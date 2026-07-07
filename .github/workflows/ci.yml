@@ -1,0 +1,117 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  quality:
+    name: Lint · Types · Unit tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm run format:check || npx prettier --check .
+      - run: npm test
+
+  i18n:
+    name: i18n key parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Check locale key parity (§20)
+        run: node scripts/check-i18n-parity.mjs
+
+  security:
+    name: Secrets · Dependencies
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - run: npm audit --audit-level=high
+
+  rls:
+    name: RLS isolation tests (§4.3)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Apply schema + policies
+        run: |
+          npx prisma db push --skip-generate
+          # auth schema stub for CI (Supabase-only objects)
+          psql "$DATABASE_URL" -c "create role authenticated nologin; create schema if not exists auth;
+            create table if not exists auth.users (id uuid primary key, email text, raw_user_meta_data jsonb default '{}'::jsonb);
+            create or replace function auth.uid() returns uuid language sql as \$\$ select nullif(current_setting('request.jwt.claims', true)::jsonb->>'sub','')::uuid \$\$;
+            create or replace function auth.jwt() returns jsonb language sql as \$\$ select coalesce(current_setting('request.jwt.claims', true)::jsonb, '{}'::jsonb) \$\$;"
+          psql "$DATABASE_URL" -f prisma/sql/001_extensions_and_indexes.sql
+          psql "$DATABASE_URL" -f prisma/sql/002_functions.sql
+          psql "$DATABASE_URL" -f prisma/sql/003_rls.sql
+      - name: Run isolation assertions
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: [quality]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - run: npm ci
+      - name: Build with placeholder env (validation runs at runtime start)
+        run: npm run build
+        env:
+          SKIP_ENV_VALIDATION: "1"
+          NEXT_PUBLIC_APP_URL: https://ci.invalid
+          NEXT_PUBLIC_SUPABASE_URL: https://ci.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_ci
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          DIRECT_URL: postgresql://ci:ci@localhost:5432/ci

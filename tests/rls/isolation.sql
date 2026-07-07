@@ -1,0 +1,77 @@
+-- Cross-tenant isolation assertions (§4.3, §23).
+-- Runs against a migrated DB with policies applied. Fails loudly via exceptions.
+
+begin;
+
+-- Fixtures: two orgs, one user each
+insert into auth.users (id, email) values
+  ('a0000000-0000-4000-8000-000000000001', 'a@test.fi'),
+  ('b0000000-0000-4000-8000-000000000002', 'b@test.fi');
+
+insert into users (id, email, created_at, updated_at) values
+  ('a0000000-0000-4000-8000-000000000001', 'a@test.fi', now(), now()),
+  ('b0000000-0000-4000-8000-000000000002', 'b@test.fi', now(), now());
+
+insert into organizations (id, name, slug) values
+  ('11111111-0000-4000-8000-000000000000', 'Org A', 'org-a'),
+  ('22222222-0000-4000-8000-000000000000', 'Org B', 'org-b');
+
+insert into organization_members (organization_id, user_id, role) values
+  ('11111111-0000-4000-8000-000000000000', 'a0000000-0000-4000-8000-000000000001', 'OWNER'),
+  ('22222222-0000-4000-8000-000000000000', 'b0000000-0000-4000-8000-000000000002', 'OWNER');
+
+insert into contacts (organization_id, first_name, email) values
+  ('11111111-0000-4000-8000-000000000000', 'Aino', 'aino@a.fi'),
+  ('22222222-0000-4000-8000-000000000000', 'Bertta', 'bertta@b.fi');
+
+-- Simulate an authenticated session for user A / org A
+create role authenticated_test login;
+grant authenticated to authenticated_test;
+grant usage on schema public to authenticated_test;
+grant select, insert, update, delete on all tables in schema public to authenticated_test;
+
+set role authenticated_test;
+select set_config('request.jwt.claims', json_build_object(
+  'sub', 'a0000000-0000-4000-8000-000000000001',
+  'role', 'OWNER',
+  'org_id', '11111111-0000-4000-8000-000000000000'
+)::text, true);
+
+do $$
+declare n int;
+begin
+  -- 1. sees own contacts
+  select count(*) into n from contacts;
+  if n <> 1 then raise exception 'ISOLATION FAIL: expected 1 visible contact, got %', n; end if;
+
+  -- 2. cannot see org B's contact
+  select count(*) into n from contacts where email = 'bertta@b.fi';
+  if n <> 0 then raise exception 'ISOLATION FAIL: cross-tenant contact visible'; end if;
+
+  -- 3. cannot see org B row in organizations
+  select count(*) into n from organizations where id = '22222222-0000-4000-8000-000000000000';
+  if n <> 0 then raise exception 'ISOLATION FAIL: foreign organization visible'; end if;
+
+  -- 4. cannot insert into org B
+  begin
+    insert into contacts (organization_id, first_name)
+      values ('22222222-0000-4000-8000-000000000000', 'Evil');
+    raise exception 'ISOLATION FAIL: cross-tenant insert allowed';
+  exception when insufficient_privilege or check_violation then
+    null; -- expected: RLS with check rejected it
+  end;
+
+  -- 5. subscriptions are read-only from client role
+  begin
+    insert into subscriptions (organization_id, plan)
+      values ('11111111-0000-4000-8000-000000000000', 'PRO');
+    raise exception 'ISOLATION FAIL: client-side subscription insert allowed';
+  exception when insufficient_privilege or check_violation then
+    null;
+  end;
+
+  raise notice 'ALL RLS ISOLATION ASSERTIONS PASSED';
+end $$;
+
+reset role;
+rollback;

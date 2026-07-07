@@ -1,0 +1,279 @@
+{
+  "common": {
+    "appName": "Syveka AI",
+    "save": "حفظ",
+    "cancel": "إلغاء",
+    "delete": "حذف",
+    "edit": "تعديل",
+    "create": "إنشاء",
+    "search": "بحث",
+    "loading": "جارٍ التحميل…",
+    "error": "حدث خطأ ما",
+    "confirm": "تأكيد",
+    "back": "رجوع",
+    "next": "التالي",
+    "upgrade": "ترقية الخطة"
+  },
+  "nav": {
+    "dashboard": "لوحة التحكم",
+    "chat": "الدردشة الذكية",
+    "voice": "المساعد الصوتي",
+    "crm": "إدارة العملاء",
+    "contacts": "جهات الاتصال",
+    "companies": "الشركات",
+    "deals": "الصفقات",
+    "calendar": "التقويم",
+    "analytics": "التحليلات",
+    "knowledge": "قاعدة المعرفة",
+    "prompts": "مكتبة الأوامر",
+    "workflows": "الأتمتة",
+    "notifications": "الإشعارات",
+    "settings": "الإعدادات"
+  },
+  "auth": {
+    "login": "تسجيل الدخول",
+    "register": "إنشاء حساب",
+    "email": "البريد الإلكتروني",
+    "password": "كلمة المرور",
+    "forgotPassword": "هل نسيت كلمة المرور؟",
+    "magicLink": "أرسل لي رابط تسجيل الدخول",
+    "continueWithGoogle": "المتابعة عبر Google",
+    "noAccount": "ليس لديك حساب؟",
+    "hasAccount": "لديك حساب بالفعل؟",
+    "verifyEmailSent": "تحقق من بريدك — أرسلنا لك رابط التفعيل."
+  },
+  "dashboard": {
+    "title": "لوحة التحكم",
+    "greeting": "مرحباً، {name}",
+    "openDeals": "الصفقات المفتوحة",
+    "callsHandled": "المكالمات المعالجة",
+    "aiMessages": "رسائل الذكاء الاصطناعي هذا الشهر",
+    "todaysEvents": "تقويم اليوم",
+    "recentActivity": "النشاط الأخير"
+  },
+  "billing": {
+    "title": "الفوترة",
+    "currentPlan": "الخطة الحالية",
+    "managePlan": "إدارة الاشتراك",
+    "quotaReached": "لقد وصلت إلى حد خطتك.",
+    "pastDue": "فشل الدفع — يرجى تحديث طريقة الدفع."
+  },
+  "chat": {
+    "emptyState": "اسأل أي شيء عن شركتك — يمكنني البحث في قاعدة المعرفة وإدارة العملاء والتقويم.",
+    "newConversation": "محادثة جديدة",
+    "placeholder": "راسل سيفيكا…",
+    "useKnowledgeBase": "استخدام قاعدة المعرفة",
+    "disclaimer": "قد تحتوي إجابات الذكاء الاصطناعي على أخطاء. تحقق من المعلومات المهمة.",
+    "errors": {
+      "generic": "حدث خطأ ما. حاول مرة أخرى.",
+      "rate_limited": "أنت ترسل الرسائل بسرعة كبيرة. انتظر لحظة.",
+      "entitlement_exceeded": "تم بلوغ حصة الذكاء الاصطناعي الشهرية — قم بترقية خطتك.",
+      "content_flagged": "لا يمكن معالجة هذه الرسالة.",
+      "generation_failed": "فشل إنشاء الرد. حاول مرة أخرى.",
+      "network_error": "انقطع الاتصال. حاول مرة أخرى."
+    }
+  },
+  "knowledge": {
+    "title": "قاعدة المعرفة",
+    "subtitle": "المستندات التي يستخدمها المساعد الذكي للإجابة عن أسئلة شركتك.",
+    "dropzone": "أسقط الملفات هنا أو انقر للرفع",
+    "uploading": "جارٍ الرفع…",
+    "empty": "لا توجد مستندات بعد. ارفع مستندك الأول لتشغيل المساعد الذكي.",
+    "status": {
+      "READY": "جاهز",
+      "PROCESSING": "قيد المعالجة",
+      "PENDING": "في الانتظار",
+      "FAILED": "فشل"
+    },
+    "errors": {
+      "unsupported_type": "نوع الملف غير مدعوم.",
+      "too_large": "الملف يتجاوز حد ٢٥ ميغابايت.",
+      "quota": "تم بلوغ حد التخزين — قم بترقية خطتك.",
+      "upload_failed": "فشل الرفع. حاول مرة أخرى."
+    }
+  },
+  "crm": {
+    "contacts": "جهات الاتصال",
+    "deals": "الصفقات",
+    "timeline": "الجدول الزمني",
+    "newContact": "جهة اتصال جديدة",
+    "searchPlaceholder": "ابحث بالاسم أو البريد أو الهاتف…",
+    "allStatuses": "كل الحالات",
+    "noContacts": "لا توجد جهات اتصال بعد.",
+    "loadMore": "عرض المزيد",
+    "noPipeline": "لم يتم إعداد خط المبيعات.",
+    "openPipeline": "خط المبيعات المفتوح",
+    "gdprConsent": "وافقت جهة الاتصال وفق اللائحة العامة لحماية البيانات",
+    "quotaContacts": "تم بلوغ حد جهات الاتصال — قم بترقية خطتك.",
+    "statuses": {
+      "LEAD": "عميل محتمل",
+      "PROSPECT": "مرشح",
+      "CUSTOMER": "عميل",
+      "CHURNED": "مفقود",
+      "ARCHIVED": "مؤرشف"
+    },
+    "fields": {
+      "firstName": "الاسم الأول",
+      "lastName": "اسم العائلة",
+      "email": "البريد الإلكتروني",
+      "phone": "الهاتف",
+      "status": "الحالة"
+    }
+  },
+  "voice": {
+    "title": "المساعد الصوتي",
+    "newAssistant": "مساعد جديد",
+    "callLog": "سجل المكالمات",
+    "empty": "لا يوجد مساعد صوتي بعد. أنشئ واحداً للرد على هاتفك بالذكاء الاصطناعي.",
+    "active": "نشط",
+    "inactive": "مسودة",
+    "noNumber": "لا يوجد رقم بعد",
+    "calls": "مكالمات",
+    "activate": "تفعيل والحصول على رقم",
+    "phoneNumber": "رقم الهاتف",
+    "persona": "الشخصية",
+    "tools": "القدرات",
+    "toolsDescription": "ما يُسمح للمساعد بفعله أثناء المكالمات. الإجراءات التي تعدل البيانات تتطلب دائماً تأكيد المتصل.",
+    "useKb": "الإجابة من قاعدة المعرفة",
+    "firstMessagePlaceholder": "مرحباً! لقد اتصلت بـ[الشركة]. كيف يمكنني المساعدة؟",
+    "systemPromptPlaceholder": "أنت تجيب على مكالمات [الشركة]. كن ودوداً وموجزاً…",
+    "noCalls": "لا توجد مكالمات بعد.",
+    "unknownCaller": "متصل مجهول",
+    "summary": "ملخص الذكاء الاصطناعي",
+    "followUps": "المتابعات",
+    "transcript": "النص",
+    "caller": "المتصل",
+    "sentiment": {
+      "positive": "إيجابي",
+      "neutral": "محايد",
+      "negative": "سلبي"
+    },
+    "fields": {
+      "name": "الاسم",
+      "language": "اللغة",
+      "firstMessage": "التحية",
+      "systemPrompt": "التعليمات",
+      "transferNumber": "رقم التحويل البشري"
+    },
+    "toolNames": {
+      "searchContacts": "البحث عن المتصلين في CRM",
+      "createContact": "إنشاء جهات اتصال جديدة",
+      "logActivity": "تسجيل ملاحظات المكالمة في CRM",
+      "getCalendarAvailability": "التحقق من توفر التقويم",
+      "bookMeeting": "حجز الاجتماعات"
+    }
+  },
+  "calendar": {
+    "title": "التقويم",
+    "newEvent": "حدث جديد",
+    "fields": {
+      "title": "العنوان",
+      "start": "البداية",
+      "end": "النهاية",
+      "location": "الموقع",
+      "description": "الوصف"
+    }
+  },
+  "notifications": {
+    "title": "الإشعارات",
+    "markAllRead": "تحديد الكل كمقروء",
+    "empty": "لا توجد إشعارات جديدة."
+  },
+  "analytics": {
+    "title": "التحليلات",
+    "winRate": "معدل الفوز",
+    "aiTokens": "رموز الذكاء الاصطناعي (شهر)",
+    "voiceCalls30d": "المكالمات (٣٠ يوماً)",
+    "voiceMinutes30d": "دقائق الصوت (٣٠ يوماً)",
+    "pipelineFunnel": "قمع المبيعات",
+    "aiMessages30d": "رسائل الذكاء الاصطناعي (٣٠ يوماً)",
+    "feedbackPositive": "تقييم إيجابي",
+    "callVolume30d": "حجم المكالمات (٣٠ يوماً)",
+    "callSentiment": "نبرة المكالمات",
+    "transferred": "تم التحويل إلى إنسان",
+    "sentiment": {
+      "positive": "إيجابي",
+      "neutral": "محايد",
+      "negative": "سلبي"
+    }
+  },
+  "prompts": {
+    "title": "مكتبة الأوامر",
+    "subtitle": "قوالب أوامر قابلة لإعادة الاستخدام لك ولفريقك.",
+    "all": "الكل",
+    "newPrompt": "أمر جديد",
+    "use": "استخدام",
+    "openInChat": "فتح في الدردشة",
+    "contentPlaceholder": "اكتب رداً إلى {{customer}} حول {{topic}}…",
+    "variableHint": "استخدم {{name}} لتعريف المتغيرات.",
+    "categories": {
+      "general": "عام",
+      "sales": "مبيعات",
+      "support": "دعم",
+      "marketing": "تسويق",
+      "finance": "مالية",
+      "hr": "موارد بشرية",
+      "productivity": "إنتاجية"
+    },
+    "fields": {
+      "title": "العنوان",
+      "description": "الوصف",
+      "category": "الفئة",
+      "content": "الأمر"
+    }
+  },
+  "workflows": {
+    "title": "الأتمتة",
+    "newWorkflow": "أتمتة جديدة",
+    "empty": "لا توجد أتمتة بعد. أنشئ أول سير عمل.",
+    "runs": "تشغيلات",
+    "lastRun": "آخر تشغيل",
+    "saved": "تم الحفظ.",
+    "runHistory": "سجل التشغيل",
+    "seconds": "ثوانٍ",
+    "promptPlaceholder": "لخّص {{trigger.title}} للفريق…",
+    "subjectPlaceholder": "الموضوع…",
+    "fields": {
+      "name": "الاسم",
+      "trigger": "المُطلق"
+    },
+    "triggers": {
+      "contact.created": "تم إنشاء جهة اتصال",
+      "deal.stage_changed": "تغيرت مرحلة الصفقة",
+      "deal.won": "تم الفوز بالصفقة",
+      "call.completed": "انتهت المكالمة",
+      "manual": "يدوي"
+    },
+    "stepTypes": {
+      "condition": "شرط",
+      "ai.generate": "توليد بالذكاء الاصطناعي",
+      "email.send": "إرسال بريد",
+      "crm.create_activity": "إنشاء نشاط CRM",
+      "notify.member": "إشعار عضو",
+      "wait.duration": "انتظار"
+    },
+    "testRun": "تشغيل تجريبي"
+  },
+  "billingPage": {
+    "title": "الفوترة",
+    "currentPlan": "الخطة الحالية",
+    "managePortal": "الإدارة عبر بوابة Stripe",
+    "checkoutSuccess": "تم تفعيل الاشتراك — أهلاً بك!",
+    "pastDue": "فشلت آخر عملية دفع. حدّث طريقة الدفع لتجنب الانقطاع.",
+    "plans": "الخطط",
+    "current": "الخطة الحالية",
+    "choosePlan": "اختر الخطة",
+    "perUserMonth": "مستخدم/شهر",
+    "interval": {
+      "monthly": "شهرياً",
+      "annual": "سنوياً (شهران مجاناً)"
+    },
+    "usage": {
+      "aiMessages": "رسائل الذكاء الاصطناعي",
+      "voiceMinutes": "دقائق الصوت",
+      "contacts": "جهات الاتصال",
+      "storage": "قاعدة المعرفة (م.ب)",
+      "seats": "المقاعد"
+    }
+  }
+}

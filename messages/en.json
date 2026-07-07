@@ -1,0 +1,279 @@
+{
+  "common": {
+    "appName": "Syveka AI",
+    "save": "Save",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "create": "Create",
+    "search": "Search",
+    "loading": "Loading…",
+    "error": "Something went wrong",
+    "confirm": "Confirm",
+    "back": "Back",
+    "next": "Next",
+    "upgrade": "Upgrade plan"
+  },
+  "nav": {
+    "dashboard": "Dashboard",
+    "chat": "AI Chat",
+    "voice": "Voice AI",
+    "crm": "CRM",
+    "contacts": "Contacts",
+    "companies": "Companies",
+    "deals": "Deals",
+    "calendar": "Calendar",
+    "analytics": "Analytics",
+    "knowledge": "Knowledge Base",
+    "prompts": "Prompt Library",
+    "workflows": "Workflows",
+    "notifications": "Notifications",
+    "settings": "Settings"
+  },
+  "auth": {
+    "login": "Log in",
+    "register": "Create account",
+    "email": "Email",
+    "password": "Password",
+    "forgotPassword": "Forgot password?",
+    "magicLink": "Email me a login link",
+    "continueWithGoogle": "Continue with Google",
+    "noAccount": "No account yet?",
+    "hasAccount": "Already have an account?",
+    "verifyEmailSent": "Check your inbox — we sent you a verification link."
+  },
+  "dashboard": {
+    "title": "Dashboard",
+    "greeting": "Hello, {name}",
+    "openDeals": "Open deals",
+    "callsHandled": "Calls handled",
+    "aiMessages": "AI messages this month",
+    "todaysEvents": "Today's calendar",
+    "recentActivity": "Recent activity"
+  },
+  "billing": {
+    "title": "Billing",
+    "currentPlan": "Current plan",
+    "managePlan": "Manage subscription",
+    "quotaReached": "You've reached your plan limit.",
+    "pastDue": "Payment failed — please update your payment method."
+  },
+  "chat": {
+    "emptyState": "Ask anything about your business — I can search your knowledge base, CRM and calendar.",
+    "newConversation": "New conversation",
+    "placeholder": "Message Syveka…",
+    "useKnowledgeBase": "Use knowledge base",
+    "disclaimer": "AI answers can contain mistakes. Verify important information.",
+    "errors": {
+      "generic": "Something went wrong. Please try again.",
+      "rate_limited": "You're sending messages too fast. Wait a moment.",
+      "entitlement_exceeded": "Monthly AI quota reached — upgrade your plan to continue.",
+      "content_flagged": "This message can't be processed.",
+      "generation_failed": "Generation failed. Please try again.",
+      "network_error": "Connection lost. Please try again."
+    }
+  },
+  "knowledge": {
+    "title": "Knowledge Base",
+    "subtitle": "Documents the AI assistant uses to answer questions about your business.",
+    "dropzone": "Drop files here or click to upload",
+    "uploading": "Uploading…",
+    "empty": "No documents yet. Upload your first document to power the AI assistant.",
+    "status": {
+      "READY": "Ready",
+      "PROCESSING": "Processing",
+      "PENDING": "Queued",
+      "FAILED": "Failed"
+    },
+    "errors": {
+      "unsupported_type": "Unsupported file type.",
+      "too_large": "File exceeds the 25 MB limit.",
+      "quota": "Storage limit reached — upgrade your plan.",
+      "upload_failed": "Upload failed. Please try again."
+    }
+  },
+  "crm": {
+    "contacts": "Contacts",
+    "deals": "Deals",
+    "timeline": "Timeline",
+    "newContact": "New contact",
+    "searchPlaceholder": "Search name, email, phone…",
+    "allStatuses": "All statuses",
+    "noContacts": "No contacts yet.",
+    "loadMore": "Load more",
+    "noPipeline": "No pipeline configured.",
+    "openPipeline": "Open pipeline",
+    "gdprConsent": "Contact has given GDPR consent",
+    "quotaContacts": "Contact limit reached — upgrade your plan.",
+    "statuses": {
+      "LEAD": "Lead",
+      "PROSPECT": "Prospect",
+      "CUSTOMER": "Customer",
+      "CHURNED": "Churned",
+      "ARCHIVED": "Archived"
+    },
+    "fields": {
+      "firstName": "First name",
+      "lastName": "Last name",
+      "email": "Email",
+      "phone": "Phone",
+      "status": "Status"
+    }
+  },
+  "voice": {
+    "title": "Voice AI",
+    "newAssistant": "New assistant",
+    "callLog": "Call log",
+    "empty": "No voice assistants yet. Create one to answer your phone with AI.",
+    "active": "Active",
+    "inactive": "Draft",
+    "noNumber": "No number yet",
+    "calls": "calls",
+    "activate": "Activate & get number",
+    "phoneNumber": "Phone number",
+    "persona": "Persona",
+    "tools": "Capabilities",
+    "toolsDescription": "What the assistant is allowed to do during calls. Actions that modify data always require caller confirmation.",
+    "useKb": "Answer from the knowledge base",
+    "firstMessagePlaceholder": "Hello! You've reached [company]. How can I help?",
+    "systemPromptPlaceholder": "You answer calls for [company]. Be friendly and concise…",
+    "noCalls": "No calls yet.",
+    "unknownCaller": "Unknown caller",
+    "summary": "AI summary",
+    "followUps": "Follow-ups",
+    "transcript": "Transcript",
+    "caller": "Caller",
+    "sentiment": {
+      "positive": "Positive",
+      "neutral": "Neutral",
+      "negative": "Negative"
+    },
+    "fields": {
+      "name": "Name",
+      "language": "Language",
+      "firstMessage": "Greeting",
+      "systemPrompt": "Instructions",
+      "transferNumber": "Human transfer number"
+    },
+    "toolNames": {
+      "searchContacts": "Look up callers in CRM",
+      "createContact": "Create new contacts",
+      "logActivity": "Log call notes to CRM",
+      "getCalendarAvailability": "Check calendar availability",
+      "bookMeeting": "Book meetings"
+    }
+  },
+  "calendar": {
+    "title": "Calendar",
+    "newEvent": "New event",
+    "fields": {
+      "title": "Title",
+      "start": "Start",
+      "end": "End",
+      "location": "Location",
+      "description": "Description"
+    }
+  },
+  "notifications": {
+    "title": "Notifications",
+    "markAllRead": "Mark all read",
+    "empty": "You're all caught up."
+  },
+  "analytics": {
+    "title": "Analytics",
+    "winRate": "Win rate",
+    "aiTokens": "AI tokens (month)",
+    "voiceCalls30d": "Calls (30 d)",
+    "voiceMinutes30d": "Voice minutes (30 d)",
+    "pipelineFunnel": "Pipeline funnel",
+    "aiMessages30d": "AI messages (30 d)",
+    "feedbackPositive": "Positive feedback",
+    "callVolume30d": "Call volume (30 d)",
+    "callSentiment": "Call sentiment",
+    "transferred": "Transferred to human",
+    "sentiment": {
+      "positive": "Positive",
+      "neutral": "Neutral",
+      "negative": "Negative"
+    }
+  },
+  "prompts": {
+    "title": "Prompt Library",
+    "subtitle": "Reusable prompt templates for you and your team.",
+    "all": "All",
+    "newPrompt": "New prompt",
+    "use": "Use",
+    "openInChat": "Open in chat",
+    "contentPlaceholder": "Write a reply to {{customer}} about {{topic}}…",
+    "variableHint": "Use {{name}} to define fill-in variables.",
+    "categories": {
+      "general": "General",
+      "sales": "Sales",
+      "support": "Support",
+      "marketing": "Marketing",
+      "finance": "Finance",
+      "hr": "HR",
+      "productivity": "Productivity"
+    },
+    "fields": {
+      "title": "Title",
+      "description": "Description",
+      "category": "Category",
+      "content": "Prompt"
+    }
+  },
+  "workflows": {
+    "title": "Workflows",
+    "newWorkflow": "New workflow",
+    "empty": "No automations yet. Create your first workflow.",
+    "runs": "runs",
+    "lastRun": "last run",
+    "saved": "Saved.",
+    "runHistory": "Run history",
+    "seconds": "seconds",
+    "promptPlaceholder": "Summarize {{trigger.title}} for the team…",
+    "subjectPlaceholder": "Subject…",
+    "fields": {
+      "name": "Name",
+      "trigger": "Trigger"
+    },
+    "triggers": {
+      "contact.created": "Contact created",
+      "deal.stage_changed": "Deal stage changed",
+      "deal.won": "Deal won",
+      "call.completed": "Voice call completed",
+      "manual": "Manual"
+    },
+    "stepTypes": {
+      "condition": "Condition",
+      "ai.generate": "AI generate",
+      "email.send": "Send email",
+      "crm.create_activity": "Create CRM activity",
+      "notify.member": "Notify member",
+      "wait.duration": "Wait"
+    },
+    "testRun": "Test run"
+  },
+  "billingPage": {
+    "title": "Billing",
+    "currentPlan": "Current plan",
+    "managePortal": "Manage in Stripe portal",
+    "checkoutSuccess": "Subscription activated — welcome aboard!",
+    "pastDue": "Your last payment failed. Update your payment method to avoid interruption.",
+    "plans": "Plans",
+    "current": "Current plan",
+    "choosePlan": "Choose plan",
+    "perUserMonth": "user/mo",
+    "interval": {
+      "monthly": "Monthly",
+      "annual": "Annual (2 months free)"
+    },
+    "usage": {
+      "aiMessages": "AI messages",
+      "voiceMinutes": "Voice minutes",
+      "contacts": "Contacts",
+      "storage": "Knowledge base (MB)",
+      "seats": "Seats"
+    }
+  }
+}

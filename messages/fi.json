@@ -1,0 +1,279 @@
+{
+  "common": {
+    "appName": "Syveka AI",
+    "save": "Tallenna",
+    "cancel": "Peruuta",
+    "delete": "Poista",
+    "edit": "Muokkaa",
+    "create": "Luo",
+    "search": "Hae",
+    "loading": "Ladataan…",
+    "error": "Jokin meni pieleen",
+    "confirm": "Vahvista",
+    "back": "Takaisin",
+    "next": "Seuraava",
+    "upgrade": "Päivitä tilaus"
+  },
+  "nav": {
+    "dashboard": "Työpöytä",
+    "chat": "AI-chat",
+    "voice": "Puheavustaja",
+    "crm": "CRM",
+    "contacts": "Kontaktit",
+    "companies": "Yritykset",
+    "deals": "Myyntimahdollisuudet",
+    "calendar": "Kalenteri",
+    "analytics": "Analytiikka",
+    "knowledge": "Tietopankki",
+    "prompts": "Promptikirjasto",
+    "workflows": "Automaatiot",
+    "notifications": "Ilmoitukset",
+    "settings": "Asetukset"
+  },
+  "auth": {
+    "login": "Kirjaudu sisään",
+    "register": "Luo tili",
+    "email": "Sähköposti",
+    "password": "Salasana",
+    "forgotPassword": "Unohditko salasanan?",
+    "magicLink": "Lähetä kirjautumislinkki sähköpostiin",
+    "continueWithGoogle": "Jatka Googlella",
+    "noAccount": "Ei vielä tiliä?",
+    "hasAccount": "Onko sinulla jo tili?",
+    "verifyEmailSent": "Tarkista sähköpostisi — lähetimme vahvistuslinkin."
+  },
+  "dashboard": {
+    "title": "Työpöytä",
+    "greeting": "Hei, {name}",
+    "openDeals": "Avoimet kaupat",
+    "callsHandled": "Käsitellyt puhelut",
+    "aiMessages": "AI-viestit tässä kuussa",
+    "todaysEvents": "Tämän päivän kalenteri",
+    "recentActivity": "Viimeisimmät tapahtumat"
+  },
+  "billing": {
+    "title": "Laskutus",
+    "currentPlan": "Nykyinen tilaus",
+    "managePlan": "Hallinnoi tilausta",
+    "quotaReached": "Tilauksesi raja on täynnä.",
+    "pastDue": "Maksu epäonnistui — päivitä maksutapasi."
+  },
+  "chat": {
+    "emptyState": "Kysy mitä tahansa yrityksestäsi — voin hakea tietopankista, CRM:stä ja kalenterista.",
+    "newConversation": "Uusi keskustelu",
+    "placeholder": "Viesti Syvekalle…",
+    "useKnowledgeBase": "Käytä tietopankkia",
+    "disclaimer": "Tekoälyn vastauksissa voi olla virheitä. Varmista tärkeät tiedot.",
+    "errors": {
+      "generic": "Jokin meni pieleen. Yritä uudelleen.",
+      "rate_limited": "Lähetät viestejä liian nopeasti. Odota hetki.",
+      "entitlement_exceeded": "Kuukauden AI-kiintiö täynnä — päivitä tilaus jatkaaksesi.",
+      "content_flagged": "Tätä viestiä ei voida käsitellä.",
+      "generation_failed": "Vastauksen luonti epäonnistui. Yritä uudelleen.",
+      "network_error": "Yhteys katkesi. Yritä uudelleen."
+    }
+  },
+  "knowledge": {
+    "title": "Tietopankki",
+    "subtitle": "Dokumentit, joita tekoälyavustaja käyttää vastatakseen yritystäsi koskeviin kysymyksiin.",
+    "dropzone": "Pudota tiedostot tähän tai klikkaa ladataksesi",
+    "uploading": "Ladataan…",
+    "empty": "Ei dokumentteja vielä. Lataa ensimmäinen dokumentti tekoälyavustajaa varten.",
+    "status": {
+      "READY": "Valmis",
+      "PROCESSING": "Käsitellään",
+      "PENDING": "Jonossa",
+      "FAILED": "Epäonnistui"
+    },
+    "errors": {
+      "unsupported_type": "Tiedostotyyppiä ei tueta.",
+      "too_large": "Tiedosto ylittää 25 Mt rajan.",
+      "quota": "Tallennustila täynnä — päivitä tilaus.",
+      "upload_failed": "Lataus epäonnistui. Yritä uudelleen."
+    }
+  },
+  "crm": {
+    "contacts": "Kontaktit",
+    "deals": "Myyntimahdollisuudet",
+    "timeline": "Aikajana",
+    "newContact": "Uusi kontakti",
+    "searchPlaceholder": "Hae nimellä, sähköpostilla, puhelimella…",
+    "allStatuses": "Kaikki tilat",
+    "noContacts": "Ei kontakteja vielä.",
+    "loadMore": "Näytä lisää",
+    "noPipeline": "Myyntiputkea ei ole määritetty.",
+    "openPipeline": "Avoin myyntiputki",
+    "gdprConsent": "Kontakti on antanut GDPR-suostumuksen",
+    "quotaContacts": "Kontaktiraja täynnä — päivitä tilaus.",
+    "statuses": {
+      "LEAD": "Liidi",
+      "PROSPECT": "Prospekti",
+      "CUSTOMER": "Asiakas",
+      "CHURNED": "Menetetty",
+      "ARCHIVED": "Arkistoitu"
+    },
+    "fields": {
+      "firstName": "Etunimi",
+      "lastName": "Sukunimi",
+      "email": "Sähköposti",
+      "phone": "Puhelin",
+      "status": "Tila"
+    }
+  },
+  "voice": {
+    "title": "Puheavustaja",
+    "newAssistant": "Uusi avustaja",
+    "callLog": "Puheluloki",
+    "empty": "Ei puheavustajia vielä. Luo avustaja vastaamaan puhelimeen tekoälyllä.",
+    "active": "Aktiivinen",
+    "inactive": "Luonnos",
+    "noNumber": "Ei numeroa vielä",
+    "calls": "puhelua",
+    "activate": "Aktivoi ja hanki numero",
+    "phoneNumber": "Puhelinnumero",
+    "persona": "Persoona",
+    "tools": "Kyvyt",
+    "toolsDescription": "Mitä avustaja saa tehdä puhelun aikana. Tietoja muokkaavat toimet vaativat aina soittajan vahvistuksen.",
+    "useKb": "Vastaa tietopankin pohjalta",
+    "firstMessagePlaceholder": "Hei! Tavoitit [yrityksen]. Kuinka voin auttaa?",
+    "systemPromptPlaceholder": "Vastaat yrityksen [yritys] puheluihin. Ole ystävällinen ja ytimekäs…",
+    "noCalls": "Ei puheluita vielä.",
+    "unknownCaller": "Tuntematon soittaja",
+    "summary": "AI-yhteenveto",
+    "followUps": "Jatkotoimet",
+    "transcript": "Litterointi",
+    "caller": "Soittaja",
+    "sentiment": {
+      "positive": "Positiivinen",
+      "neutral": "Neutraali",
+      "negative": "Negatiivinen"
+    },
+    "fields": {
+      "name": "Nimi",
+      "language": "Kieli",
+      "firstMessage": "Tervehdys",
+      "systemPrompt": "Ohjeet",
+      "transferNumber": "Siirto ihmiselle (numero)"
+    },
+    "toolNames": {
+      "searchContacts": "Hae soittajia CRM:stä",
+      "createContact": "Luo uusia kontakteja",
+      "logActivity": "Kirjaa puhelumuistiinpanot CRM:ään",
+      "getCalendarAvailability": "Tarkista kalenterin saatavuus",
+      "bookMeeting": "Varaa tapaamisia"
+    }
+  },
+  "calendar": {
+    "title": "Kalenteri",
+    "newEvent": "Uusi tapahtuma",
+    "fields": {
+      "title": "Otsikko",
+      "start": "Alkaa",
+      "end": "Päättyy",
+      "location": "Sijainti",
+      "description": "Kuvaus"
+    }
+  },
+  "notifications": {
+    "title": "Ilmoitukset",
+    "markAllRead": "Merkitse kaikki luetuiksi",
+    "empty": "Ei uusia ilmoituksia."
+  },
+  "analytics": {
+    "title": "Analytiikka",
+    "winRate": "Voittoprosentti",
+    "aiTokens": "AI-tokenit (kk)",
+    "voiceCalls30d": "Puhelut (30 pv)",
+    "voiceMinutes30d": "Puheluminuutit (30 pv)",
+    "pipelineFunnel": "Myyntiputki",
+    "aiMessages30d": "AI-viestit (30 pv)",
+    "feedbackPositive": "Positiivinen palaute",
+    "callVolume30d": "Puhelumäärä (30 pv)",
+    "callSentiment": "Puheluiden sävy",
+    "transferred": "Siirretty ihmiselle",
+    "sentiment": {
+      "positive": "Positiivinen",
+      "neutral": "Neutraali",
+      "negative": "Negatiivinen"
+    }
+  },
+  "prompts": {
+    "title": "Promptikirjasto",
+    "subtitle": "Uudelleenkäytettävät promptipohjat sinulle ja tiimillesi.",
+    "all": "Kaikki",
+    "newPrompt": "Uusi prompti",
+    "use": "Käytä",
+    "openInChat": "Avaa chatissa",
+    "contentPlaceholder": "Kirjoita vastaus asiakkaalle {{customer}} aiheesta {{topic}}…",
+    "variableHint": "Määritä täytettävät muuttujat muodossa {{nimi}}.",
+    "categories": {
+      "general": "Yleinen",
+      "sales": "Myynti",
+      "support": "Asiakaspalvelu",
+      "marketing": "Markkinointi",
+      "finance": "Talous",
+      "hr": "HR",
+      "productivity": "Tuottavuus"
+    },
+    "fields": {
+      "title": "Otsikko",
+      "description": "Kuvaus",
+      "category": "Kategoria",
+      "content": "Prompti"
+    }
+  },
+  "workflows": {
+    "title": "Automaatiot",
+    "newWorkflow": "Uusi automaatio",
+    "empty": "Ei automaatioita vielä. Luo ensimmäinen työnkulku.",
+    "runs": "ajoa",
+    "lastRun": "viimeisin ajo",
+    "saved": "Tallennettu.",
+    "runHistory": "Ajohistoria",
+    "seconds": "sekuntia",
+    "promptPlaceholder": "Tee tiimille yhteenveto: {{trigger.title}}…",
+    "subjectPlaceholder": "Otsikko…",
+    "fields": {
+      "name": "Nimi",
+      "trigger": "Laukaisin"
+    },
+    "triggers": {
+      "contact.created": "Kontakti luotu",
+      "deal.stage_changed": "Kaupan vaihe muuttui",
+      "deal.won": "Kauppa voitettu",
+      "call.completed": "Puhelu päättyi",
+      "manual": "Manuaalinen"
+    },
+    "stepTypes": {
+      "condition": "Ehto",
+      "ai.generate": "AI-generointi",
+      "email.send": "Lähetä sähköposti",
+      "crm.create_activity": "Luo CRM-tapahtuma",
+      "notify.member": "Ilmoita jäsenelle",
+      "wait.duration": "Odota"
+    },
+    "testRun": "Testiajo"
+  },
+  "billingPage": {
+    "title": "Laskutus",
+    "currentPlan": "Nykyinen tilaus",
+    "managePortal": "Hallinnoi Stripe-portaalissa",
+    "checkoutSuccess": "Tilaus aktivoitu — tervetuloa mukaan!",
+    "pastDue": "Viimeisin maksu epäonnistui. Päivitä maksutapa välttääksesi katkokset.",
+    "plans": "Tilaukset",
+    "current": "Nykyinen tilaus",
+    "choosePlan": "Valitse tilaus",
+    "perUserMonth": "käyttäjä/kk",
+    "interval": {
+      "monthly": "Kuukausittain",
+      "annual": "Vuosittain (2 kk ilmaiseksi)"
+    },
+    "usage": {
+      "aiMessages": "AI-viestit",
+      "voiceMinutes": "Puheluminuutit",
+      "contacts": "Kontaktit",
+      "storage": "Tietopankki (Mt)",
+      "seats": "Käyttäjäpaikat"
+    }
+  }
+}
