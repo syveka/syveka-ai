@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
-import { requirePermission } from "@/server/auth/guard";
-import { AuthError } from "@/server/auth/session";
-import { createDocument, listDocuments } from "@/server/services/documents";
 import { createDocumentSchema } from "@/lib/validators/documents";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(): Promise<NextResponse> {
+  const [{ requirePermission }, { AuthError }, { listDocuments }] = await Promise.all([
+    import("@/server/auth/guard"),
+    import("@/server/auth/session"),
+    import("@/server/services/documents"),
+  ]);
+
   try {
     const ctx = await requirePermission("kb:read");
     const documents = await listDocuments(ctx);
@@ -18,6 +23,12 @@ export async function GET(): Promise<NextResponse> {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const [{ requirePermission }, { AuthError }, { createDocument }] = await Promise.all([
+    import("@/server/auth/guard"),
+    import("@/server/auth/session"),
+    import("@/server/services/documents"),
+  ]);
+
   try {
     const ctx = await requirePermission("kb:write");
     const body = createDocumentSchema.safeParse(await request.json().catch(() => null));

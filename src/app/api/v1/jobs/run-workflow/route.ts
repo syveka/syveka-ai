@@ -1,17 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
-import { verifyJobRequest } from "@/server/jobs/verify";
-import { unscopedPrisma } from "@/server/db/tenant";
-import { enqueue } from "@/server/jobs/queue";
-import { anthropic } from "@/server/integrations/anthropic";
-import { routeModel } from "@/server/ai/router";
-import { sendEmail } from "@/server/integrations/resend";
 import { WorkflowNotificationEmail } from "../../../../../../emails/workflow-notification";
-import { recordUsage } from "@/server/services/billing/entitlements";
 import type { WorkflowStep } from "@/lib/validators/workflows";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const payloadSchema = z.object({
@@ -51,6 +45,24 @@ function resolveField(path: string, ctx: Ctx): unknown {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const [
+    { verifyJobRequest },
+    { unscopedPrisma },
+    { enqueue },
+    { anthropic },
+    { routeModel },
+    { sendEmail },
+    { recordUsage },
+  ] = await Promise.all([
+    import("@/server/jobs/verify"),
+    import("@/server/db/tenant"),
+    import("@/server/jobs/queue"),
+    import("@/server/integrations/anthropic"),
+    import("@/server/ai/router"),
+    import("@/server/integrations/resend"),
+    import("@/server/services/billing/entitlements"),
+  ]);
+
   const rawBody = await verifyJobRequest(request);
   if (rawBody === null) return NextResponse.json({ error: "invalid signature" }, { status: 401 });
 

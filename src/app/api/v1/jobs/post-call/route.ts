@@ -1,13 +1,8 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { verifyJobRequest } from "@/server/jobs/verify";
-import { unscopedPrisma } from "@/server/db/tenant";
-import { anthropic } from "@/server/integrations/anthropic";
-import { routeModel } from "@/server/ai/router";
-import { recordUsage } from "@/server/services/billing/entitlements";
-import { emitWorkflowEvent } from "@/server/services/workflow-events";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 const payloadSchema = z.object({
@@ -22,6 +17,22 @@ const analysisSchema = z.object({
 });
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const [
+    { verifyJobRequest },
+    { unscopedPrisma },
+    { anthropic },
+    { routeModel },
+    { recordUsage },
+    { emitWorkflowEvent },
+  ] = await Promise.all([
+    import("@/server/jobs/verify"),
+    import("@/server/db/tenant"),
+    import("@/server/integrations/anthropic"),
+    import("@/server/ai/router"),
+    import("@/server/services/billing/entitlements"),
+    import("@/server/services/workflow-events"),
+  ]);
+
   const rawBody = await verifyJobRequest(request);
   if (rawBody === null) return NextResponse.json({ error: "invalid signature" }, { status: 401 });
 
