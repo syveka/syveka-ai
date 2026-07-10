@@ -202,13 +202,21 @@ jobs:
       - name: Apply schema and policies
         run: |
           npx prisma db push --skip-generate
-          psql "$DATABASE_URL" -c "create role authenticated nologin; create schema if not exists auth;
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin
+            if not exists (select 1 from pg_roles where rolname = 'authenticated') then
+              create role authenticated nologin;
+            end if;
+            if not exists (select 1 from pg_roles where rolname = 'supabase_auth_admin') then
+              create role supabase_auth_admin nologin;
+            end if;
+          end \$\$;
+            create schema if not exists auth;
             create table if not exists auth.users (id uuid primary key, email text, raw_user_meta_data jsonb default '{}'::jsonb);
             create or replace function auth.uid() returns uuid language sql as \$\$ select nullif(current_setting('request.jwt.claims', true)::jsonb->>'sub','')::uuid \$\$;
             create or replace function auth.jwt() returns jsonb language sql as \$\$ select coalesce(current_setting('request.jwt.claims', true)::jsonb, '{}'::jsonb) \$\$;"
-          psql "$DATABASE_URL" -f prisma/sql/001_extensions_and_indexes.sql
-          psql "$DATABASE_URL" -f prisma/sql/002_functions.sql
-          psql "$DATABASE_URL" -f prisma/sql/003_rls.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/001_extensions_and_indexes.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/002_functions.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/003_rls.sql
       - name: Run isolation assertions
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
 

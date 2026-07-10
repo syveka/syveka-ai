@@ -4,28 +4,67 @@
 begin;
 
 -- Fixtures: two orgs, one user each
-insert into auth.users (id, email) values
-  ('a0000000-0000-4000-8000-000000000001', 'a@test.fi'),
-  ('b0000000-0000-4000-8000-000000000002', 'b@test.fi');
+delete from contacts
+where organization_id in (
+  '11111111-0000-4000-8000-000000000000',
+  '22222222-0000-4000-8000-000000000000'
+);
+delete from subscriptions
+where organization_id in (
+  '11111111-0000-4000-8000-000000000000',
+  '22222222-0000-4000-8000-000000000000'
+);
+delete from organization_members
+where organization_id in (
+  '11111111-0000-4000-8000-000000000000',
+  '22222222-0000-4000-8000-000000000000'
+);
+delete from organizations
+where id in (
+  '11111111-0000-4000-8000-000000000000',
+  '22222222-0000-4000-8000-000000000000'
+);
+delete from users
+where id in (
+  'a0000000-0000-4000-8000-000000000001',
+  'b0000000-0000-4000-8000-000000000002'
+);
+delete from auth.users
+where id in (
+  'a0000000-0000-4000-8000-000000000001',
+  'b0000000-0000-4000-8000-000000000002'
+);
 
-insert into users (id, email, created_at, updated_at) values
-  ('a0000000-0000-4000-8000-000000000001', 'a@test.fi', now(), now()),
-  ('b0000000-0000-4000-8000-000000000002', 'b@test.fi', now(), now());
+-- The auth trigger mirrors these rows into public.users.
+insert into auth.users (id, email, raw_user_meta_data) values
+  ('a0000000-0000-4000-8000-000000000001', 'a@test.fi', '{}'::jsonb),
+  ('b0000000-0000-4000-8000-000000000002', 'b@test.fi', '{}'::jsonb);
 
 insert into organizations (id, name, slug) values
   ('11111111-0000-4000-8000-000000000000', 'Org A', 'org-a'),
-  ('22222222-0000-4000-8000-000000000000', 'Org B', 'org-b');
+  ('22222222-0000-4000-8000-000000000000', 'Org B', 'org-b')
+on conflict (id) do update set
+  name = excluded.name,
+  slug = excluded.slug,
+  updated_at = now();
 
 insert into organization_members (organization_id, user_id, role) values
   ('11111111-0000-4000-8000-000000000000', 'a0000000-0000-4000-8000-000000000001', 'OWNER'),
-  ('22222222-0000-4000-8000-000000000000', 'b0000000-0000-4000-8000-000000000002', 'OWNER');
+  ('22222222-0000-4000-8000-000000000000', 'b0000000-0000-4000-8000-000000000002', 'OWNER')
+on conflict (organization_id, user_id) do update set
+  role = excluded.role;
 
 insert into contacts (organization_id, first_name, email) values
   ('11111111-0000-4000-8000-000000000000', 'Aino', 'aino@a.fi'),
   ('22222222-0000-4000-8000-000000000000', 'Bertta', 'bertta@b.fi');
 
 -- Simulate an authenticated session for user A / org A
-create role authenticated_test login;
+do $$
+begin
+  if not exists (select 1 from pg_roles where rolname = 'authenticated_test') then
+    create role authenticated_test login;
+  end if;
+end $$;
 grant authenticated to authenticated_test;
 grant usage on schema public to authenticated_test;
 grant select, insert, update, delete on all tables in schema public to authenticated_test;
