@@ -16,9 +16,7 @@ export async function embed(texts: string[]): Promise<number[][]> {
     input: texts,
     dimensions: EMBEDDING_DIMENSIONS,
   });
-  return res.data
-    .sort((a, b) => a.index - b.index)
-    .map((d) => d.embedding);
+  return res.data.sort((a, b) => a.index - b.index).map((d) => d.embedding);
 }
 
 export async function embedOne(text: string): Promise<number[]> {

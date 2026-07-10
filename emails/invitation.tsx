@@ -1,5 +1,12 @@
 import {
-  Body, Button, Container, Head, Heading, Html, Preview, Text,
+  Body,
+  Button,
+  Container,
+  Head,
+  Heading,
+  Html,
+  Preview,
+  Text,
 } from "@react-email/components";
 
 type Props = { orgName: string; inviteUrl: string; locale: "FI" | "EN" | "AR" };
@@ -32,7 +39,15 @@ export function InvitationEmail({ orgName, inviteUrl, locale }: Props) {
       <Head />
       <Preview>{c.preview(orgName)}</Preview>
       <Body style={{ backgroundColor: "#f6f8fa", fontFamily: "system-ui, sans-serif" }}>
-        <Container style={{ background: "#fff", borderRadius: 8, margin: "40px auto", padding: 32, maxWidth: 480 }}>
+        <Container
+          style={{
+            background: "#fff",
+            borderRadius: 8,
+            margin: "40px auto",
+            padding: 32,
+            maxWidth: 480,
+          }}
+        >
           <Heading as="h2">{c.heading(orgName)}</Heading>
           <Text>{c.body}</Text>
           <Button
@@ -41,7 +56,9 @@ export function InvitationEmail({ orgName, inviteUrl, locale }: Props) {
           >
             {c.cta}
           </Button>
-          <Text style={{ color: "#6b7280", fontSize: 12, marginTop: 24 }}>Syveka AI · syveka.ai</Text>
+          <Text style={{ color: "#6b7280", fontSize: 12, marginTop: 24 }}>
+            Syveka AI · syveka.ai
+          </Text>
         </Container>
       </Body>
     </Html>

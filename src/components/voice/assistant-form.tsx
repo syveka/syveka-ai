@@ -2,7 +2,11 @@
 
 import { useActionState } from "react";
 import { useTranslations } from "next-intl";
-import { saveAssistantAction, activateAssistantAction, type VoiceActionState } from "@/actions/voice";
+import {
+  saveAssistantAction,
+  activateAssistantAction,
+  type VoiceActionState,
+} from "@/actions/voice";
 import { VOICE_TOOL_NAMES, type VoiceAssistantInput } from "@/lib/validators/voice";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -10,7 +14,11 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "@/i18n/routing";
 
-type Initial = VoiceAssistantInput & { id?: string; isActive?: boolean; phoneNumber?: string | null };
+type Initial = VoiceAssistantInput & {
+  id?: string;
+  isActive?: boolean;
+  phoneNumber?: string | null;
+};
 
 export function AssistantForm({ initial }: { initial?: Initial }) {
   const t = useTranslations("voice");

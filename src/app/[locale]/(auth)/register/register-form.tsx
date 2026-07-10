@@ -39,7 +39,14 @@ export function RegisterForm() {
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">{t("password")}</Label>
-            <Input id="password" name="password" type="password" autoComplete="new-password" minLength={12} required />
+            <Input
+              id="password"
+              name="password"
+              type="password"
+              autoComplete="new-password"
+              minLength={12}
+              required
+            />
           </div>
           {state.error ? (
             <p role="alert" className="text-sm text-destructive">

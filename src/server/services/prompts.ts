@@ -20,8 +20,9 @@ export async function listPrompts(ctx: TenantContext, category?: string) {
 
 export async function createPrompt(ctx: TenantContext, input: PromptInput) {
   const db = tenantDb(ctx.orgId);
-  const variables = [...new Set([...input.content.matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map((m) => m[1]!))]
-    .map((name) => ({ name, label: name, type: "text" as const }));
+  const variables = [
+    ...new Set([...input.content.matchAll(/\{\{\s*(\w+)\s*\}\}/g)].map((m) => m[1]!)),
+  ].map((name) => ({ name, label: name, type: "text" as const }));
 
   const prompt = await db.prompt.create({
     data: {
@@ -30,7 +31,8 @@ export async function createPrompt(ctx: TenantContext, input: PromptInput) {
       content: input.content,
       category: input.category,
       createdById: ctx.userId,
-      locale: ctx.locale.toUpperCase() === "AR" ? "AR" : ctx.locale.toUpperCase() === "EN" ? "EN" : "FI",
+      locale:
+        ctx.locale.toUpperCase() === "AR" ? "AR" : ctx.locale.toUpperCase() === "EN" ? "EN" : "FI",
       variables,
     },
   });

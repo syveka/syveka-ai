@@ -5,7 +5,10 @@ import type { Plan } from "@prisma/client";
 import { requirePermission } from "@/server/auth/guard";
 import { unscopedPrisma } from "@/server/db/tenant";
 import {
-  getOrCreateCustomer, createCheckoutSession, createPortalSession, type BillingInterval,
+  getOrCreateCustomer,
+  createCheckoutSession,
+  createPortalSession,
+  type BillingInterval,
 } from "@/server/integrations/stripe";
 import { audit } from "@/server/services/audit";
 

@@ -25,10 +25,19 @@ export function ResetPasswordForm() {
         <form action={action} className="space-y-4">
           <div className="space-y-2">
             <Label htmlFor="password">{t("password")}</Label>
-            <Input id="password" name="password" type="password" minLength={12} autoComplete="new-password" required />
+            <Input
+              id="password"
+              name="password"
+              type="password"
+              minLength={12}
+              autoComplete="new-password"
+              required
+            />
           </div>
           {state.error ? (
-            <p role="alert" className="text-sm text-destructive">{tc("error")}</p>
+            <p role="alert" className="text-sm text-destructive">
+              {tc("error")}
+            </p>
           ) : null}
           <Button type="submit" className="w-full" disabled={pending}>
             {pending ? tc("loading") : tc("save")}

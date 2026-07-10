@@ -51,7 +51,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       const admin = createSupabaseAdmin();
       const { data, error } = await admin.storage.from("documents").download(document.storagePath);
       if (error || !data) throw new Error(`Storage download failed: ${error?.message}`);
-      text = await extractText(Buffer.from(await data.arrayBuffer()), document.mimeType ?? "text/plain");
+      text = await extractText(
+        Buffer.from(await data.arrayBuffer()),
+        document.mimeType ?? "text/plain",
+      );
     } else {
       throw new Error("No content source");
     }

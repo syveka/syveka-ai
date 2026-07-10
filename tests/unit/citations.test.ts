@@ -29,8 +29,8 @@ describe("citation validation (§15.6)", () => {
   });
 
   it("returns empty when the model fabricates everything", () => {
-    expect(
-      extractValidCitations("[doc:33333333-3333-4333-8333-333333333333]", retrieved),
-    ).toEqual([]);
+    expect(extractValidCitations("[doc:33333333-3333-4333-8333-333333333333]", retrieved)).toEqual(
+      [],
+    );
   });
 });

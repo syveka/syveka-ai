@@ -56,7 +56,9 @@ export function ProfileForm({
                 className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
               >
                 {TIMEZONES.map((tz) => (
-                  <option key={tz} value={tz}>{tz}</option>
+                  <option key={tz} value={tz}>
+                    {tz}
+                  </option>
                 ))}
               </select>
             </div>

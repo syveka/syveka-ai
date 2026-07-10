@@ -40,25 +40,37 @@ export type Permission = (typeof PERMISSIONS)[number];
 const ALL = new Set<Permission>(PERMISSIONS);
 
 const MANAGER_PERMS = new Set<Permission>([
-  "crm:read", "crm:write", "crm:delete", "crm:import-export",
+  "crm:read",
+  "crm:write",
+  "crm:delete",
+  "crm:import-export",
   "chat:use",
-  "kb:read", "kb:write",
-  "voice:configure", "voice:view-calls",
-  "workflows:manage", "workflows:view",
-  "calendar:read", "calendar:write",
-  "analytics:view", "analytics:view-own",
-  "prompts:read", "prompts:write",
+  "kb:read",
+  "kb:write",
+  "voice:configure",
+  "voice:view-calls",
+  "workflows:manage",
+  "workflows:view",
+  "calendar:read",
+  "calendar:write",
+  "analytics:view",
+  "analytics:view-own",
+  "prompts:read",
+  "prompts:write",
 ]);
 
 const MEMBER_PERMS = new Set<Permission>([
-  "crm:read", "crm:write",
+  "crm:read",
+  "crm:write",
   "chat:use",
   "kb:read",
   "voice:view-calls",
   "workflows:view",
-  "calendar:read", "calendar:write",
+  "calendar:read",
+  "calendar:write",
   "analytics:view-own",
-  "prompts:read", "prompts:write",
+  "prompts:read",
+  "prompts:write",
 ]);
 
 const VIEWER_PERMS = new Set<Permission>([

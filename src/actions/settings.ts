@@ -33,7 +33,11 @@ export async function updateProfileAction(
 
 const orgSchema = z.object({
   name: z.string().min(2).max(120),
-  businessId: z.string().regex(/^\d{7}-\d$/).optional().or(z.literal("")),
+  businessId: z
+    .string()
+    .regex(/^\d{7}-\d$/)
+    .optional()
+    .or(z.literal("")),
   vatId: z.string().max(20).optional().or(z.literal("")),
   aiInstructions: z.string().max(2000).optional().or(z.literal("")),
 });

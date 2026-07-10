@@ -13,11 +13,20 @@ import { Link } from "@/i18n/routing";
 import { cn } from "@/lib/utils";
 
 const TRIGGER_TYPES = [
-  "contact.created", "deal.stage_changed", "deal.won", "call.completed", "manual",
+  "contact.created",
+  "deal.stage_changed",
+  "deal.won",
+  "call.completed",
+  "manual",
 ] as const;
 
 const STEP_TYPES = [
-  "condition", "ai.generate", "email.send", "crm.create_activity", "notify.member", "wait.duration",
+  "condition",
+  "ai.generate",
+  "email.send",
+  "crm.create_activity",
+  "notify.member",
+  "wait.duration",
 ] as const;
 
 type Initial = {
@@ -51,14 +60,18 @@ export function WorkflowBuilder({ initial }: { initial?: Initial }) {
   const t = useTranslations("workflows");
   const tc = useTranslations("common");
   const [name, setName] = useState(initial?.name ?? "");
-  const [trigger, setTrigger] = useState<WorkflowTrigger>(initial?.trigger ?? { type: "contact.created" });
+  const [trigger, setTrigger] = useState<WorkflowTrigger>(
+    initial?.trigger ?? { type: "contact.created" },
+  );
   const [steps, setSteps] = useState<WorkflowStep[]>(initial?.steps ?? []);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
   const [pending, startTransition] = useTransition();
 
   const updateStep = (index: number, patch: Partial<WorkflowStep>) =>
-    setSteps((prev) => prev.map((s, i) => (i === index ? ({ ...s, ...patch } as WorkflowStep) : s)));
+    setSteps((prev) =>
+      prev.map((s, i) => (i === index ? ({ ...s, ...patch } as WorkflowStep) : s)),
+    );
 
   const save = () =>
     startTransition(async () => {
@@ -148,7 +161,11 @@ export function WorkflowBuilder({ initial }: { initial?: Initial }) {
         ))}
       </div>
 
-      {error ? <p role="alert" className="text-sm text-destructive">{error}</p> : null}
+      {error ? (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
       {saved ? <p className="text-sm text-success">{t("saved")}</p> : null}
 
       <div className="flex gap-2">
@@ -210,17 +227,26 @@ function StepFields({
     case "condition":
       return (
         <div className="grid grid-cols-3 gap-2">
-          {input({ value: step.field, placeholder: "trigger.valueCents", onChange: (e) => onChange({ field: e.target.value }) })}
+          {input({
+            value: step.field,
+            placeholder: "trigger.valueCents",
+            onChange: (e) => onChange({ field: e.target.value }),
+          })}
           <select
             value={step.comparator}
             onChange={(e) => onChange({ comparator: e.target.value as never })}
             className="h-9 rounded-md border border-input bg-transparent px-2 text-sm"
           >
             {["eq", "neq", "gt", "lt", "contains", "exists"].map((c) => (
-              <option key={c} value={c}>{c}</option>
+              <option key={c} value={c}>
+                {c}
+              </option>
             ))}
           </select>
-          {input({ value: String(step.value ?? ""), onChange: (e) => onChange({ value: e.target.value }) })}
+          {input({
+            value: String(step.value ?? ""),
+            onChange: (e) => onChange({ value: e.target.value }),
+          })}
         </div>
       );
     case "ai.generate":
@@ -233,14 +259,26 @@ function StepFields({
             rows={3}
             className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
           />
-          {input({ value: step.outputVar, placeholder: "outputVar", onChange: (e) => onChange({ outputVar: e.target.value }) })}
+          {input({
+            value: step.outputVar,
+            placeholder: "outputVar",
+            onChange: (e) => onChange({ outputVar: e.target.value }),
+          })}
         </>
       );
     case "email.send":
       return (
         <>
-          {input({ value: step.to, placeholder: "someone@company.fi or {{trigger.email}}", onChange: (e) => onChange({ to: e.target.value }) })}
-          {input({ value: step.subject, placeholder: t("subjectPlaceholder"), onChange: (e) => onChange({ subject: e.target.value }) })}
+          {input({
+            value: step.to,
+            placeholder: "someone@company.fi or {{trigger.email}}",
+            onChange: (e) => onChange({ to: e.target.value }),
+          })}
+          {input({
+            value: step.subject,
+            placeholder: t("subjectPlaceholder"),
+            onChange: (e) => onChange({ subject: e.target.value }),
+          })}
           <textarea
             value={step.body}
             onChange={(e) => onChange({ body: e.target.value })}
@@ -253,12 +291,24 @@ function StepFields({
     case "crm.create_activity":
       return (
         <>
-          {input({ value: step.contactIdVar, placeholder: "trigger.contactId", onChange: (e) => onChange({ contactIdVar: e.target.value }) })}
-          {input({ value: step.subject, placeholder: t("subjectPlaceholder"), onChange: (e) => onChange({ subject: e.target.value }) })}
+          {input({
+            value: step.contactIdVar,
+            placeholder: "trigger.contactId",
+            onChange: (e) => onChange({ contactIdVar: e.target.value }),
+          })}
+          {input({
+            value: step.subject,
+            placeholder: t("subjectPlaceholder"),
+            onChange: (e) => onChange({ subject: e.target.value }),
+          })}
         </>
       );
     case "notify.member":
-      return input({ value: step.title, placeholder: t("subjectPlaceholder"), onChange: (e) => onChange({ title: e.target.value }) });
+      return input({
+        value: step.title,
+        placeholder: t("subjectPlaceholder"),
+        onChange: (e) => onChange({ title: e.target.value }),
+      });
     case "wait.duration":
       return (
         <div className="flex items-center gap-2 text-sm">

@@ -11,7 +11,10 @@ import { buildSystemPrompt } from "@/server/ai/prompts/system";
 import { retrieveChunks, extractValidCitations, type RetrievedChunk } from "@/server/ai/rag";
 import { anthropicToolsFor, executeTool, type ToolIdentity } from "@/server/ai/tools";
 import {
-  assertWithinLimit, recordUsage, getMonthUsage, EntitlementError,
+  assertWithinLimit,
+  recordUsage,
+  getMonthUsage,
+  EntitlementError,
 } from "@/server/services/billing/entitlements";
 import { generateTitle } from "@/server/services/conversations";
 

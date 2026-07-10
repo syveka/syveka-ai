@@ -66,8 +66,13 @@ const searchContacts = defineTool({
       },
       take: 5,
       select: {
-        id: true, firstName: true, lastName: true, email: true,
-        phone: true, status: true, title: true,
+        id: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+        phone: true,
+        status: true,
+        title: true,
       },
     });
     return contacts;
@@ -225,10 +230,12 @@ export const TOOL_REGISTRY = [
 ] as Array<ToolDef<any>>;
 
 /** Tools the acting identity may use, in Anthropic tool format. */
-export function anthropicToolsFor(identity: ToolIdentity, enabledNames?: string[]): Anthropic.Tool[] {
+export function anthropicToolsFor(
+  identity: ToolIdentity,
+  enabledNames?: string[],
+): Anthropic.Tool[] {
   return TOOL_REGISTRY.filter(
-    (t) =>
-      can(identity.role, t.permission) && (!enabledNames || enabledNames.includes(t.name)),
+    (t) => can(identity.role, t.permission) && (!enabledNames || enabledNames.includes(t.name)),
   ).map((t) => ({
     name: t.name,
     description: t.description,
@@ -255,7 +262,10 @@ export async function executeTool(
     const result = await tool.execute(identity, parsed.data);
     return JSON.stringify(result);
   } catch (e) {
-    return JSON.stringify({ error: "execution_failed", message: e instanceof Error ? e.message : "" });
+    return JSON.stringify({
+      error: "execution_failed",
+      message: e instanceof Error ? e.message : "",
+    });
   }
 }
 

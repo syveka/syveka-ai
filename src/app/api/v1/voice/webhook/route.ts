@@ -53,7 +53,10 @@ async function resolveAssistant(vapiAssistantId: string | undefined) {
   return unscopedPrisma.voiceAssistant.findFirst({
     where: { vapiAssistantId },
     select: {
-      id: true, organizationId: true, enabledTools: true, useKnowledgeBase: true,
+      id: true,
+      organizationId: true,
+      enabledTools: true,
+      useKnowledgeBase: true,
       organization: {
         select: { members: { where: { role: "OWNER" }, select: { userId: true }, take: 1 } },
       },
@@ -63,8 +66,7 @@ async function resolveAssistant(vapiAssistantId: string | undefined) {
 
 export async function POST(request: Request): Promise<NextResponse> {
   const rawBody = await request.text();
-  const signature =
-    request.headers.get("x-vapi-signature") ?? request.headers.get("x-vapi-secret");
+  const signature = request.headers.get("x-vapi-signature") ?? request.headers.get("x-vapi-secret");
   if (!verifyVapiSignature(rawBody, signature)) {
     return NextResponse.json({ error: "invalid signature" }, { status: 401 });
   }
@@ -148,8 +150,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           status: "COMPLETED",
         },
         update: {
-          status:
-            message.endedReason === "assistant-forwarded-call" ? "TRANSFERRED" : "COMPLETED",
+          status: message.endedReason === "assistant-forwarded-call" ? "TRANSFERRED" : "COMPLETED",
           endedAt: new Date(),
           durationSeconds,
           costCents: Math.round((message.cost ?? 0) * 100),

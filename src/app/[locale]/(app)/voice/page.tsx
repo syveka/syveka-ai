@@ -51,7 +51,9 @@ export default async function VoicePage() {
                     <span
                       className={cn(
                         "rounded-full px-2 py-0.5 text-xs font-medium",
-                        a.isActive ? "bg-success/15 text-success" : "bg-muted text-muted-foreground",
+                        a.isActive
+                          ? "bg-success/15 text-success"
+                          : "bg-muted text-muted-foreground",
                       )}
                     >
                       {a.isActive ? t("active") : t("inactive")}

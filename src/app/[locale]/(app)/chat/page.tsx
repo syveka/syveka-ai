@@ -11,7 +11,9 @@ export default async function ChatPage() {
     <>
       <ConversationList
         conversations={conversations.map((c) => ({
-          id: c.id, title: c.title, isPinned: c.isPinned,
+          id: c.id,
+          title: c.title,
+          isPinned: c.isPinned,
         }))}
       />
       <div className="flex-1">

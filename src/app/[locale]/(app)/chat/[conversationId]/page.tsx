@@ -1,8 +1,6 @@
 import { notFound } from "next/navigation";
 import { requirePermission } from "@/server/auth/guard";
-import {
-  listConversations, getConversationWithMessages,
-} from "@/server/services/conversations";
+import { listConversations, getConversationWithMessages } from "@/server/services/conversations";
 import { ConversationList } from "@/components/chat/conversation-list";
 import { ChatView } from "@/components/chat/chat-view";
 import type { UiMessage } from "@/hooks/use-chat";
@@ -35,7 +33,9 @@ export default async function ConversationPage({
       <ConversationList
         activeId={conversationId}
         conversations={conversations.map((c) => ({
-          id: c.id, title: c.title, isPinned: c.isPinned,
+          id: c.id,
+          title: c.title,
+          isPinned: c.isPinned,
         }))}
       />
       <div className="flex-1">

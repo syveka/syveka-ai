@@ -31,7 +31,7 @@ jobs:
     name: Migrate DB → Deploy production
     runs-on: ubuntu-latest
     needs: [e2e-staging]
-    environment: production   # manual approval gate (§23)
+    environment: production # manual approval gate (§23)
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

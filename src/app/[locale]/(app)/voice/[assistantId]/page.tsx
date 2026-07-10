@@ -21,7 +21,11 @@ export default async function AssistantPage({
   });
   if (!assistant) notFound();
 
-  const initial: VoiceAssistantInput & { id: string; isActive: boolean; phoneNumber: string | null } = {
+  const initial: VoiceAssistantInput & {
+    id: string;
+    isActive: boolean;
+    phoneNumber: string | null;
+  } = {
     id: assistant.id,
     isActive: assistant.isActive,
     phoneNumber: assistant.phoneNumber,

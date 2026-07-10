@@ -11,7 +11,10 @@ export type Chunk = { content: string; index: number; tokenCount: number; headin
  * packs sections up to ~800 tokens with 15% overlap between chunks.
  */
 export function chunkText(text: string): Chunk[] {
-  const normalized = text.replace(/\r\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  const normalized = text
+    .replace(/\r\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
   if (!normalized) return [];
 
   const blocks = normalized.split(/\n\n+/);

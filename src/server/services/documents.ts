@@ -47,8 +47,7 @@ export async function createDocument(ctx: TenantContext, input: CreateDocumentIn
       sourceType: input.sourceType,
       storagePath: input.storagePath,
       sourceUrl: input.sourceUrl,
-      mimeType:
-        input.sourceType === "NOTE" ? "text/markdown" : input.mimeType,
+      mimeType: input.sourceType === "NOTE" ? "text/markdown" : input.mimeType,
       sizeBytes: input.sizeBytes ?? input.content?.length,
       status: "PENDING",
     },
@@ -78,8 +77,15 @@ export async function listDocuments(ctx: TenantContext) {
     orderBy: { createdAt: "desc" },
     take: 100,
     select: {
-      id: true, title: true, sourceType: true, status: true, error: true,
-      chunkCount: true, sizeBytes: true, createdAt: true, mimeType: true,
+      id: true,
+      title: true,
+      sourceType: true,
+      status: true,
+      error: true,
+      chunkCount: true,
+      sizeBytes: true,
+      createdAt: true,
+      mimeType: true,
     },
   });
 }
@@ -100,7 +106,10 @@ export async function deleteDocument(ctx: TenantContext, documentId: string): Pr
 
   if (doc.storagePath) {
     const admin = createSupabaseAdmin();
-    await admin.storage.from(DOCUMENTS_BUCKET).remove([doc.storagePath]).catch(() => undefined);
+    await admin.storage
+      .from(DOCUMENTS_BUCKET)
+      .remove([doc.storagePath])
+      .catch(() => undefined);
   }
 
   await audit(ctx, {

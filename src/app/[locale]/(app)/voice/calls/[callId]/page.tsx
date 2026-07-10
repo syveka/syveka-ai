@@ -7,11 +7,7 @@ import { Link } from "@/i18n/routing";
 
 type TranscriptTurn = { role?: string; message?: string; content?: string };
 
-export default async function CallDetailPage({
-  params,
-}: {
-  params: Promise<{ callId: string }>;
-}) {
+export default async function CallDetailPage({ params }: { params: Promise<{ callId: string }> }) {
   const { callId } = await params;
   const ctx = await requirePermission("voice:view-calls");
   const t = await getTranslations("voice");
@@ -83,7 +79,9 @@ export default async function CallDetailPage({
                       : t("caller")}
                     :
                   </span>{" "}
-                  <span className="text-muted-foreground">{turn.message ?? turn.content ?? ""}</span>
+                  <span className="text-muted-foreground">
+                    {turn.message ?? turn.content ?? ""}
+                  </span>
                 </div>
               ))
           )}

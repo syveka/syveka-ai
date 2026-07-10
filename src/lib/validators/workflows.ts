@@ -50,7 +50,11 @@ export const stepSchema = z.discriminatedUnion("type", [
   z.object({
     id: z.string().min(1),
     type: z.literal("wait.duration"),
-    seconds: z.number().int().min(60).max(60 * 60 * 24 * 30),
+    seconds: z
+      .number()
+      .int()
+      .min(60)
+      .max(60 * 60 * 24 * 30),
   }),
 ]);
 

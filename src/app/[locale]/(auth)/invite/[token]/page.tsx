@@ -45,7 +45,10 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
           </Button>
         </form>
         <p className="text-center text-xs text-muted-foreground">
-          Wrong account? <Link href="/login" className="text-primary hover:underline">Switch account</Link>
+          Wrong account?{" "}
+          <Link href="/login" className="text-primary hover:underline">
+            Switch account
+          </Link>
         </p>
       </CardContent>
     </Card>

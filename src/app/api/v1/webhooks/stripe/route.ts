@@ -105,7 +105,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       case "invoice.paid": {
         const invoice = event.data.object;
         const subId =
-          typeof invoice.subscription === "string" ? invoice.subscription : invoice.subscription?.id;
+          typeof invoice.subscription === "string"
+            ? invoice.subscription
+            : invoice.subscription?.id;
         if (subId) {
           const sub = await stripe.subscriptions.retrieve(subId);
           await upsertSubscription(sub); // clears PAST_DUE

@@ -71,8 +71,9 @@ export async function createCheckoutSession(params: {
     automatic_tax: { enabled: true },
     tax_id_collection: { enabled: true }, // ALV-tunnus / EU VAT (§14.4)
     customer_update: { address: "auto", name: "auto" },
-    locale: (["fi", "en"].includes(params.locale) ? params.locale : "auto") as
-      | Stripe.Checkout.SessionCreateParams.Locale,
+    locale: (["fi", "en"].includes(params.locale)
+      ? params.locale
+      : "auto") as Stripe.Checkout.SessionCreateParams.Locale,
     subscription_data: { metadata: { orgId: params.orgId } },
     success_url: `${env.NEXT_PUBLIC_APP_URL}/settings/billing?status=success`,
     cancel_url: `${env.NEXT_PUBLIC_APP_URL}/settings/billing?status=canceled`,

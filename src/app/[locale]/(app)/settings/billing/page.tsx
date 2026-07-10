@@ -1,9 +1,7 @@
 import { getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";
-import {
-  getEntitlements, getMonthUsage,
-} from "@/server/services/billing/entitlements";
+import { getEntitlements, getMonthUsage } from "@/server/services/billing/entitlements";
 import { tenantDb } from "@/server/db/tenant";
 import { PlanCards } from "@/components/billing/plan-cards";
 import { UsageMeters } from "@/components/billing/usage-meters";
@@ -62,7 +60,11 @@ export default async function BillingPage({
 
       <UsageMeters
         items={[
-          { label: t("usage.aiMessages"), used: aiMessages, limit: ent.aiMessagesPerUserMonth * seats },
+          {
+            label: t("usage.aiMessages"),
+            used: aiMessages,
+            limit: ent.aiMessagesPerUserMonth * seats,
+          },
           { label: t("usage.voiceMinutes"), used: voiceMinutes, limit: ent.voiceMinutesMonth },
           { label: t("usage.contacts"), used: contacts, limit: ent.maxContacts },
           {

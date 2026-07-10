@@ -24,7 +24,8 @@ export function Topbar({
   const pathname = usePathname();
   const router = useRouter();
 
-  const nextLocale = routing.locales[(routing.locales.indexOf(locale as never) + 1) % routing.locales.length]!;
+  const nextLocale =
+    routing.locales[(routing.locales.indexOf(locale as never) + 1) % routing.locales.length]!;
 
   return (
     <header className="flex h-14 items-center justify-between border-b px-4">

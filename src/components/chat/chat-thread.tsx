@@ -65,7 +65,10 @@ function MessageBubble({ message }: { message: UiMessage }) {
         {message.citations && message.citations.length > 0 ? (
           <div className="mt-2 space-y-1 border-t border-border/50 pt-2">
             {message.citations.map((c) => (
-              <div key={c.documentId} className="flex items-center gap-1.5 text-xs text-muted-foreground">
+              <div
+                key={c.documentId}
+                className="flex items-center gap-1.5 text-xs text-muted-foreground"
+              >
                 <FileText className="size-3" />
                 {c.title}
               </div>

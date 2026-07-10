@@ -2,9 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/server/auth/guard";
-import {
-  createContact, updateContact, deleteContact,
-} from "@/server/services/contacts";
+import { createContact, updateContact, deleteContact } from "@/server/services/contacts";
 import { contactSchema } from "@/lib/validators/crm";
 import { EntitlementError } from "@/server/services/billing/entitlements";
 
