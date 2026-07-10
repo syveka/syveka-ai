@@ -71,7 +71,7 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
-        let isNewConversation = !conversationIdRef.current;
+        const isNewConversation = !conversationIdRef.current;
 
         while (true) {
           const { done, value } = await reader.read();

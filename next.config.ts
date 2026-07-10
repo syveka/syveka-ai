@@ -26,9 +26,6 @@ const nextConfig: NextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   serverExternalPackages: ["@prisma/client", "pino"],
-  experimental: {
-    typedRoutes: true,
-  },
   images: {
     remotePatterns: [
       {

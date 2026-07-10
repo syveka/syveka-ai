@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { verifyJobRequest } from "@/server/jobs/verify";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { enqueue } from "@/server/jobs/queue";
@@ -65,7 +66,12 @@ export async function POST(request: Request): Promise<NextResponse> {
         data: { status: "RUNNING" },
       })
     : await unscopedPrisma.workflowRun.create({
-        data: { workflowId, organizationId: orgId, triggerData, status: "RUNNING" },
+        data: {
+          workflowId,
+          organizationId: orgId,
+          triggerData: triggerData as Prisma.InputJsonValue,
+          status: "RUNNING",
+        },
       });
 
   const steps = workflow.steps as unknown as WorkflowStep[];
@@ -82,7 +88,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     unscopedPrisma.workflowRun.update({
       where: { id: run.id },
       data: {
-        stepResults: results as object[],
+        stepResults: results as Prisma.InputJsonValue,
         ...(status ? { status, ...(status !== "WAITING" ? { finishedAt: new Date() } : {}) } : {}),
         ...(error ? { error } : {}),
       },
@@ -190,7 +196,8 @@ export async function POST(request: Request): Promise<NextResponse> {
             "run-workflow",
             {
               workflowId, orgId,
-              triggerType: parsed.data.triggerType, triggerData,
+              triggerType: parsed.data.triggerType,
+              triggerData,
               runId: run.id, resumeFromIndex: i + 1,
             },
             { delaySeconds: step.seconds },

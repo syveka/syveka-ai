@@ -48,6 +48,7 @@ export async function upsertWorkflow(
 
   const workflow = await db.workflow.create({
     data: {
+      organizationId: ctx.orgId,
       name: input.name,
       description: input.description,
       trigger: input.trigger,

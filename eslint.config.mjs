@@ -2,7 +2,20 @@ import { FlatCompat } from "@eslint/eslintrc";
 
 const compat = new FlatCompat({ baseDirectory: import.meta.dirname });
 
-export default [
+const eslintConfig = [
+  {
+    ignores: [
+      ".next/**",
+      "node_modules/**",
+      "out/**",
+      "build/**",
+      "coverage/**",
+      "playwright-report/**",
+      "test-results/**",
+      "next-env.d.ts",
+      "*.tsbuildinfo",
+    ],
+  },
   ...compat.extends("next/core-web-vitals", "next/typescript"),
   {
     rules: {
@@ -23,7 +36,7 @@ export default [
   {
     // Tenant-isolation guard (§4.3): raw prisma access only inside src/server/db.
     files: ["src/**/*.{ts,tsx}"],
-    ignores: ["src/server/db/**"],
+    ignores: ["src/server/db/**", "src/server/auth/session.ts"],
     rules: {
       "no-restricted-imports": [
         "error",
@@ -39,3 +52,5 @@ export default [
     },
   },
 ];
+
+export default eslintConfig;

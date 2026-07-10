@@ -38,7 +38,7 @@ export async function getConversationWithMessages(ctx: TenantContext, conversati
 
 export async function createConversation(ctx: TenantContext) {
   const db = tenantDb(ctx.orgId);
-  return db.conversation.create({ data: { userId: ctx.userId } });
+  return db.conversation.create({ data: { organizationId: ctx.orgId, userId: ctx.userId } });
 }
 
 export async function deleteConversation(ctx: TenantContext, conversationId: string) {

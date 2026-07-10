@@ -18,6 +18,7 @@ export async function createEvent(ctx: TenantContext, input: EventInput) {
   const db = tenantDb(ctx.orgId);
   const event = await db.calendarEvent.create({
     data: {
+      organizationId: ctx.orgId,
       title: input.title,
       description: input.description || null,
       location: input.location || null,

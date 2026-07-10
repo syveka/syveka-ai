@@ -35,6 +35,7 @@ export async function createApiKey(
   const db = tenantDb(ctx.orgId);
   await db.apiKey.create({
     data: {
+      organizationId: ctx.orgId,
       name: input.name,
       keyHash,
       prefix: plaintext.slice(0, 13),

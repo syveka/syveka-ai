@@ -62,7 +62,7 @@ export const env = (() => {
     throw new Error("env (server) imported in the browser — use clientEnv.");
   }
   // CI builds compile without real secrets; runtime always validates (§23).
-  if (process.env.SKIP_ENV_VALIDATION === "1") {
+  if (process.env.SKIP_ENV_VALIDATION === "1" || process.env.NEXT_PHASE === "phase-production-build") {
     return { ...(process.env as unknown as z.infer<typeof serverSchema>), ...clientEnv };
   }
   const parsed = serverSchema.safeParse(process.env);

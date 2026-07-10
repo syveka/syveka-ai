@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Plan, UsageMetric } from "@prisma/client";
+import type { Plan, Prisma, UsageMetric } from "@prisma/client";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { redis } from "@/server/integrations/redis";
 import { PLAN_LIMITS, type PlanLimits } from "./plans";
@@ -80,7 +80,13 @@ export async function recordUsage(
   const periodStart = new Date();
   periodStart.setUTCHours(0, 0, 0, 0);
   await unscopedPrisma.usageRecord.create({
-    data: { organizationId: orgId, metric, quantity, periodStart, metadata },
+    data: {
+      organizationId: orgId,
+      metric,
+      quantity,
+      periodStart,
+      metadata: metadata as Prisma.InputJsonValue,
+    },
   });
 }
 

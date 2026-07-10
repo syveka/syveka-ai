@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getTenantContext, AuthError } from "@/server/auth/session";
+import { getTenantContext } from "@/server/auth/session";
 import { can } from "@/server/auth/permissions";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { chatRequestSchema, type ChatStreamEvent } from "@/lib/validators/chat";
@@ -29,7 +29,7 @@ export async function POST(request: Request): Promise<Response> {
   let ctx;
   try {
     ctx = await getTenantContext();
-  } catch (e) {
+  } catch {
     return NextResponse.json({ error: { code: "unauthenticated" } }, { status: 401 });
   }
   if (!can(ctx.role, "chat:use")) {
@@ -68,7 +68,7 @@ export async function POST(request: Request): Promise<Response> {
     ? await db.conversation.findFirst({
         where: { id: input.conversationId, userId: ctx.userId, deletedAt: null },
       })
-    : await db.conversation.create({ data: { userId: ctx.userId } });
+    : await db.conversation.create({ data: { organizationId: ctx.orgId, userId: ctx.userId } });
 
   if (!conversation) {
     return NextResponse.json({ error: { code: "resource_not_found" } }, { status: 404 });

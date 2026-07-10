@@ -40,6 +40,7 @@ export async function createDocument(ctx: TenantContext, input: CreateDocumentIn
 
   const document = await db.document.create({
     data: {
+      organizationId: ctx.orgId,
       title: input.title,
       collectionId: input.collectionId,
       uploadedById: ctx.userId,

@@ -89,7 +89,11 @@ const createContact = defineTool({
   execute: async (id, input) => {
     const db = tenantDb(id.orgId);
     const contact = await db.contact.create({
-      data: { ...input, source: id.actorType === "voice_ai" ? "voice-ai" : input.source },
+      data: {
+        organizationId: id.orgId,
+        ...input,
+        source: id.actorType === "voice_ai" ? "voice-ai" : input.source,
+      },
     });
     await audit(
       { orgId: id.orgId, userId: id.userId },
@@ -121,6 +125,7 @@ const logActivity = defineTool({
     await db.contact.findFirstOrThrow({ where: { id: input.contactId } }); // tenancy check
     const activity = await db.activity.create({
       data: {
+        organizationId: id.orgId,
         contactId: input.contactId,
         type: input.type,
         subject: input.subject,
@@ -185,6 +190,7 @@ const bookMeeting = defineTool({
 
     const event = await db.calendarEvent.create({
       data: {
+        organizationId: id.orgId,
         title: input.title,
         description: input.notes,
         startsAt,

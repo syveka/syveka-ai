@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import type { Prisma } from "@prisma/client";
 import { verifyVapiSignature } from "@/server/integrations/vapi";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { executeTool, type ToolIdentity } from "@/server/ai/tools";
@@ -153,7 +154,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           durationSeconds,
           costCents: Math.round((message.cost ?? 0) * 100),
           endedReason: message.endedReason,
-          transcript: message.artifact?.messages ?? undefined,
+          transcript: message.artifact?.messages as Prisma.InputJsonValue | undefined,
           recordingUrl: message.artifact?.recordingUrl,
         },
       });

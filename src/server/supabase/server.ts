@@ -1,6 +1,7 @@
 import "server-only";
 
-import { createServerClient } from "@supabase/ssr";
+import { createServerClient, type CookieOptions } from "@supabase/ssr";
+import { createClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 import { env } from "@/env";
 
@@ -11,7 +12,7 @@ export async function createSupabaseServer() {
   return createServerClient(env.NEXT_PUBLIC_SUPABASE_URL, env.NEXT_PUBLIC_SUPABASE_ANON_KEY, {
     cookies: {
       getAll: () => cookieStore.getAll(),
-      setAll: (cookiesToSet) => {
+      setAll: (cookiesToSet: Array<{ name: string; value: string; options: CookieOptions }>) => {
         try {
           for (const { name, value, options } of cookiesToSet) {
             cookieStore.set(name, value, options);
@@ -30,8 +31,6 @@ export async function createSupabaseServer() {
  * Business reads/writes go through Prisma + tenantDb (§4.3).
  */
 export function createSupabaseAdmin() {
-  // Lazy import keeps @supabase/supabase-js out of edge bundles that don't need it.
-  const { createClient } = require("@supabase/supabase-js") as typeof import("@supabase/supabase-js");
   return createClient(env.NEXT_PUBLIC_SUPABASE_URL, env.SUPABASE_SERVICE_ROLE_KEY, {
     auth: { autoRefreshToken: false, persistSession: false },
   });

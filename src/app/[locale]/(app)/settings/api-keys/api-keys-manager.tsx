@@ -8,13 +8,23 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 
 const SCOPES = [
-  "crm:read", "crm:write", "chat:write", "kb:read", "kb:write",
-  "calendar:read", "calendar:write", "analytics:read",
+  "crm:read",
+  "crm:write",
+  "chat:write",
+  "kb:read",
+  "kb:write",
+  "calendar:read",
+  "calendar:write",
+  "analytics:read",
 ];
 
 type KeyRow = {
-  id: string; name: string; prefix: string; scopes: string[];
-  createdAt: string; lastUsedAt: string | null;
+  id: string;
+  name: string;
+  prefix: string;
+  scopes: string[];
+  createdAt: string;
+  lastUsedAt: string | null;
 };
 
 export function ApiKeysManager({ keys }: { keys: KeyRow[] }) {
@@ -40,7 +50,7 @@ export function ApiKeysManager({ keys }: { keys: KeyRow[] }) {
       {plaintext ? (
         <Card className="border-warning/50">
           <CardContent className="space-y-2 pt-6">
-            <p className="text-sm font-medium">Copy your key now — it won't be shown again:</p>
+            <p className="text-sm font-medium">Copy your key now. It will not be shown again:</p>
             <div className="flex items-center gap-2">
               <code className="flex-1 truncate rounded bg-muted px-2 py-1.5 text-xs">{plaintext}</code>
               <Button
@@ -75,7 +85,9 @@ export function ApiKeysManager({ keys }: { keys: KeyRow[] }) {
                   type="checkbox"
                   checked={scopes.includes(s)}
                   onChange={(e) =>
-                    setScopes((prev) => (e.target.checked ? [...prev, s] : prev.filter((x) => x !== s)))
+                    setScopes((prev) =>
+                      e.target.checked ? [...prev, s] : prev.filter((x) => x !== s),
+                    )
                   }
                   className="size-4"
                 />
@@ -97,7 +109,7 @@ export function ApiKeysManager({ keys }: { keys: KeyRow[] }) {
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-medium">{k.name}</p>
                   <p className="text-xs text-muted-foreground">
-                    {k.prefix}… · {k.scopes.join(", ")} ·{" "}
+                    {k.prefix}... · {k.scopes.join(", ")} ·{" "}
                     {k.lastUsedAt ? `last used ${k.lastUsedAt.slice(0, 10)}` : "never used"}
                   </p>
                 </div>

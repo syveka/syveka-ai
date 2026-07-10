@@ -3,7 +3,12 @@ import "server-only";
 import { Client } from "@upstash/qstash";
 import { env } from "@/env";
 
-const qstash = new Client({ token: env.QSTASH_TOKEN });
+let qstash: Client | null = null;
+
+function getQstash(): Client {
+  qstash ??= new Client({ token: env.QSTASH_TOKEN });
+  return qstash;
+}
 
 export type JobName = "embed-document" | "run-workflow" | "post-call" | "usage-rollup";
 
@@ -13,7 +18,7 @@ export async function enqueue(
   payload: Record<string, unknown>,
   opts?: { delaySeconds?: number },
 ): Promise<void> {
-  await qstash.publishJSON({
+  await getQstash().publishJSON({
     url: `${env.NEXT_PUBLIC_APP_URL}/api/v1/jobs/${job}`,
     body: payload,
     retries: 3,

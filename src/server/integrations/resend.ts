@@ -4,7 +4,12 @@ import { Resend } from "resend";
 import type { ReactElement } from "react";
 import { env } from "@/env";
 
-const resend = new Resend(env.RESEND_API_KEY);
+let resend: Resend | null = null;
+
+function getResend(): Resend {
+  resend ??= new Resend(env.RESEND_API_KEY);
+  return resend;
+}
 
 /** All outbound email goes through here (localized templates in /emails). */
 export async function sendEmail(params: {
@@ -13,7 +18,7 @@ export async function sendEmail(params: {
   react: ReactElement;
   replyTo?: string;
 }): Promise<{ id: string }> {
-  const { data, error } = await resend.emails.send({
+  const { data, error } = await getResend().emails.send({
     from: env.EMAIL_FROM,
     to: params.to,
     subject: params.subject,

@@ -63,6 +63,7 @@ export async function createContact(ctx: TenantContext, input: ContactInput) {
 
   const contact = await db.contact.create({
     data: {
+      organizationId: ctx.orgId,
       firstName: input.firstName,
       lastName: input.lastName || null,
       email: input.email || null,

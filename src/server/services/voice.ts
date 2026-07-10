@@ -44,6 +44,7 @@ export async function upsertAssistant(
   }
 
   const data = {
+    organizationId: ctx.orgId,
     name: input.name,
     language: input.language,
     voiceProvider: input.voiceProvider,

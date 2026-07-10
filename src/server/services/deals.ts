@@ -36,6 +36,7 @@ export async function createDeal(ctx: TenantContext, input: DealInput) {
 
   const deal = await db.deal.create({
     data: {
+      organizationId: ctx.orgId,
       title: input.title,
       valueCents: input.valueCents,
       contactId: input.contactId,

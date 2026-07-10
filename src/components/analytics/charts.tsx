@@ -10,7 +10,7 @@ export function BarChart({
 }) {
   const max = Math.max(1, ...data.map((d) => d.value));
   if (data.length === 0) {
-    return <p className="py-8 text-center text-sm text-muted-foreground">—</p>;
+    return <p className="py-8 text-center text-sm text-muted-foreground">-</p>;
   }
   return (
     <div className="flex items-end gap-1" style={{ height }} role="img" aria-label="bar chart">
@@ -31,10 +31,8 @@ export function BarChart({
 
 export function FunnelChart({
   data,
-  formatValue,
 }: {
   data: Array<{ stage: string; count: number; value: string; isWon?: boolean; isLost?: boolean }>;
-  formatValue?: never;
 }) {
   const max = Math.max(1, ...data.map((d) => d.count));
   return (

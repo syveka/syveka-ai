@@ -30,7 +30,13 @@ export function OrganizationForm({
           <div className="grid grid-cols-2 gap-3">
             <div className="space-y-1.5">
               <Label htmlFor="businessId">Y-tunnus</Label>
-              <Input id="businessId" name="businessId" defaultValue={initial.businessId} pattern="\d{7}-\d" placeholder="1234567-8" />
+              <Input
+                id="businessId"
+                name="businessId"
+                defaultValue={initial.businessId}
+                pattern="\d{7}-\d"
+                placeholder="1234567-8"
+              />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="vatId">VAT ID</Label>
@@ -44,7 +50,7 @@ export function OrganizationForm({
         <CardHeader>
           <CardTitle className="text-base">AI instructions</CardTitle>
           <CardDescription>
-            Extra context every AI answer follows — tone of voice, key facts, do's and don'ts. (§15.3)
+            Extra context every AI answer follows: tone of voice, key facts, dos and donts.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -53,13 +59,13 @@ export function OrganizationForm({
             defaultValue={initial.aiInstructions}
             rows={5}
             maxLength={2000}
-            placeholder="We are a plumbing company in Tampere. Always mention our 24h emergency line…"
+            placeholder="We are a plumbing company in Tampere. Always mention our 24h emergency line..."
             className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
           />
         </CardContent>
       </Card>
 
-      {state.message ? <p className="text-sm text-success">✓ {tc("save")}</p> : null}
+      {state.message ? <p className="text-sm text-success">Saved.</p> : null}
       {state.error ? <p className="text-sm text-destructive">{tc("error")}</p> : null}
       <Button type="submit" disabled={pending}>
         {pending ? tc("loading") : tc("save")}
