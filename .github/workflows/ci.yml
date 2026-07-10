@@ -216,7 +216,10 @@ jobs:
             create schema if not exists auth;
             create table if not exists auth.users (id uuid primary key, email text, raw_user_meta_data jsonb default '{}'::jsonb);
             create or replace function auth.uid() returns uuid language sql as \$\$ select nullif(current_setting('request.jwt.claims', true)::jsonb->>'sub','')::uuid \$\$;
-            create or replace function auth.jwt() returns jsonb language sql as \$\$ select coalesce(current_setting('request.jwt.claims', true)::jsonb, '{}'::jsonb) \$\$;"
+            create or replace function auth.jwt() returns jsonb language sql as \$\$ select coalesce(current_setting('request.jwt.claims', true)::jsonb, '{}'::jsonb) \$\$;
+            grant usage on schema auth to authenticated;
+            grant execute on function auth.uid() to authenticated;
+            grant execute on function auth.jwt() to authenticated;"
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/001_extensions_and_indexes.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/002_functions.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/003_rls.sql
