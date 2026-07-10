@@ -2,65 +2,181 @@ name: CI
 
 on:
   pull_request:
+    branches: [main]
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.sha }}
   cancel-in-progress: true
 
 env:
   NODE_VERSION: "20"
 
 jobs:
-  quality:
-    name: Lint · Types · Unit tests
+  install:
+    name: Install dependencies
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-      - run: npm ci
-      - run: npx prisma generate
-      - run: npm run lint
-      - run: npm run typecheck
-      - run: npm run format:check || npx prettier --check .
-      - run: npm test
+      - name: Install dependencies
+        run: npm ci
 
-  i18n:
-    name: i18n key parity
+  prisma-generate:
+    name: Prisma generate
     runs-on: ubuntu-latest
+    needs: [install]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: ${{ env.NODE_VERSION }}
-      - name: Check locale key parity (§20)
-        run: node scripts/check-i18n-parity.mjs
-
-  security:
-    name: Secrets · Dependencies
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-      - name: Secret scan
-        uses: gitleaks/gitleaks-action@v2
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-      - run: npm ci
-      - run: npm audit --audit-level=high
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+  prisma-validate:
+    name: Prisma validate
+    runs-on: ubuntu-latest
+    needs: [install]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Validate Prisma schema
+        run: npx prisma validate
+
+  migration-structure:
+    name: Migration structure validation
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate migration directory structure
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ ! -d prisma/migrations ]; then
+            echo "No prisma/migrations directory found; no migration files to validate."
+            exit 0
+          fi
+
+          if [ ! -f prisma/migrations/migration_lock.toml ]; then
+            echo "prisma/migrations/migration_lock.toml is required when migrations exist."
+            exit 1
+          fi
+
+          found=0
+          while IFS= read -r -d '' dir; do
+            name="$(basename "$dir")"
+            if [ "$name" = "migrations" ]; then
+              continue
+            fi
+
+            found=1
+            if [[ ! "$name" =~ ^[0-9]{14}_[A-Za-z0-9_]+$ ]]; then
+              echo "Invalid Prisma migration directory name: $name"
+              exit 1
+            fi
+
+            if [ ! -f "$dir/migration.sql" ]; then
+              echo "Missing migration.sql in $dir"
+              exit 1
+            fi
+
+            if [ ! -s "$dir/migration.sql" ]; then
+              echo "Empty migration.sql in $dir"
+              exit 1
+            fi
+          done < <(find prisma/migrations -mindepth 1 -maxdepth 1 -type d -print0 | sort -z)
+
+          if [ "$found" -eq 0 ]; then
+            echo "prisma/migrations exists but contains no migration directories."
+          fi
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    needs: [prisma-generate]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+      - name: Run lint
+        run: npm run lint
+      - name: Check formatting
+        run: npm run format:check || npx prettier --check .
+
+  typecheck:
+    name: TypeScript typecheck
+    runs-on: ubuntu-latest
+    needs: [prisma-generate]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+      - name: Run typecheck
+        run: npm run typecheck
+
+  tests:
+    name: Unit and integration tests
+    runs-on: ubuntu-latest
+    needs: [prisma-generate]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+      - name: Run unit and integration tests
+        run: npm test
 
   rls:
-    name: RLS isolation tests (§4.3)
+    name: RLS isolation tests
     runs-on: ubuntu-latest
+    needs: [prisma-generate]
     services:
       postgres:
         image: pgvector/pgvector:pg15
@@ -74,16 +190,18 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
       DIRECT_URL: postgresql://postgres:postgres@localhost:5432/postgres
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-      - run: npm ci
-      - name: Apply schema + policies
+      - name: Install dependencies
+        run: npm ci
+      - name: Apply schema and policies
         run: |
           npx prisma db push --skip-generate
-          # auth schema stub for CI (Supabase-only objects)
           psql "$DATABASE_URL" -c "create role authenticated nologin; create schema if not exists auth;
             create table if not exists auth.users (id uuid primary key, email text, raw_user_meta_data jsonb default '{}'::jsonb);
             create or replace function auth.uid() returns uuid language sql as \$\$ select nullif(current_setting('request.jwt.claims', true)::jsonb->>'sub','')::uuid \$\$;
@@ -95,17 +213,20 @@ jobs:
         run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
 
   build:
-    name: Build
+    name: Production build
     runs-on: ubuntu-latest
-    needs: [quality]
+    needs: [prisma-generate]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
-      - run: npm ci
-      - name: Build with placeholder env (validation runs at runtime start)
+      - name: Install dependencies
+        run: npm ci
+      - name: Build with placeholder env
         run: npm run build
         env:
           SKIP_ENV_VALIDATION: "1"
@@ -115,3 +236,107 @@ jobs:
           NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_ci
           DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
           DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
+
+  production-dependency-audit:
+    name: Production dependency security audit
+    runs-on: ubuntu-latest
+    needs: [install]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Blocking production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
+  full-dependency-audit-report:
+    name: Full dependency audit report
+    runs-on: ubuntu-latest
+    needs: [install]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Full dependency audit report
+        continue-on-error: true
+        run: npm audit --audit-level=high
+      - name: Save full dependency audit JSON
+        continue-on-error: true
+        run: npm audit --audit-level=high --json > npm-audit-full.json
+      - name: Upload full audit JSON
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-audit-full-${{ github.run_id }}-${{ github.run_attempt }}
+          path: npm-audit-full.json
+          if-no-files-found: warn
+          retention-days: 30
+
+  i18n:
+    name: i18n key parity
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Check locale key parity
+        run: node scripts/check-i18n-parity.mjs
+
+  secret-scan:
+    name: Secret scan
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Secret scan
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  ci-required:
+    name: CI required
+    runs-on: ubuntu-latest
+    needs:
+      - install
+      - prisma-generate
+      - prisma-validate
+      - migration-structure
+      - lint
+      - typecheck
+      - tests
+      - rls
+      - build
+      - production-dependency-audit
+      - full-dependency-audit-report
+      - i18n
+      - secret-scan
+    if: always()
+    steps:
+      - name: Verify required CI jobs
+        shell: bash
+        run: |
+          set -euo pipefail
+          results='${{ toJson(needs) }}'
+          if ! echo "$results" | jq -e 'all(.[]; .result == "success")' > /dev/null; then
+            echo "$results"
+            exit 1
+          fi
+          echo "All required CI jobs completed successfully."
