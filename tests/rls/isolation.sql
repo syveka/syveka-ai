@@ -40,9 +40,9 @@ insert into auth.users (id, email, raw_user_meta_data) values
   ('a0000000-0000-4000-8000-000000000001', 'a@test.fi', '{}'::jsonb),
   ('b0000000-0000-4000-8000-000000000002', 'b@test.fi', '{}'::jsonb);
 
-insert into organizations (id, name, slug) values
-  ('11111111-0000-4000-8000-000000000000', 'Org A', 'org-a'),
-  ('22222222-0000-4000-8000-000000000000', 'Org B', 'org-b')
+insert into organizations (id, name, slug, created_at, updated_at) values
+  ('11111111-0000-4000-8000-000000000000', 'Org A', 'org-a', now(), now()),
+  ('22222222-0000-4000-8000-000000000000', 'Org B', 'org-b', now(), now())
 on conflict (id) do update set
   name = excluded.name,
   slug = excluded.slug,
@@ -54,9 +54,9 @@ insert into organization_members (organization_id, user_id, role) values
 on conflict (organization_id, user_id) do update set
   role = excluded.role;
 
-insert into contacts (organization_id, first_name, email) values
-  ('11111111-0000-4000-8000-000000000000', 'Aino', 'aino@a.fi'),
-  ('22222222-0000-4000-8000-000000000000', 'Bertta', 'bertta@b.fi');
+insert into contacts (organization_id, first_name, email, created_at, updated_at) values
+  ('11111111-0000-4000-8000-000000000000', 'Aino', 'aino@a.fi', now(), now()),
+  ('22222222-0000-4000-8000-000000000000', 'Bertta', 'bertta@b.fi', now(), now());
 
 -- Simulate an authenticated session for user A / org A
 do $$
@@ -93,8 +93,8 @@ begin
 
   -- 4. cannot insert into org B
   begin
-    insert into contacts (organization_id, first_name)
-      values ('22222222-0000-4000-8000-000000000000', 'Evil');
+    insert into contacts (organization_id, first_name, created_at, updated_at)
+      values ('22222222-0000-4000-8000-000000000000', 'Evil', now(), now());
     raise exception 'ISOLATION FAIL: cross-tenant insert allowed';
   exception when insufficient_privilege or check_violation then
     null; -- expected: RLS with check rejected it
@@ -102,8 +102,8 @@ begin
 
   -- 5. subscriptions are read-only from client role
   begin
-    insert into subscriptions (organization_id, plan)
-      values ('11111111-0000-4000-8000-000000000000', 'PRO');
+    insert into subscriptions (organization_id, plan, status, seats, created_at, updated_at)
+      values ('11111111-0000-4000-8000-000000000000', 'PRO', 'ACTIVE', 1, now(), now());
     raise exception 'ISOLATION FAIL: client-side subscription insert allowed';
   exception when insufficient_privilege or check_violation then
     null;
