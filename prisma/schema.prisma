@@ -330,6 +330,8 @@ model Deal {
   activities   Activity[]
 
   @@index([organizationId, stageId])
+  @@index([organizationId, closedAt])
+  @@index([organizationId, pipelineId, closedAt])
   @@map("deals")
 }
 
@@ -353,6 +355,8 @@ model Activity {
   deal         Deal?        @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, dueAt])
+  @@index([organizationId, type, dueAt])
+  @@index([organizationId, type, createdAt])
   @@index([contactId])
   @@map("activities")
 }
@@ -445,6 +449,7 @@ model Conversation {
   messages     Message[]
 
   @@index([organizationId, userId, updatedAt])
+  @@index([organizationId, updatedAt])
   @@map("conversations")
 }
 

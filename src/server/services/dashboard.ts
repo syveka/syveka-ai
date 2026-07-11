@@ -1,6 +1,7 @@
 import "server-only";
 
 import { routeModel } from "@/server/ai/router";
+import { can } from "@/server/auth/permissions";
 import type { TenantContext } from "@/server/auth/session";
 import { tenantDb } from "@/server/db/tenant";
 
@@ -25,6 +26,11 @@ function percentChange(current: number, previous: number): number | null {
 
 export async function getCrmDashboard(ctx: TenantContext) {
   const db = tenantDb(ctx.orgId);
+  const permissions = {
+    canReadCalendar: can(ctx.role, "calendar:read"),
+    canUseChat: can(ctx.role, "chat:use"),
+    canViewBilling: can(ctx.role, "billing:view"),
+  };
   const todayStart = startOfUtcDay();
   const tomorrowStart = addDays(todayStart, 1);
   const now = new Date();
@@ -41,15 +47,14 @@ export async function getCrmDashboard(ctx: TenantContext) {
     revenue,
     tasksDueToday,
     overdueTasks,
-    aiConversations,
-    aiMessagesThisMonth,
     recentActivities,
-    recentConversations,
-    subscription,
     recentTasks,
     pipeline,
+    aiConversations,
+    aiMessagesThisMonth,
+    recentConversations,
+    subscription,
     upcomingMeetings,
-    upcomingTasks,
   ] = await Promise.all([
     db.contact.count({ where: { deletedAt: null, status: "CUSTOMER" } }),
     db.contact.count({
@@ -77,11 +82,6 @@ export async function getCrmDashboard(ctx: TenantContext) {
     db.activity.count({
       where: { type: "TASK", completedAt: null, dueAt: { lt: todayStart } },
     }),
-    db.conversation.count({ where: { deletedAt: null, updatedAt: { gte: monthStart } } }),
-    db.usageRecord.aggregate({
-      where: { metric: "AI_MESSAGES", periodStart: { gte: monthStart } },
-      _sum: { quantity: true },
-    }),
     db.activity.findMany({
       where: { type: { in: ["NOTE", "CALL", "EMAIL", "MEETING", "VOICE_AI_CALL", "AI_SUMMARY"] } },
       orderBy: { createdAt: "desc" },
@@ -91,13 +91,6 @@ export async function getCrmDashboard(ctx: TenantContext) {
         deal: { select: { title: true } },
       },
     }),
-    db.conversation.findMany({
-      where: { deletedAt: null },
-      orderBy: { updatedAt: "desc" },
-      take: 4,
-      select: { id: true, title: true, updatedAt: true, model: true },
-    }),
-    db.subscription.findFirst({ orderBy: { updatedAt: "desc" } }),
     db.activity.findMany({
       where: { type: "TASK" },
       orderBy: [{ dueAt: "asc" }, { createdAt: "desc" }],
@@ -112,20 +105,47 @@ export async function getCrmDashboard(ctx: TenantContext) {
       include: {
         stages: {
           orderBy: { order: "asc" },
-          include: {
-            deals: {
-              where: { deletedAt: null, closedAt: null },
-              select: { id: true, valueCents: true },
-            },
-          },
         },
       },
     }),
-    db.calendarEvent.findMany({
-      where: { startsAt: { gte: now, lte: nextWeek } },
-      orderBy: { startsAt: "asc" },
-      take: 5,
-    }),
+    permissions.canUseChat
+      ? db.conversation.count({ where: { deletedAt: null, updatedAt: { gte: monthStart } } })
+      : Promise.resolve(0),
+    permissions.canUseChat
+      ? db.usageRecord.aggregate({
+          where: { metric: "AI_MESSAGES", periodStart: { gte: monthStart } },
+          _sum: { quantity: true },
+        })
+      : Promise.resolve({ _sum: { quantity: null } }),
+    permissions.canUseChat
+      ? db.conversation.findMany({
+          where: { deletedAt: null },
+          orderBy: { updatedAt: "desc" },
+          take: 4,
+          select: { id: true, title: true, updatedAt: true, model: true },
+        })
+      : Promise.resolve([]),
+    permissions.canViewBilling
+      ? db.subscription.findFirst({ orderBy: { updatedAt: "desc" } })
+      : Promise.resolve(null),
+    permissions.canReadCalendar
+      ? db.calendarEvent.findMany({
+          where: { startsAt: { gte: now, lte: nextWeek } },
+          orderBy: { startsAt: "asc" },
+          take: 5,
+        })
+      : Promise.resolve([]),
+  ]);
+
+  const [stageDealTotals, upcomingTasks] = await Promise.all([
+    pipeline
+      ? db.deal.groupBy({
+          by: ["stageId"],
+          where: { pipelineId: pipeline.id, deletedAt: null, closedAt: null },
+          _count: { _all: true },
+          _sum: { valueCents: true },
+        })
+      : Promise.resolve([]),
     db.activity.findMany({
       where: { type: "TASK", completedAt: null, dueAt: { gte: now, lte: nextWeek } },
       orderBy: { dueAt: "asc" },
@@ -137,15 +157,25 @@ export async function getCrmDashboard(ctx: TenantContext) {
     }),
   ]);
 
+  const stageTotalsById = new Map(
+    stageDealTotals.map((stage) => [
+      stage.stageId,
+      { count: stage._count._all, valueCents: stage._sum.valueCents ?? 0 },
+    ]),
+  );
+
   const pipelineStages =
-    pipeline?.stages.map((stage) => ({
-      id: stage.id,
-      name: stage.name,
-      count: stage.deals.length,
-      valueCents: stage.deals.reduce((sum, deal) => sum + deal.valueCents, 0),
-      isWon: stage.isWon,
-      isLost: stage.isLost,
-    })) ?? [];
+    pipeline?.stages.map((stage) => {
+      const totals = stageTotalsById.get(stage.id) ?? { count: 0, valueCents: 0 };
+      return {
+        id: stage.id,
+        name: stage.name,
+        count: totals.count,
+        valueCents: totals.valueCents,
+        isWon: stage.isWon,
+        isLost: stage.isLost,
+      };
+    }) ?? [];
 
   const openPipelineValueCents = pipelineStages
     .filter((stage) => !stage.isWon && !stage.isLost)
@@ -155,6 +185,7 @@ export async function getCrmDashboard(ctx: TenantContext) {
   const customerGrowthPct = percentChange(currentCustomers, previousCustomers);
 
   return {
+    permissions,
     kpis: {
       totalCustomers,
       activeDeals,
@@ -229,20 +260,10 @@ export async function getCrmDashboard(ctx: TenantContext) {
     insights: {
       model: summaryModel.model,
       provider: summaryModel.provider,
-      items: [
-        activeDeals > 0
-          ? `${activeDeals} active deals are moving through the open pipeline.`
-          : "No active deals are open right now; create or qualify leads to rebuild pipeline coverage.",
-        overdueTasks > 0
-          ? `${overdueTasks} overdue tasks need attention before new outreach work is added.`
-          : "No overdue tasks are blocking the team today.",
-        customerGrowthPct !== null
-          ? `Customer growth is ${customerGrowthPct}% versus the previous 30-day window.`
-          : "Customer growth has no prior 30-day baseline yet.",
-        (aiMessagesThisMonth._sum.quantity ?? 0) > 0
-          ? `${aiMessagesThisMonth._sum.quantity ?? 0} AI messages have supported work this month.`
-          : "AI conversation usage is quiet this month; route customer research and follow-ups through chat to build context.",
-      ],
+      activeDeals,
+      overdueTasks,
+      customerGrowthPct,
+      aiMessagesThisMonth: aiMessagesThisMonth._sum.quantity ?? 0,
     },
   };
 }

@@ -62,6 +62,14 @@ type DashboardLabels = {
   emptyPayments: string;
   emptyTasks: string;
   emptyMeetings: string;
+  insightActiveDeals: string;
+  insightNoActiveDeals: string;
+  insightOverdueTasks: string;
+  insightNoOverdueTasks: string;
+  insightCustomerGrowth: string;
+  insightNoCustomerGrowth: string;
+  insightAiMessages: string;
+  insightNoAiMessages: string;
 };
 
 function formatDateTime(date: Date | string | null, locale: string): string {
@@ -165,47 +173,51 @@ function ActivityFeed({ dashboard, locale, labels }: DashboardProps & { labels: 
           )}
         </section>
 
-        <section>
-          <SectionTitle>{labels.latestAiActivity}</SectionTitle>
-          {dashboard.feed.aiActivities.length > 0 ? (
-            <ul>
-              {dashboard.feed.aiActivities.map((item) => (
-                <ActivityRow
-                  key={item.id}
-                  title={item.title}
-                  meta={item.model ?? labels.aiConversation}
-                  at={item.at}
-                  locale={locale}
-                />
-              ))}
-            </ul>
-          ) : (
-            <EmptyState label={labels.emptyActivity} />
-          )}
-        </section>
+        {dashboard.permissions.canUseChat ? (
+          <section>
+            <SectionTitle>{labels.latestAiActivity}</SectionTitle>
+            {dashboard.feed.aiActivities.length > 0 ? (
+              <ul>
+                {dashboard.feed.aiActivities.map((item) => (
+                  <ActivityRow
+                    key={item.id}
+                    title={item.title}
+                    meta={item.model ?? labels.aiConversation}
+                    at={item.at}
+                    locale={locale}
+                  />
+                ))}
+              </ul>
+            ) : (
+              <EmptyState label={labels.emptyActivity} />
+            )}
+          </section>
+        ) : null}
 
-        <section>
-          <SectionTitle>{labels.latestPayments}</SectionTitle>
-          {dashboard.feed.payments.length > 0 ? (
-            <ul>
-              {dashboard.feed.payments.map((item) => (
-                <ActivityRow
-                  key={item.id}
-                  title={`${item.plan} / ${item.status}`}
-                  meta={
-                    item.currentPeriodEnd
-                      ? `${labels.currentPeriodEnds}: ${formatDateTime(item.currentPeriodEnd, locale)}`
-                      : labels.billingStatus
-                  }
-                  at={item.at}
-                  locale={locale}
-                />
-              ))}
-            </ul>
-          ) : (
-            <EmptyState label={labels.emptyPayments} />
-          )}
-        </section>
+        {dashboard.permissions.canViewBilling ? (
+          <section>
+            <SectionTitle>{labels.latestPayments}</SectionTitle>
+            {dashboard.feed.payments.length > 0 ? (
+              <ul>
+                {dashboard.feed.payments.map((item) => (
+                  <ActivityRow
+                    key={item.id}
+                    title={`${item.plan} / ${item.status}`}
+                    meta={
+                      item.currentPeriodEnd
+                        ? `${labels.currentPeriodEnds}: ${formatDateTime(item.currentPeriodEnd, locale)}`
+                        : labels.billingStatus
+                    }
+                    at={item.at}
+                    locale={locale}
+                  />
+                ))}
+              </ul>
+            ) : (
+              <EmptyState label={labels.emptyPayments} />
+            )}
+          </section>
+        ) : null}
 
         <section>
           <SectionTitle>{labels.latestTasks}</SectionTitle>
@@ -230,14 +242,18 @@ function ActivityFeed({ dashboard, locale, labels }: DashboardProps & { labels: 
   );
 }
 
-function QuickActions({ labels }: { labels: DashboardLabels }) {
+function QuickActions({ dashboard, labels }: DashboardProps & { labels: DashboardLabels }) {
   const actions = [
     { label: labels.newLead, href: "/crm/contacts", icon: UserPlus },
     { label: labels.newCustomer, href: "/crm/contacts", icon: Users },
     { label: labels.createDeal, href: "/crm/deals", icon: HandCoins },
-    { label: labels.scheduleMeeting, href: "/calendar", icon: CalendarClock },
-    { label: labels.aiChat, href: "/chat", icon: MessageSquare },
-  ] as const;
+    dashboard.permissions.canReadCalendar
+      ? { label: labels.scheduleMeeting, href: "/calendar", icon: CalendarClock }
+      : null,
+    dashboard.permissions.canUseChat
+      ? { label: labels.aiChat, href: "/chat", icon: MessageSquare }
+      : null,
+  ].filter((action): action is Exclude<typeof action, null> => action !== null);
 
   return (
     <Card>
@@ -318,24 +334,26 @@ function CalendarWidget({ dashboard, locale, labels }: DashboardProps & { labels
         <CardTitle className="text-base">{labels.calendarWidget}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-5">
-        <section>
-          <SectionTitle>{labels.upcomingMeetings}</SectionTitle>
-          {dashboard.calendar.meetings.length > 0 ? (
-            <ul>
-              {dashboard.calendar.meetings.map((meeting) => (
-                <ActivityRow
-                  key={meeting.id}
-                  title={meeting.title}
-                  meta={meeting.source}
-                  at={meeting.startsAt}
-                  locale={locale}
-                />
-              ))}
-            </ul>
-          ) : (
-            <EmptyState label={labels.emptyMeetings} />
-          )}
-        </section>
+        {dashboard.permissions.canReadCalendar ? (
+          <section>
+            <SectionTitle>{labels.upcomingMeetings}</SectionTitle>
+            {dashboard.calendar.meetings.length > 0 ? (
+              <ul>
+                {dashboard.calendar.meetings.map((meeting) => (
+                  <ActivityRow
+                    key={meeting.id}
+                    title={meeting.title}
+                    meta={meeting.source}
+                    at={meeting.startsAt}
+                    locale={locale}
+                  />
+                ))}
+              </ul>
+            ) : (
+              <EmptyState label={labels.emptyMeetings} />
+            )}
+          </section>
+        ) : null}
         <section>
           <SectionTitle>{labels.upcomingTasks}</SectionTitle>
           {dashboard.calendar.tasks.length > 0 ? (
@@ -360,6 +378,19 @@ function CalendarWidget({ dashboard, locale, labels }: DashboardProps & { labels
 }
 
 function AiInsights({ dashboard, labels }: DashboardProps & { labels: DashboardLabels }) {
+  const items = [
+    dashboard.insights.activeDeals > 0 ? labels.insightActiveDeals : labels.insightNoActiveDeals,
+    dashboard.insights.overdueTasks > 0 ? labels.insightOverdueTasks : labels.insightNoOverdueTasks,
+    dashboard.insights.customerGrowthPct !== null
+      ? labels.insightCustomerGrowth
+      : labels.insightNoCustomerGrowth,
+    dashboard.permissions.canUseChat
+      ? dashboard.insights.aiMessagesThisMonth > 0
+        ? labels.insightAiMessages
+        : labels.insightNoAiMessages
+      : null,
+  ].filter((item): item is string => Boolean(item));
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
@@ -368,7 +399,7 @@ function AiInsights({ dashboard, labels }: DashboardProps & { labels: DashboardL
       </CardHeader>
       <CardContent>
         <ul className="space-y-3">
-          {dashboard.insights.items.map((item) => (
+          {items.map((item) => (
             <li key={item} className="flex gap-3 text-sm">
               <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" aria-hidden="true" />
               <span>{item}</span>
@@ -423,6 +454,16 @@ export async function CrmDashboardView({ dashboard, locale }: DashboardProps) {
     emptyPayments: t("emptyPayments"),
     emptyTasks: t("emptyTasks"),
     emptyMeetings: t("emptyMeetings"),
+    insightActiveDeals: t("insightActiveDeals", { count: dashboard.insights.activeDeals }),
+    insightNoActiveDeals: t("insightNoActiveDeals"),
+    insightOverdueTasks: t("insightOverdueTasks", { count: dashboard.insights.overdueTasks }),
+    insightNoOverdueTasks: t("insightNoOverdueTasks"),
+    insightCustomerGrowth: t("insightCustomerGrowth", {
+      percent: dashboard.insights.customerGrowthPct ?? 0,
+    }),
+    insightNoCustomerGrowth: t("insightNoCustomerGrowth"),
+    insightAiMessages: t("insightAiMessages", { count: dashboard.insights.aiMessagesThisMonth }),
+    insightNoAiMessages: t("insightNoAiMessages"),
   };
 
   const growthValue =
@@ -452,12 +493,14 @@ export async function CrmDashboardView({ dashboard, locale }: DashboardProps) {
           icon={Clock3}
           tone={dashboard.kpis.tasksDueToday > 0 ? "warning" : "default"}
         />
-        <KpiCard
-          label={labels.aiConversations}
-          value={dashboard.kpis.aiConversations}
-          detail={labels.aiMessagesDetail}
-          icon={Bot}
-        />
+        {dashboard.permissions.canUseChat ? (
+          <KpiCard
+            label={labels.aiConversations}
+            value={dashboard.kpis.aiConversations}
+            detail={labels.aiMessagesDetail}
+            icon={Bot}
+          />
+        ) : null}
         <KpiCard
           label={labels.growthPct}
           value={growthValue}
@@ -469,7 +512,7 @@ export async function CrmDashboardView({ dashboard, locale }: DashboardProps) {
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
         <ActivityFeed dashboard={dashboard} locale={locale} labels={labels} />
-        <QuickActions labels={labels} />
+        <QuickActions dashboard={dashboard} locale={locale} labels={labels} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
