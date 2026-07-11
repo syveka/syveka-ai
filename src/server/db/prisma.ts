@@ -10,10 +10,18 @@ import { env } from "@/env";
  */
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
-export const prisma =
-  globalForPrisma.prisma ??
-  new PrismaClient({
+function getPrisma(): PrismaClient {
+  globalForPrisma.prisma ??= new PrismaClient({
     log: env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
   });
 
-if (env.NODE_ENV !== "production") globalForPrisma.prisma = prisma;
+  return globalForPrisma.prisma;
+}
+
+export const prisma = new Proxy({} as PrismaClient, {
+  get(_target, prop: keyof PrismaClient) {
+    const client = getPrisma();
+    const value = client[prop];
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+});

@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { requirePermission } from "@/server/auth/guard";
 import { listConversations } from "@/server/services/conversations";
 import { ConversationList } from "@/components/chat/conversation-list";

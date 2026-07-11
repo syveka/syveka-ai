@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { redirect } from "next/navigation";
 import { getSessionUser, getTenantContextOrNull } from "@/server/auth/session";
 import { OnboardingForm } from "./onboarding-form";

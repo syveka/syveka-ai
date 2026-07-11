@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { requirePermission } from "@/server/auth/guard";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { OrganizationForm } from "./organization-form";

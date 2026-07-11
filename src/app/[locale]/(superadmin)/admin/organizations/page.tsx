@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { requireSuperadmin } from "@/server/auth/superadmin";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { Card, CardContent } from "@/components/ui/card";

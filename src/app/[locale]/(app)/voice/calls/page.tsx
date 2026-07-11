@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getTranslations, getLocale } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { listCalls } from "@/server/services/voice";

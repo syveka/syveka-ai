@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getTranslations } from "next-intl/server";
 import { Phone, Plus } from "lucide-react";
 import { requirePermission } from "@/server/auth/guard";

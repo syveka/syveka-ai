@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getTranslations, getLocale } from "next-intl/server";
 import { Plus, GitBranch } from "lucide-react";
 import { requirePermission } from "@/server/auth/guard";

@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getTenantContext } from "@/server/auth/session";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { ProfileForm } from "./profile-form";

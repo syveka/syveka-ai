@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { notFound } from "next/navigation";
 import { requirePermission } from "@/server/auth/guard";
 import { listConversations, getConversationWithMessages } from "@/server/services/conversations";

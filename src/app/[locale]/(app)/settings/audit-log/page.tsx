@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getLocale } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";

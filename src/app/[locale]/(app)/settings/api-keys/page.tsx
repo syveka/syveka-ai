@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { requirePermission } from "@/server/auth/guard";
 import { listApiKeys } from "@/server/services/api-keys";
 import { ApiKeysManager } from "./api-keys-manager";
