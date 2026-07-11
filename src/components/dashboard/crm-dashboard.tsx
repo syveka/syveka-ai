@@ -57,6 +57,9 @@ type DashboardLabels = {
   billingStatus: string;
   currentPeriodEnds: string;
   completed: string;
+  emptyValue: string;
+  paymentSummary: string;
+  stageSummary: string;
   noPipeline: string;
   emptyActivity: string;
   emptyPayments: string;
@@ -73,16 +76,28 @@ type DashboardLabels = {
 };
 
 function formatDateTime(date: Date | string | null, locale: string): string {
-  if (!date) return "-";
+  if (!date) return "";
   return formatDate(date, locale, { dateStyle: "medium", timeStyle: "short" });
 }
 
+function formatNumber(value: number, locale: string): string {
+  return new Intl.NumberFormat(locale).format(value);
+}
+
+function formatPercent(value: number | null, locale: string, emptyValue: string): string {
+  if (value === null) return emptyValue;
+  return new Intl.NumberFormat(locale, {
+    style: "percent",
+    maximumFractionDigits: 0,
+  }).format(value / 100);
+}
+
 function EmptyState({ label }: { label: string }) {
-  return <p className="py-4 text-sm text-muted-foreground">{label}</p>;
+  return <p className="py-4 text-start text-sm text-muted-foreground">{label}</p>;
 }
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
-  return <h3 className="text-sm font-medium text-muted-foreground">{children}</h3>;
+  return <h3 className="text-start text-sm font-medium text-muted-foreground">{children}</h3>;
 }
 
 function KpiCard({
@@ -114,8 +129,8 @@ function KpiCard({
         </span>
       </CardHeader>
       <CardContent>
-        <p className="text-2xl font-semibold md:text-3xl">{value}</p>
-        {detail ? <p className="mt-1 text-sm text-muted-foreground">{detail}</p> : null}
+        <p className="text-start text-2xl font-semibold md:text-3xl">{value}</p>
+        {detail ? <p className="mt-1 text-start text-sm text-muted-foreground">{detail}</p> : null}
       </CardContent>
     </Card>
   );
@@ -135,11 +150,14 @@ function ActivityRow({
   return (
     <li className="flex items-start justify-between gap-3 border-b py-3 last:border-0">
       <div className="min-w-0">
-        <p className="truncate text-sm font-medium">{title}</p>
-        {meta ? <p className="truncate text-xs text-muted-foreground">{meta}</p> : null}
+        <p className="truncate text-start text-sm font-medium">{title}</p>
+        {meta ? <p className="truncate text-start text-xs text-muted-foreground">{meta}</p> : null}
       </div>
       {at ? (
-        <time className="shrink-0 text-xs text-muted-foreground" dateTime={new Date(at).toISOString()}>
+        <time
+          className="shrink-0 text-start text-xs text-muted-foreground"
+          dateTime={new Date(at).toISOString()}
+        >
           {formatDateTime(at, locale)}
         </time>
       ) : null}
@@ -202,10 +220,15 @@ function ActivityFeed({ dashboard, locale, labels }: DashboardProps & { labels: 
                 {dashboard.feed.payments.map((item) => (
                   <ActivityRow
                     key={item.id}
-                    title={`${item.plan} / ${item.status}`}
+                    title={labels.paymentSummary
+                      .replace("{plan}", item.plan)
+                      .replace("{status}", item.status)}
                     meta={
                       item.currentPeriodEnd
-                        ? `${labels.currentPeriodEnds}: ${formatDateTime(item.currentPeriodEnd, locale)}`
+                        ? labels.currentPeriodEnds.replace(
+                            "{date}",
+                            formatDateTime(item.currentPeriodEnd, locale),
+                          )
                         : labels.billingStatus
                     }
                     at={item.at}
@@ -244,9 +267,15 @@ function ActivityFeed({ dashboard, locale, labels }: DashboardProps & { labels: 
 
 function QuickActions({ dashboard, labels }: DashboardProps & { labels: DashboardLabels }) {
   const actions = [
-    { label: labels.newLead, href: "/crm/contacts", icon: UserPlus },
-    { label: labels.newCustomer, href: "/crm/contacts", icon: Users },
-    { label: labels.createDeal, href: "/crm/deals", icon: HandCoins },
+    dashboard.permissions.canWriteCrm
+      ? { label: labels.newLead, href: "/crm/contacts", icon: UserPlus }
+      : null,
+    dashboard.permissions.canWriteCrm
+      ? { label: labels.newCustomer, href: "/crm/contacts", icon: Users }
+      : null,
+    dashboard.permissions.canWriteCrm
+      ? { label: labels.createDeal, href: "/crm/deals", icon: HandCoins }
+      : null,
     dashboard.permissions.canReadCalendar
       ? { label: labels.scheduleMeeting, href: "/calendar", icon: CalendarClock }
       : null,
@@ -298,9 +327,11 @@ function PipelinePreview({ dashboard, locale, labels }: DashboardProps & { label
             {dashboard.pipeline.stages.map((stage) => (
               <div key={stage.id}>
                 <div className="mb-1 flex items-center justify-between gap-3 text-sm">
-                  <span className="truncate">{stage.name}</span>
+                  <span className="truncate text-start">{stage.name}</span>
                   <span className="shrink-0 text-muted-foreground">
-                    {stage.count} / {formatCents(stage.valueCents, locale)}
+                    {labels.stageSummary
+                      .replace("{count}", formatNumber(stage.count, locale))
+                      .replace("{value}", formatCents(stage.valueCents, locale))}
                   </span>
                 </div>
                 <div className="h-2 overflow-hidden rounded bg-muted">
@@ -402,7 +433,7 @@ function AiInsights({ dashboard, labels }: DashboardProps & { labels: DashboardL
           {items.map((item) => (
             <li key={item} className="flex gap-3 text-sm">
               <CheckCircle2 className="mt-0.5 size-4 shrink-0 text-success" aria-hidden="true" />
-              <span>{item}</span>
+              <span className="text-start">{item}</span>
             </li>
           ))}
         </ul>
@@ -426,7 +457,9 @@ export async function CrmDashboardView({ dashboard, locale }: DashboardProps) {
     aiConversations: t("aiConversations"),
     growthPct: t("growthPct"),
     growthDetail: t("growthDetail"),
-    aiMessagesDetail: t("aiMessagesDetail", { count: dashboard.kpis.aiMessagesThisMonth }),
+    aiMessagesDetail: t("aiMessagesDetail", {
+      count: formatNumber(dashboard.kpis.aiMessagesThisMonth, locale),
+    }),
     activityFeed: t("activityFeed"),
     latestCustomerActivity: t("latestCustomerActivity"),
     latestAiActivity: t("latestAiActivity"),
@@ -447,30 +480,42 @@ export async function CrmDashboardView({ dashboard, locale }: DashboardProps) {
     generatedWith: t("generatedWith"),
     aiConversation: t("aiConversation"),
     billingStatus: t("billingStatus"),
-    currentPeriodEnds: t("currentPeriodEnds"),
+    currentPeriodEnds: t("currentPeriodEnds", { date: "{date}" }),
     completed: t("completed"),
+    emptyValue: t("emptyValue"),
+    paymentSummary: t("paymentSummary", { plan: "{plan}", status: "{status}" }),
+    stageSummary: t("stageSummary", { count: "{count}", value: "{value}" }),
     noPipeline: t("noPipeline"),
     emptyActivity: t("emptyActivity"),
     emptyPayments: t("emptyPayments"),
     emptyTasks: t("emptyTasks"),
     emptyMeetings: t("emptyMeetings"),
-    insightActiveDeals: t("insightActiveDeals", { count: dashboard.insights.activeDeals }),
+    insightActiveDeals: t("insightActiveDeals", {
+      count: formatNumber(dashboard.insights.activeDeals, locale),
+    }),
     insightNoActiveDeals: t("insightNoActiveDeals"),
-    insightOverdueTasks: t("insightOverdueTasks", { count: dashboard.insights.overdueTasks }),
+    insightOverdueTasks: t("insightOverdueTasks", {
+      count: formatNumber(dashboard.insights.overdueTasks, locale),
+    }),
     insightNoOverdueTasks: t("insightNoOverdueTasks"),
     insightCustomerGrowth: t("insightCustomerGrowth", {
-      percent: dashboard.insights.customerGrowthPct ?? 0,
+      percent: formatPercent(
+        dashboard.insights.customerGrowthPct,
+        locale,
+        t("emptyValue"),
+      ),
     }),
     insightNoCustomerGrowth: t("insightNoCustomerGrowth"),
-    insightAiMessages: t("insightAiMessages", { count: dashboard.insights.aiMessagesThisMonth }),
+    insightAiMessages: t("insightAiMessages", {
+      count: formatNumber(dashboard.insights.aiMessagesThisMonth, locale),
+    }),
     insightNoAiMessages: t("insightNoAiMessages"),
   };
 
-  const growthValue =
-    dashboard.kpis.customerGrowthPct === null ? "-" : `${dashboard.kpis.customerGrowthPct}%`;
+  const growthValue = formatPercent(dashboard.kpis.customerGrowthPct, locale, labels.emptyValue);
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-6 text-start">
       <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
         <div>
           <h1 className="text-2xl font-semibold">{labels.title}</h1>
@@ -479,8 +524,16 @@ export async function CrmDashboardView({ dashboard, locale }: DashboardProps) {
       </div>
 
       <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-6">
-        <KpiCard label={labels.totalCustomers} value={dashboard.kpis.totalCustomers} icon={Users} />
-        <KpiCard label={labels.activeDeals} value={dashboard.kpis.activeDeals} icon={HandCoins} />
+        <KpiCard
+          label={labels.totalCustomers}
+          value={formatNumber(dashboard.kpis.totalCustomers, locale)}
+          icon={Users}
+        />
+        <KpiCard
+          label={labels.activeDeals}
+          value={formatNumber(dashboard.kpis.activeDeals, locale)}
+          icon={HandCoins}
+        />
         <KpiCard
           label={labels.revenue}
           value={formatCents(dashboard.kpis.revenueCents, locale)}
@@ -489,14 +542,14 @@ export async function CrmDashboardView({ dashboard, locale }: DashboardProps) {
         />
         <KpiCard
           label={labels.tasksDueToday}
-          value={dashboard.kpis.tasksDueToday}
+          value={formatNumber(dashboard.kpis.tasksDueToday, locale)}
           icon={Clock3}
           tone={dashboard.kpis.tasksDueToday > 0 ? "warning" : "default"}
         />
         {dashboard.permissions.canUseChat ? (
           <KpiCard
             label={labels.aiConversations}
-            value={dashboard.kpis.aiConversations}
+            value={formatNumber(dashboard.kpis.aiConversations, locale)}
             detail={labels.aiMessagesDetail}
             icon={Bot}
           />

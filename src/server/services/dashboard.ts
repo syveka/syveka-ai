@@ -30,6 +30,7 @@ export async function getCrmDashboard(ctx: TenantContext) {
     canReadCalendar: can(ctx.role, "calendar:read"),
     canUseChat: can(ctx.role, "chat:use"),
     canViewBilling: can(ctx.role, "billing:view"),
+    canWriteCrm: can(ctx.role, "crm:write"),
   };
   const todayStart = startOfUtcDay();
   const tomorrowStart = addDays(todayStart, 1);
