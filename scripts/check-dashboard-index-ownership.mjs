@@ -29,7 +29,9 @@ for (const indexName of expectedIndexes) {
 }
 
 if (!failed) {
-  console.log(`Dashboard index ownership verified: ${expectedIndexes.length} migration-owned indexes`);
+  console.log(
+    `Dashboard index ownership verified: ${expectedIndexes.length} migration-owned indexes`,
+  );
 }
 
 process.exit(failed ? 1 : 0);

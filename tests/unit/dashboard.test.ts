@@ -147,7 +147,11 @@ function createMockDb(orgId: keyof typeof orgData) {
       }),
     },
     pipeline: {
-      findFirst: vi.fn(async () => ({ id: `${orgId}-pipeline`, name: `${orgId} Pipeline`, stages })),
+      findFirst: vi.fn(async () => ({
+        id: `${orgId}-pipeline`,
+        name: `${orgId} Pipeline`,
+        stages,
+      })),
     },
     conversation: {
       count: vi.fn(async () => data.aiConversations),
@@ -266,7 +270,9 @@ describe("CRM dashboard permission isolation", () => {
 
     expect(tenantDbMock).toHaveBeenCalledWith("orgA");
     expect(dashboard.kpis.totalCustomers).toBe(orgData.orgA.totalCustomers);
-    expect(dashboard.feed.customerActivities[0]?.subject).toBe(orgData.orgA.customerActivitySubject);
+    expect(dashboard.feed.customerActivities[0]?.subject).toBe(
+      orgData.orgA.customerActivitySubject,
+    );
     expect(dashboard.feed.aiActivities[0]?.title).toBe(orgData.orgA.conversationTitle);
     expect(dashboard.calendar.meetings[0]?.title).toBe(orgData.orgA.calendarTitle);
     expect(JSON.stringify(dashboard)).not.toContain(orgData.orgB.customerActivitySubject);

@@ -309,7 +309,11 @@ function QuickActions({ dashboard, labels }: DashboardProps & { labels: Dashboar
   );
 }
 
-function PipelinePreview({ dashboard, locale, labels }: DashboardProps & { labels: DashboardLabels }) {
+function PipelinePreview({
+  dashboard,
+  locale,
+  labels,
+}: DashboardProps & { labels: DashboardLabels }) {
   const max = Math.max(1, ...dashboard.pipeline.stages.map((stage) => stage.count));
 
   return (
@@ -358,7 +362,11 @@ function PipelinePreview({ dashboard, locale, labels }: DashboardProps & { label
   );
 }
 
-function CalendarWidget({ dashboard, locale, labels }: DashboardProps & { labels: DashboardLabels }) {
+function CalendarWidget({
+  dashboard,
+  locale,
+  labels,
+}: DashboardProps & { labels: DashboardLabels }) {
   return (
     <Card>
       <CardHeader>
@@ -499,11 +507,7 @@ export async function CrmDashboardView({ dashboard, locale }: DashboardProps) {
     }),
     insightNoOverdueTasks: t("insightNoOverdueTasks"),
     insightCustomerGrowth: t("insightCustomerGrowth", {
-      percent: formatPercent(
-        dashboard.insights.customerGrowthPct,
-        locale,
-        t("emptyValue"),
-      ),
+      percent: formatPercent(dashboard.insights.customerGrowthPct, locale, t("emptyValue")),
     }),
     insightNoCustomerGrowth: t("insightNoCustomerGrowth"),
     insightAiMessages: t("insightAiMessages", {
