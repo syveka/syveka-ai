@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";

@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { redirect } from "next/navigation";
 import { requireSuperadmin } from "@/server/auth/superadmin";
 import { Link } from "@/i18n/routing";

@@ -77,7 +77,10 @@ export function CalendarView({
 
       <div className="grid grid-cols-7 overflow-hidden rounded-lg border text-sm">
         {weeks[0]!.map((day) => (
-          <div key={day} className="border-b bg-muted/40 p-2 text-center text-xs font-medium text-muted-foreground">
+          <div
+            key={day}
+            className="border-b bg-muted/40 p-2 text-center text-xs font-medium text-muted-foreground"
+          >
             {weekdayFmt.format(new Date(`${day}T12:00:00Z`))}
           </div>
         ))}

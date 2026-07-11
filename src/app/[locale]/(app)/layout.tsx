@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { redirect } from "next/navigation";
 import { getTenantContextOrNull } from "@/server/auth/session";
 import { unscopedPrisma } from "@/server/db/tenant";

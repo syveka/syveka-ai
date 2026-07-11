@@ -62,7 +62,10 @@ export async function getAiAnalytics(ctx: TenantContext) {
     }),
     db.usageRecord.groupBy({
       by: ["metric"],
-      where: { metric: { in: ["AI_TOKENS_IN", "AI_TOKENS_OUT"] }, periodStart: { gte: monthStart() } },
+      where: {
+        metric: { in: ["AI_TOKENS_IN", "AI_TOKENS_OUT"] },
+        periodStart: { gte: monthStart() },
+      },
       _sum: { quantity: true },
     }),
     db.conversation.findMany({

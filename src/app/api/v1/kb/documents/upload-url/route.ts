@@ -1,11 +1,17 @@
 import { NextResponse } from "next/server";
-import { requirePermission } from "@/server/auth/guard";
-import { AuthError } from "@/server/auth/session";
-import { createUploadUrl } from "@/server/services/documents";
 import { uploadUrlSchema } from "@/lib/validators/documents";
-import { EntitlementError } from "@/server/services/billing/entitlements";
+
+export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const [{ requirePermission }, { AuthError }, { createUploadUrl }, { EntitlementError }] =
+    await Promise.all([
+      import("@/server/auth/guard"),
+      import("@/server/auth/session"),
+      import("@/server/services/documents"),
+      import("@/server/services/billing/entitlements"),
+    ]);
+
   try {
     const ctx = await requirePermission("kb:write");
     const body = uploadUrlSchema.safeParse(await request.json().catch(() => null));

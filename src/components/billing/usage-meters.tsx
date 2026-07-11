@@ -9,7 +9,9 @@ export function UsageMeters({ items }: { items: Meter[] }) {
       <CardContent className="space-y-4 pt-6">
         {items.map((m) => {
           const unlimited = m.limit >= Number.MAX_SAFE_INTEGER;
-          const pct = unlimited ? 0 : Math.min(100, Math.round((m.used / Math.max(1, m.limit)) * 100));
+          const pct = unlimited
+            ? 0
+            : Math.min(100, Math.round((m.used / Math.max(1, m.limit)) * 100));
           return (
             <div key={m.label}>
               <div className="mb-1 flex justify-between text-sm">

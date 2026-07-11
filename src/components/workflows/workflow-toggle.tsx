@@ -4,7 +4,13 @@ import { useState, useTransition } from "react";
 import { toggleWorkflowAction } from "@/actions/workflows";
 import { cn } from "@/lib/utils";
 
-export function WorkflowToggle({ workflowId, isActive }: { workflowId: string; isActive: boolean }) {
+export function WorkflowToggle({
+  workflowId,
+  isActive,
+}: {
+  workflowId: string;
+  isActive: boolean;
+}) {
   const [active, setActive] = useState(isActive);
   const [pending, startTransition] = useTransition();
 

@@ -1,13 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
-import { verifyVapiSignature } from "@/server/integrations/vapi";
-import { unscopedPrisma } from "@/server/db/tenant";
-import { executeTool, type ToolIdentity } from "@/server/ai/tools";
-import { getMonthUsage, getEntitlements } from "@/server/services/billing/entitlements";
-import { enqueue } from "@/server/jobs/queue";
+import type { unscopedPrisma as prismaClient } from "@/server/db/tenant";
+import type { ToolIdentity } from "@/server/ai/tools";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
 /**
@@ -48,12 +46,18 @@ const messageSchema = z.object({
   }),
 });
 
-async function resolveAssistant(vapiAssistantId: string | undefined) {
+async function resolveAssistant(
+  unscopedPrisma: typeof prismaClient,
+  vapiAssistantId: string | undefined,
+) {
   if (!vapiAssistantId) return null;
   return unscopedPrisma.voiceAssistant.findFirst({
     where: { vapiAssistantId },
     select: {
-      id: true, organizationId: true, enabledTools: true, useKnowledgeBase: true,
+      id: true,
+      organizationId: true,
+      enabledTools: true,
+      useKnowledgeBase: true,
       organization: {
         select: { members: { where: { role: "OWNER" }, select: { userId: true }, take: 1 } },
       },
@@ -62,9 +66,22 @@ async function resolveAssistant(vapiAssistantId: string | undefined) {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const [
+    { verifyVapiSignature },
+    { unscopedPrisma },
+    { executeTool },
+    { getMonthUsage, getEntitlements },
+    { enqueue },
+  ] = await Promise.all([
+    import("@/server/integrations/vapi"),
+    import("@/server/db/tenant"),
+    import("@/server/ai/tools"),
+    import("@/server/services/billing/entitlements"),
+    import("@/server/jobs/queue"),
+  ]);
+
   const rawBody = await request.text();
-  const signature =
-    request.headers.get("x-vapi-signature") ?? request.headers.get("x-vapi-secret");
+  const signature = request.headers.get("x-vapi-signature") ?? request.headers.get("x-vapi-secret");
   if (!verifyVapiSignature(rawBody, signature)) {
     return NextResponse.json({ error: "invalid signature" }, { status: 401 });
   }
@@ -73,7 +90,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!parsed.success) return NextResponse.json({ error: "invalid payload" }, { status: 400 });
   const { message } = parsed.data;
 
-  const assistant = await resolveAssistant(message.call?.assistantId);
+  const assistant = await resolveAssistant(unscopedPrisma, message.call?.assistantId);
   if (!assistant) return NextResponse.json({ error: "unknown assistant" }, { status: 404 });
   const orgId = assistant.organizationId;
   const ownerUserId = assistant.organization.members[0]?.userId ?? "";
@@ -148,8 +165,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           status: "COMPLETED",
         },
         update: {
-          status:
-            message.endedReason === "assistant-forwarded-call" ? "TRANSFERRED" : "COMPLETED",
+          status: message.endedReason === "assistant-forwarded-call" ? "TRANSFERRED" : "COMPLETED",
           endedAt: new Date(),
           durationSeconds,
           costCents: Math.round((message.cost ?? 0) * 100),

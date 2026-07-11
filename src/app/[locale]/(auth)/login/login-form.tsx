@@ -32,7 +32,13 @@ export function LoginForm() {
                 {t("forgotPassword")}
               </Link>
             </div>
-            <Input id="password" name="password" type="password" autoComplete="current-password" required />
+            <Input
+              id="password"
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              required
+            />
           </div>
           {state.error ? (
             <p role="alert" className="text-sm text-destructive">

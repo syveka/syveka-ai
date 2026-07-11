@@ -17,7 +17,12 @@ export function useUnreadBadge(initialCount: number, userId: string) {
       .channel(`user:${userId}:notifications`)
       .on(
         "postgres_changes",
-        { event: "INSERT", schema: "public", table: "notifications", filter: `user_id=eq.${userId}` },
+        {
+          event: "INSERT",
+          schema: "public",
+          table: "notifications",
+          filter: `user_id=eq.${userId}`,
+        },
         () => setCount((c) => c + 1),
       )
       .subscribe();

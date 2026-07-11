@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { requirePermission } from "@/server/auth/guard";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { can } from "@/server/auth/permissions";

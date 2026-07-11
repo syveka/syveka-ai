@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { requirePermission } from "@/server/auth/guard";
 import { listConversations } from "@/server/services/conversations";
 import { ConversationList } from "@/components/chat/conversation-list";
@@ -11,7 +13,9 @@ export default async function ChatPage() {
     <>
       <ConversationList
         conversations={conversations.map((c) => ({
-          id: c.id, title: c.title, isPinned: c.isPinned,
+          id: c.id,
+          title: c.title,
+          isPinned: c.isPinned,
         }))}
       />
       <div className="flex-1">

@@ -3,9 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requirePermission } from "@/server/auth/guard";
-import {
-  upsertWorkflow, setWorkflowActive,
-} from "@/server/services/workflows";
+import { upsertWorkflow, setWorkflowActive } from "@/server/services/workflows";
 import { workflowSchema } from "@/lib/validators/workflows";
 import { EntitlementError } from "@/server/services/billing/entitlements";
 
@@ -27,7 +25,10 @@ export async function saveWorkflowAction(
   return { message: "saved" };
 }
 
-export async function toggleWorkflowAction(workflowId: string, isActive: boolean): Promise<WorkflowActionState> {
+export async function toggleWorkflowAction(
+  workflowId: string,
+  isActive: boolean,
+): Promise<WorkflowActionState> {
   const ctx = await requirePermission("workflows:manage");
   try {
     await setWorkflowActive(ctx, workflowId, isActive);

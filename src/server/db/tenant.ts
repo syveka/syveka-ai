@@ -15,11 +15,30 @@ import { prisma } from "./prisma";
  * the dedicated service functions which join through the parent.
  */
 const TENANT_MODELS = new Set<Prisma.ModelName>([
-  "OrganizationMember", "Team", "Invitation", "Subscription", "UsageRecord",
-  "Company", "Contact", "Pipeline", "Deal", "Activity", "Tag",
-  "CalendarEvent", "Conversation", "Collection", "Document",
-  "Workflow", "WorkflowRun", "VoiceAssistant", "VoiceCall",
-  "Notification", "ApiKey", "WebhookEndpoint", "AuditLog", "Prompt",
+  "OrganizationMember",
+  "Team",
+  "Invitation",
+  "Subscription",
+  "UsageRecord",
+  "Company",
+  "Contact",
+  "Pipeline",
+  "Deal",
+  "Activity",
+  "Tag",
+  "CalendarEvent",
+  "Conversation",
+  "Collection",
+  "Document",
+  "Workflow",
+  "WorkflowRun",
+  "VoiceAssistant",
+  "VoiceCall",
+  "Notification",
+  "ApiKey",
+  "WebhookEndpoint",
+  "AuditLog",
+  "Prompt",
 ]);
 
 export function tenantDb(orgId: string) {

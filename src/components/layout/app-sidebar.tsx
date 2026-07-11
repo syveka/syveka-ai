@@ -2,8 +2,19 @@
 
 import { useTranslations } from "next-intl";
 import {
-  LayoutDashboard, MessageSquare, Phone, Users, Building2, Kanban,
-  Calendar, BarChart3, BookOpen, Sparkles, GitBranch, Bell, Settings,
+  LayoutDashboard,
+  MessageSquare,
+  Phone,
+  Users,
+  Building2,
+  Kanban,
+  Calendar,
+  BarChart3,
+  BookOpen,
+  Sparkles,
+  GitBranch,
+  Bell,
+  Settings,
 } from "lucide-react";
 import { Link, usePathname } from "@/i18n/routing";
 import { cn } from "@/lib/utils";

@@ -1,9 +1,7 @@
 import { NextResponse } from "next/server";
-import { verifyJobRequest } from "@/server/jobs/verify";
-import { unscopedPrisma } from "@/server/db/tenant";
-import { getEntitlements, getMonthUsage } from "@/server/services/billing/entitlements";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 /**
@@ -11,6 +9,13 @@ export const maxDuration = 300;
  * emits 80%-quota warnings (§15.6) and prunes expired soft-deleted rows (§13.3).
  */
 export async function POST(request: Request): Promise<NextResponse> {
+  const [{ verifyJobRequest }, { unscopedPrisma }, { getEntitlements, getMonthUsage }] =
+    await Promise.all([
+      import("@/server/jobs/verify"),
+      import("@/server/db/tenant"),
+      import("@/server/services/billing/entitlements"),
+    ]);
+
   const rawBody = await verifyJobRequest(request);
   if (rawBody === null) return NextResponse.json({ error: "invalid signature" }, { status: 401 });
 

@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getTranslations, getLocale } from "next-intl/server";
 import { getTenantContext } from "@/server/auth/session";
 import { listNotifications } from "@/server/services/notifications";

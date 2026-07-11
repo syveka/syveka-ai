@@ -21,7 +21,13 @@ export function InviteForm() {
       </CardHeader>
       <CardContent>
         <form action={action} className="flex flex-col gap-3 sm:flex-row">
-          <Input name="email" type="email" placeholder="colleague@company.fi" required className="sm:max-w-xs" />
+          <Input
+            name="email"
+            type="email"
+            placeholder="colleague@company.fi"
+            required
+            className="sm:max-w-xs"
+          />
           <select
             name="role"
             defaultValue="MEMBER"

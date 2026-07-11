@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getTranslations } from "next-intl/server";
 import { getTenantContext } from "@/server/auth/session";
 import { tenantDb } from "@/server/db/tenant";

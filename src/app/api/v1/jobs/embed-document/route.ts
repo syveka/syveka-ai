@@ -1,15 +1,8 @@
 import { NextResponse } from "next/server";
-import { Prisma } from "@prisma/client";
 import { z } from "zod";
-import { verifyJobRequest } from "@/server/jobs/verify";
-import { unscopedPrisma } from "@/server/db/tenant";
-import { createSupabaseAdmin } from "@/server/supabase/server";
-import { extractText, extractFromUrl } from "@/server/ai/extract";
-import { chunkText } from "@/server/ai/chunking";
-import { embed } from "@/server/integrations/openai";
-import { recordUsage } from "@/server/services/billing/entitlements";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const payloadSchema = z.object({
@@ -21,6 +14,26 @@ const payloadSchema = z.object({
 const EMBED_BATCH = 64;
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const [
+    { Prisma },
+    { verifyJobRequest },
+    { unscopedPrisma },
+    { createSupabaseAdmin },
+    { extractText, extractFromUrl },
+    { chunkText },
+    { embed },
+    { recordUsage },
+  ] = await Promise.all([
+    import("@prisma/client"),
+    import("@/server/jobs/verify"),
+    import("@/server/db/tenant"),
+    import("@/server/supabase/server"),
+    import("@/server/ai/extract"),
+    import("@/server/ai/chunking"),
+    import("@/server/integrations/openai"),
+    import("@/server/services/billing/entitlements"),
+  ]);
+
   const rawBody = await verifyJobRequest(request);
   if (rawBody === null) {
     return NextResponse.json({ error: "invalid signature" }, { status: 401 });
@@ -51,7 +64,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       const admin = createSupabaseAdmin();
       const { data, error } = await admin.storage.from("documents").download(document.storagePath);
       if (error || !data) throw new Error(`Storage download failed: ${error?.message}`);
-      text = await extractText(Buffer.from(await data.arrayBuffer()), document.mimeType ?? "text/plain");
+      text = await extractText(
+        Buffer.from(await data.arrayBuffer()),
+        document.mimeType ?? "text/plain",
+      );
     } else {
       throw new Error("No content source");
     }

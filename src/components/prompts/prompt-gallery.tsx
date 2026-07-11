@@ -5,7 +5,10 @@ import { useTranslations } from "next-intl";
 import { Plus, Trash2, Play, Globe } from "lucide-react";
 import { useRouter, usePathname } from "@/i18n/routing";
 import {
-  createPromptAction, deletePromptAction, renderPromptAction, type PromptActionState,
+  createPromptAction,
+  deletePromptAction,
+  renderPromptAction,
+  type PromptActionState,
 } from "@/actions/prompts";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -13,7 +16,15 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
-const CATEGORIES = ["sales", "support", "marketing", "finance", "hr", "productivity", "general"] as const;
+const CATEGORIES = [
+  "sales",
+  "support",
+  "marketing",
+  "finance",
+  "hr",
+  "productivity",
+  "general",
+] as const;
 
 type PromptItem = {
   id: string;
@@ -161,14 +172,11 @@ function UseDialog({ prompt, onClose }: { prompt: PromptItem; onClose: () => voi
 function CreateDialog({ onClose }: { onClose: () => void }) {
   const t = useTranslations("prompts");
   const tc = useTranslations("common");
-  const [state, action, pending] = useActionState<PromptActionState, FormData>(
-    async (prev, fd) => {
-      const result = await createPromptAction(prev, fd);
-      if (result.message === "created") onClose();
-      return result;
-    },
-    {},
-  );
+  const [state, action, pending] = useActionState<PromptActionState, FormData>(async (prev, fd) => {
+    const result = await createPromptAction(prev, fd);
+    if (result.message === "created") onClose();
+    return result;
+  }, {});
 
   return (
     <Overlay onClose={onClose}>

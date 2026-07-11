@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { notFound } from "next/navigation";
 import { requirePermission } from "@/server/auth/guard";
 import { tenantDb } from "@/server/db/tenant";
@@ -21,7 +23,11 @@ export default async function AssistantPage({
   });
   if (!assistant) notFound();
 
-  const initial: VoiceAssistantInput & { id: string; isActive: boolean; phoneNumber: string | null } = {
+  const initial: VoiceAssistantInput & {
+    id: string;
+    isActive: boolean;
+    phoneNumber: string | null;
+  } = {
     id: assistant.id,
     isActive: assistant.isActive,
     phoneNumber: assistant.phoneNumber,

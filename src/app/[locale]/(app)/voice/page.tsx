@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getTranslations } from "next-intl/server";
 import { Phone, Plus } from "lucide-react";
 import { requirePermission } from "@/server/auth/guard";
@@ -51,7 +53,9 @@ export default async function VoicePage() {
                     <span
                       className={cn(
                         "rounded-full px-2 py-0.5 text-xs font-medium",
-                        a.isActive ? "bg-success/15 text-success" : "bg-muted text-muted-foreground",
+                        a.isActive
+                          ? "bg-success/15 text-success"
+                          : "bg-muted text-muted-foreground",
                       )}
                     >
                       {a.isActive ? t("active") : t("inactive")}

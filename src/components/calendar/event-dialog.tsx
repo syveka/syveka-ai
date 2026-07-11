@@ -2,9 +2,7 @@
 
 import { useActionState, useEffect } from "react";
 import { useTranslations } from "next-intl";
-import {
-  saveEventAction, deleteEventAction, type CalendarActionState,
-} from "@/actions/calendar";
+import { saveEventAction, deleteEventAction, type CalendarActionState } from "@/actions/calendar";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -52,16 +50,36 @@ export function EventDialog({
           <form action={action} className="space-y-3">
             <div className="space-y-1.5">
               <Label htmlFor="title">{t("fields.title")}</Label>
-              <Input id="title" name="title" defaultValue={event?.title} required disabled={readOnly} />
+              <Input
+                id="title"
+                name="title"
+                defaultValue={event?.title}
+                required
+                disabled={readOnly}
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="startsAt">{t("fields.start")}</Label>
-                <Input id="startsAt" name="startsAt" type="datetime-local" defaultValue={defaultStart} required disabled={readOnly} />
+                <Input
+                  id="startsAt"
+                  name="startsAt"
+                  type="datetime-local"
+                  defaultValue={defaultStart}
+                  required
+                  disabled={readOnly}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="endsAt">{t("fields.end")}</Label>
-                <Input id="endsAt" name="endsAt" type="datetime-local" defaultValue={defaultEnd} required disabled={readOnly} />
+                <Input
+                  id="endsAt"
+                  name="endsAt"
+                  type="datetime-local"
+                  defaultValue={defaultEnd}
+                  required
+                  disabled={readOnly}
+                />
               </div>
             </div>
             <div className="space-y-1.5">
@@ -78,7 +96,11 @@ export function EventDialog({
                 className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
               />
             </div>
-            {state.error ? <p role="alert" className="text-sm text-destructive">{tc("error")}</p> : null}
+            {state.error ? (
+              <p role="alert" className="text-sm text-destructive">
+                {tc("error")}
+              </p>
+            ) : null}
             <div className="flex justify-between pt-2">
               {event && canWrite ? (
                 <Button

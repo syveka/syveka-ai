@@ -87,11 +87,16 @@ export async function moveDeal(ctx: TenantContext, dealId: string, stageId: stri
 
   // Workflow triggers (§17.1)
   await emitWorkflowEvent(ctx.orgId, "deal.stage_changed", {
-    dealId, from: deal.stage.name, to: newStage.name, valueCents: deal.valueCents,
+    dealId,
+    from: deal.stage.name,
+    to: newStage.name,
+    valueCents: deal.valueCents,
   });
   if (newStage.isWon) {
     await emitWorkflowEvent(ctx.orgId, "deal.won", {
-      dealId, title: deal.title, valueCents: deal.valueCents,
+      dealId,
+      title: deal.title,
+      valueCents: deal.valueCents,
     });
   }
 }

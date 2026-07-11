@@ -7,8 +7,14 @@ import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
 
 export const API_SCOPES = [
-  "crm:read", "crm:write", "chat:write", "kb:read", "kb:write",
-  "calendar:read", "calendar:write", "analytics:read",
+  "crm:read",
+  "crm:write",
+  "chat:write",
+  "kb:read",
+  "kb:write",
+  "calendar:read",
+  "calendar:write",
+  "analytics:read",
 ] as const;
 
 export async function listApiKeys(ctx: TenantContext) {

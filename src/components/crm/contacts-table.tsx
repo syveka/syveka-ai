@@ -101,7 +101,10 @@ export function ContactsTable({
                   ))}
                 </div>
                 <span
-                  className={cn("rounded-full px-2 py-0.5 text-xs font-medium", STATUS_STYLE[c.status])}
+                  className={cn(
+                    "rounded-full px-2 py-0.5 text-xs font-medium",
+                    STATUS_STYLE[c.status],
+                  )}
                 >
                   {t(`statuses.${c.status}` as never)}
                 </span>
@@ -120,7 +123,10 @@ export function ContactsTable({
 
       {nextCursor ? (
         <div className="flex justify-center">
-          <Button variant="outline" onClick={() => setParamRaw(router, pathname, params, nextCursor)}>
+          <Button
+            variant="outline"
+            onClick={() => setParamRaw(router, pathname, params, nextCursor)}
+          >
             {t("loadMore")}
           </Button>
         </div>

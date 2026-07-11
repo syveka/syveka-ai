@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { notFound } from "next/navigation";
 import { getTranslations, getLocale } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
@@ -68,7 +70,8 @@ export default async function ContactDetailPage({
                 <div key={a.id} className="border-s-2 border-border ps-3">
                   <p className="text-sm font-medium">{a.subject}</p>
                   <p className="text-xs text-muted-foreground">
-                    {a.type} · {formatDate(a.createdAt, locale, { dateStyle: "medium", timeStyle: "short" })}
+                    {a.type} ·{" "}
+                    {formatDate(a.createdAt, locale, { dateStyle: "medium", timeStyle: "short" })}
                   </p>
                   {a.body ? <p className="mt-1 text-sm text-muted-foreground">{a.body}</p> : null}
                 </div>

@@ -1,12 +1,11 @@
 import { NextResponse } from "next/server";
 import type Stripe from "stripe";
-import { stripe, planForPriceId } from "@/server/integrations/stripe";
-import { unscopedPrisma } from "@/server/db/tenant";
-import { invalidateEntitlements } from "@/server/services/billing/entitlements";
-import { redis } from "@/server/integrations/redis";
-import { env } from "@/env";
+import type { unscopedPrisma as prismaClient } from "@/server/db/tenant";
+import type { planForPriceId as resolvePlanForPriceId } from "@/server/integrations/stripe";
+import type { invalidateEntitlements as invalidateBillingEntitlements } from "@/server/services/billing/entitlements";
 
 export const runtime = "nodejs"; // raw-body signature verification
+export const dynamic = "force-dynamic";
 
 const SUB_STATUS_MAP: Record<Stripe.Subscription.Status, string> = {
   active: "ACTIVE",
@@ -19,15 +18,21 @@ const SUB_STATUS_MAP: Record<Stripe.Subscription.Status, string> = {
   paused: "PAUSED",
 };
 
-async function upsertSubscription(sub: Stripe.Subscription): Promise<void> {
+type RuntimeDeps = {
+  planForPriceId: typeof resolvePlanForPriceId;
+  unscopedPrisma: typeof prismaClient;
+  invalidateEntitlements: typeof invalidateBillingEntitlements;
+};
+
+async function upsertSubscription(sub: Stripe.Subscription, deps: RuntimeDeps): Promise<void> {
   const orgId = sub.metadata.orgId;
   if (!orgId) throw new Error(`Subscription ${sub.id} missing orgId metadata`);
 
   const item = sub.items.data[0];
   const priceId = item?.price.id ?? "";
-  const plan = planForPriceId(priceId);
+  const plan = deps.planForPriceId(priceId);
 
-  await unscopedPrisma.subscription.upsert({
+  await deps.unscopedPrisma.subscription.upsert({
     where: { organizationId: orgId },
     create: {
       organizationId: orgId,
@@ -49,13 +54,28 @@ async function upsertSubscription(sub: Stripe.Subscription): Promise<void> {
       trialEndsAt: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
     },
   });
-  await invalidateEntitlements(orgId);
+  await deps.invalidateEntitlements(orgId);
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
   const rawBody = await request.text();
   const signature = request.headers.get("stripe-signature");
   if (!signature) return NextResponse.json({ error: "missing signature" }, { status: 400 });
+
+  const [
+    { env },
+    { stripe, planForPriceId },
+    { unscopedPrisma },
+    { invalidateEntitlements },
+    { redis },
+  ] = await Promise.all([
+    import("@/env"),
+    import("@/server/integrations/stripe"),
+    import("@/server/db/tenant"),
+    import("@/server/services/billing/entitlements"),
+    import("@/server/integrations/redis"),
+  ]);
+  const deps = { planForPriceId, unscopedPrisma, invalidateEntitlements };
 
   let event: Stripe.Event;
   try {
@@ -80,13 +100,13 @@ export async function POST(request: Request): Promise<NextResponse> {
             });
             sub.metadata.orgId = session.metadata.orgId;
           }
-          await upsertSubscription(sub);
+          await upsertSubscription(sub, deps);
         }
         break;
       }
       case "customer.subscription.created":
       case "customer.subscription.updated":
-        await upsertSubscription(event.data.object);
+        await upsertSubscription(event.data.object, deps);
         break;
 
       case "customer.subscription.deleted": {
@@ -94,21 +114,23 @@ export async function POST(request: Request): Promise<NextResponse> {
         const orgId = sub.metadata.orgId;
         if (orgId) {
           // Downgrade to FREE; data kept, over-limit features go read-only (§14.4)
-          await unscopedPrisma.subscription.update({
+          await deps.unscopedPrisma.subscription.update({
             where: { organizationId: orgId },
             data: { plan: "FREE", status: "CANCELED", stripeSubscriptionId: null },
           });
-          await invalidateEntitlements(orgId);
+          await deps.invalidateEntitlements(orgId);
         }
         break;
       }
       case "invoice.paid": {
         const invoice = event.data.object;
         const subId =
-          typeof invoice.subscription === "string" ? invoice.subscription : invoice.subscription?.id;
+          typeof invoice.subscription === "string"
+            ? invoice.subscription
+            : invoice.subscription?.id;
         if (subId) {
           const sub = await stripe.subscriptions.retrieve(subId);
-          await upsertSubscription(sub); // clears PAST_DUE
+          await upsertSubscription(sub, deps); // clears PAST_DUE
         }
         break;
       }
@@ -117,16 +139,16 @@ export async function POST(request: Request): Promise<NextResponse> {
         const customerId =
           typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
         if (customerId) {
-          const org = await unscopedPrisma.organization.findUnique({
+          const org = await deps.unscopedPrisma.organization.findUnique({
             where: { stripeCustomerId: customerId },
             select: { id: true },
           });
           if (org) {
-            await unscopedPrisma.subscription.update({
+            await deps.unscopedPrisma.subscription.update({
               where: { organizationId: org.id },
               data: { status: "PAST_DUE" },
             });
-            await invalidateEntitlements(org.id);
+            await deps.invalidateEntitlements(org.id);
             // Dunning email sequence is triggered by the billing service (day 0/3/7).
           }
         }

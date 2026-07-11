@@ -40,7 +40,12 @@ export function OrganizationForm({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="vatId">VAT ID</Label>
-              <Input id="vatId" name="vatId" defaultValue={initial.vatId} placeholder="FI12345678" />
+              <Input
+                id="vatId"
+                name="vatId"
+                defaultValue={initial.vatId}
+                placeholder="FI12345678"
+              />
             </div>
           </div>
         </CardContent>

@@ -6,7 +6,10 @@ import type { Role } from "@prisma/client";
 import { requirePermission } from "@/server/auth/guard";
 import { getSessionUser, AuthError } from "@/server/auth/session";
 import {
-  inviteMember, acceptInvitation, changeMemberRole, removeMember,
+  inviteMember,
+  acceptInvitation,
+  changeMemberRole,
+  removeMember,
 } from "@/server/services/members";
 import { inviteMemberSchema, changeRoleSchema } from "@/lib/validators/members";
 import { createSupabaseServer } from "@/server/supabase/server";

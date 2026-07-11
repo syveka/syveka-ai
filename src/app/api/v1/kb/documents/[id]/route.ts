@@ -1,12 +1,16 @@
 import { NextResponse } from "next/server";
-import { requirePermission } from "@/server/auth/guard";
-import { AuthError } from "@/server/auth/session";
-import { tenantDb } from "@/server/db/tenant";
-import { deleteDocument } from "@/server/services/documents";
 
 type Params = { params: Promise<{ id: string }> };
 
+export const dynamic = "force-dynamic";
+
 export async function GET(_req: Request, { params }: Params): Promise<NextResponse> {
+  const [{ requirePermission }, { AuthError }, { tenantDb }] = await Promise.all([
+    import("@/server/auth/guard"),
+    import("@/server/auth/session"),
+    import("@/server/db/tenant"),
+  ]);
+
   try {
     const { id } = await params;
     const ctx = await requirePermission("kb:read");
@@ -26,6 +30,12 @@ export async function GET(_req: Request, { params }: Params): Promise<NextRespon
 }
 
 export async function DELETE(_req: Request, { params }: Params): Promise<NextResponse> {
+  const [{ requirePermission }, { AuthError }, { deleteDocument }] = await Promise.all([
+    import("@/server/auth/guard"),
+    import("@/server/auth/session"),
+    import("@/server/services/documents"),
+  ]);
+
   try {
     const { id } = await params;
     const ctx = await requirePermission("kb:write");

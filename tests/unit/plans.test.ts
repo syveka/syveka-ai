@@ -5,14 +5,16 @@ describe("plan matrix (§14.1)", () => {
   it("limits grow monotonically FREE → STARTER → PRO", () => {
     const order = ["FREE", "STARTER", "PRO"] as const;
     const keys = [
-      "maxSeats", "aiMessagesPerUserMonth", "voiceMinutesMonth",
-      "kbStorageMb", "activeWorkflows", "maxContacts",
+      "maxSeats",
+      "aiMessagesPerUserMonth",
+      "voiceMinutesMonth",
+      "kbStorageMb",
+      "activeWorkflows",
+      "maxContacts",
     ] as const;
     for (const key of keys) {
       for (let i = 1; i < order.length; i++) {
-        expect(PLAN_LIMITS[order[i]!][key]).toBeGreaterThanOrEqual(
-          PLAN_LIMITS[order[i - 1]!][key],
-        );
+        expect(PLAN_LIMITS[order[i]!][key]).toBeGreaterThanOrEqual(PLAN_LIMITS[order[i - 1]!][key]);
       }
     }
   });

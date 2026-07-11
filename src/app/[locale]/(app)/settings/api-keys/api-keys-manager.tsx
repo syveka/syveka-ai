@@ -52,7 +52,9 @@ export function ApiKeysManager({ keys }: { keys: KeyRow[] }) {
           <CardContent className="space-y-2 pt-6">
             <p className="text-sm font-medium">Copy your key now. It will not be shown again:</p>
             <div className="flex items-center gap-2">
-              <code className="flex-1 truncate rounded bg-muted px-2 py-1.5 text-xs">{plaintext}</code>
+              <code className="flex-1 truncate rounded bg-muted px-2 py-1.5 text-xs">
+                {plaintext}
+              </code>
               <Button
                 size="icon"
                 variant="outline"

@@ -1,3 +1,5 @@
+export const dynamic = "force-dynamic";
+
 import { getTranslations, getLocale } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { listCalls } from "@/server/services/voice";
@@ -36,10 +38,11 @@ export default async function CallsPage() {
                     {call.callerNumber ?? t("unknownCaller")} → {call.assistant.name}
                   </p>
                   <p className="text-xs text-muted-foreground">
-                    {formatDate(call.startedAt, locale, { dateStyle: "medium", timeStyle: "short" })}
-                    {call.durationSeconds
-                      ? ` · ${Math.round(call.durationSeconds / 60)} min`
-                      : ""}
+                    {formatDate(call.startedAt, locale, {
+                      dateStyle: "medium",
+                      timeStyle: "short",
+                    })}
+                    {call.durationSeconds ? ` · ${Math.round(call.durationSeconds / 60)} min` : ""}
                   </p>
                 </div>
                 {call.sentiment ? (

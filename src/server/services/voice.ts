@@ -2,7 +2,9 @@ import "server-only";
 
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import {
-  upsertVapiAssistant, buyPhoneNumber, type VapiAssistantConfig,
+  upsertVapiAssistant,
+  buyPhoneNumber,
+  type VapiAssistantConfig,
 } from "@/server/integrations/vapi";
 import { TOOL_REGISTRY, zodToJsonSchema } from "@/server/ai/tools";
 import { getEntitlements } from "./billing/entitlements";

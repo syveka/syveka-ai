@@ -9,8 +9,29 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 
 const PLANS: Array<{ plan: Plan; monthly: number; features: string[] }> = [
-  { plan: "STARTER", monthly: 29, features: ["1000 AI msg/user", "1 voice assistant · 100 min", "1 GB KB", "5 workflows", "5000 contacts"] },
-  { plan: "PRO", monthly: 79, features: ["5000 AI msg/user", "3 voice assistants · 500 min", "10 GB KB", "25 workflows", "API + webhooks", "2y audit log"] },
+  {
+    plan: "STARTER",
+    monthly: 29,
+    features: [
+      "1000 AI msg/user",
+      "1 voice assistant · 100 min",
+      "1 GB KB",
+      "5 workflows",
+      "5000 contacts",
+    ],
+  },
+  {
+    plan: "PRO",
+    monthly: 79,
+    features: [
+      "5000 AI msg/user",
+      "3 voice assistants · 500 min",
+      "10 GB KB",
+      "25 workflows",
+      "API + webhooks",
+      "2y audit log",
+    ],
+  },
 ];
 
 export function PlanCards({ currentPlan }: { currentPlan: Plan }) {
@@ -38,7 +59,7 @@ export function PlanCards({ currentPlan }: { currentPlan: Plan }) {
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         {PLANS.map(({ plan, monthly, features }) => {
-          const price = interval === "annual" ? Math.round(monthly * 10 / 12) : monthly;
+          const price = interval === "annual" ? Math.round((monthly * 10) / 12) : monthly;
           const isCurrent = plan === currentPlan;
           return (
             <Card key={plan} className={cn(isCurrent && "border-primary")}>
@@ -57,7 +78,12 @@ export function PlanCards({ currentPlan }: { currentPlan: Plan }) {
                   ))}
                 </ul>
                 <form action={startCheckoutAction.bind(null, plan, interval)}>
-                  <Button type="submit" className="w-full" disabled={isCurrent} variant={isCurrent ? "outline" : "default"}>
+                  <Button
+                    type="submit"
+                    className="w-full"
+                    disabled={isCurrent}
+                    variant={isCurrent ? "outline" : "default"}
+                  >
                     {isCurrent ? t("current") : t("choosePlan")}
                   </Button>
                 </form>

@@ -2,14 +2,22 @@
 
 import { redirect } from "next/navigation";
 import type { Plan } from "@prisma/client";
-import { requirePermission } from "@/server/auth/guard";
-import { unscopedPrisma } from "@/server/db/tenant";
-import {
-  getOrCreateCustomer, createCheckoutSession, createPortalSession, type BillingInterval,
-} from "@/server/integrations/stripe";
-import { audit } from "@/server/services/audit";
+
+type BillingInterval = "monthly" | "annual";
 
 export async function startCheckoutAction(plan: Plan, interval: BillingInterval): Promise<void> {
+  const [
+    { requirePermission },
+    { unscopedPrisma },
+    { getOrCreateCustomer, createCheckoutSession },
+    { audit },
+  ] = await Promise.all([
+    import("@/server/auth/guard"),
+    import("@/server/db/tenant"),
+    import("@/server/integrations/stripe"),
+    import("@/server/services/audit"),
+  ]);
+
   const ctx = await requirePermission("billing:manage");
 
   const org = await unscopedPrisma.organization.findUniqueOrThrow({
@@ -48,6 +56,12 @@ export async function startCheckoutAction(plan: Plan, interval: BillingInterval)
 }
 
 export async function openPortalAction(): Promise<void> {
+  const [{ requirePermission }, { unscopedPrisma }, { createPortalSession }] = await Promise.all([
+    import("@/server/auth/guard"),
+    import("@/server/db/tenant"),
+    import("@/server/integrations/stripe"),
+  ]);
+
   const ctx = await requirePermission("billing:manage");
   const org = await unscopedPrisma.organization.findUniqueOrThrow({
     where: { id: ctx.orgId },

@@ -1,17 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import type { Prisma } from "@prisma/client";
-import { verifyJobRequest } from "@/server/jobs/verify";
-import { unscopedPrisma } from "@/server/db/tenant";
-import { enqueue } from "@/server/jobs/queue";
-import { anthropic } from "@/server/integrations/anthropic";
-import { routeModel } from "@/server/ai/router";
-import { sendEmail } from "@/server/integrations/resend";
 import { WorkflowNotificationEmail } from "../../../../../../emails/workflow-notification";
-import { recordUsage } from "@/server/services/billing/entitlements";
 import type { WorkflowStep } from "@/lib/validators/workflows";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const payloadSchema = z.object({
@@ -29,22 +23,46 @@ type Ctx = { trigger: Record<string, unknown>; vars: Record<string, unknown> };
 /** {{trigger.x}} / {{vars.y}} interpolation. */
 function interpolate(template: string, ctx: Ctx): string {
   return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path: string) => {
-    const value = path.split(".").reduce<unknown>(
-      (acc, key) => (acc && typeof acc === "object" ? (acc as Record<string, unknown>)[key] : undefined),
-      { trigger: ctx.trigger, vars: ctx.vars } as Record<string, unknown>,
-    );
+    const value = path
+      .split(".")
+      .reduce<unknown>(
+        (acc, key) =>
+          acc && typeof acc === "object" ? (acc as Record<string, unknown>)[key] : undefined,
+        { trigger: ctx.trigger, vars: ctx.vars } as Record<string, unknown>,
+      );
     return value === undefined || value === null ? "" : String(value);
   });
 }
 
 function resolveField(path: string, ctx: Ctx): unknown {
-  return path.split(".").reduce<unknown>(
-    (acc, key) => (acc && typeof acc === "object" ? (acc as Record<string, unknown>)[key] : undefined),
-    { trigger: ctx.trigger, vars: ctx.vars } as Record<string, unknown>,
-  );
+  return path
+    .split(".")
+    .reduce<unknown>(
+      (acc, key) =>
+        acc && typeof acc === "object" ? (acc as Record<string, unknown>)[key] : undefined,
+      { trigger: ctx.trigger, vars: ctx.vars } as Record<string, unknown>,
+    );
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
+  const [
+    { verifyJobRequest },
+    { unscopedPrisma },
+    { enqueue },
+    { anthropic },
+    { routeModel },
+    { sendEmail },
+    { recordUsage },
+  ] = await Promise.all([
+    import("@/server/jobs/verify"),
+    import("@/server/db/tenant"),
+    import("@/server/jobs/queue"),
+    import("@/server/integrations/anthropic"),
+    import("@/server/ai/router"),
+    import("@/server/integrations/resend"),
+    import("@/server/services/billing/entitlements"),
+  ]);
+
   const rawBody = await verifyJobRequest(request);
   if (rawBody === null) return NextResponse.json({ error: "invalid signature" }, { status: 401 });
 
@@ -79,7 +97,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   const ctx: Ctx = {
     trigger: triggerData,
     vars: Object.fromEntries(
-      results.filter((r) => r.status === "ok" && r.output !== undefined)
+      results
+        .filter((r) => r.status === "ok" && r.output !== undefined)
         .map((r) => [r.stepId, r.output]),
     ),
   };
@@ -103,14 +122,21 @@ export async function POST(request: Request): Promise<NextResponse> {
           const actual = resolveField(step.field, ctx);
           const expected = step.value;
           const pass =
-            step.comparator === "exists" ? actual !== undefined && actual !== null
-            : step.comparator === "eq" ? actual === expected
-            : step.comparator === "neq" ? actual !== expected
-            : step.comparator === "gt" ? Number(actual) > Number(expected)
-            : step.comparator === "lt" ? Number(actual) < Number(expected)
-            : step.comparator === "contains"
-              ? String(actual ?? "").toLowerCase().includes(String(expected ?? "").toLowerCase())
-              : false;
+            step.comparator === "exists"
+              ? actual !== undefined && actual !== null
+              : step.comparator === "eq"
+                ? actual === expected
+                : step.comparator === "neq"
+                  ? actual !== expected
+                  : step.comparator === "gt"
+                    ? Number(actual) > Number(expected)
+                    : step.comparator === "lt"
+                      ? Number(actual) < Number(expected)
+                      : step.comparator === "contains"
+                        ? String(actual ?? "")
+                            .toLowerCase()
+                            .includes(String(expected ?? "").toLowerCase())
+                        : false;
           results.push({ stepId: step.id, status: "ok", output: pass });
           if (!pass) {
             // linear model (§17.1): failed condition ends the run successfully
@@ -134,7 +160,8 @@ export async function POST(request: Request): Promise<NextResponse> {
           ctx.vars[step.outputVar] = text;
           results.push({ stepId: step.id, status: "ok", output: text.slice(0, 2000) });
           await recordUsage(orgId, "AI_TOKENS_OUT", res.usage.output_tokens, {
-            feature: "workflow", workflowId,
+            feature: "workflow",
+            workflowId,
           });
           break;
         }
@@ -195,10 +222,12 @@ export async function POST(request: Request): Promise<NextResponse> {
           await enqueue(
             "run-workflow",
             {
-              workflowId, orgId,
+              workflowId,
+              orgId,
               triggerType: parsed.data.triggerType,
               triggerData,
-              runId: run.id, resumeFromIndex: i + 1,
+              runId: run.id,
+              resumeFromIndex: i + 1,
             },
             { delaySeconds: step.seconds },
           );

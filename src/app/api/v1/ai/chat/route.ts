@@ -1,21 +1,10 @@
 import { NextResponse } from "next/server";
-import { getTenantContext } from "@/server/auth/session";
-import { can } from "@/server/auth/permissions";
-import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { chatRequestSchema, type ChatStreamEvent } from "@/lib/validators/chat";
-import { rateLimiters } from "@/server/integrations/redis";
-import { isFlaggedByModeration } from "@/server/integrations/openai";
-import { streamClaude } from "@/server/integrations/anthropic";
-import { routeModel } from "@/server/ai/router";
-import { buildSystemPrompt } from "@/server/ai/prompts/system";
-import { retrieveChunks, extractValidCitations, type RetrievedChunk } from "@/server/ai/rag";
-import { anthropicToolsFor, executeTool, type ToolIdentity } from "@/server/ai/tools";
-import {
-  assertWithinLimit, recordUsage, getMonthUsage, EntitlementError,
-} from "@/server/services/billing/entitlements";
-import { generateTitle } from "@/server/services/conversations";
+import type { RetrievedChunk } from "@/server/ai/rag";
+import type { ToolIdentity } from "@/server/ai/tools";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 const CONTEXT_WINDOW_TURNS = 20; // then rolling summary (§15.6)
@@ -25,6 +14,34 @@ function sse(event: ChatStreamEvent): string {
 }
 
 export async function POST(request: Request): Promise<Response> {
+  const [
+    { getTenantContext },
+    { can },
+    { tenantDb, unscopedPrisma },
+    { rateLimiters },
+    { isFlaggedByModeration },
+    { streamClaude },
+    { routeModel },
+    { buildSystemPrompt },
+    { retrieveChunks, extractValidCitations },
+    { anthropicToolsFor, executeTool },
+    { assertWithinLimit, recordUsage, getMonthUsage, EntitlementError },
+    { generateTitle },
+  ] = await Promise.all([
+    import("@/server/auth/session"),
+    import("@/server/auth/permissions"),
+    import("@/server/db/tenant"),
+    import("@/server/integrations/redis"),
+    import("@/server/integrations/openai"),
+    import("@/server/integrations/anthropic"),
+    import("@/server/ai/router"),
+    import("@/server/ai/prompts/system"),
+    import("@/server/ai/rag"),
+    import("@/server/ai/tools"),
+    import("@/server/services/billing/entitlements"),
+    import("@/server/services/conversations"),
+  ]);
+
   // ── Guardrails: auth → permission → rate limit → entitlement → moderation ──
   let ctx;
   try {

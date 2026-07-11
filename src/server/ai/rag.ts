@@ -41,7 +41,10 @@ export async function retrieveChunks(params: {
   if (rows.length === 0) return [];
 
   const docs = await unscopedPrisma.document.findMany({
-    where: { id: { in: [...new Set(rows.map((r) => r.document_id))] }, organizationId: params.orgId },
+    where: {
+      id: { in: [...new Set(rows.map((r) => r.document_id))] },
+      organizationId: params.orgId,
+    },
     select: { id: true, title: true },
   });
   const titleById = new Map(docs.map((d) => [d.id, d.title]));

@@ -3,7 +3,20 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import { env } from "@/env";
 
-export const anthropic = new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+let anthropicClient: Anthropic | null = null;
+
+function getAnthropic(): Anthropic {
+  anthropicClient ??= new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  return anthropicClient;
+}
+
+export const anthropic = new Proxy({} as Anthropic, {
+  get(_target, prop: keyof Anthropic) {
+    const client = getAnthropic();
+    const value = client[prop];
+    return typeof value === "function" ? value.bind(client) : value;
+  },
+});
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
 
@@ -35,7 +48,7 @@ export async function streamClaude(params: {
 
   // Tool-use loop: max 5 rounds to bound cost (§15.6)
   for (let round = 0; round < 5; round++) {
-    const stream = anthropic.messages.stream({
+    const stream = getAnthropic().messages.stream({
       model: params.model,
       system: params.system,
       messages,

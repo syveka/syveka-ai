@@ -1,11 +1,15 @@
 import { NextResponse } from "next/server";
-import { unscopedPrisma } from "@/server/db/tenant";
-import { redis } from "@/server/integrations/redis";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 
 /** Uptime probe (§24): DB + Redis reachability. */
 export async function GET(): Promise<NextResponse> {
+  const [{ unscopedPrisma }, { redis }] = await Promise.all([
+    import("@/server/db/tenant"),
+    import("@/server/integrations/redis"),
+  ]);
+
   const checks: Record<string, "ok" | "fail"> = {};
   try {
     await unscopedPrisma.$queryRaw`select 1`;

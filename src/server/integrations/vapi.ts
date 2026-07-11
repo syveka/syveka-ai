@@ -53,7 +53,8 @@ function toVapiPayload(cfg: VapiAssistantConfig) {
         ? { provider: "11labs", voiceId: cfg.voiceId ?? "" }
         : {
             provider: "azure",
-            voiceId: cfg.voiceId ?? (cfg.language === "fi" ? "fi-FI-SelmaNeural" : "en-US-JennyNeural"),
+            voiceId:
+              cfg.voiceId ?? (cfg.language === "fi" ? "fi-FI-SelmaNeural" : "en-US-JennyNeural"),
           },
     transcriber: { provider: "deepgram", model: "nova-2", language: cfg.language },
     server: { url: cfg.serverUrl, secret: cfg.serverUrlSecret },
