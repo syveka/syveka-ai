@@ -319,6 +319,8 @@ model Deal {
   title           String
   valueCents      Int       @default(0) @map("value_cents")
   currency        String    @default("EUR")
+  probability     Int?
+  position        Int       @default(0)
   expectedCloseAt DateTime? @map("expected_close_at")
   closedAt        DateTime? @map("closed_at")
   lostReason      String?   @map("lost_reason")
@@ -336,6 +338,7 @@ model Deal {
   @@index([organizationId, stageId])
   @@index([organizationId, closedAt])
   @@index([organizationId, pipelineId, closedAt])
+  @@index([organizationId, ownerId])
   @@map("deals")
 }
 
@@ -376,6 +379,7 @@ enum ActivityType {
   MEETING
   VOICE_AI_CALL
   AI_SUMMARY
+  STAGE_CHANGE
 }
 
 model Tag {
@@ -778,3 +782,4 @@ model AuditLog {
   @@index([organizationId, resourceType, resourceId])
   @@map("audit_logs")
 }
+

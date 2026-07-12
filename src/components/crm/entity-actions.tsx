@@ -18,8 +18,8 @@ export function EntityActions({
   archived: boolean;
   canWrite: boolean;
   canDelete: boolean;
-  archiveAction: () => Promise<void>;
-  restoreAction: () => Promise<void>;
+  archiveAction?: () => Promise<void>;
+  restoreAction?: () => Promise<void>;
   deleteAction: () => Promise<void>;
   afterDeleteHref: string;
 }) {
@@ -58,7 +58,7 @@ export function EntityActions({
   return (
     <div className="flex items-center gap-2">
       {canWrite ? (
-        archived ? (
+        archived && restoreAction ? (
           <Button
             variant="outline"
             size="sm"
@@ -69,7 +69,7 @@ export function EntityActions({
             <ArchiveRestore className="size-4" />
             {t("restore")}
           </Button>
-        ) : (
+        ) : !archived && archiveAction ? (
           <Button
             variant="outline"
             size="sm"
@@ -80,7 +80,7 @@ export function EntityActions({
             <Archive className="size-4" />
             {t("archive")}
           </Button>
-        )
+        ) : null
       ) : null}
       {canDelete ? (
         <Button

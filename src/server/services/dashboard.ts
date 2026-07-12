@@ -173,14 +173,20 @@ export async function getCrmDashboard(ctx: TenantContext) {
         name: stage.name,
         count: totals.count,
         valueCents: totals.valueCents,
+        probability: stage.probability,
         isWon: stage.isWon,
         isLost: stage.isLost,
       };
     }) ?? [];
 
-  const openPipelineValueCents = pipelineStages
-    .filter((stage) => !stage.isWon && !stage.isLost)
-    .reduce((sum, stage) => sum + stage.valueCents, 0);
+  const openStages = pipelineStages.filter((stage) => !stage.isWon && !stage.isLost);
+  const openPipelineValueCents = openStages.reduce((sum, stage) => sum + stage.valueCents, 0);
+  // Weighted forecast uses stage default probabilities; per-deal overrides
+  // are reflected on the deals board where deals are loaded individually.
+  const forecastValueCents = openStages.reduce(
+    (sum, stage) => sum + Math.round((stage.valueCents * stage.probability) / 100),
+    0,
+  );
 
   const summaryModel = routeModel("summary");
   const customerGrowthPct = percentChange(currentCustomers, previousCustomers);
@@ -239,6 +245,7 @@ export async function getCrmDashboard(ctx: TenantContext) {
       name: pipeline?.name ?? null,
       stages: pipelineStages,
       openValueCents: openPipelineValueCents,
+      forecastValueCents,
     },
     calendar: {
       meetings: upcomingMeetings.map((event) => ({

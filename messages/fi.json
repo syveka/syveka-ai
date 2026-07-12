@@ -12,7 +12,8 @@
     "confirm": "Vahvista",
     "back": "Takaisin",
     "next": "Seuraava",
-    "upgrade": "Päivitä tilaus"
+    "upgrade": "Päivitä tilaus",
+    "close": "Sulje"
   },
   "nav": {
     "dashboard": "Työpöytä",
@@ -99,7 +100,8 @@
     "insightNoAiMessages": "AI-keskustelujen käyttö on hiljaista tässä kuussa; ohjaa asiakastutkimus ja jatkotoimet chatiin, jotta konteksti kertyy.",
     "errorTitle": "Työpöytää ei voitu ladata",
     "errorDescription": "Päivitä työpöytä tai yritä hetken kuluttua uudelleen.",
-    "retry": "Yritä uudelleen"
+    "retry": "Yritä uudelleen",
+    "pipelineForecast": "Painotettu ennuste"
   },
   "billing": {
     "title": "Laskutus",
@@ -169,7 +171,8 @@
       "phone": "Puhelin",
       "status": "Tila",
       "title": "Tehtävänimike",
-      "company": "Yritys"
+      "company": "Yritys",
+      "contact": "Kontakti"
     },
     "companies": "Yritykset",
     "newCompany": "Uusi yritys",
@@ -210,8 +213,48 @@
       "EMAIL": "Sähköposti",
       "MEETING": "Tapaaminen",
       "VOICE_AI_CALL": "Ääni-AI-puhelu",
-      "AI_SUMMARY": "AI-yhteenveto"
-    }
+      "AI_SUMMARY": "AI-yhteenveto",
+      "STAGE_CHANGE": "Vaiheen vaihto"
+    },
+    "newDeal": "Uusi myyntimahdollisuus",
+    "editDeal": "Muokkaa myyntimahdollisuutta",
+    "weighted": "painotettu",
+    "forecast": "Ennuste",
+    "dealFields": {
+      "title": "Otsikko",
+      "value": "Arvo",
+      "currency": "Valuutta",
+      "stage": "Vaihe",
+      "probability": "Todennäköisyys %",
+      "owner": "Omistaja",
+      "expectedClose": "Odotettu päätös",
+      "dueDate": "Määräaika",
+      "forecast": "Odotettu tuotto"
+    },
+    "probabilityFromStage": "Vaiheen mukaan",
+    "noContact": "Ei kontaktia",
+    "meAsOwner": "Minä",
+    "editStages": "Muokkaa vaiheita",
+    "stageKind": "Vaiheen tyyppi",
+    "stageKinds": {
+      "open": "Avoin",
+      "won": "Voitettu",
+      "lost": "Hävitty"
+    },
+    "stageHasDeals": "Vaiheessa on vielä myyntimahdollisuuksia.",
+    "lastOpenStage": "Myyntiputkessa on oltava vähintään yksi avoin vaihe.",
+    "newStagePlaceholder": "Uuden vaiheen nimi…",
+    "addStage": "Lisää vaihe",
+    "tasks": "Tehtävät",
+    "taskPlaceholder": "Mitä pitää tehdä?",
+    "addTask": "Lisää tehtävä",
+    "noTasks": "Ei tehtäviä vielä.",
+    "overdue": "Myöhässä",
+    "wonBadge": "Voitettu",
+    "lostBadge": "Hävitty",
+    "closedLabel": "Suljettu",
+    "generateInsights": "AI-analyysi",
+    "generatingInsights": "Analysoidaan…"
   },
   "voice": {
     "title": "Puheavustaja",
