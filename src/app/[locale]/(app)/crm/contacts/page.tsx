@@ -4,9 +4,10 @@ import { getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";
 import { listContacts } from "@/server/services/contacts";
+import { listCompanyOptions } from "@/server/services/companies";
 import { contactListQuerySchema } from "@/lib/validators/crm";
 import { ContactsTable } from "@/components/crm/contacts-table";
-import { NewContactDialog } from "@/components/crm/new-contact-dialog";
+import { ContactDialog } from "@/components/crm/contact-dialog";
 
 export default async function ContactsPage({
   searchParams,
@@ -16,14 +17,18 @@ export default async function ContactsPage({
   const ctx = await requirePermission("crm:read");
   const t = await getTranslations("crm");
   const query = contactListQuerySchema.parse(await searchParams);
+  const canWrite = can(ctx.role, "crm:write");
 
-  const { data, nextCursor } = await listContacts(ctx, query);
+  const [{ data, nextCursor }, companies] = await Promise.all([
+    listContacts(ctx, query),
+    canWrite ? listCompanyOptions(ctx) : Promise.resolve([]),
+  ]);
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <h1 className="text-2xl font-semibold">{t("contacts")}</h1>
-        {can(ctx.role, "crm:write") ? <NewContactDialog /> : null}
+        {canWrite ? <ContactDialog mode="create" companies={companies} /> : null}
       </div>
       <ContactsTable
         canDelete={can(ctx.role, "crm:delete")}
@@ -35,6 +40,7 @@ export default async function ContactsPage({
           phone: c.phone,
           status: c.status,
           company: c.company?.name ?? null,
+          archived: c.archivedAt !== null,
           tags: c.tags.map((tc) => ({ name: tc.tag.name, color: tc.tag.color })),
         }))}
       />

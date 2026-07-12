@@ -226,13 +226,16 @@ model Company {
   customFields   Json      @default("{}") @map("custom_fields")
   createdAt      DateTime  @default(now()) @map("created_at")
   updatedAt      DateTime  @updatedAt @map("updated_at")
+  archivedAt     DateTime? @map("archived_at")
   deletedAt      DateTime? @map("deleted_at")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   contacts     Contact[]
   deals        Deal[]
+  activities   Activity[]
 
   @@index([organizationId])
+  @@index([organizationId, name])
   @@map("companies")
 }
 
@@ -253,6 +256,7 @@ model Contact {
   customFields   Json          @default("{}") @map("custom_fields")
   createdAt      DateTime      @default(now()) @map("created_at")
   updatedAt      DateTime      @updatedAt @map("updated_at")
+  archivedAt     DateTime?     @map("archived_at")
   deletedAt      DateTime?     @map("deleted_at")
 
   organization Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
@@ -340,6 +344,7 @@ model Activity {
   organizationId String       @map("organization_id") @db.Uuid
   userId         String?      @map("user_id") @db.Uuid
   contactId      String?      @map("contact_id") @db.Uuid
+  companyId      String?      @map("company_id") @db.Uuid
   dealId         String?      @map("deal_id") @db.Uuid
   type           ActivityType
   subject        String
@@ -352,12 +357,14 @@ model Activity {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
   contact      Contact?     @relation(fields: [contactId], references: [id], onDelete: Cascade)
+  company      Company?     @relation(fields: [companyId], references: [id], onDelete: Cascade)
   deal         Deal?        @relation(fields: [dealId], references: [id], onDelete: Cascade)
 
   @@index([organizationId, dueAt])
   @@index([organizationId, type, dueAt])
   @@index([organizationId, type, createdAt])
   @@index([contactId])
+  @@index([companyId])
   @@map("activities")
 }
 

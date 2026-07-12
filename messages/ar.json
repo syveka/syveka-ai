@@ -167,7 +167,50 @@
       "lastName": "اسم العائلة",
       "email": "البريد الإلكتروني",
       "phone": "الهاتف",
-      "status": "الحالة"
+      "status": "الحالة",
+      "title": "المسمى الوظيفي",
+      "company": "الشركة"
+    },
+    "companies": "الشركات",
+    "newCompany": "شركة جديدة",
+    "editCompany": "تعديل الشركة",
+    "editContact": "تعديل جهة الاتصال",
+    "noCompanies": "لا توجد شركات بعد.",
+    "searchCompaniesPlaceholder": "ابحث بالاسم أو النطاق أو المجال…",
+    "contactCount": "{count} جهة اتصال",
+    "dealCount": "{count} صفقة",
+    "archivedBadge": "مؤرشف",
+    "archive": "أرشفة",
+    "restore": "استعادة",
+    "confirmDelete": "هل تريد الحذف نهائيًا؟",
+    "archivedFilter": {
+      "active": "نشط",
+      "archived": "مؤرشف",
+      "all": "الكل"
+    },
+    "about": "نبذة",
+    "createdLabel": "تاريخ الإنشاء",
+    "addNote": "إضافة ملاحظة",
+    "notePlaceholder": "اكتب ملاحظة…",
+    "noActivities": "لا يوجد نشاط بعد.",
+    "invalidInput": "يرجى التحقق من حقول النموذج.",
+    "noCompany": "بدون شركة",
+    "companyFields": {
+      "name": "الاسم",
+      "domain": "النطاق",
+      "industry": "المجال",
+      "size": "حجم الشركة",
+      "website": "الموقع الإلكتروني",
+      "businessId": "السجل التجاري"
+    },
+    "activityTypes": {
+      "NOTE": "ملاحظة",
+      "TASK": "مهمة",
+      "CALL": "مكالمة",
+      "EMAIL": "بريد إلكتروني",
+      "MEETING": "اجتماع",
+      "VOICE_AI_CALL": "مكالمة الذكاء الاصطناعي الصوتي",
+      "AI_SUMMARY": "ملخص الذكاء الاصطناعي"
     }
   },
   "voice": {

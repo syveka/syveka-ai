@@ -167,7 +167,50 @@
       "lastName": "Sukunimi",
       "email": "Sähköposti",
       "phone": "Puhelin",
-      "status": "Tila"
+      "status": "Tila",
+      "title": "Tehtävänimike",
+      "company": "Yritys"
+    },
+    "companies": "Yritykset",
+    "newCompany": "Uusi yritys",
+    "editCompany": "Muokkaa yritystä",
+    "editContact": "Muokkaa kontaktia",
+    "noCompanies": "Ei yrityksiä vielä.",
+    "searchCompaniesPlaceholder": "Hae nimellä, verkkotunnuksella, toimialalla…",
+    "contactCount": "{count} kontaktia",
+    "dealCount": "{count} myyntimahdollisuutta",
+    "archivedBadge": "Arkistoitu",
+    "archive": "Arkistoi",
+    "restore": "Palauta",
+    "confirmDelete": "Poistetaanko pysyvästi?",
+    "archivedFilter": {
+      "active": "Aktiiviset",
+      "archived": "Arkistoidut",
+      "all": "Kaikki"
+    },
+    "about": "Tiedot",
+    "createdLabel": "Luotu",
+    "addNote": "Lisää muistiinpano",
+    "notePlaceholder": "Kirjoita muistiinpano…",
+    "noActivities": "Ei toimintaa vielä.",
+    "invalidInput": "Tarkista lomakkeen kentät.",
+    "noCompany": "Ei yritystä",
+    "companyFields": {
+      "name": "Nimi",
+      "domain": "Verkkotunnus",
+      "industry": "Toimiala",
+      "size": "Yrityksen koko",
+      "website": "Verkkosivusto",
+      "businessId": "Y-tunnus"
+    },
+    "activityTypes": {
+      "NOTE": "Muistiinpano",
+      "TASK": "Tehtävä",
+      "CALL": "Puhelu",
+      "EMAIL": "Sähköposti",
+      "MEETING": "Tapaaminen",
+      "VOICE_AI_CALL": "Ääni-AI-puhelu",
+      "AI_SUMMARY": "AI-yhteenveto"
     }
   },
   "voice": {
