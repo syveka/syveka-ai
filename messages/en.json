@@ -12,7 +12,8 @@
     "confirm": "Confirm",
     "back": "Back",
     "next": "Next",
-    "upgrade": "Upgrade plan"
+    "upgrade": "Upgrade plan",
+    "close": "Close"
   },
   "nav": {
     "dashboard": "Dashboard",
@@ -99,7 +100,8 @@
     "insightNoAiMessages": "AI conversation usage is quiet this month; route customer research and follow-ups through chat to build context.",
     "errorTitle": "Dashboard could not load",
     "errorDescription": "Refresh the dashboard or try again in a moment.",
-    "retry": "Try again"
+    "retry": "Try again",
+    "pipelineForecast": "Weighted forecast"
   },
   "billing": {
     "title": "Billing",
@@ -169,7 +171,8 @@
       "phone": "Phone",
       "status": "Status",
       "title": "Job title",
-      "company": "Company"
+      "company": "Company",
+      "contact": "Contact"
     },
     "companies": "Companies",
     "newCompany": "New company",
@@ -210,8 +213,48 @@
       "EMAIL": "Email",
       "MEETING": "Meeting",
       "VOICE_AI_CALL": "Voice AI call",
-      "AI_SUMMARY": "AI summary"
-    }
+      "AI_SUMMARY": "AI summary",
+      "STAGE_CHANGE": "Stage change"
+    },
+    "newDeal": "New deal",
+    "editDeal": "Edit deal",
+    "weighted": "weighted",
+    "forecast": "Forecast",
+    "dealFields": {
+      "title": "Deal title",
+      "value": "Value",
+      "currency": "Currency",
+      "stage": "Stage",
+      "probability": "Probability %",
+      "owner": "Owner",
+      "expectedClose": "Expected close",
+      "dueDate": "Due date",
+      "forecast": "Expected revenue"
+    },
+    "probabilityFromStage": "From stage",
+    "noContact": "No contact",
+    "meAsOwner": "Me",
+    "editStages": "Edit stages",
+    "stageKind": "Stage type",
+    "stageKinds": {
+      "open": "Open",
+      "won": "Won",
+      "lost": "Lost"
+    },
+    "stageHasDeals": "The stage still has deals.",
+    "lastOpenStage": "The pipeline needs at least one open stage.",
+    "newStagePlaceholder": "New stage name…",
+    "addStage": "Add stage",
+    "tasks": "Tasks",
+    "taskPlaceholder": "What needs to be done?",
+    "addTask": "Add task",
+    "noTasks": "No tasks yet.",
+    "overdue": "Overdue",
+    "wonBadge": "Won",
+    "lostBadge": "Lost",
+    "closedLabel": "Closed",
+    "generateInsights": "AI insights",
+    "generatingInsights": "Analyzing…"
   },
   "voice": {
     "title": "Voice AI",

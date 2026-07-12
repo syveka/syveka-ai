@@ -12,7 +12,8 @@
     "confirm": "تأكيد",
     "back": "رجوع",
     "next": "التالي",
-    "upgrade": "ترقية الخطة"
+    "upgrade": "ترقية الخطة",
+    "close": "إغلاق"
   },
   "nav": {
     "dashboard": "لوحة التحكم",
@@ -99,7 +100,8 @@
     "insightNoAiMessages": "استخدام محادثات الذكاء الاصطناعي هادئ هذا الشهر؛ وجّه أبحاث العملاء والمتابعات إلى الدردشة لبناء السياق.",
     "errorTitle": "تعذر تحميل لوحة التحكم",
     "errorDescription": "حدّث لوحة التحكم أو حاول مرة أخرى بعد لحظات.",
-    "retry": "حاول مرة أخرى"
+    "retry": "حاول مرة أخرى",
+    "pipelineForecast": "التوقعات المرجحة"
   },
   "billing": {
     "title": "الفوترة",
@@ -169,7 +171,8 @@
       "phone": "الهاتف",
       "status": "الحالة",
       "title": "المسمى الوظيفي",
-      "company": "الشركة"
+      "company": "الشركة",
+      "contact": "جهة الاتصال"
     },
     "companies": "الشركات",
     "newCompany": "شركة جديدة",
@@ -210,8 +213,48 @@
       "EMAIL": "بريد إلكتروني",
       "MEETING": "اجتماع",
       "VOICE_AI_CALL": "مكالمة الذكاء الاصطناعي الصوتي",
-      "AI_SUMMARY": "ملخص الذكاء الاصطناعي"
-    }
+      "AI_SUMMARY": "ملخص الذكاء الاصطناعي",
+      "STAGE_CHANGE": "تغيير المرحلة"
+    },
+    "newDeal": "صفقة جديدة",
+    "editDeal": "تعديل الصفقة",
+    "weighted": "مرجّح",
+    "forecast": "التوقعات",
+    "dealFields": {
+      "title": "عنوان الصفقة",
+      "value": "القيمة",
+      "currency": "العملة",
+      "stage": "المرحلة",
+      "probability": "الاحتمالية %",
+      "owner": "المسؤول",
+      "expectedClose": "الإغلاق المتوقع",
+      "dueDate": "تاريخ الاستحقاق",
+      "forecast": "الإيراد المتوقع"
+    },
+    "probabilityFromStage": "حسب المرحلة",
+    "noContact": "بدون جهة اتصال",
+    "meAsOwner": "أنا",
+    "editStages": "تعديل المراحل",
+    "stageKind": "نوع المرحلة",
+    "stageKinds": {
+      "open": "مفتوحة",
+      "won": "مكسوبة",
+      "lost": "خاسرة"
+    },
+    "stageHasDeals": "لا تزال هناك صفقات في هذه المرحلة.",
+    "lastOpenStage": "يجب أن يحتوي خط المبيعات على مرحلة مفتوحة واحدة على الأقل.",
+    "newStagePlaceholder": "اسم المرحلة الجديدة…",
+    "addStage": "إضافة مرحلة",
+    "tasks": "المهام",
+    "taskPlaceholder": "ما الذي يجب إنجازه؟",
+    "addTask": "إضافة مهمة",
+    "noTasks": "لا توجد مهام بعد.",
+    "overdue": "متأخرة",
+    "wonBadge": "مكسوبة",
+    "lostBadge": "خاسرة",
+    "closedLabel": "تاريخ الإغلاق",
+    "generateInsights": "تحليلات الذكاء الاصطناعي",
+    "generatingInsights": "جارٍ التحليل…"
   },
   "voice": {
     "title": "المساعد الصوتي",

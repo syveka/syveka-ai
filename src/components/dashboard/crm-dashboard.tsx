@@ -48,6 +48,7 @@ type DashboardLabels = {
   aiChat: string;
   sendEmail: string;
   pipelinePreview: string;
+  pipelineForecast: string;
   calendarWidget: string;
   upcomingMeetings: string;
   upcomingTasks: string;
@@ -328,6 +329,12 @@ function PipelinePreview({
               <span className="truncate text-muted-foreground">{dashboard.pipeline.name}</span>
               <strong>{formatCents(dashboard.pipeline.openValueCents, locale)}</strong>
             </div>
+            <div className="flex items-center justify-between gap-3 text-sm">
+              <span className="truncate text-muted-foreground">{labels.pipelineForecast}</span>
+              <span className="text-muted-foreground">
+                {formatCents(dashboard.pipeline.forecastValueCents, locale)}
+              </span>
+            </div>
             {dashboard.pipeline.stages.map((stage) => (
               <div key={stage.id}>
                 <div className="mb-1 flex items-center justify-between gap-3 text-sm">
@@ -481,6 +488,7 @@ export async function CrmDashboardView({ dashboard, locale }: DashboardProps) {
     aiChat: t("aiChat"),
     sendEmail: t("sendEmail"),
     pipelinePreview: t("pipelinePreview"),
+    pipelineForecast: t("pipelineForecast"),
     calendarWidget: t("calendarWidget"),
     upcomingMeetings: t("upcomingMeetings"),
     upcomingTasks: t("upcomingTasks"),
