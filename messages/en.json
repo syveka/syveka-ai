@@ -167,7 +167,50 @@
       "lastName": "Last name",
       "email": "Email",
       "phone": "Phone",
-      "status": "Status"
+      "status": "Status",
+      "title": "Job title",
+      "company": "Company"
+    },
+    "companies": "Companies",
+    "newCompany": "New company",
+    "editCompany": "Edit company",
+    "editContact": "Edit contact",
+    "noCompanies": "No companies yet.",
+    "searchCompaniesPlaceholder": "Search name, domain, industry…",
+    "contactCount": "{count} contacts",
+    "dealCount": "{count} deals",
+    "archivedBadge": "Archived",
+    "archive": "Archive",
+    "restore": "Restore",
+    "confirmDelete": "Delete permanently?",
+    "archivedFilter": {
+      "active": "Active",
+      "archived": "Archived",
+      "all": "All"
+    },
+    "about": "About",
+    "createdLabel": "Created",
+    "addNote": "Add note",
+    "notePlaceholder": "Write a note…",
+    "noActivities": "No activity yet.",
+    "invalidInput": "Please check the form fields.",
+    "noCompany": "No company",
+    "companyFields": {
+      "name": "Name",
+      "domain": "Domain",
+      "industry": "Industry",
+      "size": "Company size",
+      "website": "Website",
+      "businessId": "Business ID"
+    },
+    "activityTypes": {
+      "NOTE": "Note",
+      "TASK": "Task",
+      "CALL": "Call",
+      "EMAIL": "Email",
+      "MEETING": "Meeting",
+      "VOICE_AI_CALL": "Voice AI call",
+      "AI_SUMMARY": "AI summary"
     }
   },
   "voice": {
