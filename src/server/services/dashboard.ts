@@ -131,7 +131,11 @@ export async function getCrmDashboard(ctx: TenantContext) {
       : Promise.resolve(null),
     permissions.canReadCalendar
       ? db.calendarEvent.findMany({
-          where: { startsAt: { gte: now, lte: nextWeek } },
+          where: {
+            deletedAt: null,
+            status: { not: "CANCELED" },
+            startsAt: { gte: now, lte: nextWeek },
+          },
           orderBy: { startsAt: "asc" },
           take: 5,
         })

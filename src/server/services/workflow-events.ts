@@ -8,6 +8,9 @@ export type WorkflowTriggerType =
   | "deal.stage_changed"
   | "deal.won"
   | "call.completed"
+  | "booking.created"
+  | "booking.canceled"
+  | "booking.rescheduled"
   | "schedule.cron"
   | "manual";
 

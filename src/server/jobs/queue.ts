@@ -10,7 +10,13 @@ function getQstash(): Client {
   return qstash;
 }
 
-export type JobName = "embed-document" | "run-workflow" | "post-call" | "usage-rollup";
+export type JobName =
+  | "embed-document"
+  | "run-workflow"
+  | "post-call"
+  | "usage-rollup"
+  | "send-reminder"
+  | "calendar-sync";
 
 /** Enqueue an async job (§2.2). Delivered to /api/v1/jobs/{name} with QStash signature. */
 export async function enqueue(
