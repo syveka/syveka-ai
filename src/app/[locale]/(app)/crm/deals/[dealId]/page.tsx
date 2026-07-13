@@ -21,6 +21,7 @@ import { EntityActions } from "@/components/crm/entity-actions";
 import { NoteComposer } from "@/components/crm/note-composer";
 import { formatCents, formatDate } from "@/lib/utils";
 import { Link } from "@/i18n/routing";
+import { EntityMeetings } from "@/components/calendar/entity-meetings";
 
 export default async function DealDetailPage({ params }: { params: Promise<{ dealId: string }> }) {
   const { dealId } = await params;
@@ -209,6 +210,8 @@ export default async function DealDetailPage({ params }: { params: Promise<{ dea
           </CardContent>
         </Card>
       </div>
+
+      {can(ctx.role, "calendar:read") ? <EntityMeetings ctx={ctx} dealId={dealId} /> : null}
     </div>
   );
 }
