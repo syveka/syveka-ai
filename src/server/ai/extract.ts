@@ -1,6 +1,8 @@
 import "server-only";
 
 import { convert as htmlToText } from "html-to-text";
+import { assertExtractionLimits } from "@/server/security/document-ingestion";
+import { fetchPublicUrl } from "@/server/security/url-ingestion";
 
 /** Extract plain text from an uploaded file buffer (§15.5 ingest). */
 export async function extractText(buffer: Buffer, mimeType: string): Promise<string> {
@@ -34,14 +36,8 @@ export async function extractText(buffer: Buffer, mimeType: string): Promise<str
 
 /** Fetch + extract a public URL (sourceType=URL). */
 export async function extractFromUrl(url: string): Promise<string> {
-  const res = await fetch(url, {
-    headers: { "User-Agent": "SyvekaBot/1.0 (+https://syveka.ai)" },
-    signal: AbortSignal.timeout(20_000),
-  });
-  if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
-  const contentType = res.headers.get("content-type") ?? "";
-  const body = Buffer.from(await res.arrayBuffer());
-  if (contentType.includes("text/html")) return extractText(body, "text/html");
-  if (contentType.includes("application/pdf")) return extractText(body, "application/pdf");
-  return body.toString("utf8");
+  const { body, mimeType } = await fetchPublicUrl(url);
+  const text = await extractText(body, mimeType);
+  assertExtractionLimits(text);
+  return text;
 }

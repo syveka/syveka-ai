@@ -38,6 +38,7 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
   "Conversation",
   "Collection",
   "Document",
+  "DocumentUploadIntent",
   "Workflow",
   "WorkflowRun",
   "VoiceAssistant",

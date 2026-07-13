@@ -52,7 +52,7 @@ export function UploadDropzone() {
             continue;
           }
           const { data } = (await urlRes.json()) as {
-            data: { storagePath: string; signedUrl: string };
+            data: { uploadIntentId: string; signedUrl: string };
           };
 
           // 2. direct upload to Storage
@@ -67,17 +67,16 @@ export function UploadDropzone() {
           }
 
           // 3. create the document record → triggers the embed pipeline
-          await fetch("/api/v1/kb/documents", {
+          const finalizeRes = await fetch("/api/v1/kb/documents", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               title: file.name.replace(/\.[^.]+$/, ""),
               sourceType: "UPLOAD",
-              storagePath: data.storagePath,
-              mimeType,
-              sizeBytes: file.size,
+              uploadIntentId: data.uploadIntentId,
             }),
           });
+          if (!finalizeRes.ok) setError("upload_failed");
         }
         router.refresh();
       } finally {

@@ -28,6 +28,7 @@ model User {
   auditLogs     AuditLog[]
   messages      Message[]
   activities    Activity[]
+  documentUploadIntents DocumentUploadIntent[]
 
   @@map("users")
 }
@@ -73,6 +74,7 @@ model Organization {
   reminders             Reminder[]
   conversations    Conversation[]
   documents        Document[]
+  documentUploadIntents DocumentUploadIntent[]
   collections      Collection[]
   prompts          Prompt[]
   workflows        Workflow[]
@@ -862,6 +864,24 @@ model Document {
   @@map("documents")
 }
 
+model DocumentUploadIntent {
+  id               String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String    @map("organization_id") @db.Uuid
+  userId           String    @map("user_id") @db.Uuid
+  storagePath      String    @unique @map("storage_path")
+  expectedMimeType String    @map("expected_mime_type")
+  maxSizeBytes     Int       @map("max_size_bytes")
+  expiresAt        DateTime  @map("expires_at")
+  usedAt           DateTime? @map("used_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, userId, expiresAt])
+  @@map("document_upload_intents")
+}
+
 enum DocSource {
   UPLOAD
   URL
@@ -1108,4 +1128,3 @@ model AuditLog {
   @@index([organizationId, resourceType, resourceId])
   @@map("audit_logs")
 }
-

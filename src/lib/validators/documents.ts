@@ -10,19 +10,28 @@ export const ALLOWED_MIME_TYPES = [
 
 export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // §13.2
 
-export const createDocumentSchema = z.object({
+const documentBase = {
   title: z.string().min(1).max(200),
   collectionId: z.string().uuid().optional(),
-  sourceType: z.enum(["UPLOAD", "URL", "NOTE"]),
-  // UPLOAD:
-  storagePath: z.string().max(500).optional(),
-  mimeType: z.enum(ALLOWED_MIME_TYPES).optional(),
-  sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES).optional(),
-  // URL:
-  sourceUrl: z.string().url().optional(),
-  // NOTE:
-  content: z.string().max(100_000).optional(),
-});
+};
+
+export const createDocumentSchema = z.discriminatedUnion("sourceType", [
+  z.object({
+    ...documentBase,
+    sourceType: z.literal("UPLOAD"),
+    uploadIntentId: z.string().uuid(),
+  }),
+  z.object({
+    ...documentBase,
+    sourceType: z.literal("URL"),
+    sourceUrl: z.string().url().max(2_048),
+  }),
+  z.object({
+    ...documentBase,
+    sourceType: z.literal("NOTE"),
+    content: z.string().max(100_000),
+  }),
+]);
 
 export const uploadUrlSchema = z.object({
   fileName: z.string().min(1).max(200),

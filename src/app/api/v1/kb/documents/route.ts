@@ -23,7 +23,11 @@ export async function GET(): Promise<NextResponse> {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const [{ requirePermission }, { AuthError }, { createDocument }] = await Promise.all([
+  const [
+    { requirePermission },
+    { AuthError },
+    { createDocument, DocumentIngestionError, UrlIngestionError },
+  ] = await Promise.all([
     import("@/server/auth/guard"),
     import("@/server/auth/session"),
     import("@/server/services/documents"),
@@ -43,6 +47,14 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch (e) {
     if (e instanceof AuthError) {
       return NextResponse.json({ error: { code: "forbidden" } }, { status: e.status });
+    }
+    if (e instanceof DocumentIngestionError) {
+      const status =
+        e.code === "expired_upload_intent" ? 410 : e.code === "reused_upload_intent" ? 409 : 400;
+      return NextResponse.json({ error: { code: e.code } }, { status });
+    }
+    if (e instanceof UrlIngestionError) {
+      return NextResponse.json({ error: { code: e.code } }, { status: 400 });
     }
     throw e;
   }
