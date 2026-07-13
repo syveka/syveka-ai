@@ -18,6 +18,7 @@ import { EntityActions } from "@/components/crm/entity-actions";
 import { NoteComposer } from "@/components/crm/note-composer";
 import { formatCents, formatDate } from "@/lib/utils";
 import { Link } from "@/i18n/routing";
+import { EntityMeetings } from "@/components/calendar/entity-meetings";
 
 export default async function ContactDetailPage({
   params,
@@ -174,6 +175,8 @@ export default async function ContactDetailPage({
           </CardContent>
         </Card>
       </div>
+
+      {can(ctx.role, "calendar:read") ? <EntityMeetings ctx={ctx} contactId={contactId} /> : null}
     </div>
   );
 }

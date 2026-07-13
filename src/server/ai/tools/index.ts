@@ -156,7 +156,12 @@ const getCalendarAvailability = defineTool({
     const dayEnd = new Date(`${input.date}T14:00:00.000Z`); // 17:00 EEST
 
     const events = await db.calendarEvent.findMany({
-      where: { startsAt: { lt: dayEnd }, endsAt: { gt: dayStart } },
+      where: {
+        deletedAt: null,
+        status: { not: "CANCELED" },
+        startsAt: { lt: dayEnd },
+        endsAt: { gt: dayStart },
+      },
       select: { startsAt: true, endsAt: true },
     });
 
@@ -189,7 +194,12 @@ const bookMeeting = defineTool({
     const endsAt = new Date(startsAt.getTime() + input.durationMinutes * 60_000);
 
     const conflict = await db.calendarEvent.findFirst({
-      where: { startsAt: { lt: endsAt }, endsAt: { gt: startsAt } },
+      where: {
+        deletedAt: null,
+        status: { not: "CANCELED" },
+        startsAt: { lt: endsAt },
+        endsAt: { gt: startsAt },
+      },
     });
     if (conflict) return { booked: false, reason: "slot_taken" };
 

@@ -38,6 +38,17 @@ const serverSchema = z.object({
   LANGFUSE_PUBLIC_KEY: z.string().optional(),
   LANGFUSE_SECRET_KEY: z.string().optional(),
   LANGFUSE_HOST: z.string().url().optional(),
+
+  // Calendar integrations (all optional — the feature degrades gracefully:
+  // providers without credentials are hidden; MOCK covers dev/test).
+  CALENDAR_TOKEN_ENCRYPTION_KEY: z.string().min(32).optional(),
+  CALENDAR_OAUTH_STATE_SECRET: z.string().min(16).optional(),
+  CALENDAR_MOCK_PROVIDER: z.enum(["0", "1"]).optional(),
+  GOOGLE_CALENDAR_CLIENT_ID: z.string().optional(),
+  GOOGLE_CALENDAR_CLIENT_SECRET: z.string().optional(),
+  MICROSOFT_CALENDAR_CLIENT_ID: z.string().optional(),
+  MICROSOFT_CALENDAR_CLIENT_SECRET: z.string().optional(),
+  MICROSOFT_CALENDAR_TENANT: z.string().optional(),
 });
 
 const clientSchema = z.object({

@@ -11,7 +11,8 @@ import { prisma } from "./prisma";
  * a forgotten `where` can no longer leak across organizations.
  *
  * Models scoped via a parent relation (Message, PipelineStage, DocumentChunk,
- * TagsOnContacts) are NOT listed here; access them through their parent or
+ * TagsOnContacts, EventAttendee, AvailabilityRule, AvailabilityOverride,
+ * BookingToken) are NOT listed here; access them through their parent or
  * the dedicated service functions which join through the parent.
  */
 const TENANT_MODELS = new Set<Prisma.ModelName>([
@@ -27,6 +28,13 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
   "Activity",
   "Tag",
   "CalendarEvent",
+  "CalendarConnection",
+  "ExternalCalendar",
+  "CalendarSyncState",
+  "AvailabilitySchedule",
+  "BookingType",
+  "Booking",
+  "Reminder",
   "Conversation",
   "Collection",
   "Document",
