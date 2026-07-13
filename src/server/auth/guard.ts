@@ -12,7 +12,7 @@ export async function requirePermission(permission: Permission): Promise<TenantC
   const ctx = await getTenantContext();
 
   if (!can(ctx.role, permission)) {
-    const sensitive = ["members:", "billing:", "api-keys:", "org:", "audit:"];
+    const sensitive = ["members:", "billing:", "api-keys:", "org:", "audit:", "integrations:"];
     if (sensitive.some((s) => permission.startsWith(s))) {
       await audit(ctx, {
         action: "authz.denied",
