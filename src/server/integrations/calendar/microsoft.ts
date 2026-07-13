@@ -215,11 +215,19 @@ export const microsoftCalendarAdapter: CalendarProviderAdapter = {
       return {
         events,
         deletedExternalIds: deleted,
+        // nextLink → more pages now; deltaLink → resume point later.
         nextCursor: data["@odata.nextLink"] ?? data["@odata.deltaLink"] ?? null,
+        hasMore: Boolean(data["@odata.nextLink"]),
       };
     } catch (e) {
       if (e instanceof ProviderError && e.code === "cursor_expired") {
-        return { events: [], deletedExternalIds: [], nextCursor: null, cursorExpired: true };
+        return {
+          events: [],
+          deletedExternalIds: [],
+          nextCursor: null,
+          hasMore: false,
+          cursorExpired: true,
+        };
       }
       throw e;
     }

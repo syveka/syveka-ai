@@ -214,11 +214,19 @@ export const googleCalendarAdapter: CalendarProviderAdapter = {
       return {
         events,
         deletedExternalIds: deleted,
+        // nextPageToken → more pages now; nextSyncToken → resume point later.
         nextCursor: data.nextPageToken ?? data.nextSyncToken ?? null,
+        hasMore: Boolean(data.nextPageToken),
       };
     } catch (e) {
       if (e instanceof ProviderError && e.code === "cursor_expired") {
-        return { events: [], deletedExternalIds: [], nextCursor: null, cursorExpired: true };
+        return {
+          events: [],
+          deletedExternalIds: [],
+          nextCursor: null,
+          hasMore: false,
+          cursorExpired: true,
+        };
       }
       throw e;
     }

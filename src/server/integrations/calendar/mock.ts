@@ -95,13 +95,20 @@ export const mockCalendarAdapter: CalendarProviderAdapter = {
   async listEvents(_tokens, calendarExternalId, cursor): Promise<SyncPage> {
     // Cursor "mock-expired" simulates a remote 410 for resync tests.
     if (cursor === "mock-expired") {
-      return { events: [], deletedExternalIds: [], nextCursor: null, cursorExpired: true };
+      return {
+        events: [],
+        deletedExternalIds: [],
+        nextCursor: null,
+        hasMore: false,
+        cursorExpired: true,
+      };
     }
     state.cursorCounter += 1;
     return {
       events: state.eventsByCalendar.get(calendarExternalId) ?? [],
       deletedExternalIds: state.deletedByCalendar.get(calendarExternalId) ?? [],
       nextCursor: `mock-cursor-${state.cursorCounter}`,
+      hasMore: false, // mock serves everything in one page
     };
   },
 

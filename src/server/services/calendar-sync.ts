@@ -149,9 +149,10 @@ export async function syncExternalCalendar(externalCalendarId: string): Promise<
 
       // Persist cursor after the page is fully applied.
       await persistCursor(calendar.id, calendar.organizationId, page.nextCursor, "ok");
-      if (!page.nextCursor || page.nextCursor === cursor) break;
+      // `nextCursor` is the resume point for the NEXT run (providers return a
+      // sync token even on the final page) — only `hasMore` continues the loop.
+      if (!page.hasMore || !page.nextCursor) break;
       cursor = page.nextCursor;
-      if (page.events.length === 0 && page.deletedExternalIds.length === 0) break;
     }
 
     await unscopedPrisma.calendarSyncState.update({

@@ -40,7 +40,14 @@ export type SyncPage = {
   events: ExternalEvent[];
   /** Ids removed remotely since the last cursor (incremental sync). */
   deletedExternalIds: string[];
+  /**
+   * Cursor to persist for the NEXT sync run (sync token / delta link).
+   * Providers return one even on the final page, so it must never be used
+   * as a "more pages" signal — that is what `hasMore` is for.
+   */
   nextCursor: string | null;
+  /** True only when more pages exist within the CURRENT sync run. */
+  hasMore: boolean;
   /** Cursor invalidated remotely → caller must full-resync. */
   cursorExpired?: boolean;
 };
