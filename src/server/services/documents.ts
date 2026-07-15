@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { Prisma } from "@prisma/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { createSupabaseAdmin } from "@/server/supabase/server";
 import { assertWithinLimit } from "./billing/entitlements";
@@ -17,6 +18,24 @@ import {
 import { assertSupportedUrl, UrlIngestionError } from "@/server/security/url-ingestion";
 
 const DOCUMENTS_BUCKET = "documents";
+
+async function assertCollectionInTenant(
+  tx: Prisma.TransactionClient,
+  organizationId: string,
+  collectionId?: string,
+): Promise<void> {
+  if (!collectionId) return;
+  const collection = await tx.collection.findFirst({
+    where: { id: collectionId, organizationId },
+    select: { id: true },
+  });
+  if (!collection) {
+    throw new DocumentIngestionError(
+      "invalid_collection",
+      "Collection does not belong to the active organization",
+    );
+  }
+}
 
 /** Create a tenant/user-bound, expiring upload intent and its signed storage URL. */
 export async function createUploadUrl(
@@ -83,6 +102,7 @@ export async function createDocument(ctx: TenantContext, input: CreateDocumentIn
     );
 
     document = await unscopedPrisma.$transaction(async (tx) => {
+      await assertCollectionInTenant(tx, ctx.orgId, input.collectionId);
       const consumed = await tx.documentUploadIntent.updateMany({
         where: {
           id: intent.id,
@@ -115,20 +135,22 @@ export async function createDocument(ctx: TenantContext, input: CreateDocumentIn
     });
   } else {
     if (input.sourceType === "URL") assertSupportedUrl(input.sourceUrl);
-    const db = tenantDb(ctx.orgId);
-    document = await db.document.create({
-      data: {
-        organizationId: ctx.orgId,
-        title: input.title,
-        collectionId: input.collectionId,
-        uploadedById: ctx.userId,
-        sourceType: input.sourceType,
-        sourceUrl: input.sourceType === "URL" ? input.sourceUrl : undefined,
-        mimeType: input.sourceType === "NOTE" ? "text/markdown" : undefined,
-        sizeBytes:
-          input.sourceType === "NOTE" ? Buffer.byteLength(input.content, "utf8") : undefined,
-        status: "PENDING",
-      },
+    document = await unscopedPrisma.$transaction(async (tx) => {
+      await assertCollectionInTenant(tx, ctx.orgId, input.collectionId);
+      return tx.document.create({
+        data: {
+          organizationId: ctx.orgId,
+          title: input.title,
+          collectionId: input.collectionId,
+          uploadedById: ctx.userId,
+          sourceType: input.sourceType,
+          sourceUrl: input.sourceType === "URL" ? input.sourceUrl : undefined,
+          mimeType: input.sourceType === "NOTE" ? "text/markdown" : undefined,
+          sizeBytes:
+            input.sourceType === "NOTE" ? Buffer.byteLength(input.content, "utf8") : undefined,
+          status: "PENDING",
+        },
+      });
     });
   }
 

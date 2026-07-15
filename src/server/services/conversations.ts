@@ -69,15 +69,23 @@ export async function attachDocumentsToConversation(params: {
 }): Promise<string[]> {
   const uniqueIds = [...new Set(params.documentIds)];
   if (uniqueIds.length === 0) return [];
-  const documents = await unscopedPrisma.document.findMany({
-    where: {
-      id: { in: uniqueIds },
-      organizationId: params.organizationId,
-      deletedAt: null,
-    },
-    select: { id: true },
-  });
-  if (documents.length !== uniqueIds.length) throw new Error("invalid_conversation_document");
+  const [conversation, documents] = await Promise.all([
+    unscopedPrisma.conversation.findFirst({
+      where: { id: params.conversationId, organizationId: params.organizationId, deletedAt: null },
+      select: { id: true },
+    }),
+    unscopedPrisma.document.findMany({
+      where: {
+        id: { in: uniqueIds },
+        organizationId: params.organizationId,
+        deletedAt: null,
+      },
+      select: { id: true },
+    }),
+  ]);
+  if (!conversation || documents.length !== uniqueIds.length) {
+    throw new Error("invalid_conversation_document");
+  }
   await unscopedPrisma.conversationDocument.createMany({
     data: documents.map((document) => ({
       organizationId: params.organizationId,

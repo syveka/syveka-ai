@@ -3,20 +3,18 @@ import "server-only";
 import { convert as htmlToText } from "html-to-text";
 import { assertExtractionLimits } from "@/server/security/document-ingestion";
 import { fetchPublicUrl } from "@/server/security/url-ingestion";
+import { parseDocumentIsolated } from "@/server/security/parser-security";
 
 /** Extract plain text from an uploaded file buffer (§15.5 ingest). */
-export async function extractText(buffer: Buffer, mimeType: string): Promise<string> {
+export async function extractText(
+  buffer: Buffer,
+  mimeType: string,
+  signal?: AbortSignal,
+): Promise<string> {
   switch (mimeType) {
-    case "application/pdf": {
-      const pdfParse = (await import("pdf-parse")).default;
-      const result = await pdfParse(buffer);
-      return result.text;
-    }
-    case "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {
-      const mammoth = await import("mammoth");
-      const result = await mammoth.extractRawText({ buffer });
-      return result.value;
-    }
+    case "application/pdf":
+    case "application/vnd.openxmlformats-officedocument.wordprocessingml.document":
+      return parseDocumentIsolated(buffer, mimeType, signal);
     case "text/html":
       return htmlToText(buffer.toString("utf8"), {
         wordwrap: false,
@@ -35,9 +33,9 @@ export async function extractText(buffer: Buffer, mimeType: string): Promise<str
 }
 
 /** Fetch + extract a public URL (sourceType=URL). */
-export async function extractFromUrl(url: string): Promise<string> {
-  const { body, mimeType } = await fetchPublicUrl(url);
-  const text = await extractText(body, mimeType);
+export async function extractFromUrl(url: string, signal?: AbortSignal): Promise<string> {
+  const { body, mimeType } = await fetchPublicUrl(url, { signal });
+  const text = await extractText(body, mimeType, signal);
   assertExtractionLimits(text);
   return text;
 }

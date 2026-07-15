@@ -61,7 +61,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (inlineContent !== undefined) {
       text = inlineContent;
     } else if (document.sourceType === "URL" && document.sourceUrl) {
-      text = await extractFromUrl(document.sourceUrl);
+      text = await extractFromUrl(document.sourceUrl, request.signal);
     } else if (document.storagePath) {
       assertTenantStoragePath(orgId, document.storagePath);
       const admin = createSupabaseAdmin();
@@ -75,7 +75,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         mimeType as Parameters<typeof verifyUploadObject>[2],
         document.sizeBytes ?? 0,
       );
-      text = await extractText(buffer, mimeType);
+      text = await extractText(buffer, mimeType, request.signal);
     } else {
       throw new Error("No content source");
     }

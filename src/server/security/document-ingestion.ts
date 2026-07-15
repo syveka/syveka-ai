@@ -25,6 +25,7 @@ export class DocumentIngestionError extends Error {
       | "expired_upload_intent"
       | "reused_upload_intent"
       | "invalid_upload_intent"
+      | "invalid_collection"
       | "mime_spoofing"
       | "oversized_upload"
       | "empty_upload",

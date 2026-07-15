@@ -95,6 +95,16 @@ AI_RETRY_BASE_DELAY_MS=250
 
 All values are validated at runtime by `src/env.ts`. The migration `20260715000000_ai_chat_production_hardening` owns the summary/cost columns, the conversation-document join table, indexes, foreign keys, and RLS policy.
 
+## Ingestion security corrections
+
+The additive migration `20260715230000_security_invariant_corrections` must be deployed after `20260715000000_ai_chat_production_hardening` and before the application commit that depends on it. It adds composite tenant keys and foreign keys for collections, documents, conversations, conversation attachments, and document chunks. It also enforces that upload-intent storage paths begin with their owning organization ID. Existing RLS policies remain in place; these constraints protect integrity even for privileged or direct database writes that bypass RLS.
+
+URL ingestion resolves each HTTP(S) destination once per hop, rejects the hop if any DNS answer is non-public, and connects the socket directly to a selected validated address. HTTPS still uses the original hostname for TLS SNI and certificate verification, and HTTP(S) sends the original Host header. Redirects are not delegated to a client library: each Location is parsed, resolved, fully validated, and pinned again before a connection is opened.
+
+PDF and DOCX parsing runs in a worker thread with a 20-second hard timeout and worker termination on timeout or cancellation. The worker has V8 heap and stack resource limits, and parser output is capped before it crosses back to the main thread. PDF page count is capped. DOCX ZIP metadata is checked before parsing for input size, entry count, per-entry and total decompressed sizes, compression ratio, encryption, ZIP64, and directory integrity. These controls bound ordinary JavaScript parser memory and terminate runaway work, but they are not an operating-system RSS or cgroup limit; complete process-level memory isolation would require a separately sandboxed child process or service.
+
+Rollback must reverse application order: first roll back the application version so no code depends on the composite constraints, then remove the corrective constraints and indexes if necessary. Do not roll back `20260715000000_ai_chat_production_hardening` while the corrective migration remains applied. Removing the constraints weakens tenant integrity and should only be done during an incident rollback.
+
 ## Verification
 
 Run:

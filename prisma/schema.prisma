@@ -791,6 +791,7 @@ model Conversation {
   summaryMessageCount Int                    @default(0) @map("summary_message_count")
   summaryUpdatedAt    DateTime?              @map("summary_updated_at")
 
+  @@unique([organizationId, id])
   @@index([organizationId, userId, updatedAt])
   @@index([organizationId, updatedAt])
   @@map("conversations")
@@ -838,6 +839,7 @@ model Collection {
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   documents    Document[]
 
+  @@unique([organizationId, id])
   @@index([organizationId])
   @@map("collections")
 }
@@ -862,10 +864,11 @@ model Document {
   deletedAt      DateTime? @map("deleted_at")
 
   organization  Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  collection    Collection?            @relation(fields: [collectionId], references: [id], onDelete: SetNull)
+  collection    Collection?            @relation(fields: [organizationId, collectionId], references: [organizationId, id], onDelete: Restrict)
   chunks        DocumentChunk[]
   conversations ConversationDocument[]
 
+  @@unique([organizationId, id])
   @@index([organizationId, status])
   @@map("documents")
 }
@@ -878,8 +881,8 @@ model ConversationDocument {
   createdAt      DateTime @default(now()) @map("created_at")
 
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
-  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  document     Document     @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [organizationId, conversationId], references: [organizationId, id], onDelete: Cascade)
+  document     Document     @relation(fields: [organizationId, documentId], references: [organizationId, id], onDelete: Cascade)
 
   @@unique([conversationId, documentId])
   @@index([organizationId, conversationId])
@@ -930,7 +933,7 @@ model DocumentChunk {
   embedding      Unsupported("vector(1536)")?
   metadata       Json                         @default("{}")
 
-  document Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  document Document @relation(fields: [organizationId, documentId], references: [organizationId, id], onDelete: Cascade)
 
   @@unique([documentId, chunkIndex])
   @@index([organizationId])
