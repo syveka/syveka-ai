@@ -33,10 +33,12 @@ export const createDocumentSchema = z.discriminatedUnion("sourceType", [
   }),
 ]);
 
-export const uploadUrlSchema = z.object({
-  fileName: z.string().min(1).max(200),
-  mimeType: z.enum(ALLOWED_MIME_TYPES),
-  sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES),
-});
+export const uploadUrlSchema = z
+  .object({
+    fileName: z.string().min(1).max(200),
+    mimeType: z.enum(ALLOWED_MIME_TYPES),
+    sizeBytes: z.number().int().positive().max(MAX_UPLOAD_BYTES),
+  })
+  .strict();
 
 export type CreateDocumentInput = z.infer<typeof createDocumentSchema>;

@@ -36,6 +36,7 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
   "Booking",
   "Reminder",
   "Conversation",
+  "ConversationDocument",
   "Collection",
   "Document",
   "DocumentUploadIntent",

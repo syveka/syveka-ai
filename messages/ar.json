@@ -115,6 +115,10 @@
     "newConversation": "محادثة جديدة",
     "placeholder": "راسل سيفيكا…",
     "useKnowledgeBase": "استخدام قاعدة المعرفة",
+    "attachFile": "إرفاق ملف PDF أو DOCX أو TXT",
+    "removeFile": "إزالة الملف",
+    "stopGenerating": "إيقاف الإنشاء",
+    "send": "إرسال الرسالة",
     "disclaimer": "قد تحتوي إجابات الذكاء الاصطناعي على أخطاء. تحقق من المعلومات المهمة.",
     "errors": {
       "generic": "حدث خطأ ما. حاول مرة أخرى.",
@@ -122,7 +126,11 @@
       "entitlement_exceeded": "تم بلوغ حصة الذكاء الاصطناعي الشهرية — قم بترقية خطتك.",
       "content_flagged": "لا يمكن معالجة هذه الرسالة.",
       "generation_failed": "فشل إنشاء الرد. حاول مرة أخرى.",
-      "network_error": "انقطع الاتصال. حاول مرة أخرى."
+      "network_error": "انقطع الاتصال. حاول مرة أخرى.",
+      "upload_failed": "تعذر رفع الملف.",
+      "unsupported_file": "استخدم ملف PDF أو DOCX أو TXT.",
+      "file_too_large": "يجب ألا يتجاوز حجم الملف 25 ميغابايت.",
+      "invalid_document": "أحد الملفات المرفقة غير متاح."
     }
   },
   "knowledge": {

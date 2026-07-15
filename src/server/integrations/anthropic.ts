@@ -2,11 +2,12 @@ import "server-only";
 
 import Anthropic from "@anthropic-ai/sdk";
 import { env } from "@/env";
+import { abortableDelay, isTransientAiError, retryDelayMs } from "@/server/ai/retry";
 
 let anthropicClient: Anthropic | null = null;
 
 function getAnthropic(): Anthropic {
-  anthropicClient ??= new Anthropic({ apiKey: env.ANTHROPIC_API_KEY });
+  anthropicClient ??= new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 0 });
   return anthropicClient;
 }
 
@@ -36,6 +37,7 @@ export async function streamClaude(params: {
   maxTokens: number;
   tools?: Anthropic.Tool[];
   callbacks: StreamCallbacks;
+  signal?: AbortSignal;
 }): Promise<{ tokensIn: number; tokensOut: number; stopReason: string | null }> {
   let tokensIn = 0;
   let tokensOut = 0;
@@ -48,17 +50,34 @@ export async function streamClaude(params: {
 
   // Tool-use loop: max 5 rounds to bound cost (§15.6)
   for (let round = 0; round < 5; round++) {
-    const stream = getAnthropic().messages.stream({
-      model: params.model,
-      system: params.system,
-      messages,
-      max_tokens: params.maxTokens,
-      ...(params.tools?.length ? { tools: params.tools } : {}),
-    });
-
-    stream.on("text", (delta) => void params.callbacks.onText(delta));
-
-    const final = await stream.finalMessage();
+    let final: Anthropic.Message | null = null;
+    for (let attempt = 1; attempt <= env.AI_RETRY_MAX_ATTEMPTS; attempt++) {
+      let emittedText = false;
+      try {
+        const stream = getAnthropic().messages.stream(
+          {
+            model: params.model,
+            system: params.system,
+            messages,
+            max_tokens: params.maxTokens,
+            ...(params.tools?.length ? { tools: params.tools } : {}),
+          },
+          { signal: params.signal },
+        );
+        stream.on("text", (delta) => {
+          emittedText = true;
+          void params.callbacks.onText(delta);
+        });
+        final = await stream.finalMessage();
+        break;
+      } catch (error) {
+        if (emittedText || attempt === env.AI_RETRY_MAX_ATTEMPTS || !isTransientAiError(error)) {
+          throw error;
+        }
+        await abortableDelay(retryDelayMs(attempt, env.AI_RETRY_BASE_DELAY_MS), params.signal);
+      }
+    }
+    if (!final) throw new Error("AI provider returned no response");
     tokensIn += final.usage.input_tokens;
     tokensOut += final.usage.output_tokens;
     stopReason = final.stop_reason;
