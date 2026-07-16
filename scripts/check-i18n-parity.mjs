@@ -6,12 +6,33 @@ const flatten = (obj, prefix = "") =>
     typeof v === "object" && v !== null ? flatten(v, `${prefix}${k}.`) : [`${prefix}${k}`],
   );
 
+const findDottedKeys = (obj, prefix = "") =>
+  Object.entries(obj).flatMap(([key, value]) => {
+    const path = prefix ? `${prefix}.${key}` : key;
+    const invalid = key.includes(".") ? [path] : [];
+    return typeof value === "object" && value !== null
+      ? [...invalid, ...findDottedKeys(value, path)]
+      : invalid;
+  });
+
+const messagesByLocale = Object.fromEntries(
+  locales.map((locale) => [locale, JSON.parse(readFileSync(`messages/${locale}.json`, "utf8"))]),
+);
+
 const keysByLocale = Object.fromEntries(
-  locales.map((l) => [l, new Set(flatten(JSON.parse(readFileSync(`messages/${l}.json`, "utf8"))))]),
+  locales.map((locale) => [locale, new Set(flatten(messagesByLocale[locale]))]),
 );
 
 const reference = keysByLocale.en;
 let failed = false;
+for (const locale of locales) {
+  const dottedKeys = findDottedKeys(messagesByLocale[locale]);
+  if (dottedKeys.length > 0) {
+    failed = true;
+    console.error(`✗ ${locale}: dotted message keys=[${dottedKeys.join(", ")}]`);
+  }
+}
+
 for (const locale of locales.slice(1)) {
   const keys = keysByLocale[locale];
   const missing = [...reference].filter((k) => !keys.has(k));

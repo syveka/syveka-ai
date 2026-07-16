@@ -11,7 +11,9 @@
     "start": "next start",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
+    "i18n:check": "node scripts/check-i18n-parity.mjs",
     "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
@@ -20,9 +22,6 @@
     "test": "vitest run",
     "test:e2e": "playwright test",
     "email:dev": "email dev --dir emails"
-  },
-  "prisma": {
-    "seed": "tsx prisma/seed.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",

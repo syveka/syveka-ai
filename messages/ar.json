@@ -478,19 +478,35 @@
       "trigger": "المُطلق"
     },
     "triggers": {
-      "contact.created": "تم إنشاء جهة اتصال",
-      "deal.stage_changed": "تغيرت مرحلة الصفقة",
-      "deal.won": "تم الفوز بالصفقة",
-      "call.completed": "انتهت المكالمة",
+      "contact": {
+        "created": "تم إنشاء جهة اتصال"
+      },
+      "deal": {
+        "stage_changed": "تغيرت مرحلة الصفقة",
+        "won": "تم الفوز بالصفقة"
+      },
+      "call": {
+        "completed": "انتهت المكالمة"
+      },
       "manual": "يدوي"
     },
     "stepTypes": {
       "condition": "شرط",
-      "ai.generate": "توليد بالذكاء الاصطناعي",
-      "email.send": "إرسال بريد",
-      "crm.create_activity": "إنشاء نشاط CRM",
-      "notify.member": "إشعار عضو",
-      "wait.duration": "انتظار"
+      "ai": {
+        "generate": "توليد بالذكاء الاصطناعي"
+      },
+      "email": {
+        "send": "إرسال بريد"
+      },
+      "crm": {
+        "create_activity": "إنشاء نشاط CRM"
+      },
+      "notify": {
+        "member": "إشعار عضو"
+      },
+      "wait": {
+        "duration": "انتظار"
+      }
     },
     "testRun": "تشغيل تجريبي"
   },

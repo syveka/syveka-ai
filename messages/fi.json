@@ -478,19 +478,35 @@
       "trigger": "Laukaisin"
     },
     "triggers": {
-      "contact.created": "Kontakti luotu",
-      "deal.stage_changed": "Kaupan vaihe muuttui",
-      "deal.won": "Kauppa voitettu",
-      "call.completed": "Puhelu päättyi",
+      "contact": {
+        "created": "Kontakti luotu"
+      },
+      "deal": {
+        "stage_changed": "Kaupan vaihe muuttui",
+        "won": "Kauppa voitettu"
+      },
+      "call": {
+        "completed": "Puhelu päättyi"
+      },
       "manual": "Manuaalinen"
     },
     "stepTypes": {
       "condition": "Ehto",
-      "ai.generate": "AI-generointi",
-      "email.send": "Lähetä sähköposti",
-      "crm.create_activity": "Luo CRM-tapahtuma",
-      "notify.member": "Ilmoita jäsenelle",
-      "wait.duration": "Odota"
+      "ai": {
+        "generate": "AI-generointi"
+      },
+      "email": {
+        "send": "Lähetä sähköposti"
+      },
+      "crm": {
+        "create_activity": "Luo CRM-tapahtuma"
+      },
+      "notify": {
+        "member": "Ilmoita jäsenelle"
+      },
+      "wait": {
+        "duration": "Odota"
+      }
     },
     "testRun": "Testiajo"
   },

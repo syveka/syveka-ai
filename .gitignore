@@ -10,3 +10,6 @@ coverage/
 playwright-report/
 test-results/
 .vercel
+
+# Local database backups
+syveka-backup.sql
