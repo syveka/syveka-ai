@@ -478,19 +478,35 @@
       "trigger": "Trigger"
     },
     "triggers": {
-      "contact.created": "Contact created",
-      "deal.stage_changed": "Deal stage changed",
-      "deal.won": "Deal won",
-      "call.completed": "Voice call completed",
+      "contact": {
+        "created": "Contact created"
+      },
+      "deal": {
+        "stage_changed": "Deal stage changed",
+        "won": "Deal won"
+      },
+      "call": {
+        "completed": "Voice call completed"
+      },
       "manual": "Manual"
     },
     "stepTypes": {
       "condition": "Condition",
-      "ai.generate": "AI generate",
-      "email.send": "Send email",
-      "crm.create_activity": "Create CRM activity",
-      "notify.member": "Notify member",
-      "wait.duration": "Wait"
+      "ai": {
+        "generate": "AI generate"
+      },
+      "email": {
+        "send": "Send email"
+      },
+      "crm": {
+        "create_activity": "Create CRM activity"
+      },
+      "notify": {
+        "member": "Notify member"
+      },
+      "wait": {
+        "duration": "Wait"
+      }
     },
     "testRun": "Test run"
   },
