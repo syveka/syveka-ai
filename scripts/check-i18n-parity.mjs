@@ -16,10 +16,7 @@ const findDottedKeys = (obj, prefix = "") =>
   });
 
 const messagesByLocale = Object.fromEntries(
-  locales.map((locale) => [
-    locale,
-    JSON.parse(readFileSync(`messages/${locale}.json`, "utf8")),
-  ]),
+  locales.map((locale) => [locale, JSON.parse(readFileSync(`messages/${locale}.json`, "utf8"))]),
 );
 
 const keysByLocale = Object.fromEntries(
