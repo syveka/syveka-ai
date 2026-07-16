@@ -19,10 +19,14 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const conversationIdRef = useRef(params.conversationId);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const router = useRouter();
 
   const send = useCallback(
-    async (text: string, opts?: { useKnowledgeBase?: boolean; deepMode?: boolean }) => {
+    async (
+      text: string,
+      opts?: { useKnowledgeBase?: boolean; deepMode?: boolean; documentIds?: string[] },
+    ) => {
       if (isStreaming || !text.trim()) return;
       setError(null);
       setIsStreaming(true);
@@ -47,6 +51,8 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
         );
 
       try {
+        const abortController = new AbortController();
+        abortControllerRef.current = abortController;
         const res = await fetch("/api/v1/ai/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -55,7 +61,9 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
             message: text,
             useKnowledgeBase: opts?.useKnowledgeBase ?? true,
             deepMode: opts?.deepMode ?? false,
+            documentIds: opts?.documentIds ?? [],
           }),
+          signal: abortController.signal,
         });
 
         if (!res.ok || !res.body) {
@@ -112,15 +120,24 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
           router.replace(`/chat/${conversationIdRef.current}`);
           router.refresh(); // refresh conversation list
         }
-      } catch {
-        setError("network_error");
+      } catch (requestError) {
+        if (requestError instanceof DOMException && requestError.name === "AbortError") {
+          setMessages((prev) =>
+            prev.filter((message) => message.id !== assistantMsg.id || message.content.length > 0),
+          );
+        } else {
+          setError("network_error");
+        }
         patchAssistant({ streaming: false });
       } finally {
+        abortControllerRef.current = null;
         setIsStreaming(false);
       }
     },
     [isStreaming, router],
   );
 
-  return { messages, send, isStreaming, error };
+  const abort = useCallback(() => abortControllerRef.current?.abort(), []);
+
+  return { messages, send, abort, isStreaming, error };
 }

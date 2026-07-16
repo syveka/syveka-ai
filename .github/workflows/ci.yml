@@ -223,8 +223,20 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/001_extensions_and_indexes.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/002_functions.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/003_rls.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin
+            if not exists (
+              select 1 from pg_constraint
+              where conname = 'document_upload_intents_tenant_path_check'
+            ) then
+              alter table document_upload_intents
+                add constraint document_upload_intents_tenant_path_check
+                check (storage_path like organization_id::text || '/%');
+            end if;
+          end \$\$;"
       - name: Run isolation assertions
-        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
 
   build:
     name: Production build

@@ -115,6 +115,10 @@
     "newConversation": "New conversation",
     "placeholder": "Message Syveka…",
     "useKnowledgeBase": "Use knowledge base",
+    "attachFile": "Attach PDF, DOCX or TXT",
+    "removeFile": "Remove file",
+    "stopGenerating": "Stop generating",
+    "send": "Send message",
     "disclaimer": "AI answers can contain mistakes. Verify important information.",
     "errors": {
       "generic": "Something went wrong. Please try again.",
@@ -122,7 +126,11 @@
       "entitlement_exceeded": "Monthly AI quota reached — upgrade your plan to continue.",
       "content_flagged": "This message can't be processed.",
       "generation_failed": "Generation failed. Please try again.",
-      "network_error": "Connection lost. Please try again."
+      "network_error": "Connection lost. Please try again.",
+      "upload_failed": "The file could not be uploaded.",
+      "unsupported_file": "Use a PDF, DOCX or TXT file.",
+      "file_too_large": "The file must be 25 MB or smaller.",
+      "invalid_document": "One of the attached files is unavailable."
     }
   },
   "knowledge": {

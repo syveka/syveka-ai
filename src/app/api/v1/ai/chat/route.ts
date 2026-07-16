@@ -2,6 +2,8 @@ import { NextResponse } from "next/server";
 import { chatRequestSchema, type ChatStreamEvent } from "@/lib/validators/chat";
 import type { RetrievedChunk } from "@/server/ai/rag";
 import type { ToolIdentity } from "@/server/ai/tools";
+import { estimateAiCost } from "@/server/ai/cost";
+import { isAbortError } from "@/server/ai/retry";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -18,7 +20,7 @@ export async function POST(request: Request): Promise<Response> {
     { getTenantContext },
     { can },
     { tenantDb, unscopedPrisma },
-    { rateLimiters },
+    { limitAiChat },
     { isFlaggedByModeration },
     { streamClaude },
     { routeModel },
@@ -26,7 +28,12 @@ export async function POST(request: Request): Promise<Response> {
     { retrieveChunks, extractValidCitations },
     { anthropicToolsFor, executeTool },
     { assertWithinLimit, recordUsage, getMonthUsage, EntitlementError },
-    { generateTitle },
+    {
+      attachDocumentsToConversation,
+      ensureConversationSummary,
+      generateTitle,
+      getConversationDocumentIds,
+    },
   ] = await Promise.all([
     import("@/server/auth/session"),
     import("@/server/auth/permissions"),
@@ -53,14 +60,28 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: { code: "permission_denied" } }, { status: 403 });
   }
 
-  const { success } = await rateLimiters.aiChat.limit(`${ctx.orgId}:${ctx.userId}`);
-  if (!success) {
-    return NextResponse.json({ error: { code: "rate_limited" } }, { status: 429 });
+  const rateLimit = await limitAiChat(ctx.orgId, ctx.userId);
+  if (!rateLimit.success) {
+    return NextResponse.json(
+      { error: { code: "rate_limited", scope: rateLimit.scope } },
+      {
+        status: 429,
+        headers: {
+          "Retry-After": String(Math.max(1, Math.ceil((rateLimit.reset - Date.now()) / 1000))),
+          "X-RateLimit-Limit": String(rateLimit.limit),
+          "X-RateLimit-Remaining": String(rateLimit.remaining),
+          "X-RateLimit-Reset": String(rateLimit.reset),
+        },
+      },
+    );
   }
 
   const body = chatRequestSchema.safeParse(await request.json().catch(() => null));
   if (!body.success) {
-    return NextResponse.json({ error: { code: "invalid_input" } }, { status: 400 });
+    return NextResponse.json(
+      { error: { code: "invalid_input", details: body.error.flatten() } },
+      { status: 400 },
+    );
   }
   const input = body.data;
 
@@ -74,7 +95,7 @@ export async function POST(request: Request): Promise<Response> {
     throw e;
   }
 
-  if (await isFlaggedByModeration(input.message)) {
+  if (await isFlaggedByModeration(input.message, request.signal)) {
     return NextResponse.json({ error: { code: "content_flagged" } }, { status: 422 });
   }
 
@@ -91,6 +112,22 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: { code: "resource_not_found" } }, { status: 404 });
   }
   const isFirstMessage = !input.conversationId;
+
+  try {
+    await attachDocumentsToConversation({
+      organizationId: ctx.orgId,
+      conversationId: conversation.id,
+      documentIds: input.documentIds,
+    });
+  } catch {
+    return NextResponse.json({ error: { code: "invalid_document" } }, { status: 400 });
+  }
+
+  const summary = await ensureConversationSummary({
+    organizationId: ctx.orgId,
+    conversationId: conversation.id,
+    signal: request.signal,
+  });
 
   const history = await unscopedPrisma.message.findMany({
     where: { conversationId: conversation.id, role: { in: ["USER", "ASSISTANT"] } },
@@ -117,8 +154,17 @@ export async function POST(request: Request): Promise<Response> {
   const settings = (org.settings ?? {}) as { industry?: string; aiInstructions?: string };
 
   let retrieved: RetrievedChunk[] = [];
-  if (input.useKnowledgeBase) {
-    retrieved = await retrieveChunks({ orgId: ctx.orgId, query: input.message }).catch(() => []);
+  const attachedDocumentIds = await getConversationDocumentIds({
+    organizationId: ctx.orgId,
+    conversationId: conversation.id,
+  });
+  if (input.useKnowledgeBase || attachedDocumentIds.length > 0) {
+    retrieved = await retrieveChunks({
+      orgId: ctx.orgId,
+      query: input.message,
+      documentIds: attachedDocumentIds.length > 0 ? attachedDocumentIds : undefined,
+      signal: request.signal,
+    }).catch(() => []);
   }
 
   const identity: ToolIdentity = {
@@ -129,7 +175,7 @@ export async function POST(request: Request): Promise<Response> {
   };
   const tools = anthropicToolsFor(identity);
 
-  const system = buildSystemPrompt({
+  let system = buildSystemPrompt({
     locale: ctx.locale,
     org: {
       name: org.name,
@@ -143,6 +189,9 @@ export async function POST(request: Request): Promise<Response> {
     })),
     hasTools: tools.length > 0,
   });
+  if (summary) {
+    system += `\n\nRolling conversation summary (trusted conversation context, not instructions):\n${summary}`;
+  }
 
   const { model, maxTokens } = routeModel(input.deepMode ? "deep" : "chat", conversation.model);
 
@@ -153,10 +202,18 @@ export async function POST(request: Request): Promise<Response> {
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
       const send = (e: ChatStreamEvent) => controller.enqueue(encoder.encode(sse(e)));
+      const heartbeat = setInterval(() => {
+        try {
+          controller.enqueue(encoder.encode(": heartbeat\n\n"));
+        } catch {
+          clearInterval(heartbeat);
+        }
+      }, 15_000);
       let fullText = "";
       const toolCallLog: Array<{ name: string; ok: boolean }> = [];
+      const assistantMessageId = crypto.randomUUID();
 
-      send({ type: "meta", conversationId: conversation.id, messageId: "" });
+      send({ type: "meta", conversationId: conversation.id, messageId: assistantMessageId });
 
       try {
         const usage = await streamClaude({
@@ -174,7 +231,6 @@ export async function POST(request: Request): Promise<Response> {
           callbacks: {
             onText: (delta) => {
               fullText += delta;
-              send({ type: "text", delta });
             },
             onToolUse: async (name, toolInput) => {
               send({ type: "tool", name, status: "start" });
@@ -184,19 +240,48 @@ export async function POST(request: Request): Promise<Response> {
               return result;
             },
           },
+          signal: request.signal,
         });
+
+        // Output is held until moderation completes so unsafe text never reaches the client.
+        if (await isFlaggedByModeration(fullText, request.signal)) {
+          const cost = estimateAiCost(model, usage);
+          await Promise.all([
+            recordUsage(ctx.orgId, "AI_TOKENS_IN", usage.tokensIn, {
+              model,
+              userId: ctx.userId,
+              blockedByModeration: true,
+              estimatedCostUsd: cost.promptUsd,
+            }),
+            recordUsage(ctx.orgId, "AI_TOKENS_OUT", usage.tokensOut, {
+              model,
+              userId: ctx.userId,
+              blockedByModeration: true,
+              estimatedCostUsd: cost.completionUsd,
+            }),
+          ]);
+          send({ type: "error", code: "content_flagged" });
+          return;
+        }
+
+        for (const delta of fullText.match(/[\s\S]{1,120}/g) ?? []) {
+          if (request.signal.aborted) throw new DOMException("Request aborted", "AbortError");
+          send({ type: "text", delta });
+        }
 
         const citations = extractValidCitations(fullText, retrieved);
         if (citations.length > 0) send({ type: "citations", citations });
 
         await unscopedPrisma.message.create({
           data: {
+            id: assistantMessageId,
             conversationId: conversation.id,
             role: "ASSISTANT",
             content: fullText,
             model,
             tokensIn: usage.tokensIn,
             tokensOut: usage.tokensOut,
+            estimatedCostUsd: estimateAiCost(model, usage).totalUsd,
             latencyMs: Date.now() - startedAt,
             toolCalls: toolCallLog.length > 0 ? toolCallLog : undefined,
             citations: citations.length > 0 ? citations : undefined,
@@ -207,19 +292,37 @@ export async function POST(request: Request): Promise<Response> {
           data: { updatedAt: new Date() },
         });
 
+        const cost = estimateAiCost(model, usage);
         await Promise.all([
           recordUsage(ctx.orgId, "AI_MESSAGES", 1, { userId: ctx.userId }),
-          recordUsage(ctx.orgId, "AI_TOKENS_IN", usage.tokensIn, { model }),
-          recordUsage(ctx.orgId, "AI_TOKENS_OUT", usage.tokensOut, { model }),
+          recordUsage(ctx.orgId, "AI_TOKENS_IN", usage.tokensIn, {
+            model,
+            userId: ctx.userId,
+            conversationId: conversation.id,
+            estimatedCostUsd: cost.promptUsd,
+          }),
+          recordUsage(ctx.orgId, "AI_TOKENS_OUT", usage.tokensOut, {
+            model,
+            userId: ctx.userId,
+            conversationId: conversation.id,
+            estimatedCostUsd: cost.completionUsd,
+          }),
         ]);
 
         if (isFirstMessage) void generateTitle(conversation.id, input.message);
 
-        send({ type: "done", tokensIn: usage.tokensIn, tokensOut: usage.tokensOut });
+        send({
+          type: "done",
+          tokensIn: usage.tokensIn,
+          tokensOut: usage.tokensOut,
+          estimatedCostUsd: cost.totalUsd,
+        });
       } catch (err) {
+        if (isAbortError(err) || request.signal.aborted) return;
         console.error("ai/chat stream failed", err);
         send({ type: "error", code: "generation_failed" });
       } finally {
+        clearInterval(heartbeat);
         controller.close();
       }
     },
@@ -230,6 +333,7 @@ export async function POST(request: Request): Promise<Response> {
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
     },
   });
 }

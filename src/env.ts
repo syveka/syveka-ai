@@ -30,6 +30,11 @@ const serverSchema = z.object({
 
   UPSTASH_REDIS_REST_URL: z.string().url(),
   UPSTASH_REDIS_REST_TOKEN: z.string().min(1),
+  AI_CHAT_USER_RATE_LIMIT: z.coerce.number().int().positive().default(30),
+  AI_CHAT_ORG_RATE_LIMIT: z.coerce.number().int().positive().default(300),
+  AI_CHAT_RATE_WINDOW_SECONDS: z.coerce.number().int().min(1).max(86_400).default(60),
+  AI_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(6).default(3),
+  AI_RETRY_BASE_DELAY_MS: z.coerce.number().int().min(10).max(10_000).default(250),
   QSTASH_TOKEN: z.string().min(1),
   QSTASH_CURRENT_SIGNING_KEY: z.string().min(1),
   QSTASH_NEXT_SIGNING_KEY: z.string().min(1),

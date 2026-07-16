@@ -13,7 +13,10 @@ export function ChatView({
   initialMessages: UiMessage[];
 }) {
   const t = useTranslations("chat");
-  const { messages, send, isStreaming, error } = useChat({ conversationId, initialMessages });
+  const { messages, send, abort, isStreaming, error } = useChat({
+    conversationId,
+    initialMessages,
+  });
 
   return (
     <div className="flex h-[calc(100vh-3rem)] flex-col md:h-[calc(100vh-4.5rem)]">
@@ -23,7 +26,11 @@ export function ChatView({
           {t(`errors.${error}` as never) ?? t("errors.generic")}
         </p>
       ) : null}
-      <Composer onSend={(text, opts) => void send(text, opts)} disabled={isStreaming} />
+      <Composer
+        onSend={(text, opts) => void send(text, opts)}
+        onAbort={abort}
+        disabled={isStreaming}
+      />
     </div>
   );
 }

@@ -23,6 +23,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     { chunkText },
     { embed },
     { recordUsage },
+    { assertExtractionLimits, assertTenantStoragePath, verifyUploadObject },
   ] = await Promise.all([
     import("@prisma/client"),
     import("@/server/jobs/verify"),
@@ -32,6 +33,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/ai/chunking"),
     import("@/server/integrations/openai"),
     import("@/server/services/billing/entitlements"),
+    import("@/server/security/document-ingestion"),
   ]);
 
   const rawBody = await verifyJobRequest(request);
@@ -59,22 +61,30 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (inlineContent !== undefined) {
       text = inlineContent;
     } else if (document.sourceType === "URL" && document.sourceUrl) {
-      text = await extractFromUrl(document.sourceUrl);
+      text = await extractFromUrl(document.sourceUrl, request.signal);
     } else if (document.storagePath) {
+      assertTenantStoragePath(orgId, document.storagePath);
       const admin = createSupabaseAdmin();
       const { data, error } = await admin.storage.from("documents").download(document.storagePath);
       if (error || !data) throw new Error(`Storage download failed: ${error?.message}`);
-      text = await extractText(
-        Buffer.from(await data.arrayBuffer()),
-        document.mimeType ?? "text/plain",
+      const buffer = Buffer.from(await data.arrayBuffer());
+      const mimeType = document.mimeType ?? "text/plain";
+      verifyUploadObject(
+        buffer,
+        data.type,
+        mimeType as Parameters<typeof verifyUploadObject>[2],
+        document.sizeBytes ?? 0,
       );
+      text = await extractText(buffer, mimeType, request.signal);
     } else {
       throw new Error("No content source");
     }
 
     // 2. Chunk
+    assertExtractionLimits(text);
     const chunks = chunkText(text);
     if (chunks.length === 0) throw new Error("Document produced no extractable text");
+    assertExtractionLimits(text, chunks.length);
 
     // 3. Embed in batches + insert (replace any previous chunks: reprocess-safe)
     await unscopedPrisma.documentChunk.deleteMany({ where: { documentId } });

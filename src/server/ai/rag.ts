@@ -22,13 +22,32 @@ export async function retrieveChunks(params: {
   query: string;
   count?: number;
   threshold?: number;
+  documentIds?: string[];
+  signal?: AbortSignal;
 }): Promise<RetrievedChunk[]> {
-  const embedding = await embedOne(params.query);
+  const embedding = await embedOne(params.query, params.signal);
   const vector = `[${embedding.join(",")}]`;
 
-  const rows = await unscopedPrisma.$queryRaw<
-    Array<{ chunk_id: string; document_id: string; content: string; similarity: number }>
-  >(Prisma.sql`
+  const rows = params.documentIds?.length
+    ? await unscopedPrisma.$queryRaw<
+        Array<{ chunk_id: string; document_id: string; content: string; similarity: number }>
+      >(Prisma.sql`
+        select dc.id as chunk_id, dc.document_id, dc.content,
+          1 - (dc.embedding <=> ${vector}::vector(1536)) as similarity
+        from document_chunks dc
+        join documents d on d.id = dc.document_id
+        where dc.organization_id = ${params.orgId}::uuid
+          and dc.document_id in (${Prisma.join(params.documentIds.map((id) => Prisma.sql`${id}::uuid`))})
+          and dc.embedding is not null
+          and d.deleted_at is null
+          and d.status = 'READY'
+          and 1 - (dc.embedding <=> ${vector}::vector(1536)) > ${params.threshold ?? 0.35}
+        order by dc.embedding <=> ${vector}::vector(1536)
+        limit ${params.count ?? 8}
+      `)
+    : await unscopedPrisma.$queryRaw<
+        Array<{ chunk_id: string; document_id: string; content: string; similarity: number }>
+      >(Prisma.sql`
     select chunk_id, document_id, content, similarity
     from match_chunks(
       ${params.orgId}::uuid,

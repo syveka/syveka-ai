@@ -115,6 +115,10 @@
     "newConversation": "Uusi keskustelu",
     "placeholder": "Viesti Syvekalle…",
     "useKnowledgeBase": "Käytä tietopankkia",
+    "attachFile": "Liitä PDF-, DOCX- tai TXT-tiedosto",
+    "removeFile": "Poista tiedosto",
+    "stopGenerating": "Pysäytä vastaus",
+    "send": "Lähetä viesti",
     "disclaimer": "Tekoälyn vastauksissa voi olla virheitä. Varmista tärkeät tiedot.",
     "errors": {
       "generic": "Jokin meni pieleen. Yritä uudelleen.",
@@ -122,7 +126,11 @@
       "entitlement_exceeded": "Kuukauden AI-kiintiö täynnä — päivitä tilaus jatkaaksesi.",
       "content_flagged": "Tätä viestiä ei voida käsitellä.",
       "generation_failed": "Vastauksen luonti epäonnistui. Yritä uudelleen.",
-      "network_error": "Yhteys katkesi. Yritä uudelleen."
+      "network_error": "Yhteys katkesi. Yritä uudelleen.",
+      "upload_failed": "Tiedoston lataaminen epäonnistui.",
+      "unsupported_file": "Käytä PDF-, DOCX- tai TXT-tiedostoa.",
+      "file_too_large": "Tiedoston enimmäiskoko on 25 Mt.",
+      "invalid_document": "Yksi liitetyistä tiedostoista ei ole käytettävissä."
     }
   },
   "knowledge": {

@@ -8,7 +8,7 @@ declare
   tenant_tables text[] := array[
     'organizations','organization_members','teams','invitations','subscriptions',
     'usage_records','companies','contacts','pipelines','deals','activities','tags',
-    'calendar_events','conversations','documents','collections','prompts',
+    'calendar_events','conversations','conversation_documents','documents','collections','prompts',
     'workflows','workflow_runs','voice_assistants','voice_calls','notifications',
     'api_keys','webhook_endpoints','audit_logs','document_chunks','messages',
     'pipeline_stages','tags_on_contacts','users'
@@ -66,7 +66,8 @@ do $$
 declare
   t text;
   ro_tables text[] := array[
-    'subscriptions','usage_records','voice_calls','workflow_runs','invitations','api_keys'
+    'subscriptions','usage_records','voice_calls','workflow_runs','invitations','api_keys',
+    'conversation_documents'
   ];
 begin
   foreach t in array ro_tables loop
