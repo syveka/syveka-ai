@@ -13,6 +13,7 @@
     "typecheck": "tsc --noEmit",
     "i18n:check": "node scripts/check-i18n-parity.mjs",
     "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
