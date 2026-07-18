@@ -72,3 +72,28 @@ flowchart TD
 ```
 
 The `Deploy` workflow has no direct `push` trigger. It starts only after `CI` completes on `main`, validates that the CI conclusion is `success`, validates that the source event was a `push`, and checks out `github.event.workflow_run.head_sha` for every deployment step.
+
+## Database Migration Order
+
+Production uses `npx prisma migrate deploy`, which applies pending tracked migrations in lexical order.
+For the current Calendar, Booking, AI Chat, Knowledge Base, CRM, and security release, the order is:
+
+1. `20260712000000_dashboard_indexes`
+2. `20260712120000_crm_contacts_companies_v1`
+3. `20260712180000_crm_deals_v1`
+4. `20260713000000_calendar_booking_v1`
+5. `20260714000000_secure_document_upload_intents`
+6. `20260715000000_ai_chat_production_hardening`
+7. `20260715230000_security_invariant_corrections`
+8. `20260718000000_calendar_booking_rls`
+
+The final migration enables RLS for every Calendar/Booking V1 table and creates only the intended
+authenticated SELECT policies. Server-only connection, token, reminder, and synchronization tables
+remain deny-by-default. Do not run `prisma/sql/005_calendar_booking_rls.sql` separately; it is only a
+compatibility wrapper for older setup instructions.
+
+Before production migration, confirm backup/PITR readiness, inspect pending `_prisma_migrations`, and
+run tenant-integrity preflight checks. After migration, verify the migration row, RLS flags, expected
+policies, and absence of authenticated policies on the server-only tables before deploying the
+application. Roll back the application before considering a database corrective migration; do not
+drop RLS or tenant policies as a routine rollback.

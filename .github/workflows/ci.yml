@@ -223,6 +223,10 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/001_extensions_and_indexes.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/002_functions.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/003_rls.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/migrations/20260718000000_calendar_booking_rls/migration.sql
+          # Reapply to prove compatibility with environments where the former
+          # standalone Calendar/Booking RLS SQL was executed manually.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/migrations/20260718000000_calendar_booking_rls/migration.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin
             if not exists (
               select 1 from pg_constraint
@@ -236,6 +240,7 @@ jobs:
       - name: Run isolation assertions
         run: |
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/calendar-booking-isolation.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
 
   build:
