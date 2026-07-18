@@ -21,6 +21,9 @@ psql $DIRECT_URL -f prisma/sql/003_rls.sql
 psql $DIRECT_URL -f prisma/sql/004_storage.sql
 npm run db:seed             # global prompt library + default pipeline data
 
+# Calendar & Booking RLS is applied by the tracked Prisma migration
+# 20260718000000_calendar_booking_rls. Do not run prisma/sql/005 separately.
+
 # Supabase dashboard (one-time):
 #  - Auth → Hooks → register public.custom_access_token_hook (access token hook)
 #  - Auth → Providers → enable Google OAuth

@@ -35,11 +35,13 @@ OAuth tokens are stored AES-256-GCM-encrypted (`crypto.ts`); refresh happens laz
 
 ## Database
 
-Migration: `prisma/migrations/20260713000000_calendar_booking_v1/migration.sql` (idempotent SQL, follows repo convention).
+Schema migration: `prisma/migrations/20260713000000_calendar_booking_v1/migration.sql` (idempotent SQL, follows repo convention).
+RLS migration: `prisma/migrations/20260718000000_calendar_booking_rls/migration.sql`.
 
 - Extended: `calendar_events` (+ owner, timezone, status, company/deal linkage indexes, external sync linkage, soft delete).
 - New: `event_attendees`, `calendar_connections`, `external_calendars`, `calendar_sync_states`, `availability_schedules`, `availability_rules`, `availability_overrides`, `booking_types`, `bookings`, `booking_tokens`, `reminders`.
-- **Index ownership**: every index on the tables above is created (and owned) by this migration. `prisma/sql/005_calendar_booking_rls.sql` owns the RLS policies for the new tables (run once per environment, like `003_rls.sql`).
+- **Index ownership**: every index on the tables above is created and owned by the schema migration.
+- **RLS ownership**: the additive `20260718000000_calendar_booking_rls` Prisma migration enables RLS and owns the authenticated read policies. `prisma/sql/005_calendar_booking_rls.sql` is a deprecated compatibility wrapper and is not a separate deployment step.
 - `tenantDb` scoping: new org-owned models added to `TENANT_MODELS`; `EventAttendee`, `AvailabilityRule`, `AvailabilityOverride`, `BookingToken` are parent-scoped (accessed only through verified parents).
 
 ## RBAC & security
