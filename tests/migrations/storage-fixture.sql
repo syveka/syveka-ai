@@ -14,5 +14,5 @@ alter table storage.objects enable row level security;
 
 create or replace function storage.foldername(path text)
 returns text[] language sql immutable as $$
-  select string_to_array(path, '/')[1:greatest(array_length(string_to_array(path, '/'), 1) - 1, 0)]
+  select (string_to_array(path, '/'))[1:greatest(array_length(string_to_array(path, '/'), 1) - 1, 0)]
 $$;
