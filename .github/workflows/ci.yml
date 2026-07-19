@@ -116,6 +116,8 @@ jobs:
           if [ "$found" -eq 0 ]; then
             echo "prisma/migrations exists but contains no migration directories."
           fi
+      - name: Verify migration order and published checksums
+        run: node scripts/check-migration-history.mjs
 
   lint:
     name: Lint
@@ -202,41 +204,14 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
-      - name: Apply schema and policies
+      - name: Deploy complete migration history to empty PostgreSQL
         run: |
-          npx prisma db push --skip-generate
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin
-            if not exists (select 1 from pg_roles where rolname = 'authenticated') then
-              create role authenticated nologin;
-            end if;
-            if not exists (select 1 from pg_roles where rolname = 'supabase_auth_admin') then
-              create role supabase_auth_admin nologin;
-            end if;
-          end \$\$;
-            create schema if not exists auth;
-            create table if not exists auth.users (id uuid primary key, email text, raw_user_meta_data jsonb default '{}'::jsonb);
-            create or replace function auth.uid() returns uuid language sql as \$\$ select nullif(current_setting('request.jwt.claims', true)::jsonb->>'sub','')::uuid \$\$;
-            create or replace function auth.jwt() returns jsonb language sql as \$\$ select coalesce(current_setting('request.jwt.claims', true)::jsonb, '{}'::jsonb) \$\$;
-            grant usage on schema auth to authenticated;
-            grant execute on function auth.uid() to authenticated;
-            grant execute on function auth.jwt() to authenticated;"
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/001_extensions_and_indexes.sql
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/002_functions.sql
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/003_rls.sql
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/migrations/20260718000000_calendar_booking_rls/migration.sql
-          # Reapply to prove compatibility with environments where the former
-          # standalone Calendar/Booking RLS SQL was executed manually.
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/migrations/20260718000000_calendar_booking_rls/migration.sql
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin
-            if not exists (
-              select 1 from pg_constraint
-              where conname = 'document_upload_intents_tenant_path_check'
-            ) then
-              alter table document_upload_intents
-                add constraint document_upload_intents_tenant_path_check
-                check (storage_path like organization_id::text || '/%');
-            end if;
-          end \$\$;"
+          npx prisma migrate deploy
+          npx prisma migrate status
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
+          # The deprecated Calendar/Booking wrapper is intentionally rerunnable.
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/005_calendar_booking_rls.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/005_calendar_booking_rls.sql
       - name: Run isolation assertions
         run: |
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql

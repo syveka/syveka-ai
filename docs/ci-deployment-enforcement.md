@@ -26,9 +26,10 @@ The detailed CI jobs are intentionally visible as separate checks, but branch pr
 
 Create a `staging` environment:
 
-- No manual approval required unless the organization wants review before staging tests.
-- Environment variable `STAGING_URL` must point to the already-deployed staging application used by Playwright.
-- Secrets `E2E_USER_EMAIL` and `E2E_USER_PASSWORD` must identify a seeded, non-production E2E account.
+- Use a separate Supabase project and a separate Vercel project containing no production data.
+- Prefer reviewer approval and restrict deployment to trusted branches.
+- Configure the staging-only variables and secrets listed in `docs/release-runbook.md`.
+- Run `.github/workflows/staging-release.yml` manually and type the staging project ref. The workflow migrates and validates staging before deploying the application.
 
 Create a `production` environment:
 
@@ -45,11 +46,16 @@ Repository or environment variables:
 
 - `STAGING_URL`
 - `PROD_URL`
+- `STAGING_SUPABASE_PROJECT_REF`
+- `STAGING_SUPABASE_URL`
+- `PRODUCTION_SUPABASE_PROJECT_REF`
+- `PRODUCTION_VERCEL_PROJECT_ID`
 
 Secrets:
 
 - `E2E_USER_EMAIL`
 - `E2E_USER_PASSWORD`
+- See `docs/release-runbook.md` for the staging workflow's `STAGING_*` secrets.
 - `PROD_DATABASE_URL`
 - `PROD_DIRECT_URL`
 - `VERCEL_TOKEN`
@@ -78,19 +84,24 @@ The `Deploy` workflow has no direct `push` trigger. It starts only after `CI` co
 Production uses `npx prisma migrate deploy`, which applies pending tracked migrations in lexical order.
 For the current Calendar, Booking, AI Chat, Knowledge Base, CRM, and security release, the order is:
 
-1. `20260712000000_dashboard_indexes`
-2. `20260712120000_crm_contacts_companies_v1`
-3. `20260712180000_crm_deals_v1`
-4. `20260713000000_calendar_booking_v1`
-5. `20260714000000_secure_document_upload_intents`
-6. `20260715000000_ai_chat_production_hardening`
-7. `20260715230000_security_invariant_corrections`
-8. `20260718000000_calendar_booking_rls`
+1. `20260701000000_initial_baseline`
+2. `20260712000000_dashboard_indexes`
+3. `20260712120000_crm_contacts_companies_v1`
+4. `20260712180000_crm_deals_v1`
+5. `20260713000000_calendar_booking_v1`
+6. `20260714000000_secure_document_upload_intents`
+7. `20260715000000_ai_chat_production_hardening`
+8. `20260715230000_security_invariant_corrections`
+9. `20260718000000_calendar_booking_rls`
+10. `20260719000000_initial_security_baseline`
 
-The final migration enables RLS for every Calendar/Booking V1 table and creates only the intended
+Migration 9 enables RLS for every Calendar/Booking V1 table and creates only the intended
 authenticated SELECT policies. Server-only connection, token, reminder, and synchronization tables
 remain deny-by-default. Do not run `prisma/sql/005_calendar_booking_rls.sql` separately; it is only a
 compatibility wrapper for older setup instructions.
+
+Migration 10 additively tracks the original manually provisioned functions, search indexes, and base
+RLS policies. See `docs/release-runbook.md` for the empty-database baseline decision and release steps.
 
 Before production migration, confirm backup/PITR readiness, inspect pending `_prisma_migrations`, and
 run tenant-integrity preflight checks. After migration, verify the migration row, RLS flags, expected

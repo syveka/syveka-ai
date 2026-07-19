@@ -12,6 +12,7 @@
     "lint": "eslint .",
     "typecheck": "tsc --noEmit",
     "i18n:check": "node scripts/check-i18n-parity.mjs",
+    "migrations:check": "node scripts/check-migration-history.mjs",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "db:generate": "prisma generate",
