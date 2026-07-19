@@ -29,8 +29,8 @@ declare
     'webhook_endpoints', 'audit_logs'
   ];
   missing_name text;
-  table_name text;
-  policy_name text;
+  contract_table text;
+  contract_policy text;
   policy_command text;
   policy_roles name[];
   policy_qual text;
@@ -46,13 +46,13 @@ declare
     'availability_schedules', 'booking_types', 'bookings'
   ];
 begin
-  select migration_name
+  select expected.migration_name
   into missing_name
   from unnest(expected_migrations) as expected(migration_name)
   where not exists (
     select 1
     from public._prisma_migrations as migration
-    where migration.migration_name = migration_name
+    where migration.migration_name = expected.migration_name
       and migration.finished_at is not null
       and migration.rolled_back_at is null
   )
@@ -117,55 +117,59 @@ begin
     raise exception 'STAGING RELEASE FAIL: a read-only client table has a write policy';
   end if;
 
-  foreach table_name in array crud_tables loop
-    foreach policy_name in array array[
-      table_name || '_select', table_name || '_insert',
-      table_name || '_update', table_name || '_delete'
+  foreach contract_table in array crud_tables loop
+    foreach contract_policy in array array[
+      contract_table || '_select', contract_table || '_insert',
+      contract_table || '_update', contract_table || '_delete'
     ] loop
       select cmd, roles,
         regexp_replace(replace(lower(coalesce(qual, '')), '::text', ''), '[[:space:]()]', '', 'g'),
         regexp_replace(replace(lower(coalesce(with_check, '')), '::text', ''), '[[:space:]()]', '', 'g')
       into policy_command, policy_roles, policy_qual, policy_check
       from pg_policies
-      where schemaname = 'public' and tablename = table_name and policyname = policy_name;
+      where schemaname = 'public'
+        and tablename = contract_table
+        and policyname = contract_policy;
 
       if policy_roles is distinct from array['authenticated']::name[] then
-        raise exception 'STAGING RELEASE FAIL: policy %.% has unexpected roles', table_name, policy_name;
+        raise exception 'STAGING RELEASE FAIL: policy %.% has unexpected roles', contract_table, contract_policy;
       end if;
-      if policy_name = table_name || '_select'
+      if contract_policy = contract_table || '_select'
         and (policy_command <> 'SELECT' or policy_qual <> 'organization_id=auth_org_id' or policy_check <> '') then
-        raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected SELECT predicate', table_name, policy_name;
-      elsif policy_name = table_name || '_insert'
+        raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected SELECT predicate', contract_table, contract_policy;
+      elsif contract_policy = contract_table || '_insert'
         and (policy_command <> 'INSERT' or policy_qual <> '' or policy_check <> 'organization_id=auth_org_id') then
-        raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected INSERT predicate', table_name, policy_name;
-      elsif policy_name = table_name || '_update'
+        raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected INSERT predicate', contract_table, contract_policy;
+      elsif contract_policy = contract_table || '_update'
         and (policy_command <> 'UPDATE' or policy_qual <> 'organization_id=auth_org_id' or policy_check <> '') then
-        raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected UPDATE predicate', table_name, policy_name;
-      elsif policy_name = table_name || '_delete'
+        raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected UPDATE predicate', contract_table, contract_policy;
+      elsif contract_policy = contract_table || '_delete'
         and (
           policy_command <> 'DELETE'
           or policy_qual <> 'organization_id=auth_org_idandauth_role=anyarray[''owner'',''admin'',''manager'']'
           or policy_check <> ''
         ) then
-        raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected DELETE predicate', table_name, policy_name;
+        raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected DELETE predicate', contract_table, contract_policy;
       end if;
     end loop;
   end loop;
 
-  foreach table_name in array direct_read_tables loop
-    policy_name := table_name || '_select';
+  foreach contract_table in array direct_read_tables loop
+    contract_policy := contract_table || '_select';
     select cmd, roles,
       regexp_replace(replace(lower(coalesce(qual, '')), '::text', ''), '[[:space:]()]', '', 'g'),
       regexp_replace(replace(lower(coalesce(with_check, '')), '::text', ''), '[[:space:]()]', '', 'g')
     into policy_command, policy_roles, policy_qual, policy_check
     from pg_policies
-    where schemaname = 'public' and tablename = table_name and policyname = policy_name;
+    where schemaname = 'public'
+      and tablename = contract_table
+      and policyname = contract_policy;
 
     if policy_command is distinct from 'SELECT'
       or policy_roles is distinct from array['authenticated']::name[]
       or policy_qual is distinct from 'organization_id=auth_org_id'
       or policy_check is distinct from '' then
-      raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected read definition', table_name, policy_name;
+      raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected read definition', contract_table, contract_policy;
     end if;
   end loop;
 
