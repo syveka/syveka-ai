@@ -269,6 +269,7 @@ jobs:
           DIRECT_URL: postgresql://postgres:postgres@localhost:5432/partial_schema
         run: |
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/migrations/supabase-compatibility.sql
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c 'create table public.users (id uuid primary key)'
           if npx prisma migrate deploy; then
             echo "A partial schema was unexpectedly accepted."
             exit 1
