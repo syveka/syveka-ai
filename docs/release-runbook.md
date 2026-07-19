@@ -18,15 +18,19 @@ The repair does not edit any published migration:
 1. `20260701000000_initial_baseline` is the schema generated from commit
    `06f3bd093d7c5d70a285bd25f7cd350a7777cc41`, the parent schema of the first
    migration. On an empty database it creates that schema. On an existing
-   database it verifies all baseline tables and performs no table DDL. It rejects
-   partially provisioned databases.
+   database it verifies the complete compatibility contract (tables, columns,
+   PostgreSQL types, nullability, primary/unique keys, foreign keys, enums, and
+   required indexes) and performs no table DDL. It rejects partial or drifted
+   databases inside a transaction.
 2. The eight published feature/security migrations run unchanged.
 3. `20260719000000_initial_security_baseline` additively tracks the original
    extensions, functions, search indexes, and base RLS setup. Existing policies
-   are preserved, missing expected policies are added, and authenticated/public
-   policies on server-only tables abort the migration.
+   are preserved, missing expected policies are added, and existing same-name
+   policies are validated by command, role, and predicate. Weak or unexpected
+   authenticated/public policies abort and roll back the migration.
 4. Supabase Storage remains an explicit compatibility step because plain
-   PostgreSQL has no `storage` schema. `prisma/sql/004_storage.sql` is rerunnable.
+   PostgreSQL has no `storage` schema. `prisma/sql/004_storage.sql` is
+   transactional and rerunnable, and refuses same-name policy drift.
 
 Required lexical order:
 
@@ -81,18 +85,32 @@ At minimum this includes Supabase URL/keys, both database URLs, AI keys, Upstash
 QStash, Stripe test-mode values, Resend, and Calendar encryption/OAuth settings.
 The staging project ID must not equal `PRODUCTION_VERCEL_PROJECT_ID`.
 
+### Workflow bootstrap after this pull request merges
+
+GitHub can dispatch a workflow only after that workflow file exists on the
+default branch. Therefore, merge this pull request only after `CI required`
+passes, then run **Staging release validation** from `main`. Merging does not
+deploy production: the production workflow has only `workflow_dispatch`, and
+Vercel's independent Git production deployment must be disabled.
+
+For both GitHub Environments, restrict deployment branches/tags to `main` only.
+For `production`, require an owner/reviewer approval and disallow administrator
+bypass except through the audited emergency process. These settings are part of
+the gate; the workflow's own `github.ref` check is defense in depth.
+
 ## Staging release validation
 
 1. Create a backup or verify Supabase staging PITR before the first migration.
-2. Open **Actions -> Staging release validation -> Run workflow** on the exact
-   commit under review.
+2. After this workflow exists on the default branch, open **Actions -> Staging
+   release validation -> Run workflow**, select `main`, and record its exact SHA.
 3. Enter the staging Supabase project ref. The workflow rejects a mismatch, a
    production project-ref match, or a production Vercel-project match.
 4. The workflow installs dependencies; runs formatting, i18n, lint, typecheck,
    tests, build, Prisma validation, migration-history validation, and the
    production dependency audit.
-5. It runs `prisma migrate deploy` against staging before application deployment,
-   then `prisma migrate status`.
+5. It runs the read-only `006_legacy_baseline_preflight.sql`, then
+   `prisma migrate deploy` against staging before application deployment, then
+   `prisma migrate status`.
 6. It applies rerunnable Supabase Storage compatibility and validates the private
    `documents` bucket plus embedding-key configuration.
 7. It runs read-only release assertions and rollback-wrapped RLS/tenant tests.
@@ -109,8 +127,8 @@ relationships, and server-only table restrictions.
 Do not run migrations repeatedly as a test. Prisma migrations are one-time and
 tracked in `_prisma_migrations`. Rerun only `prisma migrate status`,
 `tests/staging/release-invariants.sql`, the rollback-wrapped SQL tests, and the
-document/storage configuration check. CI intentionally reruns only the deprecated
-Calendar/Booking compatibility wrapper to prove its documented idempotency.
+document/storage configuration check. CI reruns only documented compatibility
+and assertion SQL; tracked Prisma migrations remain one-time operations.
 
 ## Production preflight and backup
 
@@ -127,28 +145,41 @@ Environment:
   developer folders.
 
 Before approval, archive the successful staging workflow URL, compare the release
-SHA with the production candidate, run `npm run migrations:check`, inspect
-`npx prisma migrate status` with production-scoped credentials through an approved
-operator session, and review every pending migration in the order above.
+SHA with the production candidate, run `npm run migrations:check`, and review
+every pending migration in the order above. From an approved operator session,
+run the compatibility preflight before any write:
+
+```sh
+psql "$PROD_DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
+npx prisma migrate status
+```
 
 ## Production deployment order
 
 1. Freeze schema-changing writes and notify the release owner.
 2. Verify backup/PITR and the exact release SHA.
-3. Confirm the staging workflow for that SHA passed.
-4. Approve the protected GitHub `production` Environment only after CI succeeds.
-5. Run `npx prisma migrate deploy` once using `PROD_DIRECT_URL`.
-6. Run `npx prisma migrate status` and the read-only
+3. Confirm successful main-push CI and manually dispatched staging runs for the
+   exact SHA.
+4. Manually dispatch **Production release** from `main`; enter the exact 40-digit
+   SHA twice. The verifier checks that it is the current `main` tip and queries
+   GitHub for both successful runs at that same SHA.
+5. Approve the protected GitHub `production` Environment. This approval happens
+   only after the immutable release-chain verifier succeeds.
+6. The workflow reruns the read-only compatibility preflight, then runs
+   `npx prisma migrate deploy` once using production-only database credentials.
+7. Run `npx prisma migrate status` and the read-only
    `tests/staging/release-invariants.sql` assertion.
-7. Apply `prisma/sql/004_storage.sql` only if storage has not been provisioned or
-   its rerunnable compatibility check is part of the release procedure.
-8. Deploy the application for the same immutable SHA.
-9. Run the production smoke checklist. End the write freeze only after it passes.
+8. Apply the rerunnable `prisma/sql/004_storage.sql` and validate its exact policy
+   definitions with `tests/staging/storage-invariants.sql`.
+9. Deploy the pinned Vercel CLI build for the same immutable SHA.
+10. Run the production smoke checklist. End the write freeze only after it passes.
 
 Required production Environment secrets are `PROD_DATABASE_URL`,
-`PROD_DIRECT_URL`, and `VERCEL_TOKEN`. Required variables are `PROD_URL`,
-`PRODUCTION_SUPABASE_PROJECT_REF`, and `PRODUCTION_VERCEL_PROJECT_ID`. Keep all
-runtime production values in the hosting provider's protected production scope.
+`PROD_DIRECT_URL`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`.
+Required production Environment variable is `PROD_URL`. The automatically
+provided `GITHUB_TOKEN` needs only `contents: read` and `actions: read`.
+`PRODUCTION_SUPABASE_PROJECT_REF` and `PRODUCTION_VERCEL_PROJECT_ID` are staging
+deny-list variables. Keep all runtime production values in the hosting provider's protected production scope.
 Never echo, export to artifacts, or expose any of these values to client bundles.
 
 ## Production smoke checklist

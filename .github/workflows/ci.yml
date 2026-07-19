@@ -218,6 +218,107 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/calendar-booking-isolation.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
 
+  migration-upgrade:
+    name: Legacy, drift, and policy migration tests
+    runs-on: ubuntu-latest
+    needs: [prisma-generate]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Create isolated migration test databases
+        env:
+          PGURL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: |
+          for database in legacy_upgrade partial_schema drifted_schema weak_policy storage_policy; do
+            psql "$PGURL" -v ON_ERROR_STOP=1 -c "create database $database"
+          done
+      - name: Upgrade deterministic legacy schema
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/legacy_upgrade
+          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/legacy_upgrade
+        run: |
+          bash scripts/ci/provision-legacy-database.sh
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
+          npx prisma migrate deploy
+          npx prisma migrate status
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/rls/calendar-booking-isolation.sql
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
+      - name: Reject a partially provisioned schema atomically
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/partial_schema
+          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/partial_schema
+        run: |
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/migrations/supabase-compatibility.sql
+          if npx prisma migrate deploy; then
+            echo "A partial schema was unexpectedly accepted."
+            exit 1
+          fi
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if to_regclass('public.organizations') is not null then raise exception 'partial migration was not atomic'; end if; end \$\$"
+      - name: Reject legacy structural drift before writes
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/drifted_schema
+          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/drifted_schema
+        run: |
+          bash scripts/ci/provision-legacy-database.sh
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c 'alter table public.organizations alter column slug drop not null'
+          if psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql; then
+            echo "The read-only preflight unexpectedly accepted drift."
+            exit 1
+          fi
+          if npx prisma migrate deploy; then
+            echo "The baseline unexpectedly accepted drift."
+            exit 1
+          fi
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if (select attnotnull from pg_attribute where attrelid = 'public.organizations'::regclass and attname = 'slug') then raise exception 'drift was rewritten'; end if; end \$\$"
+      - name: Reject a same-name weakened tenant policy
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/weak_policy
+          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/weak_policy
+        run: |
+          bash scripts/ci/provision-legacy-database.sh
+          alter_sql='alter policy contacts_select on public.contacts using (true)'
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "$alter_sql"
+          if npx prisma migrate deploy; then
+            echo "The security baseline unexpectedly accepted a weak policy."
+            exit 1
+          fi
+          psql "$DIRECT_URL" -Atqc "select qual from pg_policies where schemaname = 'public' and tablename = 'contacts' and policyname = 'contacts_select'" | grep -qx 'true'
+      - name: Verify storage compatibility and reject weak policy drift
+        env:
+          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/storage_policy
+        run: |
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/migrations/supabase-compatibility.sql
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/migrations/storage-fixture.sql
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/004_storage.sql
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/004_storage.sql
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/storage-invariants.sql
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c 'alter policy storage_org_read on storage.objects using (true)'
+          if psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/004_storage.sql; then
+            echo "Storage compatibility unexpectedly accepted a weak policy."
+            exit 1
+          fi
+          psql "$DIRECT_URL" -Atqc "select qual from pg_policies where schemaname = 'storage' and tablename = 'objects' and policyname = 'storage_org_read'" | grep -qx 'true'
+
   build:
     name: Production build
     runs-on: ubuntu-latest
@@ -329,6 +430,7 @@ jobs:
       - typecheck
       - tests
       - rls
+      - migration-upgrade
       - build
       - production-dependency-audit
       - full-dependency-audit-report

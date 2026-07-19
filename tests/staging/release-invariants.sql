@@ -29,6 +29,22 @@ declare
     'webhook_endpoints', 'audit_logs'
   ];
   missing_name text;
+  table_name text;
+  policy_name text;
+  policy_command text;
+  policy_roles name[];
+  policy_qual text;
+  policy_check text;
+  crud_tables text[] := array[
+    'teams', 'companies', 'contacts', 'pipelines', 'deals', 'activities', 'tags',
+    'calendar_events', 'conversations', 'documents', 'collections', 'workflows',
+    'voice_assistants', 'webhook_endpoints'
+  ];
+  direct_read_tables text[] := array[
+    'subscriptions', 'usage_records', 'voice_calls', 'workflow_runs',
+    'invitations', 'api_keys', 'conversation_documents', 'external_calendars',
+    'availability_schedules', 'booking_types', 'bookings'
+  ];
 begin
   select migration_name
   into missing_name
@@ -99,6 +115,70 @@ begin
       and roles && array['authenticated', 'public']::name[]
   ) then
     raise exception 'STAGING RELEASE FAIL: a read-only client table has a write policy';
+  end if;
+
+  foreach table_name in array crud_tables loop
+    foreach policy_name in array array[
+      table_name || '_select', table_name || '_insert',
+      table_name || '_update', table_name || '_delete'
+    ] loop
+      select cmd, roles,
+        regexp_replace(replace(lower(coalesce(qual, '')), '::text', ''), '[[:space:]()]', '', 'g'),
+        regexp_replace(replace(lower(coalesce(with_check, '')), '::text', ''), '[[:space:]()]', '', 'g')
+      into policy_command, policy_roles, policy_qual, policy_check
+      from pg_policies
+      where schemaname = 'public' and tablename = table_name and policyname = policy_name;
+
+      if policy_roles is distinct from array['authenticated']::name[] then
+        raise exception 'STAGING RELEASE FAIL: policy %.% has unexpected roles', table_name, policy_name;
+      end if;
+      if policy_name = table_name || '_select'
+        and (policy_command <> 'SELECT' or policy_qual <> 'organization_id=auth_org_id' or policy_check <> '') then
+        raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected SELECT predicate', table_name, policy_name;
+      elsif policy_name = table_name || '_insert'
+        and (policy_command <> 'INSERT' or policy_qual <> '' or policy_check <> 'organization_id=auth_org_id') then
+        raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected INSERT predicate', table_name, policy_name;
+      elsif policy_name = table_name || '_update'
+        and (policy_command <> 'UPDATE' or policy_qual <> 'organization_id=auth_org_id' or policy_check <> '') then
+        raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected UPDATE predicate', table_name, policy_name;
+      elsif policy_name = table_name || '_delete'
+        and (
+          policy_command <> 'DELETE'
+          or policy_qual <> 'organization_id=auth_org_idandauth_role=anyarray[''owner'',''admin'',''manager'']'
+          or policy_check <> ''
+        ) then
+        raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected DELETE predicate', table_name, policy_name;
+      end if;
+    end loop;
+  end loop;
+
+  foreach table_name in array direct_read_tables loop
+    policy_name := table_name || '_select';
+    select cmd, roles,
+      regexp_replace(replace(lower(coalesce(qual, '')), '::text', ''), '[[:space:]()]', '', 'g'),
+      regexp_replace(replace(lower(coalesce(with_check, '')), '::text', ''), '[[:space:]()]', '', 'g')
+    into policy_command, policy_roles, policy_qual, policy_check
+    from pg_policies
+    where schemaname = 'public' and tablename = table_name and policyname = policy_name;
+
+    if policy_command is distinct from 'SELECT'
+      or policy_roles is distinct from array['authenticated']::name[]
+      or policy_qual is distinct from 'organization_id=auth_org_id'
+      or policy_check is distinct from '' then
+      raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected read definition', table_name, policy_name;
+    end if;
+  end loop;
+
+  if exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and roles && array['authenticated']::name[]
+      and (
+        (cmd in ('SELECT', 'UPDATE', 'DELETE', 'ALL') and lower(coalesce(qual, '')) in ('', 'true', '(true)'))
+        or (cmd in ('INSERT', 'UPDATE', 'ALL') and lower(coalesce(with_check, '')) in ('true', '(true)'))
+      )
+  ) then
+    raise exception 'STAGING RELEASE FAIL: an authenticated policy has a missing or universally true predicate';
   end if;
 
   if to_regprocedure('public.auth_org_id()') is null

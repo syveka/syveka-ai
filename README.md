@@ -15,6 +15,9 @@ cp .env.example .env        # fill in all values (env.ts fails the build otherwi
 
 # Database
 npm run db:migrate          # local development migrations
+# Existing shared environments: run the read-only compatibility preflight
+# before db:deploy. See docs/release-runbook.md for the protected release flow.
+psql $DIRECT_URL -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
 npm run db:deploy           # tracked baseline + feature + RLS migrations
 psql $DIRECT_URL -f prisma/sql/004_storage.sql # Supabase only; safe to rerun
 npm run db:seed             # global prompt library + default pipeline data

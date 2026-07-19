@@ -1,3 +1,5 @@
+BEGIN;
+
 -- Track the original manually provisioned database functions, indexes, and
 -- row-level-security rules. Every operation is additive/idempotent so this
 -- migration is safe for both clean databases and previously provisioned
@@ -135,6 +137,99 @@ BEGIN
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', table_name);
   END LOOP;
 END $$;
+
+-- A pre-existing policy with the expected name is compatibility-safe only
+-- when its command, role, and tenant predicate are also the expected ones.
+-- Refuse drift instead of silently replacing a published security boundary.
+CREATE OR REPLACE FUNCTION pg_temp.assert_syveka_policy_contract()
+RETURNS VOID
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  table_name TEXT;
+  policy_name TEXT;
+  policy_command TEXT;
+  policy_roles NAME[];
+  policy_qual TEXT;
+  policy_check TEXT;
+  crud_tables TEXT[] := ARRAY[
+    'teams', 'companies', 'contacts', 'pipelines', 'deals', 'activities', 'tags',
+    'calendar_events', 'conversations', 'documents', 'collections', 'workflows',
+    'voice_assistants', 'webhook_endpoints'
+  ];
+  read_only_tables TEXT[] := ARRAY[
+    'subscriptions', 'usage_records', 'voice_calls', 'workflow_runs',
+    'invitations', 'api_keys', 'conversation_documents'
+  ];
+BEGIN
+  FOREACH table_name IN ARRAY crud_tables LOOP
+    FOREACH policy_name IN ARRAY ARRAY[
+      table_name || '_select', table_name || '_insert',
+      table_name || '_update', table_name || '_delete'
+    ] LOOP
+      SELECT cmd, roles,
+        regexp_replace(replace(lower(coalesce(qual, '')), '::text', ''), '[[:space:]()]', '', 'g'),
+        regexp_replace(replace(lower(coalesce(with_check, '')), '::text', ''), '[[:space:]()]', '', 'g')
+      INTO policy_command, policy_roles, policy_qual, policy_check
+      FROM pg_policies
+      WHERE schemaname = 'public' AND tablename = table_name AND policyname = policy_name;
+
+      IF policy_roles IS DISTINCT FROM ARRAY['authenticated']::NAME[] THEN
+        RAISE EXCEPTION 'Security baseline policy %.% has unexpected roles', table_name, policy_name;
+      END IF;
+
+      IF policy_name = table_name || '_select'
+        AND (policy_command <> 'SELECT' OR policy_qual <> 'organization_id=auth_org_id' OR policy_check <> '') THEN
+        RAISE EXCEPTION 'Security baseline policy %.% has an unexpected SELECT definition', table_name, policy_name;
+      ELSIF policy_name = table_name || '_insert'
+        AND (policy_command <> 'INSERT' OR policy_qual <> '' OR policy_check <> 'organization_id=auth_org_id') THEN
+        RAISE EXCEPTION 'Security baseline policy %.% has an unexpected INSERT definition', table_name, policy_name;
+      ELSIF policy_name = table_name || '_update'
+        AND (policy_command <> 'UPDATE' OR policy_qual <> 'organization_id=auth_org_id' OR policy_check <> '') THEN
+        RAISE EXCEPTION 'Security baseline policy %.% has an unexpected UPDATE definition', table_name, policy_name;
+      ELSIF policy_name = table_name || '_delete'
+        AND (
+          policy_command <> 'DELETE'
+          OR policy_qual <> 'organization_id=auth_org_idandauth_role=anyarray[''owner'',''admin'',''manager'']'
+          OR policy_check <> ''
+        ) THEN
+        RAISE EXCEPTION 'Security baseline policy %.% has an unexpected DELETE definition', table_name, policy_name;
+      END IF;
+    END LOOP;
+  END LOOP;
+
+  FOREACH table_name IN ARRAY read_only_tables LOOP
+    policy_name := table_name || '_select';
+    SELECT cmd, roles,
+      regexp_replace(replace(lower(coalesce(qual, '')), '::text', ''), '[[:space:]()]', '', 'g'),
+      regexp_replace(replace(lower(coalesce(with_check, '')), '::text', ''), '[[:space:]()]', '', 'g')
+    INTO policy_command, policy_roles, policy_qual, policy_check
+    FROM pg_policies
+    WHERE schemaname = 'public' AND tablename = table_name AND policyname = policy_name;
+
+    IF policy_command IS DISTINCT FROM 'SELECT'
+      OR policy_roles IS DISTINCT FROM ARRAY['authenticated']::NAME[]
+      OR policy_qual IS DISTINCT FROM 'organization_id=auth_org_id'
+      OR policy_check IS DISTINCT FROM '' THEN
+      RAISE EXCEPTION 'Security baseline policy %.% has an unexpected read-only definition', table_name, policy_name;
+    END IF;
+  END LOOP;
+
+  -- Every remaining authenticated policy must retain a real tenant/user/parent
+  -- predicate. This catches same-name permissive drift without rewriting it.
+  IF EXISTS (
+    SELECT 1 FROM pg_policies
+    WHERE schemaname = 'public'
+      AND roles && ARRAY['authenticated']::NAME[]
+      AND (
+        (cmd IN ('SELECT', 'UPDATE', 'DELETE', 'ALL') AND lower(coalesce(qual, '')) IN ('', 'true', '(true)'))
+        OR (cmd IN ('INSERT', 'UPDATE', 'ALL') AND lower(coalesce(with_check, '')) IN ('true', '(true)'))
+      )
+  ) THEN
+    RAISE EXCEPTION 'Security baseline refused an authenticated policy with a missing or universally true predicate';
+  END IF;
+END;
+$$;
 
 DO $$
 DECLARE
@@ -410,3 +505,7 @@ BEGIN
       unexpected_policy.policyname;
   END IF;
 END $$;
+
+SELECT pg_temp.assert_syveka_policy_contract();
+
+COMMIT;

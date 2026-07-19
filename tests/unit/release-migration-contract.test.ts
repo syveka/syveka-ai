@@ -5,38 +5,79 @@ import { describe, expect, it } from "vitest";
 const read = (path: string) => readFileSync(resolve(process.cwd(), path), "utf8");
 
 const baseline = read("prisma/migrations/20260701000000_initial_baseline/migration.sql");
+const preflight = read("prisma/sql/006_legacy_baseline_preflight.sql");
 const security = read("prisma/migrations/20260719000000_initial_security_baseline/migration.sql");
 const storage = read("prisma/sql/004_storage.sql");
-const workflow = read(".github/workflows/staging-release.yml");
+const stagingWorkflow = read(".github/workflows/staging-release.yml");
+const productionWorkflow = read(".github/workflows/deploy.yml");
+const ciWorkflow = read(".github/workflows/ci.yml");
+const legacyProvision = read("scripts/ci/provision-legacy-database.sh");
+
+function compatibilityContract(sql: string) {
+  const match = sql.match(
+    /-- BEGIN LEGACY BASELINE COMPATIBILITY CONTRACT([\s\S]*?)-- END LEGACY BASELINE COMPATIBILITY CONTRACT/,
+  );
+  if (!match?.[1]) throw new Error("Missing legacy compatibility contract markers.");
+  return match[1].replace(/\r\n/g, "\n").trim();
+}
 
 describe("staging release migration contract", () => {
-  it("guards existing and partially provisioned databases", () => {
-    expect(baseline).toContain("IF to_regclass('public.organizations') IS NOT NULL");
-    expect(baseline).toContain("refused an incomplete existing schema");
-    expect(baseline).toContain("refused a partially provisioned schema");
+  it("uses the identical read-only preflight contract inside the atomic baseline", () => {
+    expect(compatibilityContract(preflight)).toBe(compatibilityContract(baseline));
+    expect(baseline.trimStart()).toMatch(/^BEGIN;/);
+    expect(baseline.trimEnd()).toMatch(/COMMIT;$/);
+    expect(preflight).toContain("pg_attribute");
+    expect(preflight).toContain("pg_constraint");
+    expect(preflight).toContain("pg_index");
+    expect(preflight).toContain("pg_enum");
+    expect(preflight).toContain("refused a partially provisioned schema");
   });
 
-  it("adds security without dropping policies", () => {
-    expect(security).toContain("ENABLE ROW LEVEL SECURITY");
-    expect(security).toContain("IF NOT EXISTS");
-    expect(security).toContain("server-only table");
+  it("fails closed on same-name tenant and storage policy drift", () => {
+    expect(security.trimStart()).toMatch(/^BEGIN;/);
+    expect(security.trimEnd()).toMatch(/COMMIT;$/);
+    expect(security).toContain("assert_syveka_policy_contract");
+    expect(security).toContain("universally true predicate");
     expect(security).not.toMatch(/DROP\s+POLICY/i);
+    expect(storage.trimStart()).toContain("begin;");
+    expect(storage.trimEnd()).toMatch(/commit;$/i);
+    expect(storage).toContain("unexpected predicate");
+    expect(storage).not.toMatch(/drop\s+policy/i);
   });
 
-  it("keeps Supabase Storage setup rerunnable", () => {
-    expect(storage).toContain("on conflict (id) do nothing");
-    expect(storage.match(/if not exists/gi)).toHaveLength(4);
+  it("keeps staging manual, main-only, and secret-scoped", () => {
+    expect(stagingWorkflow).toContain("workflow_dispatch:");
+    expect(stagingWorkflow).toContain("if: github.ref == 'refs/heads/main'");
+    expect(stagingWorkflow).toContain("environment: staging");
+    expect(stagingWorkflow).not.toContain("environment: production");
+    const jobPreamble = stagingWorkflow.split("    steps:", 1)[0];
+    expect(jobPreamble).not.toContain("STAGING_DIRECT_URL:");
+    expect(jobPreamble).not.toContain("STAGING_SUPABASE_SERVICE_ROLE_KEY:");
+    expect(stagingWorkflow).not.toMatch(/run:[^\n]*\$\{\{\s*inputs\./);
+    expect(stagingWorkflow).toContain('VERCEL_CLI_VERSION: "56.3.2"');
   });
 
-  it("migrates and asserts staging before deploying", () => {
-    const migrateAt = workflow.indexOf("Apply Prisma migrations to staging");
-    const assertAt = workflow.indexOf("Verify migration, RLS, and tenant invariants");
-    const deployAt = workflow.indexOf("Deploy staging application");
+  it("requires a manual immutable production release chain", () => {
+    expect(productionWorkflow).toContain("workflow_dispatch:");
+    expect(productionWorkflow).not.toContain("workflow_run:");
+    expect(productionWorkflow).not.toMatch(/\n\s+push:/);
+    expect(productionWorkflow).toContain("candidate_sha:");
+    expect(productionWorkflow).toContain("confirm_production_sha:");
+    expect(productionWorkflow).toContain("environment: production");
+    expect(productionWorkflow).toContain("Verify main, CI, staging, and manual confirmation");
+    expect(productionWorkflow).toContain(
+      "ref: ${{ needs.verify-release-chain.outputs.candidate_sha }}",
+    );
+    expect(productionWorkflow).toContain('VERCEL_CLI_VERSION: "56.3.2"');
+  });
 
-    expect(migrateAt).toBeGreaterThan(0);
-    expect(assertAt).toBeGreaterThan(migrateAt);
-    expect(deployAt).toBeGreaterThan(assertAt);
-    expect(workflow).toContain("environment: staging");
-    expect(workflow).not.toContain("environment: production");
+  it("tests empty, legacy, partial, drifted, and weak-policy databases in CI", () => {
+    expect(ciWorkflow).toContain("Deploy complete migration history to empty PostgreSQL");
+    expect(legacyProvision).toContain("6f6ab84f0f3849a172e0fdfdc49610058640d56c");
+    expect(ciWorkflow).toContain("partial_schema");
+    expect(ciWorkflow).toContain("drifted_schema");
+    expect(ciWorkflow).toContain("weak_policy");
+    expect(ciWorkflow).toContain("storage_policy");
+    expect(ciWorkflow).toContain("migration-upgrade");
   });
 });

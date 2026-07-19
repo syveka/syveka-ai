@@ -38,13 +38,14 @@ Create a `production` environment:
 - Keep environment secrets scoped to production only.
 - Optional but recommended: configure wait timers or custom deployment protection rules if required by the release process.
 
-Disable any independent Vercel, hosting-provider, or GitHub deployment path that can deploy production directly from `main`. Production deployment should be performed only by the `Deploy` workflow after the successful `CI` workflow_run handoff.
+Disable any independent Vercel, hosting-provider, or GitHub deployment path that
+can deploy production directly from `main`. Production deployment is allowed
+only through the manually dispatched `Production release` workflow.
 
 ## Secrets And Variables
 
 Repository or environment variables:
 
-- `STAGING_URL`
 - `PROD_URL`
 - `STAGING_SUPABASE_PROJECT_REF`
 - `STAGING_SUPABASE_URL`
@@ -53,12 +54,12 @@ Repository or environment variables:
 
 Secrets:
 
-- `E2E_USER_EMAIL`
-- `E2E_USER_PASSWORD`
 - See `docs/release-runbook.md` for the staging workflow's `STAGING_*` secrets.
 - `PROD_DATABASE_URL`
 - `PROD_DIRECT_URL`
 - `VERCEL_TOKEN`
+- `VERCEL_ORG_ID`
+- `VERCEL_PROJECT_ID`
 - `GITHUB_TOKEN` is provided automatically by GitHub Actions.
 
 ## Flow
@@ -68,16 +69,27 @@ flowchart TD
   A["Pull request to main"] --> B["CI"]
   C["Push to main"] --> B
   B --> D["CI required"]
-  D --> E["Deploy workflow_run"]
-  E --> F["Verify CI conclusion, event, branch, and SHA"]
-  F --> G["Staging E2E"]
-  G --> H["Production environment approval"]
-  H --> I["Prisma migrate deploy"]
-  I --> J["Vercel production deploy"]
-  J --> K["Production health check"]
+  D --> E["Manual staging dispatch for exact main SHA"]
+  E --> F["Staging migrate, assertions, deploy, E2E"]
+  F --> G["Manual production dispatch; SHA typed twice"]
+  G --> H["Verify current main plus CI and staging for same SHA"]
+  H --> I["Production environment approval"]
+  I --> J["Read-only preflight then Prisma migrate deploy"]
+  J --> K["Pinned Vercel production deploy"]
+  K --> L["Production health check"]
 ```
 
-The `Deploy` workflow has no direct `push` trigger. It starts only after `CI` completes on `main`, validates that the CI conclusion is `success`, validates that the source event was a `push`, and checks out `github.event.workflow_run.head_sha` for every deployment step.
+Neither release workflow has a `push` or `workflow_run` trigger. Both are
+main-only manual dispatches. Production accepts an exact lowercase 40-character
+SHA, requires the operator to type it twice, verifies it is the current `main`
+tip, and requires successful main-push CI plus staging `workflow_dispatch` runs
+for that same SHA before production Environment approval is requested.
+
+The release workflows become dispatchable only after their files are merged to
+the default branch. The first safe sequence is: merge with CI only, configure
+the protected Environments, dispatch staging on the merge SHA, and only then
+consider a production dispatch. Do not temporarily add an automatic trigger to
+bootstrap the workflows.
 
 ## Database Migration Order
 
@@ -104,7 +116,7 @@ Migration 10 additively tracks the original manually provisioned functions, sear
 RLS policies. See `docs/release-runbook.md` for the empty-database baseline decision and release steps.
 
 Before production migration, confirm backup/PITR readiness, inspect pending `_prisma_migrations`, and
-run tenant-integrity preflight checks. After migration, verify the migration row, RLS flags, expected
+run `prisma/sql/006_legacy_baseline_preflight.sql`. After migration, verify the migration row, RLS flags, expected
 policies, and absence of authenticated policies on the server-only tables before deploying the
 application. Roll back the application before considering a database corrective migration; do not
 drop RLS or tenant policies as a routine rollback.
