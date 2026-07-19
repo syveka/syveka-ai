@@ -21,35 +21,35 @@ const expectedOrder = [
 const publishedChecksums = new Map([
   [
     "20260712000000_dashboard_indexes",
-    "cba1cac3bc1dbc634c44a54a14433387050908e24c9411e086f57b6031085feb",
+    "b61caa2883944b056d0c15569ab15ad7cea90bfdcd152e6f7538501ffabbd392",
   ],
   [
     "20260712120000_crm_contacts_companies_v1",
-    "d132bcc6f762c8bfde8a24a232e4870634d2ccf8f07f892200d91c6053323f5c",
+    "59d9262b00014ce2ac69f823058c97982bdb4471157ab570a653ffc54342be8d",
   ],
   [
     "20260712180000_crm_deals_v1",
-    "ad9f5ccc7b4bf60f38c39638a635d24fd3c09c6e32d72b32a03bd00e39b34045",
+    "83a7f31822b7d6a8bb8158ae0ef8e57024cc00ae37fd0f816cc2dc3e937f7801",
   ],
   [
     "20260713000000_calendar_booking_v1",
-    "6e741258313aa56c3506c11b279c89355c0458c8ede67dd101eb355cb51610e8",
+    "bdc4288612b123c92e08c231a10aa434520497ec05b6e623461b0501a2488e8f",
   ],
   [
     "20260714000000_secure_document_upload_intents",
-    "bccaa57055102940d1c717b9270ca17a1267737c9350d671c3b1ff21a033b17c",
+    "13ffd5f1dbda1675ed13243d5ca304312d920e848856f8dedaf06ad8f2928cf2",
   ],
   [
     "20260715000000_ai_chat_production_hardening",
-    "09d8e132a5a1368da61c2fac2b6b4ad675fad1c827d2b493daca311207fc6bf8",
+    "ed8b38d98718c08499dc0194ebb39bc22ce46345d18cfb907f46ddcbec54552b",
   ],
   [
     "20260715230000_security_invariant_corrections",
-    "2394c4e331292145089beb7e90994611dc4818f670abd62f014571afc8f309b4",
+    "318f6e972c6229c4071b6bd6ef4724bec801ae59b4ce380d9d0d7bf593016594",
   ],
   [
     "20260718000000_calendar_booking_rls",
-    "d7d4ff3910d5a6f1469ba53da4d82e91fc0da6f0d5681af6dd5703afbf6f4a4e",
+    "9c794259561334354beadb0318cabea8d26513754fde3dc24072758092a14c68",
   ],
 ]);
 
@@ -66,8 +66,9 @@ if (JSON.stringify(actualOrder) !== JSON.stringify(expectedOrder)) {
 }
 
 for (const [migration, expectedChecksum] of publishedChecksums) {
-  const contents = await readFile(path.join(migrationRoot, migration, "migration.sql"));
-  const checksum = createHash("sha256").update(contents).digest("hex");
+  const contents = await readFile(path.join(migrationRoot, migration, "migration.sql"), "utf8");
+  const canonicalContents = contents.replace(/\r\n/g, "\n");
+  const checksum = createHash("sha256").update(canonicalContents).digest("hex");
   if (checksum !== expectedChecksum) {
     throw new Error(`Published migration ${migration} was modified (${checksum}).`);
   }
