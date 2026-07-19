@@ -20,9 +20,13 @@ create table if not exists auth.users (
 );
 
 create or replace function auth.uid()
-returns uuid language sql stable as $$ select null::uuid $$;
+returns uuid language sql stable as $$
+  select nullif(current_setting('request.jwt.claims', true)::jsonb ->> 'sub', '')::uuid
+$$;
 create or replace function auth.jwt()
-returns jsonb language sql stable as $$ select '{}'::jsonb $$;
+returns jsonb language sql stable as $$
+  select coalesce(current_setting('request.jwt.claims', true)::jsonb, '{}'::jsonb)
+$$;
 
 grant usage on schema auth to authenticated;
 grant execute on function auth.uid() to authenticated;
