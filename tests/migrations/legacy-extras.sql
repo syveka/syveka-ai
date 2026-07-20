@@ -17,3 +17,18 @@ alter table public.document_upload_intents
   validate constraint document_upload_intents_tenant_path_check;
 alter table public.conversation_documents enable row level security;
 alter table public.conversation_documents force row level security;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_policies
+    where schemaname = 'public'
+      and tablename = 'conversation_documents'
+      and policyname = 'conversation_documents_tenant_isolation'
+  ) then
+    create policy conversation_documents_tenant_isolation
+      on public.conversation_documents
+      for select to authenticated
+      using (organization_id = auth_org_id());
+  end if;
+end $$;

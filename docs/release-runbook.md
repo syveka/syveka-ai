@@ -19,15 +19,20 @@ The repair does not edit any published migration:
    `06f3bd093d7c5d70a285bd25f7cd350a7777cc41`, the parent schema of the first
    migration. On an empty database it creates that schema. On an existing
    database it verifies the complete compatibility contract (tables, columns,
-   PostgreSQL types, nullability, primary/unique keys, foreign keys, enums, and
-   required indexes) and performs no table DDL. It rejects partial or drifted
-   databases inside a transaction.
+   PostgreSQL types (including enum names and the vector dimension), nullability,
+   identity/generated behavior, declared defaults, primary/unique keys, all 71
+   ordered foreign-key definitions, enums, and required indexes) and performs no
+   table DDL. Foreign keys include both schemas/tables, both ordered column lists,
+   validation state, update/delete actions, and deferrability. It rejects partial
+   or drifted databases inside a transaction.
 2. The eight published feature/security migrations run unchanged.
 3. `20260719000000_initial_security_baseline` additively tracks the original
    extensions, functions, search indexes, and base RLS setup. Existing policies
-   are preserved, missing expected policies are added, and existing same-name
-   policies are validated by command, role, and predicate. Weak or unexpected
-   authenticated/public policies abort and roll back the migration.
+   are preserved, missing expected policies are added, and every expected
+   authenticated policy is validated by schema/table/name, permissive mode,
+   command, exact role set, and normalized USING/WITH CHECK predicates. Weak,
+   differently defined, additional authenticated/public, or server-only policies
+   abort and roll back the migration.
 4. Supabase Storage remains an explicit compatibility step because plain
    PostgreSQL has no `storage` schema. `prisma/sql/004_storage.sql` is
    transactional and rerunnable, and refuses same-name policy drift.
@@ -47,6 +52,13 @@ Required lexical order:
 
 Run `npm run migrations:check` before release. It verifies this order and pins
 the checksums of migrations 2 through 9, which were already published.
+
+The standalone preflight and the contract embedded in the initial migration are
+byte-identical between their marker lines and enforced by a unit test. The
+contract intentionally permits unexpected extra columns for legacy forward
+compatibility, but an extra column cannot replace an expected name or relax its
+type, nullability, generated/identity behavior, or default. Operators must still
+review extras before release; the preflight never removes or rewrites them.
 
 ## One-time owner setup for staging
 

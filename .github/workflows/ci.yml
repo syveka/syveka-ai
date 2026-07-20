@@ -247,18 +247,30 @@ jobs:
         env:
           PGURL: postgresql://postgres:postgres@localhost:5432/postgres
         run: |
-          for database in legacy_upgrade partial_schema drifted_schema weak_policy storage_policy; do
+          for database in legacy_template partial_schema storage_policy; do
             psql "$PGURL" -v ON_ERROR_STOP=1 -c "create database $database"
+          done
+      - name: Provision one deterministic legacy template and clone drift cases
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/legacy_template
+          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/legacy_template
+          PGURL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: |
+          bash scripts/ci/provision-legacy-database.sh
+          databases="legacy_upgrade drifted_schema missing_column column_drift fk_wrong_source fk_wrong_target fk_not_valid weak_policy weak_messages weak_prompts weak_calendar wrong_policy_role wrong_policy_command"
+          for database in $databases; do
+            psql "$PGURL" -v ON_ERROR_STOP=1 -c "create database $database with template legacy_template"
           done
       - name: Upgrade deterministic legacy schema
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/legacy_upgrade
           DIRECT_URL: postgresql://postgres:postgres@localhost:5432/legacy_upgrade
         run: |
-          bash scripts/ci/provision-legacy-database.sh
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
           npx prisma migrate deploy
           npx prisma migrate status
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/rls/calendar-booking-isolation.sql
@@ -280,7 +292,6 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/drifted_schema
           DIRECT_URL: postgresql://postgres:postgres@localhost:5432/drifted_schema
         run: |
-          bash scripts/ci/provision-legacy-database.sh
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c 'alter table public.organizations alter column slug drop not null'
           if psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql; then
             echo "The read-only preflight unexpectedly accepted drift."
@@ -291,12 +302,58 @@ jobs:
             exit 1
           fi
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if (select attnotnull from pg_attribute where attrelid = 'public.organizations'::regclass and attname = 'slug') then raise exception 'drift was rewritten'; end if; end \$\$"
+      - name: Reject missing and type-drifted columns before writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          reject_column_drift() {
+            local database="$1"
+            local mutation="$2"
+            local assertion="$3"
+            export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$database"
+            export DIRECT_URL="$DATABASE_URL"
+            psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "$mutation"
+            if psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql; then
+              echo "Preflight unexpectedly accepted column drift in $database."
+              exit 1
+            fi
+            if npx prisma migrate deploy; then
+              echo "Initial baseline unexpectedly accepted column drift in $database."
+              exit 1
+            fi
+            psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "$assertion"
+          }
+          reject_column_drift missing_column 'alter table public.contacts drop column phone' "do \$\$ begin if exists (select 1 from information_schema.columns where table_schema = 'public' and table_name = 'contacts' and column_name = 'phone') then raise exception 'missing column was recreated'; end if; end \$\$"
+          reject_column_drift column_drift 'alter table public.contacts alter column phone type varchar(255)' "do \$\$ begin if (select format_type(atttypid, atttypmod) from pg_attribute where attrelid = 'public.contacts'::regclass and attname = 'phone') <> 'character varying(255)' then raise exception 'column drift was rewritten'; end if; end \$\$"
+      - name: Reject incorrect foreign-key definitions before writes
+        shell: bash
+        run: |
+          set -euo pipefail
+          reject_fk_drift() {
+            local database="$1"
+            local mutation="$2"
+            local assertion="$3"
+            export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$database"
+            export DIRECT_URL="$DATABASE_URL"
+            psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "$mutation"
+            if psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql; then
+              echo "Preflight unexpectedly accepted foreign-key drift in $database."
+              exit 1
+            fi
+            if npx prisma migrate deploy; then
+              echo "Initial baseline unexpectedly accepted foreign-key drift in $database."
+              exit 1
+            fi
+            psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "$assertion"
+          }
+          reject_fk_drift fk_wrong_source 'alter table public.contacts drop constraint contacts_organization_id_fkey, add constraint contacts_organization_id_fkey foreign key (company_id) references public.organizations(id) on delete cascade on update cascade' "do \$\$ begin if pg_get_constraintdef((select oid from pg_constraint where conname = 'contacts_organization_id_fkey')) not like 'FOREIGN KEY (company_id)%' then raise exception 'wrong source FK was rewritten'; end if; end \$\$"
+          reject_fk_drift fk_wrong_target 'alter table public.contacts drop constraint contacts_organization_id_fkey, add constraint contacts_organization_id_fkey foreign key (organization_id) references public.users(id) on delete cascade on update cascade' "do \$\$ begin if pg_get_constraintdef((select oid from pg_constraint where conname = 'contacts_organization_id_fkey')) not like '%REFERENCES users(id)%' then raise exception 'wrong target FK was rewritten'; end if; end \$\$"
+          reject_fk_drift fk_not_valid 'alter table public.contacts drop constraint contacts_organization_id_fkey, add constraint contacts_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete cascade on update cascade not valid' "do \$\$ begin if (select convalidated from pg_constraint where conname = 'contacts_organization_id_fkey') then raise exception 'NOT VALID FK was rewritten'; end if; end \$\$"
       - name: Reject a same-name weakened tenant policy
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/weak_policy
           DIRECT_URL: postgresql://postgres:postgres@localhost:5432/weak_policy
         run: |
-          bash scripts/ci/provision-legacy-database.sh
           alter_sql='alter policy contacts_select on public.contacts using (true)'
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "$alter_sql"
           if npx prisma migrate deploy; then
@@ -304,6 +361,28 @@ jobs:
             exit 1
           fi
           psql "$DIRECT_URL" -Atqc "select qual from pg_policies where schemaname = 'public' and tablename = 'contacts' and policyname = 'contacts_select'" | grep -qx 'true'
+      - name: Reject special-policy predicate, role, and command drift atomically
+        shell: bash
+        run: |
+          set -euo pipefail
+          reject_policy_drift() {
+            local database="$1"
+            local mutation="$2"
+            local assertion="$3"
+            export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/$database"
+            export DIRECT_URL="$DATABASE_URL"
+            psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "$mutation"
+            if npx prisma migrate deploy; then
+              echo "Security baseline unexpectedly accepted policy drift in $database."
+              exit 1
+            fi
+            psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "$assertion"
+          }
+          reject_policy_drift weak_messages 'alter policy messages_select on public.messages using (auth.uid() is not null)' "do \$\$ begin if (select qual from pg_policies where tablename = 'messages' and policyname = 'messages_select') not like '%IS NOT NULL%' then raise exception 'messages policy was replaced'; end if; end \$\$"
+          reject_policy_drift weak_prompts 'alter policy prompts_select on public.prompts using (auth.uid() is not null)' "do \$\$ begin if (select qual from pg_policies where tablename = 'prompts' and policyname = 'prompts_select') not like '%IS NOT NULL%' then raise exception 'prompts policy was replaced'; end if; end \$\$"
+          reject_policy_drift weak_calendar 'alter policy availability_rules_select on public.availability_rules using (auth.uid() is not null)' "do \$\$ begin if (select qual from pg_policies where tablename = 'availability_rules' and policyname = 'availability_rules_select') not like '%IS NOT NULL%' then raise exception 'calendar policy was replaced'; end if; end \$\$"
+          reject_policy_drift wrong_policy_role 'alter policy contacts_select on public.contacts to public' "do \$\$ begin if (select roles from pg_policies where tablename = 'contacts' and policyname = 'contacts_select') <> array['public']::name[] then raise exception 'policy role was replaced'; end if; end \$\$"
+          reject_policy_drift wrong_policy_command 'drop policy contacts_select on public.contacts; create policy contacts_select on public.contacts for delete to authenticated using (organization_id = auth_org_id())' "do \$\$ begin if (select cmd from pg_policies where tablename = 'contacts' and policyname = 'contacts_select') <> 'DELETE' then raise exception 'policy command was replaced'; end if; end \$\$"
       - name: Verify storage compatibility and reject weak policy drift
         env:
           DIRECT_URL: postgresql://postgres:postgres@localhost:5432/storage_policy
