@@ -493,10 +493,29 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-      - name: Secret scan
-        uses: gitleaks/gitleaks-action@v2
+      - name: Validate secret-scan commit range
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          sha_pattern='^[0-9a-f]{40}$'
+          if [[ ! "$BASE_SHA" =~ $sha_pattern || ! "$HEAD_SHA" =~ $sha_pattern ]]; then
+            echo "Secret scan requires exact lowercase 40-character commit SHAs."
+            exit 1
+          fi
+          git cat-file -e "$BASE_SHA^{commit}"
+          git cat-file -e "$HEAD_SHA^{commit}"
+      - name: Secret scan
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          GITLEAKS_VERSION: "8.24.3"
+        run: |
+          set -euo pipefail
+          docker run --rm --volume "$PWD:/repo" "ghcr.io/gitleaks/gitleaks:v$GITLEAKS_VERSION" git --no-banner --redact --verbose --log-opts="$BASE_SHA..$HEAD_SHA" /repo
 
   ci-required:
     name: CI required

@@ -80,7 +80,11 @@ describe("staging release migration contract", () => {
     expect(foreignKeyRows).toHaveLength(71);
     expect(contract).toContain("('api_keys', 'scopes', 'text[]', 'false', '', '', 'array[]')");
     expect(contract).toContain("('webhook_endpoints', 'events', 'text[]', 'false', '', '', '')");
+    expect(contract).toContain(
+      "('conversations', 'title', 'text', 'true', '', '', '''new conversation''')",
+    );
     expect(contract).toContain(`'::("[^"]+"|[a-z_][a-z0-9_]*)(\\[\\])?'`);
+    expect(contract).toContain("'[()]'");
   });
 
   it("fails closed on same-name tenant and storage policy drift", () => {
@@ -128,6 +132,13 @@ describe("staging release migration contract", () => {
       "ref: ${{ needs.verify-release-chain.outputs.candidate_sha }}",
     );
     expect(productionWorkflow).toContain('VERCEL_CLI_VERSION: "56.3.2"');
+  });
+
+  it("scans a validated commit range without an API-dependent wrapper", () => {
+    expect(ciWorkflow).toContain('GITLEAKS_VERSION: "8.24.3"');
+    expect(ciWorkflow).toContain('--log-opts="$BASE_SHA..$HEAD_SHA"');
+    expect(ciWorkflow).toContain("--redact");
+    expect(ciWorkflow).not.toContain("gitleaks/gitleaks-action@v2");
   });
 
   it("tests empty, legacy, structural, FK, and special-policy drift in CI", () => {
