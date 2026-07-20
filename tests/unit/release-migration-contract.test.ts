@@ -14,20 +14,37 @@ const productionWorkflow = read(".github/workflows/deploy.yml");
 const ciWorkflow = read(".github/workflows/ci.yml");
 const legacyProvision = read("scripts/ci/provision-legacy-database.sh");
 
+function betweenMarkers(source: string, startMarker: string, endMarker: string, label: string) {
+  const startIndex = source.indexOf(startMarker);
+  if (startIndex < 0) {
+    throw new Error(`Missing ${label} start marker: ${startMarker}`);
+  }
+
+  const contentStart = startIndex + startMarker.length;
+  const endIndex = source.indexOf(endMarker, contentStart);
+  if (endIndex < 0) {
+    throw new Error(`Missing ${label} end marker: ${endMarker}`);
+  }
+
+  return source.slice(contentStart, endIndex).replace(/\r\n/g, "\n").trim();
+}
+
 function compatibilityContract(sql: string) {
-  const match = sql.match(
-    /-- BEGIN LEGACY BASELINE COMPATIBILITY CONTRACT([\s\S]*?)-- END LEGACY BASELINE COMPATIBILITY CONTRACT/,
+  return betweenMarkers(
+    sql,
+    "-- BEGIN LEGACY BASELINE COMPATIBILITY CONTRACT",
+    "-- END LEGACY BASELINE COMPATIBILITY CONTRACT",
+    "legacy compatibility contract",
   );
-  if (!match?.[1]) throw new Error("Missing legacy compatibility contract markers.");
-  return match[1].replace(/\r\n/g, "\n").trim();
 }
 
 function rlsPolicyContract(sql: string) {
-  const match = sql.match(
-    /-- BEGIN COMPLETE RLS POLICY CONTRACT([\s\S]*?)-- END COMPLETE RLS POLICY CONTRACT/,
+  return betweenMarkers(
+    sql,
+    "-- BEGIN COMPLETE RLS POLICY CONTRACT",
+    "-- END COMPLETE RLS POLICY CONTRACT",
+    "complete RLS policy contract",
   );
-  if (!match?.[1]) throw new Error("Missing complete RLS policy contract markers.");
-  return match[1].replace(/\r\n/g, "\n").trim();
 }
 
 describe("staging release migration contract", () => {
@@ -47,16 +64,23 @@ describe("staging release migration contract", () => {
     expect(preflight).toContain("constraint_row.confrelid");
     expect(preflight).toContain("constraint_row.convalidated");
     expect(preflight).toContain("constraint_row.condeferrable");
-    const columnRows = contract
-      .split("-- Every scalar column in the schema", 2)[1]
-      .split("-- Complete relationship contract", 1)[0]
-      .match(/^      \('[^']+', '[^']+',/gm);
-    const foreignKeyRows = contract
-      .split("-- Complete relationship contract", 2)[1]
-      .split("  FOR expected IN\n    SELECT * FROM (VALUES\n      ('Locale'", 1)[0]
-      .match(/^      \('public', '[^']+', '[^']+_fkey',/gm);
+    const columnRows = betweenMarkers(
+      contract,
+      "-- Every scalar column in the schema",
+      "-- Complete relationship contract",
+      "complete column contract",
+    ).match(/^      \('[^']+', '[^']+',/gm);
+    const foreignKeyRows = betweenMarkers(
+      contract,
+      "-- Complete relationship contract",
+      "  FOR expected IN\n    SELECT * FROM (VALUES\n      ('Locale'",
+      "complete foreign-key contract",
+    ).match(/^      \('public', '[^']+', '[^']+_fkey',/gm);
     expect(columnRows).toHaveLength(469);
     expect(foreignKeyRows).toHaveLength(71);
+    expect(contract).toContain("('api_keys', 'scopes', 'text[]', 'false', '', '', 'array[]')");
+    expect(contract).toContain("('webhook_endpoints', 'events', 'text[]', 'false', '', '', '')");
+    expect(contract).toContain(`'::("[^"]+"|[a-z_][a-z0-9_]*)(\\[\\])?'`);
   });
 
   it("fails closed on same-name tenant and storage policy drift", () => {

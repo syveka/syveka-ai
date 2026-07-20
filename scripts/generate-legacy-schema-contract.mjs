@@ -74,7 +74,7 @@ const columnRows = scalarFields
         tableName(model),
         columnName(field),
         postgresType(field),
-        field.isRequired,
+        field.isRequired && !field.isList,
         "",
         "",
         normalizedDefault(field),
