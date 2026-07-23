@@ -1,0 +1,70 @@
+# Syveka AI — Feature Inventory
+
+Snapshot date: **2026-07-23**. Status is based on reading the actual code path (UI → action/route
+→ service → DB), not on file existence alone. "Complete" means the full workflow, tenant
+scoping, validation, and error handling are present; test presence is noted separately.
+
+Legend: **Complete** / **Complete-but-unverified** / **Partial** / **UI-only** / **Backend-only**
+/ **Stub** / **Broken** / **Not-started** / **Deprecated**
+
+| Feature | Status | Frontend | Backend | Database | Security | Tests | Key files | Next step |
+|---|---|---|---|---|---|---|---|---|
+| Authentication | Complete | ✅ login/register/forgot/reset/verify pages | ✅ Supabase Auth, real server-side validation | `users` | Cookie-presence middleware backed by real `getUser()` at data layer | Indirect (via RBAC/permission tests) | `src/server/auth/session.ts`, `src/middleware.ts`, `src/actions/auth.ts` | None blocking |
+| Onboarding | Complete (i18n gap) | ✅ | ✅ transactional org+membership+subscription+pipeline creation | `organizations`, `organization_members`, `subscriptions`, `pipelines` | `requirePermission` | Untested directly | `src/app/[locale]/(app)/onboarding/*`, `src/server/services/organizations.ts` | Localize hardcoded English/missing Arabic copy |
+| Organizations | **Partial** | ✅ settings form | ✅ create/switch; ❌ no self-serve delete action | `organizations` (has `deletedAt`, unused by any action) | `org:delete` permission defined, unused | — | `src/server/services/organizations.ts`, `src/actions/settings.ts` | Implement delete action + confirmation UI, or drop the unused permission |
+| Memberships / Team management | Complete (i18n gap) | ✅ | ✅ invite/accept/role-change/remove, all audit-logged | `organization_members`, `invitations` | `requirePermission`, RBAC | Untested directly | `src/server/services/members.ts`, `settings/members/*` | Localize `members-table.tsx`, `invite-form.tsx` (0 `useTranslations` calls) |
+| Roles & permissions (RBAC) | Complete | N/A | ✅ single source of truth, enforced everywhere sampled | `organization_members.role` | Core security control | Unit-tested (RBAC test files exist per multiple services) | `src/server/auth/{permissions,guard}.ts` | None |
+| CRM dashboard | Complete | ✅ only route with `loading.tsx`/`error.tsx` | ✅ | aggregates `deals`,`activities`,`contacts` | tenant-scoped | Untested directly | `src/server/services/dashboard.ts` | None; replicate loading/error pattern elsewhere |
+| Contacts | Complete | ✅ | ✅ full CRUD, search, archive/restore, soft delete, notes | `contacts`, `tags_on_contacts` | `tenantDb`, entitlement-checked create | Service + RBAC + validator tests | `src/server/services/contacts.ts` | None |
+| Companies | Complete | ✅ | ✅ same pattern as Contacts | `companies` | Same | Same pattern | `src/server/services/companies.ts` | None |
+| Notes | Complete | ✅ note composer | ✅ (implemented as `Activity` type `NOTE`) | `activities` | tenant-scoped | — | `contacts.ts:addContactNote` | None |
+| Timelines | Complete | ✅ entity timeline views | ✅ unified across contact/company/deal | `activities` (typed enum) | tenant-scoped | — | multiple services write `Activity` rows | None |
+| AI chat | Complete | ✅ SSE consumer (`use-chat.ts`) | ✅ full pipeline | `conversations`,`messages` | rate-limited, entitlement-gated, moderated | Strong (`ai-chat-integration.test.ts`) | `src/app/api/v1/ai/chat/route.ts` | None blocking; streaming is buffered by design, not true token stream |
+| Conversations | Complete | ✅ | ✅ ownership-checked, shared-flag support | `conversations` | `tenantDb`, ownership check | — | `src/server/services/conversations.ts` | None |
+| Message history | Complete | ✅ | ✅ up to 200 msgs, citations/tool calls persisted | `messages` | tenant-scoped via parent | — | `conversations.ts:getConversationWithMessages` | None |
+| RAG | Complete (minor gap) | N/A | ✅ chunk → embed → retrieve → cite | `document_chunks` (pgvector) | org-filtered both retrieval paths | `citations.test.ts`, `chunking.test.ts` real; `retrieveChunks()` SQL itself untested | `src/server/ai/rag.ts` | Add deleted/status filter to `match_chunks` general-search path to match the documentId-scoped path |
+| Knowledge collections | Complete | ✅ | ✅ | `collections` (composite FK to org+id) | tenant-scoped | — | `src/server/services/documents.ts` | None |
+| Documents | Complete | ✅ table + upload | ✅ full verified pipeline | `documents` (composite FK) | byte-verified upload, tenant-scoped | Strong (`document-tenant-integrity.test.ts`) | `src/server/services/documents.ts` | None |
+| File upload | Complete | ✅ dropzone + composer | ✅ signed URL → verify → finalize | `document_upload_intents` (no FK to `Document`, app-correlated only) | quota-checked, magic-byte verified | Strong | `documents.ts`, `document-ingestion.ts` | Consider adding a real FK/back-reference from Document to its originating intent |
+| Embeddings | Complete | N/A | ✅ batched, real pgvector storage | `document_chunks.embedding vector(1536)` | org-scoped | Untested at job-route level (no test file for `embed-document/route.ts`) | `jobs/embed-document/route.ts` | Add a test for the embed job route (extraction failure, status transitions) |
+| Citations | Complete | ✅ rendered | ✅ only cites actually-retrieved docs | `messages.citations` (JSON) | anti-fabrication check | Real, focused test | `rag.ts:extractValidCitations` | None |
+| AI streaming | **Implemented-but-buffered** | ✅ SSE UI works | Full response generated + moderated before any flush; replayed in fixed 120-char chunks | — | Deliberate safety tradeoff | Covered indirectly | `ai/chat/route.ts` | Document clearly as "not true token streaming"; do not "fix" without preserving moderation-before-flush |
+| Token tracking | Complete | ✅ shown in usage meters | ✅ real usage from provider response | `messages.tokensIn/Out`, `usage_records` | — | Real test (`ai-retry-cost.test.ts`) | `src/server/ai/cost.ts` | None (cost itself is a static-price estimate, documented as such) |
+| Moderation | Complete | N/A | ✅ double-sided (input + output) | — | OpenAI `omni-moderation-latest` | Strong (`ai-chat-integration.test.ts`) | `openai.ts:isFlaggedByModeration` | None |
+| AI retries | Complete | N/A | ✅ exponential backoff+jitter, smart no-retry-after-first-token | — | — | Strong, exact numeric assertions | `src/server/ai/retry.ts` | None |
+| Conversation summaries | Complete | N/A (transparent to user) | ✅ rolling summary at 40-msg trigger | `conversations.summary*` | — | Untested (mocked in route test) | `conversations.ts:ensureConversationSummary` | Add a direct unit test for trigger/threshold logic |
+| Calendar | Complete | ✅ day/week/month/agenda | ✅ | `calendar_events`, `event_attendees` | `tenantDb`, cross-tenant relation re-resolution | Real (`calendar-service.test.ts` etc., per team docs) | `src/server/services/calendar.ts` | None |
+| Booking | Complete | ✅ public + authenticated | ✅ transactional double-booking protection | `booking_types`,`bookings`,`booking_tokens` | rate-limited, honeypot, consent | Real (`booking-service.test.ts` etc.) | `src/server/services/booking.ts` | None |
+| Booking assistant | Complete | ✅ assistant panel | ✅ LLM ranks only, never decides availability | — | fallback to deterministic list on AI failure | — | `booking-assistant.ts` | None |
+| Voice agents / Vapi | Complete | ✅ | ✅ provisioning, sync, tools | `voice_assistants`,`voice_calls` | HMAC-verified webhook | — | `src/server/services/voice.ts` | None |
+| Email / Resend | Complete | N/A | ✅ | — | — | — | `resend.ts`, `emails/*` | None |
+| Stripe billing | Complete | ✅ | ✅ full webhook handling, idempotent | `subscriptions` | signature-verified + Redis dedupe | — | `webhooks/stripe/route.ts` | None |
+| Plans & subscriptions | Complete | ✅ plan cards | ✅ 9-dimension matrix | `subscriptions.plan/status` | — | — | `billing/plans.ts` | None |
+| Usage limits | Complete | ✅ usage meters | ✅ Redis-cached entitlement checks | `usage_records` | plan-gated | — | `billing/entitlements.ts` | None |
+| API keys | Complete (i18n gap) | ✅ manager UI | ✅ hashed, scoped, revocable | `api_keys` | hash-only storage | — | `src/server/services/api-keys.ts` | Localize `api-keys-manager.tsx` (0 `useTranslations`) |
+| Audit logs | Complete | ✅ log viewer | ✅ called from nearly every mutation | `audit_logs` | OWNER/ADMIN-only read (RLS) | — | `src/server/services/audit.ts` | Verify a retention-purge job exists for `auditRetentionDays` per plan (not found in this pass) |
+| Analytics | Complete | ✅ charts | ✅ sales/AI/voice analytics | reads `deals`,`usage_records`,`voice_calls` | tenant-scoped | — | `src/server/services/analytics.ts` | None |
+| Superadmin | Complete | ✅ org list + stats | ✅ real, non-route-group authz check | — | `app_metadata.is_superadmin` gate | — | `src/server/auth/superadmin.ts` | Consider whether user-level admin/impersonation is needed later |
+| Notifications | Complete | ✅ feed + Realtime badge | ✅ | `notifications` | own-row RLS | — | `src/server/services/notifications.ts` | None |
+| Localization (en/fi/ar) | Complete infra / **Partial coverage** | Catalogs complete (488/488/488, 0 drift) | N/A | N/A | — | `check-i18n-parity.mjs` passes | `messages/*.json` | Localize the flagged hardcoded-English components |
+| Settings | Complete (shell) | ✅ hub + 6 sub-pages | ✅ | — | — | — | `settings/*` | See i18n gaps above |
+| Team management | See Memberships | | | | | | | |
+| Customer portal | Complete | ✅ "Manage billing" | ✅ real Stripe Billing Portal session | — | — | — | `actions/billing.ts:openPortalAction` | None |
+| Public pages | Complete | ✅ booking pages | ✅ unauthenticated by design | — | rate-limited, consent-gated | — | `(public)/book/*`, `(public)/booking/manage/*` | None |
+| Landing page | Complete-but-unverified | ✅ exists, localized | N/A | N/A | — | — | `(marketing)/page.tsx` | Verify marketing copy quality/completeness (no placeholder markers found, but content not deep-read) |
+| Error handling | Partial | Only `/dashboard` has `error.tsx` | Route-level try/catch present in AI chat, webhooks | — | No internal errors leaked to client (spot-checked) | — | — | Add `error.tsx` to other key routes |
+| Loading states | Partial | Only `/dashboard` has `loading.tsx` | — | — | — | — | — | Same as above |
+| Empty states | Complete-but-unverified | Confirmed present in `voice/page.tsx`, `api-keys-manager.tsx`; not exhaustively checked elsewhere | — | — | — | — | — | Spot-check remaining list views |
+| Mobile responsiveness | **Unverified** | Not visually tested (static analysis only, no running app check performed in this pass) | N/A | N/A | — | — | — | Run the app and manually test key flows at mobile widths |
+| Accessibility | **Unverified** | Not audited (no axe/Lighthouse run in this pass) | N/A | N/A | — | — | — | Run an automated accessibility pass before production |
+| Workflows / automations | Complete-but-unverified trigger coverage | ✅ builder UI | ✅ 6 step types, resumable QStash runner | `workflows`,`workflow_runs` | — | — | `jobs/run-workflow/route.ts` | Grep all services for `emitWorkflowEvent(` to confirm every declared trigger type actually fires |
+
+## Notable dead/unused code (not a "feature" but affects the inventory's accuracy)
+
+| Item | Status | Evidence |
+|---|---|---|
+| `zustand` | Unused dependency | `src/stores/` empty; zero imports repo-wide |
+| `@tanstack/react-query` | Unused beyond provider mount | Zero `useQuery`/`useMutation` call sites |
+| `fallbackModel()` / OpenAI chat-generation failover | Dead code | Defined in `src/server/ai/router.ts`, never called |
+| Sentry / Langfuse | Declared, not integrated | Optional env vars exist; no SDK import found |
+| `check-dashboard-index-ownership.mjs` | Orphaned script | Not wired into any CI job or `package.json` script |
