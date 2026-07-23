@@ -5,34 +5,34 @@ and GitHub during this audit — not inferred from prior documentation or chat h
 
 ## Repository state
 
-| Field | Value |
-|---|---|
-| Repository | `syveka/syveka-ai` (`https://github.com/syveka/syveka-ai.git`) |
-| Local folder | `c:\Users\lenovo\Desktop\syveka copy` |
-| Current branch | `chore/staging-release-validation` |
-| Default branch | `main` |
-| Latest local commit | `878cda1` — "Fix legacy default and secret scan validation" |
-| Remote sync | Up to date with `origin/chore/staging-release-validation` (no ahead/behind) |
-| Working tree | **Clean of real changes.** `git status` shows ~39 files as "modified", but `git diff --stat` produces zero content diff — `core.autocrlf=true` on this Windows clone is flagging CRLF/LF normalization only, not actual edits. Confirmed by direct diff inspection. |
-| Untracked files | None |
-| Stashes | None |
-| Tags / releases | None exist yet |
-| Local branches | `chore/staging-release-validation` (current), `main`, `feature/calendar-booking-v1`, `feature/crm-contacts-v1`, `feature/crm-dashboard-v1`, `feature/crm-deals-v1`, `feature/production-hardening-sprint-1`, `fix/calendar-booking-rls-migration` |
-| Remote-only branches | `origin/chore/rc2-production-hardening` (no local copy) |
+| Field                | Value                                                                                                                                                                                                                                                               |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Repository           | `syveka/syveka-ai` (`https://github.com/syveka/syveka-ai.git`)                                                                                                                                                                                                      |
+| Local folder         | `c:\Users\lenovo\Desktop\syveka copy`                                                                                                                                                                                                                               |
+| Current branch       | `chore/staging-release-validation`                                                                                                                                                                                                                                  |
+| Default branch       | `main`                                                                                                                                                                                                                                                              |
+| Latest local commit  | `878cda1` — "Fix legacy default and secret scan validation"                                                                                                                                                                                                         |
+| Remote sync          | Up to date with `origin/chore/staging-release-validation` (no ahead/behind)                                                                                                                                                                                         |
+| Working tree         | **Clean of real changes.** `git status` shows ~39 files as "modified", but `git diff --stat` produces zero content diff — `core.autocrlf=true` on this Windows clone is flagging CRLF/LF normalization only, not actual edits. Confirmed by direct diff inspection. |
+| Untracked files      | None                                                                                                                                                                                                                                                                |
+| Stashes              | None                                                                                                                                                                                                                                                                |
+| Tags / releases      | None exist yet                                                                                                                                                                                                                                                      |
+| Local branches       | `chore/staging-release-validation` (current), `main`, `feature/calendar-booking-v1`, `feature/crm-contacts-v1`, `feature/crm-dashboard-v1`, `feature/crm-deals-v1`, `feature/production-hardening-sprint-1`, `fix/calendar-booking-rls-migration`                   |
+| Remote-only branches | `origin/chore/rc2-production-hardening` (no local copy)                                                                                                                                                                                                             |
 
 ## Pull request history (verified via `gh pr list --state all`)
 
-| # | Title | Branch | State |
-|---|---|---|---|
-| 9 | Prepare and validate first safe staging release | `chore/staging-release-validation` | **OPEN, DRAFT** (current work) |
-| 8 | Track and test Calendar & Booking RLS migration | `fix/calendar-booking-rls-migration` | Merged 2026-07-18 |
-| 7 | Fix workflow translations and i18n validation | `feature/production-hardening-sprint-1` | Merged 2026-07-16 |
-| 6 | AI Chat Production Hardening — Milestone 3 | `feature/production-hardening-sprint-1` | Merged 2026-07-13 |
-| 5 | CRM Calendar & Booking Assistant V1 | `feature/calendar-booking-v1` | Merged 2026-07-13 |
-| 4 | Add CRM Deals & Sales Pipeline module (V1) | `feature/crm-deals-v1` | Merged 2026-07-12 |
-| 3 | Add CRM Contacts & Companies module (V1) | `feature/crm-contacts-v1` | Merged 2026-07-12 |
-| 2 | CRM Dashboard V1 | `feature/crm-dashboard-v1` | Merged 2026-07-11 |
-| 1 | Production readiness hardening for v0.1.0-rc.2 | `chore/rc2-production-hardening` | Merged 2026-07-10 |
+| #   | Title                                           | Branch                                  | State                          |
+| --- | ----------------------------------------------- | --------------------------------------- | ------------------------------ |
+| 9   | Prepare and validate first safe staging release | `chore/staging-release-validation`      | **OPEN, DRAFT** (current work) |
+| 8   | Track and test Calendar & Booking RLS migration | `fix/calendar-booking-rls-migration`    | Merged 2026-07-18              |
+| 7   | Fix workflow translations and i18n validation   | `feature/production-hardening-sprint-1` | Merged 2026-07-16              |
+| 6   | AI Chat Production Hardening — Milestone 3      | `feature/production-hardening-sprint-1` | Merged 2026-07-13              |
+| 5   | CRM Calendar & Booking Assistant V1             | `feature/calendar-booking-v1`           | Merged 2026-07-13              |
+| 4   | Add CRM Deals & Sales Pipeline module (V1)      | `feature/crm-deals-v1`                  | Merged 2026-07-12              |
+| 3   | Add CRM Contacts & Companies module (V1)        | `feature/crm-contacts-v1`               | Merged 2026-07-12              |
+| 2   | CRM Dashboard V1                                | `feature/crm-dashboard-v1`              | Merged 2026-07-11              |
+| 1   | Production readiness hardening for v0.1.0-rc.2  | `chore/rc2-production-hardening`        | Merged 2026-07-10              |
 
 **Note for anyone continuing from prior context**: the branch `feature/production-hardening-sprint-1`
 and its PRs (#6, #7) referenced in earlier planning notes are **already merged** — they are
@@ -135,6 +135,6 @@ Based on repository evidence (feature depth, test coverage, CI maturity): the **
 functionally complete**, roughly matching the README's own "v0.1" self-assessment for backend
 logic depth. What remains before a confident production launch is narrower than a first read of
 the README suggests: dependency hygiene, a handful of medium-severity hardening items, i18n
-*coverage* completion (not infrastructure), and exercising the already-built release pipeline
+_coverage_ completion (not infrastructure), and exercising the already-built release pipeline
 once through staging and production. This is a hardening/finishing phase, not a
 rebuild-from-scratch or major-gap-filling phase.

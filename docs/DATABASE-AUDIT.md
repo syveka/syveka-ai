@@ -19,11 +19,11 @@ Three relations use `@@unique([organizationId, id])` on the parent **plus a comp
 `[organizationId, xId] → Parent([organizationId, id])`, which makes it structurally impossible
 at the database level for a child row to reference a parent in a different org:
 
-| Parent | Child | FK | Added in |
-|---|---|---|---|
-| `Collection` | `Document.collection` | `[organizationId, collectionId] → Collection([organizationId, id])`, `onDelete: Restrict` | `20260715230000_security_invariant_corrections` |
-| `Document` | `DocumentChunk.document` | `[organizationId, documentId] → Document([organizationId, id])`, `onDelete: Cascade` | same |
-| `Conversation` + `Document` | `ConversationDocument` | both FKs composite, `onDelete: Cascade` | same |
+| Parent                      | Child                    | FK                                                                                        | Added in                                        |
+| --------------------------- | ------------------------ | ----------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| `Collection`                | `Document.collection`    | `[organizationId, collectionId] → Collection([organizationId, id])`, `onDelete: Restrict` | `20260715230000_security_invariant_corrections` |
+| `Document`                  | `DocumentChunk.document` | `[organizationId, documentId] → Document([organizationId, id])`, `onDelete: Cascade`      | same                                            |
+| `Conversation` + `Document` | `ConversationDocument`   | both FKs composite, `onDelete: Cascade`                                                   | same                                            |
 
 **This pattern is used only for these three relations.** Every other cross-model relation
 (`Contact.company`, `Deal.contact/company`, `CalendarEvent.externalCalendar`, `Booking.bookingType`,
@@ -37,7 +37,7 @@ rows share the same `organizationId`** — that invariant is enforced only by ap
 `storagePath` strings in application code (`src/server/services/documents.ts`). A `CHECK`
 constraint added in the same corrective migration enforces
 `document_upload_intents.storage_path LIKE organization_id || '/%'`, but nothing at the DB
-level ties the *resulting* `Document` row's org to the intent that authorized it — that is an
+level ties the _resulting_ `Document` row's org to the intent that authorized it — that is an
 application-layer invariant only, verified correct today but not database-enforced.
 
 ## 3. Evidence of shipped-then-patched schema drift (directly answers the audit brief)
@@ -61,21 +61,21 @@ Supabase-native client path (see §6), since Prisma bypasses RLS regardless.
 
 ## 4. Migration-by-migration summary
 
-| Migration | What it does | RLS? |
-|---|---|---|
-| `20260701000000_initial_baseline` | **Not a from-scratch schema.** First ~1010 lines are a compatibility contract that verifies (or creates, if empty) a pre-existing hand-provisioned DB matches an exact expected shape (columns, types, FKs, enums, indexes) — because the DB predates Prisma migration tracking. Remaining lines create ~31 of the 43 eventual tables. | No |
-| `20260712000000_dashboard_indexes` | 5 dashboard-query compound indexes | No |
-| `20260712120000_crm_contacts_companies_v1` | `archived_at` columns, `activities.company_id` | No |
-| `20260712180000_crm_deals_v1` | `deals.probability/position`, `STAGE_CHANGE` enum value | No |
-| `20260713000000_calendar_booking_v1` | 11 new tables (calendar/booking domain) | **No** (deferred) |
-| `20260714000000_secure_document_upload_intents` | Creates `document_upload_intents` | Enabled, **zero policies** (deliberate deny-all — server-only table) |
-| `20260715000000_ai_chat_production_hardening` | Conversation summary fields, `conversation_documents` table (plain FKs) | Enabled + `FORCE`, one SELECT policy |
-| `20260715230000_security_invariant_corrections` | Composite-FK correction (see §3) | N/A (constraint-only) |
-| `20260718000000_calendar_booking_rls` | RLS for the 11 calendar/booking tables; 4 explicitly get zero policies (`calendar_connections`, `booking_tokens`, `reminders`, `calendar_sync_states` — OAuth tokens/secrets) | Yes |
-| `20260719000000_initial_security_baseline` | pgvector HNSW index, `pg_trgm` search indexes, `match_chunks()` RPC, `handle_new_user()` trigger, **custom_access_token_hook** (stamps org_id/role into JWT), **enables RLS on all remaining tables (43/43 total)**, defines the full policy set, ends with a 695-line self-verifying policy-contract assertion | Yes — completes coverage |
+| Migration                                       | What it does                                                                                                                                                                                                                                                                                                                           | RLS?                                                                 |
+| ----------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| `20260701000000_initial_baseline`               | **Not a from-scratch schema.** First ~1010 lines are a compatibility contract that verifies (or creates, if empty) a pre-existing hand-provisioned DB matches an exact expected shape (columns, types, FKs, enums, indexes) — because the DB predates Prisma migration tracking. Remaining lines create ~31 of the 43 eventual tables. | No                                                                   |
+| `20260712000000_dashboard_indexes`              | 5 dashboard-query compound indexes                                                                                                                                                                                                                                                                                                     | No                                                                   |
+| `20260712120000_crm_contacts_companies_v1`      | `archived_at` columns, `activities.company_id`                                                                                                                                                                                                                                                                                         | No                                                                   |
+| `20260712180000_crm_deals_v1`                   | `deals.probability/position`, `STAGE_CHANGE` enum value                                                                                                                                                                                                                                                                                | No                                                                   |
+| `20260713000000_calendar_booking_v1`            | 11 new tables (calendar/booking domain)                                                                                                                                                                                                                                                                                                | **No** (deferred)                                                    |
+| `20260714000000_secure_document_upload_intents` | Creates `document_upload_intents`                                                                                                                                                                                                                                                                                                      | Enabled, **zero policies** (deliberate deny-all — server-only table) |
+| `20260715000000_ai_chat_production_hardening`   | Conversation summary fields, `conversation_documents` table (plain FKs)                                                                                                                                                                                                                                                                | Enabled + `FORCE`, one SELECT policy                                 |
+| `20260715230000_security_invariant_corrections` | Composite-FK correction (see §3)                                                                                                                                                                                                                                                                                                       | N/A (constraint-only)                                                |
+| `20260718000000_calendar_booking_rls`           | RLS for the 11 calendar/booking tables; 4 explicitly get zero policies (`calendar_connections`, `booking_tokens`, `reminders`, `calendar_sync_states` — OAuth tokens/secrets)                                                                                                                                                          | Yes                                                                  |
+| `20260719000000_initial_security_baseline`      | pgvector HNSW index, `pg_trgm` search indexes, `match_chunks()` RPC, `handle_new_user()` trigger, **custom_access_token_hook** (stamps org_id/role into JWT), **enables RLS on all remaining tables (43/43 total)**, defines the full policy set, ends with a 695-line self-verifying policy-contract assertion                        | Yes — completes coverage                                             |
 
 Both migrations named "initial" are misleadingly positioned: `20260701000000_initial_baseline`
-is a *compatibility guard* for an already-existing DB, and `20260719000000_initial_security_baseline`
+is a _compatibility guard_ for an already-existing DB, and `20260719000000_initial_security_baseline`
 is chronologically the **last** migration, retrofitting RLS that (per its own comments) was
 originally hand-provisioned before migration tracking began.
 
@@ -90,19 +90,19 @@ this is a manual, documented-in-runbook-only step.
 
 ## 5. Tenant-isolation risk by domain (requested checklist)
 
-| Domain | DB-level enforcement | App-level enforcement | Verdict |
-|---|---|---|---|
-| Contacts / Companies | Plain FK, org-led indexes, full RLS CRUD | `tenantDb` exclusively | Clean |
-| Deals | Same | `src/actions/deals.ts` (pattern consistent, not fully re-verified) | Clean |
-| Collections / Documents | **Composite FK** (since correction migration) | `tenantDb` + validated `unscopedPrisma`; RAG queries re-filter by org | Clean |
-| Conversations | **Composite FK** for `conversation_documents`; `Conversation` has `@@unique([organizationId,id])` | Ownership validated once via `tenantDb`, id reused safely after | Clean |
-| Bookings / Calendar | Plain FKs; RLS is SELECT-only for most, zero-policy for 4 secret-bearing tables | `tenantDb`; public flow is unauthenticated by design (slug/token-resolved) | Clean, with one latent gap (see §7) |
-| Voice agents / calls | Plain FK; full RLS CRUD on assistants, SELECT-only on calls | `tenantDb` + explicit re-verify in `syncToVapi` | Clean |
-| API keys | Plain FK; RLS SELECT-only | Lookup by `keyHash` (the key **is** the credential) | Clean |
-| Subscriptions / billing | 1:1 unique `organizationId`; RLS SELECT-only | Always keyed off `ctx.orgId` | Clean |
-| Audit logs | Plain FK; RLS OWNER/ADMIN-only read | Writes always stamp `ctx.orgId`, use `unscopedPrisma` by design (must write even when actor lacks other permissions) | Clean |
-| Notifications | Plain FK; RLS own-row | Explicit `organizationId` on job-created rows | Clean |
-| File uploads (`DocumentUploadIntent`) | **No FK to `Document`**, only a path-prefix `CHECK` | `createDocument()` re-queries the intent by `(id, organizationId, userId)`, validates, atomically consumes | App-layer invariant only — see §2 |
+| Domain                                | DB-level enforcement                                                                              | App-level enforcement                                                                                                | Verdict                             |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| Contacts / Companies                  | Plain FK, org-led indexes, full RLS CRUD                                                          | `tenantDb` exclusively                                                                                               | Clean                               |
+| Deals                                 | Same                                                                                              | `src/actions/deals.ts` (pattern consistent, not fully re-verified)                                                   | Clean                               |
+| Collections / Documents               | **Composite FK** (since correction migration)                                                     | `tenantDb` + validated `unscopedPrisma`; RAG queries re-filter by org                                                | Clean                               |
+| Conversations                         | **Composite FK** for `conversation_documents`; `Conversation` has `@@unique([organizationId,id])` | Ownership validated once via `tenantDb`, id reused safely after                                                      | Clean                               |
+| Bookings / Calendar                   | Plain FKs; RLS is SELECT-only for most, zero-policy for 4 secret-bearing tables                   | `tenantDb`; public flow is unauthenticated by design (slug/token-resolved)                                           | Clean, with one latent gap (see §7) |
+| Voice agents / calls                  | Plain FK; full RLS CRUD on assistants, SELECT-only on calls                                       | `tenantDb` + explicit re-verify in `syncToVapi`                                                                      | Clean                               |
+| API keys                              | Plain FK; RLS SELECT-only                                                                         | Lookup by `keyHash` (the key **is** the credential)                                                                  | Clean                               |
+| Subscriptions / billing               | 1:1 unique `organizationId`; RLS SELECT-only                                                      | Always keyed off `ctx.orgId`                                                                                         | Clean                               |
+| Audit logs                            | Plain FK; RLS OWNER/ADMIN-only read                                                               | Writes always stamp `ctx.orgId`, use `unscopedPrisma` by design (must write even when actor lacks other permissions) | Clean                               |
+| Notifications                         | Plain FK; RLS own-row                                                                             | Explicit `organizationId` on job-created rows                                                                        | Clean                               |
+| File uploads (`DocumentUploadIntent`) | **No FK to `Document`**, only a path-prefix `CHECK`                                               | `createDocument()` re-queries the intent by `(id, organizationId, userId)`, validates, atomically consumes           | App-layer invariant only — see §2   |
 
 ## 6. The single most important finding: RLS does not protect the application
 
@@ -113,10 +113,10 @@ block that raises an exception on any policy drift or unexpected extra policy.
 
 **However, this protects almost nothing for the actual product**, because:
 
-1. `src/server/db/prisma.ts`'s own header comment states: *"Raw Prisma client on the
-   SERVICE-ROLE connection (bypasses RLS)."*
-2. `prisma/sql/003_rls.sql`'s own comment states: *"Prisma uses the service role (bypasses
-   RLS); these policies protect every Supabase-client path: PostgREST, Realtime, Storage."*
+1. `src/server/db/prisma.ts`'s own header comment states: _"Raw Prisma client on the
+   SERVICE-ROLE connection (bypasses RLS)."_
+2. `prisma/sql/003_rls.sql`'s own comment states: _"Prisma uses the service role (bypasses
+   RLS); these policies protect every Supabase-client path: PostgREST, Realtime, Storage."_
 3. `DATABASE_URL`/`DIRECT_URL` connect via the Supabase-provisioned pooled/direct Postgres role,
    which is exempt from RLS regardless of `FORCE ROW LEVEL SECURITY` (only `conversation_documents`
    even has `FORCE` set, and it doesn't matter for this connection role either way).

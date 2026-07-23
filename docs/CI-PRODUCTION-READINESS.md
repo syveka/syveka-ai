@@ -7,23 +7,23 @@ files or executed locally (read-only, non-destructive) during this audit.
 
 ### `.github/workflows/ci.yml` — triggers on PR→`main` and push→`main`, 14 jobs
 
-| Job | What it checks |
-|---|---|
-| `install` | `npm ci` |
-| `prisma-generate` | `npx prisma generate` |
-| `prisma-validate` | `npx prisma validate` (dummy DB URLs) |
-| `migration-structure` | Every `prisma/migrations/*` dir matches `^[0-9]{14}_[A-Za-z0-9_]+$`, has non-empty `migration.sql`, requires `migration_lock.toml`; then runs `check-migration-history.mjs` |
-| `lint` | ESLint + Prettier `format:check` |
-| `typecheck` | `tsc --noEmit` |
-| `tests` | `npm test` (vitest, mocked DB, no service container) |
-| `rls` | Live `pgvector/pgvector:pg15` container, `prisma migrate deploy`, then raw-SQL RLS/tenant-isolation assertions (`tests/rls/*.sql`, `tests/integration/tenant-relationship-integrity.sql`) |
-| `migration-upgrade` | Heaviest job — provisions multiple Postgres DBs and asserts the legacy-baseline migration **rejects** partial schemas, structural/column/type drift, wrong FKs, and weakened RLS policies |
-| `build` | `npm run build` with placeholder env vars + `SKIP_ENV_VALIDATION=1` |
-| `production-dependency-audit` | **Blocking**: `npm audit --omit=dev --audit-level=high` |
-| `full-dependency-audit-report` | Non-blocking (`continue-on-error: true`), uploads JSON artifact |
-| `i18n` | `node scripts/check-i18n-parity.mjs` |
-| `secret-scan` | `gitleaks` v8.24.3 via Docker over the exact commit range |
-| `ci-required` | Fan-in gate — fails unless every job above succeeded |
+| Job                            | What it checks                                                                                                                                                                            |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `install`                      | `npm ci`                                                                                                                                                                                  |
+| `prisma-generate`              | `npx prisma generate`                                                                                                                                                                     |
+| `prisma-validate`              | `npx prisma validate` (dummy DB URLs)                                                                                                                                                     |
+| `migration-structure`          | Every `prisma/migrations/*` dir matches `^[0-9]{14}_[A-Za-z0-9_]+$`, has non-empty `migration.sql`, requires `migration_lock.toml`; then runs `check-migration-history.mjs`               |
+| `lint`                         | ESLint + Prettier `format:check`                                                                                                                                                          |
+| `typecheck`                    | `tsc --noEmit`                                                                                                                                                                            |
+| `tests`                        | `npm test` (vitest, mocked DB, no service container)                                                                                                                                      |
+| `rls`                          | Live `pgvector/pgvector:pg15` container, `prisma migrate deploy`, then raw-SQL RLS/tenant-isolation assertions (`tests/rls/*.sql`, `tests/integration/tenant-relationship-integrity.sql`) |
+| `migration-upgrade`            | Heaviest job — provisions multiple Postgres DBs and asserts the legacy-baseline migration **rejects** partial schemas, structural/column/type drift, wrong FKs, and weakened RLS policies |
+| `build`                        | `npm run build` with placeholder env vars + `SKIP_ENV_VALIDATION=1`                                                                                                                       |
+| `production-dependency-audit`  | **Blocking**: `npm audit --omit=dev --audit-level=high`                                                                                                                                   |
+| `full-dependency-audit-report` | Non-blocking (`continue-on-error: true`), uploads JSON artifact                                                                                                                           |
+| `i18n`                         | `node scripts/check-i18n-parity.mjs`                                                                                                                                                      |
+| `secret-scan`                  | `gitleaks` v8.24.3 via Docker over the exact commit range                                                                                                                                 |
+| `ci-required`                  | Fan-in gate — fails unless every job above succeeded                                                                                                                                      |
 
 ### `.github/workflows/deploy.yml` (Production release)
 
@@ -46,30 +46,30 @@ preview deploy, health-check polling, and Playwright E2E smoke tests against the
 
 ## 2. Scripts (`scripts/*`)
 
-| Script | Purpose | Wired into CI? |
-|---|---|---|
-| `check-i18n-parity.mjs` | Flags dotted-literal keys and missing/extra keys across `messages/{en,fi,ar}.json` | Yes (`i18n` job) |
-| `check-migration-history.mjs` | Hardcoded expected migration order + pinned SHA-256 checksums for 8 published migrations; anti-tamper guard | Yes (`migration-structure` job, `npm run migrations:check`) |
-| `validate-staging-config.mjs` | 3 modes (`identity`/`storage`/`embedding`) guarding staging never points at production | Yes (staging workflow only) |
-| `verify-release-chain.ts` | Confirms exact SHA is `main` tip + has successful CI + staging runs | Yes (`deploy.yml`) |
-| `check-dashboard-index-ownership.mjs` | Verifies 5 named dashboard indexes exist only in the Prisma migration, not duplicated in `prisma/sql/001` | **No — orphaned, not wired into any workflow or package.json script** |
-| `generate-legacy-schema-contract.mjs` | Generates SQL fixtures/contracts for legacy-baseline compatibility tests | Indirectly used by `migration-upgrade` job fixtures |
-| `ci/provision-legacy-database.sh` | Provisions the deterministic legacy-template DB for `migration-upgrade` | Yes (`migration-upgrade` job only) |
+| Script                                | Purpose                                                                                                     | Wired into CI?                                                        |
+| ------------------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------- |
+| `check-i18n-parity.mjs`               | Flags dotted-literal keys and missing/extra keys across `messages/{en,fi,ar}.json`                          | Yes (`i18n` job)                                                      |
+| `check-migration-history.mjs`         | Hardcoded expected migration order + pinned SHA-256 checksums for 8 published migrations; anti-tamper guard | Yes (`migration-structure` job, `npm run migrations:check`)           |
+| `validate-staging-config.mjs`         | 3 modes (`identity`/`storage`/`embedding`) guarding staging never points at production                      | Yes (staging workflow only)                                           |
+| `verify-release-chain.ts`             | Confirms exact SHA is `main` tip + has successful CI + staging runs                                         | Yes (`deploy.yml`)                                                    |
+| `check-dashboard-index-ownership.mjs` | Verifies 5 named dashboard indexes exist only in the Prisma migration, not duplicated in `prisma/sql/001`   | **No — orphaned, not wired into any workflow or package.json script** |
+| `generate-legacy-schema-contract.mjs` | Generates SQL fixtures/contracts for legacy-baseline compatibility tests                                    | Indirectly used by `migration-upgrade` job fixtures                   |
+| `ci/provision-legacy-database.sh`     | Provisions the deterministic legacy-template DB for `migration-upgrade`                                     | Yes (`migration-upgrade` job only)                                    |
 
 ## 3. Local check results (run 2026-07-23, read-only, non-destructive)
 
-| Command | Result |
-|---|---|
-| `npx prisma validate` | **PASS** |
-| `npx prisma generate` | **PASS** (Prisma Client v6.19.3; a v7.9.0 update is available, not urgent) |
-| `npm run i18n:check` | **PASS** — fi: 488/488, ar: 488/488, zero drift |
-| `npm run migrations:check` | **PASS** — order correct, 8 published checksums match |
-| `npm run format:check` | **PASS** |
-| `npm run lint` | **PASS**, no warnings |
-| `npm run typecheck` | **PASS** |
-| `npm test` (vitest) | **PASS** — 34 files, 310 tests, all green, 4.13s |
-| `npm run build` | **PASS** — 111/111 static pages generated across en/fi/ar, 9.2s |
-| `npm audit --omit=dev --audit-level=high` (exact blocking CI command) | **FAIL** — see below |
+| Command                                                               | Result                                                                     |
+| --------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| `npx prisma validate`                                                 | **PASS**                                                                   |
+| `npx prisma generate`                                                 | **PASS** (Prisma Client v6.19.3; a v7.9.0 update is available, not urgent) |
+| `npm run i18n:check`                                                  | **PASS** — fi: 488/488, ar: 488/488, zero drift                            |
+| `npm run migrations:check`                                            | **PASS** — order correct, 8 published checksums match                      |
+| `npm run format:check`                                                | **PASS**                                                                   |
+| `npm run lint`                                                        | **PASS**, no warnings                                                      |
+| `npm run typecheck`                                                   | **PASS**                                                                   |
+| `npm test` (vitest)                                                   | **PASS** — 34 files, 310 tests, all green, 4.13s                           |
+| `npm run build`                                                       | **PASS** — 111/111 static pages generated across en/fi/ar, 9.2s            |
+| `npm audit --omit=dev --audit-level=high` (exact blocking CI command) | **FAIL** — see below                                                       |
 
 ### Dependency audit — the one currently-failing check
 
@@ -144,6 +144,7 @@ accurate against the actual workflow files during this audit). **It has not yet 
 end-to-end** (no staging or production dispatch has occurred per repository evidence).
 
 **Recommended release sequence from this point**:
+
 1. Fix the dependency-audit failure (§3) — this blocks any further CI-gated progress.
 2. Re-run `ci-required` on PR #9 to confirm green.
 3. Resolve the Medium security findings (`SECURITY-AUDIT.md` M1–M3) — not hard CI blockers today
@@ -155,19 +156,19 @@ end-to-end** (no staging or production dispatch has occurred per repository evid
 
 ## Summary classification
 
-| Check | Status |
-|---|---|
-| Prisma validate / generate | Passing |
-| i18n parity | Passing |
-| Migration history/checksum guard | Passing |
-| Format / lint / typecheck | Passing |
-| Unit/integration tests | Passing (310/310) |
-| Production build | Passing |
-| RLS isolation tests | Environment-dependent (covered in CI, not run locally) |
-| Migration-upgrade drift tests | Environment-dependent (covered in CI, not run locally) |
-| Secret scan | Environment-dependent (covered in CI, not run locally) |
-| **Production dependency audit** | **Failing right now** (passed 2026-07-20, fails 2026-07-23) |
-| Full dependency audit report | Non-blocking by design |
-| Dashboard index ownership check | Missing from CI wiring |
-| Staging E2E smoke | Environment-dependent, not yet exercised |
-| Production/staging deploy | Correctly gated, not yet exercised |
+| Check                            | Status                                                      |
+| -------------------------------- | ----------------------------------------------------------- |
+| Prisma validate / generate       | Passing                                                     |
+| i18n parity                      | Passing                                                     |
+| Migration history/checksum guard | Passing                                                     |
+| Format / lint / typecheck        | Passing                                                     |
+| Unit/integration tests           | Passing (310/310)                                           |
+| Production build                 | Passing                                                     |
+| RLS isolation tests              | Environment-dependent (covered in CI, not run locally)      |
+| Migration-upgrade drift tests    | Environment-dependent (covered in CI, not run locally)      |
+| Secret scan                      | Environment-dependent (covered in CI, not run locally)      |
+| **Production dependency audit**  | **Failing right now** (passed 2026-07-20, fails 2026-07-23) |
+| Full dependency audit report     | Non-blocking by design                                      |
+| Dashboard index ownership check  | Missing from CI wiring                                      |
+| Staging E2E smoke                | Environment-dependent, not yet exercised                    |
+| Production/staging deploy        | Correctly gated, not yet exercised                          |

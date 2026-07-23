@@ -104,7 +104,7 @@ flowchart LR
   both **thin transport layers** that call the same service functions — no duplicated business
   logic was found between the two transports.
 - **Authorization is layered, not single-gate**: `middleware.ts` only checks Supabase session
-  *cookie presence* (a UX redirect, not a security boundary) and its matcher **excludes all
+  _cookie presence_ (a UX redirect, not a security boundary) and its matcher **excludes all
   `/api` routes**. Every Server Action and API route independently calls `requirePermission()`
   (which calls `getTenantContext()`, which performs a real `supabase.auth.getUser()` validation)
   or, for webhooks/jobs, its own signature-verification function. This was spot-checked across
@@ -262,11 +262,11 @@ trigger) and restricted to `main`. This is a deliberately conservative, manually
 
 ## 11. Important technical tradeoffs (as-built, worth preserving context on)
 
-| Tradeoff | Why it was made | Where documented |
-|---|---|---|
-| Buffered "fake" SSE streaming instead of true token streaming | Output must pass moderation before any text reaches the client — a deliberate safety-over-latency choice | `docs/ai-chat-production-hardening.md`, confirmed in `route.ts` |
-| RLS enabled everywhere but not load-bearing for the app | Prisma needs a role that isn't blocked by RLS for legitimate cross-tenant admin/job operations; RLS is kept as a backstop for the Supabase-native client surface instead | `prisma/sql/003_rls.sql` comment, `DATABASE-AUDIT.md` §6 |
-| Two parallel migration systems (Prisma DDL + hand-applied SQL) | Prisma cannot model RLS policies or Supabase Storage's `storage` schema | `docs/release-runbook.md`, `ARCHITECTURE.md` §4 |
-| Booking assistant LLM never decides availability | Prevents hallucinated/incorrect booking slots — model only ranks/explains deterministically-computed slots | `docs/calendar-booking-v1.md` |
-| Anthropic-only generation despite router/fallback scaffolding | Simpler operationally; fallback code was written but never finished/wired | `AI-RAG-AUDIT.md` §1 |
-| Dynamic `Promise.all([import(...)])` at the top of most route handlers | Serverless cold-start/bundle-splitting optimization, applied as a consistent house style | Repeated pattern across `route.ts` files |
+| Tradeoff                                                               | Why it was made                                                                                                                                                          | Where documented                                                |
+| ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------- |
+| Buffered "fake" SSE streaming instead of true token streaming          | Output must pass moderation before any text reaches the client — a deliberate safety-over-latency choice                                                                 | `docs/ai-chat-production-hardening.md`, confirmed in `route.ts` |
+| RLS enabled everywhere but not load-bearing for the app                | Prisma needs a role that isn't blocked by RLS for legitimate cross-tenant admin/job operations; RLS is kept as a backstop for the Supabase-native client surface instead | `prisma/sql/003_rls.sql` comment, `DATABASE-AUDIT.md` §6        |
+| Two parallel migration systems (Prisma DDL + hand-applied SQL)         | Prisma cannot model RLS policies or Supabase Storage's `storage` schema                                                                                                  | `docs/release-runbook.md`, `ARCHITECTURE.md` §4                 |
+| Booking assistant LLM never decides availability                       | Prevents hallucinated/incorrect booking slots — model only ranks/explains deterministically-computed slots                                                               | `docs/calendar-booking-v1.md`                                   |
+| Anthropic-only generation despite router/fallback scaffolding          | Simpler operationally; fallback code was written but never finished/wired                                                                                                | `AI-RAG-AUDIT.md` §1                                            |
+| Dynamic `Promise.all([import(...)])` at the top of most route handlers | Serverless cold-start/bundle-splitting optimization, applied as a consistent house style                                                                                 | Repeated pattern across `route.ts` files                        |

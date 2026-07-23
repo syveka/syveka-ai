@@ -20,12 +20,14 @@ are bumped. Every other P0/P1 item is lower urgency than unblocking CI itself.
 ## Scope
 
 In scope:
+
 - Bump `next`, and whatever nested `postcss`/`sharp` versions come along with it, via
   `npm audit fix` (non-breaking within `next`'s declared `^15.2.0` range).
 - Evaluate (separately, see below) the `next-intl` moderate CVE, which requires
   `npm audit fix --force` (breaking: 3.x → 4.x).
 
 Out of scope (do not touch in this task):
+
 - Any other item in `ROADMAP.md` P0–P4.
 - Any application code changes beyond what's needed to keep the build/tests green after the
   dependency bump.
@@ -123,7 +125,7 @@ committing.
 
 - PR opened against `main` (or against the current `chore/staging-release-validation` branch if
   that's still the active integration branch at the time — confirm with `git branch
-  --show-current` and `gh pr list` before choosing the base) with the dependency bump, updated
+--show-current` and `gh pr list` before choosing the base) with the dependency bump, updated
   lockfile, and a description listing exactly which CVEs are resolved.
 - All commands in "Testing requirements" pass locally.
 - CI's `production-dependency-audit` job passes on the PR.

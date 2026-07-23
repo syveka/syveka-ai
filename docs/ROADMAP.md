@@ -7,6 +7,7 @@ repository evidence in `SECURITY-AUDIT.md`, `DATABASE-AUDIT.md`, `AI-RAG-AUDIT.m
 ## P0 — Production blockers (must resolve before any production deploy)
 
 ### P0.1 — Fix failing dependency-audit CI gate
+
 - **Business value**: unblocks the entire release pipeline; several CVEs involve SSRF/DoS in
   `next` itself.
 - **Technical scope**: `npm audit fix` for `next`/`postcss`/`sharp`; separately evaluate
@@ -18,6 +19,7 @@ repository evidence in `SECURITY-AUDIT.md`, `DATABASE-AUDIT.md`, `AI-RAG-AUDIT.m
 - **Suggested milestone**: pre-staging-dispatch.
 
 ### P0.2 — Calendar webhook signature verification
+
 - **Business value**: closes the one webhook endpoint without cryptographic verification.
 - **Technical scope**: add Microsoft `clientState` and Google channel-token validation in
   `src/app/api/v1/webhooks/calendar/[provider]/route.ts`.
@@ -26,6 +28,7 @@ repository evidence in `SECURITY-AUDIT.md`, `DATABASE-AUDIT.md`, `AI-RAG-AUDIT.m
 - **Suggested milestone**: pre-GA.
 
 ### P0.3 — Implement Content-Security-Policy
+
 - **Business value**: standard defense-in-depth control expected for a SaaS handling
   AI-generated and third-party content; closes a stale-comment gap.
 - **Technical scope**: implement the nonce-based CSP `next.config.ts`'s comment already
@@ -36,6 +39,7 @@ repository evidence in `SECURITY-AUDIT.md`, `DATABASE-AUDIT.md`, `AI-RAG-AUDIT.m
 - **Suggested milestone**: pre-GA.
 
 ### P0.4 — Rate-limit file/URL-ingestion endpoints
+
 - **Business value**: closes a cost-amplification/probing-throughput gap.
 - **Technical scope**: add `rateLimiters.api` (or a dedicated tier) to `kb/documents`,
   `kb/documents/upload-url`, `ai/files`, `ai/files/upload-url`.
@@ -47,22 +51,22 @@ repository evidence in `SECURITY-AUDIT.md`, `DATABASE-AUDIT.md`, `AI-RAG-AUDIT.m
 
 - **Exercise the release pipeline end-to-end**: dispatch `staging-release.yml` for the first
   time, verify the full smoke checklist in `docs/release-runbook.md`, then a production
-  dispatch. *Dependencies: P0 items resolved. Risk: process risk only if runbook is followed.*
+  dispatch. _Dependencies: P0 items resolved. Risk: process risk only if runbook is followed._
 - **i18n coverage completion**: localize `members-table.tsx`, `invite-form.tsx`,
   `api-keys-manager.tsx`, `organization-form.tsx`, `profile-form.tsx`, `onboarding-form.tsx`
-  (Arabic branch missing entirely). *Business value: matches the stated en/fi/ar-parity
-  principle; infrastructure already exists. Risk: low, mechanical work.*
+  (Arabic branch missing entirely). _Business value: matches the stated en/fi/ar-parity
+  principle; infrastructure already exists. Risk: low, mechanical work._
 - **Harden `getFreshTokens()`** in `calendar-connections.ts` to filter by `orgId` internally
-  rather than relying on caller discipline (`DATABASE-AUDIT.md` §7). *Risk: low, no current
-  exploit path, defense-in-depth only.*
+  rather than relying on caller discipline (`DATABASE-AUDIT.md` §7). _Risk: low, no current
+  exploit path, defense-in-depth only._
 - **Close the RAG general-search retrieval gap**: add `deleted_at`/`status='READY'` filtering
   to the `match_chunks()` path to match the documentId-scoped path (`AI-RAG-AUDIT.md` §6).
-  *Risk: low, same-tenant consistency fix, not a security fix.*
+  _Risk: low, same-tenant consistency fix, not a security fix._
 - **Vapi webhook replay protection**: add timestamp/event-id dedupe matching the Stripe pattern.
-  *Risk: low.*
+  _Risk: low._
 - **Automated route-auth-coverage test**: assert every `src/app/api/v1/**/route.ts` imports a
   recognized auth/signature-check function, closing the "spot-checked, not exhaustive" gap.
-  *Risk: low, pure test addition.*
+  _Risk: low, pure test addition._
 
 ## P2 — Product completion
 

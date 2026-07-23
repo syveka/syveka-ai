@@ -26,14 +26,8 @@ confirm `npm audit --omit=dev --audit-level=high` now passes, and open a PR. Eva
 `next-intl` 4.x bump as a separate, clearly-labeled follow-up PR (breaking change). See
 `CODEX-HANDOFF.md` for full acceptance criteria.
 
-Then, in order:
-2. P0.2 — Calendar webhook signature verification.
-3. P0.4 — Rate limiting on the four file/URL-ingestion endpoints.
-4. P0.3 — CSP implementation (after ChatGPT's script/style-origin inventory).
-5. P1 items: `getFreshTokens()` hardening, RAG general-search filter fix, Vapi webhook replay
-   protection, automated route-auth-coverage test.
-6. P1 i18n coverage completion (mechanical, low-risk, can be parallelized with the above).
-7. P2 items per `ROADMAP.md`, once P0/P1 are clear.
+Then, in order: 2. P0.2 — Calendar webhook signature verification. 3. P0.4 — Rate limiting on the four file/URL-ingestion endpoints. 4. P0.3 — CSP implementation (after ChatGPT's script/style-origin inventory). 5. P1 items: `getFreshTokens()` hardening, RAG general-search filter fix, Vapi webhook replay
+protection, automated route-auth-coverage test. 6. P1 i18n coverage completion (mechanical, low-risk, can be parallelized with the above). 7. P2 items per `ROADMAP.md`, once P0/P1 are clear.
 
 ## Tasks requiring Claude
 

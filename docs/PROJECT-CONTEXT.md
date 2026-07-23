@@ -40,32 +40,32 @@ intended expansion beyond Finland into other EU and Arabic-speaking markets.
 
 ## 3. Approved technology stack (verified against actual code, 2026-07-23)
 
-| Technology | Status | Evidence |
-|---|---|---|
-| Next.js 15 (App Router) | **Active, primary framework** | `package.json` `next@^15.2.0`; 41 page routes, 18 API routes under `src/app` |
-| TypeScript (strict) | **Active** | `tsconfig.json`, `npm run typecheck` passes clean |
-| Supabase (Postgres host, Auth, Storage, Realtime config) | **Active** — Auth + Storage are load-bearing; Realtime is configured but has no confirmed application subscriber | `src/server/supabase/server.ts`, `supabase/config.toml`, `prisma/sql/004_storage.sql` |
-| Supabase Auth | **Active, sole auth system** | `src/server/auth/session.ts`, `src/middleware.ts`; no Clerk anywhere in the repo |
-| PostgreSQL (+ pgvector, pg_trgm) | **Active** | `prisma/schema.prisma:10`, HNSW index on `document_chunks.embedding` |
-| Prisma | **Active, central ORM** | `src/server/db/prisma.ts`, `tenant.ts`; 43 models |
-| Row Level Security | **Active at the database level, but bypassed by the app's own DB connection** — see `DATABASE-AUDIT.md` §6 | `prisma/migrations/20260719000000_initial_security_baseline` |
-| Stripe | **Active** | `src/server/integrations/stripe.ts`, full webhook handler, checkout, billing portal |
-| Vapi | **Active** | `src/server/integrations/vapi.ts`, `src/server/services/voice.ts`, webhook + post-call job |
-| Resend | **Active** | `src/server/integrations/resend.ts`, 3 react-email templates |
-| OpenAI APIs | **Active — moderation and embeddings only, not chat generation** | `src/server/integrations/openai.ts` (`text-embedding-3-small`, `omni-moderation-latest`) |
-| Anthropic Claude | **Active — sole chat/generation model** | `src/server/integrations/anthropic.ts`; not in the originally-listed stack but is the actual production LLM |
-| Clerk | **Not present** — confirmed absent from `package.json` and all source | N/A |
-| Redis (Upstash) | **Active** | `src/server/integrations/redis.ts` — rate limiting, idempotency, entitlement caching |
-| QStash (Upstash) | **Active** | `src/server/jobs/{queue,verify}.ts` — background job queue for embedding, reminders, workflows, post-call processing |
-| Playwright | **Active but minimal** | `playwright.config.ts`, one smoke spec (`tests/e2e/smoke.spec.ts`), run only in the staging-release workflow, not local CI |
-| Zod | **Active, used pervasively** | One validator file per domain under `src/lib/validators/`; also gates `src/env.ts` |
-| Tailwind CSS | **Active** | `tailwind.config.ts` |
-| shadcn/ui | **Active but minimal owned set** | `src/components/ui/` currently has only button/card/input/label; README documents the `npx shadcn add ...` command for the rest |
-| GitHub Actions | **Active, mature** | `.github/workflows/{ci.yml,deploy.yml,staging-release.yml}` — 14-job CI, gated manual staging/production release chain |
-| i18n (en/fi/ar) | **Active, infrastructure complete, coverage inconsistent** | `messages/*.json` (488 keys, 0 drift); several settings components still hardcode English — see `UX-AUDIT.md` |
-| Zustand | **Declared, not used** | `src/stores/` is empty; zero imports anywhere in `src/` |
-| @tanstack/react-query | **Declared, provider wired, zero consumers** | `QueryProvider` wraps the app; no `useQuery`/`useMutation` call sites found |
-| Sentry / Langfuse | **Declared as optional env vars, no SDK integration found** | `src/env.ts` optional vars; no `@sentry`/`langfuse` imports found in the audited files |
+| Technology                                               | Status                                                                                                           | Evidence                                                                                                                        |
+| -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Next.js 15 (App Router)                                  | **Active, primary framework**                                                                                    | `package.json` `next@^15.2.0`; 41 page routes, 18 API routes under `src/app`                                                    |
+| TypeScript (strict)                                      | **Active**                                                                                                       | `tsconfig.json`, `npm run typecheck` passes clean                                                                               |
+| Supabase (Postgres host, Auth, Storage, Realtime config) | **Active** — Auth + Storage are load-bearing; Realtime is configured but has no confirmed application subscriber | `src/server/supabase/server.ts`, `supabase/config.toml`, `prisma/sql/004_storage.sql`                                           |
+| Supabase Auth                                            | **Active, sole auth system**                                                                                     | `src/server/auth/session.ts`, `src/middleware.ts`; no Clerk anywhere in the repo                                                |
+| PostgreSQL (+ pgvector, pg_trgm)                         | **Active**                                                                                                       | `prisma/schema.prisma:10`, HNSW index on `document_chunks.embedding`                                                            |
+| Prisma                                                   | **Active, central ORM**                                                                                          | `src/server/db/prisma.ts`, `tenant.ts`; 43 models                                                                               |
+| Row Level Security                                       | **Active at the database level, but bypassed by the app's own DB connection** — see `DATABASE-AUDIT.md` §6       | `prisma/migrations/20260719000000_initial_security_baseline`                                                                    |
+| Stripe                                                   | **Active**                                                                                                       | `src/server/integrations/stripe.ts`, full webhook handler, checkout, billing portal                                             |
+| Vapi                                                     | **Active**                                                                                                       | `src/server/integrations/vapi.ts`, `src/server/services/voice.ts`, webhook + post-call job                                      |
+| Resend                                                   | **Active**                                                                                                       | `src/server/integrations/resend.ts`, 3 react-email templates                                                                    |
+| OpenAI APIs                                              | **Active — moderation and embeddings only, not chat generation**                                                 | `src/server/integrations/openai.ts` (`text-embedding-3-small`, `omni-moderation-latest`)                                        |
+| Anthropic Claude                                         | **Active — sole chat/generation model**                                                                          | `src/server/integrations/anthropic.ts`; not in the originally-listed stack but is the actual production LLM                     |
+| Clerk                                                    | **Not present** — confirmed absent from `package.json` and all source                                            | N/A                                                                                                                             |
+| Redis (Upstash)                                          | **Active**                                                                                                       | `src/server/integrations/redis.ts` — rate limiting, idempotency, entitlement caching                                            |
+| QStash (Upstash)                                         | **Active**                                                                                                       | `src/server/jobs/{queue,verify}.ts` — background job queue for embedding, reminders, workflows, post-call processing            |
+| Playwright                                               | **Active but minimal**                                                                                           | `playwright.config.ts`, one smoke spec (`tests/e2e/smoke.spec.ts`), run only in the staging-release workflow, not local CI      |
+| Zod                                                      | **Active, used pervasively**                                                                                     | One validator file per domain under `src/lib/validators/`; also gates `src/env.ts`                                              |
+| Tailwind CSS                                             | **Active**                                                                                                       | `tailwind.config.ts`                                                                                                            |
+| shadcn/ui                                                | **Active but minimal owned set**                                                                                 | `src/components/ui/` currently has only button/card/input/label; README documents the `npx shadcn add ...` command for the rest |
+| GitHub Actions                                           | **Active, mature**                                                                                               | `.github/workflows/{ci.yml,deploy.yml,staging-release.yml}` — 14-job CI, gated manual staging/production release chain          |
+| i18n (en/fi/ar)                                          | **Active, infrastructure complete, coverage inconsistent**                                                       | `messages/*.json` (488 keys, 0 drift); several settings components still hardcode English — see `UX-AUDIT.md`                   |
+| Zustand                                                  | **Declared, not used**                                                                                           | `src/stores/` is empty; zero imports anywhere in `src/`                                                                         |
+| @tanstack/react-query                                    | **Declared, provider wired, zero consumers**                                                                     | `QueryProvider` wraps the app; no `useQuery`/`useMutation` call sites found                                                     |
+| Sentry / Langfuse                                        | **Declared as optional env vars, no SDK integration found**                                                      | `src/env.ts` optional vars; no `@sentry`/`langfuse` imports found in the audited files                                          |
 
 ## 4. Development workflow
 
@@ -126,6 +126,7 @@ intended expansion beyond Finland into other EU and Arabic-speaking markets.
 
 In dependency order, per what is already built and what remains — see `ROADMAP.md` for the
 full prioritized breakdown:
+
 1. Close the P0 production blockers (dependency CVEs, calendar webhook signature, missing CSP,
    unrate-limited file-ingestion endpoints) before any production deploy.
 2. Finish i18n coverage gaps (Members, API Keys, Organization/Profile settings, Onboarding).
@@ -161,6 +162,7 @@ CSV contact import UI, PWA push notifications, RAG re-ranking, custom-LLM voice 
 ## 9. Decisions that must not be reversed without explicit owner approval
 
 See `DECISIONS.md` for the full list. Highlights relevant to any coding session:
+
 - Do not replace `tenantDb()`/`unscopedPrisma` application-layer tenant scoping with "RLS will
   handle it" reasoning — RLS does not protect the Prisma connection today (see §5.1 above).
   Any change to the database connection role (e.g. switching to a non-bypassing role) is an

@@ -6,23 +6,23 @@ what was verified vs. what remains unverified; do not treat the "unverified" ite
 
 ## Route-by-route summary
 
-| Route area | Localization | Loading/error UX | Notes |
-|---|---|---|---|
-| Landing (`(marketing)/page.tsx`) | Localized | Default only | Content not deep-read; no placeholder markers (`TODO`/`Coming soon`) found repo-wide |
-| Auth (login/register/forgot/reset/verify) | Localized | Default only | Functionally complete per architecture audit |
-| Onboarding | **Hardcoded English, no Arabic string at all** | Default only | `onboarding-form.tsx` uses `locale === "fi" ? ... : ...` ternaries instead of `useTranslations` for most copy |
-| Dashboard | Localized (2 usages) | **Only route with `loading.tsx`/`error.tsx`** | `DashboardSkeleton` fallback, localized retry-error card — this is the reference pattern to replicate elsewhere |
-| CRM (contacts/companies/deals) | Localized (12 usages) | Default only | Functionally complete |
-| Calendar / Booking | Localized (6 usages) | Default only | Public booking pages localized; RTL logical-property discipline confirmed in at least one related file |
-| AI Chat | Localized (per-component, in leaf components not route files) | Default only | SSE UI, error alert rendered via i18n key with generic fallback |
-| Knowledge Base | Localized | Default only | Upload dropzone + document table |
-| Voice | Localized (6 usages) | Default only | Confirmed explicit empty-state UI |
-| Settings — Organization | **Partially hardcoded** | Default only | Only `common.save/error/loading` translated; all field labels/descriptions/placeholders are literal English (e.g. "Company name", "AI instructions") |
-| Settings — Profile | **Partially hardcoded** | Default only | Same pattern — "Name", "Language", "Timezone" hardcoded |
-| Settings — Members | **Fully hardcoded (0 `useTranslations` calls)** | Default only | `members-table.tsx`, `invite-form.tsx` — role labels rendered as raw enum strings (`ADMIN`, `MANAGER`) |
-| Settings — API keys | **Fully hardcoded (0 `useTranslations` calls)** | Default only | `api-keys-manager.tsx` |
-| Settings — Billing | Localized (part of 8 settings usages) | Default only | Plan cards + usage meters |
-| Superadmin | **Fully hardcoded English** | Default only | Arguably acceptable for an internal ops-only surface, but inconsistent with the rest of the app's localization discipline |
+| Route area                                | Localization                                                  | Loading/error UX                              | Notes                                                                                                                                                |
+| ----------------------------------------- | ------------------------------------------------------------- | --------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Landing (`(marketing)/page.tsx`)          | Localized                                                     | Default only                                  | Content not deep-read; no placeholder markers (`TODO`/`Coming soon`) found repo-wide                                                                 |
+| Auth (login/register/forgot/reset/verify) | Localized                                                     | Default only                                  | Functionally complete per architecture audit                                                                                                         |
+| Onboarding                                | **Hardcoded English, no Arabic string at all**                | Default only                                  | `onboarding-form.tsx` uses `locale === "fi" ? ... : ...` ternaries instead of `useTranslations` for most copy                                        |
+| Dashboard                                 | Localized (2 usages)                                          | **Only route with `loading.tsx`/`error.tsx`** | `DashboardSkeleton` fallback, localized retry-error card — this is the reference pattern to replicate elsewhere                                      |
+| CRM (contacts/companies/deals)            | Localized (12 usages)                                         | Default only                                  | Functionally complete                                                                                                                                |
+| Calendar / Booking                        | Localized (6 usages)                                          | Default only                                  | Public booking pages localized; RTL logical-property discipline confirmed in at least one related file                                               |
+| AI Chat                                   | Localized (per-component, in leaf components not route files) | Default only                                  | SSE UI, error alert rendered via i18n key with generic fallback                                                                                      |
+| Knowledge Base                            | Localized                                                     | Default only                                  | Upload dropzone + document table                                                                                                                     |
+| Voice                                     | Localized (6 usages)                                          | Default only                                  | Confirmed explicit empty-state UI                                                                                                                    |
+| Settings — Organization                   | **Partially hardcoded**                                       | Default only                                  | Only `common.save/error/loading` translated; all field labels/descriptions/placeholders are literal English (e.g. "Company name", "AI instructions") |
+| Settings — Profile                        | **Partially hardcoded**                                       | Default only                                  | Same pattern — "Name", "Language", "Timezone" hardcoded                                                                                              |
+| Settings — Members                        | **Fully hardcoded (0 `useTranslations` calls)**               | Default only                                  | `members-table.tsx`, `invite-form.tsx` — role labels rendered as raw enum strings (`ADMIN`, `MANAGER`)                                               |
+| Settings — API keys                       | **Fully hardcoded (0 `useTranslations` calls)**               | Default only                                  | `api-keys-manager.tsx`                                                                                                                               |
+| Settings — Billing                        | Localized (part of 8 settings usages)                         | Default only                                  | Plan cards + usage meters                                                                                                                            |
+| Superadmin                                | **Fully hardcoded English**                                   | Default only                                  | Arguably acceptable for an internal ops-only surface, but inconsistent with the rest of the app's localization discipline                            |
 
 ## Localization infrastructure vs. coverage
 

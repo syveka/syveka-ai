@@ -139,7 +139,7 @@ OpenAI `omni-moderation-latest`, applied **twice** per turn: once on raw user in
 generation (422 if flagged, no generation call made), once on the complete model output before
 any text is released to the client (SSE error if flagged, assistant message not persisted, but
 token usage still recorded for billing accuracy with `blockedByModeration: true`). This
-double-sided gate is *why* streaming is effectively buffered (§3) — a deliberate, documented
+double-sided gate is _why_ streaming is effectively buffered (§3) — a deliberate, documented
 trade. Genuinely tested: exactly-twice-per-turn call count, input-blocked path, output-blocked
 path (verifying unsafe text never appears in the response body and no message is persisted).
 
@@ -182,7 +182,7 @@ per-org default 300/window, both env-configurable) applied **before** any expens
 a monthly plan-entitlement quota (`assertWithinLimit`, 402 on breach) — genuine cost control.
 **Gap**: no dedicated rate limiter exists for the `embed-document` job route or the KB/chat
 upload-url endpoints beyond the storage-size entitlement checked only at upload-URL issuance —
-ties directly to `SECURITY-AUDIT.md` M3. Embedding cost only becomes visible *after* the OpenAI
+ties directly to `SECURITY-AUDIT.md` M3. Embedding cost only becomes visible _after_ the OpenAI
 calls are made (`recordUsage` post-hoc); there is no pre-flight embeddings-cost entitlement
 check before those calls.
 
@@ -218,16 +218,16 @@ that touches it), `ensureConversationSummary()`'s trigger logic, the `embed-docu
 
 ## Milestone 3 checklist (per the audit brief)
 
-| Item | Status |
-|---|---|
-| Streaming | Implemented-but-buffered (deliberate) |
-| Rate limiting | Partially implemented (chat: yes; file/embed endpoints: no) |
-| Zod validation | Implemented |
-| Moderation | Implemented, well-tested |
-| Token tracking | Implemented (real usage, estimated cost) |
-| Conversation summaries | Implemented |
-| Citations | Implemented, well-tested |
-| Retry handling | Implemented, well-tested |
-| File upload | Implemented, complete pipeline |
-| Embeddings | Implemented |
-| Tests | Strong overall, with the specific gaps listed in §18 |
+| Item                   | Status                                                      |
+| ---------------------- | ----------------------------------------------------------- |
+| Streaming              | Implemented-but-buffered (deliberate)                       |
+| Rate limiting          | Partially implemented (chat: yes; file/embed endpoints: no) |
+| Zod validation         | Implemented                                                 |
+| Moderation             | Implemented, well-tested                                    |
+| Token tracking         | Implemented (real usage, estimated cost)                    |
+| Conversation summaries | Implemented                                                 |
+| Citations              | Implemented, well-tested                                    |
+| Retry handling         | Implemented, well-tested                                    |
+| File upload            | Implemented, complete pipeline                              |
+| Embeddings             | Implemented                                                 |
+| Tests                  | Strong overall, with the specific gaps listed in §18        |
