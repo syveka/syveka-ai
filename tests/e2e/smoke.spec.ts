@@ -6,6 +6,12 @@ import { test, expect } from "@playwright/test";
  */
 
 test.describe("public", () => {
+  test("authentication UI starts", async ({ page }) => {
+    await page.goto("/login");
+    await expect(page.locator("#email")).toBeVisible();
+    await expect(page.locator("#password")).toBeVisible();
+  });
+
   test("landing renders in Finnish by default", async ({ page }) => {
     await page.goto("/");
     await expect(page.locator("h1")).toContainText(/tekoäly/i);
@@ -28,6 +34,18 @@ test.describe("public", () => {
     const res = await request.get("/api/health");
     expect(res.status()).toBe(200);
     expect((await res.json()).status).toBe("healthy");
+  });
+
+  test("AI and document APIs start and enforce authentication", async ({ request }) => {
+    const chat = await request.post("/api/v1/ai/chat", {
+      data: { message: "staging startup probe" },
+    });
+    expect(chat.status()).toBe(401);
+
+    const upload = await request.post("/api/v1/ai/files/upload-url", {
+      data: { filename: "probe.txt", contentType: "text/plain", size: 1 },
+    });
+    expect([401, 403]).toContain(upload.status());
   });
 });
 
@@ -68,5 +86,18 @@ test.describe("authenticated", () => {
     await page.goto("/crm/deals");
     await expect(page.getByText("Uusi liidi")).toBeVisible();
     await expect(page.getByText("Voitettu")).toBeVisible();
+  });
+
+  test("companies, Calendar and Booking, and Knowledge Base start", async ({ page }) => {
+    await page.goto("/crm/companies");
+    await expect(page.getByRole("heading", { name: /yritykset|companies/i })).toBeVisible();
+
+    await page.goto("/calendar");
+    await expect(page.getByRole("heading", { name: /kalenteri|calendar/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: /saatavuus|availability/i })).toBeVisible();
+    await expect(page.getByRole("link", { name: /varaussivut|booking/i })).toBeVisible();
+
+    await page.goto("/knowledge");
+    await expect(page.getByRole("heading", { name: /tietopankki|knowledge/i })).toBeVisible();
   });
 });

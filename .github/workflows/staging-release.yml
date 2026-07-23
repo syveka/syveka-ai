@@ -1,0 +1,271 @@
+name: Staging release validation
+
+on:
+  workflow_dispatch:
+    inputs:
+      staging_project_ref:
+        description: "Type the 20-character staging Supabase project ref"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "20"
+  VERCEL_CLI_VERSION: "56.3.2"
+
+jobs:
+  validate-migrate-deploy:
+    name: Validate, migrate, and deploy staging
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 45
+    steps:
+      - name: Refuse non-staging targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$CONFIRM_STAGING_PROJECT_REF" =~ ^[a-z0-9]{20}$ ]]; then
+            echo "The staging confirmation must be a 20-character lowercase Supabase project ref."
+            exit 1
+          fi
+          if [ "$RUN_REF" != "refs/heads/main" ]; then
+            echo "Staging release validation is only allowed from main."
+            exit 1
+          fi
+          if [ "$CONFIRM_STAGING_PROJECT_REF" != "$STAGING_SUPABASE_PROJECT_REF" ]; then
+            echo "The confirmation input does not match the staging project ref."
+            exit 1
+          fi
+          if [ -z "$PRODUCTION_SUPABASE_PROJECT_REF" ] || [ "$STAGING_SUPABASE_PROJECT_REF" = "$PRODUCTION_SUPABASE_PROJECT_REF" ]; then
+            echo "Staging and production Supabase project refs must be present and different."
+            exit 1
+          fi
+          if [ -z "$STAGING_VERCEL_PROJECT_ID" ] || [ "$STAGING_VERCEL_PROJECT_ID" = "$PRODUCTION_VERCEL_PROJECT_ID" ]; then
+            echo "The staging Vercel project must be present and different from production."
+            exit 1
+          fi
+        env:
+          CONFIRM_STAGING_PROJECT_REF: ${{ inputs.staging_project_ref }}
+          RUN_REF: ${{ github.ref }}
+          STAGING_SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+          PRODUCTION_SUPABASE_PROJECT_REF: ${{ vars.PRODUCTION_SUPABASE_PROJECT_REF }}
+          STAGING_VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+          PRODUCTION_VERCEL_PROJECT_ID: ${{ vars.PRODUCTION_VERCEL_PROJECT_ID }}
+
+      - name: Checkout exact main candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Validate staging project identity
+        run: node scripts/validate-staging-config.mjs
+        env:
+          STAGING_CONFIG_MODE: identity
+          STAGING_SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+          PRODUCTION_SUPABASE_PROJECT_REF: ${{ vars.PRODUCTION_SUPABASE_PROJECT_REF }}
+          STAGING_SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+          STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          STAGING_DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+
+      - name: Validate migration history
+        run: npm run migrations:check
+
+      - name: Format check
+        run: npm run format:check
+
+      - name: Translation key parity
+        run: npm run i18n:check
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Unit and integration tests
+        run: npm test
+
+      - name: Prisma schema validation
+        run: npx prisma validate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
+
+      - name: Production dependency audit
+        run: npm audit --omit=dev --audit-level=high
+
+      - name: Production build
+        run: npm run build
+        env:
+          SKIP_ENV_VALIDATION: "1"
+          NEXT_PUBLIC_APP_URL: https://staging.invalid
+          NEXT_PUBLIC_SUPABASE_URL: https://staging.invalid
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: staging-build-placeholder
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_staging_build
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
+
+      - name: Read-only legacy compatibility preflight
+        run: psql "$STAGING_DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
+        env:
+          STAGING_DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+
+      - name: Apply Prisma migrations to staging
+        run: npx prisma migrate deploy
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+
+      - name: Verify Prisma migration status
+        run: npx prisma migrate status
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+
+      - name: Apply rerunnable Supabase Storage compatibility
+        run: psql "$STAGING_DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/004_storage.sql
+        env:
+          STAGING_DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+
+      - name: Verify database RLS and tenant invariants
+        shell: bash
+        run: |
+          set -euo pipefail
+          psql "$STAGING_DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
+          psql "$STAGING_DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
+          psql "$STAGING_DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/rls/calendar-booking-isolation.sql
+          psql "$STAGING_DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
+        env:
+          STAGING_DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+
+      - name: Verify Supabase Storage policy definitions
+        run: psql "$STAGING_DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/storage-invariants.sql
+        env:
+          STAGING_DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+
+      - name: Verify private document storage
+        run: node scripts/validate-staging-config.mjs
+        env:
+          STAGING_CONFIG_MODE: storage
+          STAGING_SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+          STAGING_SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+          STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+
+      - name: Verify embedding configuration
+        run: node scripts/validate-staging-config.mjs
+        env:
+          STAGING_CONFIG_MODE: embedding
+          STAGING_OPENAI_API_KEY: ${{ secrets.STAGING_OPENAI_API_KEY }}
+
+      - name: Build staging deployment with pinned Vercel CLI
+        run: |
+          npx --yes "vercel@$VERCEL_CLI_VERSION" pull --yes --environment=preview --token="$STAGING_VERCEL_TOKEN"
+          npx --yes "vercel@$VERCEL_CLI_VERSION" build --token="$STAGING_VERCEL_TOKEN"
+        env:
+          STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+
+      - name: Deploy staging application
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          deployment_url=$(npx --yes "vercel@$VERCEL_CLI_VERSION" deploy --prebuilt --token="$STAGING_VERCEL_TOKEN")
+          if [[ "$deployment_url" != https://* ]]; then
+            echo "Vercel did not return an HTTPS staging deployment URL."
+            exit 1
+          fi
+          echo "url=$deployment_url" >> "$GITHUB_OUTPUT"
+        env:
+          STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+
+      - name: Validate staging E2E base URL
+        id: staging-url
+        shell: bash
+        run: |
+          set -euo pipefail
+          validated_url="$(
+            node -e '
+              const value = process.env.CANDIDATE_E2E_BASE_URL?.trim();
+              const fail = (message) => {
+                console.error(`Invalid staging E2E base URL: ${message}`);
+                process.exit(1);
+              };
+
+              if (!value) {
+                fail("the deployment step did not provide a URL.");
+              }
+
+              let url;
+              try {
+                url = new URL(value);
+              } catch {
+                fail("expected an absolute HTTPS URL.");
+              }
+
+              if (
+                url.protocol !== "https:" ||
+                !url.hostname ||
+                url.username ||
+                url.password ||
+                url.pathname !== "/" ||
+                url.search ||
+                url.hash
+              ) {
+                fail("expected an HTTPS origin without credentials, path, query, or fragment.");
+              }
+
+              process.stdout.write(url.origin);
+            '
+          )"
+          echo "url=$validated_url" >> "$GITHUB_OUTPUT"
+        env:
+          CANDIDATE_E2E_BASE_URL: ${{ steps.deploy.outputs.url }}
+
+      - name: Wait for staging health
+        shell: bash
+        run: |
+          set -euo pipefail
+          for attempt in {1..12}; do
+            status=$(curl --silent --output /dev/null --write-out "%{http_code}" "$E2E_BASE_URL/api/health")
+            if [ "$status" = "200" ]; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Staging health check did not become healthy."
+          exit 1
+        env:
+          E2E_BASE_URL: ${{ steps.staging-url.outputs.url }}
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run essential staging smoke tests
+        run: npm run test:e2e
+        env:
+          E2E_BASE_URL: ${{ steps.staging-url.outputs.url }}
+          E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}

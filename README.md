@@ -14,15 +14,18 @@ npm install
 cp .env.example .env        # fill in all values (env.ts fails the build otherwise)
 
 # Database
-npm run db:migrate          # Prisma migrations
-psql $DIRECT_URL -f prisma/sql/001_extensions_and_indexes.sql
-psql $DIRECT_URL -f prisma/sql/002_functions.sql
-psql $DIRECT_URL -f prisma/sql/003_rls.sql
-psql $DIRECT_URL -f prisma/sql/004_storage.sql
+npm run db:migrate          # local development migrations
+# Existing shared environments: run the read-only compatibility preflight
+# before db:deploy. See docs/release-runbook.md for the protected release flow.
+psql $DIRECT_URL -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
+npm run db:deploy           # tracked baseline + feature + RLS migrations
+psql $DIRECT_URL -f prisma/sql/004_storage.sql # Supabase only; safe to rerun
 npm run db:seed             # global prompt library + default pipeline data
 
 # Calendar & Booking RLS is applied by the tracked Prisma migration
 # 20260718000000_calendar_booking_rls. Do not run prisma/sql/005 separately.
+# prisma/sql/001-003 are retained only for historical operator compatibility;
+# new environments receive those database objects from tracked migrations.
 
 # Supabase dashboard (one-time):
 #  - Auth → Hooks → register public.custom_access_token_hook (access token hook)
@@ -84,4 +87,7 @@ npx shadcn@latest add dialog dropdown-menu avatar tooltip table tabs badge selec
 npm install          # (registry unavailable in the build sandbox — run locally)
 npm run typecheck && npm test
 node scripts/check-i18n-parity.mjs
+npm run migrations:check
 ```
+
+Release operators must follow [docs/release-runbook.md](docs/release-runbook.md).
