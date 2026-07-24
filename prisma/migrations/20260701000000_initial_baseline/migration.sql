@@ -1,5 +1,3 @@
-BEGIN;
-
 -- Syveka initial Prisma baseline.
 --
 -- The repository originally published its schema with `prisma db push` and
@@ -1062,55 +1060,183 @@ BEGIN
   END IF;
 
 -- CreateEnum
-CREATE TYPE "Locale" AS ENUM ('EN', 'FI', 'AR');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'Locale' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "Locale" AS ENUM ('EN', 'FI', 'AR');
+  END IF;
+END
+$$;
 
 -- CreateEnum
-CREATE TYPE "OrgType" AS ENUM ('PERSONAL', 'BUSINESS');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'OrgType' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "OrgType" AS ENUM ('PERSONAL', 'BUSINESS');
+  END IF;
+END
+$$;
 
 -- CreateEnum
-CREATE TYPE "Role" AS ENUM ('OWNER', 'ADMIN', 'MANAGER', 'MEMBER', 'VIEWER');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'Role' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "Role" AS ENUM ('OWNER', 'ADMIN', 'MANAGER', 'MEMBER', 'VIEWER');
+  END IF;
+END
+$$;
 
 -- CreateEnum
-CREATE TYPE "InviteStatus" AS ENUM ('PENDING', 'ACCEPTED', 'EXPIRED', 'REVOKED');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'InviteStatus' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "InviteStatus" AS ENUM ('PENDING', 'ACCEPTED', 'EXPIRED', 'REVOKED');
+  END IF;
+END
+$$;
 
 -- CreateEnum
-CREATE TYPE "Plan" AS ENUM ('FREE', 'STARTER', 'PRO', 'ENTERPRISE');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'Plan' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "Plan" AS ENUM ('FREE', 'STARTER', 'PRO', 'ENTERPRISE');
+  END IF;
+END
+$$;
 
 -- CreateEnum
-CREATE TYPE "SubStatus" AS ENUM ('ACTIVE', 'TRIALING', 'PAST_DUE', 'CANCELED', 'INCOMPLETE', 'PAUSED');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'SubStatus' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "SubStatus" AS ENUM ('ACTIVE', 'TRIALING', 'PAST_DUE', 'CANCELED', 'INCOMPLETE', 'PAUSED');
+  END IF;
+END
+$$;
 
 -- CreateEnum
-CREATE TYPE "UsageMetric" AS ENUM ('AI_TOKENS_IN', 'AI_TOKENS_OUT', 'AI_MESSAGES', 'VOICE_MINUTES', 'EMBEDDINGS', 'STORAGE_MB', 'WORKFLOW_RUNS', 'API_CALLS');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'UsageMetric' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "UsageMetric" AS ENUM ('AI_TOKENS_IN', 'AI_TOKENS_OUT', 'AI_MESSAGES', 'VOICE_MINUTES', 'EMBEDDINGS', 'STORAGE_MB', 'WORKFLOW_RUNS', 'API_CALLS');
+  END IF;
+END
+$$;
 
 -- CreateEnum
-CREATE TYPE "ContactStatus" AS ENUM ('LEAD', 'PROSPECT', 'CUSTOMER', 'CHURNED', 'ARCHIVED');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'ContactStatus' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "ContactStatus" AS ENUM ('LEAD', 'PROSPECT', 'CUSTOMER', 'CHURNED', 'ARCHIVED');
+  END IF;
+END
+$$;
 
 -- CreateEnum
-CREATE TYPE "ActivityType" AS ENUM ('NOTE', 'TASK', 'CALL', 'EMAIL', 'MEETING', 'VOICE_AI_CALL', 'AI_SUMMARY');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'ActivityType' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "ActivityType" AS ENUM ('NOTE', 'TASK', 'CALL', 'EMAIL', 'MEETING', 'VOICE_AI_CALL', 'AI_SUMMARY');
+  END IF;
+END
+$$;
 
 -- CreateEnum
-CREATE TYPE "EventSource" AS ENUM ('MANUAL', 'VOICE_AI', 'WORKFLOW', 'GOOGLE', 'OUTLOOK');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'EventSource' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "EventSource" AS ENUM ('MANUAL', 'VOICE_AI', 'WORKFLOW', 'GOOGLE', 'OUTLOOK');
+  END IF;
+END
+$$;
 
 -- CreateEnum
-CREATE TYPE "MessageRole" AS ENUM ('USER', 'ASSISTANT', 'SYSTEM', 'TOOL');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'MessageRole' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "MessageRole" AS ENUM ('USER', 'ASSISTANT', 'SYSTEM', 'TOOL');
+  END IF;
+END
+$$;
 
 -- CreateEnum
-CREATE TYPE "DocSource" AS ENUM ('UPLOAD', 'URL', 'NOTE', 'FAQ', 'INTEGRATION');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'DocSource' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "DocSource" AS ENUM ('UPLOAD', 'URL', 'NOTE', 'FAQ', 'INTEGRATION');
+  END IF;
+END
+$$;
 
 -- CreateEnum
-CREATE TYPE "DocStatus" AS ENUM ('PENDING', 'PROCESSING', 'READY', 'FAILED');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'DocStatus' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "DocStatus" AS ENUM ('PENDING', 'PROCESSING', 'READY', 'FAILED');
+  END IF;
+END
+$$;
 
 -- CreateEnum
-CREATE TYPE "CallDirection" AS ENUM ('INBOUND', 'OUTBOUND');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'CallDirection' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "CallDirection" AS ENUM ('INBOUND', 'OUTBOUND');
+  END IF;
+END
+$$;
 
 -- CreateEnum
-CREATE TYPE "CallStatus" AS ENUM ('IN_PROGRESS', 'COMPLETED', 'FAILED', 'NO_ANSWER', 'TRANSFERRED');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'CallStatus' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "CallStatus" AS ENUM ('IN_PROGRESS', 'COMPLETED', 'FAILED', 'NO_ANSWER', 'TRANSFERRED');
+  END IF;
+END
+$$;
 
 -- CreateEnum
-CREATE TYPE "RunStatus" AS ENUM ('RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELED', 'WAITING');
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_type WHERE typname = 'RunStatus' AND typnamespace = 'public'::regnamespace
+  ) THEN
+    CREATE TYPE "RunStatus" AS ENUM ('RUNNING', 'SUCCEEDED', 'FAILED', 'CANCELED', 'WAITING');
+  END IF;
+END
+$$;
 
 -- CreateTable
-CREATE TABLE "users" (
+CREATE TABLE IF NOT EXISTS "users" (
     "id" UUID NOT NULL,
     "email" TEXT NOT NULL,
     "full_name" TEXT,
@@ -1125,7 +1251,7 @@ CREATE TABLE "users" (
 );
 
 -- CreateTable
-CREATE TABLE "organizations" (
+CREATE TABLE IF NOT EXISTS "organizations" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "name" TEXT NOT NULL,
     "slug" TEXT NOT NULL,
@@ -1144,7 +1270,7 @@ CREATE TABLE "organizations" (
 );
 
 -- CreateTable
-CREATE TABLE "organization_members" (
+CREATE TABLE IF NOT EXISTS "organization_members" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "user_id" UUID NOT NULL,
@@ -1156,7 +1282,7 @@ CREATE TABLE "organization_members" (
 );
 
 -- CreateTable
-CREATE TABLE "teams" (
+CREATE TABLE IF NOT EXISTS "teams" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "name" TEXT NOT NULL,
@@ -1167,7 +1293,7 @@ CREATE TABLE "teams" (
 );
 
 -- CreateTable
-CREATE TABLE "invitations" (
+CREATE TABLE IF NOT EXISTS "invitations" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "email" TEXT NOT NULL,
@@ -1182,7 +1308,7 @@ CREATE TABLE "invitations" (
 );
 
 -- CreateTable
-CREATE TABLE "subscriptions" (
+CREATE TABLE IF NOT EXISTS "subscriptions" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "stripe_subscription_id" TEXT,
@@ -1199,7 +1325,7 @@ CREATE TABLE "subscriptions" (
 );
 
 -- CreateTable
-CREATE TABLE "usage_records" (
+CREATE TABLE IF NOT EXISTS "usage_records" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "metric" "UsageMetric" NOT NULL,
@@ -1212,7 +1338,7 @@ CREATE TABLE "usage_records" (
 );
 
 -- CreateTable
-CREATE TABLE "companies" (
+CREATE TABLE IF NOT EXISTS "companies" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "name" TEXT NOT NULL,
@@ -1231,7 +1357,7 @@ CREATE TABLE "companies" (
 );
 
 -- CreateTable
-CREATE TABLE "contacts" (
+CREATE TABLE IF NOT EXISTS "contacts" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "company_id" UUID,
@@ -1254,7 +1380,7 @@ CREATE TABLE "contacts" (
 );
 
 -- CreateTable
-CREATE TABLE "pipelines" (
+CREATE TABLE IF NOT EXISTS "pipelines" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "name" TEXT NOT NULL,
@@ -1264,7 +1390,7 @@ CREATE TABLE "pipelines" (
 );
 
 -- CreateTable
-CREATE TABLE "pipeline_stages" (
+CREATE TABLE IF NOT EXISTS "pipeline_stages" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "pipeline_id" UUID NOT NULL,
     "name" TEXT NOT NULL,
@@ -1277,7 +1403,7 @@ CREATE TABLE "pipeline_stages" (
 );
 
 -- CreateTable
-CREATE TABLE "deals" (
+CREATE TABLE IF NOT EXISTS "deals" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "pipeline_id" UUID NOT NULL,
@@ -1299,7 +1425,7 @@ CREATE TABLE "deals" (
 );
 
 -- CreateTable
-CREATE TABLE "activities" (
+CREATE TABLE IF NOT EXISTS "activities" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "user_id" UUID,
@@ -1317,7 +1443,7 @@ CREATE TABLE "activities" (
 );
 
 -- CreateTable
-CREATE TABLE "tags" (
+CREATE TABLE IF NOT EXISTS "tags" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "name" TEXT NOT NULL,
@@ -1327,7 +1453,7 @@ CREATE TABLE "tags" (
 );
 
 -- CreateTable
-CREATE TABLE "tags_on_contacts" (
+CREATE TABLE IF NOT EXISTS "tags_on_contacts" (
     "contact_id" UUID NOT NULL,
     "tag_id" UUID NOT NULL,
 
@@ -1335,7 +1461,7 @@ CREATE TABLE "tags_on_contacts" (
 );
 
 -- CreateTable
-CREATE TABLE "calendar_events" (
+CREATE TABLE IF NOT EXISTS "calendar_events" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "created_by_id" UUID NOT NULL,
@@ -1358,7 +1484,7 @@ CREATE TABLE "calendar_events" (
 );
 
 -- CreateTable
-CREATE TABLE "conversations" (
+CREATE TABLE IF NOT EXISTS "conversations" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "user_id" UUID NOT NULL,
@@ -1375,7 +1501,7 @@ CREATE TABLE "conversations" (
 );
 
 -- CreateTable
-CREATE TABLE "messages" (
+CREATE TABLE IF NOT EXISTS "messages" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "conversation_id" UUID NOT NULL,
     "user_id" UUID,
@@ -1394,7 +1520,7 @@ CREATE TABLE "messages" (
 );
 
 -- CreateTable
-CREATE TABLE "collections" (
+CREATE TABLE IF NOT EXISTS "collections" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "name" TEXT NOT NULL,
@@ -1405,7 +1531,7 @@ CREATE TABLE "collections" (
 );
 
 -- CreateTable
-CREATE TABLE "documents" (
+CREATE TABLE IF NOT EXISTS "documents" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "collection_id" UUID,
@@ -1428,7 +1554,7 @@ CREATE TABLE "documents" (
 );
 
 -- CreateTable
-CREATE TABLE "document_chunks" (
+CREATE TABLE IF NOT EXISTS "document_chunks" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "document_id" UUID NOT NULL,
     "organization_id" UUID NOT NULL,
@@ -1442,7 +1568,7 @@ CREATE TABLE "document_chunks" (
 );
 
 -- CreateTable
-CREATE TABLE "prompts" (
+CREATE TABLE IF NOT EXISTS "prompts" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID,
     "created_by_id" UUID,
@@ -1461,7 +1587,7 @@ CREATE TABLE "prompts" (
 );
 
 -- CreateTable
-CREATE TABLE "voice_assistants" (
+CREATE TABLE IF NOT EXISTS "voice_assistants" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "vapi_assistant_id" TEXT,
@@ -1484,7 +1610,7 @@ CREATE TABLE "voice_assistants" (
 );
 
 -- CreateTable
-CREATE TABLE "voice_calls" (
+CREATE TABLE IF NOT EXISTS "voice_calls" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "assistant_id" UUID NOT NULL,
@@ -1509,7 +1635,7 @@ CREATE TABLE "voice_calls" (
 );
 
 -- CreateTable
-CREATE TABLE "workflows" (
+CREATE TABLE IF NOT EXISTS "workflows" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "created_by_id" UUID NOT NULL,
@@ -1526,7 +1652,7 @@ CREATE TABLE "workflows" (
 );
 
 -- CreateTable
-CREATE TABLE "workflow_runs" (
+CREATE TABLE IF NOT EXISTS "workflow_runs" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "workflow_id" UUID NOT NULL,
     "organization_id" UUID NOT NULL,
@@ -1541,7 +1667,7 @@ CREATE TABLE "workflow_runs" (
 );
 
 -- CreateTable
-CREATE TABLE "notifications" (
+CREATE TABLE IF NOT EXISTS "notifications" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "user_id" UUID NOT NULL,
@@ -1556,7 +1682,7 @@ CREATE TABLE "notifications" (
 );
 
 -- CreateTable
-CREATE TABLE "api_keys" (
+CREATE TABLE IF NOT EXISTS "api_keys" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "name" TEXT NOT NULL,
@@ -1572,7 +1698,7 @@ CREATE TABLE "api_keys" (
 );
 
 -- CreateTable
-CREATE TABLE "webhook_endpoints" (
+CREATE TABLE IF NOT EXISTS "webhook_endpoints" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "url" TEXT NOT NULL,
@@ -1586,7 +1712,7 @@ CREATE TABLE "webhook_endpoints" (
 );
 
 -- CreateTable
-CREATE TABLE "audit_logs" (
+CREATE TABLE IF NOT EXISTS "audit_logs" (
     "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "organization_id" UUID NOT NULL,
     "actor_id" UUID,
@@ -1604,271 +1730,631 @@ CREATE TABLE "audit_logs" (
 );
 
 -- CreateIndex
-CREATE UNIQUE INDEX "users_email_key" ON "users"("email");
+CREATE UNIQUE INDEX IF NOT EXISTS "users_email_key" ON "users"("email");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "organizations_slug_key" ON "organizations"("slug");
+CREATE UNIQUE INDEX IF NOT EXISTS "organizations_slug_key" ON "organizations"("slug");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "organizations_stripe_customer_id_key" ON "organizations"("stripe_customer_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "organizations_stripe_customer_id_key" ON "organizations"("stripe_customer_id");
 
 -- CreateIndex
-CREATE INDEX "organization_members_user_id_idx" ON "organization_members"("user_id");
+CREATE INDEX IF NOT EXISTS "organization_members_user_id_idx" ON "organization_members"("user_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "organization_members_organization_id_user_id_key" ON "organization_members"("organization_id", "user_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "organization_members_organization_id_user_id_key" ON "organization_members"("organization_id", "user_id");
 
 -- CreateIndex
-CREATE INDEX "teams_organization_id_idx" ON "teams"("organization_id");
+CREATE INDEX IF NOT EXISTS "teams_organization_id_idx" ON "teams"("organization_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "invitations_token_key" ON "invitations"("token");
+CREATE UNIQUE INDEX IF NOT EXISTS "invitations_token_key" ON "invitations"("token");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "invitations_organization_id_email_key" ON "invitations"("organization_id", "email");
+CREATE UNIQUE INDEX IF NOT EXISTS "invitations_organization_id_email_key" ON "invitations"("organization_id", "email");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "subscriptions_organization_id_key" ON "subscriptions"("organization_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "subscriptions_organization_id_key" ON "subscriptions"("organization_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "subscriptions_stripe_subscription_id_key" ON "subscriptions"("stripe_subscription_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "subscriptions_stripe_subscription_id_key" ON "subscriptions"("stripe_subscription_id");
 
 -- CreateIndex
-CREATE INDEX "usage_records_organization_id_metric_period_start_idx" ON "usage_records"("organization_id", "metric", "period_start");
+CREATE INDEX IF NOT EXISTS "usage_records_organization_id_metric_period_start_idx" ON "usage_records"("organization_id", "metric", "period_start");
 
 -- CreateIndex
-CREATE INDEX "companies_organization_id_idx" ON "companies"("organization_id");
+CREATE INDEX IF NOT EXISTS "companies_organization_id_idx" ON "companies"("organization_id");
 
 -- CreateIndex
-CREATE INDEX "contacts_organization_id_status_idx" ON "contacts"("organization_id", "status");
+CREATE INDEX IF NOT EXISTS "contacts_organization_id_status_idx" ON "contacts"("organization_id", "status");
 
 -- CreateIndex
-CREATE INDEX "contacts_organization_id_email_idx" ON "contacts"("organization_id", "email");
+CREATE INDEX IF NOT EXISTS "contacts_organization_id_email_idx" ON "contacts"("organization_id", "email");
 
 -- CreateIndex
-CREATE INDEX "pipelines_organization_id_idx" ON "pipelines"("organization_id");
+CREATE INDEX IF NOT EXISTS "pipelines_organization_id_idx" ON "pipelines"("organization_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "pipeline_stages_pipeline_id_order_key" ON "pipeline_stages"("pipeline_id", "order");
+CREATE UNIQUE INDEX IF NOT EXISTS "pipeline_stages_pipeline_id_order_key" ON "pipeline_stages"("pipeline_id", "order");
 
 -- CreateIndex
-CREATE INDEX "deals_organization_id_stage_id_idx" ON "deals"("organization_id", "stage_id");
+CREATE INDEX IF NOT EXISTS "deals_organization_id_stage_id_idx" ON "deals"("organization_id", "stage_id");
 
 -- CreateIndex
-CREATE INDEX "deals_organization_id_closed_at_idx" ON "deals"("organization_id", "closed_at");
+CREATE INDEX IF NOT EXISTS "deals_organization_id_closed_at_idx" ON "deals"("organization_id", "closed_at");
 
 -- CreateIndex
-CREATE INDEX "deals_organization_id_pipeline_id_closed_at_idx" ON "deals"("organization_id", "pipeline_id", "closed_at");
+CREATE INDEX IF NOT EXISTS "deals_organization_id_pipeline_id_closed_at_idx" ON "deals"("organization_id", "pipeline_id", "closed_at");
 
 -- CreateIndex
-CREATE INDEX "activities_organization_id_due_at_idx" ON "activities"("organization_id", "due_at");
+CREATE INDEX IF NOT EXISTS "activities_organization_id_due_at_idx" ON "activities"("organization_id", "due_at");
 
 -- CreateIndex
-CREATE INDEX "activities_organization_id_type_due_at_idx" ON "activities"("organization_id", "type", "due_at");
+CREATE INDEX IF NOT EXISTS "activities_organization_id_type_due_at_idx" ON "activities"("organization_id", "type", "due_at");
 
 -- CreateIndex
-CREATE INDEX "activities_organization_id_type_created_at_idx" ON "activities"("organization_id", "type", "created_at");
+CREATE INDEX IF NOT EXISTS "activities_organization_id_type_created_at_idx" ON "activities"("organization_id", "type", "created_at");
 
 -- CreateIndex
-CREATE INDEX "activities_contact_id_idx" ON "activities"("contact_id");
+CREATE INDEX IF NOT EXISTS "activities_contact_id_idx" ON "activities"("contact_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "tags_organization_id_name_key" ON "tags"("organization_id", "name");
+CREATE UNIQUE INDEX IF NOT EXISTS "tags_organization_id_name_key" ON "tags"("organization_id", "name");
 
 -- CreateIndex
-CREATE INDEX "calendar_events_organization_id_starts_at_idx" ON "calendar_events"("organization_id", "starts_at");
+CREATE INDEX IF NOT EXISTS "calendar_events_organization_id_starts_at_idx" ON "calendar_events"("organization_id", "starts_at");
 
 -- CreateIndex
-CREATE INDEX "conversations_organization_id_user_id_updated_at_idx" ON "conversations"("organization_id", "user_id", "updated_at");
+CREATE INDEX IF NOT EXISTS "conversations_organization_id_user_id_updated_at_idx" ON "conversations"("organization_id", "user_id", "updated_at");
 
 -- CreateIndex
-CREATE INDEX "conversations_organization_id_updated_at_idx" ON "conversations"("organization_id", "updated_at");
+CREATE INDEX IF NOT EXISTS "conversations_organization_id_updated_at_idx" ON "conversations"("organization_id", "updated_at");
 
 -- CreateIndex
-CREATE INDEX "messages_conversation_id_created_at_idx" ON "messages"("conversation_id", "created_at");
+CREATE INDEX IF NOT EXISTS "messages_conversation_id_created_at_idx" ON "messages"("conversation_id", "created_at");
 
 -- CreateIndex
-CREATE INDEX "collections_organization_id_idx" ON "collections"("organization_id");
+CREATE INDEX IF NOT EXISTS "collections_organization_id_idx" ON "collections"("organization_id");
 
 -- CreateIndex
-CREATE INDEX "documents_organization_id_status_idx" ON "documents"("organization_id", "status");
+CREATE INDEX IF NOT EXISTS "documents_organization_id_status_idx" ON "documents"("organization_id", "status");
 
 -- CreateIndex
-CREATE INDEX "document_chunks_organization_id_idx" ON "document_chunks"("organization_id");
+CREATE INDEX IF NOT EXISTS "document_chunks_organization_id_idx" ON "document_chunks"("organization_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "document_chunks_document_id_chunk_index_key" ON "document_chunks"("document_id", "chunk_index");
+CREATE UNIQUE INDEX IF NOT EXISTS "document_chunks_document_id_chunk_index_key" ON "document_chunks"("document_id", "chunk_index");
 
 -- CreateIndex
-CREATE INDEX "prompts_organization_id_category_idx" ON "prompts"("organization_id", "category");
+CREATE INDEX IF NOT EXISTS "prompts_organization_id_category_idx" ON "prompts"("organization_id", "category");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "voice_assistants_vapi_assistant_id_key" ON "voice_assistants"("vapi_assistant_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "voice_assistants_vapi_assistant_id_key" ON "voice_assistants"("vapi_assistant_id");
 
 -- CreateIndex
-CREATE INDEX "voice_assistants_organization_id_idx" ON "voice_assistants"("organization_id");
+CREATE INDEX IF NOT EXISTS "voice_assistants_organization_id_idx" ON "voice_assistants"("organization_id");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "voice_calls_vapi_call_id_key" ON "voice_calls"("vapi_call_id");
+CREATE UNIQUE INDEX IF NOT EXISTS "voice_calls_vapi_call_id_key" ON "voice_calls"("vapi_call_id");
 
 -- CreateIndex
-CREATE INDEX "voice_calls_organization_id_started_at_idx" ON "voice_calls"("organization_id", "started_at");
+CREATE INDEX IF NOT EXISTS "voice_calls_organization_id_started_at_idx" ON "voice_calls"("organization_id", "started_at");
 
 -- CreateIndex
-CREATE INDEX "workflows_organization_id_is_active_idx" ON "workflows"("organization_id", "is_active");
+CREATE INDEX IF NOT EXISTS "workflows_organization_id_is_active_idx" ON "workflows"("organization_id", "is_active");
 
 -- CreateIndex
-CREATE INDEX "workflow_runs_organization_id_started_at_idx" ON "workflow_runs"("organization_id", "started_at");
+CREATE INDEX IF NOT EXISTS "workflow_runs_organization_id_started_at_idx" ON "workflow_runs"("organization_id", "started_at");
 
 -- CreateIndex
-CREATE INDEX "notifications_user_id_read_at_idx" ON "notifications"("user_id", "read_at");
+CREATE INDEX IF NOT EXISTS "notifications_user_id_read_at_idx" ON "notifications"("user_id", "read_at");
 
 -- CreateIndex
-CREATE UNIQUE INDEX "api_keys_key_hash_key" ON "api_keys"("key_hash");
+CREATE UNIQUE INDEX IF NOT EXISTS "api_keys_key_hash_key" ON "api_keys"("key_hash");
 
 -- CreateIndex
-CREATE INDEX "api_keys_organization_id_idx" ON "api_keys"("organization_id");
+CREATE INDEX IF NOT EXISTS "api_keys_organization_id_idx" ON "api_keys"("organization_id");
 
 -- CreateIndex
-CREATE INDEX "audit_logs_organization_id_created_at_idx" ON "audit_logs"("organization_id", "created_at");
+CREATE INDEX IF NOT EXISTS "audit_logs_organization_id_created_at_idx" ON "audit_logs"("organization_id", "created_at");
 
 -- CreateIndex
-CREATE INDEX "audit_logs_organization_id_resource_type_resource_id_idx" ON "audit_logs"("organization_id", "resource_type", "resource_id");
+CREATE INDEX IF NOT EXISTS "audit_logs_organization_id_resource_type_resource_id_idx" ON "audit_logs"("organization_id", "resource_type", "resource_id");
 
 -- AddForeignKey
-ALTER TABLE "organization_members" ADD CONSTRAINT "organization_members_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'organization_members_organization_id_fkey' AND conrelid = 'public."organization_members"'::regclass
+  ) THEN
+    ALTER TABLE "organization_members" ADD CONSTRAINT "organization_members_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "organization_members" ADD CONSTRAINT "organization_members_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'organization_members_user_id_fkey' AND conrelid = 'public."organization_members"'::regclass
+  ) THEN
+    ALTER TABLE "organization_members" ADD CONSTRAINT "organization_members_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "organization_members" ADD CONSTRAINT "organization_members_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'organization_members_team_id_fkey' AND conrelid = 'public."organization_members"'::regclass
+  ) THEN
+    ALTER TABLE "organization_members" ADD CONSTRAINT "organization_members_team_id_fkey" FOREIGN KEY ("team_id") REFERENCES "teams"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "teams" ADD CONSTRAINT "teams_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'teams_organization_id_fkey' AND conrelid = 'public."teams"'::regclass
+  ) THEN
+    ALTER TABLE "teams" ADD CONSTRAINT "teams_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "invitations" ADD CONSTRAINT "invitations_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'invitations_organization_id_fkey' AND conrelid = 'public."invitations"'::regclass
+  ) THEN
+    ALTER TABLE "invitations" ADD CONSTRAINT "invitations_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'subscriptions_organization_id_fkey' AND conrelid = 'public."subscriptions"'::regclass
+  ) THEN
+    ALTER TABLE "subscriptions" ADD CONSTRAINT "subscriptions_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "usage_records" ADD CONSTRAINT "usage_records_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'usage_records_organization_id_fkey' AND conrelid = 'public."usage_records"'::regclass
+  ) THEN
+    ALTER TABLE "usage_records" ADD CONSTRAINT "usage_records_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "companies" ADD CONSTRAINT "companies_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'companies_organization_id_fkey' AND conrelid = 'public."companies"'::regclass
+  ) THEN
+    ALTER TABLE "companies" ADD CONSTRAINT "companies_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "contacts" ADD CONSTRAINT "contacts_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'contacts_organization_id_fkey' AND conrelid = 'public."contacts"'::regclass
+  ) THEN
+    ALTER TABLE "contacts" ADD CONSTRAINT "contacts_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "contacts" ADD CONSTRAINT "contacts_company_id_fkey" FOREIGN KEY ("company_id") REFERENCES "companies"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'contacts_company_id_fkey' AND conrelid = 'public."contacts"'::regclass
+  ) THEN
+    ALTER TABLE "contacts" ADD CONSTRAINT "contacts_company_id_fkey" FOREIGN KEY ("company_id") REFERENCES "companies"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "pipelines" ADD CONSTRAINT "pipelines_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'pipelines_organization_id_fkey' AND conrelid = 'public."pipelines"'::regclass
+  ) THEN
+    ALTER TABLE "pipelines" ADD CONSTRAINT "pipelines_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "pipeline_stages" ADD CONSTRAINT "pipeline_stages_pipeline_id_fkey" FOREIGN KEY ("pipeline_id") REFERENCES "pipelines"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'pipeline_stages_pipeline_id_fkey' AND conrelid = 'public."pipeline_stages"'::regclass
+  ) THEN
+    ALTER TABLE "pipeline_stages" ADD CONSTRAINT "pipeline_stages_pipeline_id_fkey" FOREIGN KEY ("pipeline_id") REFERENCES "pipelines"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "deals" ADD CONSTRAINT "deals_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'deals_organization_id_fkey' AND conrelid = 'public."deals"'::regclass
+  ) THEN
+    ALTER TABLE "deals" ADD CONSTRAINT "deals_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "deals" ADD CONSTRAINT "deals_pipeline_id_fkey" FOREIGN KEY ("pipeline_id") REFERENCES "pipelines"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'deals_pipeline_id_fkey' AND conrelid = 'public."deals"'::regclass
+  ) THEN
+    ALTER TABLE "deals" ADD CONSTRAINT "deals_pipeline_id_fkey" FOREIGN KEY ("pipeline_id") REFERENCES "pipelines"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "deals" ADD CONSTRAINT "deals_stage_id_fkey" FOREIGN KEY ("stage_id") REFERENCES "pipeline_stages"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'deals_stage_id_fkey' AND conrelid = 'public."deals"'::regclass
+  ) THEN
+    ALTER TABLE "deals" ADD CONSTRAINT "deals_stage_id_fkey" FOREIGN KEY ("stage_id") REFERENCES "pipeline_stages"("id") ON DELETE RESTRICT ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "deals" ADD CONSTRAINT "deals_contact_id_fkey" FOREIGN KEY ("contact_id") REFERENCES "contacts"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'deals_contact_id_fkey' AND conrelid = 'public."deals"'::regclass
+  ) THEN
+    ALTER TABLE "deals" ADD CONSTRAINT "deals_contact_id_fkey" FOREIGN KEY ("contact_id") REFERENCES "contacts"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "deals" ADD CONSTRAINT "deals_company_id_fkey" FOREIGN KEY ("company_id") REFERENCES "companies"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'deals_company_id_fkey' AND conrelid = 'public."deals"'::regclass
+  ) THEN
+    ALTER TABLE "deals" ADD CONSTRAINT "deals_company_id_fkey" FOREIGN KEY ("company_id") REFERENCES "companies"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "activities" ADD CONSTRAINT "activities_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'activities_organization_id_fkey' AND conrelid = 'public."activities"'::regclass
+  ) THEN
+    ALTER TABLE "activities" ADD CONSTRAINT "activities_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "activities" ADD CONSTRAINT "activities_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'activities_user_id_fkey' AND conrelid = 'public."activities"'::regclass
+  ) THEN
+    ALTER TABLE "activities" ADD CONSTRAINT "activities_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "activities" ADD CONSTRAINT "activities_contact_id_fkey" FOREIGN KEY ("contact_id") REFERENCES "contacts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'activities_contact_id_fkey' AND conrelid = 'public."activities"'::regclass
+  ) THEN
+    ALTER TABLE "activities" ADD CONSTRAINT "activities_contact_id_fkey" FOREIGN KEY ("contact_id") REFERENCES "contacts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "activities" ADD CONSTRAINT "activities_deal_id_fkey" FOREIGN KEY ("deal_id") REFERENCES "deals"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'activities_deal_id_fkey' AND conrelid = 'public."activities"'::regclass
+  ) THEN
+    ALTER TABLE "activities" ADD CONSTRAINT "activities_deal_id_fkey" FOREIGN KEY ("deal_id") REFERENCES "deals"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "tags" ADD CONSTRAINT "tags_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'tags_organization_id_fkey' AND conrelid = 'public."tags"'::regclass
+  ) THEN
+    ALTER TABLE "tags" ADD CONSTRAINT "tags_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "tags_on_contacts" ADD CONSTRAINT "tags_on_contacts_contact_id_fkey" FOREIGN KEY ("contact_id") REFERENCES "contacts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'tags_on_contacts_contact_id_fkey' AND conrelid = 'public."tags_on_contacts"'::regclass
+  ) THEN
+    ALTER TABLE "tags_on_contacts" ADD CONSTRAINT "tags_on_contacts_contact_id_fkey" FOREIGN KEY ("contact_id") REFERENCES "contacts"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "tags_on_contacts" ADD CONSTRAINT "tags_on_contacts_tag_id_fkey" FOREIGN KEY ("tag_id") REFERENCES "tags"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'tags_on_contacts_tag_id_fkey' AND conrelid = 'public."tags_on_contacts"'::regclass
+  ) THEN
+    ALTER TABLE "tags_on_contacts" ADD CONSTRAINT "tags_on_contacts_tag_id_fkey" FOREIGN KEY ("tag_id") REFERENCES "tags"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "calendar_events" ADD CONSTRAINT "calendar_events_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'calendar_events_organization_id_fkey' AND conrelid = 'public."calendar_events"'::regclass
+  ) THEN
+    ALTER TABLE "calendar_events" ADD CONSTRAINT "calendar_events_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "conversations" ADD CONSTRAINT "conversations_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'conversations_organization_id_fkey' AND conrelid = 'public."conversations"'::regclass
+  ) THEN
+    ALTER TABLE "conversations" ADD CONSTRAINT "conversations_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "messages" ADD CONSTRAINT "messages_conversation_id_fkey" FOREIGN KEY ("conversation_id") REFERENCES "conversations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'messages_conversation_id_fkey' AND conrelid = 'public."messages"'::regclass
+  ) THEN
+    ALTER TABLE "messages" ADD CONSTRAINT "messages_conversation_id_fkey" FOREIGN KEY ("conversation_id") REFERENCES "conversations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "messages" ADD CONSTRAINT "messages_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'messages_user_id_fkey' AND conrelid = 'public."messages"'::regclass
+  ) THEN
+    ALTER TABLE "messages" ADD CONSTRAINT "messages_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "collections" ADD CONSTRAINT "collections_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'collections_organization_id_fkey' AND conrelid = 'public."collections"'::regclass
+  ) THEN
+    ALTER TABLE "collections" ADD CONSTRAINT "collections_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "documents" ADD CONSTRAINT "documents_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'documents_organization_id_fkey' AND conrelid = 'public."documents"'::regclass
+  ) THEN
+    ALTER TABLE "documents" ADD CONSTRAINT "documents_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "documents" ADD CONSTRAINT "documents_collection_id_fkey" FOREIGN KEY ("collection_id") REFERENCES "collections"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'documents_collection_id_fkey' AND conrelid = 'public."documents"'::regclass
+  ) THEN
+    ALTER TABLE "documents" ADD CONSTRAINT "documents_collection_id_fkey" FOREIGN KEY ("collection_id") REFERENCES "collections"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "document_chunks" ADD CONSTRAINT "document_chunks_document_id_fkey" FOREIGN KEY ("document_id") REFERENCES "documents"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'document_chunks_document_id_fkey' AND conrelid = 'public."document_chunks"'::regclass
+  ) THEN
+    ALTER TABLE "document_chunks" ADD CONSTRAINT "document_chunks_document_id_fkey" FOREIGN KEY ("document_id") REFERENCES "documents"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "prompts" ADD CONSTRAINT "prompts_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'prompts_organization_id_fkey' AND conrelid = 'public."prompts"'::regclass
+  ) THEN
+    ALTER TABLE "prompts" ADD CONSTRAINT "prompts_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "voice_assistants" ADD CONSTRAINT "voice_assistants_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'voice_assistants_organization_id_fkey' AND conrelid = 'public."voice_assistants"'::regclass
+  ) THEN
+    ALTER TABLE "voice_assistants" ADD CONSTRAINT "voice_assistants_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "voice_calls" ADD CONSTRAINT "voice_calls_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'voice_calls_organization_id_fkey' AND conrelid = 'public."voice_calls"'::regclass
+  ) THEN
+    ALTER TABLE "voice_calls" ADD CONSTRAINT "voice_calls_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "voice_calls" ADD CONSTRAINT "voice_calls_assistant_id_fkey" FOREIGN KEY ("assistant_id") REFERENCES "voice_assistants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'voice_calls_assistant_id_fkey' AND conrelid = 'public."voice_calls"'::regclass
+  ) THEN
+    ALTER TABLE "voice_calls" ADD CONSTRAINT "voice_calls_assistant_id_fkey" FOREIGN KEY ("assistant_id") REFERENCES "voice_assistants"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "workflows" ADD CONSTRAINT "workflows_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'workflows_organization_id_fkey' AND conrelid = 'public."workflows"'::regclass
+  ) THEN
+    ALTER TABLE "workflows" ADD CONSTRAINT "workflows_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_workflow_id_fkey" FOREIGN KEY ("workflow_id") REFERENCES "workflows"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'workflow_runs_workflow_id_fkey' AND conrelid = 'public."workflow_runs"'::regclass
+  ) THEN
+    ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_workflow_id_fkey" FOREIGN KEY ("workflow_id") REFERENCES "workflows"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'workflow_runs_organization_id_fkey' AND conrelid = 'public."workflow_runs"'::regclass
+  ) THEN
+    ALTER TABLE "workflow_runs" ADD CONSTRAINT "workflow_runs_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "notifications" ADD CONSTRAINT "notifications_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'notifications_organization_id_fkey' AND conrelid = 'public."notifications"'::regclass
+  ) THEN
+    ALTER TABLE "notifications" ADD CONSTRAINT "notifications_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "notifications" ADD CONSTRAINT "notifications_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'notifications_user_id_fkey' AND conrelid = 'public."notifications"'::regclass
+  ) THEN
+    ALTER TABLE "notifications" ADD CONSTRAINT "notifications_user_id_fkey" FOREIGN KEY ("user_id") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "api_keys" ADD CONSTRAINT "api_keys_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'api_keys_organization_id_fkey' AND conrelid = 'public."api_keys"'::regclass
+  ) THEN
+    ALTER TABLE "api_keys" ADD CONSTRAINT "api_keys_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "webhook_endpoints" ADD CONSTRAINT "webhook_endpoints_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'webhook_endpoints_organization_id_fkey' AND conrelid = 'public."webhook_endpoints"'::regclass
+  ) THEN
+    ALTER TABLE "webhook_endpoints" ADD CONSTRAINT "webhook_endpoints_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "audit_logs" ADD CONSTRAINT "audit_logs_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'audit_logs_organization_id_fkey' AND conrelid = 'public."audit_logs"'::regclass
+  ) THEN
+    ALTER TABLE "audit_logs" ADD CONSTRAINT "audit_logs_organization_id_fkey" FOREIGN KEY ("organization_id") REFERENCES "organizations"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 -- AddForeignKey
-ALTER TABLE "audit_logs" ADD CONSTRAINT "audit_logs_actor_id_fkey" FOREIGN KEY ("actor_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'audit_logs_actor_id_fkey' AND conrelid = 'public."audit_logs"'::regclass
+  ) THEN
+    ALTER TABLE "audit_logs" ADD CONSTRAINT "audit_logs_actor_id_fkey" FOREIGN KEY ("actor_id") REFERENCES "users"("id") ON DELETE SET NULL ON UPDATE CASCADE;
+  END IF;
+END
+$$;
 
 END $syveka_baseline$;
 
@@ -1928,5 +2414,3 @@ RETURNS TEXT
 LANGUAGE SQL
 STABLE
 AS $$ SELECT auth.jwt() ->> 'role' $$;
-
-COMMIT;

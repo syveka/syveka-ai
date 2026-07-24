@@ -52,6 +52,47 @@ Required lexical order:
 
 Run `npm run migrations:check` before release. It verifies this order and pins
 the checksums of migrations 2 through 9, which were already published.
+`20260701000000_initial_baseline` is deliberately excluded from that pinned
+list: it has never successfully completed `prisma migrate deploy` in any
+shared environment, so it remains safe to correct.
+
+### Recovering from a failed initial baseline apply
+
+Every `CREATE TYPE`, `CREATE TABLE`, `CREATE INDEX`, and `ADD CONSTRAINT`
+statement in `20260701000000_initial_baseline` is now guarded (native
+`IF NOT EXISTS`, or an existence check against `pg_type`/`pg_constraint` for
+the statements PostgreSQL does not support that clause on) so the file is safe
+to reapply from any partially-created state, for example a database that was
+originally provisioned with `prisma db push` before migrations existed. The
+migration no longer wraps itself in an explicit `BEGIN`/`COMMIT`: Prisma
+already applies each `migration.sql` inside its own transaction, and the extra
+literal `BEGIN`/`COMMIT` statements caused Prisma's schema engine to report a
+generic `current transaction is aborted, commands ignored until end of
+transaction block` error instead of the real PostgreSQL error whenever any
+earlier statement failed. To see the real error for any future failure, run
+the file directly with `psql -v ON_ERROR_STOP=1 -f
+prisma/migrations/20260701000000_initial_baseline/migration.sql` against the
+same database instead of `prisma migrate deploy`.
+
+If `prisma migrate deploy` already failed once, `_prisma_migrations` retains a
+row for `20260701000000_initial_baseline` with `finished_at` still null. Every
+subsequent `prisma migrate deploy` will refuse with `P3009` until that row is
+resolved:
+
+1. Confirm with `npx prisma migrate status` that `20260701000000_initial_baseline`
+   is the failed migration, and independently verify (do not assume) that its
+   DDL did not leave the database in an inconsistent state beyond the
+   idempotent objects this migration itself owns.
+2. Per two-maintainer approval, run:
+   ```sh
+   npx prisma migrate resolve --rolled-back 20260701000000_initial_baseline
+   ```
+   using `STAGING_DIRECT_URL` (or the equivalent production URL, only after a
+   verified backup). This only clears the bookkeeping row; it does not touch
+   any table.
+3. Re-run `prisma migrate deploy`. Because the migration is now idempotent,
+   it will finish creating whatever baseline objects are still missing and
+   continue on to the remaining nine migrations.
 
 The standalone preflight and the contract embedded in the initial migration are
 byte-identical between their marker lines and enforced by a unit test. The
