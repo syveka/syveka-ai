@@ -51,8 +51,25 @@ describe("staging release migration contract", () => {
   it("uses the identical read-only preflight contract inside the atomic baseline", () => {
     const contract = compatibilityContract(preflight);
     expect(contract).toBe(compatibilityContract(baseline));
-    expect(baseline.trimStart()).toMatch(/^BEGIN;/);
-    expect(baseline.trimEnd()).toMatch(/COMMIT;$/);
+    // The baseline must not wrap itself in an explicit BEGIN/COMMIT: Prisma
+    // already applies each migration.sql inside its own transaction, and the
+    // extra literal BEGIN/COMMIT caused Prisma's schema engine to report a
+    // generic "current transaction is aborted" error instead of the real
+    // PostgreSQL error whenever an earlier statement failed.
+    expect(baseline.trimStart()).not.toMatch(/^BEGIN;/);
+    expect(baseline.trimEnd()).not.toMatch(/COMMIT;$/);
+    // Every object this migration creates must tolerate re-application from a
+    // partially-created database (e.g. one originally provisioned with
+    // `prisma db push`, or left behind by an earlier interrupted deploy).
+    expect(baseline).toContain('CREATE TABLE IF NOT EXISTS "users"');
+    expect(baseline).toMatch(/CREATE TYPE "Locale" AS ENUM/);
+    expect(baseline).toMatch(
+      /SELECT 1 FROM pg_type WHERE typname = 'Locale' AND typnamespace = 'public'::regnamespace/,
+    );
+    expect(baseline).toContain('CREATE UNIQUE INDEX IF NOT EXISTS "users_email_key"');
+    expect(baseline).toMatch(
+      /SELECT 1 FROM pg_constraint WHERE conname = 'organization_members_organization_id_fkey'/,
+    );
     expect(preflight).toContain("pg_attribute");
     expect(preflight).toContain("pg_constraint");
     expect(preflight).toContain("pg_index");

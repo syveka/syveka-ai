@@ -218,6 +218,55 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/calendar-booking-isolation.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
 
+  baseline-migration-repro:
+    name: Initial baseline idempotency and failure-clarity
+    runs-on: ubuntu-latest
+    needs: [prisma-generate]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Apply the raw baseline SQL directly on a clean database
+        env:
+          PGURL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: |
+          # Running the file through psql instead of `prisma migrate deploy`
+          # surfaces the real Postgres error text for any statement that
+          # fails, instead of the generic "current transaction is aborted"
+          # message Prisma reports for every statement after the real one.
+          psql "$PGURL" -v ON_ERROR_STOP=1 -f prisma/migrations/20260701000000_initial_baseline/migration.sql
+      - name: Reproduce a partially-applied baseline and confirm recovery
+        env:
+          PGURL: postgresql://postgres:postgres@localhost:5432/postgres
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/leftover_baseline
+          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/leftover_baseline
+        run: |
+          set -euo pipefail
+          # This reproduces the exact staging incident: a database that
+          # already has one baseline object (e.g. left over from a database
+          # that was provisioned with `prisma db push` before migrations
+          # existed, or from an earlier interrupted migration attempt) must
+          # not make `prisma migrate deploy` fail.
+          psql "$PGURL" -v ON_ERROR_STOP=1 -c 'create database leftover_baseline'
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c 'create type "Locale" as enum ('"'"'EN'"'"', '"'"'FI'"'"', '"'"'AR'"'"')'
+          npx prisma migrate deploy
+          npx prisma migrate status
+
   migration-upgrade:
     name: Legacy, drift, and policy migration tests
     runs-on: ubuntu-latest
@@ -529,6 +578,7 @@ jobs:
       - typecheck
       - tests
       - rls
+      - baseline-migration-repro
       - migration-upgrade
       - build
       - production-dependency-audit
