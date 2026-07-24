@@ -1,0 +1,129 @@
+name: Staging migration repair (temporary)
+
+# TEMPORARY workflow: recovers the staging database from the one-time
+# 20260701000000_initial_baseline failure recorded in _prisma_migrations.
+# Delete this file once the repair is confirmed complete.
+
+on:
+  workflow_dispatch:
+    inputs:
+      staging_project_ref:
+        description: "Type the 20-character staging Supabase project ref"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  repair:
+    name: Inspect and resolve the failed staging migration
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 15
+    steps:
+      - name: Refuse non-staging targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$CONFIRM_STAGING_PROJECT_REF" =~ ^[a-z0-9]{20}$ ]]; then
+            echo "The staging confirmation must be a 20-character lowercase Supabase project ref."
+            exit 1
+          fi
+          if [ "$RUN_REF" != "refs/heads/main" ]; then
+            echo "Staging migration repair is only allowed from main."
+            exit 1
+          fi
+          if [ "$CONFIRM_STAGING_PROJECT_REF" != "$STAGING_SUPABASE_PROJECT_REF" ]; then
+            echo "The confirmation input does not match the staging project ref."
+            exit 1
+          fi
+          if [ -z "$PRODUCTION_SUPABASE_PROJECT_REF" ] || [ "$STAGING_SUPABASE_PROJECT_REF" = "$PRODUCTION_SUPABASE_PROJECT_REF" ]; then
+            echo "Staging and production Supabase project refs must be present and different."
+            exit 1
+          fi
+        env:
+          CONFIRM_STAGING_PROJECT_REF: ${{ inputs.staging_project_ref }}
+          RUN_REF: ${{ github.ref }}
+          STAGING_SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+          PRODUCTION_SUPABASE_PROJECT_REF: ${{ vars.PRODUCTION_SUPABASE_PROJECT_REF }}
+
+      - name: Checkout exact main candidate
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check migration status and resolve only the expected failed baseline migration
+        shell: bash
+        run: |
+          set -euo pipefail
+          # This repair only ever targets the one migration we diagnosed and
+          # fixed in PR #11. If anything else is reported as failed, refuse
+          # and stop so a human can look at it.
+          EXPECTED_MIGRATION="20260701000000_initial_baseline"
+
+          echo "== npx prisma migrate status (informational) =="
+          set +e
+          npx prisma migrate status > status.log 2>&1
+          set -e
+          cat status.log
+
+          echo "== npx prisma migrate deploy (identifies the exact failed migration, if any) =="
+          set +e
+          npx prisma migrate deploy > deploy.log 2>&1
+          deploy_exit=$?
+          set -e
+          cat deploy.log
+
+          if [ "$deploy_exit" -eq 0 ]; then
+            echo "Deploy succeeded with no failed migration to resolve. Nothing further to do."
+            npx prisma migrate status
+            exit 0
+          fi
+
+          # Prisma reports P3009 with a line like:
+          #   The `20260701000000_initial_baseline` migration started at ... failed
+          failed_migration="$(grep -oE '`[0-9]{14}_[A-Za-z0-9_]+` migration started at .* failed' deploy.log \
+            | grep -oE '`[0-9]{14}_[A-Za-z0-9_]+`' | tr -d '`' | head -n1 || true)"
+
+          if [ -z "$failed_migration" ]; then
+            echo "prisma migrate deploy failed, but not with the expected 'failed migration' (P3009) shape."
+            echo "Refusing to resolve anything automatically; this needs human review."
+            exit 1
+          fi
+
+          echo "Failed migration identified from deploy output: $failed_migration"
+
+          if [ "$failed_migration" != "$EXPECTED_MIGRATION" ]; then
+            echo "Refusing to resolve: expected '$EXPECTED_MIGRATION' but deploy reports '$failed_migration'."
+            exit 1
+          fi
+
+          echo "== npx prisma migrate resolve --rolled-back $failed_migration =="
+          npx prisma migrate resolve --rolled-back "$failed_migration"
+
+          echo "== npx prisma migrate deploy (retry) =="
+          npx prisma migrate deploy
+
+          echo "== npx prisma migrate status (post-deploy) =="
+          npx prisma migrate status
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
