@@ -36,16 +36,16 @@ breach.
 (`unscopedPrisma`) at `src/server/db/tenant.ts:105`. 126 graph edges connect it to 24 code
 files plus 4 docs, grouped by feature domain:
 
-| Feature domain | Files (edge count) | Total edges |
-|---|---|---|
-| CRM (Deals/Companies/Contacts) | `src/server/services/deals.ts` (16), `src/server/services/companies.ts` (10), `src/server/services/contacts.ts` (9), `src/server/services/analytics.ts` (4) | 39 |
-| Calendar & Booking | `src/server/services/calendar.ts` (11), `src/server/services/booking.ts` (6), `src/server/services/availability.ts` (5), `src/server/services/booking-assistant.ts` (5), `src/server/services/calendar-connections.ts` (5) | 32 |
-| AI Chat / Knowledge Base | `src/server/services/conversations.ts` (5), `src/server/services/documents.ts` (4), `src/server/services/prompts.ts` (3) | 12 |
-| Voice Assistant | `src/server/services/voice.ts` (5) | 5 |
-| Org / Settings / Ops | `src/server/services/api-keys.ts` (4), `src/server/services/members.ts` (4), `src/server/services/notifications.ts` (4), `src/server/services/workflows.ts` (4), `src/server/services/dashboard.ts` (2) | 18 |
-| AI Tools | `src/server/ai/tools/index.ts` (1) | 1 |
-| Server-rendered pages | `src/app/[locale]/(app)/calendar/page.tsx`, `src/app/[locale]/(app)/calendar/booking-types/page.tsx`, `src/app/[locale]/(app)/settings/audit-log/page.tsx`, `src/app/[locale]/(app)/settings/members/page.tsx`, `src/app/[locale]/(app)/voice/[assistantId]/page.tsx`, `src/app/[locale]/(app)/voice/calls/[callId]/page.tsx`, `src/app/[locale]/(app)/workflows/[workflowId]/page.tsx` | 12 |
-| Docs referencing the pattern | `docs/ARCHITECTURE.md`, `docs/DATABASE-AUDIT.md`, `docs/DECISIONS.md`, `README.md` | 4 |
+| Feature domain                 | Files (edge count)                                                                                                                                                                                                                                                                                                                                                                      | Total edges |
+| ------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| CRM (Deals/Companies/Contacts) | `src/server/services/deals.ts` (16), `src/server/services/companies.ts` (10), `src/server/services/contacts.ts` (9), `src/server/services/analytics.ts` (4)                                                                                                                                                                                                                             | 39          |
+| Calendar & Booking             | `src/server/services/calendar.ts` (11), `src/server/services/booking.ts` (6), `src/server/services/availability.ts` (5), `src/server/services/booking-assistant.ts` (5), `src/server/services/calendar-connections.ts` (5)                                                                                                                                                              | 32          |
+| AI Chat / Knowledge Base       | `src/server/services/conversations.ts` (5), `src/server/services/documents.ts` (4), `src/server/services/prompts.ts` (3)                                                                                                                                                                                                                                                                | 12          |
+| Voice Assistant                | `src/server/services/voice.ts` (5)                                                                                                                                                                                                                                                                                                                                                      | 5           |
+| Org / Settings / Ops           | `src/server/services/api-keys.ts` (4), `src/server/services/members.ts` (4), `src/server/services/notifications.ts` (4), `src/server/services/workflows.ts` (4), `src/server/services/dashboard.ts` (2)                                                                                                                                                                                 | 18          |
+| AI Tools                       | `src/server/ai/tools/index.ts` (1)                                                                                                                                                                                                                                                                                                                                                      | 1           |
+| Server-rendered pages          | `src/app/[locale]/(app)/calendar/page.tsx`, `src/app/[locale]/(app)/calendar/booking-types/page.tsx`, `src/app/[locale]/(app)/settings/audit-log/page.tsx`, `src/app/[locale]/(app)/settings/members/page.tsx`, `src/app/[locale]/(app)/voice/[assistantId]/page.tsx`, `src/app/[locale]/(app)/voice/calls/[callId]/page.tsx`, `src/app/[locale]/(app)/workflows/[workflowId]/page.tsx` | 12          |
+| Docs referencing the pattern   | `docs/ARCHITECTURE.md`, `docs/DATABASE-AUDIT.md`, `docs/DECISIONS.md`, `README.md`                                                                                                                                                                                                                                                                                                      | 4           |
 
 In short: every multi-tenant feature in the product routes its Prisma access through this
 one file.
@@ -87,7 +87,7 @@ services, meaning both a scoped and an unscoped path exist in one file:
 
 - **RLS is not a backstop for product queries.** This is a deliberate, already-approved
   architecture decision (`docs/DECISIONS.md:31-38`), not a defect — but it means `tenantDb()`
-  plus caller discipline at `unscopedPrisma` sites is the *entire* cross-tenant defense for
+  plus caller discipline at `unscopedPrisma` sites is the _entire_ cross-tenant defense for
   the 33 allow-listed models. There is no database-level fallback if application code gets
   this wrong.
 - **`unscopedPrisma` is unguarded by tooling.** The ESLint rule at `eslint.config.mjs:37-51`
@@ -106,7 +106,7 @@ services, meaning both a scoped and an unscoped path exist in one file:
   (`docs/ROADMAP.md:59-61`).
 - **New finding — `TENANT_MODELS` allowlist has no automated guard.** The scoping check at
   `src/server/db/tenant.ts:61` is `if (!model || !TENANT_MODELS.has(model)) return
-  query(args);` — if a Prisma model is added to the schema and someone forgets to add it to
+query(args);` — if a Prisma model is added to the schema and someone forgets to add it to
   this 33-entry allowlist, `tenantDb()` becomes a **silent, unscoped passthrough** for that
   model: no error, no warning, just unfiltered cross-tenant access on every query. I diffed
   the current schema (43 models) against the allowlist: the 10 excluded models are all
@@ -157,6 +157,7 @@ doesn't tell a reviewer whether a new call is tenant-safe or not.
 ## Findings classified by severity
 
 **Critical**
+
 1. RLS is not load-bearing for product queries — `tenantDb()`/caller discipline is the sole
    cross-tenant defense for 33 models. Deliberate, already-approved design
    (`docs/DECISIONS.md:31-38`); listed here because it is the premise the rest of this audit
@@ -167,21 +168,15 @@ doesn't tell a reviewer whether a new call is tenant-safe or not.
 3. `TENANT_MODELS` allowlist has no automated guard against silent drift on schema changes.
    Currently in sync; this is a process gap, not an active bug. **(New finding.)**
 
-**Important**
-4. `unscopedPrisma` and `tenantDb` imported side-by-side in 9 tenant-facing service files
-   with no lint boundary between them. No current known misuse found.
-5. `DocumentUploadIntent` → `Document` missing FK, app-layer-only correlation. Already
-   tracked (`docs/DATABASE-AUDIT.md:161-162`).
-6. RAG general-search retrieval path missing `deleted_at`/`status='READY'` filter. Same-tenant
-   consistency gap, not cross-tenant. Already tracked (`docs/ROADMAP.md:62-63`).
+**Important** 4. `unscopedPrisma` and `tenantDb` imported side-by-side in 9 tenant-facing service files
+with no lint boundary between them. No current known misuse found. 5. `DocumentUploadIntent` → `Document` missing FK, app-layer-only correlation. Already
+tracked (`docs/DATABASE-AUDIT.md:161-162`). 6. RAG general-search retrieval path missing `deleted_at`/`status='READY'` filter. Same-tenant
+consistency gap, not cross-tenant. Already tracked (`docs/ROADMAP.md:62-63`).
 
-**Optional**
-7. Per-call `tenantDb(orgId)` re-instantiation instead of once-per-request reuse — no
-   measured impact.
-8. 11 test files individually mock the Prisma-extension shape — friction only if the
-   interface changes.
-9. `tenantDb`/`unscopedPrisma` co-exported from one module with no trust-level naming signal
-   — a readability improvement, not a defect.
+**Optional** 7. Per-call `tenantDb(orgId)` re-instantiation instead of once-per-request reuse — no
+measured impact. 8. 11 test files individually mock the Prisma-extension shape — friction only if the
+interface changes. 9. `tenantDb`/`unscopedPrisma` co-exported from one module with no trust-level naming signal
+— a readability improvement, not a defect.
 
 ## Recommended implementation order
 
@@ -215,11 +210,13 @@ stage is independently shippable and reversible by reverting its own commit.
 ## Required tests and acceptance criteria per stage
 
 **Stage 1 — TENANT_MODELS audit (no code change)**
+
 - No new test. Acceptance: this document's manual diff (43 schema models vs. 33-entry
   allowlist, 10 correctly excluded) is the record of completion. Re-verify manually before
   stage 2 ships, and after any `prisma/schema.prisma` change until stage 2 is live.
 
 **Stage 2 — TENANT_MODELS coverage test**
+
 - New test: assert every Prisma DMMF model name is either present in `TENANT_MODELS` or in a
   hardcoded, documented exclusion list (`Message`, `PipelineStage`, `DocumentChunk`,
   `TagsOnContacts`, `EventAttendee`, `AvailabilityRule`, `AvailabilityOverride`,
@@ -230,6 +227,7 @@ stage is independently shippable and reversible by reverting its own commit.
   behavior altered.
 
 **Stage 3 — `getFreshTokens()` hardening**
+
 - Update existing/add unit test coverage in whichever test file covers
   `calendar-connections.ts` (currently `tests/unit/calendar-sync.test.ts` and related) to
   assert: (a) `getFreshTokens(orgId, connectionId)` returns tokens only when the connection's
@@ -239,9 +237,10 @@ stage is independently shippable and reversible by reverting its own commit.
   all 4 existing callers (`disconnectConnection`, `checkConnectionHealth`,
   `syncExternalCalendar`, `ensureWebhookSubscription`) updated to pass `orgId` and pass their
   existing tests unmodified in behavior; `npm run lint && npm run typecheck && npm test &&
-  npm run build` all green.
+npm run build` all green.
 
 **Stage 4 — RAG retrieval filter fix**
+
 - Add/extend a unit test on the `match_chunks()` / general-search path in `src/server/ai/rag.ts`
   asserting soft-deleted (`deleted_at` set) and non-`READY` documents are excluded from
   general-search results, mirroring the existing documentId-scoped path's test coverage.
@@ -249,12 +248,14 @@ stage is independently shippable and reversible by reverting its own commit.
   tests unchanged; `npm run typecheck && npm test` green.
 
 **Stage 5 — `unscopedPrisma` module split**
+
 - No new test required (pure re-export move). Acceptance criteria: `npm run typecheck && npm
-  run lint && npm test && npm run build` all green with zero behavior diff; grep confirms no
+run lint && npm test && npm run build` all green with zero behavior diff; grep confirms no
   remaining import of `unscopedPrisma` from `@/server/db/tenant` outside the new module's
   re-export; all ~58 previously-identified call sites updated to the new import path.
 
 **Stage 6 — `DocumentUploadIntent` ↔ `Document` FK**
+
 - See "Migration and rollback requirements" below for the full checklist. Test-wise: extend
   `tests/unit/document-tenant-integrity.test.ts` and/or
   `tests/unit/conversation-document-integrity.test.ts` to assert the new FK is enforced
@@ -319,7 +320,7 @@ executed as part of this document — it is a plan, not an action.
   scope and would break existing legitimate call sites.
 - **Any change to `TENANT_MODELS` contents.** The current 33-entry allowlist is verified
   correct against the schema as of this audit. No models should be added or removed as part
-  of this plan — only the *test coverage* around the list changes (stage 2).
+  of this plan — only the _test coverage_ around the list changes (stage 2).
 - **Any performance optimization of `tenantDb(orgId)` instantiation** (item 7 in the
   Optional findings). No profiling data exists showing this is a real cost; instrument and
   measure before optimizing, not before.

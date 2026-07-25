@@ -16,9 +16,7 @@ const TENANT_TS_PATH = resolve(process.cwd(), "src/server/db/tenant.ts");
 const tenantSource = readFileSync(TENANT_TS_PATH, "utf8");
 
 function extractTenantModels(source: string): string[] {
-  const match = source.match(
-    /const TENANT_MODELS = new Set<Prisma\.ModelName>\(\[([\s\S]*?)\]\)/,
-  );
+  const match = source.match(/const TENANT_MODELS = new Set<Prisma\.ModelName>\(\[([\s\S]*?)\]\)/);
   if (!match) {
     throw new Error(
       "Could not find `const TENANT_MODELS = new Set<Prisma.ModelName>([...])` in " +
