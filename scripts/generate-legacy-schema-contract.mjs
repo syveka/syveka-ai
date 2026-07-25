@@ -7,6 +7,71 @@ const sqlString = (value) => `'${String(value).replaceAll("'", "''")}'`;
 const columnName = (field) => field.dbName ?? field.name;
 const tableName = (model) => model.dbName ?? model.name;
 
+// Prisma's DMMF cannot express PostgreSQL nullability for scalar-list (array) columns:
+// Prisma has no optional-list syntax (`Int[]?` / `String[]?` are invalid schema syntax), so
+// `field.isRequired` is structurally always `true` for every list field regardless of whether
+// the underlying column actually has a NOT NULL constraint. This map is the explicit, verified
+// source of truth instead, keyed by "<table>.<column>". Each entry was confirmed against real
+// migration history (see the CREATE TABLE statement cited, and confirmed no later migration
+// alters that column's nullability):
+//   - api_keys.scopes                 -> nullable  (prisma/migrations/20260701000000_initial_baseline/migration.sql:1691, no NOT NULL)
+//   - webhook_endpoints.events        -> nullable  (prisma/migrations/20260701000000_initial_baseline/migration.sql:1706, no NOT NULL)
+//   - booking_types.duration_options  -> NOT NULL  (prisma/migrations/20260713000000_calendar_booking_v1/migration.sql:237)
+//   - calendar_connections.scopes     -> NOT NULL  (prisma/migrations/20260713000000_calendar_booking_v1/migration.sql:104)
+const LIST_COLUMN_NOT_NULL_ENTRIES = [
+  ["api_keys.scopes", false],
+  ["webhook_endpoints.events", false],
+  ["booking_types.duration_options", true],
+  ["calendar_connections.scopes", true],
+];
+
+const seenListColumnKeys = new Set();
+for (const [key] of LIST_COLUMN_NOT_NULL_ENTRIES) {
+  if (seenListColumnKeys.has(key)) {
+    throw new Error(`Duplicate LIST_COLUMN_NOT_NULL entry for scalar-list column "${key}".`);
+  }
+  seenListColumnKeys.add(key);
+}
+
+const LIST_COLUMN_NOT_NULL = new Map(LIST_COLUMN_NOT_NULL_ENTRIES);
+
+const actualScalarListKeys = new Set(
+  models.flatMap((model) =>
+    model.fields
+      .filter((field) => field.isList && field.kind === "scalar")
+      .map((field) => `${tableName(model)}.${columnName(field)}`),
+  ),
+);
+
+const missingListColumnKeys = [...actualScalarListKeys].filter(
+  (key) => !LIST_COLUMN_NOT_NULL.has(key),
+);
+if (missingListColumnKeys.length > 0) {
+  throw new Error(
+    "LIST_COLUMN_NOT_NULL is missing an entry for scalar-list column(s): " +
+      missingListColumnKeys.join(", ") +
+      ". Determine each column's real PostgreSQL NOT NULL status from migration history " +
+      "and add it explicitly to scripts/generate-legacy-schema-contract.mjs.",
+  );
+}
+
+const staleListColumnKeys = [...LIST_COLUMN_NOT_NULL.keys()].filter(
+  (key) => !actualScalarListKeys.has(key),
+);
+if (staleListColumnKeys.length > 0) {
+  throw new Error(
+    "LIST_COLUMN_NOT_NULL has stale entry/entries no longer present as a scalar-list field " +
+      "in the Prisma schema: " +
+      staleListColumnKeys.join(", ") +
+      ". Remove the stale entry/entries from scripts/generate-legacy-schema-contract.mjs.",
+  );
+}
+
+function columnNotNull(model, field) {
+  if (!field.isList) return field.isRequired;
+  return LIST_COLUMN_NOT_NULL.get(`${tableName(model)}.${columnName(field)}`);
+}
+
 function postgresType(field) {
   if (field.name === "embedding") return "vector(1536)";
   if (field.isList) {
@@ -74,7 +139,7 @@ const columnRows = scalarFields
         tableName(model),
         columnName(field),
         postgresType(field),
-        field.isRequired && !field.isList,
+        columnNotNull(model, field),
         "",
         "",
         normalizedDefault(field),

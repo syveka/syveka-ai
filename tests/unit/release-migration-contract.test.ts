@@ -95,8 +95,19 @@ describe("staging release migration contract", () => {
     ).match(/^      \('public', '[^']+', '[^']+_fkey',/gm);
     expect(columnRows).toHaveLength(469);
     expect(foreignKeyRows).toHaveLength(71);
+    // Scalar-list (array) columns cannot express nullability via Prisma's DMMF (Prisma has no
+    // optional-list syntax), so each column's real PostgreSQL NOT NULL status is verified
+    // against migration history and pinned here explicitly to guard against regressions like
+    // the one fixed by this test: a blanket "isList => not_null false" heuristic silently
+    // mis-marked NOT NULL array columns as nullable.
     expect(contract).toContain("('api_keys', 'scopes', 'text[]', 'false', '', '', 'array[]')");
     expect(contract).toContain("('webhook_endpoints', 'events', 'text[]', 'false', '', '', '')");
+    expect(contract).toContain(
+      "('booking_types', 'duration_options', 'integer[]', 'true', '', '', 'array[30]')",
+    );
+    expect(contract).toContain(
+      "('calendar_connections', 'scopes', 'text[]', 'true', '', '', 'array[]')",
+    );
     expect(contract).toContain(
       "('conversations', 'title', 'text', 'true', '', '', '''new conversation''')",
     );
