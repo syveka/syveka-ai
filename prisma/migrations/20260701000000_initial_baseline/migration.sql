@@ -2361,6 +2361,21 @@ END $syveka_baseline$;
 -- A plain PostgreSQL database does not ship the Supabase roles and auth helper
 -- functions used by policy DDL. Create a narrow compatibility surface only
 -- when those objects are absent. Supabase-provided objects are never replaced.
+--
+-- Every statement that touches the `auth` schema is guarded by an existence
+-- check evaluated *before* the DDL is attempted (never a bare
+-- `IF NOT EXISTS` clause on the statement itself). On a real Supabase project
+-- the `auth` schema, `auth.users`, and the connecting role's grants already
+-- exist, but the migration role does not have CREATE privilege on that
+-- schema: `CREATE TABLE IF NOT EXISTS auth.users (...)` still fails with
+-- "permission denied for schema auth" even though the table already exists,
+-- because PostgreSQL checks schema privilege before the existence check for
+-- these statements. `to_regnamespace` is a safe, privilege-free catalog
+-- lookup, but `to_regclass`/`to_regprocedure` on a *qualified* name (e.g.
+-- 'auth.uid()') require USAGE on that schema to resolve and would raise the
+-- same permission error the guard is meant to avoid, so function existence
+-- is checked with a direct pg_proc/pg_namespace join instead, which needs no
+-- privilege on the target schema.
 DO $$
 BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
@@ -2370,38 +2385,54 @@ BEGIN
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'supabase_auth_admin') THEN
     CREATE ROLE supabase_auth_admin NOLOGIN;
   END IF;
-END $$;
 
-CREATE SCHEMA IF NOT EXISTS auth;
+  IF to_regnamespace('auth') IS NULL THEN
+    CREATE SCHEMA auth;
 
-CREATE TABLE IF NOT EXISTS auth.users (
-  id UUID PRIMARY KEY,
-  email TEXT,
-  raw_user_meta_data JSONB NOT NULL DEFAULT '{}'::JSONB
-);
+    CREATE TABLE auth.users (
+      id UUID PRIMARY KEY,
+      email TEXT,
+      raw_user_meta_data JSONB NOT NULL DEFAULT '{}'::JSONB
+    );
 
-DO $$
-BEGIN
-  IF to_regprocedure('auth.uid()') IS NULL THEN
+    GRANT USAGE ON SCHEMA auth TO authenticated;
+  END IF;
+
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc AS proc
+    JOIN pg_namespace AS ns ON ns.oid = proc.pronamespace
+    WHERE ns.nspname = 'auth' AND proc.proname = 'uid' AND proc.pronargs = 0
+  ) THEN
     EXECUTE $function$
       CREATE FUNCTION auth.uid() RETURNS UUID
       LANGUAGE SQL STABLE
       AS 'SELECT nullif(current_setting(''request.jwt.claims'', true)::jsonb ->> ''sub'', '''')::uuid'
     $function$;
+    GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated;
   END IF;
 
-  IF to_regprocedure('auth.jwt()') IS NULL THEN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_proc AS proc
+    JOIN pg_namespace AS ns ON ns.oid = proc.pronamespace
+    WHERE ns.nspname = 'auth' AND proc.proname = 'jwt' AND proc.pronargs = 0
+  ) THEN
     EXECUTE $function$
       CREATE FUNCTION auth.jwt() RETURNS JSONB
       LANGUAGE SQL STABLE
       AS 'SELECT coalesce(current_setting(''request.jwt.claims'', true)::jsonb, ''{}''::jsonb)'
     $function$;
+    GRANT EXECUTE ON FUNCTION auth.jwt() TO authenticated;
   END IF;
 END $$;
 
-GRANT USAGE ON SCHEMA auth TO authenticated;
-GRANT EXECUTE ON FUNCTION auth.uid() TO authenticated;
-GRANT EXECUTE ON FUNCTION auth.jwt() TO authenticated;
+-- PostgreSQL validates SQL-language function bodies at creation time
+-- (`check_function_bodies`), which requires resolving the `auth.jwt()`
+-- reference below and therefore USAGE on schema `auth`. The connecting
+-- migration role does not have that grant on a real Supabase project (only
+-- `authenticated` does), so body validation is disabled for these two
+-- definitions; PostgreSQL still resolves the reference normally, with the
+-- caller's own privileges, every time the function is actually invoked.
+SET check_function_bodies = off;
 
 CREATE OR REPLACE FUNCTION public.auth_org_id()
 RETURNS UUID
@@ -2414,3 +2445,5 @@ RETURNS TEXT
 LANGUAGE SQL
 STABLE
 AS $$ SELECT auth.jwt() ->> 'role' $$;
+
+SET check_function_bodies = on;
