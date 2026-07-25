@@ -4,130 +4,116 @@ Technical implementation handoff for the next task. This is the **only** task as
 now — do not start on P1/P2 items from `ROADMAP.md` without a fresh handoff, even if they look
 quick.
 
+## Status of the previous handoff (P0.1 — dependency audit)
+
+Done. Resolved in commit `3b285a2` ("fix: unblock dependency audit and formatting"). Superseded
+by this handoff.
+
 ## Current target
 
-**P0.1 — Fix the failing `production-dependency-audit` CI gate.**
+**Diagnose (do not yet fix) a schema-contract drift on `booking_types.duration_options` that now
+blocks staging release validation's read-only compatibility preflight.**
 
 ## Why this is first
 
-`npm audit --omit=dev --audit-level=high` — the exact command the blocking
-`production-dependency-audit` job in `.github/workflows/ci.yml` runs — currently fails locally
-(verified 2026-07-23) with vulnerabilities that were **not** present when this job last passed
-in CI on 2026-07-20 (run `29712079180`, PR #9). This means PR #9's current green CI status is
-stale: the next push or manual re-run of this workflow will fail this gate until dependencies
-are bumped. Every other P0/P1 item is lower urgency than unblocking CI itself.
+The staging release pipeline was blocked end-to-end by a `20260701000000_initial_baseline`
+migration failure (PRs #11, #12, #13, #14 — idempotency fix, temporary DB repair workflow, an
+auth-schema permission fix, and cleanup, all merged into `main`). That blocker is **fully
+resolved**:
 
-## Scope
+- Staging's `_prisma_migrations` no longer has a failed row for
+  `20260701000000_initial_baseline`.
+- `prisma migrate deploy` now applies all 10 migrations cleanly against the real staging
+  database (verified directly, `prisma migrate status` reports "Database schema is up to date!").
+- Workflow run
+  [30138154368](https://github.com/syveka/syveka-ai/actions/runs/30138154368) (Staging release
+  validation, dispatched from `main` at `70b46f1`) got past every step that used to fail,
+  including `Apply Prisma migrations to staging`.
 
-In scope:
+That same run then failed at the **next** step, `Read-only legacy compatibility preflight`
+(`prisma/sql/006_legacy_baseline_preflight.sql`), with a genuinely new and unrelated error:
 
-- Bump `next`, and whatever nested `postcss`/`sharp` versions come along with it, via
-  `npm audit fix` (non-breaking within `next`'s declared `^15.2.0` range).
-- Evaluate (separately, see below) the `next-intl` moderate CVE, which requires
-  `npm audit fix --force` (breaking: 3.x → 4.x).
+```
+psql:prisma/sql/006_legacy_baseline_preflight.sql:1003: ERROR:  Syveka baseline incompatible column booking_types.duration_options: expected type integer[], not_null false, identity , generated , default array[30]; found type integer[], not_null t, identity , generated , default array[30]
+CONTEXT:  PL/pgSQL function inline_code_block line 808 at RAISE
+##[error]Process completed with exit code 3.
+```
 
-Out of scope (do not touch in this task):
+In plain terms: the frozen "expected schema" contract (embedded identically in both
+`prisma/sql/006_legacy_baseline_preflight.sql` and
+`prisma/migrations/20260701000000_initial_baseline/migration.sql`, enforced byte-identical by
+`tests/unit/release-migration-contract.test.ts`) says `booking_types.duration_options` should be
+**nullable** (`not_null false`). The live staging database — now fully migrated through all 10
+migrations for the first time — has it as **`NOT NULL`**. Something diverged between whatever
+migration actually shaped this column and the contract's frozen expectation of it.
 
-- Any other item in `ROADMAP.md` P0–P4.
-- Any application code changes beyond what's needed to keep the build/tests green after the
-  dependency bump.
-- Any database migration, schema change, or RLS policy change.
-- Any production/staging deployment or workflow dispatch.
+## What's already known (read-only checks only, nothing changed)
 
-## Acceptance criteria
+- `prisma/schema.prisma:642` currently declares:
+  `durationOptions Int[] @default([30]) @map("duration_options")` — no `?`. Prisma does not
+  support nullable array fields, so this schema declaration is inherently `NOT NULL`, matching
+  what's live in the database, **not** matching the frozen contract's `not_null false`.
+- This strongly suggests the **frozen contract is the stale side**, not the live schema — but
+  this has not been verified against migration history, and it must be before anything is
+  changed.
+- `20260701000000_initial_baseline` is not in the checksum-pinned "published" list in
+  `scripts/check-migration-history.mjs`. Migrations 2–9 (including whichever one actually set
+  `duration_options` to `NOT NULL`, if it was one of them) **are** pinned — do not assume any of
+  them can be edited without the same care applied to the baseline fix.
 
-1. `npm audit --omit=dev --audit-level=high` exits 0 (or the `next-intl` finding is explicitly
-   deferred to a separate, clearly-labeled follow-up PR — see below — in which case document
-   that in the PR description).
-2. `npm run lint`, `npm run typecheck`, `npm test`, `npm run build` all still pass after the
-   bump.
-3. `npx prisma validate` and `npx prisma generate` still pass (should be unaffected, but verify —
-   Prisma itself is not part of this bump).
-4. No application code changes beyond what's strictly required to compile/pass tests against
-   the new dependency versions (e.g. a type signature that changed upstream). If `next`'s bump
-   requires any code change, document exactly what and why in the PR description.
-5. `package-lock.json` is updated and committed alongside `package.json`.
+## Safest next investigation steps (do not act on these yet without re-confirming)
+
+1. `git log -p --all -- prisma/migrations/*/migration.sql | grep -n -B5 'duration_options'` (or
+   grep each `migration.sql` directly) to find every statement that touches
+   `booking_types.duration_options`, in migration order, and determine which one (if any)
+   introduced `NOT NULL`.
+2. Confirm whether that migration is in the checksum-pinned list. If it is, it must not be
+   edited — the correction belongs in a new additive migration and in the frozen contract, not in
+   the pinned file.
+3. Decide, deliberately, which side is authoritative: does the application actually rely on
+   `duration_options` always being non-null (check `src/server/services/*booking*`,
+   `src/lib/validators/*booking*`, and any code path that reads this column assuming it's never
+   null)? If yes, the contract (both copies, kept byte-identical per the unit test) is what needs
+   correcting to `not_null true` for this column — not the live database.
+4. If the contract needs correcting: update both
+   `prisma/sql/006_legacy_baseline_preflight.sql` and the identical block inside
+   `prisma/migrations/20260701000000_initial_baseline/migration.sql`, keep
+   `tests/unit/release-migration-contract.test.ts` passing (it byte-compares the two), and treat
+   this exactly as carefully as the baseline idempotency fix was treated — full local
+   reproduction against a fresh Postgres before touching anything real.
+5. Do **not** touch the live staging database directly to "fix" this by relaxing or adding a
+   constraint until the direction in step 3 is settled — changing the contract and changing the
+   database are two different fixes for two different diagnoses, and doing the wrong one first
+   makes the real problem harder to see.
+6. Re-run the read-only preflight locally
+   (`psql "$URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql`) against a
+   database migrated through all 10 migrations before touching staging again — this reproduces
+   the failure without needing staging credentials at all.
+
+## Prohibited changes (for tonight, and until the above is deliberately decided)
+
+- Do not modify any published (checksum-pinned) migration file.
+- Do not modify `prisma/schema.prisma` or any live database schema, staging or production.
+- Do not run `prisma migrate resolve`, `db push`, `migrate reset`, or dispatch any release/repair
+  workflow.
+- Do not touch `.env.local`, `.env.example`, or any secret.
 
 ## Relevant files
 
-- `package.json`, `package-lock.json` (the actual change).
-- `.github/workflows/ci.yml` — the `production-dependency-audit` job, for reference on the exact
-  command/flags being gated (do not modify this file unless the audit command itself needs to
-  change, which is not expected).
-- `next.config.ts` — check after the bump in case any Next.js config API changed (unlikely for
-  a patch/minor bump within `^15.2.0`, but verify the build output is clean).
+- `prisma/sql/006_legacy_baseline_preflight.sql` — the failing read-only check, source of the
+  exact error above.
+- `prisma/migrations/20260701000000_initial_baseline/migration.sql` — carries a byte-identical
+  copy of the same contract between the `-- BEGIN/END LEGACY BASELINE COMPATIBILITY CONTRACT`
+  markers.
+- `tests/unit/release-migration-contract.test.ts` — enforces the two stay byte-identical; also a
+  good place to see the exact contract row format for `booking_types`.
+- `prisma/schema.prisma:642` — current source-of-truth declaration for this column.
+- `docs/release-runbook.md` — the "Recovering from a failed initial baseline apply" section
+  documents the now-resolved migration-bookkeeping issue this handoff supersedes as the active
+  blocker.
 
 ## Database impact
 
-None. This is a dependency-only change.
-
-## Security requirements
-
-- Confirm the specific CVEs being patched (DoS in Server Actions, SSRF in Server Actions on
-  custom servers, response-body cache confusion, unbounded Server Action payload on Edge
-  runtime, SSRF via rewrites, DoS in Image Optimization SVG handling, unauthenticated disclosure
-  of internal Server Function endpoints for `next`; XSS/arbitrary-file-read for `postcss`;
-  libvips CVEs for `sharp`) are actually resolved by checking the installed version against each
-  advisory's patched-version range after `npm audit fix` — don't just trust exit code 0 without
-  spot-checking the advisory details `npm audit` prints.
-- Do not use `npm audit fix --force` for anything in the non-breaking group — only `next-intl`
-  needs `--force`, and it should be a separate PR (see below), not bundled into this one.
-
-## The `next-intl` decision (handle as a separate follow-up, do not block this task on it)
-
-`next-intl` 3.26.5 → patched at 4.9.1+ is a **major version bump** (breaking changes). This
-repo's i18n usage (`src/i18n/{routing,request}.ts`, `useTranslations`/`getTranslations` calls
-throughout) needs to be checked against next-intl's 4.x migration guide before taking this
-upgrade. **Open a second, clearly-labeled PR for this** rather than bundling it with the P0.1
-fix — the moderate-severity finding does not block the `--audit-level=high` gate, so it does not
-have to be resolved in the same PR as the high-severity fixes. Flag it to ChatGPT/owner for
-timing per `NEXT-STEPS.md`.
-
-## Testing requirements
-
-Run the full local validation suite before opening the PR:
-
-```
-npm ci
-npx prisma validate
-npx prisma generate
-npm run format:check
-npm run lint
-npm run typecheck
-npm test
-npm run build
-npm audit --omit=dev --audit-level=high
-```
-
-All must pass (the last one is the actual point of this task). CI will additionally run the
-`rls` and `migration-upgrade` jobs (live Postgres, not runnable locally without a DB) and
-`secret-scan` (Docker) — these are not expected to be affected by a dependency bump, but let CI
-confirm.
-
-## Commands to validate
-
-Same block as above. Additionally, after `npm audit fix`, run `npm audit --omit=dev
---audit-level=high` a second time to confirm zero remaining high-severity findings before
-committing.
-
-## Prohibited changes
-
-- Do not modify `prisma/schema.prisma`, any file under `prisma/migrations/`, or any file under
-  `prisma/sql/`.
-- Do not modify RLS policies, `src/server/db/tenant.ts`, or `src/server/security/*`.
-- Do not modify `.github/workflows/*.yml` beyond what's strictly necessary (not expected to be
-  necessary at all for this task).
-- Do not touch `.env.local`, `.env.example`, or any secret.
-- Do not force-push, merge this PR, or dispatch any release workflow — open the PR and stop.
-- Do not bundle the `next-intl` major bump into this PR.
-
-## Definition of done
-
-- PR opened against `main` (or against the current `chore/staging-release-validation` branch if
-  that's still the active integration branch at the time — confirm with `git branch
---show-current` and `gh pr list` before choosing the base) with the dependency bump, updated
-  lockfile, and a description listing exactly which CVEs are resolved.
-- All commands in "Testing requirements" pass locally.
-- CI's `production-dependency-audit` job passes on the PR.
-- `next-intl` upgrade is explicitly deferred and tracked as a separate follow-up, not silently
-  dropped.
+None yet — this handoff is diagnosis-only. Any eventual fix must be additive (new migration
+and/or contract text correction), never a rewrite of a pinned migration or a direct unreviewed
+change to staging/production.
