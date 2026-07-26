@@ -1,81 +1,20 @@
--- Cross-tenant isolation assertions (§4.3, §23).
--- Runs against a migrated DB with policies applied. Fails loudly via exceptions.
+-- Cross-tenant isolation assertions (§4.3, §23). Fails loudly via exceptions.
+--
+-- Run directly as an already-authenticated, ephemeral LOGIN role that is a
+-- member of `authenticated` -- see scripts/ci/run-rls-check.sh, which creates
+-- that role, grants it privileges, and loads tests/rls/isolation-fixtures.sql
+-- through a separate administrative connection before this file ever runs.
+-- This file never creates a role, never grants anything to itself, and never
+-- uses SET ROLE: the connection this runs over IS the client role for real,
+-- which is what makes these assertions genuine (and what keeps them working
+-- against a hosted Postgres that terminates a connection attempting to grant
+-- itself a new role -- see this file's git history for the investigation).
+-- Every attempted write below happens inside a transaction that always rolls
+-- back; the fixtures themselves are cleaned up separately, by the
+-- administrative connection, after this file returns.
 
 begin;
 
--- Fixtures: two orgs, one user each
-delete from contacts
-where organization_id in (
-  '11111111-0000-4000-8000-000000000000',
-  '22222222-0000-4000-8000-000000000000'
-);
-delete from subscriptions
-where organization_id in (
-  '11111111-0000-4000-8000-000000000000',
-  '22222222-0000-4000-8000-000000000000'
-);
-delete from organization_members
-where organization_id in (
-  '11111111-0000-4000-8000-000000000000',
-  '22222222-0000-4000-8000-000000000000'
-);
-delete from organizations
-where id in (
-  '11111111-0000-4000-8000-000000000000',
-  '22222222-0000-4000-8000-000000000000'
-);
-delete from users
-where id in (
-  'a0000000-0000-4000-8000-000000000001',
-  'b0000000-0000-4000-8000-000000000002'
-);
-delete from auth.users
-where id in (
-  'a0000000-0000-4000-8000-000000000001',
-  'b0000000-0000-4000-8000-000000000002'
-);
-
--- The auth trigger mirrors these rows into public.users.
-insert into auth.users (id, email, raw_user_meta_data) values
-  ('a0000000-0000-4000-8000-000000000001', 'a@test.fi', '{}'::jsonb),
-  ('b0000000-0000-4000-8000-000000000002', 'b@test.fi', '{}'::jsonb);
-
-insert into organizations (id, name, slug, created_at, updated_at) values
-  ('11111111-0000-4000-8000-000000000000', 'Org A', 'org-a', now(), now()),
-  ('22222222-0000-4000-8000-000000000000', 'Org B', 'org-b', now(), now())
-on conflict (id) do update set
-  name = excluded.name,
-  slug = excluded.slug,
-  updated_at = now();
-
-insert into organization_members (organization_id, user_id, role) values
-  ('11111111-0000-4000-8000-000000000000', 'a0000000-0000-4000-8000-000000000001', 'OWNER'),
-  ('22222222-0000-4000-8000-000000000000', 'b0000000-0000-4000-8000-000000000002', 'OWNER')
-on conflict (organization_id, user_id) do update set
-  role = excluded.role;
-
-insert into contacts (organization_id, first_name, email, created_at, updated_at) values
-  ('11111111-0000-4000-8000-000000000000', 'Aino', 'aino@a.fi', now(), now()),
-  ('22222222-0000-4000-8000-000000000000', 'Bertta', 'bertta@b.fi', now(), now());
-
--- Simulate an authenticated session for user A / org A
-do $$
-begin
-  if not exists (select 1 from pg_roles where rolname = 'authenticated_test') then
-    create role authenticated_test login;
-  end if;
-end $$;
-grant authenticated to authenticated_test;
-grant usage on schema public to authenticated_test;
-grant select, insert, update, delete on all tables in schema public to authenticated_test;
--- Supabase's direct database role is intentionally not a superuser, so SET ROLE
--- requires the executing role to already be a member of the target role. Grant that
--- membership here, inside this same transaction, so it never persists past the
--- `rollback` below; `set local role` (rather than plain `set role`) additionally
--- confines the role switch to this transaction on its own.
-grant authenticated_test to current_user;
-
-set local role authenticated_test;
 select set_config('request.jwt.claims', json_build_object(
   'sub', 'a0000000-0000-4000-8000-000000000001',
   'role', 'OWNER',
@@ -118,5 +57,4 @@ begin
   raise notice 'ALL RLS ISOLATION ASSERTIONS PASSED';
 end $$;
 
-reset role;
 rollback;

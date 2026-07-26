@@ -151,11 +151,18 @@ jobs:
         run: |
           set -euo pipefail
           psql "$STAGING_DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
-          psql "$STAGING_DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
-          psql "$STAGING_DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/rls/calendar-booking-isolation.sql
+          # Hosted Postgres terminates the connection outright if the
+          # administrative role is granted a new role (see the investigation
+          # this harness came from) -- so the RLS assertions run over a
+          # separate connection authenticated directly as a dedicated,
+          # ephemeral LOGIN role instead of granting that role to this session
+          # and using SET ROLE.
+          bash scripts/ci/run-rls-check.sh iso tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql
+          bash scripts/ci/run-rls-check.sh cal tests/rls/calendar-booking-fixtures.sql tests/rls/calendar-booking-cleanup.sql tests/rls/calendar-booking-isolation.sql
           psql "$STAGING_DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
         env:
           STAGING_DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          ADMIN_URL: ${{ secrets.STAGING_DIRECT_URL }}
 
       - name: Verify Supabase Storage policy definitions
         run: psql "$STAGING_DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/storage-invariants.sql

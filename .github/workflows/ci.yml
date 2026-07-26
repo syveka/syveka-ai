@@ -214,10 +214,12 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/005_calendar_booking_rls.sql
       - name: Run isolation assertions
         run: |
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/calendar-booking-isolation.sql
+          bash scripts/ci/run-rls-check.sh iso tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql
+          bash scripts/ci/run-rls-check.sh cal tests/rls/calendar-booking-fixtures.sql tests/rls/calendar-booking-cleanup.sql tests/rls/calendar-booking-isolation.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/migrations/match-chunks-eligibility.sql
+        env:
+          ADMIN_URL: postgresql://postgres:postgres@localhost:5432/postgres
 
   rls-non-superuser:
     name: RLS isolation tests (non-superuser Supabase-like role)
@@ -282,61 +284,78 @@ jobs:
         run: |
           npx prisma migrate deploy
           npx prisma migrate status
-      - name: Reject the un-fixed SET ROLE pattern under the non-superuser role
+      - name: Confirm the old grant-to-current_user pattern is gone
         shell: bash
         run: |
           set -euo pipefail
-          # A regression control: this is the exact pattern the two isolation SQL
-          # files used before this fix (create + grant a role, then `set role`
-          # straight away, with no membership grant to the executing role first). It
-          # must keep failing under a non-superuser role exactly like staging did, or
-          # this reproduction has stopped meaning anything.
-          cat > /tmp/unfixed-set-role.sql <<'SQL'
-          begin;
-          do $$
-          begin
-            if not exists (select 1 from pg_roles where rolname = 'ci_regression_unfixed_role') then
-              create role ci_regression_unfixed_role login;
-            end if;
-          end $$;
-          grant authenticated to ci_regression_unfixed_role;
-          grant usage on schema public to ci_regression_unfixed_role;
-          set role ci_regression_unfixed_role;
-          rollback;
-          SQL
-          if psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/unfixed-set-role.sql 2>/tmp/unfixed-set-role.err; then
-            echo "The un-fixed SET ROLE pattern unexpectedly succeeded under a non-superuser role."
-            cat /tmp/unfixed-set-role.err
+          # Regression control (coverage A): granting a temporary role to the
+          # connected session's own role, however well-intentioned, is exactly what
+          # a hosted Postgres provider can terminate the connection over -- see
+          # scripts/ci/run-rls-check.sh's header comment. Neither client-run
+          # assertions file may reintroduce it.
+          if grep -Eq 'grant\s+\S+\s+to\s+current_user' tests/rls/isolation.sql tests/rls/calendar-booking-isolation.sql; then
+            echo "::error::A client-run RLS assertions file grants a role to current_user again."
             exit 1
           fi
-          grep -q 'permission denied to set role' /tmp/unfixed-set-role.err
-          echo "Confirmed: the un-fixed pattern still reproduces the staging failure under a non-superuser role."
-      - name: Run the corrected staging RLS and tenant invariant checks as the non-superuser role
+          echo "Confirmed: neither client-run assertions file grants anything to current_user."
+      - name: Run the corrected staging RLS and tenant invariant checks through dedicated LOGIN roles
         run: |
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
-          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/calendar-booking-isolation.sql
+          bash scripts/ci/run-rls-check.sh iso tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql
+          bash scripts/ci/run-rls-check.sh cal tests/rls/calendar-booking-fixtures.sql tests/rls/calendar-booking-cleanup.sql tests/rls/calendar-booking-isolation.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
-      - name: Confirm no residue survives rollback
+        env:
+          ADMIN_URL: postgresql://supabase_like:supabase_like@localhost:5432/rls_non_superuser
+      - name: Force a client assertion failure and confirm cleanup still leaves no residue
         shell: bash
         run: |
           set -euo pipefail
-          leftover_roles="$(psql "$PGADMIN_URL" -Atqc "select count(*) from pg_roles where rolname in ('authenticated_test', 'calendar_authenticated_test')")"
+          # Regression control (coverage H): a deliberately-failing assertions file,
+          # run through the same harness and real fixtures, must still leave no
+          # role/fixture residue behind even though the assertions themselves fail.
+          cat tests/rls/isolation.sql > /tmp/forced-failure-assertions.sql
+          echo "do \$\$ begin raise exception 'deliberate forced failure for cleanup regression coverage'; end \$\$;" >> /tmp/forced-failure-assertions.sql
+          if bash scripts/ci/run-rls-check.sh isof tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql /tmp/forced-failure-assertions.sql; then
+            echo "::error::The deliberately-failing assertions file unexpectedly succeeded."
+            exit 1
+          fi
+          echo "Confirmed: the forced assertion failure propagated as a real failure."
+        env:
+          ADMIN_URL: postgresql://supabase_like:supabase_like@localhost:5432/rls_non_superuser
+      - name: Force a client login failure and confirm cleanup still leaves no residue
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Regression control (coverage I): the client connection never even
+          # authenticates here (RLS_CHECK_FORCE_LOGIN_FAILURE deliberately connects
+          # with the wrong password); cleanup must still remove the role.
+          if RLS_CHECK_FORCE_LOGIN_FAILURE=1 bash scripts/ci/run-rls-check.sh isol tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql; then
+            echo "::error::The deliberately-wrong-password client connection unexpectedly succeeded."
+            exit 1
+          fi
+          echo "Confirmed: the forced login failure propagated as a real failure."
+        env:
+          ADMIN_URL: postgresql://supabase_like:supabase_like@localhost:5432/rls_non_superuser
+      - name: Confirm no residue survives success or failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          leftover_roles="$(psql "$PGADMIN_URL" -Atqc "select count(*) from pg_roles where rolname like 'rls\_%' escape '\'")"
           if [ "$leftover_roles" != "0" ]; then
-            echo "Temporary test role(s) leaked past rollback."
+            echo "Temporary test role(s) leaked past cleanup."
             exit 1
           fi
-          leftover_membership="$(psql "$PGADMIN_URL" -Atqc "select count(*) from pg_auth_members am join pg_roles r on r.oid = am.roleid where r.rolname in ('authenticated_test', 'calendar_authenticated_test')")"
+          leftover_membership="$(psql "$PGADMIN_URL" -Atqc "select count(*) from pg_auth_members am join pg_roles r on r.oid = am.roleid where r.rolname like 'rls\_%' escape '\'")"
           if [ "$leftover_membership" != "0" ]; then
-            echo "Temporary test role membership leaked past rollback."
+            echo "Temporary test role membership leaked past cleanup."
             exit 1
           fi
-          leftover_fixtures="$(psql "$DATABASE_URL" -Atqc "select count(*) from organizations where id in ('11111111-0000-4000-8000-000000000000', '22222222-0000-4000-8000-000000000000', '31111111-0000-4000-8000-000000000000', '32222222-0000-4000-8000-000000000000')")"
+          leftover_fixtures="$(psql "$PGADMIN_TARGET_URL" -Atqc "select count(*) from organizations where id in ('11111111-0000-4000-8000-000000000000', '22222222-0000-4000-8000-000000000000', '31111111-0000-4000-8000-000000000000', '32222222-0000-4000-8000-000000000000')")"
           if [ "$leftover_fixtures" != "0" ]; then
-            echo "Temporary RLS test fixtures leaked past rollback."
+            echo "Temporary RLS test fixtures leaked past cleanup."
             exit 1
           fi
-          leftover_integrity_fixtures="$(psql "$DATABASE_URL" -Atqc "select count(*) from organizations where id in ('20000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000002')")"
+          leftover_integrity_fixtures="$(psql "$PGADMIN_TARGET_URL" -Atqc "select count(*) from organizations where id in ('20000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000002')")"
           if [ "$leftover_integrity_fixtures" != "0" ]; then
             echo "Temporary tenant-relationship-integrity fixtures leaked past rollback."
             exit 1
@@ -345,7 +364,7 @@ jobs:
           # confirming FORCE ROW LEVEL SECURITY reverted with the transaction, exactly
           # as ordinary transactional DDL rollback guarantees -- not something that
           # needed, or got, any separate manual cleanup.
-          force_rls_restored="$(psql "$DATABASE_URL" -Atqc "select relforcerowsecurity from pg_class where oid = 'public.conversation_documents'::regclass")"
+          force_rls_restored="$(psql "$PGADMIN_TARGET_URL" -Atqc "select relforcerowsecurity from pg_class where oid = 'public.conversation_documents'::regclass")"
           if [ "$force_rls_restored" != "t" ]; then
             echo "FORCE ROW LEVEL SECURITY on conversation_documents did not survive rollback."
             exit 1
