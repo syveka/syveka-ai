@@ -41,6 +41,21 @@ DECLARE
     'document_chunks', 'prompts', 'voice_assistants', 'voice_calls', 'workflows',
     'workflow_runs', 'notifications', 'api_keys', 'webhook_endpoints', 'audit_logs'
   ];
+  -- Scalar-list columns whose NOT NULL constraint could not be produced by `prisma db push`
+  -- against this project's pre-migration-system legacy schema: Prisma's db push does not
+  -- emit NOT NULL for scalar-list columns even when the Prisma field is required, unlike the
+  -- hand-authored migration SQL that later created these same columns with an explicit NOT
+  -- NULL. Real, not-yet-upgraded legacy databases have these columns as nullable; this
+  -- preflight tolerates that specific, verified historical state below without weakening the
+  -- check for any other column. See prisma/migrations/20260726000000_normalize_list_column_nullability,
+  -- which enforces NOT NULL for real after upgrade (a legacy database has
+  -- 20260713000000_calendar_booking_v1 marked as already-applied, so its DDL never runs).
+  legacy_nullable_list_columns TEXT[] := ARRAY[
+-- BEGIN LEGACY NULLABLE LIST COLUMNS
+    'booking_types.duration_options',
+    'calendar_connections.scopes'
+-- END LEGACY NULLABLE LIST COLUMNS
+  ];
 BEGIN
   IF to_regclass('public.organizations') IS NULL THEN
     SELECT table_name
@@ -810,7 +825,14 @@ BEGIN
       AND NOT attribute.attisdropped;
 
     IF actual_type IS DISTINCT FROM expected.formatted_type
-      OR actual_not_null IS DISTINCT FROM expected.not_null::BOOLEAN
+      OR (
+        actual_not_null IS DISTINCT FROM expected.not_null::BOOLEAN
+        AND NOT (
+          actual_not_null IS FALSE
+          AND format('%s.%s', expected.table_name, expected.column_name)
+            = ANY(legacy_nullable_list_columns)
+        )
+      )
       OR actual_identity IS DISTINCT FROM expected.identity_kind
       OR actual_generated IS DISTINCT FROM expected.generated_kind
       OR actual_default IS DISTINCT FROM expected.normalized_default THEN

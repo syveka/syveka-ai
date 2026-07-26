@@ -13,7 +13,8 @@ declare
     '20260715000000_ai_chat_production_hardening',
     '20260715230000_security_invariant_corrections',
     '20260718000000_calendar_booking_rls',
-    '20260719000000_initial_security_baseline'
+    '20260719000000_initial_security_baseline',
+    '20260726000000_normalize_list_column_nullability'
   ];
   protected_tables text[] := array[
     'users', 'organizations', 'organization_members', 'teams', 'invitations',
@@ -212,6 +213,20 @@ begin
     where conname = 'document_upload_intents_tenant_path_check' and convalidated
   ) then
     raise exception 'STAGING RELEASE FAIL: a tenant relationship invariant is missing';
+  end if;
+
+  -- These two scalar-list columns are the ones legacy databases upgrade via
+  -- 20260726000000_normalize_list_column_nullability rather than
+  -- 20260713000000_calendar_booking_v1 (see that migration's header): confirm the
+  -- fully-migrated target state (NOT NULL) actually held for real, on every path.
+  if (
+    select attnotnull from pg_attribute
+    where attrelid = 'public.booking_types'::regclass and attname = 'duration_options'
+  ) is not true or (
+    select attnotnull from pg_attribute
+    where attrelid = 'public.calendar_connections'::regclass and attname = 'scopes'
+  ) is not true then
+    raise exception 'STAGING RELEASE FAIL: booking_types.duration_options and calendar_connections.scopes must be NOT NULL after migration';
   end if;
 
   raise notice 'ALL STAGING RELEASE INVARIANTS PASSED';

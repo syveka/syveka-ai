@@ -72,6 +72,38 @@ function columnNotNull(model, field) {
   return LIST_COLUMN_NOT_NULL.get(`${tableName(model)}.${columnName(field)}`);
 }
 
+// Scalar-list columns whose NOT NULL constraint (recorded as `true` above) could not be
+// produced by `prisma db push` against this project's pre-migration-system legacy schema:
+// Prisma's db push does not emit NOT NULL for scalar-list columns even when the Prisma field
+// is required, unlike the hand-authored migration SQL that later created these same columns
+// with an explicit NOT NULL (see scripts/ci/provision-legacy-database.sh, legacy_sha
+// 6f6ab84f0f3849a172e0fdfdc49610058640d56c, and
+// prisma/migrations/20260713000000_calendar_booking_v1). The pre-upgrade compatibility
+// preflight must tolerate this specific, verified historical state without weakening the
+// check for any other column; the fully-migrated target state (both NOT NULL, recorded above)
+// is enforced for real by prisma/migrations/20260726000000_normalize_list_column_nullability,
+// since a legacy database has 20260713000000_calendar_booking_v1 marked as already-applied
+// and so never actually runs its DDL.
+const LEGACY_NULLABLE_LIST_COLUMNS = [
+  "booking_types.duration_options",
+  "calendar_connections.scopes",
+];
+
+for (const key of LEGACY_NULLABLE_LIST_COLUMNS) {
+  if (!LIST_COLUMN_NOT_NULL.has(key)) {
+    throw new Error(
+      `LEGACY_NULLABLE_LIST_COLUMNS references "${key}", which has no LIST_COLUMN_NOT_NULL entry.`,
+    );
+  }
+  if (LIST_COLUMN_NOT_NULL.get(key) !== true) {
+    throw new Error(
+      `LEGACY_NULLABLE_LIST_COLUMNS references "${key}", whose target nullability is not NOT ` +
+        "NULL (true) — a legacy tolerance is only meaningful for a column whose fully-migrated " +
+        "target is NOT NULL.",
+    );
+  }
+}
+
 function postgresType(field) {
   if (field.name === "embedding") return "vector(1536)";
   if (field.isList) {
@@ -187,6 +219,9 @@ for (const model of models) {
 console.log("-- BEGIN COMPLETE COLUMN CONTRACT");
 console.log(columnRows.join(",\n"));
 console.log("-- END COMPLETE COLUMN CONTRACT");
+console.log("-- BEGIN LEGACY NULLABLE LIST COLUMNS");
+console.log(LEGACY_NULLABLE_LIST_COLUMNS.map((key) => `    ${sqlString(key)}`).join(",\n"));
+console.log("-- END LEGACY NULLABLE LIST COLUMNS");
 console.log("-- BEGIN COMPLETE FOREIGN KEY CONTRACT");
 console.log(fkRows.join(",\n"));
 console.log("-- END COMPLETE FOREIGN KEY CONTRACT");
