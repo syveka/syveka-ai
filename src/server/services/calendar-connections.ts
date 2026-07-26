@@ -175,10 +175,11 @@ export async function completeConnection(params: {
   return { orgId, connectionId: connection.id };
 }
 
-/** Decrypted, refreshed-when-needed tokens for a connection. */
-export async function getFreshTokens(connectionId: string): Promise<OAuthTokens> {
-  const conn = await unscopedPrisma.calendarConnection.findUnique({
-    where: { id: connectionId },
+/** Decrypted, refreshed-when-needed tokens for a connection. Filters by `orgId` so the
+ * function is tenant-safe by construction rather than by caller discipline. */
+export async function getFreshTokens(connectionId: string, orgId: string): Promise<OAuthTokens> {
+  const conn = await unscopedPrisma.calendarConnection.findFirst({
+    where: { id: connectionId, organizationId: orgId },
   });
   if (!conn || !conn.accessTokenEnc) throw new ConnectionError("Connection not found", "not_found");
 
@@ -288,7 +289,7 @@ export async function disconnectConnection(
 
   // Best-effort webhook unsubscription + token revocation.
   try {
-    const tokens = await getFreshTokens(connectionId);
+    const tokens = await getFreshTokens(connectionId, ctx.orgId);
     for (const cal of conn.calendars) {
       if (cal.syncState?.webhookSubscriptionId) {
         await adapter
@@ -333,7 +334,7 @@ export async function checkConnectionHealth(ctx: TenantContext, connectionId: st
   });
   if (!conn) throw new ConnectionError("Connection not found", "not_found");
   try {
-    const tokens = await getFreshTokens(connectionId);
+    const tokens = await getFreshTokens(connectionId, ctx.orgId);
     await getProviderAdapter(conn.provider).listCalendars(tokens);
     await markConnectionStatus(connectionId, "CONNECTED");
     return { status: "CONNECTED" as const };

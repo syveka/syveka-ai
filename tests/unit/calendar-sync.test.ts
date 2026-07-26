@@ -96,6 +96,12 @@ describe("idempotent import sync", () => {
     expect(unscopedMock.eventAttendee.createMany).toHaveBeenCalled();
   });
 
+  it("fetches tokens scoped to the calendar's own organization", async () => {
+    mockProviderTestApi.seedEvents("mock-primary", [remoteEvent()]);
+    await syncExternalCalendar("extcal-1");
+    expect(getFreshTokensMock).toHaveBeenCalledWith("conn-1", "org-a");
+  });
+
   it("replaying the same page is a no-op (same etag → skipped)", async () => {
     mockProviderTestApi.seedEvents("mock-primary", [remoteEvent()]);
     unscopedMock.calendarEvent.findUnique.mockResolvedValue({

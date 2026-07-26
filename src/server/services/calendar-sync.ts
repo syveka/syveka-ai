@@ -106,7 +106,7 @@ export async function syncExternalCalendar(externalCalendarId: string): Promise<
   };
 
   try {
-    const tokens = await getFreshTokens(calendar.connectionId);
+    const tokens = await getFreshTokens(calendar.connectionId, calendar.organizationId);
     let cursor: string | null = calendar.syncState?.syncCursor ?? null;
     let pages = 0;
 
@@ -215,7 +215,7 @@ export async function ensureWebhookSubscription(externalCalendarId: string): Pro
   if (stillValid) return;
 
   const adapter = getProviderAdapter(calendar.connection.provider);
-  const tokens = await getFreshTokens(calendar.connectionId);
+  const tokens = await getFreshTokens(calendar.connectionId, calendar.organizationId);
   const callbackUrl = `${clientEnv.NEXT_PUBLIC_APP_URL}/api/v1/webhooks/calendar/${calendar.connection.provider.toLowerCase()}`;
   const sub = await adapter.subscribeWebhook(tokens, calendar.externalId, callbackUrl);
   if (!sub) return;
