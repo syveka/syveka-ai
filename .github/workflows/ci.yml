@@ -307,7 +307,7 @@ jobs:
           PGURL: postgresql://postgres:postgres@localhost:5432/postgres
         run: |
           bash scripts/ci/provision-legacy-database.sh
-          databases="legacy_upgrade drifted_schema missing_column column_drift fk_wrong_source fk_wrong_target fk_not_valid weak_policy weak_messages weak_prompts weak_calendar wrong_policy_role wrong_policy_command"
+          databases="legacy_upgrade drifted_schema missing_column column_drift fk_wrong_source fk_wrong_target fk_not_valid fk_legacy_already_final fk_legacy_wrong_update_action fk_legacy_wrong_delete_action fk_legacy_not_valid fk_legacy_deferrable fk_state_no_table fk_state_pending fk_state_applied fk_state_unfinished fk_state_rolled_back fk_state_final_applied weak_policy weak_messages weak_prompts weak_calendar wrong_policy_role wrong_policy_command"
           for database in $databases; do
             psql "$PGURL" -v ON_ERROR_STOP=1 -c "create database $database with template legacy_template"
           done
@@ -316,15 +316,41 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/legacy_upgrade
           DIRECT_URL: postgresql://postgres:postgres@localhost:5432/legacy_upgrade
         run: |
+          # `prisma db push` against the pinned legacy schema (which already models
+          # conversation_documents with today's composite foreign keys) reconstructs
+          # conversation_documents_organization_id_fkey with Prisma's current default
+          # referential actions (ON UPDATE CASCADE), not the ON UPDATE NO ACTION a real,
+          # continuously-migrated production database still carries at this point --
+          # so this step exercises the primary (non-override) branch of the FK check,
+          # not the legacy override itself. The override's exact tolerance boundary is
+          # covered directly below by the fk_legacy_* scenarios, which force the real
+          # historical value onto a clone regardless of what this template contains.
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
           npx prisma migrate deploy
           npx prisma migrate status
+          # 20260729000000_conversation_documents_organization_fk_on_update must have
+          # corrected the constraint for real by the end of this deploy.
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if (select confupdtype from pg_constraint where conname = 'conversation_documents_organization_id_fkey') <> 'c' then raise exception 'conversation_documents_organization_id_fkey was not upgraded to ON UPDATE CASCADE'; end if; end \$\$"
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/rls/calendar-booking-isolation.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
+      - name: Accept an already-corrected foreign key without needing the legacy override
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fk_legacy_already_final
+          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/fk_legacy_already_final
+        run: |
+          # Simulates a database where this FK was already corrected out-of-band
+          # before this deploy; the primary (non-override) branch of the FK check
+          # must accept it on its own, proving the override is additive tolerance
+          # and not required for the final state to pass.
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c 'alter table public.conversation_documents drop constraint conversation_documents_organization_id_fkey, add constraint conversation_documents_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete cascade on update cascade'
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
+          npx prisma migrate deploy
+          npx prisma migrate status
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if (select confupdtype from pg_constraint where conname = 'conversation_documents_organization_id_fkey') <> 'c' then raise exception 'already-final conversation_documents_organization_id_fkey was disturbed'; end if; end \$\$"
       - name: Reject a partially provisioned schema atomically
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/partial_schema
@@ -399,6 +425,84 @@ jobs:
           reject_fk_drift fk_wrong_source 'alter table public.contacts drop constraint contacts_organization_id_fkey, add constraint contacts_organization_id_fkey foreign key (company_id) references public.organizations(id) on delete cascade on update cascade' "do \$\$ begin if pg_get_constraintdef((select oid from pg_constraint where conname = 'contacts_organization_id_fkey')) not like 'FOREIGN KEY (company_id)%' then raise exception 'wrong source FK was rewritten'; end if; end \$\$"
           reject_fk_drift fk_wrong_target 'alter table public.contacts drop constraint contacts_organization_id_fkey, add constraint contacts_organization_id_fkey foreign key (organization_id) references public.users(id) on delete cascade on update cascade' "do \$\$ begin if pg_get_constraintdef((select oid from pg_constraint where conname = 'contacts_organization_id_fkey')) not like '%REFERENCES users(id)%' then raise exception 'wrong target FK was rewritten'; end if; end \$\$"
           reject_fk_drift fk_not_valid 'alter table public.contacts drop constraint contacts_organization_id_fkey, add constraint contacts_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete cascade on update cascade not valid' "do \$\$ begin if (select convalidated from pg_constraint where conname = 'contacts_organization_id_fkey') then raise exception 'NOT VALID FK was rewritten'; end if; end \$\$"
+          # The next four all target conversation_documents_organization_id_fkey --
+          # the one constraint with a narrow legacy override -- to prove that override
+          # tolerates exactly ON UPDATE NO ACTION and nothing else: a different update
+          # action, a different delete action, an unvalidated constraint, or a
+          # deferrable constraint must all still fail closed even though they share
+          # the same constraint name the override names.
+          reject_fk_drift fk_legacy_wrong_update_action 'alter table public.conversation_documents drop constraint conversation_documents_organization_id_fkey, add constraint conversation_documents_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete cascade on update set null' "do \$\$ begin if (select confupdtype from pg_constraint where conname = 'conversation_documents_organization_id_fkey') <> 'n' then raise exception 'wrong legacy update-action FK was rewritten'; end if; end \$\$"
+          reject_fk_drift fk_legacy_wrong_delete_action 'alter table public.conversation_documents drop constraint conversation_documents_organization_id_fkey, add constraint conversation_documents_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete restrict on update no action' "do \$\$ begin if (select confdeltype from pg_constraint where conname = 'conversation_documents_organization_id_fkey') <> 'r' then raise exception 'wrong legacy delete-action FK was rewritten'; end if; end \$\$"
+          reject_fk_drift fk_legacy_not_valid 'alter table public.conversation_documents drop constraint conversation_documents_organization_id_fkey, add constraint conversation_documents_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete cascade on update no action not valid' "do \$\$ begin if (select convalidated from pg_constraint where conname = 'conversation_documents_organization_id_fkey') then raise exception 'unvalidated legacy FK was rewritten'; end if; end \$\$"
+          reject_fk_drift fk_legacy_deferrable 'alter table public.conversation_documents drop constraint conversation_documents_organization_id_fkey, add constraint conversation_documents_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete cascade on update no action deferrable' "do \$\$ begin if not (select condeferrable from pg_constraint where conname = 'conversation_documents_organization_id_fkey') then raise exception 'deferrable legacy FK was rewritten'; end if; end \$\$"
+      - name: Verify the legacy FK override is gated by governing-migration-applied state
+        shell: bash
+        run: |
+          set -euo pipefail
+          legacy_fk_sql='alter table public.conversation_documents drop constraint conversation_documents_organization_id_fkey, add constraint conversation_documents_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete cascade on update no action'
+          governing_migration='20260729000000_conversation_documents_organization_fk_on_update'
+
+          # A: a genuinely legacy database -- no _prisma_migrations table at all --
+          # must still be tolerated; absence of the tracking table is not evidence the
+          # migration ran.
+          export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/fk_state_no_table"
+          export DIRECT_URL="$DATABASE_URL"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "$legacy_fk_sql"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c 'drop table public._prisma_migrations'
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
+
+          # B: _prisma_migrations exists (from the eight already-resolved published
+          # migrations) but has no row at all for the governing migration -- the
+          # ordinary not-yet-deployed legacy-upgrade state -- must still be tolerated.
+          export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/fk_state_pending"
+          export DIRECT_URL="$DATABASE_URL"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "$legacy_fk_sql"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
+
+          # C: once the governing migration is recorded as successfully applied
+          # (finished_at set, rolled_back_at null), the exact same legacy value is a
+          # real regression, not history -- the preflight must fail, and (since the
+          # baseline migration embeds this identical check) `prisma migrate deploy`
+          # must fail too, before rewriting anything.
+          export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/fk_state_applied"
+          export DIRECT_URL="$DATABASE_URL"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "$legacy_fk_sql"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "insert into public._prisma_migrations (id, checksum, migration_name, started_at, finished_at, applied_steps_count) values ('11111111-1111-1111-1111-111111111111', repeat('0', 64), '$governing_migration', now(), now(), 1)"
+          if psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql; then
+            echo "Preflight unexpectedly accepted NO ACTION after the governing migration was recorded applied."
+            exit 1
+          fi
+          if npx prisma migrate deploy; then
+            echo "prisma migrate deploy unexpectedly accepted NO ACTION after the governing migration was recorded applied."
+            exit 1
+          fi
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if (select confupdtype from pg_constraint where conname = 'conversation_documents_organization_id_fkey') <> 'a' then raise exception 'malformed constraint was rewritten instead of being rejected'; end if; end \$\$"
+
+          # D1: a row that started but never finished (finished_at NULL) must NOT
+          # count as successfully applied -- this exercises Prisma's own
+          # migration-history semantics, not a special case we invented, so the
+          # tolerance must still apply.
+          export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/fk_state_unfinished"
+          export DIRECT_URL="$DATABASE_URL"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "$legacy_fk_sql"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "insert into public._prisma_migrations (id, checksum, migration_name, started_at, applied_steps_count) values ('22222222-2222-2222-2222-222222222222', repeat('0', 64), '$governing_migration', now(), 0)"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
+
+          # D2: a row that finished but was later rolled back must NOT count as
+          # successfully applied either.
+          export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/fk_state_rolled_back"
+          export DIRECT_URL="$DATABASE_URL"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "$legacy_fk_sql"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "insert into public._prisma_migrations (id, checksum, migration_name, started_at, finished_at, rolled_back_at, applied_steps_count) values ('33333333-3333-3333-3333-333333333333', repeat('0', 64), '$governing_migration', now(), now(), now(), 1)"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
+
+          # E: the final ON UPDATE CASCADE definition always passes regardless of
+          # whether the governing migration is recorded yet -- it matches the
+          # contract directly and never needs the override.
+          export DATABASE_URL="postgresql://postgres:postgres@localhost:5432/fk_state_final_applied"
+          export DIRECT_URL="$DATABASE_URL"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "insert into public._prisma_migrations (id, checksum, migration_name, started_at, finished_at, applied_steps_count) values ('44444444-4444-4444-4444-444444444444', repeat('0', 64), '$governing_migration', now(), now(), 1)"
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
       - name: Reject a same-name weakened tenant policy
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/weak_policy
