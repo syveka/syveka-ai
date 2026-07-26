@@ -2,9 +2,7 @@ import { createHash } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
-  verifyJobRequest: vi.fn(
-    async (request: Request): Promise<string | null> => request.text(),
-  ),
+  verifyJobRequest: vi.fn(async (request: Request): Promise<string | null> => request.text()),
   findMany: vi.fn(async (..._args: unknown[]) => [] as Array<{ id: string }>),
   ensureWebhookSubscription: vi.fn(
     async (_id: string): Promise<"reused" | "renewed" | "skipped"> => "renewed",
@@ -43,7 +41,9 @@ function calendarIds(count: number, startAt = 0): Array<{ id: string }> {
 }
 
 function retryDeduplicationId(failedIds: string[]): string {
-  const digest = createHash("sha256").update([...failedIds].sort().join(",")).digest("hex");
+  const digest = createHash("sha256")
+    .update([...failedIds].sort().join(","))
+    .digest("hex");
   return `calendar-sync-retry-${digest}`;
 }
 

@@ -290,9 +290,7 @@ console.log("-- BEGIN LEGACY NULLABLE LIST COLUMNS");
 console.log(LEGACY_NULLABLE_LIST_COLUMNS.map((key) => `    ${sqlString(key)}`).join(",\n"));
 console.log("-- END LEGACY NULLABLE LIST COLUMNS");
 console.log("-- BEGIN LEGACY MISSING COLUMNS");
-console.log(
-  LEGACY_MISSING_COLUMN_ENTRIES.map(([key]) => `    ${sqlString(key)}`).join(",\n"),
-);
+console.log(LEGACY_MISSING_COLUMN_ENTRIES.map(([key]) => `    ${sqlString(key)}`).join(",\n"));
 console.log("-- END LEGACY MISSING COLUMNS");
 console.log("-- BEGIN COMPLETE FOREIGN KEY CONTRACT");
 console.log(fkRows.join(",\n"));

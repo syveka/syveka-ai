@@ -19,7 +19,9 @@ const payloadSchema = z.union([sweepPayloadSchema, retryPayloadSchema]);
 /** Deterministic across replays of the same sweep page: same failed set → same id, so
  * QStash dedupes a re-publish instead of chaining a second retry job. */
 function retryDeduplicationId(failedIds: string[]): string {
-  const digest = createHash("sha256").update([...failedIds].sort().join(",")).digest("hex");
+  const digest = createHash("sha256")
+    .update([...failedIds].sort().join(","))
+    .digest("hex");
   return `calendar-sync-retry-${digest}`;
 }
 
