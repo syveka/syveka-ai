@@ -9,7 +9,48 @@ quick.
 Done. Resolved in commit `3b285a2` ("fix: unblock dependency audit and formatting"). Superseded
 by this handoff.
 
-## Current target
+## Status of the previous handoff (schema-contract drift on `booking_types.duration_options`)
+
+**Done — diagnosed and fixed.** This handoff originally asked only for a read-only diagnosis
+(see the preserved sections below for the full original brief). A later session completed the
+diagnosis, confirmed the frozen contract was the stale side (per the "safest next investigation
+steps" below), and shipped the fix:
+
+- Root cause (step 1/3 above): `scripts/generate-legacy-schema-contract.mjs` used
+  `field.isRequired && !field.isList`, which blanket-marked every Prisma scalar-list column as
+  nullable in the frozen contract. `booking_types.duration_options` and
+  `calendar_connections.scopes` are genuinely `NOT NULL` per their creation migration
+  (`20260713000000_calendar_booking_v1`, checksum-pinned) — the contract was wrong, not the live
+  database. Fixed in commit `094c5ac` ("fix: correct legacy list nullability contract"), which
+  replaced the heuristic with an explicit, fail-closed `LIST_COLUMN_NOT_NULL` map.
+- That fix then broke real legacy-database upgrades in CI (Prisma's `db push`, used to provision
+  the legacy template, never emits `NOT NULL` for scalar-list columns even when the Prisma field
+  is required). Fixed in commit `b69854e` ("fix: preserve legacy list nullability upgrade"):
+  the preflight now tolerates the verified historical nullable state for exactly these two
+  columns via an explicit `legacy_nullable_list_columns` allowlist, and a new additive migration
+  `20260726000000_normalize_list_column_nullability` backfills and applies `NOT NULL` for real on
+  the legacy-upgrade path.
+- Both commits merged to `main` via PR #17 (`syveka/fix/legacy-list-nullability-contract`,
+  merge commit `db88448`). Per the `b69854e` commit message, this was verified against both a
+  disposable CI-equivalent legacy database and a fresh full-history install: preflight passes
+  pre-upgrade, `migrate deploy` + release invariants pass post-upgrade, both columns are
+  genuinely `NOT NULL` afterward, and drift rejection for unrelated columns is unaffected.
+- No pinned migration file was edited; the fix is additive, exactly as this handoff's
+  "prohibited changes" section required.
+
+**Known gap:** as of 2026-07-26, the branch `docs/codex-handoff-migration-repair-status` (and
+apparently this file's own content, which was never updated after PR #17 merged) is 8 commits
+behind `origin/main` and does not yet contain `094c5ac`/`b69854e`. Anyone continuing work in that
+branch should sync with `main` before doing anything else with the schema contract — do not
+re-diagnose or re-fix this from scratch.
+
+No new task is assigned yet. Await a fresh handoff before starting P1/P2 `ROADMAP.md` items.
+
+---
+
+## Original brief (preserved for reference — see "Done" status above)
+
+## Current target (historical)
 
 **Diagnose (do not yet fix) a schema-contract drift on `booking_types.duration_options` that now
 blocks staging release validation's read-only compatibility preflight.**
@@ -61,7 +102,7 @@ migration actually shaped this column and the contract's frozen expectation of i
   `duration_options` to `NOT NULL`, if it was one of them) **are** pinned — do not assume any of
   them can be edited without the same care applied to the baseline fix.
 
-## Safest next investigation steps (do not act on these yet without re-confirming)
+## Safest next investigation steps (historical — already carried out, see "Done" status above)
 
 1. `git log -p --all -- prisma/migrations/*/migration.sql | grep -n -B5 'duration_options'` (or
    grep each `migration.sql` directly) to find every statement that touches
@@ -90,7 +131,7 @@ migration actually shaped this column and the contract's frozen expectation of i
    database migrated through all 10 migrations before touching staging again — this reproduces
    the failure without needing staging credentials at all.
 
-## Prohibited changes (for tonight, and until the above is deliberately decided)
+## Prohibited changes (historical — superseded, see "Done" status above)
 
 - Do not modify any published (checksum-pinned) migration file.
 - Do not modify `prisma/schema.prisma` or any live database schema, staging or production.
@@ -114,6 +155,6 @@ migration actually shaped this column and the contract's frozen expectation of i
 
 ## Database impact
 
-None yet — this handoff is diagnosis-only. Any eventual fix must be additive (new migration
-and/or contract text correction), never a rewrite of a pinned migration or a direct unreviewed
-change to staging/production.
+None from this handoff directly. The eventual fix (see "Done" status above) was additive: a new
+migration plus a contract text correction, never a rewrite of a pinned migration or a direct
+unreviewed change to staging/production.
