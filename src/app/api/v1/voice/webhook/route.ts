@@ -72,12 +72,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     { executeTool },
     { getMonthUsage, getEntitlements },
     { enqueue },
+    { redis },
   ] = await Promise.all([
     import("@/server/integrations/vapi"),
     import("@/server/db/tenant"),
     import("@/server/ai/tools"),
     import("@/server/services/billing/entitlements"),
     import("@/server/jobs/queue"),
+    import("@/server/integrations/redis"),
   ]);
 
   const rawBody = await request.text();
@@ -175,7 +177,33 @@ export async function POST(request: Request): Promise<NextResponse> {
         },
       });
 
-      await enqueue("post-call", { vapiCallId: message.call.id, orgId });
+      // Replay/idempotency guard for the post-call side effect only — the voiceCall
+      // upsert above is already safe to repeat. A validly-signed end-of-call-report
+      // has no expiry, so Vapi retries (or a captured-and-replayed request) could
+      // otherwise re-trigger the post-call pipeline indefinitely.
+      //
+      // QStash's own deduplicationId covers concurrent/uncertain-ack deliveries; the
+      // durable Redis marker below covers replays outside QStash's window. The marker
+      // is written only *after* enqueue succeeds, so a failed enqueue never gets
+      // marked complete — a legitimate retry must still be able to enqueue.
+      const dedupeKey = `vapi:eocr:${orgId}:${message.call.id}`;
+      const alreadyProcessed = await redis.get(dedupeKey);
+      if (alreadyProcessed) {
+        return NextResponse.json({ ok: true, duplicate: true });
+      }
+
+      try {
+        await enqueue(
+          "post-call",
+          { vapiCallId: message.call.id, orgId },
+          { deduplicationId: `vapi-eocr-${orgId}-${message.call.id}` },
+        );
+      } catch {
+        // Do not mark the event complete: a legitimate retry must be able to enqueue.
+        return NextResponse.json({ error: "post-call enqueue failed" }, { status: 500 });
+      }
+
+      await redis.set(dedupeKey, "1", { ex: 60 * 60 * 24 });
       return NextResponse.json({ ok: true });
     }
 

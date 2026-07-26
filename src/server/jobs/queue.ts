@@ -22,12 +22,13 @@ export type JobName =
 export async function enqueue(
   job: JobName,
   payload: Record<string, unknown>,
-  opts?: { delaySeconds?: number },
+  opts?: { delaySeconds?: number; deduplicationId?: string },
 ): Promise<void> {
   await getQstash().publishJSON({
     url: `${env.NEXT_PUBLIC_APP_URL}/api/v1/jobs/${job}`,
     body: payload,
     retries: 3,
     ...(opts?.delaySeconds ? { delay: opts.delaySeconds } : {}),
+    ...(opts?.deduplicationId ? { deduplicationId: opts.deduplicationId } : {}),
   });
 }
