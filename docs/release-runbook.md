@@ -235,6 +235,31 @@ provided `GITHUB_TOKEN` needs only `contents: read` and `actions: read`.
 deny-list variables. Keep all runtime production values in the hosting provider's protected production scope.
 Never echo, export to artifacts, or expose any of these values to client bundles.
 
+## Calendar webhook subscription maintenance schedule (QStash)
+
+`ensureWebhookSubscription()` (P0.2) reuses a subscription only while it has more than
+12 hours left before expiry. Nothing renews it on a schedule by itself — the only other
+caller is the settings-page toggle-on action, which runs once, immediately, and never
+again. `src/app/api/v1/jobs/calendar-sync/route.ts` is the recurring maintenance sweep
+that keeps enabled calendars' webhook subscriptions (and verification secrets) renewed,
+but **the code alone does not create its own trigger** — a QStash recurring schedule
+must be registered manually, once per environment, before this is operationally
+complete:
+
+- POST destination: `/api/v1/jobs/calendar-sync`
+- Cron: `0 */6 * * *` (every 6 hours — comfortably more frequent than the 12-hour
+  freshness buffer above, so a subscription is always renewed well before it lapses)
+- Initial JSON body: `{}`
+- The request must be delivered and signed by QStash (verified via
+  `verifyJobRequest`, the same signature check every other `jobs/*` route uses) —
+  do not point any other caller at this route.
+
+This is a required pre-deployment operational step, not a code change. **Do not
+consider P0.2 operationally complete for an environment until this schedule has
+actually been registered against it** — until then, any calendar's webhook
+subscription still silently lapses days after a user enables sync, exactly as before
+this fix, because nothing will be calling this route on a recurring basis.
+
 ## Production smoke checklist
 
 - `/api/health` returns HTTP 200 with database and Redis checks `ok`.

@@ -16,6 +16,7 @@ const expectedOrder = [
   "20260719000000_initial_security_baseline",
   "20260726000000_normalize_list_column_nullability",
   "20260727000000_fix_match_chunks_document_eligibility",
+  "20260728000000_calendar_webhook_verification_secret",
 ];
 
 // These eight migrations were published before the staging-release branch.

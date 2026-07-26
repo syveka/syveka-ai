@@ -112,9 +112,14 @@ export const mockCalendarAdapter: CalendarProviderAdapter = {
     };
   },
 
-  async subscribeWebhook(): Promise<WebhookSubscription> {
+  async subscribeWebhook(
+    _tokens,
+    _calendarExternalId,
+    _callbackUrl,
+    _verificationSecret,
+  ): Promise<WebhookSubscription> {
     return {
-      subscriptionId: `mock-sub-${Date.now()}`,
+      subscriptionId: `mock-sub-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       expiresAt: new Date(Date.now() + 7 * 86_400_000),
     };
   },

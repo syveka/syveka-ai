@@ -93,7 +93,7 @@ describe("staging release migration contract", () => {
       "  FOR expected IN\n    SELECT * FROM (VALUES\n      ('Locale'",
       "complete foreign-key contract",
     ).match(/^      \('public', '[^']+', '[^']+_fkey',/gm);
-    expect(columnRows).toHaveLength(469);
+    expect(columnRows).toHaveLength(470);
     expect(foreignKeyRows).toHaveLength(71);
     // Scalar-list (array) columns cannot express nullability via Prisma's DMMF (Prisma has no
     // optional-list syntax), so each column's real PostgreSQL NOT NULL status is verified

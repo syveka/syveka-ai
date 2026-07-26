@@ -233,7 +233,12 @@ export const microsoftCalendarAdapter: CalendarProviderAdapter = {
     }
   },
 
-  async subscribeWebhook(tokens, calendarExternalId, callbackUrl): Promise<WebhookSubscription> {
+  async subscribeWebhook(
+    tokens,
+    calendarExternalId,
+    callbackUrl,
+    verificationSecret,
+  ): Promise<WebhookSubscription> {
     const data = await graphFetch<{ id: string; expirationDateTime?: string }>(
       `${GRAPH}/subscriptions`,
       tokens.accessToken,
@@ -245,6 +250,7 @@ export const microsoftCalendarAdapter: CalendarProviderAdapter = {
           notificationUrl: callbackUrl,
           resource: `/me/calendars/${calendarExternalId}/events`,
           expirationDateTime: new Date(Date.now() + 3 * 86_400_000 - 60_000).toISOString(),
+          clientState: verificationSecret,
         }),
       },
     );

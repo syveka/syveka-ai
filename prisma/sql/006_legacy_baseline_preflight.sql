@@ -50,6 +50,25 @@ DECLARE
     'calendar_connections.scopes'
 -- END LEGACY NULLABLE LIST COLUMNS
   ];
+  -- Columns that may not exist YET on a legacy-upgrade database when this preflight
+  -- runs, because their governing migration is intentionally NOT in the "already
+  -- resolved" published-migrations list (scripts/ci/provision-legacy-database.sh) --
+  -- it runs for real, later in the same `prisma migrate deploy` invocation, not
+  -- before it. Unlike legacy_nullable_list_columns (an existing column with a
+  -- temporarily-wrong attribute), these columns may be entirely absent at check
+  -- time. A column in this list only skips the missing-column exception -- if it
+  -- DOES exist, every normal type/nullability/identity/generated/default check below
+  -- still applies in full, so a present-but-malformed allowlisted column still fails.
+  --   - calendar_sync_states.webhook_verification_secret_hash: the pinned legacy
+  --     snapshot (6f6ab84f0f3849a172e0fdfdc49610058640d56c) predates this column;
+  --     20260728000000_calendar_webhook_verification_secret (not a published/resolved
+  --     migration) adds it for real later in the same deploy; after that migration
+  --     completes, the database must have the correctly shaped column like any other.
+  legacy_missing_columns TEXT[] := ARRAY[
+-- BEGIN LEGACY MISSING COLUMNS
+    'calendar_sync_states.webhook_verification_secret_hash'
+-- END LEGACY MISSING COLUMNS
+  ];
 BEGIN
   IF to_regclass('public.organizations') IS NULL THEN
     SELECT table_name
@@ -471,6 +490,7 @@ BEGIN
       ('calendar_sync_states', 'webhook_expires_at', 'timestamp(3) without time zone', 'false', '', '', ''),
       ('calendar_sync_states', 'webhook_resource_id', 'text', 'false', '', '', ''),
       ('calendar_sync_states', 'webhook_subscription_id', 'text', 'false', '', '', ''),
+      ('calendar_sync_states', 'webhook_verification_secret_hash', 'text', 'false', '', '', ''),
       ('collections', 'created_at', 'timestamp(3) without time zone', 'true', '', '', 'current_timestamp'),
       ('collections', 'description', 'text', 'false', '', '', ''),
       ('collections', 'id', 'uuid', 'true', '', '', 'gen_random_uuid'),
@@ -817,6 +837,18 @@ BEGIN
       AND attribute.attname = expected.column_name
       AND attribute.attnum > 0
       AND NOT attribute.attisdropped;
+
+    IF NOT FOUND THEN
+      IF format('%s.%s', expected.table_name, expected.column_name)
+        = ANY(legacy_missing_columns) THEN
+        CONTINUE;
+      END IF;
+      RAISE EXCEPTION
+        'Syveka baseline missing column %.%: expected type %, not_null %, identity %, generated %, default %; column does not exist',
+        expected.table_name, expected.column_name, expected.formatted_type,
+        expected.not_null, expected.identity_kind, expected.generated_kind,
+        expected.normalized_default;
+    END IF;
 
     IF actual_type IS DISTINCT FROM expected.formatted_type
       OR (

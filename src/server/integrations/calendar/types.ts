@@ -73,10 +73,16 @@ export interface CalendarProviderAdapter {
     calendarExternalId: string,
     cursor: string | null,
   ): Promise<SyncPage>;
+  /**
+   * `verificationSecret` is a caller-generated, one-time-use-at-subscribe value (P0.2):
+   * Google sends it as the watch channel `token`; Microsoft sends it as `clientState`.
+   * It is never returned — only the caller's hash of it is ever persisted.
+   */
   subscribeWebhook(
     tokens: OAuthTokens,
     calendarExternalId: string,
     callbackUrl: string,
+    verificationSecret: string,
   ): Promise<WebhookSubscription | null>;
   unsubscribeWebhook(tokens: OAuthTokens, subscription: WebhookSubscription): Promise<void>;
 }
