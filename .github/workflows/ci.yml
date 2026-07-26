@@ -219,6 +219,131 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/migrations/match-chunks-eligibility.sql
 
+  rls-non-superuser:
+    name: RLS isolation tests (non-superuser Supabase-like role)
+    runs-on: ubuntu-latest
+    needs: [prisma-generate]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      # Supabase's own direct database role is intentionally not a Postgres
+      # superuser; the "Verify database RLS and tenant invariants" staging step runs
+      # under exactly this kind of restricted role, which is what actually failed
+      # (permission denied to set role "authenticated_test"). This job reproduces
+      # that role shape -- LOGIN, CREATEROLE only, no SUPERUSER, no BYPASSRLS -- to
+      # keep the fix honest instead of only ever testing as the superuser the other
+      # CI jobs use.
+      PGURL: postgresql://postgres:postgres@localhost:5432/postgres
+      DATABASE_URL: postgresql://supabase_like:supabase_like@localhost:5432/rls_non_superuser
+      DIRECT_URL: postgresql://supabase_like:supabase_like@localhost:5432/rls_non_superuser
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Provision a non-superuser, Supabase-like execution role
+        run: |
+          set -euo pipefail
+          psql "$PGURL" -v ON_ERROR_STOP=1 -c "create role authenticated nologin"
+          psql "$PGURL" -v ON_ERROR_STOP=1 -c "create role supabase_like login password 'supabase_like' createrole nosuperuser nobypassrls"
+          psql "$PGURL" -v ON_ERROR_STOP=1 -c "create database rls_non_superuser owner supabase_like"
+          # pgvector's CREATE EXTENSION requires a superuser; everything after this
+          # runs as supabase_like, which owns the resulting database (and, per
+          # PostgreSQL 15's pg_database_owner default, its public schema) but is
+          # never granted SUPERUSER or BYPASSRLS.
+          psql "$PGURL" -v ON_ERROR_STOP=1 -d rls_non_superuser -c 'create extension if not exists vector'
+          psql "$PGURL" -v ON_ERROR_STOP=1 -d rls_non_superuser -c 'create extension if not exists pgcrypto'
+          psql "$PGURL" -v ON_ERROR_STOP=1 -d rls_non_superuser -c 'create extension if not exists "uuid-ossp"'
+          not_a_member="$(psql "$PGURL" -Atqc "select not pg_has_role('supabase_like', 'authenticated', 'member')")"
+          if [ "$not_a_member" != "t" ]; then
+            echo "supabase_like must not start out as a member of authenticated."
+            exit 1
+          fi
+      - name: Deploy complete migration history as the non-superuser role
+        run: |
+          npx prisma migrate deploy
+          npx prisma migrate status
+      - name: Reject the un-fixed SET ROLE pattern under the non-superuser role
+        shell: bash
+        run: |
+          set -euo pipefail
+          # A regression control: this is the exact pattern the two isolation SQL
+          # files used before this fix (create + grant a role, then `set role`
+          # straight away, with no membership grant to the executing role first). It
+          # must keep failing under a non-superuser role exactly like staging did, or
+          # this reproduction has stopped meaning anything.
+          cat > /tmp/unfixed-set-role.sql <<'SQL'
+          begin;
+          do $$
+          begin
+            if not exists (select 1 from pg_roles where rolname = 'ci_regression_unfixed_role') then
+              create role ci_regression_unfixed_role login;
+            end if;
+          end $$;
+          grant authenticated to ci_regression_unfixed_role;
+          grant usage on schema public to ci_regression_unfixed_role;
+          set role ci_regression_unfixed_role;
+          rollback;
+          SQL
+          if psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f /tmp/unfixed-set-role.sql 2>/tmp/unfixed-set-role.err; then
+            echo "The un-fixed SET ROLE pattern unexpectedly succeeded under a non-superuser role."
+            cat /tmp/unfixed-set-role.err
+            exit 1
+          fi
+          grep -q 'permission denied to set role' /tmp/unfixed-set-role.err
+          echo "Confirmed: the un-fixed pattern still reproduces the staging failure under a non-superuser role."
+      - name: Run the corrected staging RLS and tenant invariant checks as the non-superuser role
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/calendar-booking-isolation.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
+      - name: Confirm no residue survives rollback
+        shell: bash
+        run: |
+          set -euo pipefail
+          leftover_roles="$(psql "$PGURL" -Atqc "select count(*) from pg_roles where rolname in ('authenticated_test', 'calendar_authenticated_test')")"
+          if [ "$leftover_roles" != "0" ]; then
+            echo "Temporary test role(s) leaked past rollback."
+            exit 1
+          fi
+          leftover_membership="$(psql "$PGURL" -Atqc "select count(*) from pg_auth_members am join pg_roles r on r.oid = am.roleid where r.rolname in ('authenticated_test', 'calendar_authenticated_test')")"
+          if [ "$leftover_membership" != "0" ]; then
+            echo "Temporary test role membership leaked past rollback."
+            exit 1
+          fi
+          leftover_fixtures="$(psql "$DATABASE_URL" -Atqc "select count(*) from organizations where id in ('11111111-0000-4000-8000-000000000000', '22222222-0000-4000-8000-000000000000', '31111111-0000-4000-8000-000000000000', '32222222-0000-4000-8000-000000000000')")"
+          if [ "$leftover_fixtures" != "0" ]; then
+            echo "Temporary RLS test fixtures leaked past rollback."
+            exit 1
+          fi
+          leftover_integrity_fixtures="$(psql "$DATABASE_URL" -Atqc "select count(*) from organizations where id in ('20000000-0000-4000-8000-000000000001', '20000000-0000-4000-8000-000000000002')")"
+          if [ "$leftover_integrity_fixtures" != "0" ]; then
+            echo "Temporary tenant-relationship-integrity fixtures leaked past rollback."
+            exit 1
+          fi
+          # A fresh connection (not the one that ran tenant-relationship-integrity.sql)
+          # confirming FORCE ROW LEVEL SECURITY reverted with the transaction, exactly
+          # as ordinary transactional DDL rollback guarantees -- not something that
+          # needed, or got, any separate manual cleanup.
+          force_rls_restored="$(psql "$DATABASE_URL" -Atqc "select relforcerowsecurity from pg_class where oid = 'public.conversation_documents'::regclass")"
+          if [ "$force_rls_restored" != "t" ]; then
+            echo "FORCE ROW LEVEL SECURITY on conversation_documents did not survive rollback."
+            exit 1
+          fi
+
   baseline-migration-repro:
     name: Initial baseline idempotency and failure-clarity
     runs-on: ubuntu-latest
@@ -683,6 +808,7 @@ jobs:
       - typecheck
       - tests
       - rls
+      - rls-non-superuser
       - baseline-migration-repro
       - migration-upgrade
       - build

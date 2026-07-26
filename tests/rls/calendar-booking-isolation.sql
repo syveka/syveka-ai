@@ -328,8 +328,14 @@ end $$;
 grant authenticated to calendar_authenticated_test;
 grant usage on schema public to calendar_authenticated_test;
 grant select, insert, update, delete on all tables in schema public to calendar_authenticated_test;
+-- Supabase's direct database role is intentionally not a superuser, so SET ROLE
+-- requires the executing role to already be a member of the target role. Grant that
+-- membership here, inside this same transaction, so it never persists past the
+-- `rollback` below; `set local role` (rather than plain `set role`) additionally
+-- confines the role switch to this transaction on its own.
+grant calendar_authenticated_test to current_user;
 
-set role calendar_authenticated_test;
+set local role calendar_authenticated_test;
 select set_config('request.jwt.claims', json_build_object(
   'sub', 'c0000000-0000-4000-8000-000000000001',
   'role', 'OWNER',
