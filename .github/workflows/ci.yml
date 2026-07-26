@@ -307,7 +307,7 @@ jobs:
           PGURL: postgresql://postgres:postgres@localhost:5432/postgres
         run: |
           bash scripts/ci/provision-legacy-database.sh
-          databases="legacy_upgrade drifted_schema missing_column column_drift fk_wrong_source fk_wrong_target fk_not_valid weak_policy weak_messages weak_prompts weak_calendar wrong_policy_role wrong_policy_command"
+          databases="legacy_upgrade drifted_schema missing_column column_drift fk_wrong_source fk_wrong_target fk_not_valid fk_legacy_already_final fk_legacy_wrong_update_action fk_legacy_wrong_delete_action fk_legacy_not_valid fk_legacy_deferrable weak_policy weak_messages weak_prompts weak_calendar wrong_policy_role wrong_policy_command"
           for database in $databases; do
             psql "$PGURL" -v ON_ERROR_STOP=1 -c "create database $database with template legacy_template"
           done
@@ -316,15 +316,41 @@ jobs:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/legacy_upgrade
           DIRECT_URL: postgresql://postgres:postgres@localhost:5432/legacy_upgrade
         run: |
+          # `prisma db push` against the pinned legacy schema (which already models
+          # conversation_documents with today's composite foreign keys) reconstructs
+          # conversation_documents_organization_id_fkey with Prisma's current default
+          # referential actions (ON UPDATE CASCADE), not the ON UPDATE NO ACTION a real,
+          # continuously-migrated production database still carries at this point --
+          # so this step exercises the primary (non-override) branch of the FK check,
+          # not the legacy override itself. The override's exact tolerance boundary is
+          # covered directly below by the fk_legacy_* scenarios, which force the real
+          # historical value onto a clone regardless of what this template contains.
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
           npx prisma migrate deploy
           npx prisma migrate status
+          # 20260729000000_conversation_documents_organization_fk_on_update must have
+          # corrected the constraint for real by the end of this deploy.
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if (select confupdtype from pg_constraint where conname = 'conversation_documents_organization_id_fkey') <> 'c' then raise exception 'conversation_documents_organization_id_fkey was not upgraded to ON UPDATE CASCADE'; end if; end \$\$"
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/rls/calendar-booking-isolation.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
+      - name: Accept an already-corrected foreign key without needing the legacy override
+        env:
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/fk_legacy_already_final
+          DIRECT_URL: postgresql://postgres:postgres@localhost:5432/fk_legacy_already_final
+        run: |
+          # Simulates a database where this FK was already corrected out-of-band
+          # before this deploy; the primary (non-override) branch of the FK check
+          # must accept it on its own, proving the override is additive tolerance
+          # and not required for the final state to pass.
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c 'alter table public.conversation_documents drop constraint conversation_documents_organization_id_fkey, add constraint conversation_documents_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete cascade on update cascade'
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
+          npx prisma migrate deploy
+          npx prisma migrate status
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if (select confupdtype from pg_constraint where conname = 'conversation_documents_organization_id_fkey') <> 'c' then raise exception 'already-final conversation_documents_organization_id_fkey was disturbed'; end if; end \$\$"
       - name: Reject a partially provisioned schema atomically
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/partial_schema
@@ -399,6 +425,16 @@ jobs:
           reject_fk_drift fk_wrong_source 'alter table public.contacts drop constraint contacts_organization_id_fkey, add constraint contacts_organization_id_fkey foreign key (company_id) references public.organizations(id) on delete cascade on update cascade' "do \$\$ begin if pg_get_constraintdef((select oid from pg_constraint where conname = 'contacts_organization_id_fkey')) not like 'FOREIGN KEY (company_id)%' then raise exception 'wrong source FK was rewritten'; end if; end \$\$"
           reject_fk_drift fk_wrong_target 'alter table public.contacts drop constraint contacts_organization_id_fkey, add constraint contacts_organization_id_fkey foreign key (organization_id) references public.users(id) on delete cascade on update cascade' "do \$\$ begin if pg_get_constraintdef((select oid from pg_constraint where conname = 'contacts_organization_id_fkey')) not like '%REFERENCES users(id)%' then raise exception 'wrong target FK was rewritten'; end if; end \$\$"
           reject_fk_drift fk_not_valid 'alter table public.contacts drop constraint contacts_organization_id_fkey, add constraint contacts_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete cascade on update cascade not valid' "do \$\$ begin if (select convalidated from pg_constraint where conname = 'contacts_organization_id_fkey') then raise exception 'NOT VALID FK was rewritten'; end if; end \$\$"
+          # The next four all target conversation_documents_organization_id_fkey --
+          # the one constraint with a narrow legacy override -- to prove that override
+          # tolerates exactly ON UPDATE NO ACTION and nothing else: a different update
+          # action, a different delete action, an unvalidated constraint, or a
+          # deferrable constraint must all still fail closed even though they share
+          # the same constraint name the override names.
+          reject_fk_drift fk_legacy_wrong_update_action 'alter table public.conversation_documents drop constraint conversation_documents_organization_id_fkey, add constraint conversation_documents_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete cascade on update set null' "do \$\$ begin if (select confupdtype from pg_constraint where conname = 'conversation_documents_organization_id_fkey') <> 'n' then raise exception 'wrong legacy update-action FK was rewritten'; end if; end \$\$"
+          reject_fk_drift fk_legacy_wrong_delete_action 'alter table public.conversation_documents drop constraint conversation_documents_organization_id_fkey, add constraint conversation_documents_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete restrict on update no action' "do \$\$ begin if (select confdeltype from pg_constraint where conname = 'conversation_documents_organization_id_fkey') <> 'r' then raise exception 'wrong legacy delete-action FK was rewritten'; end if; end \$\$"
+          reject_fk_drift fk_legacy_not_valid 'alter table public.conversation_documents drop constraint conversation_documents_organization_id_fkey, add constraint conversation_documents_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete cascade on update no action not valid' "do \$\$ begin if (select convalidated from pg_constraint where conname = 'conversation_documents_organization_id_fkey') then raise exception 'unvalidated legacy FK was rewritten'; end if; end \$\$"
+          reject_fk_drift fk_legacy_deferrable 'alter table public.conversation_documents drop constraint conversation_documents_organization_id_fkey, add constraint conversation_documents_organization_id_fkey foreign key (organization_id) references public.organizations(id) on delete cascade on update no action deferrable' "do \$\$ begin if not (select condeferrable from pg_constraint where conname = 'conversation_documents_organization_id_fkey') then raise exception 'deferrable legacy FK was rewritten'; end if; end \$\$"
       - name: Reject a same-name weakened tenant policy
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/weak_policy

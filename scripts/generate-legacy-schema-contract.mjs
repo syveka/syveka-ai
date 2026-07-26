@@ -248,6 +248,7 @@ const columnRows = scalarFields
   );
 
 const fkRows = [];
+const fkByConstraint = new Map();
 for (const model of models) {
   for (const relation of model.fields.filter(
     (field) => field.kind === "object" && field.relationFromFields?.length,
@@ -262,6 +263,8 @@ for (const model of models) {
     const constraint = `${tableName(model)}_${sourceColumns.join("_")}_fkey`;
     const deleteAction =
       relation.relationOnDelete ?? (relation.isRequired ? "Restrict" : "SetNull");
+    const updateAction = "Cascade";
+    fkByConstraint.set(constraint, { deleteAction, updateAction });
     fkRows.push(
       `      (${[
         "public",
@@ -272,13 +275,91 @@ for (const model of models) {
         tableName(target),
         `{${targetColumns.join(",")}}`,
         deleteAction,
-        "Cascade",
+        updateAction,
         false,
         false,
         true,
       ]
         .map(sqlString)
         .join(", ")})`,
+    );
+  }
+}
+
+// Foreign keys whose ON UPDATE action may still show a specific, verified
+// pre-correction legacy value on a not-yet-fully-upgraded database, because their
+// governing migration is intentionally NOT in the "already resolved"
+// published-migrations list (scripts/ci/provision-legacy-database.sh) -- it runs for
+// real, later in the very same `prisma migrate deploy` invocation, not before it. Only
+// the single named attribute below may legacy-differ for the one named constraint;
+// every other attribute (columns, referenced table, delete action, deferrability,
+// validation) -- and every other constraint's update action -- must still match the
+// final contract exactly, so a present-but-differently-malformed constraint, or drift
+// on any other constraint, still fails closed. This list must never grow
+// speculatively -- one entry per case actually shipped, added only when the same
+// before/after situation genuinely recurs.
+//   - conversation_documents_organization_id_fkey: created by
+//     20260715000000_ai_chat_production_hardening with no ON UPDATE clause (Postgres
+//     default NO ACTION). 20260715230000_security_invariant_corrections upgraded this
+//     table's other two foreign keys (conversation_id, document_id) to composite keys
+//     with ON UPDATE CASCADE but intentionally left this one alone,
+//     20260729000000_conversation_documents_organization_fk_on_update (not a
+//     published/resolved migration) drops and re-adds it with ON UPDATE CASCADE for
+//     real, later in the same deploy.
+const LEGACY_FOREIGN_KEY_UPDATE_ACTION_OVERRIDES = [
+  [
+    "conversation_documents_organization_id_fkey",
+    "NoAction",
+    "20260729000000_conversation_documents_organization_fk_on_update",
+  ],
+];
+
+const seenFkOverrideConstraints = new Set();
+for (const [
+  constraintName,
+  legacyUpdateAction,
+  migrationDir,
+] of LEGACY_FOREIGN_KEY_UPDATE_ACTION_OVERRIDES) {
+  if (seenFkOverrideConstraints.has(constraintName)) {
+    throw new Error(
+      `Duplicate LEGACY_FOREIGN_KEY_UPDATE_ACTION_OVERRIDES entry for constraint "${constraintName}".`,
+    );
+  }
+  seenFkOverrideConstraints.add(constraintName);
+
+  const fk = fkByConstraint.get(constraintName);
+  if (!fk) {
+    throw new Error(
+      `LEGACY_FOREIGN_KEY_UPDATE_ACTION_OVERRIDES references constraint "${constraintName}", ` +
+        "which is not a real foreign key in the current Prisma schema.",
+    );
+  }
+  if (legacyUpdateAction === fk.updateAction) {
+    throw new Error(
+      `LEGACY_FOREIGN_KEY_UPDATE_ACTION_OVERRIDES references constraint "${constraintName}" ` +
+        `with legacy update action "${legacyUpdateAction}", which matches its final target ` +
+        "update action -- a legacy tolerance is only meaningful when it differs from the " +
+        "final target.",
+    );
+  }
+  const migrationPath = path.join("prisma/migrations", migrationDir, "migration.sql");
+  if (!existsSync(migrationPath)) {
+    throw new Error(
+      `LEGACY_FOREIGN_KEY_UPDATE_ACTION_OVERRIDES references migration "${migrationDir}", ` +
+        `which does not exist at ${migrationPath}.`,
+    );
+  }
+  const migrationSql = readFileSync(migrationPath, "utf8");
+  const dropPattern = new RegExp(`DROP CONSTRAINT\\s+"${constraintName}"`, "i");
+  const addPattern = new RegExp(
+    `ADD CONSTRAINT\\s+"${constraintName}"[\\s\\S]*?ON UPDATE ${fk.updateAction === "Cascade" ? "CASCADE" : fk.updateAction.toUpperCase()}`,
+    "i",
+  );
+  if (!dropPattern.test(migrationSql) || !addPattern.test(migrationSql)) {
+    throw new Error(
+      `LEGACY_FOREIGN_KEY_UPDATE_ACTION_OVERRIDES references migration "${migrationDir}", whose ` +
+        `migration.sql does not drop and re-add constraint "${constraintName}" with the final ` +
+        "target update action.",
     );
   }
 }
@@ -295,6 +376,14 @@ console.log("-- END LEGACY MISSING COLUMNS");
 console.log("-- BEGIN COMPLETE FOREIGN KEY CONTRACT");
 console.log(fkRows.join(",\n"));
 console.log("-- END COMPLETE FOREIGN KEY CONTRACT");
+console.log("-- BEGIN LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES");
+console.log(
+  LEGACY_FOREIGN_KEY_UPDATE_ACTION_OVERRIDES.map(
+    ([constraintName, legacyUpdateAction]) =>
+      `    ${sqlString(`${constraintName}=${legacyUpdateAction}`)}`,
+  ).join(",\n"),
+);
+console.log("-- END LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES");
 
 const policies = [];
 const addPolicy = (table, name, command, using = "", check = "") => {

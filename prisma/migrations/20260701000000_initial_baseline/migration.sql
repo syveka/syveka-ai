@@ -75,6 +75,26 @@ DECLARE
     'calendar_sync_states.webhook_verification_secret_hash'
 -- END LEGACY MISSING COLUMNS
   ];
+  -- Foreign keys whose ON UPDATE action may still show a specific, verified
+  -- pre-correction legacy value on a not-yet-fully-upgraded database, because their
+  -- governing migration is intentionally NOT in the "already resolved"
+  -- published-migrations list -- it runs for real, later in the same `prisma migrate
+  -- deploy` invocation, not before it. Each entry is "constraint_name=legacy_update_action"
+  -- and tolerates ONLY that exact update action for ONLY that exact constraint; every
+  -- other attribute of that constraint (columns, referenced table, delete action,
+  -- deferrability, validation) and every other constraint's update action must still
+  -- match the frozen contract exactly.
+  --   - conversation_documents_organization_id_fkey: created with no ON UPDATE clause
+  --     (Postgres default NO ACTION) by 20260715000000_ai_chat_production_hardening;
+  --     20260715230000_security_invariant_corrections upgraded this table's other two
+  --     foreign keys but intentionally left this one alone;
+  --     20260729000000_conversation_documents_organization_fk_on_update (not a
+  --     published/resolved migration) corrects it for real later in the same deploy.
+  legacy_foreign_key_update_action_overrides TEXT[] := ARRAY[
+-- BEGIN LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES
+    'conversation_documents_organization_id_fkey=NoAction'
+-- END LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES
+  ];
 BEGIN
   IF to_regclass('public.organizations') IS NULL THEN
     SELECT table_name
@@ -1011,7 +1031,13 @@ BEGIN
       OR actual_target_table IS DISTINCT FROM expected.target_table
       OR actual_target_columns IS DISTINCT FROM expected.target_columns::TEXT[]
       OR actual_delete_action IS DISTINCT FROM expected.delete_action
-      OR actual_update_action IS DISTINCT FROM expected.update_action
+      OR (
+        actual_update_action IS DISTINCT FROM expected.update_action
+        AND NOT (
+          (expected.constraint_name || '=' || actual_update_action)
+            = ANY(legacy_foreign_key_update_action_overrides)
+        )
+      )
       OR actual_deferrable IS DISTINCT FROM expected.is_deferrable::BOOLEAN
       OR actual_initially_deferred IS DISTINCT FROM expected.initially_deferred::BOOLEAN
       OR actual_validated IS DISTINCT FROM expected.is_validated::BOOLEAN THEN

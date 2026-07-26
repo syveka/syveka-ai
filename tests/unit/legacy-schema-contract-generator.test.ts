@@ -141,6 +141,45 @@ function committedLegacyMissingColumns(): string[] {
     .map((line) => line.replace(/,$/, ""));
 }
 
+function legacyForeignKeyOverridesOf(generatorStdout: string): string[] {
+  const match = generatorStdout.match(
+    /-- BEGIN LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES\r?\n([\s\S]*?)\r?\n-- END LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES/,
+  );
+  const body = match?.[1];
+  if (body === undefined) {
+    throw new Error(
+      "Missing LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES markers in generator output.",
+    );
+  }
+  return body
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.replace(/,$/, ""));
+}
+
+function committedLegacyForeignKeyOverrides(): string[] {
+  const preflight = readFileSync(
+    resolve(process.cwd(), "prisma/sql/006_legacy_baseline_preflight.sql"),
+    "utf8",
+  );
+  const startMarker = "-- BEGIN LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES";
+  const endMarker = "-- END LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES";
+  const startIndex = preflight.indexOf(startMarker);
+  const endIndex = preflight.indexOf(endMarker, startIndex);
+  if (startIndex < 0 || endIndex < 0) {
+    throw new Error(
+      "Missing LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES markers in the committed preflight SQL.",
+    );
+  }
+  return preflight
+    .slice(startIndex + startMarker.length, endIndex)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.replace(/,$/, ""));
+}
+
 describe("legacy schema contract generator", () => {
   it("exits successfully and classifies every scalar-list field with no leftover error output", () => {
     const result = runGenerator(generatorSource);
@@ -319,5 +358,101 @@ describe("legacy schema contract generator", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("does not add column");
     expect(result.stderr).toContain("webhook_verification_secret_hash");
+  });
+
+  it("emits exactly the one approved legacy foreign-key update-action override", () => {
+    const rows = legacyForeignKeyOverridesOf(runGenerator(generatorSource).stdout);
+    expect(rows).toEqual(["'conversation_documents_organization_id_fkey=NoAction'"]);
+  });
+
+  it("generates a legacy foreign-key override block that matches the committed preflight SQL exactly", () => {
+    const generated = legacyForeignKeyOverridesOf(runGenerator(generatorSource).stdout);
+    expect(generated).toEqual(committedLegacyForeignKeyOverrides());
+  });
+
+  it("still requires the final ON DELETE CASCADE / ON UPDATE CASCADE definition in the complete foreign-key contract", () => {
+    const result = runGenerator(generatorSource);
+    expect(result.stdout).toContain(
+      "('public', 'conversation_documents', 'conversation_documents_organization_id_fkey', " +
+        "'{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', " +
+        "'false', 'false', 'true')",
+    );
+  });
+
+  it("fails closed on a duplicate LEGACY_FOREIGN_KEY_UPDATE_ACTION_OVERRIDES constraint", () => {
+    const mutated = generatorSource.replace(
+      /(\[\s*\r?\n\s*"conversation_documents_organization_id_fkey",\s*\r?\n\s*"NoAction",\s*\r?\n\s*"20260729000000_conversation_documents_organization_fk_on_update",\s*\r?\n\s*\],)/,
+      "$1$1",
+    );
+    expect(mutated).not.toBe(generatorSource);
+
+    const result = runGenerator(mutated);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Duplicate LEGACY_FOREIGN_KEY_UPDATE_ACTION_OVERRIDES entry");
+  });
+
+  it("fails closed when a foreign-key override references a nonexistent constraint", () => {
+    const mutated = generatorSource.replace(
+      '"conversation_documents_organization_id_fkey"',
+      '"not_a_real_table_not_a_real_fkey"',
+    );
+    expect(mutated).not.toBe(generatorSource);
+
+    const result = runGenerator(mutated);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("which is not a real foreign key");
+    expect(result.stderr).toContain("not_a_real_table_not_a_real_fkey");
+  });
+
+  it("fails closed when a foreign-key override's legacy value matches the final target value", () => {
+    const mutated = generatorSource.replace('"NoAction"', '"Cascade"');
+    expect(mutated).not.toBe(generatorSource);
+
+    const result = runGenerator(mutated);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("matches its final target update action");
+  });
+
+  it("fails closed when a foreign-key override references a nonexistent migration directory", () => {
+    const mutated = generatorSource.replace(
+      '"20260729000000_conversation_documents_organization_fk_on_update"',
+      '"20269999999999_not_a_real_migration"',
+    );
+    expect(mutated).not.toBe(generatorSource);
+
+    const result = runGenerator(mutated);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("which does not exist at");
+    expect(result.stderr).toContain("20269999999999_not_a_real_migration");
+  });
+
+  it("fails closed when the named migration does not drop and re-add the constraint with the final action", () => {
+    const mutated = generatorSource.replace(
+      '"20260729000000_conversation_documents_organization_fk_on_update"',
+      '"20260728000000_calendar_webhook_verification_secret"',
+    );
+    expect(mutated).not.toBe(generatorSource);
+
+    const result = runGenerator(mutated);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("does not drop and re-add constraint");
+    expect(result.stderr).toContain("conversation_documents_organization_id_fkey");
+  });
+
+  it("places the legacy foreign-key override markers after the complete foreign-key contract and before the RLS policy contract", () => {
+    const stdout = runGenerator(generatorSource).stdout;
+    const fkEnd = stdout.indexOf("-- END COMPLETE FOREIGN KEY CONTRACT");
+    const overrideStart = stdout.indexOf("-- BEGIN LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES");
+    const overrideEnd = stdout.indexOf("-- END LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES");
+    const rlsStart = stdout.indexOf("-- BEGIN COMPLETE RLS POLICY CONTRACT");
+    expect(fkEnd).toBeGreaterThan(-1);
+    expect(overrideStart).toBeGreaterThan(fkEnd);
+    expect(overrideEnd).toBeGreaterThan(overrideStart);
+    expect(rlsStart).toBeGreaterThan(overrideEnd);
   });
 });
