@@ -68,8 +68,14 @@ end $$;
 grant authenticated to authenticated_test;
 grant usage on schema public to authenticated_test;
 grant select, insert, update, delete on all tables in schema public to authenticated_test;
+-- Supabase's direct database role is intentionally not a superuser, so SET ROLE
+-- requires the executing role to already be a member of the target role. Grant that
+-- membership here, inside this same transaction, so it never persists past the
+-- `rollback` below; `set local role` (rather than plain `set role`) additionally
+-- confines the role switch to this transaction on its own.
+grant authenticated_test to current_user;
 
-set role authenticated_test;
+set local role authenticated_test;
 select set_config('request.jwt.claims', json_build_object(
   'sub', 'a0000000-0000-4000-8000-000000000001',
   'role', 'OWNER',
