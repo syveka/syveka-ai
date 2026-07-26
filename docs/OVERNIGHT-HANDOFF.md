@@ -1,7 +1,81 @@
 # Overnight Handoff — 2026-07-26
 
 **Branch:** `docs/codex-handoff-migration-repair-status`
-**Status:** Completed — one small docs task done, local commit created, not pushed.
+**Status:** Completed — docs task done, then branch safely synchronized with `origin/main`.
+Local commits only, nothing pushed.
+
+## Branch reconciliation (follow-up session, same day)
+
+After the docs task below, the branch was synchronized with `origin/main` per an explicit
+"safe branch reconciliation" request, using merge (not rebase), with every step gated on
+verification before proceeding.
+
+- **Backup branch:** `backup/docs/codex-handoff-migration-repair-status-before-main-sync`,
+  created from pre-sync `HEAD` (`3b1a9ef`) before any merge activity — all prior local commits
+  remain fully reachable there regardless of anything done afterward.
+- **Working-tree investigation:** `git status` showed ~40 files as "modified" plus the
+  `.gitignore` line-ending diff already known from the docs task below. Every one of those ~40
+  files was individually verified via `git hash-object <file>` vs `git rev-parse HEAD:<file>` —
+  **all matched HEAD exactly**. This was a stale Git index stat-cache artifact (cached
+  ctime/mtime no longer matching disk, e.g. `src/server/ai/rag.ts`'s index entry showed
+  `size: 3622` while both HEAD and the on-disk file were `3518` bytes and hash-identical), not
+  real uncommitted work. Refreshed via `git add` on the exact verified-identical paths (stages
+  no actual content change — confirmed with `git diff --cached --stat` showing nothing). The
+  `.gitignore` line-ending diff was preserved separately via a named stash
+  (`gitignore-crlf-only-pre-main-sync`, `.gitignore` only) rather than staged with the rest.
+- **Merge:** `git merge origin/main --no-edit` (fast-forward was not possible — branch had
+  diverged, 8 behind / 3 ahead at merge time). Produced 3 conflicts, all inspected in detail
+  before any resolution:
+  - `docs/CODEX-HANDOFF.md` — content conflict. Resolved **ours (HEAD)**: my prior rewrite (see
+    below) is a strict superset of origin/main's untouched original — nothing upstream was lost.
+  - `docs/TENANTDB-ARCHITECTURE-AUDIT.md` — add/add conflict, same file created independently on
+    both sides. Diff was 100% cosmetic (Prettier table alignment + `_emphasis_` vs `*emphasis*`,
+    a couple of line-wraps); substance identical. Resolved **theirs (origin/main)** — matches the
+    project's `prettier --write .` formatting convention.
+  - `tests/unit/tenant-models-coverage.test.ts` — add/add conflict, same file both sides, only
+    difference a single line-wrapped regex call (Prettier again). Resolved **theirs
+    (origin/main)** for the same reason.
+  - All three resolutions were explicitly reviewed and approved before staging or committing.
+- **Merge commit:** `03e8021955325adc5da09c26513eeec2ef99862d` — "merge: synchronize current
+  branch with origin/main".
+- **Stash restoration:** `git stash apply stash@{0}` reported "Already up to date" — the merge's
+  incoming `.gitignore` already matched the working tree exactly, including at the raw-byte level
+  (`git -c core.autocrlf=false diff --stat -- .gitignore` → empty). No refresh was needed; the
+  stash was confirmed redundant (identical content, verified by hash) and dropped with
+  `git stash drop`, not `pop`, only after that confirmation.
+- **Post-merge validation, all green:**
+  - `tests/unit/tenant-models-coverage.test.ts` — 5/5 passed
+  - `tests/unit/release-migration-contract.test.ts` — 6/6 passed
+  - `tests/unit/legacy-schema-contract-generator.test.ts` — 11/11 passed
+  - `tests/unit/security-migration-contract.test.ts` — 8/8 passed
+  - `npm run typecheck` — exit 0, clean
+  - `npm run lint` — exit 0, clean
+  - `npm test` (full suite) — **36 files, 326 tests, all passed**
+  - `npm run build` — exit 0, clean production build (all routes generated)
+- **Final state:** `git rev-list --left-right --count origin/main...HEAD` → `0`  `4` (0 behind,
+  4 ahead — fully caught up with `origin/main`, plus the branch's own 4 local-only commits: the
+  2 pre-existing ones, the docs rewrite, and this merge commit). `git status` clean except
+  untracked `graphify-out/` (local skill output, not project source, left alone throughout).
+- **Not done, by design:** nothing was pushed, no PR opened/merged, no rebase, no reset, no
+  force/destructive command of any kind. The backup branch and the original
+  `origin/docs/codex-handoff-migration-repair-status` remote ref are both untouched and still
+  available if anything here ever needs to be re-examined.
+
+## Exact next step (updated)
+
+The branch is now fully synchronized with `origin/main` and locally validated (tests, typecheck,
+lint, build all green). Remaining action is entirely yours:
+1. Review the 4 local commits (`git log origin/main..HEAD`) and push
+   `docs/codex-handoff-migration-repair-status` when ready, or open/update its PR.
+2. Once pushed, the backup branch (`backup/docs/codex-handoff-migration-repair-status-before-main-sync`)
+   and the dropped stash are no longer needed, but nothing was scheduled to delete them
+   automatically — that's a manual cleanup step for you, not done here.
+3. There is still no new CODEX-HANDOFF task queued — a fresh handoff is needed before starting
+   any P1/P2 `ROADMAP.md` item.
+
+---
+
+## Original entry (docs-only task, before the reconciliation above)
 
 ## Task selected
 
