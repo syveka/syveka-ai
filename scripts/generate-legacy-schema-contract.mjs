@@ -287,17 +287,19 @@ for (const model of models) {
 }
 
 // Foreign keys whose ON UPDATE action may still show a specific, verified
-// pre-correction legacy value on a not-yet-fully-upgraded database, because their
-// governing migration is intentionally NOT in the "already resolved"
-// published-migrations list (scripts/ci/provision-legacy-database.sh) -- it runs for
-// real, later in the very same `prisma migrate deploy` invocation, not before it. Only
-// the single named attribute below may legacy-differ for the one named constraint;
-// every other attribute (columns, referenced table, delete action, deferrability,
-// validation) -- and every other constraint's update action -- must still match the
-// final contract exactly, so a present-but-differently-malformed constraint, or drift
-// on any other constraint, still fails closed. This list must never grow
-// speculatively -- one entry per case actually shipped, added only when the same
-// before/after situation genuinely recurs.
+// pre-correction legacy value on a database whose governing migration has not yet
+// been successfully applied (per public._prisma_migrations -- see the preflight SQL
+// for the exact applied-state query). The tolerance is state-gated, not
+// unconditional: once the named migration is recorded as successfully applied, the
+// exact same legacy value is a real regression and must fail closed again, not
+// silently pass forever. Only the single named attribute below may legacy-differ for
+// the one named constraint, and only pre-migration; every other attribute (columns,
+// referenced table, delete action, deferrability, validation) -- and every other
+// constraint's update action -- must still match the final contract exactly, so a
+// present-but-differently-malformed constraint, or drift on any other constraint,
+// still fails closed. This list must never grow speculatively -- one entry per case
+// actually shipped, added only when the same before/after situation genuinely
+// recurs.
 //   - conversation_documents_organization_id_fkey: created by
 //     20260715000000_ai_chat_production_hardening with no ON UPDATE clause (Postgres
 //     default NO ACTION). 20260715230000_security_invariant_corrections upgraded this
@@ -326,6 +328,18 @@ for (const [
     );
   }
   seenFkOverrideConstraints.add(constraintName);
+
+  if (
+    constraintName.includes("=") ||
+    legacyUpdateAction.includes("=") ||
+    migrationDir.includes("=")
+  ) {
+    throw new Error(
+      `LEGACY_FOREIGN_KEY_UPDATE_ACTION_OVERRIDES entry for constraint "${constraintName}" ` +
+        'contains a literal "=", which would corrupt the ' +
+        '"constraint_name=legacy_update_action=governing_migration" SQL encoding.',
+    );
+  }
 
   const fk = fkByConstraint.get(constraintName);
   if (!fk) {
@@ -379,8 +393,8 @@ console.log("-- END COMPLETE FOREIGN KEY CONTRACT");
 console.log("-- BEGIN LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES");
 console.log(
   LEGACY_FOREIGN_KEY_UPDATE_ACTION_OVERRIDES.map(
-    ([constraintName, legacyUpdateAction]) =>
-      `    ${sqlString(`${constraintName}=${legacyUpdateAction}`)}`,
+    ([constraintName, legacyUpdateAction, migrationDir]) =>
+      `    ${sqlString(`${constraintName}=${legacyUpdateAction}=${migrationDir}`)}`,
   ).join(",\n"),
 );
 console.log("-- END LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES");

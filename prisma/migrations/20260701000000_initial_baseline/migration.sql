@@ -29,6 +29,8 @@ DECLARE
   actual_values TEXT[];
   missing_table TEXT;
   existing_table TEXT;
+  fk_override_governing_migration TEXT;
+  fk_override_migration_applied BOOLEAN;
   baseline_tables TEXT[] := ARRAY[
     'users', 'organizations', 'organization_members', 'teams', 'invitations',
     'subscriptions', 'usage_records', 'companies', 'contacts', 'pipelines',
@@ -76,23 +78,27 @@ DECLARE
 -- END LEGACY MISSING COLUMNS
   ];
   -- Foreign keys whose ON UPDATE action may still show a specific, verified
-  -- pre-correction legacy value on a not-yet-fully-upgraded database, because their
-  -- governing migration is intentionally NOT in the "already resolved"
-  -- published-migrations list -- it runs for real, later in the same `prisma migrate
-  -- deploy` invocation, not before it. Each entry is "constraint_name=legacy_update_action"
-  -- and tolerates ONLY that exact update action for ONLY that exact constraint; every
-  -- other attribute of that constraint (columns, referenced table, delete action,
-  -- deferrability, validation) and every other constraint's update action must still
-  -- match the frozen contract exactly.
+  -- pre-correction legacy value, but ONLY until their governing migration has been
+  -- successfully applied (per public._prisma_migrations -- see the lookup just below
+  -- the FK loop's SELECT INTO). This tolerance is state-gated, not unconditional: once
+  -- the named migration is recorded as successfully applied, the same legacy value is
+  -- a real regression and must fail closed again. Each entry is
+  -- "constraint_name=legacy_update_action=governing_migration_name" and tolerates
+  -- ONLY that exact update action for ONLY that exact constraint, and only
+  -- pre-migration; every other attribute of that constraint (columns, referenced
+  -- table, delete action, deferrability, validation) and every other constraint's
+  -- update action must still match the frozen contract exactly.
   --   - conversation_documents_organization_id_fkey: created with no ON UPDATE clause
   --     (Postgres default NO ACTION) by 20260715000000_ai_chat_production_hardening;
   --     20260715230000_security_invariant_corrections upgraded this table's other two
   --     foreign keys but intentionally left this one alone;
   --     20260729000000_conversation_documents_organization_fk_on_update (not a
   --     published/resolved migration) corrects it for real later in the same deploy.
+  --     Once that migration is recorded as successfully applied, ON UPDATE NO ACTION
+  --     on this constraint is drift, not history, and must fail closed.
   legacy_foreign_key_update_action_overrides TEXT[] := ARRAY[
 -- BEGIN LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES
-    'conversation_documents_organization_id_fkey=NoAction'
+    'conversation_documents_organization_id_fkey=NoAction=20260729000000_conversation_documents_organization_fk_on_update'
 -- END LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES
   ];
 BEGIN
@@ -1024,6 +1030,34 @@ BEGIN
       constraint_row.oid, source_namespace.nspname, source_table.relname,
       target_namespace.nspname, target_table.relname;
 
+    -- Resolve the governing migration (if any) for this exact constraint and this
+    -- exact observed update action. A NULL result means either there is no override
+    -- for this constraint at all, or the observed value doesn't match the single
+    -- allowlisted historical value -- either way, no tolerance applies below.
+    SELECT split_part(override_entry, '=', 3)
+    INTO fk_override_governing_migration
+    FROM unnest(legacy_foreign_key_update_action_overrides) AS override_entry
+    WHERE split_part(override_entry, '=', 1) = expected.constraint_name
+      AND split_part(override_entry, '=', 2) = actual_update_action;
+
+    -- The tolerance only applies pre-migration: once the governing migration is
+    -- recorded as successfully applied, the same legacy value is drift, not history.
+    -- A genuinely legacy database (no _prisma_migrations table yet at all) is always
+    -- treated as not-yet-applied, so it may still pass.
+    IF fk_override_governing_migration IS NOT NULL
+      AND to_regclass('public._prisma_migrations') IS NOT NULL THEN
+      SELECT EXISTS (
+        SELECT 1
+        FROM public._prisma_migrations
+        WHERE migration_name = fk_override_governing_migration
+          AND finished_at IS NOT NULL
+          AND rolled_back_at IS NULL
+      )
+      INTO fk_override_migration_applied;
+    ELSE
+      fk_override_migration_applied := FALSE;
+    END IF;
+
     IF actual_source_schema IS DISTINCT FROM expected.source_schema
       OR actual_source_table IS DISTINCT FROM expected.source_table
       OR actual_columns IS DISTINCT FROM expected.source_columns::TEXT[]
@@ -1034,8 +1068,8 @@ BEGIN
       OR (
         actual_update_action IS DISTINCT FROM expected.update_action
         AND NOT (
-          (expected.constraint_name || '=' || actual_update_action)
-            = ANY(legacy_foreign_key_update_action_overrides)
+          fk_override_governing_migration IS NOT NULL
+          AND NOT fk_override_migration_applied
         )
       )
       OR actual_deferrable IS DISTINCT FROM expected.is_deferrable::BOOLEAN

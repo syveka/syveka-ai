@@ -362,7 +362,10 @@ describe("legacy schema contract generator", () => {
 
   it("emits exactly the one approved legacy foreign-key update-action override", () => {
     const rows = legacyForeignKeyOverridesOf(runGenerator(generatorSource).stdout);
-    expect(rows).toEqual(["'conversation_documents_organization_id_fkey=NoAction'"]);
+    expect(rows).toEqual([
+      "'conversation_documents_organization_id_fkey=NoAction=" +
+        "20260729000000_conversation_documents_organization_fk_on_update'",
+    ]);
   });
 
   it("generates a legacy foreign-key override block that matches the committed preflight SQL exactly", () => {
@@ -390,6 +393,16 @@ describe("legacy schema contract generator", () => {
 
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Duplicate LEGACY_FOREIGN_KEY_UPDATE_ACTION_OVERRIDES entry");
+  });
+
+  it("fails closed when an override entry's legacy update action contains a literal '='", () => {
+    const mutated = generatorSource.replace('"NoAction"', '"No=Action"');
+    expect(mutated).not.toBe(generatorSource);
+
+    const result = runGenerator(mutated);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('contains a literal "="');
   });
 
   it("fails closed when a foreign-key override references a nonexistent constraint", () => {
