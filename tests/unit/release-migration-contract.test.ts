@@ -95,8 +95,31 @@ describe("staging release migration contract", () => {
     ).match(/^      \('public', '[^']+', '[^']+_fkey',/gm);
     expect(columnRows).toHaveLength(469);
     expect(foreignKeyRows).toHaveLength(71);
+    // Scalar-list (array) columns cannot express nullability via Prisma's DMMF (Prisma has no
+    // optional-list syntax), so each column's real PostgreSQL NOT NULL status is verified
+    // against migration history and pinned here explicitly to guard against regressions like
+    // the one fixed by this test: a blanket "isList => not_null false" heuristic silently
+    // mis-marked NOT NULL array columns as nullable.
     expect(contract).toContain("('api_keys', 'scopes', 'text[]', 'false', '', '', 'array[]')");
     expect(contract).toContain("('webhook_endpoints', 'events', 'text[]', 'false', '', '', '')");
+    expect(contract).toContain(
+      "('booking_types', 'duration_options', 'integer[]', 'true', '', '', 'array[30]')",
+    );
+    expect(contract).toContain(
+      "('calendar_connections', 'scopes', 'text[]', 'true', '', '', 'array[]')",
+    );
+    // Real legacy databases (provisioned via `prisma db push` against the pre-migration-system
+    // schema) have these two NOT-NULL-target columns as nullable, because Prisma's db push does
+    // not emit NOT NULL for scalar-list columns. The pre-upgrade preflight must tolerate exactly
+    // this pair without weakening the check for any other column; NOT NULL is enforced for real
+    // by the 20260726000000_normalize_list_column_nullability migration below.
+    expect(contract).toContain("legacy_nullable_list_columns");
+    expect(contract).toContain("'booking_types.duration_options'");
+    expect(contract).toContain("'calendar_connections.scopes'");
+    expect(releaseInvariants).toContain("20260726000000_normalize_list_column_nullability");
+    expect(releaseInvariants).toContain(
+      "booking_types.duration_options and calendar_connections.scopes must be NOT NULL after migration",
+    );
     expect(contract).toContain(
       "('conversations', 'title', 'text', 'true', '', '', '''new conversation''')",
     );
