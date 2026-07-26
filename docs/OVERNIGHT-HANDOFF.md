@@ -52,7 +52,7 @@ verification before proceeding.
   - `npm run lint` — exit 0, clean
   - `npm test` (full suite) — **36 files, 326 tests, all passed**
   - `npm run build` — exit 0, clean production build (all routes generated)
-- **Final state:** `git rev-list --left-right --count origin/main...HEAD` → `0`  `4` (0 behind,
+- **Final state:** `git rev-list --left-right --count origin/main...HEAD` → `0` `4` (0 behind,
   4 ahead — fully caught up with `origin/main`, plus the branch's own 4 local-only commits: the
   2 pre-existing ones, the docs rewrite, and this merge commit). `git status` clean except
   untracked `graphify-out/` (local skill output, not project source, left alone throughout).
@@ -65,6 +65,7 @@ verification before proceeding.
 
 The branch is now fully synchronized with `origin/main` and locally validated (tests, typecheck,
 lint, build all green). Remaining action is entirely yours:
+
 1. Review the 4 local commits (`git log origin/main..HEAD`) and push
    `docs/codex-handoff-migration-repair-status` when ready, or open/update its PR.
 2. Once pushed, the backup branch (`backup/docs/codex-handoff-migration-repair-status-before-main-sync`)
@@ -141,6 +142,7 @@ marked "not yet" in the brief) are both done and merged to `main`. Nothing neede
 ## Changes made
 
 Rewrote `docs/CODEX-HANDOFF.md`:
+
 - Added a new "Status of the previous handoff (schema-contract drift...)" section marking it
   **Done**, with the root cause, the two resolving commits, the PR/merge commit, and the
   verification method quoted from the `b69854e` commit message.
