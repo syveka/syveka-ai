@@ -7,6 +7,7 @@
     "src/app/api/v1/jobs/embed-document/route.ts": { "maxDuration": 300 },
     "src/app/api/v1/jobs/run-workflow/route.ts": { "maxDuration": 300 },
     "src/app/api/v1/jobs/post-call/route.ts": { "maxDuration": 120 },
-    "src/app/api/v1/jobs/usage-rollup/route.ts": { "maxDuration": 300 }
+    "src/app/api/v1/jobs/usage-rollup/route.ts": { "maxDuration": 300 },
+    "src/app/api/v1/jobs/calendar-sync/route.ts": { "maxDuration": 120 }
   }
 }

@@ -1,10 +1,42 @@
 import "server-only";
 
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { getProviderAdapter } from "@/server/integrations/calendar";
 import { ProviderError, type ExternalEvent } from "@/server/integrations/calendar/types";
 import { getFreshTokens, markConnectionStatus } from "./calendar-connections";
 import { clientEnv } from "@/env";
+
+/**
+ * Webhook verification secret (P0.2): a fresh 32-byte value generated per subscription,
+ * sent to the provider once at subscribe time (Google: watch `token`, echoed back as
+ * X-Goog-Channel-Token; Microsoft: `clientState`, echoed back on every notification), and
+ * never needed again afterward — only compared. Only the SHA-256 hash is ever persisted,
+ * mirroring the same pattern already used for booking tokens and API keys
+ * (src/server/services/booking-tokens.ts, src/server/services/api-keys.ts).
+ */
+export function generateWebhookSecret(): string {
+  return randomBytes(32).toString("base64url"); // 43 chars — well within clientState's 128
+}
+
+export function hashWebhookSecret(raw: string): string {
+  return createHash("sha256").update(raw, "utf8").digest("hex");
+}
+
+/**
+ * Constant-time verification. Hashing first means both sides are always a fixed-length
+ * (64 hex char) digest, so arbitrary-length input can never make timingSafeEqual throw.
+ * Missing/null values fail closed. Never logs or returns the presented or stored value.
+ */
+export function verifyWebhookSecret(
+  presented: string | null | undefined,
+  storedHash: string | null | undefined,
+): boolean {
+  if (!presented || !storedHash) return false;
+  const a = Buffer.from(hashWebhookSecret(presented), "utf8");
+  const b = Buffer.from(storedHash, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
 
 /**
  * Idempotent import sync.
@@ -199,27 +231,51 @@ async function persistCursor(
   });
 }
 
-/** Ensure a webhook subscription exists (renewed by scheduled sync). */
-export async function ensureWebhookSubscription(externalCalendarId: string): Promise<void> {
+export type WebhookSubscriptionOutcome = "reused" | "renewed" | "skipped";
+
+/**
+ * Ensure a webhook subscription exists, renewing it (with a fresh verification secret)
+ * when missing, near expiry, or missing a secret hash. Safe to call repeatedly — the
+ * only recurring caller today is the calendar-sync maintenance job
+ * (src/app/api/v1/jobs/calendar-sync/route.ts); the settings-page toggle-on action
+ * calls it once immediately for the calendar being enabled.
+ */
+export async function ensureWebhookSubscription(
+  externalCalendarId: string,
+): Promise<WebhookSubscriptionOutcome> {
   const calendar = await unscopedPrisma.externalCalendar.findUnique({
     where: { id: externalCalendarId },
     include: { connection: true, syncState: true },
   });
-  if (!calendar?.syncEnabled) return;
+  if (!calendar?.syncEnabled) return "skipped";
 
   const state = calendar.syncState;
+  // A subscription is only reusable when it has an id, isn't near expiry, AND has a
+  // verification secret on record — a null hash (pre-P0.2 rows, or anything that
+  // otherwise lost its secret) must be renewed here rather than waiting for expiry,
+  // since without a secret no incoming notification for it could ever verify.
   const stillValid =
-    state?.webhookSubscriptionId &&
-    state.webhookExpiresAt &&
-    state.webhookExpiresAt.getTime() > Date.now() + 12 * 3_600_000;
-  if (stillValid) return;
+    !!state?.webhookSubscriptionId &&
+    !!state.webhookExpiresAt &&
+    state.webhookExpiresAt.getTime() > Date.now() + 12 * 3_600_000 &&
+    !!state.webhookVerificationSecretHash;
+  if (stillValid) return "reused";
 
   const adapter = getProviderAdapter(calendar.connection.provider);
   const tokens = await getFreshTokens(calendar.connectionId, calendar.organizationId);
   const callbackUrl = `${clientEnv.NEXT_PUBLIC_APP_URL}/api/v1/webhooks/calendar/${calendar.connection.provider.toLowerCase()}`;
-  const sub = await adapter.subscribeWebhook(tokens, calendar.externalId, callbackUrl);
-  if (!sub) return;
+  const verificationSecret = generateWebhookSecret();
+  const sub = await adapter.subscribeWebhook(
+    tokens,
+    calendar.externalId,
+    callbackUrl,
+    verificationSecret,
+  );
+  if (!sub) return "skipped";
 
+  // Renewal replaces the subscription id/resource id/expiry and the secret hash
+  // together, in one write — the previous secret is discarded, so notifications
+  // still using it fail verification from this point on.
   await unscopedPrisma.calendarSyncState.upsert({
     where: { externalCalendarId },
     create: {
@@ -228,25 +284,41 @@ export async function ensureWebhookSubscription(externalCalendarId: string): Pro
       webhookSubscriptionId: sub.subscriptionId,
       webhookResourceId: sub.resourceId ?? null,
       webhookExpiresAt: sub.expiresAt ?? null,
+      webhookVerificationSecretHash: hashWebhookSecret(verificationSecret),
     },
     update: {
       webhookSubscriptionId: sub.subscriptionId,
       webhookResourceId: sub.resourceId ?? null,
       webhookExpiresAt: sub.expiresAt ?? null,
+      webhookVerificationSecretHash: hashWebhookSecret(verificationSecret),
     },
   });
+  return "renewed";
 }
 
-/** Resolve which calendar a provider webhook ping belongs to, then sync it. */
+/**
+ * Resolve which calendar a provider webhook ping belongs to, verify its presented
+ * secret, then sync it. Returns false — without triggering a sync — for an unknown
+ * subscription id, a wrong provider/subscription pairing, or a missing/invalid
+ * verification secret alike, so a caller can never distinguish "no such subscription"
+ * from "subscription exists but verification failed" (no information leak).
+ */
 export async function handleProviderWebhook(params: {
   provider: "GOOGLE" | "MICROSOFT" | "MOCK";
   subscriptionId: string;
+  presentedSecret: string | null;
 }): Promise<boolean> {
   const state = await unscopedPrisma.calendarSyncState.findFirst({
-    where: { webhookSubscriptionId: params.subscriptionId },
-    select: { externalCalendarId: true },
+    where: {
+      webhookSubscriptionId: params.subscriptionId,
+      externalCalendar: { connection: { provider: params.provider } },
+    },
+    select: { externalCalendarId: true, webhookVerificationSecretHash: true },
   });
   if (!state) return false;
+  if (!verifyWebhookSecret(params.presentedSecret, state.webhookVerificationSecretHash)) {
+    return false;
+  }
   await syncExternalCalendar(state.externalCalendarId);
   return true;
 }

@@ -563,17 +563,18 @@ model ExternalCalendar {
 
 /// Sync cursor + webhook subscription state per external calendar.
 model CalendarSyncState {
-  id                    String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  organizationId        String    @map("organization_id") @db.Uuid
-  externalCalendarId    String    @unique @map("external_calendar_id") @db.Uuid
-  syncCursor            String?   @map("sync_cursor")
-  webhookSubscriptionId String?   @map("webhook_subscription_id")
-  webhookResourceId     String?   @map("webhook_resource_id")
-  webhookExpiresAt      DateTime? @map("webhook_expires_at")
-  lastSyncedAt          DateTime? @map("last_synced_at")
-  lastSyncStatus        String?   @map("last_sync_status")
-  failureCount          Int       @default(0) @map("failure_count")
-  updatedAt             DateTime  @updatedAt @map("updated_at")
+  id                            String    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId                String    @map("organization_id") @db.Uuid
+  externalCalendarId            String    @unique @map("external_calendar_id") @db.Uuid
+  syncCursor                    String?   @map("sync_cursor")
+  webhookSubscriptionId         String?   @map("webhook_subscription_id")
+  webhookResourceId             String?   @map("webhook_resource_id")
+  webhookExpiresAt              DateTime? @map("webhook_expires_at")
+  webhookVerificationSecretHash String?   @map("webhook_verification_secret_hash")
+  lastSyncedAt                  DateTime? @map("last_synced_at")
+  lastSyncStatus                String?   @map("last_sync_status")
+  failureCount                  Int       @default(0) @map("failure_count")
+  updatedAt                     DateTime  @updatedAt @map("updated_at")
 
   organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   externalCalendar ExternalCalendar @relation(fields: [externalCalendarId], references: [id], onDelete: Cascade)

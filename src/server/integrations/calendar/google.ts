@@ -232,7 +232,12 @@ export const googleCalendarAdapter: CalendarProviderAdapter = {
     }
   },
 
-  async subscribeWebhook(tokens, calendarExternalId, callbackUrl): Promise<WebhookSubscription> {
+  async subscribeWebhook(
+    tokens,
+    calendarExternalId,
+    callbackUrl,
+    verificationSecret,
+  ): Promise<WebhookSubscription> {
     const channelId = crypto.randomUUID();
     const data = await googleFetch<{ resourceId?: string; expiration?: string }>(
       `${API}/calendars/${encodeURIComponent(calendarExternalId)}/events/watch`,
@@ -240,7 +245,12 @@ export const googleCalendarAdapter: CalendarProviderAdapter = {
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ id: channelId, type: "web_hook", address: callbackUrl }),
+        body: JSON.stringify({
+          id: channelId,
+          type: "web_hook",
+          address: callbackUrl,
+          token: verificationSecret,
+        }),
       },
     );
     return {

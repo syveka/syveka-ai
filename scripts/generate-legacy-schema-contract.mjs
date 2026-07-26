@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from "node:fs";
+import path from "node:path";
 import { Prisma } from "@prisma/client";
 
 const models = Prisma.dmmf.datamodel.models;
@@ -160,6 +162,71 @@ scalarFields.push({
   },
 });
 
+// Columns that may not exist YET on a legacy-upgrade database when this preflight
+// check runs, because their governing migration is intentionally NOT in the
+// "already resolved" published-migrations list (scripts/ci/provision-legacy-database.sh)
+// — it runs for real, later in the very same `prisma migrate deploy` invocation, not
+// before it. Unlike LEGACY_NULLABLE_LIST_COLUMNS (an existing column with a
+// temporarily-wrong attribute), these columns may be entirely absent at check time.
+// Each entry is verified below against the exact migration that adds it, so this can
+// never silently mask a column that was never actually added by anything. This list
+// must never grow speculatively — one entry per case actually shipped, added only
+// when the same before/after situation genuinely recurs.
+//   - calendar_sync_states.webhook_verification_secret_hash: the pinned legacy
+//     snapshot (6f6ab84f0f3849a172e0fdfdc49610058640d56c) predates this column;
+//     20260728000000_calendar_webhook_verification_secret (not a published/resolved
+//     migration) adds it for real later in the same deploy; after that migration
+//     completes, the database must have the correctly shaped column like any other.
+const LEGACY_MISSING_COLUMN_ENTRIES = [
+  [
+    "calendar_sync_states.webhook_verification_secret_hash",
+    "20260728000000_calendar_webhook_verification_secret",
+  ],
+];
+
+const seenMissingColumnKeys = new Set();
+for (const [key] of LEGACY_MISSING_COLUMN_ENTRIES) {
+  if (seenMissingColumnKeys.has(key)) {
+    throw new Error(`Duplicate LEGACY_MISSING_COLUMN entry for column "${key}".`);
+  }
+  seenMissingColumnKeys.add(key);
+}
+
+// Reusing scalarFields (rather than filtering separately) is what guarantees this
+// column can never be silently removed from the complete target column contract
+// below: an entry can only validate against a key that columnRows will also emit.
+const actualScalarColumnKeys = new Set(
+  scalarFields.map(({ model, field }) => `${tableName(model)}.${columnName(field)}`),
+);
+
+for (const [key, migrationDir] of LEGACY_MISSING_COLUMN_ENTRIES) {
+  if (!actualScalarColumnKeys.has(key)) {
+    throw new Error(
+      `LEGACY_MISSING_COLUMN_ENTRIES references "${key}", which is not a real scalar column ` +
+        "in the current Prisma schema.",
+    );
+  }
+  const migrationPath = path.join("prisma/migrations", migrationDir, "migration.sql");
+  if (!existsSync(migrationPath)) {
+    throw new Error(
+      `LEGACY_MISSING_COLUMN_ENTRIES references migration "${migrationDir}", which does not ` +
+        `exist at ${migrationPath}.`,
+    );
+  }
+  const [expectedTable, expectedColumn] = key.split(".");
+  const migrationSql = readFileSync(migrationPath, "utf8");
+  const addColumnPattern = new RegExp(
+    `ALTER TABLE\\s+"${expectedTable}"\\s+ADD COLUMN\\s+"${expectedColumn}"`,
+    "i",
+  );
+  if (!addColumnPattern.test(migrationSql)) {
+    throw new Error(
+      `LEGACY_MISSING_COLUMN_ENTRIES references migration "${migrationDir}", whose migration.sql ` +
+        `does not add column "${expectedColumn}" to table "${expectedTable}".`,
+    );
+  }
+}
+
 const columnRows = scalarFields
   .sort((left, right) => {
     const tableOrder = tableName(left.model).localeCompare(tableName(right.model));
@@ -222,6 +289,9 @@ console.log("-- END COMPLETE COLUMN CONTRACT");
 console.log("-- BEGIN LEGACY NULLABLE LIST COLUMNS");
 console.log(LEGACY_NULLABLE_LIST_COLUMNS.map((key) => `    ${sqlString(key)}`).join(",\n"));
 console.log("-- END LEGACY NULLABLE LIST COLUMNS");
+console.log("-- BEGIN LEGACY MISSING COLUMNS");
+console.log(LEGACY_MISSING_COLUMN_ENTRIES.map(([key]) => `    ${sqlString(key)}`).join(",\n"));
+console.log("-- END LEGACY MISSING COLUMNS");
 console.log("-- BEGIN COMPLETE FOREIGN KEY CONTRACT");
 console.log(fkRows.join(",\n"));
 console.log("-- END COMPLETE FOREIGN KEY CONTRACT");

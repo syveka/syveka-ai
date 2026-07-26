@@ -106,6 +106,41 @@ function committedLegacyNullableListColumns(): string[] {
     .map((line) => line.replace(/,$/, ""));
 }
 
+function legacyMissingColumnsOf(generatorStdout: string): string[] {
+  const match = generatorStdout.match(
+    /-- BEGIN LEGACY MISSING COLUMNS\r?\n([\s\S]*?)\r?\n-- END LEGACY MISSING COLUMNS/,
+  );
+  const body = match?.[1];
+  if (body === undefined) {
+    throw new Error("Missing LEGACY MISSING COLUMNS markers in generator output.");
+  }
+  return body
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.replace(/,$/, ""));
+}
+
+function committedLegacyMissingColumns(): string[] {
+  const preflight = readFileSync(
+    resolve(process.cwd(), "prisma/sql/006_legacy_baseline_preflight.sql"),
+    "utf8",
+  );
+  const startMarker = "-- BEGIN LEGACY MISSING COLUMNS";
+  const endMarker = "-- END LEGACY MISSING COLUMNS";
+  const startIndex = preflight.indexOf(startMarker);
+  const endIndex = preflight.indexOf(endMarker, startIndex);
+  if (startIndex < 0 || endIndex < 0) {
+    throw new Error("Missing LEGACY MISSING COLUMNS markers in the committed preflight SQL.");
+  }
+  return preflight
+    .slice(startIndex + startMarker.length, endIndex)
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => line.replace(/,$/, ""));
+}
+
 describe("legacy schema contract generator", () => {
   it("exits successfully and classifies every scalar-list field with no leftover error output", () => {
     const result = runGenerator(generatorSource);
@@ -212,5 +247,77 @@ describe("legacy schema contract generator", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("Duplicate LIST_COLUMN_NOT_NULL entry");
     expect(result.stderr).toContain("api_keys.scopes");
+  });
+
+  it("emits exactly the one approved legacy-missing column", () => {
+    const rows = legacyMissingColumnsOf(runGenerator(generatorSource).stdout);
+    expect(rows).toEqual(["'calendar_sync_states.webhook_verification_secret_hash'"]);
+  });
+
+  it("generates a legacy-missing-columns block that matches the committed preflight SQL exactly", () => {
+    const generated = legacyMissingColumnsOf(runGenerator(generatorSource).stdout);
+    expect(generated).toEqual(committedLegacyMissingColumns());
+  });
+
+  it("the complete target column contract still contains the legacy-missing column", () => {
+    const rows = columnRowsOf(runGenerator(generatorSource).stdout);
+    expect(rows).toContain(
+      "('calendar_sync_states', 'webhook_verification_secret_hash', 'text', 'false', '', '', '')",
+    );
+  });
+
+  it("fails closed on a duplicate LEGACY_MISSING_COLUMN_ENTRIES key", () => {
+    const mutated = generatorSource.replace(
+      /(\[\s*\r?\n\s*"calendar_sync_states\.webhook_verification_secret_hash",\s*\r?\n\s*"20260728000000_calendar_webhook_verification_secret",\s*\r?\n\s*\],)/,
+      "$1$1",
+    );
+    expect(mutated).not.toBe(generatorSource);
+
+    const result = runGenerator(mutated);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("Duplicate LEGACY_MISSING_COLUMN entry");
+  });
+
+  it("fails closed when a LEGACY_MISSING_COLUMN entry names a nonexistent/stale schema column", () => {
+    const mutated = generatorSource.replace(
+      /"calendar_sync_states\.webhook_verification_secret_hash"/,
+      '"not_a_real_table.not_a_real_column"',
+    );
+    expect(mutated).not.toBe(generatorSource);
+
+    const result = runGenerator(mutated);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("is not a real scalar column");
+    expect(result.stderr).toContain("not_a_real_table.not_a_real_column");
+  });
+
+  it("fails closed when a LEGACY_MISSING_COLUMN entry names a nonexistent migration directory", () => {
+    const mutated = generatorSource.replace(
+      '"20260728000000_calendar_webhook_verification_secret"',
+      '"20269999999999_not_a_real_migration"',
+    );
+    expect(mutated).not.toBe(generatorSource);
+
+    const result = runGenerator(mutated);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("which does not exist at");
+    expect(result.stderr).toContain("20269999999999_not_a_real_migration");
+  });
+
+  it("fails closed when the named migration does not add the exact column", () => {
+    const mutated = generatorSource.replace(
+      '"20260728000000_calendar_webhook_verification_secret"',
+      '"20260726000000_normalize_list_column_nullability"',
+    );
+    expect(mutated).not.toBe(generatorSource);
+
+    const result = runGenerator(mutated);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("does not add column");
+    expect(result.stderr).toContain("webhook_verification_secret_hash");
   });
 });
