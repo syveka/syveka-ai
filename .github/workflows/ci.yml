@@ -217,6 +217,7 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/rls/calendar-booking-isolation.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/migrations/match-chunks-eligibility.sql
 
   baseline-migration-repro:
     name: Initial baseline idempotency and failure-clarity
