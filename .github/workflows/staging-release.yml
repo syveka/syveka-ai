@@ -157,8 +157,8 @@ jobs:
           # separate connection authenticated directly as a dedicated,
           # ephemeral LOGIN role instead of granting that role to this session
           # and using SET ROLE.
-          bash scripts/ci/run-rls-check.sh iso tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql
-          bash scripts/ci/run-rls-check.sh cal tests/rls/calendar-booking-fixtures.sql tests/rls/calendar-booking-cleanup.sql tests/rls/calendar-booking-isolation.sql
+          bash scripts/ci/run-rls-check.sh iso tests/rls/isolation-grants.sql tests/rls/isolation-revokes.sql tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql tests/rls/isolation-grants-verify.sql
+          bash scripts/ci/run-rls-check.sh cal tests/rls/calendar-booking-grants.sql tests/rls/calendar-booking-revokes.sql tests/rls/calendar-booking-fixtures.sql tests/rls/calendar-booking-cleanup.sql tests/rls/calendar-booking-isolation.sql tests/rls/calendar-booking-grants-verify.sql
           psql "$STAGING_DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
         env:
           STAGING_DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}

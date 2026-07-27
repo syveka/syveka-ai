@@ -214,8 +214,8 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/005_calendar_booking_rls.sql
       - name: Run isolation assertions
         run: |
-          bash scripts/ci/run-rls-check.sh iso tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql
-          bash scripts/ci/run-rls-check.sh cal tests/rls/calendar-booking-fixtures.sql tests/rls/calendar-booking-cleanup.sql tests/rls/calendar-booking-isolation.sql
+          bash scripts/ci/run-rls-check.sh iso tests/rls/isolation-grants.sql tests/rls/isolation-revokes.sql tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql tests/rls/isolation-grants-verify.sql
+          bash scripts/ci/run-rls-check.sh cal tests/rls/calendar-booking-grants.sql tests/rls/calendar-booking-revokes.sql tests/rls/calendar-booking-fixtures.sql tests/rls/calendar-booking-cleanup.sql tests/rls/calendar-booking-isolation.sql tests/rls/calendar-booking-grants-verify.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/migrations/match-chunks-eligibility.sql
         env:
@@ -301,8 +301,8 @@ jobs:
       - name: Run the corrected staging RLS and tenant invariant checks through dedicated LOGIN roles
         run: |
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
-          bash scripts/ci/run-rls-check.sh iso tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql
-          bash scripts/ci/run-rls-check.sh cal tests/rls/calendar-booking-fixtures.sql tests/rls/calendar-booking-cleanup.sql tests/rls/calendar-booking-isolation.sql
+          bash scripts/ci/run-rls-check.sh iso tests/rls/isolation-grants.sql tests/rls/isolation-revokes.sql tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql tests/rls/isolation-grants-verify.sql
+          bash scripts/ci/run-rls-check.sh cal tests/rls/calendar-booking-grants.sql tests/rls/calendar-booking-revokes.sql tests/rls/calendar-booking-fixtures.sql tests/rls/calendar-booking-cleanup.sql tests/rls/calendar-booking-isolation.sql tests/rls/calendar-booking-grants-verify.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
         env:
           ADMIN_URL: postgresql://supabase_like:supabase_like@localhost:5432/rls_non_superuser
@@ -315,7 +315,7 @@ jobs:
           # role/fixture residue behind even though the assertions themselves fail.
           cat tests/rls/isolation.sql > /tmp/forced-failure-assertions.sql
           echo "do \$\$ begin raise exception 'deliberate forced failure for cleanup regression coverage'; end \$\$;" >> /tmp/forced-failure-assertions.sql
-          if bash scripts/ci/run-rls-check.sh isof tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql /tmp/forced-failure-assertions.sql; then
+          if bash scripts/ci/run-rls-check.sh isof tests/rls/isolation-grants.sql tests/rls/isolation-revokes.sql tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql /tmp/forced-failure-assertions.sql tests/rls/isolation-grants-verify.sql; then
             echo "::error::The deliberately-failing assertions file unexpectedly succeeded."
             exit 1
           fi
@@ -329,7 +329,7 @@ jobs:
           # Regression control (coverage I): the client connection never even
           # authenticates here (RLS_CHECK_FORCE_LOGIN_FAILURE deliberately connects
           # with the wrong password); cleanup must still remove the role.
-          if RLS_CHECK_FORCE_LOGIN_FAILURE=1 bash scripts/ci/run-rls-check.sh isol tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql; then
+          if RLS_CHECK_FORCE_LOGIN_FAILURE=1 bash scripts/ci/run-rls-check.sh isol tests/rls/isolation-grants.sql tests/rls/isolation-revokes.sql tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql tests/rls/isolation-grants-verify.sql; then
             echo "::error::The deliberately-wrong-password client connection unexpectedly succeeded."
             exit 1
           fi
@@ -466,6 +466,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/legacy_upgrade
           DIRECT_URL: postgresql://postgres:postgres@localhost:5432/legacy_upgrade
+          ADMIN_URL: postgresql://postgres:postgres@localhost:5432/legacy_upgrade
         run: |
           # `prisma db push` against the pinned legacy schema (which already models
           # conversation_documents with today's composite foreign keys) reconstructs
@@ -485,8 +486,8 @@ jobs:
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if (select confupdtype from pg_constraint where conname = 'conversation_documents_organization_id_fkey') <> 'c' then raise exception 'conversation_documents_organization_id_fkey was not upgraded to ON UPDATE CASCADE'; end if; end \$\$"
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
-          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/rls/isolation.sql
-          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/rls/calendar-booking-isolation.sql
+          bash scripts/ci/run-rls-check.sh iso tests/rls/isolation-grants.sql tests/rls/isolation-revokes.sql tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql tests/rls/isolation-grants-verify.sql
+          bash scripts/ci/run-rls-check.sh cal tests/rls/calendar-booking-grants.sql tests/rls/calendar-booking-revokes.sql tests/rls/calendar-booking-fixtures.sql tests/rls/calendar-booking-cleanup.sql tests/rls/calendar-booking-isolation.sql tests/rls/calendar-booking-grants-verify.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
       - name: Accept an already-corrected foreign key without needing the legacy override
         env:
