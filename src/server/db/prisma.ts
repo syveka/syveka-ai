@@ -1,18 +1,23 @@
 import "server-only";
 
 import { PrismaClient } from "@prisma/client";
-import { env } from "@/env";
 
 /**
  * Raw Prisma client on the SERVICE-ROLE connection (bypasses RLS).
  * ⚠ Only importable inside src/server/db (ESLint boundary, §4.3).
  * All business code uses tenantDb() from ./tenant.
+ *
+ * The connection URL itself is read by Prisma directly from
+ * `process.env.DATABASE_URL` (see `datasource db` in schema.prisma) — this
+ * module never routes through `@/env`'s full schema validation, so an
+ * unrelated missing var (Stripe, Vapi, ...) elsewhere in that schema can't
+ * make DB connectivity checks fail for the wrong reason.
  */
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
 function getPrisma(): PrismaClient {
   globalForPrisma.prisma ??= new PrismaClient({
-    log: env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+    log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
   });
 
   return globalForPrisma.prisma;

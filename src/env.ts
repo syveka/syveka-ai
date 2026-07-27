@@ -56,6 +56,37 @@ const serverSchema = z.object({
   MICROSOFT_CALENDAR_TENANT: z.string().optional(),
 });
 
+/**
+ * Redis-only subset of `serverSchema`, validated independently.
+ *
+ * `getRedisEnv()` must not go through `getServerEnv()`: that validates the
+ * entire ~25-key server schema (Stripe, Vapi, QStash, Resend, ...) and
+ * throws if *any* field is missing, even ones Redis never touches. That
+ * coupling previously made `/api/health`'s "redis" check fail for reasons
+ * that had nothing to do with Redis.
+ */
+const redisEnvSchema = serverSchema.pick({
+  UPSTASH_REDIS_REST_URL: true,
+  UPSTASH_REDIS_REST_TOKEN: true,
+});
+
+export function getRedisEnv(): z.infer<typeof redisEnvSchema> {
+  if (process.env.SKIP_ENV_VALIDATION === "1") {
+    return {
+      UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL ?? "",
+      UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN ?? "",
+    };
+  }
+
+  const parsed = redisEnvSchema.safeParse(process.env);
+  if (!parsed.success) {
+    const invalidFields = Object.keys(parsed.error.flatten().fieldErrors);
+    console.error("Invalid Redis environment variables:", invalidFields);
+    throw new Error(`Invalid Redis environment variables: ${invalidFields.join(", ")}`);
+  }
+  return parsed.data;
+}
+
 const clientSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.string().url(),
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
@@ -106,8 +137,9 @@ function getServerEnv(): ServerEnv {
 
   const parsed = serverSchema.safeParse(process.env);
   if (!parsed.success) {
-    console.error("Invalid environment variables:", parsed.error.flatten().fieldErrors);
-    throw new Error("Invalid environment variables");
+    const invalidFields = Object.keys(parsed.error.flatten().fieldErrors);
+    console.error("Invalid environment variables:", invalidFields);
+    throw new Error(`Invalid environment variables: ${invalidFields.join(", ")}`);
   }
 
   cachedServerEnv ??= { ...parsed.data, ...getClientEnv() };

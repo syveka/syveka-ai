@@ -2,15 +2,15 @@ import "server-only";
 
 import { Redis } from "@upstash/redis";
 import { Ratelimit } from "@upstash/ratelimit";
-import { env } from "@/env";
+import { env, getRedisEnv } from "@/env";
 
 let redisClient: Redis | null = null;
 
 function getRedis(): Redis {
-  redisClient ??= new Redis({
-    url: env.UPSTASH_REDIS_REST_URL,
-    token: env.UPSTASH_REDIS_REST_TOKEN,
-  });
+  if (!redisClient) {
+    const { UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN } = getRedisEnv();
+    redisClient = new Redis({ url: UPSTASH_REDIS_REST_URL, token: UPSTASH_REDIS_REST_TOKEN });
+  }
   return redisClient;
 }
 
