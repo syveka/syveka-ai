@@ -45,6 +45,11 @@ export default defineConfig({
     baseURL: resolveE2EBaseURL(),
     trace: "retain-on-failure",
     locale: "fi-FI",
+    // Staging Preview deployments sit behind Vercel Deployment Protection;
+    // this header is required for automated requests to reach them at all.
+    extraHTTPHeaders: process.env.VERCEL_AUTOMATION_BYPASS_SECRET
+      ? { "x-vercel-protection-bypass": process.env.VERCEL_AUTOMATION_BYPASS_SECRET }
+      : undefined,
   },
   projects: [
     { name: "desktop", use: { ...devices["Desktop Chrome"] } },
