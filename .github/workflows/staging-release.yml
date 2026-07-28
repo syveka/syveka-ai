@@ -251,12 +251,31 @@ jobs:
         env:
           CANDIDATE_E2E_BASE_URL: ${{ steps.deploy.outputs.url }}
 
+      - name: Require Vercel protection bypass secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            echo "VERCEL_AUTOMATION_BYPASS_SECRET is not configured for the staging environment."
+            echo "Staging Preview deployments sit behind Vercel Deployment Protection, so the" \
+                 "health check and smoke tests below cannot reach $E2E_BASE_URL without this" \
+                 "bypass secret (see Vercel Project Settings > Deployment Protection >" \
+                 "Protection Bypass for Automation)."
+            exit 1
+          fi
+        env:
+          E2E_BASE_URL: ${{ steps.staging-url.outputs.url }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
       - name: Wait for staging health
         shell: bash
         run: |
           set -euo pipefail
           for attempt in {1..12}; do
-            status=$(curl --silent --output /dev/null --write-out "%{http_code}" "$E2E_BASE_URL/api/health")
+            status=$(curl --silent --output /dev/null --write-out "%{http_code}" \
+              -H "x-vercel-protection-bypass: $VERCEL_AUTOMATION_BYPASS_SECRET" \
+              -H "x-vercel-set-bypass-cookie: true" \
+              "$E2E_BASE_URL/api/health")
             if [ "$status" = "200" ]; then
               exit 0
             fi
@@ -266,6 +285,7 @@ jobs:
           exit 1
         env:
           E2E_BASE_URL: ${{ steps.staging-url.outputs.url }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
@@ -276,3 +296,4 @@ jobs:
           E2E_BASE_URL: ${{ steps.staging-url.outputs.url }}
           E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
