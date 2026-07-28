@@ -36,7 +36,7 @@ describe("staging-release.yml Vercel Deployment Protection bypass", () => {
   it("does not weaken the health check's success condition or failure reporting", () => {
     const block = stepBlock("Wait for staging health");
     expect(block).toContain('"$status" = "200"');
-    expect(block).toContain("Staging health check did not become healthy.");
+    expect(block).toContain("Staging health check did not become healthy after");
     expect(block).toContain("exit 1");
   });
 

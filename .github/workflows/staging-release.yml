@@ -274,17 +274,32 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in {1..12}; do
-            status=$(curl --silent --output /dev/null --write-out "%{http_code}" \
+          # Cold Preview deployments can take longer than a fixed 120s to become healthy
+          # (Lambda cold start + Supabase connection/pool warm-up); three consecutive runs
+          # (30403635764 attempts 1-2, and the run before it) timed out here at ~120s while
+          # the same deployment verified healthy moments later on manual recheck. 30 attempts
+          # at 10s gives a 5-minute budget -- still bounded, but enough headroom for warm-up.
+          # --max-time bounds each individual request so one hung attempt can't silently
+          # consume the whole budget. The response body is our own /api/health JSON
+          # ({"status":...,"checks":{...}}) -- it never contains secrets, so it's safe to
+          # print in full for diagnostics.
+          max_attempts=30
+          for attempt in $(seq 1 "$max_attempts"); do
+            response=$(curl --silent --max-time 15 --connect-timeout 10 \
               -H "x-vercel-protection-bypass: $VERCEL_AUTOMATION_BYPASS_SECRET" \
               -H "x-vercel-set-bypass-cookie: true" \
-              "$E2E_BASE_URL/api/health")
+              -w '\n%{http_code}' \
+              "$E2E_BASE_URL/api/health") || response=$'\n000'
+            status="${response##*$'\n'}"
+            body="${response%$'\n'*}"
             if [ "$status" = "200" ]; then
+              echo "Staging health check succeeded on attempt $attempt/$max_attempts: $body"
               exit 0
             fi
+            echo "Attempt $attempt/$max_attempts: status=$status body=${body:0:500}"
             sleep 10
           done
-          echo "Staging health check did not become healthy."
+          echo "Staging health check did not become healthy after $max_attempts attempts (~5 minutes)."
           exit 1
         env:
           E2E_BASE_URL: ${{ steps.staging-url.outputs.url }}
