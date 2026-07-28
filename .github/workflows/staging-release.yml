@@ -124,6 +124,9 @@ jobs:
           DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
           DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
 
+      - name: Verify Prisma RHEL query engine is included in build artifacts
+        run: node scripts/verify-prisma-engine.mjs
+
       - name: Read-only legacy compatibility preflight
         run: psql "$STAGING_DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_preflight.sql
         env:
