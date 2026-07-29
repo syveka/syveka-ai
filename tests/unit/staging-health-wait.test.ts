@@ -51,4 +51,19 @@ describe("staging-release.yml health-check retry budget", () => {
     expect(block).toContain("steps.staging-url.outputs.url");
     expect(block).not.toMatch(/echo\s+"?\$VERCEL_AUTOMATION_BYPASS_SECRET\b/);
   });
+
+  it("does not request a bypass cookie -- run 30408486375 proved that forces an unfollowed 307 redirect", () => {
+    const block = stepBlock("Wait for staging health");
+    // The header name may still appear in an explanatory comment; only the actual
+    // curl invocation (`-H "x-vercel-set-bypass-cookie...`) matters here.
+    expect(block).not.toMatch(/-H\s+"x-vercel-set-bypass-cookie/);
+  });
+
+  it("captures the sanitized redirect Location (host+path, no query/nonce) for future diagnosability", () => {
+    const block = stepBlock("Wait for staging health");
+    expect(block).toMatch(/-D\s+"\$headers_file"/);
+    expect(block).toMatch(/grep\s+-i\s+'\^location:'/);
+    // Strips the query string so a Vercel SSO nonce never lands in CI logs.
+    expect(block).toContain('location="${location%%\\?*}"');
+  });
 });
