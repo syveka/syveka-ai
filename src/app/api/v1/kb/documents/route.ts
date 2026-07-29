@@ -27,14 +27,31 @@ export async function POST(request: Request): Promise<NextResponse> {
     { requirePermission },
     { AuthError },
     { createDocument, DocumentIngestionError, UrlIngestionError },
+    { rateLimiters },
   ] = await Promise.all([
     import("@/server/auth/guard"),
     import("@/server/auth/session"),
     import("@/server/services/documents"),
+    import("@/server/integrations/redis"),
   ]);
 
   try {
     const ctx = await requirePermission("kb:write");
+    const rateLimit = await rateLimiters.api.limit(`kb-documents:${ctx.orgId}:${ctx.userId}`);
+    if (!rateLimit.success) {
+      return NextResponse.json(
+        { error: { code: "rate_limited" } },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": String(Math.max(1, Math.ceil((rateLimit.reset - Date.now()) / 1000))),
+            "X-RateLimit-Limit": String(rateLimit.limit),
+            "X-RateLimit-Remaining": String(rateLimit.remaining),
+            "X-RateLimit-Reset": String(rateLimit.reset),
+          },
+        },
+      );
+    }
     const body = createDocumentSchema.safeParse(await request.json().catch(() => null));
     if (!body.success) {
       return NextResponse.json(
