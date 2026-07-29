@@ -280,23 +280,38 @@ jobs:
           # the same deployment verified healthy moments later on manual recheck. 30 attempts
           # at 10s gives a 5-minute budget -- still bounded, but enough headroom for warm-up.
           # --max-time bounds each individual request so one hung attempt can't silently
-          # consume the whole budget. The response body is our own /api/health JSON
-          # ({"status":...,"checks":{...}}) -- it never contains secrets, so it's safe to
-          # print in full for diagnostics.
+          # consume the whole budget.
+          #
+          # `x-vercel-set-bypass-cookie: true` is deliberately NOT sent here: run 30408486375
+          # proved (via sanitized status/Location diagnostics) that it makes Vercel respond
+          # with 307 to the *same* URL to attach the bypass cookie, rather than passing the
+          # request straight through -- and this loop's plain `curl` (no -L) never follows
+          # that redirect, so every attempt "failed" without ever reaching the app. A bare
+          # `x-vercel-protection-bypass` header bypasses protection directly with no redirect,
+          # which is exactly what playwright.config.ts already does for the smoke tests
+          # (it never sets that cookie flag either). This loop is stateless, one request at a
+          # time -- it has no need for Vercel to also set a reusable bypass cookie.
           max_attempts=30
           for attempt in $(seq 1 "$max_attempts"); do
-            response=$(curl --silent --max-time 15 --connect-timeout 10 \
+            headers_file=$(mktemp)
+            body_file=$(mktemp)
+            status=$(curl --silent --max-time 15 --connect-timeout 10 \
+              -D "$headers_file" -o "$body_file" -w '%{http_code}' \
               -H "x-vercel-protection-bypass: $VERCEL_AUTOMATION_BYPASS_SECRET" \
-              -H "x-vercel-set-bypass-cookie: true" \
-              -w '\n%{http_code}' \
-              "$E2E_BASE_URL/api/health") || response=$'\n000'
-            status="${response##*$'\n'}"
-            body="${response%$'\n'*}"
+              "$E2E_BASE_URL/api/health") || status=000
+            body=$(head -c 500 "$body_file" 2>/dev/null)
             if [ "$status" = "200" ]; then
               echo "Staging health check succeeded on attempt $attempt/$max_attempts: $body"
+              rm -f "$headers_file" "$body_file"
               exit 0
             fi
-            echo "Attempt $attempt/$max_attempts: status=$status body=${body:0:500}"
+            # Location is our own deployment's redirect target, never a token/cookie --
+            # host+path only (query strings on Vercel's protection redirects carry a nonce).
+            location=$(grep -i '^location:' "$headers_file" 2>/dev/null | head -1 |
+              sed -E 's/^[Ll]ocation:[[:space:]]*//' | tr -d '\r\n')
+            location="${location%%\?*}"
+            echo "Attempt $attempt/$max_attempts: status=$status body=${body} ${location:+location=$location}"
+            rm -f "$headers_file" "$body_file"
             sleep 10
           done
           echo "Staging health check did not become healthy after $max_attempts attempts (~5 minutes)."
