@@ -87,6 +87,44 @@ export function getRedisEnv(): z.infer<typeof redisEnvSchema> {
   return parsed.data;
 }
 
+/**
+ * Supabase-only subset, validated independently of the full client+server
+ * merge.
+ *
+ * `createSupabaseServer()`/`createSupabaseAdmin()` only need these three
+ * fields, but reading them through `env` (the merged Proxy) forces the
+ * *entire* client schema to validate first -- including
+ * NEXT_PUBLIC_APP_URL and NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY, which have
+ * nothing to do with Supabase. That coupling turned an unrelated
+ * misconfigured Stripe/app-url value into a 500 on every authenticated
+ * request (surfaced by the ai/files/upload-url smoke test, which -- unlike
+ * ai/chat's blanket catch -- doesn't swallow non-auth errors). Same root
+ * cause and same fix shape as `getRedisEnv()` above.
+ */
+const supabaseServerEnvSchema = z.object({
+  NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+});
+
+export function getSupabaseServerEnv(): z.infer<typeof supabaseServerEnvSchema> {
+  if (process.env.SKIP_ENV_VALIDATION === "1") {
+    return {
+      NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+      SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+    };
+  }
+
+  const parsed = supabaseServerEnvSchema.safeParse(process.env);
+  if (!parsed.success) {
+    const invalidFields = Object.keys(parsed.error.flatten().fieldErrors);
+    console.error("Invalid Supabase environment variables:", invalidFields);
+    throw new Error(`Invalid Supabase environment variables: ${invalidFields.join(", ")}`);
+  }
+  return parsed.data;
+}
+
 const clientSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.string().url(),
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
