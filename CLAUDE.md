@@ -169,7 +169,7 @@ questions:
 - Use descriptive, intention-revealing names for variables, functions, and files.
 - Keep technical debt minimal, and address it deliberately rather than letting it accumulate
   silently.
-- Add comments only where the *why* isn't obvious from the code itself — never narrate *what*
+- Add comments only where the _why_ isn't obvious from the code itself — never narrate _what_
   well-named code already shows.
 - Avoid premature optimization; optimize only where there is a measured, real need.
 - Avoid unnecessary abstraction; don't build for hypothetical future requirements that may never
