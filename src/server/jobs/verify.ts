@@ -1,15 +1,18 @@
 import "server-only";
 
 import { Receiver } from "@upstash/qstash";
-import { env } from "@/env";
+import { getQstashEnv } from "@/env";
 
 let receiver: Receiver | null = null;
 
 function getReceiver(): Receiver {
-  receiver ??= new Receiver({
-    currentSigningKey: env.QSTASH_CURRENT_SIGNING_KEY,
-    nextSigningKey: env.QSTASH_NEXT_SIGNING_KEY,
-  });
+  if (!receiver) {
+    const { QSTASH_CURRENT_SIGNING_KEY, QSTASH_NEXT_SIGNING_KEY } = getQstashEnv();
+    receiver = new Receiver({
+      currentSigningKey: QSTASH_CURRENT_SIGNING_KEY,
+      nextSigningKey: QSTASH_NEXT_SIGNING_KEY,
+    });
+  }
   return receiver;
 }
 

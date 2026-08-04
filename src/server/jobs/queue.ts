@@ -1,12 +1,15 @@
 import "server-only";
 
 import { Client } from "@upstash/qstash";
-import { env } from "@/env";
+import { getQstashEnv } from "@/env";
 
 let qstash: Client | null = null;
 
 function getQstash(): Client {
-  qstash ??= new Client({ token: env.QSTASH_TOKEN });
+  if (!qstash) {
+    const { QSTASH_TOKEN } = getQstashEnv();
+    qstash = new Client({ token: QSTASH_TOKEN });
+  }
   return qstash;
 }
 
@@ -24,8 +27,9 @@ export async function enqueue(
   payload: Record<string, unknown>,
   opts?: { delaySeconds?: number; deduplicationId?: string },
 ): Promise<void> {
+  const { NEXT_PUBLIC_APP_URL } = getQstashEnv();
   await getQstash().publishJSON({
-    url: `${env.NEXT_PUBLIC_APP_URL}/api/v1/jobs/${job}`,
+    url: `${NEXT_PUBLIC_APP_URL}/api/v1/jobs/${job}`,
     body: payload,
     retries: 3,
     ...(opts?.delaySeconds ? { delay: opts.delaySeconds } : {}),

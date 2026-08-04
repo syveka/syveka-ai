@@ -125,6 +125,48 @@ export function getSupabaseServerEnv(): z.infer<typeof supabaseServerEnvSchema> 
   return parsed.data;
 }
 
+/**
+ * QStash-only subset, validated independently of the full client+server
+ * merge.
+ *
+ * `verifyJobRequest()` (signature verification, used by every job route) and
+ * `enqueue()` (job publishing) only need these four fields, but reading them
+ * through `env` forces the entire ~25-field server schema plus the 4-field
+ * client schema to validate first -- including fields QStash has nothing to
+ * do with (Stripe, Vapi, Resend, calendar, ...). `verifyJobRequest()` calls
+ * its receiver constructor outside its own try/catch, so an unrelated
+ * misconfigured field anywhere in that schema would throw unhandled and 500
+ * every one of the six QStash job routes (post-call, run-workflow,
+ * usage-rollup, send-reminder, embed-document, calendar-sync) at once. Same
+ * root cause and same fix shape as `getRedisEnv()`/`getSupabaseServerEnv()`
+ * above.
+ */
+const qstashEnvSchema = z.object({
+  QSTASH_TOKEN: z.string().min(1),
+  QSTASH_CURRENT_SIGNING_KEY: z.string().min(1),
+  QSTASH_NEXT_SIGNING_KEY: z.string().min(1),
+  NEXT_PUBLIC_APP_URL: z.string().url(),
+});
+
+export function getQstashEnv(): z.infer<typeof qstashEnvSchema> {
+  if (process.env.SKIP_ENV_VALIDATION === "1") {
+    return {
+      QSTASH_TOKEN: process.env.QSTASH_TOKEN ?? "",
+      QSTASH_CURRENT_SIGNING_KEY: process.env.QSTASH_CURRENT_SIGNING_KEY ?? "",
+      QSTASH_NEXT_SIGNING_KEY: process.env.QSTASH_NEXT_SIGNING_KEY ?? "",
+      NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL ?? "",
+    };
+  }
+
+  const parsed = qstashEnvSchema.safeParse(process.env);
+  if (!parsed.success) {
+    const invalidFields = Object.keys(parsed.error.flatten().fieldErrors);
+    console.error("Invalid QStash environment variables:", invalidFields);
+    throw new Error(`Invalid QStash environment variables: ${invalidFields.join(", ")}`);
+  }
+  return parsed.data;
+}
+
 const clientSchema = z.object({
   NEXT_PUBLIC_APP_URL: z.string().url(),
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
