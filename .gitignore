@@ -9,6 +9,7 @@ next-env.d.ts
 coverage/
 playwright-report/
 test-results/
+graphify-out/
 .vercel
 
 # Local database backups
