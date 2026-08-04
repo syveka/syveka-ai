@@ -24,8 +24,18 @@ export class ConnectionError extends Error {
 
 function stateSecret(): string {
   // Reuse the QStash signing key material as HMAC secret if a dedicated one
-  // is not configured; state only needs integrity, not confidentiality.
-  return process.env.CALENDAR_OAUTH_STATE_SECRET ?? process.env.QSTASH_CURRENT_SIGNING_KEY ?? "dev";
+  // is not configured; state only needs integrity, not confidentiality. No
+  // further fallback: an unconfigured secret must fail closed rather than
+  // sign/verify OAuth state (which binds org/user/provider) with a value
+  // anyone with repo access can read.
+  const secret = process.env.CALENDAR_OAUTH_STATE_SECRET || process.env.QSTASH_CURRENT_SIGNING_KEY;
+  if (!secret) {
+    throw new ConnectionError(
+      "Calendar OAuth state signing is not configured (set CALENDAR_OAUTH_STATE_SECRET or QSTASH_CURRENT_SIGNING_KEY)",
+      "not_configured",
+    );
+  }
+  return secret;
 }
 
 export function buildOAuthState(ctx: TenantContext, provider: CalendarProvider): string {
