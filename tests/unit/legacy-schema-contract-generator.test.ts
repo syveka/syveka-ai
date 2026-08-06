@@ -141,6 +141,17 @@ function committedLegacyMissingColumns(): string[] {
     .map((line) => line.replace(/,$/, ""));
 }
 
+function legacyMissingTablesDeclarationOf(generatorStdout: string): string {
+  const match = generatorStdout.match(
+    /-- BEGIN LEGACY MISSING TABLES\r?\n([\s\S]*?)\r?\n-- END LEGACY MISSING TABLES/,
+  );
+  const body = match?.[1];
+  if (body === undefined) {
+    throw new Error("Missing LEGACY MISSING TABLES markers in generator output.");
+  }
+  return body.trim();
+}
+
 function legacyForeignKeyOverridesOf(generatorStdout: string): string[] {
   const match = generatorStdout.match(
     /-- BEGIN LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES\r?\n([\s\S]*?)\r?\n-- END LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES/,
@@ -358,6 +369,67 @@ describe("legacy schema contract generator", () => {
     expect(result.status).not.toBe(0);
     expect(result.stderr).toContain("does not add column");
     expect(result.stderr).toContain("webhook_verification_secret_hash");
+  });
+
+  it("fails closed when a legacy-missing table references a nonexistent migration directory", () => {
+    const mutated = generatorSource.replace(
+      "const LEGACY_MISSING_TABLE_ENTRIES = [];",
+      'const LEGACY_MISSING_TABLE_ENTRIES = [["users", "20269999999999_not_a_real_migration"]];',
+    );
+    expect(mutated).not.toBe(generatorSource);
+
+    const result = runGenerator(mutated);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("LEGACY_MISSING_TABLE_ENTRIES references migration");
+    expect(result.stderr).toContain("20269999999999_not_a_real_migration");
+  });
+
+  it("fails closed when the named migration does not create the legacy-missing table", () => {
+    const mutated = generatorSource.replace(
+      "const LEGACY_MISSING_TABLE_ENTRIES = [];",
+      'const LEGACY_MISSING_TABLE_ENTRIES = [["users", "20260726000000_normalize_list_column_nullability"]];',
+    );
+    expect(mutated).not.toBe(generatorSource);
+
+    const result = runGenerator(mutated);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('does not create table "users"');
+  });
+
+  it("fails closed when a legacy-missing table is absent from the Prisma schema", () => {
+    const mutated = generatorSource.replace(
+      "const LEGACY_MISSING_TABLE_ENTRIES = [];",
+      'const LEGACY_MISSING_TABLE_ENTRIES = [["not_a_real_table", "20260701000000_initial_baseline"]];',
+    );
+    expect(mutated).not.toBe(generatorSource);
+
+    const result = runGenerator(mutated);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('references "not_a_real_table"');
+    expect(result.stderr).toContain("is not a real table in the current Prisma schema");
+  });
+
+  it("emits valid PostgreSQL for an empty legacy-missing-table list", () => {
+    const stdout = runGenerator(generatorSource).stdout;
+    expect(legacyMissingTablesDeclarationOf(stdout)).toBe(
+      "legacy_missing_tables TEXT[] := '{}'::TEXT[];",
+    );
+    expect(stdout).not.toContain("ARRAY[]");
+  });
+
+  it("places legacy-missing-table markers between missing columns and foreign keys", () => {
+    const stdout = runGenerator(generatorSource).stdout;
+    const missingColumnsEnd = stdout.indexOf("-- END LEGACY MISSING COLUMNS");
+    const missingTablesStart = stdout.indexOf("-- BEGIN LEGACY MISSING TABLES");
+    const missingTablesEnd = stdout.indexOf("-- END LEGACY MISSING TABLES");
+    const foreignKeysStart = stdout.indexOf("-- BEGIN COMPLETE FOREIGN KEY CONTRACT");
+    expect(missingColumnsEnd).toBeGreaterThan(-1);
+    expect(missingTablesStart).toBeGreaterThan(missingColumnsEnd);
+    expect(missingTablesEnd).toBeGreaterThan(missingTablesStart);
+    expect(foreignKeysStart).toBeGreaterThan(missingTablesEnd);
   });
 
   it("emits exactly the one approved legacy foreign-key update-action override", () => {

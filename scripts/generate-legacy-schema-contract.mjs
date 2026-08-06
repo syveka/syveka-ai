@@ -9,6 +9,50 @@ const sqlString = (value) => `'${String(value).replaceAll("'", "''")}'`;
 const columnName = (field) => field.dbName ?? field.name;
 const tableName = (model) => model.dbName ?? model.name;
 
+// Tables that may not exist YET on a legacy-upgrade database because the
+// migration that creates them runs later in the same `prisma migrate deploy`.
+// Every entry is fail-closed against both the current Prisma schema and the
+// migration that owns the CREATE TABLE statement. Keep this empty until a real
+// legacy-upgrade gap requires an exemption.
+const LEGACY_MISSING_TABLE_ENTRIES = [];
+
+const actualTableNames = new Set(models.map(tableName));
+const seenMissingTableNames = new Set();
+for (const [expectedTable, migrationDir] of LEGACY_MISSING_TABLE_ENTRIES) {
+  if (seenMissingTableNames.has(expectedTable)) {
+    throw new Error(`Duplicate LEGACY_MISSING_TABLE entry for table "${expectedTable}".`);
+  }
+  seenMissingTableNames.add(expectedTable);
+
+  if (!actualTableNames.has(expectedTable)) {
+    throw new Error(
+      `LEGACY_MISSING_TABLE_ENTRIES references "${expectedTable}", which is not a real table ` +
+        "in the current Prisma schema.",
+    );
+  }
+
+  const migrationPath = path.join("prisma/migrations", migrationDir, "migration.sql");
+  if (!existsSync(migrationPath)) {
+    throw new Error(
+      `LEGACY_MISSING_TABLE_ENTRIES references migration "${migrationDir}", which does not ` +
+        `exist at ${migrationPath}.`,
+    );
+  }
+
+  const migrationSql = readFileSync(migrationPath, "utf8");
+  const escapedTable = expectedTable.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const createTablePattern = new RegExp(
+    `CREATE TABLE\\s+(?:IF NOT EXISTS\\s+)?(?:"public"\\.)?"${escapedTable}"(?:\\s|\\()`,
+    "i",
+  );
+  if (!createTablePattern.test(migrationSql)) {
+    throw new Error(
+      `LEGACY_MISSING_TABLE_ENTRIES references migration "${migrationDir}", whose ` +
+        `migration.sql does not create table "${expectedTable}".`,
+    );
+  }
+}
+
 // Prisma's DMMF cannot express PostgreSQL nullability for scalar-list (array) columns:
 // Prisma has no optional-list syntax (`Int[]?` / `String[]?` are invalid schema syntax), so
 // `field.isRequired` is structurally always `true` for every list field regardless of whether
@@ -387,6 +431,15 @@ console.log("-- END LEGACY NULLABLE LIST COLUMNS");
 console.log("-- BEGIN LEGACY MISSING COLUMNS");
 console.log(LEGACY_MISSING_COLUMN_ENTRIES.map(([key]) => `    ${sqlString(key)}`).join(",\n"));
 console.log("-- END LEGACY MISSING COLUMNS");
+console.log("-- BEGIN LEGACY MISSING TABLES");
+if (LEGACY_MISSING_TABLE_ENTRIES.length === 0) {
+  console.log("  legacy_missing_tables TEXT[] := '{}'::TEXT[];");
+} else {
+  console.log("  legacy_missing_tables TEXT[] := ARRAY[");
+  console.log(LEGACY_MISSING_TABLE_ENTRIES.map(([table]) => `    ${sqlString(table)}`).join(",\n"));
+  console.log("  ];");
+}
+console.log("-- END LEGACY MISSING TABLES");
 console.log("-- BEGIN COMPLETE FOREIGN KEY CONTRACT");
 console.log(fkRows.join(",\n"));
 console.log("-- END COMPLETE FOREIGN KEY CONTRACT");

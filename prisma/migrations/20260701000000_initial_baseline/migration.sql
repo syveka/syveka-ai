@@ -77,6 +77,9 @@ DECLARE
     'calendar_sync_states.webhook_verification_secret_hash'
 -- END LEGACY MISSING COLUMNS
   ];
+-- BEGIN LEGACY MISSING TABLES
+  legacy_missing_tables TEXT[] := '{}'::TEXT[];
+-- END LEGACY MISSING TABLES
   -- Foreign keys whose ON UPDATE action may still show a specific, verified
   -- pre-correction legacy value, but ONLY until their governing migration has been
   -- successfully applied (per public._prisma_migrations -- see the lookup just below
@@ -871,6 +874,10 @@ BEGIN
       AND NOT attribute.attisdropped;
 
     IF NOT FOUND THEN
+      IF expected.table_name = ANY(legacy_missing_tables)
+        AND to_regclass(format('public.%I', expected.table_name)) IS NULL THEN
+        CONTINUE;
+      END IF;
       IF format('%s.%s', expected.table_name, expected.column_name)
         = ANY(legacy_missing_columns) THEN
         CONTINUE;
@@ -1029,6 +1036,16 @@ BEGIN
     GROUP BY
       constraint_row.oid, source_namespace.nspname, source_table.relname,
       target_namespace.nspname, target_table.relname;
+
+    IF (
+      expected.source_table = ANY(legacy_missing_tables)
+      AND to_regclass(format('%I.%I', expected.source_schema, expected.source_table)) IS NULL
+    ) OR (
+      expected.target_table = ANY(legacy_missing_tables)
+      AND to_regclass(format('%I.%I', expected.target_schema, expected.target_table)) IS NULL
+    ) THEN
+      CONTINUE;
+    END IF;
 
     -- Resolve the governing migration (if any) for this exact constraint and this
     -- exact observed update action. A NULL result means either there is no override
