@@ -11,7 +11,7 @@ import { getEntitlements } from "./billing/entitlements";
 import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
 import type { VoiceAssistantInput } from "@/lib/validators/voice";
-import { env } from "@/env";
+import { getVapiEnv } from "@/env";
 
 /** Zod tool schemas → OpenAI-function JSON for Vapi (§16.2). */
 function vapiToolsFor(enabledNames: string[]) {
@@ -119,6 +119,7 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
       ? "Aloita kertomalla, että olet tekoälyavustaja ja puhelu voidaan tallentaa."
       : "Start by disclosing that you are an AI assistant and the call may be recorded.";
 
+  const { NEXT_PUBLIC_APP_URL, VAPI_WEBHOOK_SECRET } = getVapiEnv();
   const config: VapiAssistantConfig = {
     name: assistant.name,
     firstMessage: assistant.firstMessage,
@@ -130,8 +131,8 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
     language: assistant.language.toLowerCase() as "fi" | "en" | "ar",
     voiceProvider: assistant.voiceProvider,
     voiceId: assistant.voiceId,
-    serverUrl: `${env.NEXT_PUBLIC_APP_URL}/api/v1/voice/webhook`,
-    serverUrlSecret: env.VAPI_WEBHOOK_SECRET,
+    serverUrl: `${NEXT_PUBLIC_APP_URL}/api/v1/voice/webhook`,
+    serverUrlSecret: VAPI_WEBHOOK_SECRET,
     tools: vapiToolsFor(toolNames),
     maxDurationSeconds: 15 * 60, // §16.5
   };

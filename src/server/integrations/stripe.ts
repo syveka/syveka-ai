@@ -2,16 +2,19 @@ import "server-only";
 
 import Stripe from "stripe";
 import type { Plan } from "@prisma/client";
-import { env } from "@/env";
+import { getStripeEnv } from "@/env";
 
 let stripeClient: Stripe | null = null;
 
 function getStripe(): Stripe {
-  stripeClient ??= new Stripe(env.STRIPE_SECRET_KEY, {
-    apiVersion: "2025-02-24.acacia",
-    typescript: true,
-    appInfo: { name: "Syveka AI", url: env.NEXT_PUBLIC_APP_URL },
-  });
+  if (!stripeClient) {
+    const { STRIPE_SECRET_KEY, NEXT_PUBLIC_APP_URL } = getStripeEnv();
+    stripeClient = new Stripe(STRIPE_SECRET_KEY, {
+      apiVersion: "2025-02-24.acacia",
+      typescript: true,
+      appInfo: { name: "Syveka AI", url: NEXT_PUBLIC_APP_URL },
+    });
+  }
   return stripeClient;
 }
 
@@ -26,14 +29,20 @@ export const stripe = new Proxy({} as Stripe, {
 export type BillingInterval = "monthly" | "annual";
 
 function priceMap(): Record<Exclude<Plan, "FREE" | "ENTERPRISE">, Record<BillingInterval, string>> {
+  const {
+    STRIPE_PRICE_STARTER_MONTHLY,
+    STRIPE_PRICE_STARTER_ANNUAL,
+    STRIPE_PRICE_PRO_MONTHLY,
+    STRIPE_PRICE_PRO_ANNUAL,
+  } = getStripeEnv();
   return {
     STARTER: {
-      monthly: env.STRIPE_PRICE_STARTER_MONTHLY,
-      annual: env.STRIPE_PRICE_STARTER_ANNUAL,
+      monthly: STRIPE_PRICE_STARTER_MONTHLY,
+      annual: STRIPE_PRICE_STARTER_ANNUAL,
     },
     PRO: {
-      monthly: env.STRIPE_PRICE_PRO_MONTHLY,
-      annual: env.STRIPE_PRICE_PRO_ANNUAL,
+      monthly: STRIPE_PRICE_PRO_MONTHLY,
+      annual: STRIPE_PRICE_PRO_ANNUAL,
     },
   };
 }
@@ -79,6 +88,7 @@ export async function createCheckoutSession(params: {
   seats: number;
   locale: string;
 }): Promise<string> {
+  const { NEXT_PUBLIC_APP_URL } = getStripeEnv();
   const session = await getStripe().checkout.sessions.create({
     customer: params.customerId,
     mode: "subscription",
@@ -90,8 +100,8 @@ export async function createCheckoutSession(params: {
       ? params.locale
       : "auto") as Stripe.Checkout.SessionCreateParams.Locale,
     subscription_data: { metadata: { orgId: params.orgId } },
-    success_url: `${env.NEXT_PUBLIC_APP_URL}/settings/billing?status=success`,
-    cancel_url: `${env.NEXT_PUBLIC_APP_URL}/settings/billing?status=canceled`,
+    success_url: `${NEXT_PUBLIC_APP_URL}/settings/billing?status=success`,
+    cancel_url: `${NEXT_PUBLIC_APP_URL}/settings/billing?status=canceled`,
     metadata: { orgId: params.orgId },
   });
   if (!session.url) throw new Error("Stripe did not return a checkout URL");
@@ -99,9 +109,10 @@ export async function createCheckoutSession(params: {
 }
 
 export async function createPortalSession(customerId: string): Promise<string> {
+  const { NEXT_PUBLIC_APP_URL } = getStripeEnv();
   const session = await getStripe().billingPortal.sessions.create({
     customer: customerId,
-    return_url: `${env.NEXT_PUBLIC_APP_URL}/settings/billing`,
+    return_url: `${NEXT_PUBLIC_APP_URL}/settings/billing`,
   });
   return session.url;
 }

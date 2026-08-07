@@ -1,13 +1,13 @@
 import "server-only";
 
 import Anthropic from "@anthropic-ai/sdk";
-import { env } from "@/env";
+import { getAnthropicEnv } from "@/env";
 import { abortableDelay, isTransientAiError, retryDelayMs } from "@/server/ai/retry";
 
 let anthropicClient: Anthropic | null = null;
 
 function getAnthropic(): Anthropic {
-  anthropicClient ??= new Anthropic({ apiKey: env.ANTHROPIC_API_KEY, maxRetries: 0 });
+  anthropicClient ??= new Anthropic({ apiKey: getAnthropicEnv().ANTHROPIC_API_KEY, maxRetries: 0 });
   return anthropicClient;
 }
 
@@ -39,6 +39,7 @@ export async function streamClaude(params: {
   callbacks: StreamCallbacks;
   signal?: AbortSignal;
 }): Promise<{ tokensIn: number; tokensOut: number; stopReason: string | null }> {
+  const { AI_RETRY_MAX_ATTEMPTS, AI_RETRY_BASE_DELAY_MS } = getAnthropicEnv();
   let tokensIn = 0;
   let tokensOut = 0;
   let stopReason: string | null = null;
@@ -51,7 +52,7 @@ export async function streamClaude(params: {
   // Tool-use loop: max 5 rounds to bound cost (§15.6)
   for (let round = 0; round < 5; round++) {
     let final: Anthropic.Message | null = null;
-    for (let attempt = 1; attempt <= env.AI_RETRY_MAX_ATTEMPTS; attempt++) {
+    for (let attempt = 1; attempt <= AI_RETRY_MAX_ATTEMPTS; attempt++) {
       let emittedText = false;
       try {
         const stream = getAnthropic().messages.stream(
@@ -71,10 +72,10 @@ export async function streamClaude(params: {
         final = await stream.finalMessage();
         break;
       } catch (error) {
-        if (emittedText || attempt === env.AI_RETRY_MAX_ATTEMPTS || !isTransientAiError(error)) {
+        if (emittedText || attempt === AI_RETRY_MAX_ATTEMPTS || !isTransientAiError(error)) {
           throw error;
         }
-        await abortableDelay(retryDelayMs(attempt, env.AI_RETRY_BASE_DELAY_MS), params.signal);
+        await abortableDelay(retryDelayMs(attempt, AI_RETRY_BASE_DELAY_MS), params.signal);
       }
     }
     if (!final) throw new Error("AI provider returned no response");

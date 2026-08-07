@@ -1,15 +1,16 @@
 import "server-only";
 
 import { createHmac, timingSafeEqual } from "node:crypto";
-import { env } from "@/env";
+import { getVapiEnv } from "@/env";
 
 const VAPI_BASE = "https://api.vapi.ai";
 
 async function vapiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  const { VAPI_API_KEY } = getVapiEnv();
   const res = await fetch(`${VAPI_BASE}${path}`, {
     ...init,
     headers: {
-      Authorization: `Bearer ${env.VAPI_API_KEY}`,
+      Authorization: `Bearer ${VAPI_API_KEY}`,
       "Content-Type": "application/json",
       ...init?.headers,
     },
@@ -90,7 +91,8 @@ export async function buyPhoneNumber(assistantId: string): Promise<{ id: string;
 /** HMAC verification for inbound Vapi webhooks (§13.2). */
 export function verifyVapiSignature(rawBody: string, signature: string | null): boolean {
   if (!signature) return false;
-  const expected = createHmac("sha256", env.VAPI_WEBHOOK_SECRET).update(rawBody).digest("hex");
+  const { VAPI_WEBHOOK_SECRET } = getVapiEnv();
+  const expected = createHmac("sha256", VAPI_WEBHOOK_SECRET).update(rawBody).digest("hex");
   const a = Buffer.from(expected);
   const b = Buffer.from(signature);
   return a.length === b.length && timingSafeEqual(a, b);

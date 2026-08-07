@@ -56,6 +56,123 @@ const serverSchema = z.object({
   MICROSOFT_CALENDAR_TENANT: z.string().optional(),
 });
 
+function providerEnvError(label: string, invalidFields: string[]): Error {
+  console.error(`Invalid ${label} environment variables:`, invalidFields);
+  return new Error(`Invalid ${label} environment variables: ${invalidFields.join(", ")}`);
+}
+
+const stripeEnvSchema = serverSchema
+  .pick({
+    STRIPE_SECRET_KEY: true,
+    STRIPE_WEBHOOK_SECRET: true,
+    STRIPE_PRICE_STARTER_MONTHLY: true,
+    STRIPE_PRICE_STARTER_ANNUAL: true,
+    STRIPE_PRICE_PRO_MONTHLY: true,
+    STRIPE_PRICE_PRO_ANNUAL: true,
+  })
+  .extend({ NEXT_PUBLIC_APP_URL: z.string().url() });
+
+export function getStripeEnv(): z.infer<typeof stripeEnvSchema> {
+  if (process.env.SKIP_ENV_VALIDATION === "1") {
+    return {
+      STRIPE_SECRET_KEY: process.env.STRIPE_SECRET_KEY as string,
+      STRIPE_WEBHOOK_SECRET: process.env.STRIPE_WEBHOOK_SECRET as string,
+      STRIPE_PRICE_STARTER_MONTHLY: process.env.STRIPE_PRICE_STARTER_MONTHLY as string,
+      STRIPE_PRICE_STARTER_ANNUAL: process.env.STRIPE_PRICE_STARTER_ANNUAL as string,
+      STRIPE_PRICE_PRO_MONTHLY: process.env.STRIPE_PRICE_PRO_MONTHLY as string,
+      STRIPE_PRICE_PRO_ANNUAL: process.env.STRIPE_PRICE_PRO_ANNUAL as string,
+      NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL as string,
+    };
+  }
+
+  const parsed = stripeEnvSchema.safeParse(process.env);
+  if (!parsed.success) {
+    throw providerEnvError("Stripe", Object.keys(parsed.error.flatten().fieldErrors));
+  }
+  return parsed.data;
+}
+
+const vapiEnvSchema = serverSchema
+  .pick({ VAPI_API_KEY: true, VAPI_WEBHOOK_SECRET: true })
+  .extend({ NEXT_PUBLIC_APP_URL: z.string().url() });
+
+export function getVapiEnv(): z.infer<typeof vapiEnvSchema> {
+  if (process.env.SKIP_ENV_VALIDATION === "1") {
+    return {
+      VAPI_API_KEY: process.env.VAPI_API_KEY as string,
+      VAPI_WEBHOOK_SECRET: process.env.VAPI_WEBHOOK_SECRET as string,
+      NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL as string,
+    };
+  }
+
+  const parsed = vapiEnvSchema.safeParse(process.env);
+  if (!parsed.success) {
+    throw providerEnvError("Vapi", Object.keys(parsed.error.flatten().fieldErrors));
+  }
+  return parsed.data;
+}
+
+const openAIEnvSchema = serverSchema.pick({
+  OPENAI_API_KEY: true,
+  AI_RETRY_MAX_ATTEMPTS: true,
+  AI_RETRY_BASE_DELAY_MS: true,
+});
+
+export function getOpenAIEnv(): z.infer<typeof openAIEnvSchema> {
+  if (process.env.SKIP_ENV_VALIDATION === "1") {
+    return {
+      OPENAI_API_KEY: process.env.OPENAI_API_KEY as string,
+      AI_RETRY_MAX_ATTEMPTS: process.env.AI_RETRY_MAX_ATTEMPTS as unknown as number,
+      AI_RETRY_BASE_DELAY_MS: process.env.AI_RETRY_BASE_DELAY_MS as unknown as number,
+    };
+  }
+
+  const parsed = openAIEnvSchema.safeParse(process.env);
+  if (!parsed.success) {
+    throw providerEnvError("OpenAI", Object.keys(parsed.error.flatten().fieldErrors));
+  }
+  return parsed.data;
+}
+
+const anthropicEnvSchema = serverSchema.pick({
+  ANTHROPIC_API_KEY: true,
+  AI_RETRY_MAX_ATTEMPTS: true,
+  AI_RETRY_BASE_DELAY_MS: true,
+});
+
+export function getAnthropicEnv(): z.infer<typeof anthropicEnvSchema> {
+  if (process.env.SKIP_ENV_VALIDATION === "1") {
+    return {
+      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY as string,
+      AI_RETRY_MAX_ATTEMPTS: process.env.AI_RETRY_MAX_ATTEMPTS as unknown as number,
+      AI_RETRY_BASE_DELAY_MS: process.env.AI_RETRY_BASE_DELAY_MS as unknown as number,
+    };
+  }
+
+  const parsed = anthropicEnvSchema.safeParse(process.env);
+  if (!parsed.success) {
+    throw providerEnvError("Anthropic", Object.keys(parsed.error.flatten().fieldErrors));
+  }
+  return parsed.data;
+}
+
+const resendEnvSchema = serverSchema.pick({ RESEND_API_KEY: true, EMAIL_FROM: true });
+
+export function getResendEnv(): z.infer<typeof resendEnvSchema> {
+  if (process.env.SKIP_ENV_VALIDATION === "1") {
+    return {
+      RESEND_API_KEY: process.env.RESEND_API_KEY as string,
+      EMAIL_FROM: process.env.EMAIL_FROM as string,
+    };
+  }
+
+  const parsed = resendEnvSchema.safeParse(process.env);
+  if (!parsed.success) {
+    throw providerEnvError("Resend", Object.keys(parsed.error.flatten().fieldErrors));
+  }
+  return parsed.data;
+}
+
 /**
  * Redis-only subset of `serverSchema`, validated independently.
  *
