@@ -35,7 +35,8 @@ jobs:
           REVIEWED_SHA: ${{ inputs.reviewed_sha }}
         shell: bash
         run: |
-          if ! gh api "repos/$GITHUB_REPOSITORY/git/commits/$REVIEWED_SHA" >/dev/null 2>&1; then
+          if [[ "$GITHUB_REPOSITORY" != "syveka/syveka-ai" ]] || \
+            ! gh api "repos/syveka/syveka-ai/git/commits/$REVIEWED_SHA" >/dev/null 2>&1; then
             echo "AMBIGUOUS"
             exit 1
           fi
@@ -43,7 +44,7 @@ jobs:
       - name: Checkout reviewed trusted ref
         id: checkout
         continue-on-error: true
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           ref: ${{ inputs.reviewed_sha }}
           fetch-depth: 1
@@ -59,8 +60,9 @@ jobs:
         run: |
           migration_file="prisma/migrations/20260701000000_initial_baseline/migration.sql"
           actual_head="$(git rev-parse HEAD 2>/dev/null || true)"
+          reviewed_sha_lower="${REVIEWED_SHA,,}"
 
-          if [[ "$CHECKOUT_OUTCOME" != "success" || "$actual_head" != "$REVIEWED_SHA" || ! -f "$migration_file" || -L "$migration_file" ]]; then
+          if [[ "$CHECKOUT_OUTCOME" != "success" || "$actual_head" != "$reviewed_sha_lower" || ! -f "$migration_file" || -L "$migration_file" ]]; then
             echo "AMBIGUOUS"
             exit 1
           fi
