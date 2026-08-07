@@ -152,6 +152,14 @@ function legacyMissingTablesDeclarationOf(generatorStdout: string): string {
   return body.trim();
 }
 
+function committedLegacyMissingTablesDeclaration(): string {
+  const preflight = readFileSync(
+    resolve(process.cwd(), "prisma/sql/006_legacy_baseline_preflight.sql"),
+    "utf8",
+  );
+  return legacyMissingTablesDeclarationOf(preflight);
+}
+
 function legacyForeignKeyOverridesOf(generatorStdout: string): string[] {
   const match = generatorStdout.match(
     /-- BEGIN LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES\r?\n([\s\S]*?)\r?\n-- END LEGACY FOREIGN KEY UPDATE ACTION OVERRIDES/,
@@ -412,12 +420,43 @@ describe("legacy schema contract generator", () => {
     expect(result.stderr).toContain("is not a real table in the current Prisma schema");
   });
 
+  it("fails closed on duplicate legacy-missing-table entries", () => {
+    const mutated = generatorSource.replace(
+      "const LEGACY_MISSING_TABLE_ENTRIES = [];",
+      'const LEGACY_MISSING_TABLE_ENTRIES = [["users", "20260701000000_initial_baseline"], ["users", "20260701000000_initial_baseline"]];',
+    );
+    expect(mutated).not.toBe(generatorSource);
+
+    const result = runGenerator(mutated);
+
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain('Duplicate LEGACY_MISSING_TABLE entry for table "users"');
+  });
+
   it("emits valid PostgreSQL for an empty legacy-missing-table list", () => {
     const stdout = runGenerator(generatorSource).stdout;
     expect(legacyMissingTablesDeclarationOf(stdout)).toBe(
       "legacy_missing_tables TEXT[] := '{}'::TEXT[];",
     );
     expect(stdout).not.toContain("ARRAY[]");
+    expect(legacyMissingTablesDeclarationOf(stdout)).toBe(
+      committedLegacyMissingTablesDeclaration(),
+    );
+  });
+
+  it("emits a valid PostgreSQL array for a validated non-empty legacy-missing-table list", () => {
+    const mutated = generatorSource.replace(
+      "const LEGACY_MISSING_TABLE_ENTRIES = [];",
+      'const LEGACY_MISSING_TABLE_ENTRIES = [["users", "20260701000000_initial_baseline"]];',
+    );
+    expect(mutated).not.toBe(generatorSource);
+
+    const result = runGenerator(mutated);
+
+    expect(result.status).toBe(0);
+    expect(legacyMissingTablesDeclarationOf(result.stdout)).toBe(
+      "legacy_missing_tables TEXT[] := ARRAY[\n    'users'\n  ];",
+    );
   });
 
   it("places legacy-missing-table markers between missing columns and foreign keys", () => {
