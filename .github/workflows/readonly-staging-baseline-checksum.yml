@@ -101,9 +101,14 @@ jobs:
               2>/dev/null <<'SQL'
           SELECT
             count(*),
-            count(*) FILTER (WHERE finished_at IS NOT NULL),
-            count(*) FILTER (WHERE rolled_back_at IS NOT NULL),
-            count(*) FILTER (WHERE checksum = :'expected_checksum')
+            count(*) FILTER (WHERE finished_at IS NOT NULL AND rolled_back_at IS NULL),
+            count(*) FILTER (WHERE finished_at IS NULL AND rolled_back_at IS NOT NULL),
+            count(*) FILTER (WHERE finished_at IS NULL AND rolled_back_at IS NULL),
+            count(*) FILTER (
+              WHERE finished_at IS NOT NULL
+                AND rolled_back_at IS NULL
+                AND checksum = :'expected_checksum'
+            )
           FROM public._prisma_migrations
           WHERE migration_name = '20260701000000_initial_baseline';
           SQL
@@ -112,19 +117,27 @@ jobs:
             exit 1
           fi
 
-          IFS='|' read -r row_count finished_count rolled_back_count matching_count <<< "$result"
-
-          if [[ "$row_count" != "1" || "$finished_count" != "1" || "$rolled_back_count" != "0" ]]; then
+          if [[ ! "$result" =~ ^[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+$ ]]; then
             echo "AMBIGUOUS"
             exit 1
           fi
 
-          if [[ "$matching_count" == "1" ]]; then
+          IFS='|' read -r total_count active_count rolled_back_count unfinished_count active_matching_count <<< "$result"
+
+          if (( active_count + rolled_back_count + unfinished_count != total_count ||
+                active_matching_count > active_count ||
+                active_count != 1 ||
+                unfinished_count != 0 )); then
+            echo "AMBIGUOUS"
+            exit 1
+          fi
+
+          if [[ "$active_matching_count" == "1" ]]; then
             echo "MATCH"
             exit 1
           fi
 
-          if [[ "$matching_count" == "0" ]]; then
+          if [[ "$active_matching_count" == "0" ]]; then
             echo "MISMATCH_CONFIRMED"
             exit 0
           fi
