@@ -1,0 +1,180 @@
+name: Read-only staging baseline checksum diagnostic
+
+on:
+  workflow_dispatch:
+    inputs:
+      reviewed_sha:
+        description: Reviewed 40-character Syveka commit SHA to diagnose
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  diagnose:
+    name: Diagnose staging baseline checksum
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment: staging
+
+    steps:
+      - name: Validate reviewed commit SHA
+        env:
+          REVIEWED_SHA: ${{ inputs.reviewed_sha }}
+        shell: bash
+        run: |
+          if [[ ! "$REVIEWED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "REVIEWED_SHA_INVALID"
+            exit 1
+          fi
+
+      - name: Verify reviewed SHA belongs to the Syveka repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REVIEWED_SHA: ${{ inputs.reviewed_sha }}
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REPOSITORY" != "syveka/syveka-ai" ]] || \
+            ! gh api "repos/syveka/syveka-ai/git/commits/$REVIEWED_SHA" >/dev/null 2>&1; then
+            echo "REPOSITORY_SHA_INVALID"
+            exit 1
+          fi
+
+      - name: Checkout reviewed trusted ref
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ inputs.reviewed_sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+          lfs: false
+
+      - name: Verify checked-out source
+        env:
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          REVIEWED_SHA: ${{ inputs.reviewed_sha }}
+        shell: bash
+        run: |
+          migration_file="prisma/migrations/20260701000000_initial_baseline/migration.sql"
+
+          if [[ "$CHECKOUT_OUTCOME" != "success" ]]; then
+            echo "CHECKOUT_FAILED"
+            exit 1
+          fi
+
+          actual_head="$(git rev-parse HEAD 2>/dev/null || true)"
+          reviewed_sha_lower="${REVIEWED_SHA,,}"
+
+          if [[ "$actual_head" != "$reviewed_sha_lower" || \
+                ! -f "$migration_file" || \
+                -L "$migration_file" ]]; then
+            echo "SOURCE_VERIFICATION_FAILED"
+            exit 1
+          fi
+
+      - name: Diagnose the applied staging checksum
+        env:
+          STAGING_DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          PGOPTIONS: "-c default_transaction_read_only=on"
+          PGCONNECT_TIMEOUT: "10"
+        shell: bash
+        run: |
+          set -euo pipefail
+          set +x
+
+          migration_file="prisma/migrations/20260701000000_initial_baseline/migration.sql"
+
+          if ! command -v sha256sum >/dev/null 2>&1; then
+            echo "FILE_HASH_FAILED"
+            exit 1
+          fi
+
+          if ! expected_checksum="$(sha256sum "$migration_file" 2>/dev/null | awk '{print $1}')"; then
+            echo "FILE_HASH_FAILED"
+            exit 1
+          fi
+
+          if [[ ! "$expected_checksum" =~ ^[0-9a-f]{64}$ ]]; then
+            echo "FILE_HASH_FAILED"
+            exit 1
+          fi
+
+          echo "FILE_HASH_OK"
+
+          if ! command -v psql >/dev/null 2>&1; then
+            echo "POSTGRES_CLIENT_UNAVAILABLE"
+            exit 1
+          fi
+
+          if ! result="$(
+            psql "$STAGING_DIRECT_URL" \
+              -X -A -t -F '|' \
+              -v ON_ERROR_STOP=1 \
+              -v expected_checksum="$expected_checksum" \
+              2>/dev/null <<'SQL'
+          SELECT
+            count(*),
+            count(*) FILTER (WHERE finished_at IS NOT NULL),
+            count(*) FILTER (WHERE rolled_back_at IS NOT NULL),
+            count(*) FILTER (WHERE checksum = :'expected_checksum')
+          FROM public._prisma_migrations
+          WHERE migration_name = '20260701000000_initial_baseline';
+          SQL
+          )"; then
+            echo "DB_QUERY_FAILED"
+            exit 1
+          fi
+
+          echo "DB_QUERY_OK"
+
+          if [[ ! "$result" =~ ^[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+$ ]]; then
+            echo "RESULT_PARSE_FAILED"
+            exit 1
+          fi
+
+          IFS='|' read -r row_count finished_count rolled_back_count matching_count <<< "$result"
+
+          if (( finished_count > row_count ||
+                rolled_back_count > row_count ||
+                matching_count > row_count )); then
+            echo "RESULT_PARSE_FAILED"
+            exit 1
+          fi
+
+          if (( row_count == 0 )); then
+            echo "ROW_COUNT_ZERO"
+          elif (( row_count == 1 )); then
+            echo "ROW_COUNT_ONE"
+          else
+            echo "ROW_COUNT_MULTIPLE"
+          fi
+
+          if (( finished_count == 0 )); then
+            echo "FINISHED_ZERO"
+          elif (( finished_count == 1 )); then
+            echo "FINISHED_ONE"
+          else
+            echo "FINISHED_MULTIPLE"
+          fi
+
+          if (( rolled_back_count == 0 )); then
+            echo "ROLLED_BACK_ZERO"
+          else
+            echo "ROLLED_BACK_PRESENT"
+          fi
+
+          if (( row_count == 1 )); then
+            if (( matching_count == 1 )); then
+              echo "CHECKSUM_MATCH"
+            elif (( matching_count == 0 )); then
+              echo "CHECKSUM_MISMATCH"
+            else
+              echo "RESULT_PARSE_FAILED"
+              exit 1
+            fi
+          fi
+
+          echo "DIAGNOSTIC_COMPLETE"
