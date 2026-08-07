@@ -63,7 +63,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!signature) return NextResponse.json({ error: "missing signature" }, { status: 400 });
 
   const [
-    { env },
+    { getStripeEnv },
     { stripe, planForPriceId },
     { unscopedPrisma },
     { invalidateEntitlements },
@@ -79,7 +79,11 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   let event: Stripe.Event;
   try {
-    event = stripe.webhooks.constructEvent(rawBody, signature, env.STRIPE_WEBHOOK_SECRET);
+    event = stripe.webhooks.constructEvent(
+      rawBody,
+      signature,
+      getStripeEnv().STRIPE_WEBHOOK_SECRET,
+    );
   } catch {
     return NextResponse.json({ error: "invalid signature" }, { status: 400 });
   }

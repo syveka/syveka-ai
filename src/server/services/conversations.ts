@@ -7,7 +7,7 @@ import { anthropic } from "@/server/integrations/anthropic";
 import { routeModel } from "@/server/ai/router";
 import { estimateAiCost } from "@/server/ai/cost";
 import { withAiRetry } from "@/server/ai/retry";
-import { env } from "@/env";
+import { getAnthropicEnv } from "@/env";
 import { recordUsage } from "@/server/services/billing/entitlements";
 
 const SUMMARY_CONTEXT_MESSAGES = 20;
@@ -147,6 +147,7 @@ export async function ensureConversationSummary(params: {
     .map((message) => `${message.role === "USER" ? "User" : "Assistant"}: ${message.content}`)
     .join("\n\n")
     .slice(0, 60_000);
+  const { AI_RETRY_MAX_ATTEMPTS, AI_RETRY_BASE_DELAY_MS } = getAnthropicEnv();
   const response = await withAiRetry(
     () =>
       anthropic.messages.create(
@@ -169,8 +170,8 @@ export async function ensureConversationSummary(params: {
         { signal: params.signal },
       ),
     {
-      maxAttempts: env.AI_RETRY_MAX_ATTEMPTS,
-      baseDelayMs: env.AI_RETRY_BASE_DELAY_MS,
+      maxAttempts: AI_RETRY_MAX_ATTEMPTS,
+      baseDelayMs: AI_RETRY_BASE_DELAY_MS,
       signal: params.signal,
     },
   );
@@ -206,6 +207,7 @@ export async function ensureConversationSummary(params: {
 export async function generateTitle(conversationId: string, firstMessage: string): Promise<void> {
   const { model, maxTokens } = routeModel("title");
   try {
+    const { AI_RETRY_MAX_ATTEMPTS, AI_RETRY_BASE_DELAY_MS } = getAnthropicEnv();
     const res = await withAiRetry(
       () =>
         anthropic.messages.create({
@@ -218,7 +220,7 @@ export async function generateTitle(conversationId: string, firstMessage: string
             },
           ],
         }),
-      { maxAttempts: env.AI_RETRY_MAX_ATTEMPTS, baseDelayMs: env.AI_RETRY_BASE_DELAY_MS },
+      { maxAttempts: AI_RETRY_MAX_ATTEMPTS, baseDelayMs: AI_RETRY_BASE_DELAY_MS },
     );
     const title = res.content[0]?.type === "text" ? res.content[0].text.trim().slice(0, 80) : null;
     if (title) {
