@@ -51,6 +51,10 @@ describe("staging release migration contract", () => {
   it("uses the identical read-only preflight contract inside the atomic baseline", () => {
     const contract = compatibilityContract(preflight);
     expect(contract).toBe(compatibilityContract(baseline));
+    expect(contract).toContain(
+      "-- BEGIN LEGACY MISSING TABLES\n  legacy_missing_tables TEXT[] := '{}'::TEXT[];\n-- END LEGACY MISSING TABLES",
+    );
+    expect(contract).not.toContain("ARRAY[]");
     // The baseline must not wrap itself in an explicit BEGIN/COMMIT: Prisma
     // already applies each migration.sql inside its own transaction, and the
     // extra literal BEGIN/COMMIT caused Prisma's schema engine to report a
@@ -95,6 +99,9 @@ describe("staging release migration contract", () => {
     ).match(/^      \('public', '[^']+', '[^']+_fkey',/gm);
     expect(columnRows).toHaveLength(470);
     expect(foreignKeyRows).toHaveLength(71);
+    expect(contract).toContain("expected.table_name = ANY(legacy_missing_tables)");
+    expect(contract).toContain("expected.source_table = ANY(legacy_missing_tables)");
+    expect(contract).toContain("expected.target_table = ANY(legacy_missing_tables)");
     // Scalar-list (array) columns cannot express nullability via Prisma's DMMF (Prisma has no
     // optional-list syntax), so each column's real PostgreSQL NOT NULL status is verified
     // against migration history and pinned here explicitly to guard against regressions like

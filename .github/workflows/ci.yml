@@ -458,10 +458,14 @@ jobs:
           PGURL: postgresql://postgres:postgres@localhost:5432/postgres
         run: |
           bash scripts/ci/provision-legacy-database.sh
-          databases="legacy_upgrade drifted_schema missing_column column_drift fk_wrong_source fk_wrong_target fk_not_valid fk_legacy_already_final fk_legacy_wrong_update_action fk_legacy_wrong_delete_action fk_legacy_not_valid fk_legacy_deferrable fk_state_no_table fk_state_pending fk_state_applied fk_state_unfinished fk_state_rolled_back fk_state_final_applied weak_policy weak_messages weak_prompts weak_calendar wrong_policy_role wrong_policy_command"
+          databases="legacy_upgrade drifted_schema missing_column column_drift fk_wrong_source fk_wrong_target fk_not_valid fk_legacy_already_final fk_legacy_wrong_update_action fk_legacy_wrong_delete_action fk_legacy_not_valid fk_legacy_deferrable fk_state_no_table fk_state_pending fk_state_applied fk_state_unfinished fk_state_rolled_back fk_state_final_applied missing_table_allowlist_absent missing_table_allowlist_bad_column missing_table_allowlist_bad_fk weak_policy weak_messages weak_prompts weak_calendar wrong_policy_role wrong_policy_command"
           for database in $databases; do
             psql "$PGURL" -v ON_ERROR_STOP=1 -c "create database $database with template legacy_template"
           done
+      - name: Verify the legacy missing-table allowlist remains fail-closed
+        env:
+          PGURL: postgresql://postgres:postgres@localhost:5432/postgres
+        run: node tests/migrations/legacy-missing-table-contract.mjs
       - name: Upgrade deterministic legacy schema
         env:
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/legacy_upgrade
