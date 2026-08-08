@@ -1,7 +1,7 @@
 # Syveka AI
 
 Multi-tenant AI business assistant for Finnish SMBs.
-Architecture source of truth: `syveka-ai-architecture.md` (repo root / docs).
+Architecture source of truth: `docs/ARCHITECTURE.md`.
 
 ## Stack
 
@@ -50,10 +50,10 @@ npx shadcn@latest add dialog dropdown-menu avatar tooltip table tabs badge selec
 
 ## Non-negotiable conventions
 
-- **Tenant isolation (§4.3):** never import `@/server/db/prisma` outside `src/server/db` (ESLint-enforced). Business code uses `tenantDb(ctx.orgId)`.
-- **Permissions (§12.3):** every Server Action / API handler starts with `requirePermission("...")`.
-- **RTL (§20):** logical Tailwind utilities only (`ms-* me-* ps-* pe-* text-start`).
-- **Validation (§21):** Zod schemas in `src/lib/validators` are shared by forms and actions.
+- **Tenant isolation (see `docs/DEVELOPMENT.md` §5):** never import `@/server/db/prisma` outside `src/server/db` (ESLint-enforced). Business code uses `tenantDb(ctx.orgId)`.
+- **Permissions (see `docs/DEVELOPMENT.md` §6):** every Server Action / API handler starts with `requirePermission("...")`.
+- **RTL (see `docs/DEVELOPMENT.md` §9):** logical Tailwind utilities only (`ms-* me-* ps-* pe-* text-start`).
+- **Validation (see `docs/DEVELOPMENT.md` §10):** Zod schemas in `src/lib/validators` are shared by forms and actions.
 - **Money:** integer cents. **IDs:** uuid. **Audit:** every sensitive mutation calls `audit()`.
 
 ## Implementation status (v0.1)

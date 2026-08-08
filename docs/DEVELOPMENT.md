@@ -24,7 +24,7 @@ npm run db:generate / db:migrate / db:deploy / db:seed / db:studio
 
 Local setup, Supabase/Stripe one-time configuration, and the exact migration sequencing
 (tracked Prisma migrations vs. the hand-applied `prisma/sql/001-006` scripts) are documented in
-`README.md`. The full CI job graph — 14 required jobs including RLS isolation under both a
+`README.md`. The full CI job graph — 16 required jobs including RLS isolation under both a
 superuser and a non-superuser Supabase-like role, migration drift/legacy-upgrade tests, and a
 gitleaks secret scan — is defined in `.github/workflows/ci.yml`; read a job's steps directly
 before assuming what a script name checks.
