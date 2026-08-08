@@ -59,7 +59,7 @@ in an action or route handler.
 Every Server Action / API handler independently calls `requirePermission(...)`
 (`src/server/auth/guard.ts`), which calls `getTenantContext()` (`src/server/auth/session.ts`) to
 do a real `supabase.auth.getUser()` validation and resolve `{orgId, userId, role}`.
-`middleware.ts` only checks Supabase session *cookie presence* for UX redirects and its matcher
+`middleware.ts` only checks Supabase session _cookie presence_ for UX redirects and its matcher
 excludes all `/api` routes — it is not a security boundary. Webhooks and QStash job routes verify
 their own signatures instead of going through `requirePermission`.
 
