@@ -213,3 +213,10 @@ approval, silence, or broad repository access is never standing approval.
 - [ ] No unauthorized merge, deployment, environment approval, or production action
 - [ ] Risks, failures, and assumptions disclosed
 - [ ] Waiting for human authorization before the next protected action
+
+## 11. Development Reference
+
+For commands, architecture, and implementation-level conventions (build/lint/test commands,
+request flow, tenant isolation, RBAC, environment validation, AI provider routing, i18n/RTL,
+Windows/money/ID conventions, test layout), see `docs/DEVELOPMENT.md`. That file is a living
+technical reference, not policy — it never overrides or supersedes the rules in this charter.

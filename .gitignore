@@ -14,3 +14,6 @@ graphify-out/
 
 # Local database backups
 syveka-backup.sql
+
+# Personal Claude Code settings (permissions allowlist) - never shared
+.claude/settings.local.json
