@@ -3,6 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { audit } from "./audit";
+import { EmailChannelError, getEmailChannelAdapter } from "@/server/channels/email";
 import type { TenantContext } from "@/server/auth/session";
 import type {
   AssignThreadInput,
@@ -15,7 +16,11 @@ import type {
 export class InboxError extends Error {
   constructor(
     public readonly code:
-      "thread_not_found" | "message_not_found" | "not_outbound" | "requires_approval",
+      | "thread_not_found"
+      | "message_not_found"
+      | "not_outbound"
+      | "requires_approval"
+      | "draft_generation_failed",
     message: string,
   ) {
     super(message);
@@ -78,12 +83,24 @@ export async function getThread(ctx: TenantContext, threadId: string) {
 async function requireTenantMessage(ctx: TenantContext, messageId: string) {
   const message = await unscopedPrisma.inboxMessage.findFirst({
     where: { id: messageId },
-    include: { thread: { select: { id: true, organizationId: true } } },
+    include: {
+      thread: { select: { id: true, organizationId: true, channel: true, subject: true } },
+    },
   });
   if (!message || message.thread.organizationId !== ctx.orgId) {
     throw new InboxError("message_not_found", "Message does not belong to this organization");
   }
   return message;
+}
+
+/** Reply-to-sender: the most recent inbound message's `fromAddress`. */
+async function findEmailRecipient(threadId: string): Promise<string | null> {
+  const lastInbound = await unscopedPrisma.inboxMessage.findFirst({
+    where: { threadId, direction: "INBOUND", fromAddress: { not: null } },
+    orderBy: { createdAt: "desc" },
+    select: { fromAddress: true },
+  });
+  return lastInbound?.fromAddress ?? null;
 }
 
 /**
@@ -202,11 +219,11 @@ export async function approveMessage(ctx: TenantContext, messageId: string) {
 }
 
 /**
- * Marks a message sent. Actual channel dispatch (SMTP, WhatsApp Business
- * API, Twilio, ...) is intentionally not implemented here — this is the
- * extension point a future provider integration calls into once one is
- * chosen. A human-authored reply may be sent directly; an AI-generated
- * draft must go through `approveMessage` first.
+ * Marks a message sent, dispatching it through the channel adapter first.
+ * Other channels (SMS, WhatsApp, web chat) have no adapter yet — those
+ * threads are marked sent without dispatch until a provider is chosen for
+ * them. A human-authored reply may be sent directly; an AI-generated draft
+ * must go through `approveMessage` first.
  */
 export async function sendMessage(ctx: TenantContext, messageId: string) {
   const message = await requireTenantMessage(ctx, messageId);
@@ -220,11 +237,45 @@ export async function sendMessage(ctx: TenantContext, messageId: string) {
     );
   }
 
+  let externalId: string | null = null;
+  if (message.thread.channel === "EMAIL") {
+    const to = message.toAddress ?? (await findEmailRecipient(message.threadId));
+    if (!to) {
+      throw new InboxError("not_outbound", "No recipient address found for this thread's reply");
+    }
+    try {
+      const subject = message.thread.subject
+        ? message.thread.subject.startsWith("Re:")
+          ? message.thread.subject
+          : `Re: ${message.thread.subject}`
+        : "Re: your message";
+      const sent = await getEmailChannelAdapter().send({
+        to,
+        subject,
+        text: message.body,
+        inReplyToExternalId: message.externalId ?? undefined,
+      });
+      externalId = sent.externalId;
+    } catch (err) {
+      await unscopedPrisma.inboxMessage.update({
+        where: { id: message.id },
+        data: { status: "FAILED" },
+      });
+      await audit(ctx, {
+        action: "inbox.message.send_failed",
+        resourceType: "inbox_message",
+        resourceId: message.id,
+        after: { code: err instanceof EmailChannelError ? err.code : "unknown" },
+      });
+      throw err;
+    }
+  }
+
   const sentAt = new Date();
   const [updated] = await unscopedPrisma.$transaction([
     unscopedPrisma.inboxMessage.update({
       where: { id: message.id },
-      data: { status: "SENT", sentAt },
+      data: { status: "SENT", sentAt, ...(externalId ? { externalId } : {}) },
     }),
     unscopedPrisma.inboxThread.update({
       where: { id: message.threadId },

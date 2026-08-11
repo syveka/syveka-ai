@@ -1,22 +1,37 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@/server/auth/session";
 
-const { tenantDbMock, unscopedMock, auditMock } = vi.hoisted(() => ({
-  tenantDbMock: vi.fn(),
-  unscopedMock: {
-    inboxMessage: {
-      create: vi.fn(),
-      findMany: vi.fn(),
-      findFirst: vi.fn(),
-      update: vi.fn(),
-    },
-    inboxThread: {
-      update: vi.fn(),
-    },
-    $transaction: vi.fn(),
-  },
-  auditMock: vi.fn(async () => undefined),
-}));
+const { tenantDbMock, unscopedMock, auditMock, emailAdapterMock, EmailChannelErrorMock } =
+  vi.hoisted(() => {
+    class EmailChannelErrorMock extends Error {
+      constructor(
+        message: string,
+        public readonly code: string,
+        public readonly retryable = false,
+      ) {
+        super(message);
+        this.name = "EmailChannelError";
+      }
+    }
+    return {
+      tenantDbMock: vi.fn(),
+      unscopedMock: {
+        inboxMessage: {
+          create: vi.fn(),
+          findMany: vi.fn(),
+          findFirst: vi.fn(),
+          update: vi.fn(),
+        },
+        inboxThread: {
+          update: vi.fn(),
+        },
+        $transaction: vi.fn(),
+      },
+      auditMock: vi.fn(async () => undefined),
+      emailAdapterMock: { send: vi.fn(async () => ({ externalId: "ext-sent-1" })) },
+      EmailChannelErrorMock,
+    };
+  });
 
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: tenantDbMock,
@@ -25,6 +40,11 @@ vi.mock("@/server/db/tenant", () => ({
 
 vi.mock("@/server/services/audit", () => ({
   audit: auditMock,
+}));
+
+vi.mock("@/server/channels/email", () => ({
+  getEmailChannelAdapter: () => emailAdapterMock,
+  EmailChannelError: EmailChannelErrorMock,
 }));
 
 import {
@@ -321,6 +341,125 @@ describe("inbox service", () => {
         expect.anything(),
         expect.objectContaining({ action: "inbox.message.approved" }),
       );
+    });
+  });
+
+  describe("sendMessage — email channel dispatch", () => {
+    it("dispatches through the email adapter and stores the returned externalId", async () => {
+      unscopedMock.inboxMessage.findFirst.mockResolvedValueOnce({
+        id: "msg-1",
+        direction: "OUTBOUND",
+        aiGenerated: false,
+        approvedAt: null,
+        threadId: "t1",
+        toAddress: "customer@example.com",
+        externalId: null,
+        body: "Thanks!",
+        thread: { id: "t1", organizationId: "org-a", channel: "EMAIL", subject: "Order #42" },
+      });
+
+      await sendMessage(ctx("org-a"), "msg-1");
+
+      expect(emailAdapterMock.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          to: "customer@example.com",
+          subject: "Re: Order #42",
+          text: "Thanks!",
+        }),
+      );
+      expect(unscopedMock.inboxMessage.update).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ status: "SENT", externalId: "ext-sent-1" }),
+        }),
+      );
+    });
+
+    it("falls back to the last inbound message's fromAddress when toAddress is unset", async () => {
+      unscopedMock.inboxMessage.findFirst
+        .mockResolvedValueOnce({
+          id: "msg-1",
+          direction: "OUTBOUND",
+          aiGenerated: false,
+          approvedAt: null,
+          threadId: "t1",
+          toAddress: null,
+          externalId: null,
+          body: "Thanks!",
+          thread: { id: "t1", organizationId: "org-a", channel: "EMAIL", subject: null },
+        })
+        .mockResolvedValueOnce({ fromAddress: "sender@example.com" });
+
+      await sendMessage(ctx("org-a"), "msg-1");
+
+      expect(emailAdapterMock.send).toHaveBeenCalledWith(
+        expect.objectContaining({ to: "sender@example.com", subject: "Re: your message" }),
+      );
+    });
+
+    it("throws without dispatching when no recipient address can be found", async () => {
+      unscopedMock.inboxMessage.findFirst
+        .mockResolvedValueOnce({
+          id: "msg-1",
+          direction: "OUTBOUND",
+          aiGenerated: false,
+          approvedAt: null,
+          threadId: "t1",
+          toAddress: null,
+          externalId: null,
+          body: "Thanks!",
+          thread: { id: "t1", organizationId: "org-a", channel: "EMAIL", subject: null },
+        })
+        .mockResolvedValueOnce(null);
+
+      await expect(sendMessage(ctx("org-a"), "msg-1")).rejects.toBeInstanceOf(InboxError);
+      expect(emailAdapterMock.send).not.toHaveBeenCalled();
+    });
+
+    it("marks the message FAILED and audits the failure when the adapter throws, without marking it SENT", async () => {
+      unscopedMock.inboxMessage.findFirst.mockResolvedValueOnce({
+        id: "msg-1",
+        direction: "OUTBOUND",
+        aiGenerated: false,
+        approvedAt: null,
+        threadId: "t1",
+        toAddress: "customer@example.com",
+        externalId: null,
+        body: "Thanks!",
+        thread: { id: "t1", organizationId: "org-a", channel: "EMAIL", subject: "Hi" },
+      });
+      emailAdapterMock.send.mockRejectedValueOnce(
+        new EmailChannelErrorMock("boom", "remote_error", true),
+      );
+
+      await expect(sendMessage(ctx("org-a"), "msg-1")).rejects.toThrow("boom");
+
+      expect(unscopedMock.inboxMessage.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { status: "FAILED" } }),
+      );
+      expect(auditMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          action: "inbox.message.send_failed",
+          after: { code: "remote_error" },
+        }),
+      );
+      expect(unscopedMock.$transaction).not.toHaveBeenCalled();
+    });
+
+    it("does not dispatch through the email adapter for non-email channels", async () => {
+      unscopedMock.inboxMessage.findFirst.mockResolvedValueOnce({
+        id: "msg-1",
+        direction: "OUTBOUND",
+        aiGenerated: false,
+        approvedAt: null,
+        threadId: "t1",
+        thread: { id: "t1", organizationId: "org-a", channel: "WHATSAPP", subject: null },
+      });
+
+      await sendMessage(ctx("org-a"), "msg-1");
+
+      expect(emailAdapterMock.send).not.toHaveBeenCalled();
+      expect(unscopedMock.$transaction).toHaveBeenCalled();
     });
   });
 
