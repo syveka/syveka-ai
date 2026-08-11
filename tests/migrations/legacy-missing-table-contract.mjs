@@ -65,8 +65,11 @@ try {
   ).replaceAll("\r\n", "\n");
   fixture = replaceOnce(
     fixture,
-    "  legacy_missing_tables TEXT[] := '{}'::TEXT[];",
-    `  legacy_missing_tables TEXT[] := ARRAY['${fixtureTable}'];`,
+    "  legacy_missing_tables TEXT[] := ARRAY[\n    'business_dna'\n  ];",
+    "  legacy_missing_tables TEXT[] := ARRAY[\n" +
+      "    'business_dna',\n" +
+      `    '${fixtureTable}'\n` +
+      "  ];",
     "legacy-missing-table declaration",
   );
   fixture = insertContractRows(
