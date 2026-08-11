@@ -606,6 +606,7 @@
     "title": "Business DNA",
     "subtitle": "The operational context Inbox, Voice, Booking and CRM use to act on your behalf.",
     "emptyBanner": "You haven't set up your Business DNA yet. Fill in what you can below — every field is optional.",
+    "skipForNow": "Skip for now →",
     "savedMessage": "Saved.",
     "invalidInput": "Please check the highlighted fields and try again.",
     "saveFailed": "Could not save. Please try again.",

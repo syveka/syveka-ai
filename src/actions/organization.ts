@@ -33,7 +33,9 @@ export async function createOrganizationAction(
   const supabase = await createSupabaseServer();
   await supabase.auth.refreshSession();
 
-  redirect("/dashboard");
+  // A brand-new org has no Business DNA yet — send the owner there first
+  // (skippable) rather than straight to an empty dashboard.
+  redirect("/settings/business-dna");
 }
 
 export async function switchOrganizationAction(orgId: string): Promise<void> {
