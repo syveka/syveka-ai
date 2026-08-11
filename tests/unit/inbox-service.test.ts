@@ -123,6 +123,9 @@ function createMockDb(orgId: string) {
       create: vi.fn(async ({ data }: QueryArgs) => threadRow("new-thread", orgId, data)),
       update: vi.fn(async ({ data }: QueryArgs) => threadRow(`${orgId}-t1`, orgId, data)),
     },
+    contact: {
+      findFirst: vi.fn(async (_args: QueryArgs) => null as { id: string } | null),
+    },
   };
 }
 
@@ -214,6 +217,101 @@ describe("inbox service", () => {
       expect(db.inboxThread.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: expect.objectContaining({ status: "OPEN" }) }),
       );
+    });
+
+    it("auto-matches an existing CRM contact by sender email when no contactId is given", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(null);
+      db.contact.findFirst.mockResolvedValueOnce({ id: "contact-42" });
+
+      await recordInboundMessage("org-a", {
+        channel: "EMAIL",
+        fromAddress: "jane@example.com",
+        body: "Hi there",
+      });
+
+      expect(db.contact.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            email: { equals: "jane@example.com", mode: "insensitive" },
+          }),
+        }),
+      );
+      expect(db.inboxThread.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ contactId: "contact-42" }) }),
+      );
+    });
+
+    it("leaves the thread unlinked when no CRM contact matches the sender email", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(null);
+      db.contact.findFirst.mockResolvedValueOnce(null);
+
+      await recordInboundMessage("org-a", {
+        channel: "EMAIL",
+        fromAddress: "stranger@example.com",
+        body: "Hi there",
+      });
+
+      expect(db.inboxThread.create).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ contactId: null }) }),
+      );
+    });
+
+    it("does not query for a contact match when fromAddress is absent", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(null);
+      await recordInboundMessage("org-a", { channel: "SMS", body: "Hi there" });
+      expect(db.contact.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("prefers an explicitly given contactId over email auto-matching", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(null);
+      await recordInboundMessage("org-a", {
+        channel: "EMAIL",
+        contactId: "explicit-contact",
+        fromAddress: "jane@example.com",
+        body: "Hi there",
+      });
+      expect(db.contact.findFirst).not.toHaveBeenCalled();
+      expect(db.inboxThread.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ contactId: "explicit-contact" }),
+        }),
+      );
+    });
+
+    it("retroactively links an existing unlinked thread when a later message's sender now matches a contact", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(
+        threadRow("org-a-t1", "org-a", { contactId: null }),
+      );
+      db.contact.findFirst.mockResolvedValueOnce({ id: "contact-42" });
+
+      await recordInboundMessage("org-a", {
+        channel: "EMAIL",
+        fromAddress: "jane@example.com",
+        body: "Follow-up",
+      });
+
+      expect(db.inboxThread.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { contactId: "contact-42" } }),
+      );
+    });
+
+    it("does not re-link a thread that already has a contact", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(
+        threadRow("org-a-t1", "org-a", { contactId: "existing-contact" }),
+      );
+      db.contact.findFirst.mockResolvedValueOnce({ id: "different-contact" });
+
+      await recordInboundMessage("org-a", {
+        channel: "EMAIL",
+        fromAddress: "jane@example.com",
+        body: "Follow-up",
+      });
+
+      // Only the readAt/lastMessageAt/status update should have happened —
+      // never an update that overwrites an already-linked contactId.
+      for (const call of db.inboxThread.update.mock.calls) {
+        expect((call[0] as QueryArgs).data).not.toHaveProperty("contactId");
+      }
     });
 
     it("reuses an existing matching thread instead of creating a new one", async () => {
