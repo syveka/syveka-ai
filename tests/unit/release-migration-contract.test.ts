@@ -56,7 +56,11 @@ describe("staging release migration contract", () => {
     const contract = compatibilityContract(preflight);
     expect(contract).toBe(compatibilityContract(baseline));
     expect(contract).toContain(
-      "-- BEGIN LEGACY MISSING TABLES\n  legacy_missing_tables TEXT[] := ARRAY[\n    'business_dna'\n  ];\n-- END LEGACY MISSING TABLES",
+      "-- BEGIN LEGACY MISSING TABLES\n  legacy_missing_tables TEXT[] := ARRAY[\n" +
+        "    'business_dna',\n" +
+        "    'inbox_threads',\n" +
+        "    'inbox_messages'\n" +
+        "  ];\n-- END LEGACY MISSING TABLES",
     );
     expect(contract).not.toContain("ARRAY[]");
     // The baseline must not wrap itself in an explicit BEGIN/COMMIT: Prisma
@@ -101,8 +105,8 @@ describe("staging release migration contract", () => {
       "  FOR expected IN\n    SELECT * FROM (VALUES\n      ('Locale'",
       "complete foreign-key contract",
     ).match(/^      \('public', '[^']+', '[^']+_fkey',/gm);
-    expect(columnRows).toHaveLength(487);
-    expect(foreignKeyRows).toHaveLength(72);
+    expect(columnRows).toHaveLength(513);
+    expect(foreignKeyRows).toHaveLength(77);
     expect(contract).toContain("expected.table_name = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.source_table = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.target_table = ANY(legacy_missing_tables)");

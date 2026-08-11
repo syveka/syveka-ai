@@ -5,7 +5,10 @@ import { describe, expect, it } from "vitest";
 
 const GENERATOR_PATH = resolve(process.cwd(), "scripts/generate-legacy-schema-contract.mjs");
 const SCRIPTS_DIR = resolve(process.cwd(), "scripts");
-const generatorSource = readFileSync(GENERATOR_PATH, "utf8");
+// Normalized to LF regardless of the checkout's line-ending state (Windows'
+// core.autocrlf can rewrite this file to CRLF on a checkout/stash round-trip)
+// so the LF-only literal search strings below match reliably either way.
+const generatorSource = readFileSync(GENERATOR_PATH, "utf8").replace(/\r\n/g, "\n");
 
 interface GeneratorResult {
   status: number;
@@ -380,7 +383,11 @@ describe("legacy schema contract generator", () => {
   });
 
   const DEFAULT_LEGACY_MISSING_TABLE_ENTRIES =
-    'const LEGACY_MISSING_TABLE_ENTRIES = [["business_dna", "20260811000000_business_dna_v1"]];';
+    "const LEGACY_MISSING_TABLE_ENTRIES = [\n" +
+    '  ["business_dna", "20260811000000_business_dna_v1"],\n' +
+    '  ["inbox_threads", "20260811010000_inbox_mvp_foundation"],\n' +
+    '  ["inbox_messages", "20260811010000_inbox_mvp_foundation"],\n' +
+    "];";
 
   it("fails closed when a legacy-missing table references a nonexistent migration directory", () => {
     const mutated = generatorSource.replace(
@@ -450,10 +457,14 @@ describe("legacy schema contract generator", () => {
     expect(stdout).not.toContain("ARRAY[]");
   });
 
-  it("emits a valid PostgreSQL array for the real (business_dna) legacy-missing-table list, matching the committed contract", () => {
+  it("emits a valid PostgreSQL array for the real (default) legacy-missing-table list, matching the committed contract", () => {
     const stdout = runGenerator(generatorSource).stdout;
     expect(legacyMissingTablesDeclarationOf(stdout)).toBe(
-      "legacy_missing_tables TEXT[] := ARRAY[\n    'business_dna'\n  ];",
+      "legacy_missing_tables TEXT[] := ARRAY[\n" +
+        "    'business_dna',\n" +
+        "    'inbox_threads',\n" +
+        "    'inbox_messages'\n" +
+        "  ];",
     );
     expect(legacyMissingTablesDeclarationOf(stdout)).toBe(
       committedLegacyMissingTablesDeclaration(),

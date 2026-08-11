@@ -19,6 +19,7 @@ const expectedOrder = [
   "20260728000000_calendar_webhook_verification_secret",
   "20260729000000_conversation_documents_organization_fk_on_update",
   "20260811000000_business_dna_v1",
+  "20260811010000_inbox_mvp_foundation",
 ];
 
 // These eight migrations were published before the staging-release branch.

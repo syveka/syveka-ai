@@ -12,8 +12,8 @@ import { prisma } from "./prisma";
  *
  * Models scoped via a parent relation (Message, PipelineStage, DocumentChunk,
  * TagsOnContacts, EventAttendee, AvailabilityRule, AvailabilityOverride,
- * BookingToken) are NOT listed here; access them through their parent or
- * the dedicated service functions which join through the parent.
+ * BookingToken, InboxMessage) are NOT listed here; access them through their
+ * parent or the dedicated service functions which join through the parent.
  */
 const TENANT_MODELS = new Set<Prisma.ModelName>([
   "OrganizationMember",
@@ -50,6 +50,7 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
   "AuditLog",
   "Prompt",
   "BusinessDNA",
+  "InboxThread",
 ]);
 
 export function tenantDb(orgId: string) {
