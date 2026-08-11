@@ -655,6 +655,17 @@
     "invalidInput": "Please check the highlighted fields and try again.",
     "saveFailed": "Could not save. Please try again.",
     "updated": "Updated {date}",
+    "regenerate": {
+      "label": "Regenerate from website",
+      "description": "Pull fresh facts from your website. Only the fields it finds are updated — review and save when ready.",
+      "placeholder": "https://example.com",
+      "extract": "Extract",
+      "extracting": "Extracting…",
+      "rateLimited": "Too many extraction attempts. Try again later.",
+      "failed": "Could not extract from that URL. Please check it and try again.",
+      "reviewHint": "This never saves automatically — review the fields below first.",
+      "appliedMessage": "Fields updated from the website. Review and save when ready."
+    },
     "sections": {
       "identity": "Identity",
       "identityDescription": "How your business is described across Inbox, Voice, Booking and CRM.",
