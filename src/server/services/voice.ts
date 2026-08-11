@@ -7,6 +7,7 @@ import {
   type VapiAssistantConfig,
 } from "@/server/integrations/vapi";
 import { TOOL_REGISTRY, zodToJsonSchema } from "@/server/ai/tools";
+import { buildVoiceSystemPrompt } from "@/server/ai/prompts/voice";
 import { getEntitlements } from "./billing/entitlements";
 import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
@@ -119,15 +120,33 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
       ? "Aloita kertomalla, että olet tekoälyavustaja ja puhelu voidaan tallentaa."
       : "Start by disclosing that you are an AI assistant and the call may be recorded.";
 
+  // Business DNA is optional — the assistant degrades gracefully (falls back
+  // to just the human-authored prompt) when the org hasn't filled it in yet.
+  const businessDna = await tenantDb(orgId).businessDNA.findFirst({
+    select: {
+      displayName: true,
+      industry: true,
+      productsServices: true,
+      supportedLocales: true,
+      brandTone: true,
+      communicationStyle: true,
+      openingHours: true,
+      policies: true,
+      targetCustomer: true,
+      keyFacts: true,
+    },
+  });
+
   const { NEXT_PUBLIC_APP_URL, VAPI_WEBHOOK_SECRET } = getVapiEnv();
   const config: VapiAssistantConfig = {
     name: assistant.name,
     firstMessage: assistant.firstMessage,
-    systemPrompt: `${disclosure}\n\n${assistant.systemPrompt}${
-      assistant.transferNumber
-        ? `\n\nIf the caller asks for a human, transfer the call to ${assistant.transferNumber}.`
-        : ""
-    }`,
+    systemPrompt: buildVoiceSystemPrompt({
+      disclosure,
+      businessDna,
+      assistantSystemPrompt: assistant.systemPrompt,
+      transferNumber: assistant.transferNumber,
+    }),
     language: assistant.language.toLowerCase() as "fi" | "en" | "ar",
     voiceProvider: assistant.voiceProvider,
     voiceId: assistant.voiceId,
