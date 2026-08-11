@@ -14,7 +14,10 @@ const tableName = (model) => model.dbName ?? model.name;
 // Every entry is fail-closed against both the current Prisma schema and the
 // migration that owns the CREATE TABLE statement. Keep this empty until a real
 // legacy-upgrade gap requires an exemption.
-const LEGACY_MISSING_TABLE_ENTRIES = [];
+//   - business_dna: does not exist on any legacy (pre-migration-system)
+//     database; created for the first time by 20260811000000_business_dna_v1,
+//     which runs later in the same deploy as this baseline's preflight.
+const LEGACY_MISSING_TABLE_ENTRIES = [["business_dna", "20260811000000_business_dna_v1"]];
 
 const actualTableNames = new Set(models.map(tableName));
 const seenMissingTableNames = new Set();

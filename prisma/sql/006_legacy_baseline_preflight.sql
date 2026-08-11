@@ -72,7 +72,9 @@ DECLARE
 -- END LEGACY MISSING COLUMNS
   ];
 -- BEGIN LEGACY MISSING TABLES
-  legacy_missing_tables TEXT[] := '{}'::TEXT[];
+  legacy_missing_tables TEXT[] := ARRAY[
+    'business_dna'
+  ];
 -- END LEGACY MISSING TABLES
   -- Foreign keys whose ON UPDATE action may still show a specific, verified
   -- pre-correction legacy value, but ONLY until their governing migration has been
