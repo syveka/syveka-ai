@@ -111,6 +111,23 @@ export class DuplicateInboundMessageError extends Error {
 }
 
 /**
+ * Best-effort CRM contact match by exact email (case-insensitive), scoped to
+ * the org. Read-only — never creates a contact. A sender with no matching
+ * contact simply leaves the thread unlinked; a human can link one manually.
+ */
+async function findContactByEmail(
+  db: ReturnType<typeof tenantDb>,
+  email: string | undefined,
+): Promise<string | null> {
+  if (!email) return null;
+  const contact = await db.contact.findFirst({
+    where: { email: { equals: email, mode: "insensitive" }, deletedAt: null },
+    select: { id: true },
+  });
+  return contact?.id ?? null;
+}
+
+/**
  * Simulates a message arriving on a channel. Called by the inbound-email
  * webhook (and any future channel webhook) once a provider is chosen. Takes
  * a plain `orgId` rather than a `TenantContext` because a webhook has no
@@ -127,12 +144,16 @@ export class DuplicateInboundMessageError extends Error {
 export async function recordInboundMessage(orgId: string, input: RecordInboundMessageInput) {
   const db = tenantDb(orgId);
 
+  // Auto-match to an existing CRM contact by sender email when the caller
+  // didn't already resolve one — never fabricates or creates a contact.
+  const contactId = input.contactId ?? (await findContactByEmail(db, input.fromAddress));
+
   let thread = await db.inboxThread.findFirst({
     where: {
       deletedAt: null,
       channel: input.channel,
       status: { not: "CLOSED" },
-      ...(input.contactId ? { contactId: input.contactId } : {}),
+      ...(contactId ? { contactId } : {}),
       ...(input.externalId ? { externalId: input.externalId } : {}),
     },
     orderBy: { lastMessageAt: "desc" },
@@ -144,9 +165,18 @@ export async function recordInboundMessage(orgId: string, input: RecordInboundMe
         organizationId: orgId,
         channel: input.channel,
         subject: input.subject ?? null,
-        contactId: input.contactId ?? null,
+        contactId: contactId ?? null,
         externalId: input.externalId ?? null,
       },
+    });
+  } else if (!thread.contactId && contactId) {
+    // A later message from the same sender resolved a contact match the
+    // first message couldn't (e.g. the contact was created afterwards) —
+    // link it retroactively rather than leaving the thread permanently
+    // unlinked.
+    thread = await db.inboxThread.update({
+      where: { id: thread.id },
+      data: { contactId },
     });
   }
 
