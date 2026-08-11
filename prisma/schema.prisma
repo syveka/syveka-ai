@@ -88,6 +88,7 @@ model Organization {
   webhookEndpoints      WebhookEndpoint[]
   auditLogs             AuditLog[]
   tags                  Tag[]
+  businessDNA           BusinessDNA?
 
   @@map("organizations")
 }
@@ -158,6 +159,42 @@ enum InviteStatus {
   ACCEPTED
   EXPIRED
   REVOKED
+}
+
+// ───────────────────────── BUSINESS DNA ─────────────────────────
+
+/**
+ * Business DNA: the operational business context Inbox, Voice, Booking and
+ * CRM read to act on the organization's behalf. One profile per organization
+ * (MVP scope only — see docs/DEVELOPMENT.md before widening this model).
+ * `sourceUrl`/`extractedAt` record provenance of the last AI-assisted
+ * extraction; raw scraped content is intentionally never persisted here.
+ */
+model BusinessDNA {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String @unique @map("organization_id") @db.Uuid
+
+  displayName        String?  @map("display_name")
+  industry           String?
+  productsServices   String?  @map("products_services")
+  supportedLocales   Locale[] @default([]) @map("supported_locales")
+  brandTone          String?  @map("brand_tone")
+  communicationStyle String?  @map("communication_style")
+  openingHours       Json?    @map("opening_hours")
+  policies           String?
+  pricingNotes       String?  @map("pricing_notes")
+  targetCustomer     String?  @map("target_customer")
+  keyFacts           String[] @default([]) @map("key_facts")
+
+  sourceUrl   String?   @map("source_url")
+  extractedAt DateTime? @map("extracted_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("business_dna")
 }
 
 // ───────────────────────── BILLING ─────────────────────────

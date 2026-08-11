@@ -28,6 +28,7 @@ type RateLimiters = {
   aiChatUser: Ratelimit;
   aiChatOrg: Ratelimit;
   anonDemo: Ratelimit;
+  businessDnaExtract: Ratelimit;
 };
 
 let rateLimitersClient: RateLimiters | null = null;
@@ -61,6 +62,11 @@ function getRateLimiters(): RateLimiters {
       limiter: Ratelimit.slidingWindow(5, "1 d"),
       prefix: "rl:demo",
     }),
+    businessDnaExtract: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(5, "1 h"),
+      prefix: "rl:business-dna-extract",
+    }),
   };
   return rateLimitersClient;
 }
@@ -80,6 +86,9 @@ export const rateLimiters = {
   },
   get anonDemo() {
     return getRateLimiters().anonDemo;
+  },
+  get businessDnaExtract() {
+    return getRateLimiters().businessDnaExtract;
   },
 } satisfies RateLimiters;
 

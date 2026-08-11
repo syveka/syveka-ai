@@ -49,6 +49,7 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
   "WebhookEndpoint",
   "AuditLog",
   "Prompt",
+  "BusinessDNA",
 ]);
 
 export function tenantDb(orgId: string) {
