@@ -29,7 +29,8 @@
     "prompts": "Promptikirjasto",
     "workflows": "Automaatiot",
     "notifications": "Ilmoitukset",
-    "settings": "Asetukset"
+    "settings": "Asetukset",
+    "businessDna": "Yrityksen DNA"
   },
   "auth": {
     "login": "Kirjaudu sisään",
@@ -600,5 +601,57 @@
       "disconnected": "Yhteys katkaistu",
       "error": "Virhe"
     }
+  },
+  "businessDna": {
+    "title": "Yrityksen DNA",
+    "subtitle": "Toiminnallinen konteksti, jota Postilaatikko, Puheavustaja, Ajanvaraus ja CRM käyttävät toimiessaan puolestasi.",
+    "emptyBanner": "Et ole vielä määrittänyt yrityksesi DNA:ta. Täytä alla olevat kentät — kaikki kentät ovat valinnaisia.",
+    "savedMessage": "Tallennettu.",
+    "invalidInput": "Tarkista korostetut kentät ja yritä uudelleen.",
+    "saveFailed": "Tallennus epäonnistui. Yritä uudelleen.",
+    "updated": "Päivitetty {date}",
+    "sections": {
+      "identity": "Perustiedot",
+      "identityDescription": "Miten yritystäsi kuvataan Postilaatikossa, Puheavustajassa, Ajanvarauksessa ja CRM:ssä.",
+      "productsAndCustomers": "Tuotteet ja asiakkaat",
+      "openingHours": "Aukioloajat",
+      "policiesAndPricing": "Käytännöt ja hinnoittelu",
+      "keyFacts": "Keskeiset faktat"
+    },
+    "fields": {
+      "displayName": "Näyttönimi",
+      "industry": "Toimiala",
+      "supportedLocales": "Tuetut kielet",
+      "brandTone": "Brändin sävy",
+      "communicationStyle": "Viestintätyyli",
+      "productsServices": "Tuotteet ja palvelut",
+      "targetCustomer": "Kohdeasiakas",
+      "policies": "Käytännöt",
+      "pricingNotes": "Hinnoittelutiedot",
+      "keyFacts": "Keskeiset faktat"
+    },
+    "placeholders": {
+      "displayName": "Acme Oy",
+      "industry": "esim. putkityöt, vähittäiskauppa, konsultointi",
+      "brandTone": "esim. ystävällinen, ammattimainen, leikkisä",
+      "communicationStyle": "esim. ytimekäs, virallinen, rento",
+      "productsServices": "Listaa myymäsi tuotteet tai palvelut…",
+      "targetCustomer": "Millaisia asiakkaitasi tyypillisesti ovat?",
+      "policies": "Peruutus, palautus, tietojenkäsittely…",
+      "pricingNotes": "Hinnoittelusäännöt, tarjouspohjat…",
+      "keyFacts": "Yksi fakta per rivi, esim.\nKävelyasiakkaat tervetulleita\nToimitus 20 km säteellä"
+    },
+    "weekdays": {
+      "monday": "Maanantai",
+      "tuesday": "Tiistai",
+      "wednesday": "Keskiviikko",
+      "thursday": "Torstai",
+      "friday": "Perjantai",
+      "saturday": "Lauantai",
+      "sunday": "Sunnuntai"
+    },
+    "closed": "Suljettu",
+    "openTimeLabel": "{day} avautuu",
+    "closeTimeLabel": "{day} sulkeutuu"
   }
 }
