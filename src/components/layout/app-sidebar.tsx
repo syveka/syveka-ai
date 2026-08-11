@@ -15,6 +15,7 @@ import {
   GitBranch,
   Bell,
   Settings,
+  Dna,
 } from "lucide-react";
 import { Link, usePathname } from "@/i18n/routing";
 import { cn } from "@/lib/utils";
@@ -40,6 +41,12 @@ const NAV: NavItem[] = [
   { href: "/prompts", key: "prompts", icon: Sparkles, permission: "prompts:read" },
   { href: "/workflows", key: "workflows", icon: GitBranch, permission: "workflows:view" },
   { href: "/notifications", key: "notifications", icon: Bell },
+  {
+    href: "/settings/business-dna",
+    key: "businessDna",
+    icon: Dna,
+    permission: "business-dna:read",
+  },
   { href: "/settings/profile", key: "settings", icon: Settings },
 ];
 
