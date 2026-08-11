@@ -508,6 +508,15 @@ END $$;
 
 SELECT pg_temp.assert_syveka_policy_contract();
 
+-- This contract runs here, mid-deploy, so it can only ever assert policies
+-- that already exist at THIS point in migration history. Never add a table
+-- whose CREATE POLICY statements live in a later migration (e.g. business_dna,
+-- added by 20260811000000_business_dna_v1) — its policies genuinely don't
+-- exist yet when this file applies, and this loop has no "not yet created"
+-- tolerance (unlike the missing-table/-column allowlists elsewhere): it would
+-- immediately fail with a contract mismatch. tests/staging/release-invariants.sql
+-- carries the complete, current contract instead, since it only ever runs
+-- after every migration (including later ones) has applied for real.
 -- BEGIN COMPLETE RLS POLICY CONTRACT
 DO $syveka_complete_policy_contract$
 DECLARE
@@ -528,10 +537,6 @@ BEGIN
       ('public', 'availability_schedules', 'availability_schedules_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),
       ('public', 'booking_types', 'booking_types_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),
       ('public', 'bookings', 'bookings_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),
-      ('public', 'business_dna', 'business_dna_delete', 'PERMISSIVE', 'DELETE', '{authenticated}', 'organization_id=auth_org_idandauth_role=anyarray[''owner'',''admin'',''manager'']', ''),
-      ('public', 'business_dna', 'business_dna_insert', 'PERMISSIVE', 'INSERT', '{authenticated}', '', 'organization_id=auth_org_id'),
-      ('public', 'business_dna', 'business_dna_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),
-      ('public', 'business_dna', 'business_dna_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),
       ('public', 'calendar_events', 'calendar_events_delete', 'PERMISSIVE', 'DELETE', '{authenticated}', 'organization_id=auth_org_idandauth_role=anyarray[''owner'',''admin'',''manager'']', ''),
       ('public', 'calendar_events', 'calendar_events_insert', 'PERMISSIVE', 'INSERT', '{authenticated}', '', 'organization_id=auth_org_id'),
       ('public', 'calendar_events', 'calendar_events_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),
