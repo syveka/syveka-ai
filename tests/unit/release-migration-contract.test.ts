@@ -47,12 +47,16 @@ function rlsPolicyContract(sql: string) {
   );
 }
 
+function policyRows(contract: string): string[] {
+  return contract.match(/^      \('public',.*$/gm) ?? [];
+}
+
 describe("staging release migration contract", () => {
   it("uses the identical read-only preflight contract inside the atomic baseline", () => {
     const contract = compatibilityContract(preflight);
     expect(contract).toBe(compatibilityContract(baseline));
     expect(contract).toContain(
-      "-- BEGIN LEGACY MISSING TABLES\n  legacy_missing_tables TEXT[] := '{}'::TEXT[];\n-- END LEGACY MISSING TABLES",
+      "-- BEGIN LEGACY MISSING TABLES\n  legacy_missing_tables TEXT[] := ARRAY[\n    'business_dna'\n  ];\n-- END LEGACY MISSING TABLES",
     );
     expect(contract).not.toContain("ARRAY[]");
     // The baseline must not wrap itself in an explicit BEGIN/COMMIT: Prisma
@@ -97,8 +101,8 @@ describe("staging release migration contract", () => {
       "  FOR expected IN\n    SELECT * FROM (VALUES\n      ('Locale'",
       "complete foreign-key contract",
     ).match(/^      \('public', '[^']+', '[^']+_fkey',/gm);
-    expect(columnRows).toHaveLength(470);
-    expect(foreignKeyRows).toHaveLength(71);
+    expect(columnRows).toHaveLength(487);
+    expect(foreignKeyRows).toHaveLength(72);
     expect(contract).toContain("expected.table_name = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.source_table = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.target_table = ANY(legacy_missing_tables)");
@@ -141,8 +145,31 @@ describe("staging release migration contract", () => {
     expect(security).toContain("universally true predicate");
     expect(security).not.toMatch(/DROP\s+POLICY/i);
     const rlsContract = rlsPolicyContract(security);
-    expect(rlsContract).toBe(rlsPolicyContract(releaseInvariants));
-    expect(rlsContract.match(/^      \('public',/gm)).toHaveLength(86);
+    // security-baseline's contract runs mid-deploy, so it can only ever
+    // assert policies that already exist at that point in migration history
+    // — it must be a subset of (not identical to) release-invariants.sql's
+    // contract, which runs at the very end and reflects every migration,
+    // including ones (like business_dna) whose CREATE POLICY statements run
+    // after this file. See the comment above this file's own RLS DO block.
+    const securityRows = policyRows(rlsContract);
+    const releaseInvariantRows = new Set(policyRows(rlsPolicyContract(releaseInvariants)));
+    expect(securityRows.length).toBeGreaterThan(0);
+    for (const row of securityRows) {
+      expect(releaseInvariantRows.has(row)).toBe(true);
+    }
+    expect(securityRows).toHaveLength(86);
+    expect(releaseInvariantRows.size).toBe(90);
+    // The only rows release-invariants carries beyond security-baseline are
+    // business_dna's — anything else diverging would be real, unexplained drift.
+    const extraRows = [...releaseInvariantRows].filter((row) => !securityRows.includes(row));
+    expect(extraRows.sort()).toEqual(
+      [
+        "      ('public', 'business_dna', 'business_dna_delete', 'PERMISSIVE', 'DELETE', '{authenticated}', 'organization_id=auth_org_idandauth_role=anyarray[''owner'',''admin'',''manager'']', ''),",
+        "      ('public', 'business_dna', 'business_dna_insert', 'PERMISSIVE', 'INSERT', '{authenticated}', '', 'organization_id=auth_org_id'),",
+        "      ('public', 'business_dna', 'business_dna_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),",
+        "      ('public', 'business_dna', 'business_dna_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+      ].sort(),
+    );
     expect(rlsPolicyContract(security)).toContain("messages_select");
     expect(rlsPolicyContract(security)).toContain("prompts_select");
     expect(rlsPolicyContract(security)).toContain("availability_rules_select");

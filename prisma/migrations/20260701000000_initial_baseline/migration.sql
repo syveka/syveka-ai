@@ -78,7 +78,9 @@ DECLARE
 -- END LEGACY MISSING COLUMNS
   ];
 -- BEGIN LEGACY MISSING TABLES
-  legacy_missing_tables TEXT[] := '{}'::TEXT[];
+  legacy_missing_tables TEXT[] := ARRAY[
+    'business_dna'
+  ];
 -- END LEGACY MISSING TABLES
   -- Foreign keys whose ON UPDATE action may still show a specific, verified
   -- pre-correction legacy value, but ONLY until their governing migration has been
@@ -475,6 +477,23 @@ BEGIN
       ('bookings', 'starts_at', 'timestamp(3) without time zone', 'true', '', '', ''),
       ('bookings', 'status', '"BookingStatus"', 'true', '', '', '''confirmed'''),
       ('bookings', 'updated_at', 'timestamp(3) without time zone', 'true', '', '', ''),
+      ('business_dna', 'brand_tone', 'text', 'false', '', '', ''),
+      ('business_dna', 'communication_style', 'text', 'false', '', '', ''),
+      ('business_dna', 'created_at', 'timestamp(3) without time zone', 'true', '', '', 'current_timestamp'),
+      ('business_dna', 'display_name', 'text', 'false', '', '', ''),
+      ('business_dna', 'extracted_at', 'timestamp(3) without time zone', 'false', '', '', ''),
+      ('business_dna', 'id', 'uuid', 'true', '', '', 'gen_random_uuid'),
+      ('business_dna', 'industry', 'text', 'false', '', '', ''),
+      ('business_dna', 'key_facts', 'text[]', 'true', '', '', 'array[]'),
+      ('business_dna', 'opening_hours', 'jsonb', 'false', '', '', ''),
+      ('business_dna', 'organization_id', 'uuid', 'true', '', '', ''),
+      ('business_dna', 'policies', 'text', 'false', '', '', ''),
+      ('business_dna', 'pricing_notes', 'text', 'false', '', '', ''),
+      ('business_dna', 'products_services', 'text', 'false', '', '', ''),
+      ('business_dna', 'source_url', 'text', 'false', '', '', ''),
+      ('business_dna', 'supported_locales', '"Locale"[]', 'true', '', '', 'array[]'),
+      ('business_dna', 'target_customer', 'text', 'false', '', '', ''),
+      ('business_dna', 'updated_at', 'timestamp(3) without time zone', 'true', '', '', ''),
       ('calendar_connections', 'access_token_enc', 'text', 'false', '', '', ''),
       ('calendar_connections', 'account_email', 'text', 'false', '', '', ''),
       ('calendar_connections', 'created_at', 'timestamp(3) without time zone', 'true', '', '', 'current_timestamp'),
@@ -919,6 +938,7 @@ BEGIN
       ('public', 'organization_members', 'organization_members_team_id_fkey', '{team_id}', 'public', 'teams', '{id}', 'SetNull', 'Cascade', 'false', 'false', 'true'),
       ('public', 'teams', 'teams_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'invitations', 'invitations_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
+      ('public', 'business_dna', 'business_dna_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'subscriptions', 'subscriptions_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'usage_records', 'usage_records_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'companies', 'companies_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),

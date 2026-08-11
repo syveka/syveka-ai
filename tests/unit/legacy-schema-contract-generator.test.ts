@@ -149,7 +149,7 @@ function legacyMissingTablesDeclarationOf(generatorStdout: string): string {
   if (body === undefined) {
     throw new Error("Missing LEGACY MISSING TABLES markers in generator output.");
   }
-  return body.trim();
+  return body.replace(/\r\n/g, "\n").trim();
 }
 
 function committedLegacyMissingTablesDeclaration(): string {
@@ -379,9 +379,12 @@ describe("legacy schema contract generator", () => {
     expect(result.stderr).toContain("webhook_verification_secret_hash");
   });
 
+  const DEFAULT_LEGACY_MISSING_TABLE_ENTRIES =
+    'const LEGACY_MISSING_TABLE_ENTRIES = [["business_dna", "20260811000000_business_dna_v1"]];';
+
   it("fails closed when a legacy-missing table references a nonexistent migration directory", () => {
     const mutated = generatorSource.replace(
-      "const LEGACY_MISSING_TABLE_ENTRIES = [];",
+      DEFAULT_LEGACY_MISSING_TABLE_ENTRIES,
       'const LEGACY_MISSING_TABLE_ENTRIES = [["users", "20269999999999_not_a_real_migration"]];',
     );
     expect(mutated).not.toBe(generatorSource);
@@ -395,7 +398,7 @@ describe("legacy schema contract generator", () => {
 
   it("fails closed when the named migration does not create the legacy-missing table", () => {
     const mutated = generatorSource.replace(
-      "const LEGACY_MISSING_TABLE_ENTRIES = [];",
+      DEFAULT_LEGACY_MISSING_TABLE_ENTRIES,
       'const LEGACY_MISSING_TABLE_ENTRIES = [["users", "20260726000000_normalize_list_column_nullability"]];',
     );
     expect(mutated).not.toBe(generatorSource);
@@ -408,7 +411,7 @@ describe("legacy schema contract generator", () => {
 
   it("fails closed when a legacy-missing table is absent from the Prisma schema", () => {
     const mutated = generatorSource.replace(
-      "const LEGACY_MISSING_TABLE_ENTRIES = [];",
+      DEFAULT_LEGACY_MISSING_TABLE_ENTRIES,
       'const LEGACY_MISSING_TABLE_ENTRIES = [["not_a_real_table", "20260701000000_initial_baseline"]];',
     );
     expect(mutated).not.toBe(generatorSource);
@@ -422,7 +425,7 @@ describe("legacy schema contract generator", () => {
 
   it("fails closed on duplicate legacy-missing-table entries", () => {
     const mutated = generatorSource.replace(
-      "const LEGACY_MISSING_TABLE_ENTRIES = [];",
+      DEFAULT_LEGACY_MISSING_TABLE_ENTRIES,
       'const LEGACY_MISSING_TABLE_ENTRIES = [["users", "20260701000000_initial_baseline"], ["users", "20260701000000_initial_baseline"]];',
     );
     expect(mutated).not.toBe(generatorSource);
@@ -434,20 +437,33 @@ describe("legacy schema contract generator", () => {
   });
 
   it("emits valid PostgreSQL for an empty legacy-missing-table list", () => {
-    const stdout = runGenerator(generatorSource).stdout;
+    const mutated = generatorSource.replace(
+      DEFAULT_LEGACY_MISSING_TABLE_ENTRIES,
+      "const LEGACY_MISSING_TABLE_ENTRIES = [];",
+    );
+    expect(mutated).not.toBe(generatorSource);
+
+    const stdout = runGenerator(mutated).stdout;
     expect(legacyMissingTablesDeclarationOf(stdout)).toBe(
       "legacy_missing_tables TEXT[] := '{}'::TEXT[];",
     );
     expect(stdout).not.toContain("ARRAY[]");
+  });
+
+  it("emits a valid PostgreSQL array for the real (business_dna) legacy-missing-table list, matching the committed contract", () => {
+    const stdout = runGenerator(generatorSource).stdout;
+    expect(legacyMissingTablesDeclarationOf(stdout)).toBe(
+      "legacy_missing_tables TEXT[] := ARRAY[\n    'business_dna'\n  ];",
+    );
     expect(legacyMissingTablesDeclarationOf(stdout)).toBe(
       committedLegacyMissingTablesDeclaration(),
     );
   });
 
-  it("emits a valid PostgreSQL array for a validated non-empty legacy-missing-table list", () => {
+  it("emits a valid PostgreSQL array for a validated multi-entry legacy-missing-table list", () => {
     const mutated = generatorSource.replace(
-      "const LEGACY_MISSING_TABLE_ENTRIES = [];",
-      'const LEGACY_MISSING_TABLE_ENTRIES = [["users", "20260701000000_initial_baseline"]];',
+      DEFAULT_LEGACY_MISSING_TABLE_ENTRIES,
+      'const LEGACY_MISSING_TABLE_ENTRIES = [["business_dna", "20260811000000_business_dna_v1"], ["users", "20260701000000_initial_baseline"]];',
     );
     expect(mutated).not.toBe(generatorSource);
 
@@ -455,7 +471,7 @@ describe("legacy schema contract generator", () => {
 
     expect(result.status).toBe(0);
     expect(legacyMissingTablesDeclarationOf(result.stdout)).toBe(
-      "legacy_missing_tables TEXT[] := ARRAY[\n    'users'\n  ];",
+      "legacy_missing_tables TEXT[] := ARRAY[\n    'business_dna',\n    'users'\n  ];",
     );
   });
 

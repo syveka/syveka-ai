@@ -18,6 +18,8 @@ export const PERMISSIONS = [
   "crm:delete",
   "crm:import-export",
   "crm:manage-pipeline",
+  "business-dna:read",
+  "business-dna:write",
   "chat:use",
   "kb:read",
   "kb:write",
@@ -49,6 +51,8 @@ const MANAGER_PERMS = new Set<Permission>([
   "crm:delete",
   "crm:import-export",
   "crm:manage-pipeline",
+  "business-dna:read",
+  "business-dna:write",
   "chat:use",
   "kb:read",
   "kb:write",
@@ -69,6 +73,7 @@ const MANAGER_PERMS = new Set<Permission>([
 const MEMBER_PERMS = new Set<Permission>([
   "crm:read",
   "crm:write",
+  "business-dna:read",
   "chat:use",
   "kb:read",
   "voice:view-calls",
@@ -83,6 +88,7 @@ const MEMBER_PERMS = new Set<Permission>([
 
 const VIEWER_PERMS = new Set<Permission>([
   "crm:read",
+  "business-dna:read",
   "kb:read",
   "voice:view-calls",
   "calendar:read",
