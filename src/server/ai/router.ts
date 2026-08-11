@@ -4,7 +4,7 @@ import "server-only";
  * Model router (§15.2). Config-driven so model upgrades are ops changes.
  * Pinned versions reviewed monthly (arch §25 "Continuous").
  */
-export type AiTask = "chat" | "deep" | "utility" | "title" | "sentiment" | "summary";
+export type AiTask = "chat" | "deep" | "utility" | "title" | "sentiment" | "summary" | "draft";
 
 export type ModelChoice = {
   provider: "anthropic" | "openai";
@@ -19,6 +19,7 @@ const ROUTES: Record<AiTask, ModelChoice> = {
   title: { provider: "anthropic", model: "claude-haiku-4-5-20251001", maxTokens: 64 },
   sentiment: { provider: "anthropic", model: "claude-haiku-4-5-20251001", maxTokens: 16 },
   summary: { provider: "anthropic", model: "claude-haiku-4-5-20251001", maxTokens: 1024 },
+  draft: { provider: "anthropic", model: "claude-sonnet-4-5", maxTokens: 1024 },
 };
 
 const FALLBACK: ModelChoice = { provider: "openai", model: "gpt-4o", maxTokens: 4096 };
