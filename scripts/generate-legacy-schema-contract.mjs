@@ -64,11 +64,15 @@ for (const [expectedTable, migrationDir] of LEGACY_MISSING_TABLE_ENTRIES) {
 //   - webhook_endpoints.events        -> nullable  (prisma/migrations/20260701000000_initial_baseline/migration.sql:1706, no NOT NULL)
 //   - booking_types.duration_options  -> NOT NULL  (prisma/migrations/20260713000000_calendar_booking_v1/migration.sql:237)
 //   - calendar_connections.scopes     -> NOT NULL  (prisma/migrations/20260713000000_calendar_booking_v1/migration.sql:104)
+//   - business_dna.supported_locales  -> NOT NULL  (prisma/migrations/20260811000000_business_dna_v1/migration.sql:10)
+//   - business_dna.key_facts          -> NOT NULL  (prisma/migrations/20260811000000_business_dna_v1/migration.sql:17)
 const LIST_COLUMN_NOT_NULL_ENTRIES = [
   ["api_keys.scopes", false],
   ["webhook_endpoints.events", false],
   ["booking_types.duration_options", true],
   ["calendar_connections.scopes", true],
+  ["business_dna.supported_locales", true],
+  ["business_dna.key_facts", true],
 ];
 
 const seenListColumnKeys = new Set();
@@ -81,10 +85,14 @@ for (const [key] of LIST_COLUMN_NOT_NULL_ENTRIES) {
 
 const LIST_COLUMN_NOT_NULL = new Map(LIST_COLUMN_NOT_NULL_ENTRIES);
 
+// `columnNotNull()` below looks up any list field regardless of scalar vs.
+// enum kind (Postgres enum-array columns need the same explicit NOT NULL
+// source of truth as text[]/integer[] ones), so this completeness check must
+// cover both — excluding only relation ("object") list fields like Contact[].
 const actualScalarListKeys = new Set(
   models.flatMap((model) =>
     model.fields
-      .filter((field) => field.isList && field.kind === "scalar")
+      .filter((field) => field.isList && field.kind !== "object")
       .map((field) => `${tableName(model)}.${columnName(field)}`),
   ),
 );
@@ -155,6 +163,7 @@ function postgresType(field) {
   if (field.isList) {
     if (field.type === "String") return "text[]";
     if (field.type === "Int") return "integer[]";
+    if (field.kind === "enum") return `"${field.type}"[]`;
   }
   if (field.kind === "enum") return `"${field.type}"`;
   if (field.nativeType?.[0] === "Uuid") return "uuid";
@@ -472,6 +481,7 @@ for (const table of [
   "workflows",
   "voice_assistants",
   "webhook_endpoints",
+  "business_dna",
 ]) {
   addPolicy(table, `${table}_select`, "SELECT", "organization_id=auth_org_id");
   addPolicy(table, `${table}_insert`, "INSERT", "", "organization_id=auth_org_id");

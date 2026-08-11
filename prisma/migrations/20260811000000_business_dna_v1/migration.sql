@@ -40,4 +40,8 @@ CREATE POLICY business_dna_update ON public.business_dna
   FOR UPDATE TO authenticated USING (organization_id = auth_org_id());
 
 CREATE POLICY business_dna_delete ON public.business_dna
-  FOR DELETE TO authenticated USING (organization_id = auth_org_id());
+  FOR DELETE TO authenticated
+  USING (
+    organization_id = auth_org_id()
+    AND auth_role() IN ('OWNER', 'ADMIN', 'MANAGER')
+  );

@@ -97,8 +97,8 @@ describe("staging release migration contract", () => {
       "  FOR expected IN\n    SELECT * FROM (VALUES\n      ('Locale'",
       "complete foreign-key contract",
     ).match(/^      \('public', '[^']+', '[^']+_fkey',/gm);
-    expect(columnRows).toHaveLength(470);
-    expect(foreignKeyRows).toHaveLength(71);
+    expect(columnRows).toHaveLength(487);
+    expect(foreignKeyRows).toHaveLength(72);
     expect(contract).toContain("expected.table_name = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.source_table = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.target_table = ANY(legacy_missing_tables)");
@@ -142,7 +142,7 @@ describe("staging release migration contract", () => {
     expect(security).not.toMatch(/DROP\s+POLICY/i);
     const rlsContract = rlsPolicyContract(security);
     expect(rlsContract).toBe(rlsPolicyContract(releaseInvariants));
-    expect(rlsContract.match(/^      \('public',/gm)).toHaveLength(86);
+    expect(rlsContract.match(/^      \('public',/gm)).toHaveLength(90);
     expect(rlsPolicyContract(security)).toContain("messages_select");
     expect(rlsPolicyContract(security)).toContain("prompts_select");
     expect(rlsPolicyContract(security)).toContain("availability_rules_select");
