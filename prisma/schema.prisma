@@ -30,6 +30,8 @@ model User {
   messages              Message[]
   activities            Activity[]
   documentUploadIntents DocumentUploadIntent[]
+  assignedInboxThreads  InboxThread[]
+  approvedInboxMessages InboxMessage[]
 
   @@map("users")
 }
@@ -89,6 +91,7 @@ model Organization {
   auditLogs             AuditLog[]
   tags                  Tag[]
   businessDNA           BusinessDNA?
+  inboxThreads          InboxThread[]
 
   @@map("organizations")
 }
@@ -313,6 +316,7 @@ model Contact {
   activities     Activity[]
   tags           TagsOnContacts[]
   eventAttendees EventAttendee[]
+  inboxThreads   InboxThread[]
 
   @@index([organizationId, status])
   @@index([organizationId, email])
@@ -453,6 +457,111 @@ model TagsOnContacts {
 
   @@id([contactId, tagId])
   @@map("tags_on_contacts")
+}
+
+// ───────────────────────── INBOX ─────────────────────────
+
+/**
+ * Inbox MVP foundation: the data layer for a unified, channel-agnostic
+ * conversation surface (email/SMS/WhatsApp/web chat today; extensible to
+ * more). Server-only for now — no RLS client policies are granted (see
+ * the migration), matching document_upload_intents/calendar_connections,
+ * since every access path in this MVP goes through the audited, RBAC-
+ * checked service layer, not a direct Supabase client query.
+ * Explicitly out of scope for this foundation slice (tracked as follow-up,
+ * not silently deferred): actual channel-provider dispatch (sending a
+ * message for real requires picking and configuring a provider — a product
+ * decision, not an engineering one) and AI draft generation (a natural
+ * next step once a provider is chosen, reusing the Business DNA system-
+ * prompt wiring already built for chat).
+ */
+model InboxThread {
+  id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String            @map("organization_id") @db.Uuid
+  channel        InboxChannel
+  status         InboxThreadStatus @default(OPEN)
+  subject        String?
+  contactId      String?           @map("contact_id") @db.Uuid
+  assignedToId   String?           @map("assigned_to_id") @db.Uuid
+  externalId     String?           @map("external_id")
+  lastMessageAt  DateTime?         @map("last_message_at")
+  /** Null = unread (reset to null whenever a new inbound message arrives). */
+  readAt         DateTime?         @map("read_at")
+  createdAt      DateTime          @default(now()) @map("created_at")
+  updatedAt      DateTime          @updatedAt @map("updated_at")
+  deletedAt      DateTime?         @map("deleted_at")
+
+  organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  contact      Contact?       @relation(fields: [contactId], references: [id], onDelete: SetNull)
+  assignedTo   User?          @relation(fields: [assignedToId], references: [id], onDelete: SetNull)
+  messages     InboxMessage[]
+
+  @@index([organizationId, status, lastMessageAt])
+  @@index([contactId])
+  @@map("inbox_threads")
+}
+
+enum InboxChannel {
+  EMAIL
+  SMS
+  WHATSAPP
+  WEB_CHAT
+}
+
+enum InboxThreadStatus {
+  OPEN
+  PENDING
+  CLOSED
+}
+
+/**
+ * Scoped via `threadId` only, like `Message` is via `conversationId` — see
+ * the DOCUMENTED_EXCLUSIONS comment in src/server/db/tenant.ts.
+ */
+model InboxMessage {
+  id           String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  threadId     String                @map("thread_id") @db.Uuid
+  direction    InboxMessageDirection
+  status       InboxMessageStatus    @default(RECEIVED)
+  fromAddress  String?               @map("from_address")
+  toAddress    String?               @map("to_address")
+  body         String
+  aiGenerated  Boolean               @default(false) @map("ai_generated")
+  approvedById String?               @map("approved_by_id") @db.Uuid
+  approvedAt   DateTime?             @map("approved_at")
+  sentAt       DateTime?             @map("sent_at")
+  /**
+   * Provider message id (e.g. RFC 5322 Message-ID). Globally unique per
+   * provider by construction, so a plain unique constraint doubles as
+   * webhook-redelivery idempotency — multiple NULLs remain allowed.
+   */
+  externalId   String?               @unique @map("external_id")
+  createdAt    DateTime              @default(now()) @map("created_at")
+  updatedAt    DateTime              @updatedAt @map("updated_at")
+
+  thread     InboxThread @relation(fields: [threadId], references: [id], onDelete: Cascade)
+  approvedBy User?       @relation(fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@index([threadId, createdAt])
+  @@map("inbox_messages")
+}
+
+enum InboxMessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+/**
+ * RECEIVED is the terminal state for INBOUND messages. OUTBOUND messages
+ * move DRAFT -> APPROVED -> SENT (or FAILED); AI-generated drafts require
+ * an explicit approval before they may be sent (see upsertInboxMessage).
+ */
+enum InboxMessageStatus {
+  RECEIVED
+  DRAFT
+  APPROVED
+  SENT
+  FAILED
 }
 
 // ───────────────────────── CALENDAR & BOOKING ─────────────────────────

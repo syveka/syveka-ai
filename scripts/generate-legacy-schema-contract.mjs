@@ -17,7 +17,13 @@ const tableName = (model) => model.dbName ?? model.name;
 //   - business_dna: does not exist on any legacy (pre-migration-system)
 //     database; created for the first time by 20260811000000_business_dna_v1,
 //     which runs later in the same deploy as this baseline's preflight.
-const LEGACY_MISSING_TABLE_ENTRIES = [["business_dna", "20260811000000_business_dna_v1"]];
+//   - inbox_threads, inbox_messages: same situation, created for the first
+//     time by 20260811010000_inbox_mvp_foundation.
+const LEGACY_MISSING_TABLE_ENTRIES = [
+  ["business_dna", "20260811000000_business_dna_v1"],
+  ["inbox_threads", "20260811010000_inbox_mvp_foundation"],
+  ["inbox_messages", "20260811010000_inbox_mvp_foundation"],
+];
 
 const actualTableNames = new Set(models.map(tableName));
 const seenMissingTableNames = new Set();

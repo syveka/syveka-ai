@@ -27,7 +27,7 @@ declare
     'messages', 'collections', 'documents', 'document_chunks',
     'document_upload_intents', 'prompts', 'voice_assistants', 'voice_calls',
     'workflows', 'workflow_runs', 'notifications', 'api_keys',
-    'webhook_endpoints', 'audit_logs'
+    'webhook_endpoints', 'audit_logs', 'inbox_threads', 'inbox_messages'
   ];
   missing_name text;
   contract_table text;
@@ -93,7 +93,7 @@ begin
       and tablename = any (
         array[
           'calendar_connections', 'calendar_sync_states', 'booking_tokens',
-          'reminders', 'document_upload_intents'
+          'reminders', 'document_upload_intents', 'inbox_threads', 'inbox_messages'
         ]
       )
       and roles && array['authenticated', 'public']::name[]

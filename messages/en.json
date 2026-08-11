@@ -28,6 +28,7 @@
     "knowledge": "Knowledge Base",
     "prompts": "Prompt Library",
     "workflows": "Workflows",
+    "inbox": "Inbox",
     "notifications": "Notifications",
     "settings": "Settings",
     "businessDna": "Business DNA"
@@ -600,6 +601,50 @@
       "needsReauth": "Needs re-authentication",
       "disconnected": "Disconnected",
       "error": "Error"
+    }
+  },
+  "inbox": {
+    "title": "Inbox",
+    "subtitle": "Customer conversations across every channel.",
+    "empty": "No conversations yet.",
+    "noSubject": "(no subject)",
+    "unread": "Unread",
+    "read": "Read",
+    "errorTitle": "Inbox could not load",
+    "errorDescription": "Refresh the page or try again in a moment.",
+    "retry": "Try again",
+    "channel": {
+      "EMAIL": "Email",
+      "SMS": "SMS",
+      "WHATSAPP": "WhatsApp",
+      "WEB_CHAT": "Web chat"
+    },
+    "status": {
+      "OPEN": "Open",
+      "PENDING": "Pending",
+      "CLOSED": "Closed"
+    },
+    "list": {
+      "contact": "Contact",
+      "lastMessage": "Last message"
+    },
+    "detail": {
+      "back": "Back to inbox",
+      "noMessages": "No messages yet.",
+      "generateDraft": "Generate AI draft",
+      "generating": "Generating…",
+      "replyPlaceholder": "Write a reply…",
+      "saveDraft": "Save draft",
+      "saving": "Saving…",
+      "send": "Send",
+      "sending": "Sending…",
+      "approve": "Approve",
+      "aiDraftBadge": "AI draft — needs approval before sending",
+      "aiApprovedBadge": "AI draft — approved, ready to send",
+      "draftBadge": "Draft",
+      "sentBadge": "Sent",
+      "failedBadge": "Failed to send",
+      "error": "Something went wrong. Please try again."
     }
   },
   "businessDna": {

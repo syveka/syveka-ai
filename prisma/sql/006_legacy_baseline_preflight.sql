@@ -73,7 +73,9 @@ DECLARE
   ];
 -- BEGIN LEGACY MISSING TABLES
   legacy_missing_tables TEXT[] := ARRAY[
-    'business_dna'
+    'business_dna',
+    'inbox_threads',
+    'inbox_messages'
   ];
 -- END LEGACY MISSING TABLES
   -- Foreign keys whose ON UPDATE action may still show a specific, verified
@@ -665,6 +667,33 @@ BEGIN
       ('external_calendars', 'organization_id', 'uuid', 'true', '', '', ''),
       ('external_calendars', 'sync_enabled', 'boolean', 'true', '', '', 'false'),
       ('external_calendars', 'timezone', 'text', 'false', '', '', ''),
+      ('inbox_messages', 'ai_generated', 'boolean', 'true', '', '', 'false'),
+      ('inbox_messages', 'approved_at', 'timestamp(3) without time zone', 'false', '', '', ''),
+      ('inbox_messages', 'approved_by_id', 'uuid', 'false', '', '', ''),
+      ('inbox_messages', 'body', 'text', 'true', '', '', ''),
+      ('inbox_messages', 'created_at', 'timestamp(3) without time zone', 'true', '', '', 'current_timestamp'),
+      ('inbox_messages', 'direction', '"InboxMessageDirection"', 'true', '', '', ''),
+      ('inbox_messages', 'external_id', 'text', 'false', '', '', ''),
+      ('inbox_messages', 'from_address', 'text', 'false', '', '', ''),
+      ('inbox_messages', 'id', 'uuid', 'true', '', '', 'gen_random_uuid'),
+      ('inbox_messages', 'sent_at', 'timestamp(3) without time zone', 'false', '', '', ''),
+      ('inbox_messages', 'status', '"InboxMessageStatus"', 'true', '', '', '''received'''),
+      ('inbox_messages', 'thread_id', 'uuid', 'true', '', '', ''),
+      ('inbox_messages', 'to_address', 'text', 'false', '', '', ''),
+      ('inbox_messages', 'updated_at', 'timestamp(3) without time zone', 'true', '', '', ''),
+      ('inbox_threads', 'assigned_to_id', 'uuid', 'false', '', '', ''),
+      ('inbox_threads', 'channel', '"InboxChannel"', 'true', '', '', ''),
+      ('inbox_threads', 'contact_id', 'uuid', 'false', '', '', ''),
+      ('inbox_threads', 'created_at', 'timestamp(3) without time zone', 'true', '', '', 'current_timestamp'),
+      ('inbox_threads', 'deleted_at', 'timestamp(3) without time zone', 'false', '', '', ''),
+      ('inbox_threads', 'external_id', 'text', 'false', '', '', ''),
+      ('inbox_threads', 'id', 'uuid', 'true', '', '', 'gen_random_uuid'),
+      ('inbox_threads', 'last_message_at', 'timestamp(3) without time zone', 'false', '', '', ''),
+      ('inbox_threads', 'organization_id', 'uuid', 'true', '', '', ''),
+      ('inbox_threads', 'read_at', 'timestamp(3) without time zone', 'false', '', '', ''),
+      ('inbox_threads', 'status', '"InboxThreadStatus"', 'true', '', '', '''open'''),
+      ('inbox_threads', 'subject', 'text', 'false', '', '', ''),
+      ('inbox_threads', 'updated_at', 'timestamp(3) without time zone', 'true', '', '', ''),
       ('invitations', 'created_at', 'timestamp(3) without time zone', 'true', '', '', 'current_timestamp'),
       ('invitations', 'email', 'text', 'true', '', '', ''),
       ('invitations', 'expires_at', 'timestamp(3) without time zone', 'true', '', '', ''),
@@ -953,6 +982,11 @@ BEGIN
       ('public', 'tags', 'tags_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'tags_on_contacts', 'tags_on_contacts_contact_id_fkey', '{contact_id}', 'public', 'contacts', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'tags_on_contacts', 'tags_on_contacts_tag_id_fkey', '{tag_id}', 'public', 'tags', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
+      ('public', 'inbox_threads', 'inbox_threads_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
+      ('public', 'inbox_threads', 'inbox_threads_contact_id_fkey', '{contact_id}', 'public', 'contacts', '{id}', 'SetNull', 'Cascade', 'false', 'false', 'true'),
+      ('public', 'inbox_threads', 'inbox_threads_assigned_to_id_fkey', '{assigned_to_id}', 'public', 'users', '{id}', 'SetNull', 'Cascade', 'false', 'false', 'true'),
+      ('public', 'inbox_messages', 'inbox_messages_thread_id_fkey', '{thread_id}', 'public', 'inbox_threads', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
+      ('public', 'inbox_messages', 'inbox_messages_approved_by_id_fkey', '{approved_by_id}', 'public', 'users', '{id}', 'SetNull', 'Cascade', 'false', 'false', 'true'),
       ('public', 'calendar_events', 'calendar_events_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'calendar_events', 'calendar_events_external_calendar_id_fkey', '{external_calendar_id}', 'public', 'external_calendars', '{id}', 'SetNull', 'Cascade', 'false', 'false', 'true'),
       ('public', 'event_attendees', 'event_attendees_event_id_fkey', '{event_id}', 'public', 'calendar_events', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
