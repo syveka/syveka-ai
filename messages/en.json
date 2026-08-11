@@ -607,6 +607,8 @@
     "subtitle": "Customer conversations across every channel.",
     "empty": "No conversations yet.",
     "noSubject": "(no subject)",
+    "unread": "Unread",
+    "read": "Read",
     "channel": {
       "EMAIL": "Email",
       "SMS": "SMS",

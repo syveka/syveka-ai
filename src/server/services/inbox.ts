@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { audit } from "./audit";
 import { EmailChannelError, getEmailChannelAdapter } from "@/server/channels/email";
@@ -103,13 +103,26 @@ async function findEmailRecipient(threadId: string): Promise<string | null> {
   return lastInbound?.fromAddress ?? null;
 }
 
+export class DuplicateInboundMessageError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "DuplicateInboundMessageError";
+  }
+}
+
 /**
- * Simulates a message arriving on a channel. Not wired to any route in this
- * foundation slice — it's the extension point a future channel webhook
- * calls once a provider is chosen (deliberately out of scope here; picking
- * a provider is a product decision, not an engineering one). Takes a plain
- * `orgId` rather than a `TenantContext` because a webhook has no human user
- * session to derive one from.
+ * Simulates a message arriving on a channel. Called by the inbound-email
+ * webhook (and any future channel webhook) once a provider is chosen. Takes
+ * a plain `orgId` rather than a `TenantContext` because a webhook has no
+ * human user session to derive one from.
+ *
+ * Idempotent on `input.externalId` (the provider's message id, e.g. an RFC
+ * 5322 Message-ID): a webhook redelivery of the same message hits the
+ * database's unique constraint on `inbox_messages.external_id` rather than
+ * creating a duplicate. The redelivery is detected by catching that
+ * constraint violation (concurrency-safe, unlike a check-then-insert) and
+ * the existing thread + message are returned instead of running the
+ * thread-update/audit side effects a second time.
  */
 export async function recordInboundMessage(orgId: string, input: RecordInboundMessageInput) {
   const db = tenantDb(orgId);
@@ -137,21 +150,47 @@ export async function recordInboundMessage(orgId: string, input: RecordInboundMe
     });
   }
 
-  const message = await unscopedPrisma.inboxMessage.create({
-    data: {
-      threadId: thread.id,
-      direction: "INBOUND",
-      status: "RECEIVED",
-      fromAddress: input.fromAddress ?? null,
-      toAddress: input.toAddress ?? null,
-      body: input.body,
-      externalId: input.externalId ?? null,
-    },
-  });
+  let message;
+  try {
+    message = await unscopedPrisma.inboxMessage.create({
+      data: {
+        threadId: thread.id,
+        direction: "INBOUND",
+        status: "RECEIVED",
+        fromAddress: input.fromAddress ?? null,
+        toAddress: input.toAddress ?? null,
+        body: input.body,
+        externalId: input.externalId ?? null,
+      },
+    });
+  } catch (err) {
+    if (
+      input.externalId &&
+      err instanceof Prisma.PrismaClientKnownRequestError &&
+      err.code === "P2002"
+    ) {
+      const existing = await unscopedPrisma.inboxMessage.findFirst({
+        where: { externalId: input.externalId },
+        include: { thread: { select: { id: true, organizationId: true } } },
+      });
+      if (existing && existing.thread.organizationId === orgId) {
+        const { thread: existingThread, ...existingMessage } = existing;
+        return {
+          thread: { ...thread, id: existingThread.id },
+          message: existingMessage,
+          duplicate: true as const,
+        };
+      }
+      throw new DuplicateInboundMessageError(
+        `Inbound message externalId ${input.externalId} already exists for a different organization`,
+      );
+    }
+    throw err;
+  }
 
   await db.inboxThread.update({
     where: { id: thread.id },
-    data: { lastMessageAt: message.createdAt, status: "OPEN" },
+    data: { lastMessageAt: message.createdAt, status: "OPEN", readAt: null },
   });
 
   await audit(
@@ -164,7 +203,25 @@ export async function recordInboundMessage(orgId: string, input: RecordInboundMe
     },
   );
 
-  return { thread, message };
+  return { thread, message, duplicate: false as const };
+}
+
+/** Opening a thread marks it read. Idempotent — safe to call on every view. */
+export async function markThreadRead(ctx: TenantContext, threadId: string) {
+  const db = tenantDb(ctx.orgId);
+  const thread = await db.inboxThread.findFirst({
+    where: { id: threadId, deletedAt: null },
+    select: { id: true, readAt: true },
+  });
+  if (!thread) {
+    throw new InboxError("thread_not_found", "Thread does not belong to this organization");
+  }
+  if (thread.readAt) return thread;
+
+  return db.inboxThread.update({
+    where: { id: thread.id },
+    data: { readAt: new Date() },
+  });
 }
 
 export async function createDraftMessage(ctx: TenantContext, input: CreateDraftMessageInput) {

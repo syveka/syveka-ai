@@ -105,7 +105,7 @@ describe("staging release migration contract", () => {
       "  FOR expected IN\n    SELECT * FROM (VALUES\n      ('Locale'",
       "complete foreign-key contract",
     ).match(/^      \('public', '[^']+', '[^']+_fkey',/gm);
-    expect(columnRows).toHaveLength(513);
+    expect(columnRows).toHaveLength(514);
     expect(foreignKeyRows).toHaveLength(77);
     expect(contract).toContain("expected.table_name = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.source_table = ANY(legacy_missing_tables)");

@@ -696,6 +696,7 @@ BEGIN
       ('inbox_threads', 'id', 'uuid', 'true', '', '', 'gen_random_uuid'),
       ('inbox_threads', 'last_message_at', 'timestamp(3) without time zone', 'false', '', '', ''),
       ('inbox_threads', 'organization_id', 'uuid', 'true', '', '', ''),
+      ('inbox_threads', 'read_at', 'timestamp(3) without time zone', 'false', '', '', ''),
       ('inbox_threads', 'status', '"InboxThreadStatus"', 'true', '', '', '''open'''),
       ('inbox_threads', 'subject', 'text', 'false', '', '', ''),
       ('inbox_threads', 'updated_at', 'timestamp(3) without time zone', 'true', '', '', ''),

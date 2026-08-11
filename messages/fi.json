@@ -607,6 +607,8 @@
     "subtitle": "Asiakaskeskustelut kaikista kanavista.",
     "empty": "Ei vielä keskusteluja.",
     "noSubject": "(ei aihetta)",
+    "unread": "Lukematon",
+    "read": "Luettu",
     "channel": {
       "EMAIL": "Sähköposti",
       "SMS": "Tekstiviesti",

@@ -47,17 +47,28 @@ vi.mock("@/server/channels/email", () => ({
   EmailChannelError: EmailChannelErrorMock,
 }));
 
+import { Prisma } from "@prisma/client";
 import {
   approveMessage,
   assignThread,
   createDraftMessage,
+  DuplicateInboundMessageError,
   getThread,
   InboxError,
   listThreads,
+  markThreadRead,
   recordInboundMessage,
   sendMessage,
   updateThreadStatus,
 } from "@/server/services/inbox";
+
+function uniqueConstraintError(target: string) {
+  return new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+    code: "P2002",
+    clientVersion: "test",
+    meta: { target: [target] },
+  });
+}
 
 function ctx(orgId = "org-a", userId = "user-1"): TenantContext {
   return { userId, email: "u@example.com", orgId, role: "MANAGER", locale: "en" };
@@ -221,6 +232,94 @@ describe("inbox service", () => {
         expect.objectContaining({ orgId: "org-a" }),
         expect.objectContaining({ action: "inbox.message.received", actorType: "system" }),
       );
+    });
+
+    it("resets the thread to unread (readAt: null) when a new inbound message arrives", async () => {
+      await recordInboundMessage("org-a", { channel: "EMAIL", body: "Hi there" });
+      expect(db.inboxThread.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ readAt: null }) }),
+      );
+    });
+
+    it("is idempotent on a webhook redelivery: returns the existing message instead of erroring", async () => {
+      unscopedMock.inboxMessage.create.mockRejectedValueOnce(
+        uniqueConstraintError("inbox_messages_external_id_key"),
+      );
+      unscopedMock.inboxMessage.findFirst.mockResolvedValueOnce({
+        id: "existing-msg",
+        threadId: "org-a-t1",
+        externalId: "ext-1",
+        thread: { id: "org-a-t1", organizationId: "org-a" },
+      });
+
+      const result = await recordInboundMessage("org-a", {
+        channel: "EMAIL",
+        body: "Hi there",
+        externalId: "ext-1",
+      });
+
+      expect(result.duplicate).toBe(true);
+      expect(result.message).toMatchObject({ id: "existing-msg" });
+      // No second thread-status update or audit entry for the redelivery.
+      expect(db.inboxThread.update).not.toHaveBeenCalled();
+      expect(auditMock).not.toHaveBeenCalled();
+    });
+
+    it("rejects a cross-organization externalId collision instead of returning another tenant's message", async () => {
+      unscopedMock.inboxMessage.create.mockRejectedValueOnce(
+        uniqueConstraintError("inbox_messages_external_id_key"),
+      );
+      unscopedMock.inboxMessage.findFirst.mockResolvedValueOnce({
+        id: "other-org-msg",
+        threadId: "org-b-t1",
+        externalId: "ext-1",
+        thread: { id: "org-b-t1", organizationId: "org-b" },
+      });
+
+      await expect(
+        recordInboundMessage("org-a", { channel: "EMAIL", body: "Hi there", externalId: "ext-1" }),
+      ).rejects.toBeInstanceOf(DuplicateInboundMessageError);
+    });
+
+    it("does not swallow unrelated database errors", async () => {
+      unscopedMock.inboxMessage.create.mockRejectedValueOnce(new Error("connection reset"));
+      await expect(
+        recordInboundMessage("org-a", { channel: "EMAIL", body: "Hi there" }),
+      ).rejects.toThrow("connection reset");
+    });
+  });
+
+  describe("markThreadRead", () => {
+    it("throws when the thread does not belong to the tenant", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(null);
+      await expect(markThreadRead(ctx(), "missing")).rejects.toBeInstanceOf(InboxError);
+    });
+
+    it("stamps readAt when the thread is unread", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(
+        threadRow("org-a-t1", "org-a", { readAt: null }),
+      );
+      await markThreadRead(ctx("org-a"), "org-a-t1");
+      expect(db.inboxThread.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { readAt: expect.any(Date) } }),
+      );
+    });
+
+    it("is a no-op when the thread is already read", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(
+        threadRow("org-a-t1", "org-a", { readAt: new Date() }),
+      );
+      await markThreadRead(ctx("org-a"), "org-a-t1");
+      expect(db.inboxThread.update).not.toHaveBeenCalled();
+    });
+
+    it("uses the caller's org for tenant verification (tenant isolation)", async () => {
+      const dbB = createMockDb("org-b");
+      dbB.inboxThread.findFirst.mockResolvedValueOnce(null);
+      tenantDbMock.mockImplementation((orgId: string) => (orgId === "org-b" ? dbB : db));
+
+      await expect(markThreadRead(ctx("org-b"), "org-a-t1")).rejects.toBeInstanceOf(InboxError);
+      expect(tenantDbMock).toHaveBeenLastCalledWith("org-b");
     });
   });
 

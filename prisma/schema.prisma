@@ -485,6 +485,8 @@ model InboxThread {
   assignedToId   String?           @map("assigned_to_id") @db.Uuid
   externalId     String?           @map("external_id")
   lastMessageAt  DateTime?         @map("last_message_at")
+  /** Null = unread (reset to null whenever a new inbound message arrives). */
+  readAt         DateTime?         @map("read_at")
   createdAt      DateTime          @default(now()) @map("created_at")
   updatedAt      DateTime          @updatedAt @map("updated_at")
   deletedAt      DateTime?         @map("deleted_at")
@@ -528,7 +530,12 @@ model InboxMessage {
   approvedById String?               @map("approved_by_id") @db.Uuid
   approvedAt   DateTime?             @map("approved_at")
   sentAt       DateTime?             @map("sent_at")
-  externalId   String?               @map("external_id")
+  /**
+   * Provider message id (e.g. RFC 5322 Message-ID). Globally unique per
+   * provider by construction, so a plain unique constraint doubles as
+   * webhook-redelivery idempotency — multiple NULLs remain allowed.
+   */
+  externalId   String?               @unique @map("external_id")
   createdAt    DateTime              @default(now()) @map("created_at")
   updatedAt    DateTime              @updatedAt @map("updated_at")
 

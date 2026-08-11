@@ -49,15 +49,24 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: { code: "rate_limited" } }, { status: 429 });
   }
 
-  const { recordInboundMessage } = await import("@/server/services/inbox");
-  await recordInboundMessage(input.organizationId, {
-    channel: "EMAIL",
-    fromAddress: input.fromAddress,
-    toAddress: input.toAddress,
-    subject: input.subject,
-    body: input.body,
-    externalId: input.externalId,
-  });
-
-  return NextResponse.json({ ok: true });
+  const { recordInboundMessage, DuplicateInboundMessageError } =
+    await import("@/server/services/inbox");
+  try {
+    const { duplicate } = await recordInboundMessage(input.organizationId, {
+      channel: "EMAIL",
+      fromAddress: input.fromAddress,
+      toAddress: input.toAddress,
+      subject: input.subject,
+      body: input.body,
+      externalId: input.externalId,
+    });
+    return NextResponse.json({ ok: true, duplicate });
+  } catch (err) {
+    if (err instanceof DuplicateInboundMessageError) {
+      // externalId collision across organizations: extremely unlikely with real
+      // provider message ids, but never silently attribute it to the wrong tenant.
+      return NextResponse.json({ error: { code: "conflict" } }, { status: 409 });
+    }
+    throw err;
+  }
 }

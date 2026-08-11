@@ -40,13 +40,27 @@ export default async function InboxPage({
             const contactName = thread.contact
               ? [thread.contact.firstName, thread.contact.lastName].filter(Boolean).join(" ")
               : null;
+            const unread = thread.readAt === null;
             return (
-              <Link key={thread.id} href={`/inbox/${thread.id}`} className="block">
+              <Link
+                key={thread.id}
+                href={`/inbox/${thread.id}`}
+                className="block focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              >
                 <Card className="transition-colors hover:bg-accent/50">
-                  <CardContent className="flex items-center justify-between gap-4 p-4">
+                  <CardContent className="flex items-center gap-4 p-4">
+                    {unread ? (
+                      <span className="sr-only">{t("unread")}</span>
+                    ) : (
+                      <span className="sr-only">{t("read")}</span>
+                    )}
+                    <span
+                      aria-hidden="true"
+                      className={`size-2 shrink-0 rounded-full ${unread ? "bg-primary" : "bg-transparent"}`}
+                    />
                     <div className="min-w-0 flex-1 space-y-1">
                       <div className="flex items-center gap-2">
-                        <span className="truncate font-medium">
+                        <span className={`truncate ${unread ? "font-semibold" : "font-medium"}`}>
                           {thread.subject || t("noSubject")}
                         </span>
                         <span

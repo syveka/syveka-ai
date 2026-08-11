@@ -4,7 +4,7 @@ import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";
-import { getThread } from "@/server/services/inbox";
+import { getThread, markThreadRead } from "@/server/services/inbox";
 import { approveMessageAction, generateDraftAction, sendMessageAction } from "@/actions/inbox";
 import { Link } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
@@ -27,6 +27,7 @@ export default async function InboxThreadPage({
   const t = await getTranslations("inbox");
   const thread = await getThread(ctx, threadId);
   if (!thread) notFound();
+  await markThreadRead(ctx, threadId);
 
   const canWrite = can(ctx.role, "inbox:write");
   const canApprove = can(ctx.role, "inbox:approve");
