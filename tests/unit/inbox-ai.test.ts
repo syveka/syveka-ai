@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
     tenantDb: vi.fn(),
     inboxThreadFindFirst: vi.fn(),
     businessDnaFindFirst: vi.fn(async (): Promise<Record<string, unknown> | null> => null),
+    bookingFindFirst: vi.fn(async (): Promise<Record<string, unknown> | null> => null),
     messageFindMany: vi.fn(async () => [] as unknown[]),
     organizationFindUniqueOrThrow: vi.fn(async () => ({ name: "Acme" })),
     streamClaude: vi.fn(),
@@ -64,9 +65,15 @@ describe("generateEmailDraft", () => {
     mocks.tenantDb.mockReturnValue({
       inboxThread: { findFirst: mocks.inboxThreadFindFirst },
       businessDNA: { findFirst: mocks.businessDnaFindFirst },
+      booking: { findFirst: mocks.bookingFindFirst },
     });
-    mocks.inboxThreadFindFirst.mockResolvedValue({ id: "thread-1", subject: "Order #42" });
+    mocks.inboxThreadFindFirst.mockResolvedValue({
+      id: "thread-1",
+      subject: "Order #42",
+      contact: null,
+    });
     mocks.businessDnaFindFirst.mockResolvedValue(null);
+    mocks.bookingFindFirst.mockResolvedValue(null);
     mocks.organizationFindUniqueOrThrow.mockResolvedValue({ name: "Acme" });
     mocks.isFlaggedByModeration.mockResolvedValue(false);
     mocks.streamClaude.mockImplementation(async ({ callbacks }) => {
@@ -135,6 +142,54 @@ describe("generateEmailDraft", () => {
       code: "draft_generation_failed",
     });
     expect(mocks.createDraftMessage).not.toHaveBeenCalled();
+  });
+
+  it("includes an upcoming booking when the thread's contact has a matching confirmed booking", async () => {
+    mocks.inboxThreadFindFirst.mockResolvedValueOnce({
+      id: "thread-1",
+      subject: "Order #42",
+      contact: { email: "jane@example.com" },
+    });
+    mocks.bookingFindFirst.mockResolvedValueOnce({
+      startsAt: new Date("2026-09-01T10:00:00.000Z"),
+      bookingType: { name: "Consultation" },
+    });
+
+    await generateEmailDraft(ctx(), "thread-1");
+
+    expect(mocks.bookingFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          guestEmail: { equals: "jane@example.com", mode: "insensitive" },
+          status: "CONFIRMED",
+        }),
+      }),
+    );
+    const call = mocks.streamClaude.mock.calls[0]![0];
+    expect(call.system).toContain("Upcoming appointment");
+    expect(call.system).toContain("Consultation");
+    expect(call.system).toContain("2026-09-01T10:00:00.000Z");
+  });
+
+  it("does not look up a booking when the thread has no linked contact", async () => {
+    await generateEmailDraft(ctx(), "thread-1");
+    expect(mocks.bookingFindFirst).not.toHaveBeenCalled();
+    const call = mocks.streamClaude.mock.calls[0]![0];
+    expect(call.system).not.toContain("Upcoming appointment");
+  });
+
+  it("omits the booking section when the contact has no upcoming booking", async () => {
+    mocks.inboxThreadFindFirst.mockResolvedValueOnce({
+      id: "thread-1",
+      subject: "Order #42",
+      contact: { email: "jane@example.com" },
+    });
+    mocks.bookingFindFirst.mockResolvedValueOnce(null);
+
+    await generateEmailDraft(ctx(), "thread-1");
+
+    const call = mocks.streamClaude.mock.calls[0]![0];
+    expect(call.system).not.toContain("Upcoming appointment");
   });
 
   it("includes prior thread messages in the transcript sent to the model", async () => {
