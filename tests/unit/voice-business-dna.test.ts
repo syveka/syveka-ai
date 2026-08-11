@@ -33,7 +33,7 @@ vi.mock("@/server/services/audit", () => ({ audit: mocks.auditMock }));
 vi.mock("@/env", () => ({
   getVapiEnv: () => ({
     VAPI_API_KEY: "test",
-    VAPI_WEBHOOK_SECRET: "test-secret-1234567890",
+    VAPI_WEBHOOK_SECRET: "a".repeat(32),
     NEXT_PUBLIC_APP_URL: "https://app.example.com",
   }),
 }));
