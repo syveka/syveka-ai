@@ -353,8 +353,7 @@ BEGIN
       ('documents_organization_id_fkey'),
       ('document_upload_intents_organization_id_fkey'),
       ('document_chunks_organization_id_document_id_fkey'),
-      ('documents_organization_id_collection_id_fkey'),
-      ('inbox_threads_organization_id_fkey')
+      ('documents_organization_id_collection_id_fkey')
     ) AS contract(constraint_name)
   LOOP
     IF NOT EXISTS (
