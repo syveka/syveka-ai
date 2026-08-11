@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { notFound } from "next/navigation";
+import { headers } from "next/headers";
 import { NextIntlClientProvider } from "next-intl";
 import { getMessages, setRequestLocale } from "next-intl/server";
 import { routing, RTL_LOCALES, type AppLocale } from "@/i18n/routing";
@@ -29,11 +30,12 @@ export default async function LocaleLayout({
 
   const dir = RTL_LOCALES.has(locale) ? "rtl" : "ltr";
   const messages = await getMessages();
+  const nonce = (await headers()).get("x-nonce") ?? undefined;
 
   return (
     <html lang={locale} dir={dir} suppressHydrationWarning>
       <body className="font-sans">
-        <ThemeProvider>
+        <ThemeProvider nonce={nonce}>
           <NextIntlClientProvider messages={messages}>
             <QueryProvider>{children}</QueryProvider>
           </NextIntlClientProvider>

@@ -4,8 +4,8 @@ import createNextIntlPlugin from "next-intl/plugin";
 const withNextIntl = createNextIntlPlugin("./src/i18n/request.ts");
 
 /**
- * Static security headers (§13.2). The nonce-based CSP is set in
- * `src/middleware.ts` because it must vary per request.
+ * Static security headers (§13.2). Content-Security-Policy is set in
+ * `src/middleware.ts` instead, since it carries a per-request nonce.
  */
 const securityHeaders = [
   { key: "X-Content-Type-Options", value: "nosniff" },
