@@ -54,6 +54,11 @@ const serverSchema = z.object({
   MICROSOFT_CALENDAR_CLIENT_ID: z.string().optional(),
   MICROSOFT_CALENDAR_CLIENT_SECRET: z.string().optional(),
   MICROSOFT_CALENDAR_TENANT: z.string().optional(),
+
+  // Inbox email channel (optional — MOCK covers dev/test/credential-less
+  // environments; the webhook secret gates the inbound-email endpoint).
+  INBOX_EMAIL_MOCK_PROVIDER: z.enum(["0", "1"]).optional(),
+  INBOX_EMAIL_WEBHOOK_SECRET: z.string().min(16).optional(),
 });
 
 function providerEnvError(label: string, invalidFields: string[]): Error {
