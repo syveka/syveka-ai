@@ -65,9 +65,15 @@ try {
   ).replaceAll("\r\n", "\n");
   fixture = replaceOnce(
     fixture,
-    "  legacy_missing_tables TEXT[] := ARRAY[\n    'business_dna'\n  ];",
     "  legacy_missing_tables TEXT[] := ARRAY[\n" +
       "    'business_dna',\n" +
+      "    'inbox_threads',\n" +
+      "    'inbox_messages'\n" +
+      "  ];",
+    "  legacy_missing_tables TEXT[] := ARRAY[\n" +
+      "    'business_dna',\n" +
+      "    'inbox_threads',\n" +
+      "    'inbox_messages',\n" +
       `    '${fixtureTable}'\n` +
       "  ];",
     "legacy-missing-table declaration",
