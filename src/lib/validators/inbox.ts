@@ -32,6 +32,23 @@ export const recordInboundMessageSchema = z.object({
 });
 export type RecordInboundMessageInput = z.infer<typeof recordInboundMessageSchema>;
 
+/**
+ * Normalized inbound-email webhook payload — deliberately provider-agnostic
+ * (not any specific ESP's raw webhook JSON shape, which is a follow-up once
+ * a provider is chosen for inbound routing). `organizationId` is required
+ * because there is no per-org inbox-address routing table yet; mapping a
+ * real recipient address to an organization is the same follow-up.
+ */
+export const inboundEmailWebhookSchema = z.object({
+  organizationId: z.string().uuid(),
+  fromAddress: z.string().trim().min(1).max(320),
+  toAddress: optionalTrimmed(320),
+  subject: optionalTrimmed(200),
+  body: z.string().trim().min(1).max(10_000),
+  externalId: optionalTrimmed(200),
+});
+export type InboundEmailWebhookInput = z.infer<typeof inboundEmailWebhookSchema>;
+
 export const createDraftMessageSchema = z.object({
   threadId: z.string().uuid(),
   body: z.string().trim().min(1).max(10_000),
