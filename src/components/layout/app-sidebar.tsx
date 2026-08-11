@@ -13,6 +13,7 @@ import {
   BookOpen,
   Sparkles,
   GitBranch,
+  Inbox,
   Bell,
   Settings,
 } from "lucide-react";
@@ -39,6 +40,7 @@ const NAV: NavItem[] = [
   { href: "/knowledge", key: "knowledge", icon: BookOpen, permission: "kb:read" },
   { href: "/prompts", key: "prompts", icon: Sparkles, permission: "prompts:read" },
   { href: "/workflows", key: "workflows", icon: GitBranch, permission: "workflows:view" },
+  { href: "/inbox", key: "inbox", icon: Inbox, permission: "inbox:read" },
   { href: "/notifications", key: "notifications", icon: Bell },
   { href: "/settings/profile", key: "settings", icon: Settings },
 ];

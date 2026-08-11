@@ -28,6 +28,7 @@
     "knowledge": "Tietopankki",
     "prompts": "Promptikirjasto",
     "workflows": "Automaatiot",
+    "inbox": "Saapuneet",
     "notifications": "Ilmoitukset",
     "settings": "Asetukset"
   },
@@ -599,6 +600,45 @@
       "needsReauth": "Vaatii uudelleenkirjautumisen",
       "disconnected": "Yhteys katkaistu",
       "error": "Virhe"
+    }
+  },
+  "inbox": {
+    "title": "Saapuneet",
+    "subtitle": "Asiakaskeskustelut kaikista kanavista.",
+    "empty": "Ei vielä keskusteluja.",
+    "noSubject": "(ei aihetta)",
+    "channel": {
+      "EMAIL": "Sähköposti",
+      "SMS": "Tekstiviesti",
+      "WHATSAPP": "WhatsApp",
+      "WEB_CHAT": "Verkkochat"
+    },
+    "status": {
+      "OPEN": "Avoin",
+      "PENDING": "Odottaa",
+      "CLOSED": "Suljettu"
+    },
+    "list": {
+      "contact": "Yhteystieto",
+      "lastMessage": "Viimeisin viesti"
+    },
+    "detail": {
+      "back": "Takaisin saapuneisiin",
+      "noMessages": "Ei vielä viestejä.",
+      "generateDraft": "Luo tekoälyluonnos",
+      "generating": "Luodaan…",
+      "replyPlaceholder": "Kirjoita vastaus…",
+      "saveDraft": "Tallenna luonnos",
+      "saving": "Tallennetaan…",
+      "send": "Lähetä",
+      "sending": "Lähetetään…",
+      "approve": "Hyväksy",
+      "aiDraftBadge": "Tekoälyluonnos — vaatii hyväksynnän ennen lähetystä",
+      "aiApprovedBadge": "Tekoälyluonnos — hyväksytty, valmis lähetettäväksi",
+      "draftBadge": "Luonnos",
+      "sentBadge": "Lähetetty",
+      "failedBadge": "Lähetys epäonnistui",
+      "error": "Jotain meni pieleen. Yritä uudelleen."
     }
   }
 }
