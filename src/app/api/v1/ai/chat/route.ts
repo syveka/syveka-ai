@@ -146,11 +146,14 @@ export async function POST(request: Request): Promise<Response> {
     },
   });
 
-  // ── Context: org profile + RAG ──
-  const org = await unscopedPrisma.organization.findUniqueOrThrow({
-    where: { id: ctx.orgId },
-    select: { name: true, settings: true },
-  });
+  // ── Context: org profile + Business DNA + RAG ──
+  const [org, businessDna] = await Promise.all([
+    unscopedPrisma.organization.findUniqueOrThrow({
+      where: { id: ctx.orgId },
+      select: { name: true, settings: true },
+    }),
+    db.businessDNA.findFirst({}),
+  ]);
   const settings = (org.settings ?? {}) as { industry?: string; aiInstructions?: string };
 
   let retrieved: RetrievedChunk[] = [];
@@ -182,6 +185,7 @@ export async function POST(request: Request): Promise<Response> {
       industry: settings.industry,
       customInstructions: settings.aiInstructions,
     },
+    businessDna,
     ragContext: retrieved.map((c) => ({
       documentId: c.documentId,
       content: c.content,

@@ -49,6 +49,7 @@ const DOCUMENTED_EXCLUSIONS = new Set([
   "AvailabilityRule",
   "AvailabilityOverride",
   "BookingToken",
+  "InboxMessage",
   "User",
   "Organization",
 ]);

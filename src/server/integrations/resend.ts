@@ -29,3 +29,30 @@ export async function sendEmail(params: {
   if (error || !data) throw new Error(`Resend error: ${error?.message ?? "unknown"}`);
   return { id: data.id };
 }
+
+/**
+ * Raw (non-template) send for dynamic bodies — the Inbox email channel's
+ * outbound replies, which have no react-email template since the content is
+ * AI-drafted or human-authored per thread.
+ */
+export async function sendRawEmail(params: {
+  to: string;
+  subject: string;
+  text: string;
+  html?: string;
+  replyTo?: string;
+  headers?: Record<string, string>;
+}): Promise<{ id: string }> {
+  const { EMAIL_FROM } = getResendEnv();
+  const { data, error } = await getResend().emails.send({
+    from: EMAIL_FROM,
+    to: params.to,
+    subject: params.subject,
+    text: params.text,
+    html: params.html,
+    replyTo: params.replyTo,
+    headers: params.headers,
+  });
+  if (error || !data) throw new Error(`Resend error: ${error?.message ?? "unknown"}`);
+  return { id: data.id };
+}

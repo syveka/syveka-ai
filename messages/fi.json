@@ -28,6 +28,7 @@
     "knowledge": "Tietopankki",
     "prompts": "Promptikirjasto",
     "workflows": "Automaatiot",
+    "inbox": "Saapuneet",
     "notifications": "Ilmoitukset",
     "settings": "Asetukset",
     "businessDna": "Yrityksen DNA"
@@ -602,6 +603,50 @@
       "error": "Virhe"
     }
   },
+  "inbox": {
+    "title": "Saapuneet",
+    "subtitle": "Asiakaskeskustelut kaikista kanavista.",
+    "empty": "Ei vielä keskusteluja.",
+    "noSubject": "(ei aihetta)",
+    "unread": "Lukematon",
+    "read": "Luettu",
+    "errorTitle": "Saapuneita ei voitu ladata",
+    "errorDescription": "Päivitä sivu tai yritä hetken kuluttua uudelleen.",
+    "retry": "Yritä uudelleen",
+    "channel": {
+      "EMAIL": "Sähköposti",
+      "SMS": "Tekstiviesti",
+      "WHATSAPP": "WhatsApp",
+      "WEB_CHAT": "Verkkochat"
+    },
+    "status": {
+      "OPEN": "Avoin",
+      "PENDING": "Odottaa",
+      "CLOSED": "Suljettu"
+    },
+    "list": {
+      "contact": "Yhteystieto",
+      "lastMessage": "Viimeisin viesti"
+    },
+    "detail": {
+      "back": "Takaisin saapuneisiin",
+      "noMessages": "Ei vielä viestejä.",
+      "generateDraft": "Luo tekoälyluonnos",
+      "generating": "Luodaan…",
+      "replyPlaceholder": "Kirjoita vastaus…",
+      "saveDraft": "Tallenna luonnos",
+      "saving": "Tallennetaan…",
+      "send": "Lähetä",
+      "sending": "Lähetetään…",
+      "approve": "Hyväksy",
+      "aiDraftBadge": "Tekoälyluonnos — vaatii hyväksynnän ennen lähetystä",
+      "aiApprovedBadge": "Tekoälyluonnos — hyväksytty, valmis lähetettäväksi",
+      "draftBadge": "Luonnos",
+      "sentBadge": "Lähetetty",
+      "failedBadge": "Lähetys epäonnistui",
+      "error": "Jotain meni pieleen. Yritä uudelleen."
+    }
+  },
   "businessDna": {
     "title": "Yrityksen DNA",
     "subtitle": "Toiminnallinen konteksti, jota Postilaatikko, Puheavustaja, Ajanvaraus ja CRM käyttävät toimiessaan puolestasi.",
@@ -611,6 +656,17 @@
     "invalidInput": "Tarkista korostetut kentät ja yritä uudelleen.",
     "saveFailed": "Tallennus epäonnistui. Yritä uudelleen.",
     "updated": "Päivitetty {date}",
+    "regenerate": {
+      "label": "Päivitä verkkosivustolta",
+      "description": "Hae tuoreet tiedot verkkosivustoltasi. Vain löydetyt kentät päivitetään — tarkista ja tallenna, kun olet valmis.",
+      "placeholder": "https://esimerkki.fi",
+      "extract": "Nouda",
+      "extracting": "Noudetaan…",
+      "rateLimited": "Liian monta noutoyritystä. Yritä myöhemmin uudelleen.",
+      "failed": "Tietoja ei voitu noutaa osoitteesta. Tarkista osoite ja yritä uudelleen.",
+      "reviewHint": "Tämä ei tallenna automaattisesti — tarkista alla olevat kentät ensin.",
+      "appliedMessage": "Kentät päivitetty verkkosivustolta. Tarkista ja tallenna, kun olet valmis."
+    },
     "sections": {
       "identity": "Perustiedot",
       "identityDescription": "Miten yritystäsi kuvataan Postilaatikossa, Puheavustajassa, Ajanvarauksessa ja CRM:ssä.",

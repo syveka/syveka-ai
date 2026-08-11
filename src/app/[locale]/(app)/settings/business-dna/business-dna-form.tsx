@@ -3,12 +3,18 @@
 import { useActionState, useEffect, useState } from "react";
 import { useTranslations } from "next-intl";
 import { updateBusinessDnaAction, type BusinessDnaActionState } from "@/actions/business-dna";
-import { BUSINESS_DNA_LOCALES } from "@/lib/validators/business-dna";
+import { BUSINESS_DNA_LOCALES, type ExtractedBusinessDNA } from "@/lib/validators/business-dna";
 import { DAY_KEYS, type DayKey, type WeekHours } from "@/lib/business-dna/opening-hours";
+import {
+  mergeExtractedOpeningHours,
+  mergeExtractedSupportedLocales,
+  mergeExtractedTextFields,
+} from "@/lib/business-dna/merge-extracted";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { RegenerateFromWebsite } from "./regenerate-from-website";
 
 const TEXTAREA_CLASS =
   "w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
@@ -33,6 +39,32 @@ export type BusinessDnaInitial = {
   keyFacts: string[];
 };
 
+type TextFieldValues = {
+  displayName: string;
+  industry: string;
+  brandTone: string;
+  communicationStyle: string;
+  productsServices: string;
+  targetCustomer: string;
+  policies: string;
+  pricingNotes: string;
+  keyFacts: string;
+};
+
+function toTextFieldValues(initial: BusinessDnaInitial): TextFieldValues {
+  return {
+    displayName: initial.displayName,
+    industry: initial.industry,
+    brandTone: initial.brandTone,
+    communicationStyle: initial.communicationStyle,
+    productsServices: initial.productsServices,
+    targetCustomer: initial.targetCustomer,
+    policies: initial.policies,
+    pricingNotes: initial.pricingNotes,
+    keyFacts: initial.keyFacts.join("\n"),
+  };
+}
+
 export function BusinessDnaForm({
   initial,
   isNew,
@@ -50,8 +82,11 @@ export function BusinessDnaForm({
     updateBusinessDnaAction,
     {},
   );
+  const [values, setValues] = useState<TextFieldValues>(() => toTextFieldValues(initial));
+  const [supportedLocales, setSupportedLocales] = useState<string[]>(initial.supportedLocales);
   const [hours, setHours] = useState<WeekHours>(initial.openingHours);
   const [justSaved, setJustSaved] = useState(false);
+  const [justRegenerated, setJustRegenerated] = useState(false);
 
   useEffect(() => {
     if (state.message === "saved") setJustSaved(true);
@@ -59,6 +94,28 @@ export function BusinessDnaForm({
 
   function setDay(day: DayKey, patch: Partial<WeekHours[DayKey]>) {
     setHours((prev) => ({ ...prev, [day]: { ...prev[day], ...patch } }));
+  }
+
+  function setField(field: keyof TextFieldValues, value: string) {
+    setValues((prev) => ({ ...prev, [field]: value }));
+  }
+
+  function toggleLocale(locale: string, checked: boolean) {
+    setSupportedLocales((prev) => (checked ? [...prev, locale] : prev.filter((l) => l !== locale)));
+  }
+
+  /**
+   * Merges only the fields the extraction actually returned — every field
+   * is optional in `ExtractedBusinessDNA` (a scrape may only surface a
+   * handful of facts), so anything absent leaves the human-edited value
+   * untouched rather than being cleared.
+   */
+  function handleExtracted(data: ExtractedBusinessDNA) {
+    setValues((prev) => mergeExtractedTextFields(prev, data));
+    setSupportedLocales((prev) => mergeExtractedSupportedLocales(prev, data));
+    setHours((prev) => mergeExtractedOpeningHours(prev, data));
+    setJustRegenerated(true);
+    setJustSaved(false);
   }
 
   return (
@@ -71,6 +128,17 @@ export function BusinessDnaForm({
         <p className="text-xs text-muted-foreground">
           {t("updated", { date: new Date(updatedAt).toLocaleDateString() })}
         </p>
+      ) : null}
+
+      {readOnly ? null : (
+        <RegenerateFromWebsite
+          onExtracted={(data) => {
+            handleExtracted(data);
+          }}
+        />
+      )}
+      {justRegenerated ? (
+        <p className="text-sm text-primary">{t("regenerate.appliedMessage")}</p>
       ) : null}
 
       <fieldset disabled={readOnly} className="space-y-6">
@@ -86,7 +154,8 @@ export function BusinessDnaForm({
                 <Input
                   id="displayName"
                   name="displayName"
-                  defaultValue={initial.displayName}
+                  value={values.displayName}
+                  onChange={(e) => setField("displayName", e.target.value)}
                   maxLength={200}
                   placeholder={t("placeholders.displayName")}
                 />
@@ -96,7 +165,8 @@ export function BusinessDnaForm({
                 <Input
                   id="industry"
                   name="industry"
-                  defaultValue={initial.industry}
+                  value={values.industry}
+                  onChange={(e) => setField("industry", e.target.value)}
                   maxLength={120}
                   placeholder={t("placeholders.industry")}
                 />
@@ -108,7 +178,8 @@ export function BusinessDnaForm({
                 <Input
                   id="brandTone"
                   name="brandTone"
-                  defaultValue={initial.brandTone}
+                  value={values.brandTone}
+                  onChange={(e) => setField("brandTone", e.target.value)}
                   maxLength={200}
                   placeholder={t("placeholders.brandTone")}
                 />
@@ -118,7 +189,8 @@ export function BusinessDnaForm({
                 <Input
                   id="communicationStyle"
                   name="communicationStyle"
-                  defaultValue={initial.communicationStyle}
+                  value={values.communicationStyle}
+                  onChange={(e) => setField("communicationStyle", e.target.value)}
                   maxLength={200}
                   placeholder={t("placeholders.communicationStyle")}
                 />
@@ -133,7 +205,8 @@ export function BusinessDnaForm({
                       type="checkbox"
                       name="supportedLocales"
                       value={locale}
-                      defaultChecked={initial.supportedLocales.includes(locale)}
+                      checked={supportedLocales.includes(locale)}
+                      onChange={(e) => toggleLocale(locale, e.target.checked)}
                       className="size-4 rounded border-input"
                     />
                     {LOCALE_LABELS[locale]}
@@ -154,7 +227,8 @@ export function BusinessDnaForm({
               <textarea
                 id="productsServices"
                 name="productsServices"
-                defaultValue={initial.productsServices}
+                value={values.productsServices}
+                onChange={(e) => setField("productsServices", e.target.value)}
                 rows={3}
                 maxLength={4000}
                 placeholder={t("placeholders.productsServices")}
@@ -166,7 +240,8 @@ export function BusinessDnaForm({
               <textarea
                 id="targetCustomer"
                 name="targetCustomer"
-                defaultValue={initial.targetCustomer}
+                value={values.targetCustomer}
+                onChange={(e) => setField("targetCustomer", e.target.value)}
                 rows={3}
                 maxLength={2000}
                 placeholder={t("placeholders.targetCustomer")}
@@ -231,7 +306,8 @@ export function BusinessDnaForm({
               <textarea
                 id="policies"
                 name="policies"
-                defaultValue={initial.policies}
+                value={values.policies}
+                onChange={(e) => setField("policies", e.target.value)}
                 rows={3}
                 maxLength={4000}
                 placeholder={t("placeholders.policies")}
@@ -243,7 +319,8 @@ export function BusinessDnaForm({
               <textarea
                 id="pricingNotes"
                 name="pricingNotes"
-                defaultValue={initial.pricingNotes}
+                value={values.pricingNotes}
+                onChange={(e) => setField("pricingNotes", e.target.value)}
                 rows={3}
                 maxLength={4000}
                 placeholder={t("placeholders.pricingNotes")}
@@ -261,7 +338,8 @@ export function BusinessDnaForm({
             <textarea
               id="keyFacts"
               name="keyFacts"
-              defaultValue={initial.keyFacts.join("\n")}
+              value={values.keyFacts}
+              onChange={(e) => setField("keyFacts", e.target.value)}
               rows={5}
               maxLength={6000}
               placeholder={t("placeholders.keyFacts")}

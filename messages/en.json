@@ -28,6 +28,7 @@
     "knowledge": "Knowledge Base",
     "prompts": "Prompt Library",
     "workflows": "Workflows",
+    "inbox": "Inbox",
     "notifications": "Notifications",
     "settings": "Settings",
     "businessDna": "Business DNA"
@@ -602,6 +603,50 @@
       "error": "Error"
     }
   },
+  "inbox": {
+    "title": "Inbox",
+    "subtitle": "Customer conversations across every channel.",
+    "empty": "No conversations yet.",
+    "noSubject": "(no subject)",
+    "unread": "Unread",
+    "read": "Read",
+    "errorTitle": "Inbox could not load",
+    "errorDescription": "Refresh the page or try again in a moment.",
+    "retry": "Try again",
+    "channel": {
+      "EMAIL": "Email",
+      "SMS": "SMS",
+      "WHATSAPP": "WhatsApp",
+      "WEB_CHAT": "Web chat"
+    },
+    "status": {
+      "OPEN": "Open",
+      "PENDING": "Pending",
+      "CLOSED": "Closed"
+    },
+    "list": {
+      "contact": "Contact",
+      "lastMessage": "Last message"
+    },
+    "detail": {
+      "back": "Back to inbox",
+      "noMessages": "No messages yet.",
+      "generateDraft": "Generate AI draft",
+      "generating": "Generating…",
+      "replyPlaceholder": "Write a reply…",
+      "saveDraft": "Save draft",
+      "saving": "Saving…",
+      "send": "Send",
+      "sending": "Sending…",
+      "approve": "Approve",
+      "aiDraftBadge": "AI draft — needs approval before sending",
+      "aiApprovedBadge": "AI draft — approved, ready to send",
+      "draftBadge": "Draft",
+      "sentBadge": "Sent",
+      "failedBadge": "Failed to send",
+      "error": "Something went wrong. Please try again."
+    }
+  },
   "businessDna": {
     "title": "Business DNA",
     "subtitle": "The operational context Inbox, Voice, Booking and CRM use to act on your behalf.",
@@ -611,6 +656,17 @@
     "invalidInput": "Please check the highlighted fields and try again.",
     "saveFailed": "Could not save. Please try again.",
     "updated": "Updated {date}",
+    "regenerate": {
+      "label": "Regenerate from website",
+      "description": "Pull fresh facts from your website. Only the fields it finds are updated — review and save when ready.",
+      "placeholder": "https://example.com",
+      "extract": "Extract",
+      "extracting": "Extracting…",
+      "rateLimited": "Too many extraction attempts. Try again later.",
+      "failed": "Could not extract from that URL. Please check it and try again.",
+      "reviewHint": "This never saves automatically — review the fields below first.",
+      "appliedMessage": "Fields updated from the website. Review and save when ready."
+    },
     "sections": {
       "identity": "Identity",
       "identityDescription": "How your business is described across Inbox, Voice, Booking and CRM.",
