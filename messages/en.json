@@ -609,6 +609,9 @@
     "noSubject": "(no subject)",
     "unread": "Unread",
     "read": "Read",
+    "errorTitle": "Inbox could not load",
+    "errorDescription": "Refresh the page or try again in a moment.",
+    "retry": "Try again",
     "channel": {
       "EMAIL": "Email",
       "SMS": "SMS",

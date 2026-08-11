@@ -609,6 +609,9 @@
     "noSubject": "(ei aihetta)",
     "unread": "Lukematon",
     "read": "Luettu",
+    "errorTitle": "Saapuneita ei voitu ladata",
+    "errorDescription": "Päivitä sivu tai yritä hetken kuluttua uudelleen.",
+    "retry": "Yritä uudelleen",
     "channel": {
       "EMAIL": "Sähköposti",
       "SMS": "Tekstiviesti",
