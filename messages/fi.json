@@ -610,6 +610,17 @@
     "invalidInput": "Tarkista korostetut kentät ja yritä uudelleen.",
     "saveFailed": "Tallennus epäonnistui. Yritä uudelleen.",
     "updated": "Päivitetty {date}",
+    "regenerate": {
+      "label": "Päivitä verkkosivustolta",
+      "description": "Hae tuoreet tiedot verkkosivustoltasi. Vain löydetyt kentät päivitetään — tarkista ja tallenna, kun olet valmis.",
+      "placeholder": "https://esimerkki.fi",
+      "extract": "Nouda",
+      "extracting": "Noudetaan…",
+      "rateLimited": "Liian monta noutoyritystä. Yritä myöhemmin uudelleen.",
+      "failed": "Tietoja ei voitu noutaa osoitteesta. Tarkista osoite ja yritä uudelleen.",
+      "reviewHint": "Tämä ei tallenna automaattisesti — tarkista alla olevat kentät ensin.",
+      "appliedMessage": "Kentät päivitetty verkkosivustolta. Tarkista ja tallenna, kun olet valmis."
+    },
     "sections": {
       "identity": "Perustiedot",
       "identityDescription": "Miten yritystäsi kuvataan Postilaatikossa, Puheavustajassa, Ajanvarauksessa ja CRM:ssä.",
