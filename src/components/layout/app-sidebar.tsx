@@ -16,6 +16,7 @@ import {
   Inbox,
   Bell,
   Settings,
+  Dna,
 } from "lucide-react";
 import { Link, usePathname } from "@/i18n/routing";
 import { cn } from "@/lib/utils";
@@ -42,6 +43,12 @@ const NAV: NavItem[] = [
   { href: "/workflows", key: "workflows", icon: GitBranch, permission: "workflows:view" },
   { href: "/inbox", key: "inbox", icon: Inbox, permission: "inbox:read" },
   { href: "/notifications", key: "notifications", icon: Bell },
+  {
+    href: "/settings/business-dna",
+    key: "businessDna",
+    icon: Dna,
+    permission: "business-dna:read",
+  },
   { href: "/settings/profile", key: "settings", icon: Settings },
 ];
 

@@ -30,7 +30,8 @@
     "workflows": "الأتمتة",
     "inbox": "الوارد",
     "notifications": "الإشعارات",
-    "settings": "الإعدادات"
+    "settings": "الإعدادات",
+    "businessDna": "الهوية التجارية"
   },
   "auth": {
     "login": "تسجيل الدخول",
@@ -645,5 +646,57 @@
       "failedBadge": "فشل الإرسال",
       "error": "حدث خطأ ما. حاول مرة أخرى."
     }
+  },
+  "businessDna": {
+    "title": "الهوية التجارية",
+    "subtitle": "السياق التشغيلي الذي يستخدمه صندوق الوارد والمساعد الصوتي والحجز وإدارة علاقات العملاء للتصرف نيابة عنك.",
+    "emptyBanner": "لم تقم بإعداد الهوية التجارية لشركتك بعد. املأ الحقول أدناه — جميع الحقول اختيارية.",
+    "savedMessage": "تم الحفظ.",
+    "invalidInput": "يرجى مراجعة الحقول المميزة والمحاولة مرة أخرى.",
+    "saveFailed": "تعذر الحفظ. يرجى المحاولة مرة أخرى.",
+    "updated": "آخر تحديث {date}",
+    "sections": {
+      "identity": "الهوية",
+      "identityDescription": "كيفية وصف شركتك عبر صندوق الوارد والمساعد الصوتي والحجز وإدارة علاقات العملاء.",
+      "productsAndCustomers": "المنتجات والعملاء",
+      "openingHours": "ساعات العمل",
+      "policiesAndPricing": "السياسات والتسعير",
+      "keyFacts": "الحقائق الأساسية"
+    },
+    "fields": {
+      "displayName": "اسم العرض",
+      "industry": "المجال",
+      "supportedLocales": "اللغات المدعومة",
+      "brandTone": "نبرة العلامة التجارية",
+      "communicationStyle": "أسلوب التواصل",
+      "productsServices": "المنتجات والخدمات",
+      "targetCustomer": "العميل المستهدف",
+      "policies": "السياسات",
+      "pricingNotes": "ملاحظات التسعير",
+      "keyFacts": "الحقائق الأساسية"
+    },
+    "placeholders": {
+      "displayName": "Acme Oy",
+      "industry": "مثال: السباكة، البيع بالتجزئة، الاستشارات",
+      "brandTone": "مثال: ودود، احترافي، مرح",
+      "communicationStyle": "مثال: موجز، رسمي، غير رسمي",
+      "productsServices": "اذكر ما تبيعه أو تقدمه…",
+      "targetCustomer": "من هم عملاؤك النموذجيون؟",
+      "policies": "الإلغاء، الاسترداد، التعامل مع البيانات…",
+      "pricingNotes": "قواعد التسعير، نماذج عروض الأسعار…",
+      "keyFacts": "حقيقة واحدة في كل سطر، مثال:\nنرحب بالزبائن دون موعد\nالتوصيل ضمن 20 كم"
+    },
+    "weekdays": {
+      "monday": "الاثنين",
+      "tuesday": "الثلاثاء",
+      "wednesday": "الأربعاء",
+      "thursday": "الخميس",
+      "friday": "الجمعة",
+      "saturday": "السبت",
+      "sunday": "الأحد"
+    },
+    "closed": "مغلق",
+    "openTimeLabel": "وقت فتح {day}",
+    "closeTimeLabel": "وقت إغلاق {day}"
   }
 }

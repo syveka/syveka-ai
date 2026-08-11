@@ -30,7 +30,8 @@
     "workflows": "Workflows",
     "inbox": "Inbox",
     "notifications": "Notifications",
-    "settings": "Settings"
+    "settings": "Settings",
+    "businessDna": "Business DNA"
   },
   "auth": {
     "login": "Log in",
@@ -645,5 +646,57 @@
       "failedBadge": "Failed to send",
       "error": "Something went wrong. Please try again."
     }
+  },
+  "businessDna": {
+    "title": "Business DNA",
+    "subtitle": "The operational context Inbox, Voice, Booking and CRM use to act on your behalf.",
+    "emptyBanner": "You haven't set up your Business DNA yet. Fill in what you can below — every field is optional.",
+    "savedMessage": "Saved.",
+    "invalidInput": "Please check the highlighted fields and try again.",
+    "saveFailed": "Could not save. Please try again.",
+    "updated": "Updated {date}",
+    "sections": {
+      "identity": "Identity",
+      "identityDescription": "How your business is described across Inbox, Voice, Booking and CRM.",
+      "productsAndCustomers": "Products & customers",
+      "openingHours": "Opening hours",
+      "policiesAndPricing": "Policies & pricing",
+      "keyFacts": "Key facts"
+    },
+    "fields": {
+      "displayName": "Display name",
+      "industry": "Industry",
+      "supportedLocales": "Supported languages",
+      "brandTone": "Brand tone",
+      "communicationStyle": "Communication style",
+      "productsServices": "Products & services",
+      "targetCustomer": "Target customer",
+      "policies": "Policies",
+      "pricingNotes": "Pricing notes",
+      "keyFacts": "Key facts"
+    },
+    "placeholders": {
+      "displayName": "Acme Oy",
+      "industry": "e.g. plumbing, retail, consulting",
+      "brandTone": "e.g. friendly, professional, playful",
+      "communicationStyle": "e.g. concise, formal, casual",
+      "productsServices": "List what you sell or offer…",
+      "targetCustomer": "Who are your typical customers?",
+      "policies": "Cancellation, refund, data handling…",
+      "pricingNotes": "Pricing rules, quote templates…",
+      "keyFacts": "One fact per line, e.g.\nWalk-ins welcome\nDelivery within 20km"
+    },
+    "weekdays": {
+      "monday": "Monday",
+      "tuesday": "Tuesday",
+      "wednesday": "Wednesday",
+      "thursday": "Thursday",
+      "friday": "Friday",
+      "saturday": "Saturday",
+      "sunday": "Sunday"
+    },
+    "closed": "Closed",
+    "openTimeLabel": "{day} opening time",
+    "closeTimeLabel": "{day} closing time"
   }
 }
