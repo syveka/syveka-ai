@@ -33,6 +33,9 @@ vi.mock("@/server/db/tenant", () => ({
       findFirst: vi.fn(async () => ({ id: "33333333-3333-4333-8333-333333333333", model: null })),
       create: vi.fn(),
     },
+    businessDNA: {
+      findFirst: vi.fn(async () => null),
+    },
   })),
   unscopedPrisma: {
     message: { findMany: mocks.messageFindMany, create: mocks.messageCreate },
@@ -66,6 +69,7 @@ vi.mock("@/server/services/conversations", () => ({
 }));
 
 import { POST } from "@/app/api/v1/ai/chat/route";
+import { buildSystemPrompt } from "@/server/ai/prompts/system";
 
 describe("AI chat route integration", () => {
   beforeEach(() => {
@@ -119,6 +123,7 @@ describe("AI chat route integration", () => {
         system: expect.stringContaining("Earlier context"),
       }),
     );
+    expect(buildSystemPrompt).toHaveBeenCalledWith(expect.objectContaining({ businessDna: null }));
   });
 
   it("blocks an unsafe input before model invocation", async () => {
