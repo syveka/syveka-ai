@@ -651,6 +651,7 @@
     "title": "Yrityksen DNA",
     "subtitle": "Toiminnallinen konteksti, jota Postilaatikko, Puheavustaja, Ajanvaraus ja CRM käyttävät toimiessaan puolestasi.",
     "emptyBanner": "Et ole vielä määrittänyt yrityksesi DNA:ta. Täytä alla olevat kentät — kaikki kentät ovat valinnaisia.",
+    "skipForNow": "Ohita toistaiseksi →",
     "savedMessage": "Tallennettu.",
     "invalidInput": "Tarkista korostetut kentät ja yritä uudelleen.",
     "saveFailed": "Tallennus epäonnistui. Yritä uudelleen.",
