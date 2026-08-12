@@ -286,10 +286,18 @@ export async function markThreadRead(ctx: TenantContext, threadId: string) {
   }
   if (thread.readAt) return thread;
 
-  return db.inboxThread.update({
+  const updated = await db.inboxThread.update({
     where: { id: thread.id },
     data: { readAt: new Date() },
   });
+
+  await audit(ctx, {
+    action: "inbox.thread.read",
+    resourceType: "inbox_thread",
+    resourceId: thread.id,
+  });
+
+  return updated;
 }
 
 /**
@@ -307,10 +315,18 @@ export async function markThreadUnread(ctx: TenantContext, threadId: string) {
     throw new InboxError("thread_not_found", "Thread does not belong to this organization");
   }
 
-  return db.inboxThread.update({
+  const updated = await db.inboxThread.update({
     where: { id: thread.id },
     data: { readAt: null },
   });
+
+  await audit(ctx, {
+    action: "inbox.thread.unread",
+    resourceType: "inbox_thread",
+    resourceId: thread.id,
+  });
+
+  return updated;
 }
 
 export async function createDraftMessage(ctx: TenantContext, input: CreateDraftMessageInput) {

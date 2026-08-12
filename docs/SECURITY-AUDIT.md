@@ -196,3 +196,38 @@ already-enforced CI gate — the release pipeline will not let a deploy through 
 M1–M3 are recommended hardening before general availability but do not involve authentication
 bypass, cross-tenant data exposure, or injection — treat them as a pre-GA hardening sprint, not
 an emergency.
+
+---
+
+### Addendum (2026-08-13) — Inbox and Business DNA are out of this audit's scope
+
+This document's snapshot date (2026-07-23) predates the Inbox and Business DNA subsystems
+entirely — both shipped afterward (`business_dna` in migration `20260811000000`, `inbox_threads`/
+`inbox_messages` in `20260811010000`, roughly 150 commits behind this snapshot) and neither
+appears anywhere above. This addendum does not re-run a full audit of either subsystem; it
+records, for anyone reading this file as current, the security controls that shipped with them so
+this document is not mistaken for a statement that they're unreviewed:
+
+- **Tenant isolation**: both subsystems are scoped through `tenantDb`/`unscopedPrisma` with
+  manual tenancy verification exactly where `tenantDb` can't reach (`InboxMessage`, parent-scoped
+  via `threadId`) — same pattern as every other subsystem in this codebase. Live SQL-level RLS
+  coverage (not just application-layer scoping) was added and verified against a real Postgres
+  instance in `tests/rls/inbox-dna-isolation.sql`: `business_dna`'s real client policies reject
+  cross-tenant insert/update/delete; `inbox_threads`/`inbox_messages`/`inbox_mailboxes` are
+  confirmed default-deny (RLS enabled, zero client policies) rather than merely assumed so.
+- **Prompt-injection boundaries**: untrusted inbound content (email bodies, thread history) is
+  wrapped in labeled tags and passed through `neutralizeTagBreakout()` before reaching any AI
+  system prompt, matching the same defense pattern used for booking guest notes and RAG chunk
+  content elsewhere in this file's "Areas verified clean" table.
+- **Webhook trust**: both inbound-email webhooks resolve the organization exclusively from a
+  verified recipient address (`resolveOrgIdByMailboxAddress`), never from a client-supplied org
+  id; the Resend endpoint verifies svix signatures over the raw body before parsing; both return
+  an identical response for "bad secret" and "unregistered address" so neither webhook can be
+  used to enumerate valid mailbox addresses.
+- **Audit logging**: every state-changing mutation in `src/server/services/inbox.ts` is
+  `audit()`-logged, including `markThreadRead`/`markThreadUnread` (added in this addendum's
+  companion PR — previously the one gap in an otherwise fully-audited file).
+
+This addendum is itself a snapshot, not a live feed. A dedicated, from-scratch security review of
+Inbox and Business DNA — with the same file/line-level evidence standard as the rest of this
+document — has not been performed and should not be assumed equivalent to one.
