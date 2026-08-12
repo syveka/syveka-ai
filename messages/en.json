@@ -662,7 +662,9 @@
       "createContact": "Create contact",
       "createContactFirstName": "First name",
       "createContactLastName": "Last name",
-      "createContactSuccess": "Contact created and linked."
+      "createContactSuccess": "Contact created and linked.",
+      "insertBookingLink": "Insert booking link:",
+      "chooseBookingType": "Choose a booking type…"
     }
   },
   "businessDna": {

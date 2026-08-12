@@ -5,7 +5,10 @@ import { getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";
 import { getThread, listAssignableMembers, markThreadRead } from "@/server/services/inbox";
+import { listBookingTypes } from "@/server/services/booking";
 import { approveMessageAction, markThreadUnreadAction, sendMessageAction } from "@/actions/inbox";
+import { tenantDb } from "@/server/db/tenant";
+import { clientEnv } from "@/env";
 import { Link } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -43,7 +46,21 @@ export default async function InboxThreadPage({
   const canWrite = can(ctx.role, "inbox:write");
   const canApprove = can(ctx.role, "inbox:approve");
   const canCreateContact = canWrite && can(ctx.role, "crm:write");
+  const canInsertBookingLink = canWrite && can(ctx.role, "booking:manage");
   const members = canWrite ? await listAssignableMembers(ctx) : [];
+  const [bookingTypes, org] = canInsertBookingLink
+    ? await Promise.all([
+        listBookingTypes(ctx),
+        tenantDb(ctx.orgId).organization.findFirst({
+          where: { id: ctx.orgId },
+          select: { slug: true },
+        }),
+      ])
+    : [[], null];
+  const activeBookingTypes = bookingTypes
+    .filter((bt) => bt.isActive)
+    .map((bt) => ({ slug: bt.slug, name: bt.name }));
+  const bookingBaseUrl = `${clientEnv.NEXT_PUBLIC_APP_URL}/book/${org?.slug ?? ""}`;
   const contactName = thread.contact
     ? [thread.contact.firstName, thread.contact.lastName].filter(Boolean).join(" ")
     : null;
@@ -182,7 +199,11 @@ export default async function InboxThreadPage({
       {canWrite ? (
         <div className="space-y-3 border-t pt-4">
           <GenerateDraftButton threadId={thread.id} hasUnsentDraft={hasUnsentDraft} />
-          <ReplyForm threadId={thread.id} />
+          <ReplyForm
+            threadId={thread.id}
+            bookingTypes={activeBookingTypes}
+            bookingBaseUrl={bookingBaseUrl}
+          />
         </div>
       ) : null}
     </div>

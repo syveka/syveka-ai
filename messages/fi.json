@@ -662,7 +662,9 @@
       "createContact": "Luo asiakas",
       "createContactFirstName": "Etunimi",
       "createContactLastName": "Sukunimi",
-      "createContactSuccess": "Asiakas luotu ja linkitetty."
+      "createContactSuccess": "Asiakas luotu ja linkitetty.",
+      "insertBookingLink": "Lisää varauslinkki:",
+      "chooseBookingType": "Valitse varaustyyppi…"
     }
   },
   "businessDna": {
