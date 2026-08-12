@@ -5,6 +5,7 @@ import { routeModel } from "@/server/ai/router";
 import { streamClaude } from "@/server/integrations/anthropic";
 import { isFlaggedByModeration } from "@/server/integrations/openai";
 import { buildBusinessDnaPromptBlock, getBusinessDnaContext } from "@/server/business-dna/context";
+import { neutralizeTagBreakout } from "@/server/ai/prompts/untrusted";
 import { InboxError, upsertAiDraftMessage } from "./inbox";
 import type { TenantContext } from "@/server/auth/session";
 import type { InboxMessage } from "@prisma/client";
@@ -67,9 +68,10 @@ function buildTranscript(
   messages: Array<{ direction: string; body: string; fromAddress: string | null }>,
 ): string {
   if (messages.length === 0) return "(no prior messages)";
-  const lines = messages.map((m) =>
-    m.direction === "INBOUND" ? `Customer: ${m.body}` : `Business: ${m.body}`,
-  );
+  const lines = messages.map((m) => {
+    const body = neutralizeTagBreakout(m.body);
+    return m.direction === "INBOUND" ? `Customer: ${body}` : `Business: ${body}`;
+  });
   return `<email_thread>\n${lines.join("\n\n")}\n</email_thread>`;
 }
 

@@ -7,6 +7,9 @@ import { retrieveChunks } from "@/server/ai/rag";
 import { can, type Permission } from "@/server/auth/permissions";
 import type { Role } from "@prisma/client";
 import { audit } from "@/server/services/audit";
+import { computeAvailableSlots, type DateOverride, type WeeklyRule } from "@/server/calendar/slots";
+import { addDaysUtc, isValidTimezone, zonedTimeToUtc } from "@/server/calendar/timezone";
+import { DEFAULT_WEEKLY_RULES } from "@/server/services/booking";
 
 /**
  * Function-calling tool registry (§15.4). Each tool declares:
@@ -144,16 +147,66 @@ const logActivity = defineTool({
   },
 });
 
+/**
+ * Reads the organization's actual default `AvailabilitySchedule` (same
+ * source of truth the public booking flow uses via `computeAvailableSlots`)
+ * rather than assuming fixed hours — a hardcoded "09-17 Europe/Helsinki"
+ * window here would be exactly the kind of invented opening-hours fact the
+ * platform's prompt rules elsewhere explicitly forbid. Falls back to
+ * `DEFAULT_WEEKLY_RULES` (Mon-Fri 09:00-17:00, Europe/Helsinki) only when the
+ * org hasn't configured a schedule yet, same fallback booking.ts already
+ * uses for booking types with no schedule — and reports that fact back to
+ * the caller so the model can caveat it instead of presenting it as real.
+ */
+async function resolveOrgDefaultSchedule(orgId: string): Promise<{
+  timezone: string;
+  rules: WeeklyRule[];
+  overrides: DateOverride[];
+  isOrgConfigured: boolean;
+}> {
+  const schedule = await tenantDb(orgId).availabilitySchedule.findFirst({
+    orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
+    include: { rules: true, overrides: true },
+  });
+  if (!schedule) {
+    return {
+      timezone: "Europe/Helsinki",
+      rules: DEFAULT_WEEKLY_RULES,
+      overrides: [],
+      isOrgConfigured: false,
+    };
+  }
+  return {
+    timezone: isValidTimezone(schedule.timezone) ? schedule.timezone : "Europe/Helsinki",
+    rules: schedule.rules.map((r) => ({
+      weekday: r.weekday,
+      startMinute: r.startMinute,
+      endMinute: r.endMinute,
+    })),
+    overrides: schedule.overrides.map((o) => ({
+      date: o.date.toISOString().slice(0, 10),
+      startMinute: o.startMinute,
+      endMinute: o.endMinute,
+      isUnavailable: o.isUnavailable,
+    })),
+    isOrgConfigured: true,
+  };
+}
+
 const getCalendarAvailability = defineTool({
   name: "getCalendarAvailability",
   description:
-    "Get free 30-minute booking slots for a given date (ISO yyyy-mm-dd) during business hours (09–17 Europe/Helsinki).",
+    "Get free 30-minute booking slots for a given date (ISO yyyy-mm-dd), computed from the organization's actual configured availability schedule (or a generic Mon-Fri 09:00-17:00 default if none is configured yet — the response flags which one was used).",
   schema: z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }),
   permission: "calendar:read",
   execute: async (id, input) => {
     const db = tenantDb(id.orgId);
-    const dayStart = new Date(`${input.date}T06:00:00.000Z`); // 09:00 EEST
-    const dayEnd = new Date(`${input.date}T14:00:00.000Z`); // 17:00 EEST
+    const [year, month, day] = input.date.split("-").map(Number) as [number, number, number];
+    const { timezone, rules, overrides, isOrgConfigured } = await resolveOrgDefaultSchedule(
+      id.orgId,
+    );
+    const dayStart = zonedTimeToUtc(year, month, day, 0, timezone);
+    const dayEnd = addDaysUtc(dayStart, 1);
 
     const events = await db.calendarEvent.findMany({
       where: {
@@ -165,14 +218,25 @@ const getCalendarAvailability = defineTool({
       select: { startsAt: true, endsAt: true },
     });
 
-    const slots: string[] = [];
-    for (let t = dayStart.getTime(); t + 30 * 60_000 <= dayEnd.getTime(); t += 30 * 60_000) {
-      const s = t;
-      const e = t + 30 * 60_000;
-      const busy = events.some((ev) => ev.startsAt.getTime() < e && ev.endsAt.getTime() > s);
-      if (!busy) slots.push(new Date(s).toISOString());
-    }
-    return { date: input.date, freeSlots: slots.slice(0, 12) };
+    const slots = computeAvailableSlots({
+      timezone,
+      rules,
+      overrides,
+      busy: events.map((e) => ({ startsAt: e.startsAt, endsAt: e.endsAt })),
+      from: dayStart,
+      to: dayEnd,
+      now: new Date(),
+      durationMinutes: 30,
+    });
+
+    return {
+      date: input.date,
+      timezone,
+      freeSlots: slots.slice(0, 12).map((s) => s.toISOString()),
+      // When false, these are generic default hours, not the org's real
+      // schedule — the system prompt instructs the model to caveat this.
+      usingOrgConfiguredHours: isOrgConfigured,
+    };
   },
 });
 
