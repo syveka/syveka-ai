@@ -619,6 +619,11 @@
       "WHATSAPP": "WhatsApp",
       "WEB_CHAT": "Verkkochat"
     },
+    "channelStatus": {
+      "connected": "Sähköposti yhdistetty",
+      "mock": "Testisähköpostipalvelu käytössä — viestit ovat simuloituja, eivät oikeita",
+      "notConfigured": "Sähköpostia ei ole vielä määritetty"
+    },
     "status": {
       "OPEN": "Avoin",
       "PENDING": "Odottaa",
