@@ -92,6 +92,7 @@ model Organization {
   tags                  Tag[]
   businessDNA           BusinessDNA?
   inboxThreads          InboxThread[]
+  inboxMailboxes        InboxMailbox[]
 
   @@map("organizations")
 }
@@ -475,6 +476,27 @@ model TagsOnContacts {
  * next step once a provider is chosen, reusing the Business DNA system-
  * prompt wiring already built for chat).
  */
+/**
+ * One inbound address per organization per channel — the server-controlled
+ * mapping an inbound webhook resolves the organization from. Never trust an
+ * organization id supplied directly in an inbound payload; always resolve
+ * it through this table via the verified recipient address instead.
+ */
+model InboxMailbox {
+  id             String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String       @map("organization_id") @db.Uuid
+  channel        InboxChannel @default(EMAIL)
+  address        String
+  createdAt      DateTime     @default(now()) @map("created_at")
+  updatedAt      DateTime     @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, channel])
+  @@unique([channel, address])
+  @@map("inbox_mailboxes")
+}
+
 model InboxThread {
   id             String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId String            @map("organization_id") @db.Uuid

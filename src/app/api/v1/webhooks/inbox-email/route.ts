@@ -14,14 +14,21 @@ function secretMatches(presented: string, expected: string): boolean {
 }
 
 /**
- * Inbound-email webhook. Accepts a normalized, provider-agnostic payload
+ * Provider-agnostic inbound-email webhook. Accepts a normalized payload
  * (see `inboundEmailWebhookSchema`) rather than any specific ESP's raw
- * webhook JSON — mapping a real provider's payload shape and a recipient
- * address to an organization (instead of requiring `organizationId` in the
- * body) is a deliberate follow-up once an inbound provider is chosen.
+ * webhook JSON — the real Resend adapter lives at
+ * `/api/v1/webhooks/inbox-email/resend` and normalizes into this same
+ * shape before calling the shared service function. This endpoint stays
+ * useful for manual testing, fixtures, and any future provider that can
+ * emit the normalized shape directly.
  *
- * Fails closed: if `INBOX_EMAIL_WEBHOOK_SECRET` is not configured, every
- * request is rejected rather than accepted unauthenticated (§4).
+ * Fails closed twice, independently:
+ * - if `INBOX_EMAIL_WEBHOOK_SECRET` is not configured, every request is
+ *   rejected rather than accepted unauthenticated (§4)
+ * - the organization is NEVER read from the request body — it is resolved
+ *   server-side from `toAddress` via the `inbox_mailboxes` table, so a
+ *   valid secret alone can never inject a message into an arbitrary
+ *   organization
  */
 export async function POST(request: Request) {
   const expectedSecret = process.env.INBOX_EMAIL_WEBHOOK_SECRET;
@@ -43,8 +50,16 @@ export async function POST(request: Request) {
   }
   const input = body.data;
 
+  const { resolveOrgIdByMailboxAddress } = await import("@/server/services/inbox-mailbox");
+  const orgId = await resolveOrgIdByMailboxAddress(input.toAddress, "EMAIL");
+  if (!orgId) {
+    // Deliberately identical response to a bad secret: never confirm or
+    // deny whether an address is registered to anyone.
+    return NextResponse.json({ error: { code: "unauthorized" } }, { status: 401 });
+  }
+
   const { rateLimiters } = await import("@/server/integrations/redis");
-  const rateLimit = await rateLimiters.inboxEmailWebhook.limit(input.organizationId);
+  const rateLimit = await rateLimiters.inboxEmailWebhook.limit(orgId);
   if (!rateLimit.success) {
     return NextResponse.json({ error: { code: "rate_limited" } }, { status: 429 });
   }
@@ -52,7 +67,7 @@ export async function POST(request: Request) {
   const { recordInboundMessage, DuplicateInboundMessageError } =
     await import("@/server/services/inbox");
   try {
-    const { duplicate } = await recordInboundMessage(input.organizationId, {
+    const { duplicate } = await recordInboundMessage(orgId, {
       channel: "EMAIL",
       fromAddress: input.fromAddress,
       toAddress: input.toAddress,

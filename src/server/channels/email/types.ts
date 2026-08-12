@@ -37,3 +37,24 @@ export class EmailChannelError extends Error {
     this.name = "EmailChannelError";
   }
 }
+
+/**
+ * Canonical inbound message — the ONE shape every provider adapter (and,
+ * later, every channel) normalizes into before it reaches the Inbox domain
+ * layer. Provider-specific payload fields must never leak past the adapter
+ * that produced this.
+ */
+export type CanonicalInboundEmail = {
+  provider: "resend" | "generic";
+  /** Provider's own message id — used as `InboxMessage.externalId` for idempotency. */
+  providerMessageId: string;
+  /** The verified recipient address a mailbox was resolved from. */
+  mailboxAddress: string;
+  fromAddress: string;
+  toAddresses: string[];
+  subject?: string;
+  /** Always plain text — HTML-only content is converted, never rendered raw. */
+  text: string;
+  receivedAt: Date;
+  attachments?: Array<{ filename: string; contentType: string }>;
+};

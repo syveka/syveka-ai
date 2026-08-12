@@ -20,6 +20,8 @@ export class InboxError extends Error {
       | "message_not_found"
       | "not_outbound"
       | "requires_approval"
+      | "already_sent"
+      | "not_org_member"
       | "draft_generation_failed",
     message: string,
   ) {
@@ -317,6 +319,9 @@ export async function sendMessage(ctx: TenantContext, messageId: string) {
   if (message.direction !== "OUTBOUND") {
     throw new InboxError("not_outbound", "Only outbound messages can be sent");
   }
+  if (message.status === "SENT") {
+    throw new InboxError("already_sent", "This message has already been sent");
+  }
   if (message.aiGenerated && !message.approvedAt) {
     throw new InboxError(
       "requires_approval",
@@ -324,10 +329,28 @@ export async function sendMessage(ctx: TenantContext, messageId: string) {
     );
   }
 
+  const sentAt = new Date();
+  // Atomic claim BEFORE dispatch: a compare-and-swap on the exact status
+  // just read. Two concurrent sendMessage calls (double form submit, a
+  // retried request) can both pass the checks above, but only one can win
+  // this conditional update — the loser sees count === 0 and never
+  // dispatches, closing the race a simple pre-check would miss.
+  const claim = await unscopedPrisma.inboxMessage.updateMany({
+    where: { id: message.id, status: message.status },
+    data: { status: "SENT", sentAt },
+  });
+  if (claim.count === 0) {
+    throw new InboxError("already_sent", "This message has already been sent");
+  }
+
   let externalId: string | null = null;
   if (message.thread.channel === "EMAIL") {
     const to = message.toAddress ?? (await findEmailRecipient(message.threadId));
     if (!to) {
+      await unscopedPrisma.inboxMessage.update({
+        where: { id: message.id },
+        data: { status: "FAILED" },
+      });
       throw new InboxError("not_outbound", "No recipient address found for this thread's reply");
     }
     try {
@@ -358,11 +381,10 @@ export async function sendMessage(ctx: TenantContext, messageId: string) {
     }
   }
 
-  const sentAt = new Date();
   const [updated] = await unscopedPrisma.$transaction([
     unscopedPrisma.inboxMessage.update({
       where: { id: message.id },
-      data: { status: "SENT", sentAt, ...(externalId ? { externalId } : {}) },
+      data: externalId ? { externalId } : {},
     }),
     unscopedPrisma.inboxThread.update({
       where: { id: message.threadId },
@@ -409,6 +431,20 @@ export async function updateThreadStatus(
   return updated;
 }
 
+/** Assignable operators = members of the organization (mirrors listOwnerOptions in deals.ts). */
+export async function listAssignableMembers(ctx: TenantContext) {
+  const db = tenantDb(ctx.orgId);
+  const members = await db.organizationMember.findMany({
+    include: { user: { select: { id: true, fullName: true, email: true } } },
+    orderBy: { joinedAt: "asc" },
+    take: 500,
+  });
+  return members.map((m) => ({
+    id: m.user.id,
+    name: m.user.fullName ?? m.user.email,
+  }));
+}
+
 export async function assignThread(ctx: TenantContext, threadId: string, input: AssignThreadInput) {
   const db = tenantDb(ctx.orgId);
   const thread = await db.inboxThread.findFirst({
@@ -417,6 +453,18 @@ export async function assignThread(ctx: TenantContext, threadId: string, input: 
   });
   if (!thread) {
     throw new InboxError("thread_not_found", "Thread does not belong to this organization");
+  }
+
+  // Never trust a browser-supplied user id: a thread can only be assigned
+  // to someone who is actually a member of this organization.
+  if (input.assignedToId) {
+    const member = await db.organizationMember.findFirst({
+      where: { userId: input.assignedToId },
+      select: { id: true },
+    });
+    if (!member) {
+      throw new InboxError("not_org_member", "assignedToId is not a member of this organization");
+    }
   }
 
   const updated = await db.inboxThread.update({

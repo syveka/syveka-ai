@@ -34,15 +34,17 @@ export type RecordInboundMessageInput = z.infer<typeof recordInboundMessageSchem
 
 /**
  * Normalized inbound-email webhook payload — deliberately provider-agnostic
- * (not any specific ESP's raw webhook JSON shape, which is a follow-up once
- * a provider is chosen for inbound routing). `organizationId` is required
- * because there is no per-org inbox-address routing table yet; mapping a
- * real recipient address to an organization is the same follow-up.
+ * (not any specific ESP's raw webhook JSON shape; see
+ * `src/server/channels/email/resend-inbound.ts` for the real Resend
+ * adapter, which normalizes into this same shape before it reaches the
+ * service layer). `toAddress` is required and is the ONLY signal used to
+ * resolve the organization — via a server-controlled mailbox lookup, never
+ * trusted directly. There is deliberately no `organizationId` field: a
+ * caller can never simply assert which tenant a message belongs to.
  */
 export const inboundEmailWebhookSchema = z.object({
-  organizationId: z.string().uuid(),
+  toAddress: z.string().trim().min(1).max(320),
   fromAddress: z.string().trim().min(1).max(320),
-  toAddress: optionalTrimmed(320),
   subject: optionalTrimmed(200),
   body: z.string().trim().min(1).max(10_000),
   externalId: optionalTrimmed(200),

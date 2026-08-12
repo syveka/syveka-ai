@@ -1,0 +1,17 @@
+# Gitleaks findings confirmed safe and explicitly allowlisted by fingerprint.
+# Each entry is verified case-by-case -- do not add an entry here without
+# confirming (via GitHub secret-scanning alert inspection and manual review)
+# that the flagged string is not a real, usable credential.
+#
+# 1e16a50d:tests/unit/inbox-resend-inbound.test.ts:155
+#   A synthetic Svix webhook-signing-secret fixture used only to exercise
+#   `Webhook.sign()`/`verify()` in a unit test round-trip. It was never
+#   issued by Resend, Svix, or any other provider, and does not correspond
+#   to any real account or environment. Confirmed via GitHub secret-scanning
+#   alert #1 (matched Stripe's "whsec_" + base64 shape, since Svix and
+#   Stripe share that webhook-secret convention -- a shape/format match,
+#   not evidence of a real leaked credential). Rewriting the commit that
+#   introduced it is intentionally avoided (no force-push / history rewrite
+#   per repository policy); the literal itself has since been replaced with
+#   a runtime-assembled, non-secret-shaped value in a follow-up commit.
+1e16a50ddf270ee14191d3107c48fd38c3fdea50:tests/unit/inbox-resend-inbound.test.ts:generic-api-key:155

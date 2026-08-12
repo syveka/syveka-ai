@@ -51,6 +51,7 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
   "Prompt",
   "BusinessDNA",
   "InboxThread",
+  "InboxMailbox",
 ]);
 
 export function tenantDb(orgId: string) {

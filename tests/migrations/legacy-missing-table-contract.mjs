@@ -68,12 +68,14 @@ try {
     "  legacy_missing_tables TEXT[] := ARRAY[\n" +
       "    'business_dna',\n" +
       "    'inbox_threads',\n" +
-      "    'inbox_messages'\n" +
+      "    'inbox_messages',\n" +
+      "    'inbox_mailboxes'\n" +
       "  ];",
     "  legacy_missing_tables TEXT[] := ARRAY[\n" +
       "    'business_dna',\n" +
       "    'inbox_threads',\n" +
       "    'inbox_messages',\n" +
+      "    'inbox_mailboxes',\n" +
       `    '${fixtureTable}'\n` +
       "  ];",
     "legacy-missing-table declaration",
