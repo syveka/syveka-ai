@@ -14,6 +14,7 @@ import { AssignmentControls } from "./assignment-controls";
 import { StatusControls } from "./status-controls";
 import { GenerateDraftButton } from "./generate-draft-button";
 import { DraftMessageBody } from "./draft-message-body";
+import { CreateContactFromThread } from "./create-contact-from-thread";
 
 const MESSAGE_BADGE_KEY: Record<string, string> = {
   DRAFT: "draftBadge",
@@ -41,6 +42,7 @@ export default async function InboxThreadPage({
 
   const canWrite = can(ctx.role, "inbox:write");
   const canApprove = can(ctx.role, "inbox:approve");
+  const canCreateContact = canWrite && can(ctx.role, "crm:write");
   const members = canWrite ? await listAssignableMembers(ctx) : [];
   const contactName = thread.contact
     ? [thread.contact.firstName, thread.contact.lastName].filter(Boolean).join(" ")
@@ -78,6 +80,9 @@ export default async function InboxThreadPage({
             </>
           ) : null}
         </p>
+        {!thread.contact && canCreateContact ? (
+          <CreateContactFromThread threadId={thread.id} />
+        ) : null}
         {thread.upcomingBooking ? (
           <p className="text-sm text-muted-foreground">
             {t("detail.upcomingBooking", {

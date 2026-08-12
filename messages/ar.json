@@ -658,7 +658,11 @@
       "edit": "تعديل",
       "saveEdit": "حفظ التغييرات",
       "cancel": "إلغاء",
-      "upcomingBooking": "حجز قادم: {type} في {date}"
+      "upcomingBooking": "حجز قادم: {type} في {date}",
+      "createContact": "إنشاء جهة اتصال",
+      "createContactFirstName": "الاسم الأول",
+      "createContactLastName": "اسم العائلة",
+      "createContactSuccess": "تم إنشاء جهة الاتصال وربطها."
     }
   },
   "businessDna": {

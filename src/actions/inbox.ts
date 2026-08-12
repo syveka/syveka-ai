@@ -2,9 +2,12 @@
 
 import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/server/auth/guard";
+import { can } from "@/server/auth/permissions";
+import { AuthError } from "@/server/auth/session";
 import {
   approveMessage,
   assignThread,
+  createContactFromThread,
   createDraftMessage,
   editDraftMessage,
   markThreadUnread,
@@ -13,8 +16,10 @@ import {
   InboxError,
 } from "@/server/services/inbox";
 import { generateEmailDraft } from "@/server/services/inbox-ai";
+import { EntitlementError } from "@/server/services/billing/entitlements";
 import {
   assignThreadSchema,
+  createContactFromThreadSchema,
   createDraftMessageSchema,
   editDraftMessageSchema,
   updateThreadStatusSchema,
@@ -139,4 +144,33 @@ export async function assignThreadAction(
   revalidatePath(`/inbox/${threadId}`);
   revalidatePath("/inbox");
   return { message: "updated" };
+}
+
+/** Requires both permissions since this action reaches across domains: it
+ * both reads/mutates the thread (inbox:write) and creates a CRM contact
+ * (crm:write). A user needs both, matching what they'd need to do each step
+ * manually. */
+export async function createContactFromThreadAction(
+  threadId: string,
+  _prev: InboxActionState,
+  formData: FormData,
+): Promise<InboxActionState> {
+  const ctx = await requirePermission("inbox:write");
+  if (!can(ctx.role, "crm:write")) {
+    throw new AuthError("Missing permission: crm:write", 403);
+  }
+  const parsed = createContactFromThreadSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "invalid_input" };
+
+  try {
+    await createContactFromThread(ctx, threadId, parsed.data);
+  } catch (e) {
+    if (e instanceof InboxError) return { error: e.code };
+    if (e instanceof EntitlementError) return { error: "quota" };
+    return { error: "failed" };
+  }
+  revalidatePath(`/inbox/${threadId}`);
+  revalidatePath("/inbox");
+  revalidatePath("/crm/contacts");
+  return { message: "contact_created" };
 }
