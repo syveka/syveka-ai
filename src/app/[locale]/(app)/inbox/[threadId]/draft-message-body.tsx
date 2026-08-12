@@ -1,20 +1,34 @@
 "use client";
 
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { useTranslations } from "next-intl";
 import { editDraftMessageAction, type InboxActionState } from "@/actions/inbox";
 import { Button } from "@/components/ui/button";
+import { InsertBookingLinkControl } from "./insert-booking-link";
 
 const TEXTAREA_CLASS =
   "w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
 
-export function DraftMessageBody({ messageId, body }: { messageId: string; body: string }) {
+export function DraftMessageBody({
+  messageId,
+  body,
+  bookingTypes = [],
+  bookingBaseUrl,
+}: {
+  messageId: string;
+  body: string;
+  /** Active booking types the operator can hand off to — empty when the
+   * viewer lacks `booking:manage` or the org has none configured. */
+  bookingTypes?: { slug: string; name: string }[];
+  bookingBaseUrl?: string;
+}) {
   const t = useTranslations("inbox");
   const [editing, setEditing] = useState(false);
   const [state, action, pending] = useActionState<InboxActionState, FormData>(
     editDraftMessageAction.bind(null, messageId),
     {},
   );
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
     if (state.message === "edited") setEditing(false);
@@ -34,6 +48,7 @@ export function DraftMessageBody({ messageId, body }: { messageId: string; body:
   return (
     <form action={action} className="space-y-2">
       <textarea
+        ref={textareaRef}
         name="body"
         defaultValue={body}
         rows={4}
@@ -41,6 +56,12 @@ export function DraftMessageBody({ messageId, body }: { messageId: string; body:
         required
         disabled={pending}
         className={TEXTAREA_CLASS}
+      />
+      <InsertBookingLinkControl
+        fieldId={`booking-link-edit-${messageId}`}
+        textareaRef={textareaRef}
+        bookingTypes={bookingTypes}
+        bookingBaseUrl={bookingBaseUrl}
       />
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={pending}>
