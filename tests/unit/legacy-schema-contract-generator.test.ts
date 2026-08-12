@@ -387,6 +387,7 @@ describe("legacy schema contract generator", () => {
     '  ["business_dna", "20260811000000_business_dna_v1"],\n' +
     '  ["inbox_threads", "20260811010000_inbox_mvp_foundation"],\n' +
     '  ["inbox_messages", "20260811010000_inbox_mvp_foundation"],\n' +
+    '  ["inbox_mailboxes", "20260812000000_inbox_mailboxes"],\n' +
     "];";
 
   it("fails closed when a legacy-missing table references a nonexistent migration directory", () => {
@@ -463,7 +464,8 @@ describe("legacy schema contract generator", () => {
       "legacy_missing_tables TEXT[] := ARRAY[\n" +
         "    'business_dna',\n" +
         "    'inbox_threads',\n" +
-        "    'inbox_messages'\n" +
+        "    'inbox_messages',\n" +
+        "    'inbox_mailboxes'\n" +
         "  ];",
     );
     expect(legacyMissingTablesDeclarationOf(stdout)).toBe(

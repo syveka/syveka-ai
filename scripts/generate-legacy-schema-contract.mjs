@@ -23,6 +23,7 @@ const LEGACY_MISSING_TABLE_ENTRIES = [
   ["business_dna", "20260811000000_business_dna_v1"],
   ["inbox_threads", "20260811010000_inbox_mvp_foundation"],
   ["inbox_messages", "20260811010000_inbox_mvp_foundation"],
+  ["inbox_mailboxes", "20260812000000_inbox_mailboxes"],
 ];
 
 const actualTableNames = new Set(models.map(tableName));

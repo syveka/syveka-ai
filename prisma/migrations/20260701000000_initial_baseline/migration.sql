@@ -81,7 +81,8 @@ DECLARE
   legacy_missing_tables TEXT[] := ARRAY[
     'business_dna',
     'inbox_threads',
-    'inbox_messages'
+    'inbox_messages',
+    'inbox_mailboxes'
   ];
 -- END LEGACY MISSING TABLES
   -- Foreign keys whose ON UPDATE action may still show a specific, verified
@@ -673,6 +674,12 @@ BEGIN
       ('external_calendars', 'organization_id', 'uuid', 'true', '', '', ''),
       ('external_calendars', 'sync_enabled', 'boolean', 'true', '', '', 'false'),
       ('external_calendars', 'timezone', 'text', 'false', '', '', ''),
+      ('inbox_mailboxes', 'address', 'text', 'true', '', '', ''),
+      ('inbox_mailboxes', 'channel', '"InboxChannel"', 'true', '', '', '''email'''),
+      ('inbox_mailboxes', 'created_at', 'timestamp(3) without time zone', 'true', '', '', 'current_timestamp'),
+      ('inbox_mailboxes', 'id', 'uuid', 'true', '', '', 'gen_random_uuid'),
+      ('inbox_mailboxes', 'organization_id', 'uuid', 'true', '', '', ''),
+      ('inbox_mailboxes', 'updated_at', 'timestamp(3) without time zone', 'true', '', '', ''),
       ('inbox_messages', 'ai_generated', 'boolean', 'true', '', '', 'false'),
       ('inbox_messages', 'approved_at', 'timestamp(3) without time zone', 'false', '', '', ''),
       ('inbox_messages', 'approved_by_id', 'uuid', 'false', '', '', ''),
@@ -988,6 +995,7 @@ BEGIN
       ('public', 'tags', 'tags_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'tags_on_contacts', 'tags_on_contacts_contact_id_fkey', '{contact_id}', 'public', 'contacts', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'tags_on_contacts', 'tags_on_contacts_tag_id_fkey', '{tag_id}', 'public', 'tags', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
+      ('public', 'inbox_mailboxes', 'inbox_mailboxes_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'inbox_threads', 'inbox_threads_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'inbox_threads', 'inbox_threads_contact_id_fkey', '{contact_id}', 'public', 'contacts', '{id}', 'SetNull', 'Cascade', 'false', 'false', 'true'),
       ('public', 'inbox_threads', 'inbox_threads_assigned_to_id_fkey', '{assigned_to_id}', 'public', 'users', '{id}', 'SetNull', 'Cascade', 'false', 'false', 'true'),
