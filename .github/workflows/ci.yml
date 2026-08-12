@@ -216,6 +216,7 @@ jobs:
         run: |
           bash scripts/ci/run-rls-check.sh iso tests/rls/isolation-grants.sql tests/rls/isolation-revokes.sql tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql tests/rls/isolation-grants-verify.sql
           bash scripts/ci/run-rls-check.sh cal tests/rls/calendar-booking-grants.sql tests/rls/calendar-booking-revokes.sql tests/rls/calendar-booking-fixtures.sql tests/rls/calendar-booking-cleanup.sql tests/rls/calendar-booking-isolation.sql tests/rls/calendar-booking-grants-verify.sql
+          bash scripts/ci/run-rls-check.sh dna tests/rls/inbox-dna-grants.sql tests/rls/inbox-dna-revokes.sql tests/rls/inbox-dna-fixtures.sql tests/rls/inbox-dna-cleanup.sql tests/rls/inbox-dna-isolation.sql tests/rls/inbox-dna-grants-verify.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/migrations/match-chunks-eligibility.sql
         env:
@@ -293,7 +294,7 @@ jobs:
           # a hosted Postgres provider can terminate the connection over -- see
           # scripts/ci/run-rls-check.sh's header comment. Neither client-run
           # assertions file may reintroduce it.
-          if grep -Eq 'grant\s+\S+\s+to\s+current_user' tests/rls/isolation.sql tests/rls/calendar-booking-isolation.sql; then
+          if grep -Eq 'grant\s+\S+\s+to\s+current_user' tests/rls/isolation.sql tests/rls/calendar-booking-isolation.sql tests/rls/inbox-dna-isolation.sql; then
             echo "::error::A client-run RLS assertions file grants a role to current_user again."
             exit 1
           fi
@@ -303,6 +304,7 @@ jobs:
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
           bash scripts/ci/run-rls-check.sh iso tests/rls/isolation-grants.sql tests/rls/isolation-revokes.sql tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql tests/rls/isolation-grants-verify.sql
           bash scripts/ci/run-rls-check.sh cal tests/rls/calendar-booking-grants.sql tests/rls/calendar-booking-revokes.sql tests/rls/calendar-booking-fixtures.sql tests/rls/calendar-booking-cleanup.sql tests/rls/calendar-booking-isolation.sql tests/rls/calendar-booking-grants-verify.sql
+          bash scripts/ci/run-rls-check.sh dna tests/rls/inbox-dna-grants.sql tests/rls/inbox-dna-revokes.sql tests/rls/inbox-dna-fixtures.sql tests/rls/inbox-dna-cleanup.sql tests/rls/inbox-dna-isolation.sql tests/rls/inbox-dna-grants-verify.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
         env:
           ADMIN_URL: postgresql://supabase_like:supabase_like@localhost:5432/rls_non_superuser
@@ -492,6 +494,7 @@ jobs:
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
           bash scripts/ci/run-rls-check.sh iso tests/rls/isolation-grants.sql tests/rls/isolation-revokes.sql tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql tests/rls/isolation-grants-verify.sql
           bash scripts/ci/run-rls-check.sh cal tests/rls/calendar-booking-grants.sql tests/rls/calendar-booking-revokes.sql tests/rls/calendar-booking-fixtures.sql tests/rls/calendar-booking-cleanup.sql tests/rls/calendar-booking-isolation.sql tests/rls/calendar-booking-grants-verify.sql
+          bash scripts/ci/run-rls-check.sh dna tests/rls/inbox-dna-grants.sql tests/rls/inbox-dna-revokes.sql tests/rls/inbox-dna-fixtures.sql tests/rls/inbox-dna-cleanup.sql tests/rls/inbox-dna-isolation.sql tests/rls/inbox-dna-grants-verify.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/integration/tenant-relationship-integrity.sql
       - name: Accept an already-corrected foreign key without needing the legacy override
         env:
