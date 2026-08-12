@@ -7,6 +7,12 @@ import { computeAvailableSlots, type WeeklyRule } from "@/server/calendar/slots"
 import { DEFAULT_WEEKLY_RULES } from "./booking";
 import { neutralizeTagBreakout } from "@/server/ai/prompts/untrusted";
 import { buildBusinessDnaPromptBlock, getBusinessDnaContext } from "@/server/business-dna/context";
+import {
+  formatCrmContactLine,
+  formatCrmDealLine,
+  getCrmContactContext,
+  getCrmDealContext,
+} from "@/server/crm/context";
 import type { TenantContext } from "@/server/auth/session";
 
 /**
@@ -91,36 +97,13 @@ async function buildCrmContext(
   entity?: { contactId?: string; dealId?: string },
 ): Promise<string> {
   if (!entity?.contactId && !entity?.dealId) return "";
-  const db = tenantDb(ctx.orgId);
+  const [contact, deal] = await Promise.all([
+    entity.contactId ? getCrmContactContext(ctx, entity.contactId) : null,
+    entity.dealId ? getCrmDealContext(ctx, entity.dealId) : null,
+  ]);
   const lines: string[] = [];
-  if (entity.contactId) {
-    const contact = await db.contact.findFirst({
-      where: { id: entity.contactId, deletedAt: null },
-      select: { firstName: true, lastName: true, email: true, title: true, status: true },
-    });
-    if (contact) {
-      lines.push(
-        `Contact: ${contact.firstName} ${contact.lastName ?? ""} (${contact.email ?? "no email"}), ${contact.title ?? ""} — status ${contact.status}`,
-      );
-    }
-  }
-  if (entity.dealId) {
-    const deal = await db.deal.findFirst({
-      where: { id: entity.dealId, deletedAt: null },
-      select: {
-        title: true,
-        valueCents: true,
-        currency: true,
-        expectedCloseAt: true,
-        stage: { select: { name: true } },
-      },
-    });
-    if (deal) {
-      lines.push(
-        `Deal: "${deal.title}" — stage ${deal.stage.name}, value ${(deal.valueCents / 100).toFixed(0)} ${deal.currency}${deal.expectedCloseAt ? `, expected close ${deal.expectedCloseAt.toISOString().slice(0, 10)}` : ""}`,
-      );
-    }
-  }
+  if (contact) lines.push(formatCrmContactLine(contact));
+  if (deal) lines.push(formatCrmDealLine(deal));
   return lines.join("\n");
 }
 

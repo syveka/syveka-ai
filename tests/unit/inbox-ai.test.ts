@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => {
     inboxThreadFindFirst: vi.fn(),
     businessDnaFindFirst: vi.fn(async (): Promise<Record<string, unknown> | null> => null),
     bookingFindFirst: vi.fn(async (): Promise<Record<string, unknown> | null> => null),
+    contactFindFirst: vi.fn(async (): Promise<Record<string, unknown> | null> => null),
+    dealFindFirst: vi.fn(async (): Promise<Record<string, unknown> | null> => null),
     messageFindMany: vi.fn(async () => [] as unknown[]),
     organizationFindUniqueOrThrow: vi.fn(async () => ({ name: "Acme" })),
     streamClaude: vi.fn(),
@@ -66,6 +68,8 @@ describe("generateEmailDraft", () => {
       inboxThread: { findFirst: mocks.inboxThreadFindFirst },
       businessDNA: { findFirst: mocks.businessDnaFindFirst },
       booking: { findFirst: mocks.bookingFindFirst },
+      contact: { findFirst: mocks.contactFindFirst },
+      deal: { findFirst: mocks.dealFindFirst },
     });
     mocks.inboxThreadFindFirst.mockResolvedValue({
       id: "thread-1",
@@ -74,6 +78,8 @@ describe("generateEmailDraft", () => {
     });
     mocks.businessDnaFindFirst.mockResolvedValue(null);
     mocks.bookingFindFirst.mockResolvedValue(null);
+    mocks.contactFindFirst.mockResolvedValue(null);
+    mocks.dealFindFirst.mockResolvedValue(null);
     mocks.organizationFindUniqueOrThrow.mockResolvedValue({ name: "Acme" });
     mocks.isFlaggedByModeration.mockResolvedValue(false);
     mocks.streamClaude.mockImplementation(async ({ callbacks }) => {
@@ -168,6 +174,69 @@ describe("generateEmailDraft", () => {
     expect(call.system).toContain("Upcoming appointment");
     expect(call.system).toContain("Consultation");
     expect(call.system).toContain("2026-09-01T10:00:00.000Z");
+  });
+
+  it("includes the linked contact's CRM context (status, title, company) in the system prompt", async () => {
+    mocks.inboxThreadFindFirst.mockResolvedValueOnce({
+      id: "thread-1",
+      subject: "Order #42",
+      contact: { id: "contact-1", email: "jane@example.com" },
+    });
+    mocks.contactFindFirst.mockResolvedValueOnce({
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "jane@example.com",
+      title: "CTO",
+      status: "CUSTOMER",
+      company: { name: "Acme Oy" },
+    });
+
+    await generateEmailDraft(ctx(), "thread-1");
+
+    const call = mocks.streamClaude.mock.calls[0]![0];
+    expect(call.system).toContain("Customer context");
+    expect(call.system).toContain("Jane Doe");
+    expect(call.system).toContain("Acme Oy");
+    expect(call.system).toContain("status CUSTOMER");
+  });
+
+  it("includes the contact's active (not closed) deal alongside their CRM context", async () => {
+    mocks.inboxThreadFindFirst.mockResolvedValueOnce({
+      id: "thread-1",
+      subject: "Order #42",
+      contact: { id: "contact-1", email: "jane@example.com" },
+    });
+    mocks.contactFindFirst.mockResolvedValueOnce({
+      firstName: "Jane",
+      lastName: "Doe",
+      email: "jane@example.com",
+      title: null,
+      status: "CUSTOMER",
+      company: null,
+    });
+    mocks.dealFindFirst.mockResolvedValueOnce({
+      title: "ERP rollout",
+      valueCents: 500_000,
+      currency: "EUR",
+      expectedCloseAt: null,
+      stage: { name: "Tarjous" },
+    });
+
+    await generateEmailDraft(ctx(), "thread-1");
+
+    expect(mocks.dealFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ closedAt: null }) }),
+    );
+    const call = mocks.streamClaude.mock.calls[0]![0];
+    expect(call.system).toContain("ERP rollout");
+  });
+
+  it("does not look up CRM contact context when the thread has no linked contact", async () => {
+    await generateEmailDraft(ctx(), "thread-1");
+    expect(mocks.contactFindFirst).not.toHaveBeenCalled();
+    expect(mocks.dealFindFirst).not.toHaveBeenCalled();
+    const call = mocks.streamClaude.mock.calls[0]![0];
+    expect(call.system).not.toContain("Customer context");
   });
 
   it("does not look up a booking when the thread has no linked contact", async () => {
