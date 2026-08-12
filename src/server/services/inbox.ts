@@ -55,6 +55,29 @@ export async function listThreads(ctx: TenantContext, query: ThreadListQuery) {
   return { data, nextCursor: hasMore ? data[data.length - 1]?.id : undefined };
 }
 
+/**
+ * Read-only, display-only lookup of the linked contact's next confirmed
+ * booking — mirrors the lookup `inbox-ai.ts` uses internally to give AI
+ * drafts booking context, kept as a separate copy rather than shared so the
+ * UI-display concern here and the AI-prompt concern there stay decoupled.
+ */
+async function findUpcomingBookingContext(
+  db: ReturnType<typeof tenantDb>,
+  guestEmail: string | undefined,
+): Promise<{ typeName: string; startsAt: Date } | null> {
+  if (!guestEmail) return null;
+  const booking = await db.booking.findFirst({
+    where: {
+      guestEmail: { equals: guestEmail, mode: "insensitive" },
+      status: "CONFIRMED",
+      startsAt: { gte: new Date() },
+    },
+    orderBy: { startsAt: "asc" },
+    select: { startsAt: true, bookingType: { select: { name: true } } },
+  });
+  return booking ? { typeName: booking.bookingType.name, startsAt: booking.startsAt } : null;
+}
+
 export async function getThread(ctx: TenantContext, threadId: string) {
   const db = tenantDb(ctx.orgId);
   const thread = await db.inboxThread.findFirst({
@@ -68,12 +91,15 @@ export async function getThread(ctx: TenantContext, threadId: string) {
 
   // Safe without a manual tenant check: `thread` was already resolved through
   // tenantDb above, so `thread.id` is guaranteed to belong to this org.
-  const messages = await unscopedPrisma.inboxMessage.findMany({
-    where: { threadId: thread.id },
-    orderBy: { createdAt: "asc" },
-  });
+  const [messages, upcomingBooking] = await Promise.all([
+    unscopedPrisma.inboxMessage.findMany({
+      where: { threadId: thread.id },
+      orderBy: { createdAt: "asc" },
+    }),
+    findUpcomingBookingContext(db, thread.contact?.email ?? undefined),
+  ]);
 
-  return { ...thread, messages };
+  return { ...thread, messages, upcomingBooking };
 }
 
 /**
@@ -256,6 +282,27 @@ export async function markThreadRead(ctx: TenantContext, threadId: string) {
   });
 }
 
+/**
+ * Explicit "mark as unread" — an operator flagging a thread for follow-up
+ * after already reading it. Opening the thread again re-marks it read (see
+ * `markThreadRead`), matching common inbox UX.
+ */
+export async function markThreadUnread(ctx: TenantContext, threadId: string) {
+  const db = tenantDb(ctx.orgId);
+  const thread = await db.inboxThread.findFirst({
+    where: { id: threadId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!thread) {
+    throw new InboxError("thread_not_found", "Thread does not belong to this organization");
+  }
+
+  return db.inboxThread.update({
+    where: { id: thread.id },
+    data: { readAt: null },
+  });
+}
+
 export async function createDraftMessage(ctx: TenantContext, input: CreateDraftMessageInput) {
   const db = tenantDb(ctx.orgId);
   const thread = await db.inboxThread.findFirst({
@@ -286,6 +333,50 @@ export async function createDraftMessage(ctx: TenantContext, input: CreateDraftM
   return message;
 }
 
+/**
+ * Creates a new AI draft, or — when an unsent AI draft already exists for
+ * this thread — replaces it in place ("regenerate") instead of
+ * accumulating duplicate drafts an operator would have to sort through.
+ * Regenerating always resets status to DRAFT and clears any prior
+ * approval, since the previously-approved text no longer exists.
+ */
+export async function upsertAiDraftMessage(ctx: TenantContext, threadId: string, body: string) {
+  const db = tenantDb(ctx.orgId);
+  const thread = await db.inboxThread.findFirst({
+    where: { id: threadId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!thread) {
+    throw new InboxError("thread_not_found", "Thread does not belong to this organization");
+  }
+
+  const existingDraft = await unscopedPrisma.inboxMessage.findFirst({
+    where: {
+      threadId: thread.id,
+      direction: "OUTBOUND",
+      aiGenerated: true,
+      status: { not: "SENT" },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (existingDraft) {
+    const updated = await unscopedPrisma.inboxMessage.update({
+      where: { id: existingDraft.id },
+      data: { body, status: "DRAFT", approvedAt: null, approvedById: null },
+    });
+    await audit(ctx, {
+      action: "inbox.message.drafted",
+      resourceType: "inbox_message",
+      resourceId: updated.id,
+      after: { threadId: thread.id, aiGenerated: true, regenerated: true },
+    });
+    return updated;
+  }
+
+  return createDraftMessage(ctx, { threadId: thread.id, body, aiGenerated: true });
+}
+
 /** Required before `sendMessage` will send an AI-generated draft. */
 export async function approveMessage(ctx: TenantContext, messageId: string) {
   const message = await requireTenantMessage(ctx, messageId);
@@ -302,6 +393,36 @@ export async function approveMessage(ctx: TenantContext, messageId: string) {
     action: "inbox.message.approved",
     resourceType: "inbox_message",
     resourceId: message.id,
+  });
+
+  return updated;
+}
+
+/**
+ * Edits an unsent outbound message's body. Always resets status to DRAFT
+ * and clears any prior approval — a human approved specific text, not
+ * "whatever this message currently says", so an edited AI-generated draft
+ * must be re-approved before it can be sent.
+ */
+export async function editDraftMessage(ctx: TenantContext, messageId: string, body: string) {
+  const message = await requireTenantMessage(ctx, messageId);
+  if (message.direction !== "OUTBOUND") {
+    throw new InboxError("not_outbound", "Only outbound messages can be edited");
+  }
+  if (message.status === "SENT") {
+    throw new InboxError("already_sent", "Sent messages cannot be edited");
+  }
+
+  const updated = await unscopedPrisma.inboxMessage.update({
+    where: { id: message.id },
+    data: { body, status: "DRAFT", approvedAt: null, approvedById: null },
+  });
+
+  await audit(ctx, {
+    action: "inbox.message.drafted",
+    resourceType: "inbox_message",
+    resourceId: message.id,
+    after: { edited: true },
   });
 
   return updated;

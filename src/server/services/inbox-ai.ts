@@ -4,7 +4,7 @@ import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { routeModel } from "@/server/ai/router";
 import { streamClaude } from "@/server/integrations/anthropic";
 import { isFlaggedByModeration } from "@/server/integrations/openai";
-import { createDraftMessage, InboxError } from "./inbox";
+import { InboxError, upsertAiDraftMessage } from "./inbox";
 import type { TenantContext } from "@/server/auth/session";
 import type { InboxMessage } from "@prisma/client";
 
@@ -130,7 +130,8 @@ async function findUpcomingBooking(
 /**
  * Generates an AI draft reply for a thread using Business DNA context (and,
  * when the thread's linked contact has an upcoming booking, that too), then
- * persists it via `createDraftMessage` (aiGenerated=true — subject to the
+ * persists it via `upsertAiDraftMessage` (aiGenerated=true, replacing an
+ * existing unsent AI draft in place when "regenerating" — subject to the
  * approval gate in `sendMessage` like any other AI-generated draft).
  */
 export async function generateEmailDraft(
@@ -213,5 +214,5 @@ export async function generateEmailDraft(
     );
   }
 
-  return createDraftMessage(ctx, { threadId: thread.id, body: draftText, aiGenerated: true });
+  return upsertAiDraftMessage(ctx, thread.id, draftText);
 }

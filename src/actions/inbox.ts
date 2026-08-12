@@ -6,6 +6,8 @@ import {
   approveMessage,
   assignThread,
   createDraftMessage,
+  editDraftMessage,
+  markThreadUnread,
   sendMessage,
   updateThreadStatus,
   InboxError,
@@ -14,6 +16,7 @@ import { generateEmailDraft } from "@/server/services/inbox-ai";
 import {
   assignThreadSchema,
   createDraftMessageSchema,
+  editDraftMessageSchema,
   updateThreadStatusSchema,
 } from "@/lib/validators/inbox";
 
@@ -37,11 +40,41 @@ export async function createDraftMessageAction(
   return { message: "drafted" };
 }
 
-/** Plain (void-returning) form action — used directly as a `<form action>` with no useActionState. */
-export async function generateDraftAction(threadId: string): Promise<void> {
+export async function generateDraftAction(
+  threadId: string,
+  _prev: InboxActionState,
+  _formData: FormData,
+): Promise<InboxActionState> {
   const ctx = await requirePermission("inbox:write");
-  await generateEmailDraft(ctx, threadId);
+  try {
+    await generateEmailDraft(ctx, threadId);
+  } catch (e) {
+    if (e instanceof InboxError) return { error: e.code };
+    return { error: "failed" };
+  }
   revalidatePath(`/inbox/${threadId}`);
+  return { message: "drafted" };
+}
+
+export async function editDraftMessageAction(
+  messageId: string,
+  _prev: InboxActionState,
+  formData: FormData,
+): Promise<InboxActionState> {
+  const ctx = await requirePermission("inbox:write");
+  const parsed = editDraftMessageSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "invalid_input" };
+
+  let threadId: string;
+  try {
+    const updated = await editDraftMessage(ctx, messageId, parsed.data.body);
+    threadId = updated.threadId;
+  } catch (e) {
+    if (e instanceof InboxError) return { error: e.code };
+    return { error: "failed" };
+  }
+  revalidatePath(`/inbox/${threadId}`);
+  return { message: "edited" };
 }
 
 /** Plain (void-returning) form action — used directly as a `<form action>` with no useActionState. */
@@ -57,6 +90,14 @@ export async function sendMessageAction(messageId: string): Promise<void> {
   const ctx = await requirePermission("inbox:write");
   const updated = await sendMessage(ctx, messageId);
   revalidatePath(`/inbox/${updated.threadId}`);
+  revalidatePath("/inbox");
+}
+
+/** Plain (void-returning) form action — used directly as a `<form action>` with no useActionState. */
+export async function markThreadUnreadAction(threadId: string): Promise<void> {
+  const ctx = await requirePermission("inbox:write");
+  await markThreadUnread(ctx, threadId);
+  revalidatePath(`/inbox/${threadId}`);
   revalidatePath("/inbox");
 }
 

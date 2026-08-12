@@ -632,6 +632,8 @@
       "back": "العودة إلى الوارد",
       "noMessages": "لا توجد رسائل بعد.",
       "generateDraft": "إنشاء مسودة بالذكاء الاصطناعي",
+      "regenerateDraft": "إعادة إنشاء مسودة الذكاء الاصطناعي",
+      "generateFailed": "تعذر إنشاء المسودة. حاول مرة أخرى.",
       "generating": "جارٍ الإنشاء…",
       "replyPlaceholder": "اكتب ردًا…",
       "saveDraft": "حفظ المسودة",
@@ -644,7 +646,19 @@
       "draftBadge": "مسودة",
       "sentBadge": "تم الإرسال",
       "failedBadge": "فشل الإرسال",
-      "error": "حدث خطأ ما. حاول مرة أخرى."
+      "error": "حدث خطأ ما. حاول مرة أخرى.",
+      "status": "الحالة",
+      "saveStatus": "تحديث الحالة",
+      "assignee": "المسؤول",
+      "unassigned": "غير مُسند",
+      "assignedTo": "مُسندة إلى {name}",
+      "assignToMe": "إسناد إليّ",
+      "saveAssignment": "حفظ الإسناد",
+      "markUnread": "تعليم كغير مقروءة",
+      "edit": "تعديل",
+      "saveEdit": "حفظ التغييرات",
+      "cancel": "إلغاء",
+      "upcomingBooking": "حجز قادم: {type} في {date}"
     }
   },
   "businessDna": {

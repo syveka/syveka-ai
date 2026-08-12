@@ -632,6 +632,8 @@
       "back": "Back to inbox",
       "noMessages": "No messages yet.",
       "generateDraft": "Generate AI draft",
+      "regenerateDraft": "Regenerate AI draft",
+      "generateFailed": "Couldn't generate a draft. Please try again.",
       "generating": "Generating…",
       "replyPlaceholder": "Write a reply…",
       "saveDraft": "Save draft",
@@ -644,7 +646,19 @@
       "draftBadge": "Draft",
       "sentBadge": "Sent",
       "failedBadge": "Failed to send",
-      "error": "Something went wrong. Please try again."
+      "error": "Something went wrong. Please try again.",
+      "status": "Status",
+      "saveStatus": "Update status",
+      "assignee": "Assignee",
+      "unassigned": "Unassigned",
+      "assignedTo": "Assigned to {name}",
+      "assignToMe": "Assign to me",
+      "saveAssignment": "Save assignment",
+      "markUnread": "Mark as unread",
+      "edit": "Edit",
+      "saveEdit": "Save changes",
+      "cancel": "Cancel",
+      "upcomingBooking": "Upcoming booking: {type} on {date}"
     }
   },
   "businessDna": {

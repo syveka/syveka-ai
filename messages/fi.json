@@ -632,6 +632,8 @@
       "back": "Takaisin saapuneisiin",
       "noMessages": "Ei vielä viestejä.",
       "generateDraft": "Luo tekoälyluonnos",
+      "regenerateDraft": "Luo tekoälyluonnos uudelleen",
+      "generateFailed": "Luonnosta ei voitu luoda. Yritä uudelleen.",
       "generating": "Luodaan…",
       "replyPlaceholder": "Kirjoita vastaus…",
       "saveDraft": "Tallenna luonnos",
@@ -644,7 +646,19 @@
       "draftBadge": "Luonnos",
       "sentBadge": "Lähetetty",
       "failedBadge": "Lähetys epäonnistui",
-      "error": "Jotain meni pieleen. Yritä uudelleen."
+      "error": "Jotain meni pieleen. Yritä uudelleen.",
+      "status": "Tila",
+      "saveStatus": "Päivitä tila",
+      "assignee": "Vastuuhenkilö",
+      "unassigned": "Ei osoitettu",
+      "assignedTo": "Osoitettu: {name}",
+      "assignToMe": "Ota itselleni",
+      "saveAssignment": "Tallenna osoitus",
+      "markUnread": "Merkitse lukemattomaksi",
+      "edit": "Muokkaa",
+      "saveEdit": "Tallenna muutokset",
+      "cancel": "Peruuta",
+      "upcomingBooking": "Tuleva varaus: {type}, {date}"
     }
   },
   "businessDna": {
