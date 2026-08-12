@@ -21,6 +21,7 @@ const { tenantDbMock, unscopedMock, auditMock, emailAdapterMock, EmailChannelErr
           findMany: vi.fn(),
           findFirst: vi.fn(),
           update: vi.fn(),
+          updateMany: vi.fn(),
         },
         inboxThread: {
           update: vi.fn(),
@@ -55,6 +56,7 @@ import {
   DuplicateInboundMessageError,
   getThread,
   InboxError,
+  listAssignableMembers,
   listThreads,
   markThreadRead,
   recordInboundMessage,
@@ -126,6 +128,13 @@ function createMockDb(orgId: string) {
     contact: {
       findFirst: vi.fn(async (_args: QueryArgs) => null as { id: string } | null),
     },
+    organizationMember: {
+      findFirst: vi.fn(async (_args: QueryArgs) => ({ id: "member-1" }) as { id: string } | null),
+      findMany: vi.fn(async (_args: QueryArgs) => [
+        { user: { id: "user-1", fullName: "Ada Lovelace", email: "ada@example.com" } },
+        { user: { id: "user-2", fullName: null, email: "no-name@example.com" } },
+      ]),
+    },
   };
 }
 
@@ -151,6 +160,7 @@ describe("inbox service", () => {
       id: "msg-1",
       ...data,
     }));
+    unscopedMock.inboxMessage.updateMany.mockResolvedValue({ count: 1 });
     unscopedMock.$transaction.mockImplementation(async (ops: Promise<unknown>[]) =>
       Promise.all(ops),
     );
@@ -546,6 +556,7 @@ describe("inbox service", () => {
       unscopedMock.inboxMessage.findFirst.mockResolvedValueOnce({
         id: "msg-1",
         direction: "OUTBOUND",
+        status: "DRAFT",
         aiGenerated: false,
         approvedAt: null,
         threadId: "t1",
@@ -564,9 +575,17 @@ describe("inbox service", () => {
           text: "Thanks!",
         }),
       );
+      // The atomic claim (compare-and-swap on the message's current status)
+      // is what actually transitions it to SENT, before dispatch.
+      expect(unscopedMock.inboxMessage.updateMany).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { id: "msg-1", status: "DRAFT" },
+          data: expect.objectContaining({ status: "SENT" }),
+        }),
+      );
       expect(unscopedMock.inboxMessage.update).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ status: "SENT", externalId: "ext-sent-1" }),
+          data: expect.objectContaining({ externalId: "ext-sent-1" }),
         }),
       );
     });
@@ -660,6 +679,70 @@ describe("inbox service", () => {
     });
   });
 
+  describe("sendMessage — duplicate-send prevention", () => {
+    it("rejects re-sending a message that is already SENT, without dispatching", async () => {
+      unscopedMock.inboxMessage.findFirst.mockResolvedValueOnce({
+        id: "msg-1",
+        direction: "OUTBOUND",
+        status: "SENT",
+        aiGenerated: false,
+        approvedAt: null,
+        threadId: "t1",
+        thread: { id: "t1", organizationId: "org-a", channel: "EMAIL", subject: null },
+      });
+
+      await expect(sendMessage(ctx("org-a"), "msg-1")).rejects.toMatchObject({
+        code: "already_sent",
+      });
+      expect(unscopedMock.inboxMessage.updateMany).not.toHaveBeenCalled();
+      expect(emailAdapterMock.send).not.toHaveBeenCalled();
+    });
+
+    it("loses the race and never dispatches when a concurrent call already claimed the send", async () => {
+      unscopedMock.inboxMessage.findFirst.mockResolvedValueOnce({
+        id: "msg-1",
+        direction: "OUTBOUND",
+        status: "DRAFT",
+        aiGenerated: false,
+        approvedAt: null,
+        threadId: "t1",
+        toAddress: "customer@example.com",
+        thread: { id: "t1", organizationId: "org-a", channel: "EMAIL", subject: null },
+      });
+      // Simulates a concurrent sendMessage call winning the compare-and-swap
+      // first: the conditional update matches zero rows.
+      unscopedMock.inboxMessage.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(sendMessage(ctx("org-a"), "msg-1")).rejects.toMatchObject({
+        code: "already_sent",
+      });
+      expect(emailAdapterMock.send).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("listAssignableMembers", () => {
+    it("lists the caller's org members as assignable options, falling back to email when no name is set", async () => {
+      const result = await listAssignableMembers(ctx("org-a"));
+      expect(tenantDbMock).toHaveBeenCalledWith("org-a");
+      expect(result).toEqual([
+        { id: "user-1", name: "Ada Lovelace" },
+        { id: "user-2", name: "no-name@example.com" },
+      ]);
+    });
+
+    it("uses the caller's org for tenant isolation", async () => {
+      const dbB = createMockDb("org-b");
+      dbB.organizationMember.findMany.mockResolvedValueOnce([]);
+      tenantDbMock.mockImplementation((orgId: string) => (orgId === "org-b" ? dbB : db));
+
+      const result = await listAssignableMembers(ctx("org-b"));
+
+      expect(tenantDbMock).toHaveBeenLastCalledWith("org-b");
+      expect(result).toEqual([]);
+      expect(db.organizationMember.findMany).not.toHaveBeenCalled();
+    });
+  });
+
   describe("updateThreadStatus / assignThread", () => {
     it("throws when the thread does not belong to the tenant", async () => {
       db.inboxThread.findFirst.mockResolvedValueOnce(null);
@@ -693,6 +776,45 @@ describe("inbox service", () => {
       await assignThread(ctx("org-a"), "org-a-t1", {});
       expect(db.inboxThread.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: { assignedToId: null } }),
+      );
+      expect(db.organizationMember.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("assigns to a verified organization member", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(threadRow("org-a-t1", "org-a"));
+      db.organizationMember.findFirst.mockResolvedValueOnce({ id: "member-1" });
+
+      await assignThread(ctx("org-a"), "org-a-t1", { assignedToId: "user-2" });
+
+      expect(db.organizationMember.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { userId: "user-2" } }),
+      );
+      expect(db.inboxThread.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { assignedToId: "user-2" } }),
+      );
+    });
+
+    it("rejects assigning to a user id that is not a member of this organization — never trusts a browser-supplied id", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(threadRow("org-a-t1", "org-a"));
+      db.organizationMember.findFirst.mockResolvedValueOnce(null);
+
+      await expect(
+        assignThread(ctx("org-a"), "org-a-t1", { assignedToId: "outsider-user" }),
+      ).rejects.toMatchObject({ code: "not_org_member" });
+      expect(db.inboxThread.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects assigning to a user who belongs to a different organization", async () => {
+      const dbB = createMockDb("org-b");
+      dbB.inboxThread.findFirst.mockResolvedValueOnce(threadRow("org-b-t1", "org-b"));
+      dbB.organizationMember.findFirst.mockResolvedValueOnce(null);
+      tenantDbMock.mockImplementation((orgId: string) => (orgId === "org-b" ? dbB : db));
+
+      await expect(
+        assignThread(ctx("org-b"), "org-b-t1", { assignedToId: "org-a-user" }),
+      ).rejects.toMatchObject({ code: "not_org_member" });
+      expect(dbB.organizationMember.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { userId: "org-a-user" } }),
       );
     });
 
