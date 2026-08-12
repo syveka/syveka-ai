@@ -13,7 +13,7 @@ snapshot, not a live feed.
 - Domain: syveka.com. Business email: info@syveka.com.
 - Repository: `syveka/syveka-ai` (`https://github.com/syveka/syveka-ai.git`).
 
-## Repository facts as of this snapshot (2026-07-23)
+## Repository facts as of this snapshot (2026-07-23) — SUPERSEDED, see addendum below
 
 - Local folder: `c:\Users\lenovo\Desktop\syveka copy`
 - Current branch: `chore/staging-release-validation`
@@ -26,12 +26,26 @@ snapshot, not a live feed.
 - Open work: PR #9 (`Prepare and validate first safe staging release`, DRAFT) on the current
   branch. PRs #1–#8 are all merged historical work.
 
+### Addendum (2026-08-12) — read this instead for current state
+
+The section above is a stale point-in-time snapshot from 2026-07-23; do not act on its branch,
+PR, or milestone facts. As of 2026-08-12: default branch `main`, PR #9 and the
+staging-release-validation work are long since resolved/superseded. 44 more PRs have merged
+since (#10–#53), most recently Phase 6 (**Production Inbox Integration**) Workstreams A–C: #52
+(real Resend inbound/outbound email + security hardening), #53 (thread status/assignment/
+read-unread UI, editable AI drafts). PR #54 (Workstream D — channel-adapter registry foundation
+for future SMS/WhatsApp/web-chat support) is open, CI-green, awaiting review/merge
+authorization. As always: this addendum is also a snapshot, not a live feed — run `git status`,
+`git log`, `gh pr list` before trusting any of it.
+
 ## Current milestone
 
-Finishing the **staging-release-validation** hardening pass (PR #9) and clearing the P0
-production blockers found in this audit before the first staging/production dispatch. The core
-platform (CRM, Calendar/Booking, AI Chat/RAG, Voice, Billing, Workflows) is functionally
-complete — this is a hardening/finishing phase, not a build-from-scratch phase.
+Phase 6 (**Production Inbox Integration**) is functionally complete pending PR #54 review: real
+email channel (Resend) live end-to-end, thread workflow UI, AI drafts (booking-aware, editable,
+regenerate-in-place), CRM contact auto-match, and a multi-channel adapter foundation (schema +
+registry) ready for a second channel whenever a provider is chosen. The rest of the core
+platform (CRM, Calendar/Booking, AI Chat/RAG, Voice, Billing, Workflows) remains functionally
+complete per the prior milestone.
 
 ## Completed features (verified, not just claimed)
 
@@ -40,20 +54,27 @@ Auth (Supabase, no Clerk), RBAC, Onboarding, Organizations (except self-serve de
 assistant, external calendar import sync), Voice AI (Vapi), AI Chat + RAG (Milestone 3
 hardening — upload→extract→chunk→embed→retrieve→cite→moderate→track-cost), Stripe billing,
 Workflows (trigger coverage partially unverified), Notifications, Audit logs, Analytics,
-Superadmin, i18n infrastructure (488/488/488 key parity). Full detail: `FEATURE-INVENTORY.md`.
+Superadmin, i18n infrastructure (488/488/488 key parity), Business DNA (settings UI, AI
+extraction, AI chat + Voice context, onboarding nudge), Inbox (email channel, thread workflow,
+booking-aware AI drafts, CRM contact match, multi-channel adapter foundation). Full detail:
+`FEATURE-INVENTORY.md` (Inbox rows updated 2026-08-12; other post-2026-07-23 features not yet
+reflected there).
 
 ## Active work
 
-PR #9 — staging release validation. CI last passed 2026-07-20 (run `29712079180`), but **the
-blocking dependency-audit check would fail if re-run today** (new CVEs in `next`/`postcss`/
-`sharp`/`next-intl`) — this is the first thing to fix. See `CI-PRODUCTION-READINESS.md` and
-`CODEX-HANDOFF.md`.
+PR #54 — Inbox multi-channel adapter registry foundation (Phase 6 Workstream D), open and
+CI-green as of 2026-08-12, awaiting review/merge authorization. No other PRs open.
 
 ## Known blockers
 
+Unverified as of 2026-08-12 — re-check `SECURITY-AUDIT.md` and re-run the dependency audit
+before trusting this list; it is carried over from the 2026-07-23 snapshot and may be stale:
+
 1. Dependency CVEs fail the blocking CI gate (High) — `SECURITY-AUDIT.md` H1.
 2. Calendar webhook has no signature verification (Medium).
-3. No CSP header despite a comment claiming one exists (Medium).
+3. No CSP header despite a comment claiming one exists (Medium) — **note:** PR #43
+   (`fix/csp-security-headers`, merged 2026-08-11) implemented a nonce-based CSP; this blocker
+   is likely resolved but not re-verified in this addendum.
 4. Four file/URL-ingestion endpoints have no rate limiting (Medium).
 
 None are cross-tenant data exposure, auth bypass, or injection vulnerabilities.
@@ -106,9 +127,13 @@ i18n coverage gaps, or the RLS-bypass nuance. Prefer this documentation set.
 
 ## Exact next task
 
-**P0.1 from `ROADMAP.md`**: fix the failing dependency audit (`npm audit fix` for
-`next`/`postcss`/`sharp`). See `CODEX-HANDOFF.md` for full acceptance criteria — this is a
-Codex implementation task, not a Claude task, unless explicitly asked to do it directly.
+As of 2026-08-12: get PR #54 reviewed and merged (owner action), then decide whether to pick up
+a real second Inbox channel (SMS/WhatsApp/web chat) or return to the `ROADMAP.md`/
+`CODEX-HANDOFF.md` P0 items below, which have not been re-verified since 2026-07-23:
+
+**P0.1 from `ROADMAP.md`** (unverified currency): fix the failing dependency audit (`npm audit
+fix` for `next`/`postcss`/`sharp`). See `CODEX-HANDOFF.md` for full acceptance criteria — this
+is a Codex implementation task, not a Claude task, unless explicitly asked to do it directly.
 
 ## Commands safe to run (read-only or local-only, no approval needed)
 

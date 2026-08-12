@@ -3,7 +3,8 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { audit } from "./audit";
-import { EmailChannelError, getEmailChannelAdapter } from "@/server/channels/email";
+import { EmailChannelError } from "@/server/channels/email";
+import { getChannelAdapter } from "@/server/channels/registry";
 import type { TenantContext } from "@/server/auth/session";
 import type {
   AssignThreadInput,
@@ -121,8 +122,12 @@ async function requireTenantMessage(ctx: TenantContext, messageId: string) {
   return message;
 }
 
-/** Reply-to-sender: the most recent inbound message's `fromAddress`. */
-async function findEmailRecipient(threadId: string): Promise<string | null> {
+/**
+ * Reply-to-sender: the most recent inbound message's `fromAddress`.
+ * Channel-agnostic — works for an email address, phone number, or chat
+ * session id alike.
+ */
+async function findLastInboundFromAddress(threadId: string): Promise<string | null> {
   const lastInbound = await unscopedPrisma.inboxMessage.findFirst({
     where: { threadId, direction: "INBOUND", fromAddress: { not: null } },
     orderBy: { createdAt: "desc" },
@@ -429,11 +434,12 @@ export async function editDraftMessage(ctx: TenantContext, messageId: string, bo
 }
 
 /**
- * Marks a message sent, dispatching it through the channel adapter first.
- * Other channels (SMS, WhatsApp, web chat) have no adapter yet — those
- * threads are marked sent without dispatch until a provider is chosen for
- * them. A human-authored reply may be sent directly; an AI-generated draft
- * must go through `approveMessage` first.
+ * Marks a message sent, dispatching it through the thread channel's adapter
+ * first (`getChannelAdapter`). Channels with no adapter registered yet (SMS,
+ * WhatsApp, web chat) return `null` — those threads are marked sent without
+ * dispatch until a provider is wired up for them. A human-authored reply may
+ * be sent directly; an AI-generated draft must go through `approveMessage`
+ * first.
  */
 export async function sendMessage(ctx: TenantContext, messageId: string) {
   const message = await requireTenantMessage(ctx, messageId);
@@ -465,8 +471,9 @@ export async function sendMessage(ctx: TenantContext, messageId: string) {
   }
 
   let externalId: string | null = null;
-  if (message.thread.channel === "EMAIL") {
-    const to = message.toAddress ?? (await findEmailRecipient(message.threadId));
+  const adapter = getChannelAdapter(message.thread.channel);
+  if (adapter) {
+    const to = message.toAddress ?? (await findLastInboundFromAddress(message.threadId));
     if (!to) {
       await unscopedPrisma.inboxMessage.update({
         where: { id: message.id },
@@ -480,11 +487,11 @@ export async function sendMessage(ctx: TenantContext, messageId: string) {
           ? message.thread.subject
           : `Re: ${message.thread.subject}`
         : "Re: your message";
-      const sent = await getEmailChannelAdapter().send({
+      const sent = await adapter.send({
         to,
         subject,
-        text: message.body,
-        inReplyToExternalId: message.externalId ?? undefined,
+        body: message.body,
+        replyToExternalId: message.externalId ?? undefined,
       });
       externalId = sent.externalId;
     } catch (err) {
