@@ -5,18 +5,15 @@ import { getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";
 import { getThread, listAssignableMembers, markThreadRead } from "@/server/services/inbox";
-import {
-  approveMessageAction,
-  generateDraftAction,
-  markThreadUnreadAction,
-  sendMessageAction,
-} from "@/actions/inbox";
+import { approveMessageAction, markThreadUnreadAction, sendMessageAction } from "@/actions/inbox";
 import { Link } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ReplyForm } from "./reply-form";
 import { AssignmentControls } from "./assignment-controls";
 import { StatusControls } from "./status-controls";
+import { GenerateDraftButton } from "./generate-draft-button";
+import { DraftMessageBody } from "./draft-message-body";
 
 const MESSAGE_BADGE_KEY: Record<string, string> = {
   DRAFT: "draftBadge",
@@ -49,6 +46,9 @@ export default async function InboxThreadPage({
     ? [thread.contact.firstName, thread.contact.lastName].filter(Boolean).join(" ")
     : null;
   const assigneeName = thread.assignedTo?.fullName ?? null;
+  const hasUnsentDraft = thread.messages.some(
+    (m) => m.direction === "OUTBOUND" && m.aiGenerated && m.status !== "SENT",
+  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -68,9 +68,24 @@ export default async function InboxThreadPage({
         </div>
         <p className="text-sm text-muted-foreground">
           {t(`channel.${thread.channel}`)}
-          {contactName ? ` · ${contactName}` : ""}
-          {thread.contact?.email ? ` · ${thread.contact.email}` : ""}
+          {thread.contact ? (
+            <>
+              {" · "}
+              <Link href={`/crm/contacts/${thread.contact.id}`} className="hover:underline">
+                {contactName || thread.contact.email}
+              </Link>
+              {contactName && thread.contact.email ? ` · ${thread.contact.email}` : ""}
+            </>
+          ) : null}
         </p>
+        {thread.upcomingBooking ? (
+          <p className="text-sm text-muted-foreground">
+            {t("detail.upcomingBooking", {
+              type: thread.upcomingBooking.typeName,
+              date: new Date(thread.upcomingBooking.startsAt).toLocaleString(),
+            })}
+          </p>
+        ) : null}
         {canWrite ? (
           <div className="flex flex-wrap items-center gap-4 pt-1">
             <StatusControls threadId={thread.id} status={thread.status} />
@@ -112,7 +127,11 @@ export default async function InboxThreadPage({
                 <div className="max-w-[85%] space-y-2">
                   <Card className={isInbound ? "" : "bg-primary/5"}>
                     <CardContent className="space-y-2 p-4">
-                      <p className="whitespace-pre-wrap text-sm">{message.body}</p>
+                      {canWrite && !isInbound && message.status !== "SENT" ? (
+                        <DraftMessageBody messageId={message.id} body={message.body} />
+                      ) : (
+                        <p className="whitespace-pre-wrap text-sm">{message.body}</p>
+                      )}
                       <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                         {message.aiGenerated ? (
                           <span className="rounded-full bg-secondary px-2 py-0.5 font-medium text-secondary-foreground">
@@ -157,11 +176,7 @@ export default async function InboxThreadPage({
 
       {canWrite ? (
         <div className="space-y-3 border-t pt-4">
-          <form action={generateDraftAction.bind(null, thread.id)}>
-            <Button type="submit" variant="outline">
-              {t("detail.generateDraft")}
-            </Button>
-          </form>
+          <GenerateDraftButton threadId={thread.id} hasUnsentDraft={hasUnsentDraft} />
           <ReplyForm threadId={thread.id} />
         </div>
       ) : null}

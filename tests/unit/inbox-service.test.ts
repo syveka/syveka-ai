@@ -54,6 +54,7 @@ import {
   assignThread,
   createDraftMessage,
   DuplicateInboundMessageError,
+  editDraftMessage,
   getThread,
   InboxError,
   listAssignableMembers,
@@ -63,6 +64,7 @@ import {
   recordInboundMessage,
   sendMessage,
   updateThreadStatus,
+  upsertAiDraftMessage,
 } from "@/server/services/inbox";
 
 function uniqueConstraintError(target: string) {
@@ -128,6 +130,12 @@ function createMockDb(orgId: string) {
     },
     contact: {
       findFirst: vi.fn(async (_args: QueryArgs) => null as { id: string } | null),
+    },
+    booking: {
+      findFirst: vi.fn(
+        async (_args: QueryArgs) =>
+          null as { startsAt: Date; bookingType: { name: string } } | null,
+      ),
     },
     organizationMember: {
       findFirst: vi.fn(async (_args: QueryArgs) => ({ id: "member-1" }) as { id: string } | null),
@@ -209,6 +217,37 @@ describe("inbox service", () => {
         expect.objectContaining({ where: { threadId: "org-a-t1" } }),
       );
       expect(result?.messages).toEqual([{ id: "m1" }]);
+    });
+
+    it("returns null upcomingBooking when the thread has no linked contact", async () => {
+      const result = await getThread(ctx("org-a"), "org-a-t1");
+      expect(db.booking.findFirst).not.toHaveBeenCalled();
+      expect(result?.upcomingBooking).toBeNull();
+    });
+
+    it("includes the contact's next confirmed upcoming booking for display", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(
+        threadRow("org-a-t1", "org-a", { contact: { email: "jane@example.com" } }),
+      );
+      db.booking.findFirst.mockResolvedValueOnce({
+        startsAt: new Date("2026-09-01T10:00:00.000Z"),
+        bookingType: { name: "Consultation" },
+      });
+
+      const result = await getThread(ctx("org-a"), "org-a-t1");
+
+      expect(db.booking.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            guestEmail: { equals: "jane@example.com", mode: "insensitive" },
+            status: "CONFIRMED",
+          }),
+        }),
+      );
+      expect(result?.upcomingBooking).toEqual({
+        typeName: "Consultation",
+        startsAt: new Date("2026-09-01T10:00:00.000Z"),
+      });
     });
   });
 
@@ -482,6 +521,111 @@ describe("inbox service", () => {
           }),
         }),
       );
+    });
+  });
+
+  describe("upsertAiDraftMessage", () => {
+    it("throws when the thread does not belong to the tenant", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(null);
+      await expect(upsertAiDraftMessage(ctx(), "missing", "Hi")).rejects.toBeInstanceOf(InboxError);
+    });
+
+    it("creates a new AI draft when none exists yet", async () => {
+      unscopedMock.inboxMessage.findFirst.mockResolvedValueOnce(null);
+      await upsertAiDraftMessage(ctx("org-a"), "org-a-t1", "Hello there");
+      expect(unscopedMock.inboxMessage.create).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({
+            direction: "OUTBOUND",
+            status: "DRAFT",
+            aiGenerated: true,
+            body: "Hello there",
+          }),
+        }),
+      );
+    });
+
+    it("only matches an unsent AI-generated draft to replace (excludes SENT messages)", async () => {
+      unscopedMock.inboxMessage.findFirst.mockResolvedValueOnce(null);
+      await upsertAiDraftMessage(ctx("org-a"), "org-a-t1", "Hello");
+      expect(unscopedMock.inboxMessage.findFirst).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: expect.objectContaining({
+            threadId: "org-a-t1",
+            direction: "OUTBOUND",
+            aiGenerated: true,
+            status: { not: "SENT" },
+          }),
+        }),
+      );
+    });
+
+    it("replaces an existing unsent AI draft in place, resetting status and clearing approval, instead of creating a duplicate", async () => {
+      unscopedMock.inboxMessage.findFirst.mockResolvedValueOnce({
+        id: "draft-1",
+        status: "APPROVED",
+        approvedAt: new Date(),
+        approvedById: "user-1",
+      });
+      await upsertAiDraftMessage(ctx("org-a"), "org-a-t1", "Updated text");
+      expect(unscopedMock.inboxMessage.update).toHaveBeenCalledWith({
+        where: { id: "draft-1" },
+        data: { body: "Updated text", status: "DRAFT", approvedAt: null, approvedById: null },
+      });
+      expect(unscopedMock.inboxMessage.create).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("editDraftMessage", () => {
+    it("rejects editing a message belonging to a different organization", async () => {
+      unscopedMock.inboxMessage.findFirst.mockResolvedValueOnce({
+        id: "msg-1",
+        direction: "OUTBOUND",
+        status: "DRAFT",
+        thread: { id: "t1", organizationId: "org-b" },
+      });
+      await expect(editDraftMessage(ctx("org-a"), "msg-1", "New body")).rejects.toBeInstanceOf(
+        InboxError,
+      );
+      expect(unscopedMock.inboxMessage.update).not.toHaveBeenCalled();
+    });
+
+    it("rejects editing an INBOUND message", async () => {
+      unscopedMock.inboxMessage.findFirst.mockResolvedValueOnce({
+        id: "msg-1",
+        direction: "INBOUND",
+        status: "RECEIVED",
+        thread: { id: "t1", organizationId: "org-a" },
+      });
+      await expect(editDraftMessage(ctx("org-a"), "msg-1", "New body")).rejects.toMatchObject({
+        code: "not_outbound",
+      });
+    });
+
+    it("rejects editing an already-sent message", async () => {
+      unscopedMock.inboxMessage.findFirst.mockResolvedValueOnce({
+        id: "msg-1",
+        direction: "OUTBOUND",
+        status: "SENT",
+        thread: { id: "t1", organizationId: "org-a" },
+      });
+      await expect(editDraftMessage(ctx("org-a"), "msg-1", "New body")).rejects.toMatchObject({
+        code: "already_sent",
+      });
+    });
+
+    it("resets status to DRAFT and clears prior approval when an approved draft is edited", async () => {
+      unscopedMock.inboxMessage.findFirst.mockResolvedValueOnce({
+        id: "msg-1",
+        direction: "OUTBOUND",
+        status: "APPROVED",
+        thread: { id: "t1", organizationId: "org-a" },
+      });
+      await editDraftMessage(ctx("org-a"), "msg-1", "New body");
+      expect(unscopedMock.inboxMessage.update).toHaveBeenCalledWith({
+        where: { id: "msg-1" },
+        data: { body: "New body", status: "DRAFT", approvedAt: null, approvedById: null },
+      });
     });
   });
 

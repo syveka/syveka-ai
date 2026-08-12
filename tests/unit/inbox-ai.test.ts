@@ -20,12 +20,12 @@ const mocks = vi.hoisted(() => {
     organizationFindUniqueOrThrow: vi.fn(async () => ({ name: "Acme" })),
     streamClaude: vi.fn(),
     isFlaggedByModeration: vi.fn(async () => false),
-    createDraftMessage: vi.fn(
-      async (_ctx: unknown, input: { threadId: string; body: string; aiGenerated: boolean }) => ({
-        id: "draft-1",
-        ...input,
-      }),
-    ),
+    upsertAiDraftMessage: vi.fn(async (_ctx: unknown, threadId: string, body: string) => ({
+      id: "draft-1",
+      threadId,
+      body,
+      aiGenerated: true,
+    })),
     FakeInboxError,
   };
 });
@@ -42,7 +42,7 @@ vi.mock("@/server/integrations/openai", () => ({
   isFlaggedByModeration: mocks.isFlaggedByModeration,
 }));
 vi.mock("@/server/services/inbox", () => ({
-  createDraftMessage: mocks.createDraftMessage,
+  upsertAiDraftMessage: mocks.upsertAiDraftMessage,
   InboxError: mocks.FakeInboxError,
 }));
 
@@ -114,13 +114,10 @@ describe("generateEmailDraft", () => {
 
   it("persists the generated text as an AI-generated draft", async () => {
     await generateEmailDraft(ctx(), "thread-1");
-    expect(mocks.createDraftMessage).toHaveBeenCalledWith(
+    expect(mocks.upsertAiDraftMessage).toHaveBeenCalledWith(
       expect.anything(),
-      expect.objectContaining({
-        threadId: "thread-1",
-        body: "Thanks for reaching out — happy to help!",
-        aiGenerated: true,
-      }),
+      "thread-1",
+      "Thanks for reaching out — happy to help!",
     );
   });
 
@@ -133,7 +130,7 @@ describe("generateEmailDraft", () => {
     await expect(generateEmailDraft(ctx(), "thread-1")).rejects.toMatchObject({
       code: "draft_generation_failed",
     });
-    expect(mocks.createDraftMessage).not.toHaveBeenCalled();
+    expect(mocks.upsertAiDraftMessage).not.toHaveBeenCalled();
   });
 
   it("rejects when the drafted content is flagged by moderation", async () => {
@@ -141,7 +138,7 @@ describe("generateEmailDraft", () => {
     await expect(generateEmailDraft(ctx(), "thread-1")).rejects.toMatchObject({
       code: "draft_generation_failed",
     });
-    expect(mocks.createDraftMessage).not.toHaveBeenCalled();
+    expect(mocks.upsertAiDraftMessage).not.toHaveBeenCalled();
   });
 
   it("includes an upcoming booking when the thread's contact has a matching confirmed booking", async () => {

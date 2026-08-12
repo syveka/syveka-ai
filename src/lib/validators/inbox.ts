@@ -58,6 +58,11 @@ export const createDraftMessageSchema = z.object({
 });
 export type CreateDraftMessageInput = z.infer<typeof createDraftMessageSchema>;
 
+export const editDraftMessageSchema = z.object({
+  body: z.string().trim().min(1).max(10_000),
+});
+export type EditDraftMessageInput = z.infer<typeof editDraftMessageSchema>;
+
 export const threadListQuerySchema = z.object({
   status: z.enum(INBOX_THREAD_STATUSES).optional(),
   channel: z.enum(INBOX_CHANNELS).optional(),
