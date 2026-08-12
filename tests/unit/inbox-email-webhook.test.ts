@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => {
         duplicate: false,
       }),
     ),
+    resolveOrgIdByMailboxAddress: vi.fn(async (): Promise<string | null> => null),
     limit: vi.fn(async () => ({
       success: true,
       reset: Date.now() + 60_000,
@@ -32,6 +33,9 @@ const mocks = vi.hoisted(() => {
 vi.mock("@/server/services/inbox", () => ({
   recordInboundMessage: mocks.recordInboundMessage,
   DuplicateInboundMessageError: mocks.DuplicateInboundMessageError,
+}));
+vi.mock("@/server/services/inbox-mailbox", () => ({
+  resolveOrgIdByMailboxAddress: mocks.resolveOrgIdByMailboxAddress,
 }));
 vi.mock("@/server/integrations/redis", () => ({
   rateLimiters: { inboxEmailWebhook: { limit: mocks.limit } },
@@ -54,9 +58,8 @@ function request(
 }
 
 const validPayload = {
-  organizationId: ORG_ID,
+  toAddress: "acme-oy@inbox.syveka.ai",
   fromAddress: "customer@example.com",
-  toAddress: "inbox@syveka.ai",
   subject: "Question about pricing",
   body: "Hi, how much does this cost?",
   externalId: "ext-1",
@@ -68,6 +71,7 @@ describe("POST /api/v1/webhooks/inbox-email", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.INBOX_EMAIL_WEBHOOK_SECRET = SECRET;
+    mocks.resolveOrgIdByMailboxAddress.mockResolvedValue(ORG_ID);
   });
 
   afterAll(() => {
@@ -96,12 +100,30 @@ describe("POST /api/v1/webhooks/inbox-email", () => {
   });
 
   it("rejects an invalid payload", async () => {
-    const response = await POST(request({ organizationId: "not-a-uuid" }));
+    const response = await POST(request({ fromAddress: "a@b.com" }));
     expect(response.status).toBe(400);
     expect(mocks.recordInboundMessage).not.toHaveBeenCalled();
   });
 
-  it("rate-limits per organization", async () => {
+  it("ignores any organizationId the caller tries to smuggle in the body — org is always resolved server-side", async () => {
+    await POST(
+      request({
+        ...validPayload,
+        organizationId: "99999999-9999-4999-8999-999999999999",
+      }),
+    );
+    expect(mocks.recordInboundMessage).toHaveBeenCalledWith(ORG_ID, expect.anything());
+  });
+
+  it("fails closed with a generic 401 (not 404) when no mailbox matches the recipient address", async () => {
+    mocks.resolveOrgIdByMailboxAddress.mockResolvedValueOnce(null);
+    const response = await POST(request(validPayload));
+    expect(response.status).toBe(401);
+    await expect(response.json()).resolves.toEqual({ error: { code: "unauthorized" } });
+    expect(mocks.recordInboundMessage).not.toHaveBeenCalled();
+  });
+
+  it("rate-limits per organization, resolved from the mailbox not the payload", async () => {
     mocks.limit.mockResolvedValueOnce({
       success: false,
       reset: Date.now(),
@@ -110,14 +132,18 @@ describe("POST /api/v1/webhooks/inbox-email", () => {
     });
     const response = await POST(request(validPayload));
     expect(response.status).toBe(429);
+    expect(mocks.limit).toHaveBeenCalledWith(ORG_ID);
     expect(mocks.recordInboundMessage).not.toHaveBeenCalled();
   });
 
-  it("accepts a valid signed payload and records the inbound message", async () => {
+  it("accepts a valid signed payload and records the inbound message under the mailbox-resolved org", async () => {
     const response = await POST(request(validPayload));
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ ok: true, duplicate: false });
-    expect(mocks.limit).toHaveBeenCalledWith(ORG_ID);
+    expect(mocks.resolveOrgIdByMailboxAddress).toHaveBeenCalledWith(
+      "acme-oy@inbox.syveka.ai",
+      "EMAIL",
+    );
     expect(mocks.recordInboundMessage).toHaveBeenCalledWith(
       ORG_ID,
       expect.objectContaining({

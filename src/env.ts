@@ -59,6 +59,14 @@ const serverSchema = z.object({
   // environments; the webhook secret gates the inbound-email endpoint).
   INBOX_EMAIL_MOCK_PROVIDER: z.enum(["0", "1"]).optional(),
   INBOX_EMAIL_WEBHOOK_SECRET: z.string().min(16).optional(),
+  // Domain organization mailbox addresses are provisioned under
+  // ({slug}@this-domain) — requires real DNS/MX configuration to receive
+  // mail; see docs/inbox-architecture.md.
+  INBOX_EMAIL_DOMAIN: z.string().optional(),
+  // Resend's inbound-email webhook signing secret (svix), from the Resend
+  // dashboard's Webhooks page for the endpoint below — distinct from
+  // INBOX_EMAIL_WEBHOOK_SECRET, which gates the provider-agnostic endpoint.
+  RESEND_INBOUND_WEBHOOK_SECRET: z.string().optional(),
 });
 
 function providerEnvError(label: string, invalidFields: string[]): Error {
