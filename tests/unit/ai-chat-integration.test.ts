@@ -33,9 +33,6 @@ vi.mock("@/server/db/tenant", () => ({
       findFirst: vi.fn(async () => ({ id: "33333333-3333-4333-8333-333333333333", model: null })),
       create: vi.fn(),
     },
-    businessDNA: {
-      findFirst: vi.fn(async () => null),
-    },
   })),
   unscopedPrisma: {
     message: { findMany: mocks.messageFindMany, create: mocks.messageCreate },
@@ -47,6 +44,9 @@ vi.mock("@/server/ai/router", () => ({
   routeModel: vi.fn(() => ({ model: "claude-sonnet-4-5", maxTokens: 4096 })),
 }));
 vi.mock("@/server/ai/prompts/system", () => ({ buildSystemPrompt: vi.fn(() => "system") }));
+vi.mock("@/server/business-dna/context", () => ({
+  getBusinessDnaContext: vi.fn(async () => null),
+}));
 vi.mock("@/server/ai/rag", () => ({
   retrieveChunks: vi.fn(async () => []),
   extractValidCitations: vi.fn(() => []),

@@ -25,6 +25,7 @@ export async function POST(request: Request): Promise<Response> {
     { streamClaude },
     { routeModel },
     { buildSystemPrompt },
+    { getBusinessDnaContext },
     { retrieveChunks, extractValidCitations },
     { anthropicToolsFor, executeTool },
     { assertWithinLimit, recordUsage, getMonthUsage, EntitlementError },
@@ -43,6 +44,7 @@ export async function POST(request: Request): Promise<Response> {
     import("@/server/integrations/anthropic"),
     import("@/server/ai/router"),
     import("@/server/ai/prompts/system"),
+    import("@/server/business-dna/context"),
     import("@/server/ai/rag"),
     import("@/server/ai/tools"),
     import("@/server/services/billing/entitlements"),
@@ -152,7 +154,7 @@ export async function POST(request: Request): Promise<Response> {
       where: { id: ctx.orgId },
       select: { name: true, settings: true },
     }),
-    db.businessDNA.findFirst({}),
+    getBusinessDnaContext(ctx.orgId),
   ]);
   const settings = (org.settings ?? {}) as { industry?: string; aiInstructions?: string };
 

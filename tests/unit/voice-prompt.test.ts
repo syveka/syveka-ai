@@ -27,6 +27,7 @@ describe("buildVoiceSystemPrompt", () => {
         communicationStyle: null,
         openingHours: null,
         policies: "No refunds after pickup",
+        pricingNotes: null,
         targetCustomer: null,
         keyFacts: ["Open since 1995"],
       },
@@ -57,13 +58,14 @@ describe("buildVoiceSystemPrompt", () => {
         communicationStyle: null,
         openingHours: null,
         policies: null,
+        pricingNotes: null,
         targetCustomer: null,
         keyFacts: [],
       },
       assistantSystemPrompt: "Prompt.",
       transferNumber: null,
     });
-    expect(result).toContain("Business name: Acme Bakery");
+    expect(result).toContain("Display name: Acme Bakery");
     expect(result).not.toContain("Industry:");
     expect(result).not.toContain("Policies:");
     expect(result).not.toContain("Key facts:");
@@ -81,6 +83,7 @@ describe("buildVoiceSystemPrompt", () => {
         communicationStyle: null,
         openingHours: null,
         policies: null,
+        pricingNotes: null,
         targetCustomer: null,
         keyFacts: [],
       },
@@ -107,15 +110,16 @@ describe("buildVoiceSystemPrompt", () => {
           notADay: { closed: false, open: "10:00", close: "12:00" },
         },
         policies: null,
+        pricingNotes: null,
         targetCustomer: null,
         keyFacts: [],
       },
       assistantSystemPrompt: "Prompt.",
       transferNumber: null,
     });
-    expect(result).toContain("monday: 09:00-17:00");
-    expect(result).toContain("tuesday: closed");
-    expect(result).not.toContain("wednesday");
+    expect(result).toContain("Monday: 09:00–17:00");
+    expect(result).toContain("Tuesday: closed");
+    expect(result).not.toContain("Wednesday:");
     expect(result).not.toContain("notADay");
   });
 
@@ -131,6 +135,7 @@ describe("buildVoiceSystemPrompt", () => {
         communicationStyle: null,
         openingHours: "not an object",
         policies: null,
+        pricingNotes: null,
         targetCustomer: null,
         keyFacts: [],
       },

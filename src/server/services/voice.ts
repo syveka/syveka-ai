@@ -8,6 +8,7 @@ import {
 } from "@/server/integrations/vapi";
 import { TOOL_REGISTRY, zodToJsonSchema } from "@/server/ai/tools";
 import { buildVoiceSystemPrompt } from "@/server/ai/prompts/voice";
+import { getBusinessDnaContext } from "@/server/business-dna/context";
 import { getEntitlements } from "./billing/entitlements";
 import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
@@ -122,20 +123,7 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
 
   // Business DNA is optional — the assistant degrades gracefully (falls back
   // to just the human-authored prompt) when the org hasn't filled it in yet.
-  const businessDna = await tenantDb(orgId).businessDNA.findFirst({
-    select: {
-      displayName: true,
-      industry: true,
-      productsServices: true,
-      supportedLocales: true,
-      brandTone: true,
-      communicationStyle: true,
-      openingHours: true,
-      policies: true,
-      targetCustomer: true,
-      keyFacts: true,
-    },
-  });
+  const businessDna = await getBusinessDnaContext(orgId);
 
   const { NEXT_PUBLIC_APP_URL, VAPI_WEBHOOK_SECRET } = getVapiEnv();
   const config: VapiAssistantConfig = {
