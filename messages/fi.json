@@ -658,7 +658,11 @@
       "edit": "Muokkaa",
       "saveEdit": "Tallenna muutokset",
       "cancel": "Peruuta",
-      "upcomingBooking": "Tuleva varaus: {type}, {date}"
+      "upcomingBooking": "Tuleva varaus: {type}, {date}",
+      "createContact": "Luo asiakas",
+      "createContactFirstName": "Etunimi",
+      "createContactLastName": "Sukunimi",
+      "createContactSuccess": "Asiakas luotu ja linkitetty."
     }
   },
   "businessDna": {

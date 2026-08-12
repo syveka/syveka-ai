@@ -658,7 +658,11 @@
       "edit": "Edit",
       "saveEdit": "Save changes",
       "cancel": "Cancel",
-      "upcomingBooking": "Upcoming booking: {type} on {date}"
+      "upcomingBooking": "Upcoming booking: {type} on {date}",
+      "createContact": "Create contact",
+      "createContactFirstName": "First name",
+      "createContactLastName": "Last name",
+      "createContactSuccess": "Contact created and linked."
     }
   },
   "businessDna": {

@@ -80,3 +80,9 @@ export const assignThreadSchema = z.object({
   assignedToId: optionalUuid,
 });
 export type AssignThreadInput = z.infer<typeof assignThreadSchema>;
+
+export const createContactFromThreadSchema = z.object({
+  firstName: z.string().trim().min(1).max(100),
+  lastName: optionalTrimmed(100),
+});
+export type CreateContactFromThreadInput = z.infer<typeof createContactFromThreadSchema>;

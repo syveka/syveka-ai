@@ -3,11 +3,13 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { audit } from "./audit";
+import { createContact } from "./contacts";
 import { EmailChannelError } from "@/server/channels/email";
 import { getChannelAdapter } from "@/server/channels/registry";
 import type { TenantContext } from "@/server/auth/session";
 import type {
   AssignThreadInput,
+  CreateContactFromThreadInput,
   CreateDraftMessageInput,
   RecordInboundMessageInput,
   ThreadListQuery,
@@ -23,7 +25,9 @@ export class InboxError extends Error {
       | "requires_approval"
       | "already_sent"
       | "not_org_member"
-      | "draft_generation_failed",
+      | "draft_generation_failed"
+      | "already_linked"
+      | "no_sender_address",
     message: string,
   ) {
     super(message);
@@ -609,4 +613,58 @@ export async function assignThread(ctx: TenantContext, threadId: string, input: 
   });
 
   return updated;
+}
+
+/**
+ * Explicit operator action for the case the read-only exact-email auto-match
+ * (`findContactByEmail`, run at inbound-message time) found nothing: creates
+ * a new CRM contact from the thread's sender address and links it. Never
+ * runs automatically — only ever in response to a deliberate operator
+ * click, so a spam or unknown sender never silently becomes a CRM contact.
+ * Reuses `createContact` (entitlement check, audit log) rather than a
+ * parallel contact-creation path.
+ */
+export async function createContactFromThread(
+  ctx: TenantContext,
+  threadId: string,
+  input: CreateContactFromThreadInput,
+) {
+  const db = tenantDb(ctx.orgId);
+  const thread = await db.inboxThread.findFirst({
+    where: { id: threadId, deletedAt: null },
+    select: { id: true, contactId: true },
+  });
+  if (!thread) {
+    throw new InboxError("thread_not_found", "Thread does not belong to this organization");
+  }
+  if (thread.contactId) {
+    throw new InboxError("already_linked", "This thread is already linked to a contact");
+  }
+
+  const email = await findLastInboundFromAddress(threadId);
+  if (!email) {
+    throw new InboxError("no_sender_address", "This thread has no inbound sender address to link");
+  }
+
+  const contact = await createContact(ctx, {
+    firstName: input.firstName,
+    lastName: input.lastName,
+    email,
+    status: "LEAD",
+    gdprConsent: false,
+  });
+
+  const updated = await db.inboxThread.update({
+    where: { id: thread.id },
+    data: { contactId: contact.id },
+  });
+
+  await audit(ctx, {
+    action: "inbox.thread.contact_linked",
+    resourceType: "inbox_thread",
+    resourceId: thread.id,
+    after: { contactId: contact.id, source: "operator_created" },
+  });
+
+  return { thread: updated, contact };
 }
