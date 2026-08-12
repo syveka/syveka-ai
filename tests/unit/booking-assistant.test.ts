@@ -1,21 +1,27 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@/server/auth/session";
+import type * as BusinessDnaContextModule from "@/server/business-dna/context";
 
 type AnthropicCreateArgs = {
   system: string;
   messages: Array<{ role: string; content: string }>;
 };
 
-const { tenantDbMock, anthropicCreateMock } = vi.hoisted(() => ({
+const { tenantDbMock, anthropicCreateMock, getBusinessDnaContextMock } = vi.hoisted(() => ({
   tenantDbMock: vi.fn(),
   anthropicCreateMock: vi.fn(async (_args: AnthropicCreateArgs) => ({
     content: [{ type: "text", text: "How about 10:00 or 14:00?" }],
   })),
+  getBusinessDnaContextMock: vi.fn(async () => null as Record<string, unknown> | null),
 }));
 
 vi.mock("@/server/db/tenant", () => ({ tenantDb: tenantDbMock }));
 vi.mock("@/server/integrations/anthropic", () => ({
   anthropic: { messages: { create: anthropicCreateMock } },
+}));
+vi.mock("@/server/business-dna/context", async (importOriginal) => ({
+  ...(await importOriginal<typeof BusinessDnaContextModule>()),
+  getBusinessDnaContext: getBusinessDnaContextMock,
 }));
 
 import { assistScheduling, generateMeetingSummary } from "@/server/services/booking-assistant";
@@ -72,6 +78,40 @@ describe("assistScheduling", () => {
     expect(result.aiUsed).toBe(false);
     expect(result.reply).toBe("");
     expect(result.suggestedSlots.length).toBeGreaterThan(0);
+  });
+
+  it("grounds the reply in the org's real Business DNA (brand tone, policies) when configured", async () => {
+    tenantDbMock.mockReturnValue(baseDb());
+    getBusinessDnaContextMock.mockResolvedValueOnce({
+      displayName: "Acme Spa",
+      industry: null,
+      productsServices: null,
+      supportedLocales: [],
+      brandTone: "Warm and relaxed",
+      communicationStyle: null,
+      openingHours: null,
+      policies: "24h cancellation notice required",
+      pricingNotes: null,
+      targetCustomer: null,
+      keyFacts: [],
+    });
+
+    await assistScheduling(ctx(), "book 30 min");
+
+    expect(getBusinessDnaContextMock).toHaveBeenCalledWith("org-a");
+    const call = anthropicCreateMock.mock.calls[0]![0];
+    expect(call.system).toContain("<business_profile>");
+    expect(call.system).toContain("24h cancellation notice required");
+  });
+
+  it("omits the business profile section entirely when the org has no Business DNA configured", async () => {
+    tenantDbMock.mockReturnValue(baseDb());
+    getBusinessDnaContextMock.mockResolvedValueOnce(null);
+
+    await assistScheduling(ctx(), "book 30 min");
+
+    const call = anthropicCreateMock.mock.calls[0]![0];
+    expect(call.system).not.toContain("<business_profile>");
   });
 
   it("returns no slots and skips the model call entirely when there is no availability", async () => {

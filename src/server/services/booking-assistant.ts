@@ -6,6 +6,7 @@ import { tenantDb } from "@/server/db/tenant";
 import { computeAvailableSlots, type WeeklyRule } from "@/server/calendar/slots";
 import { DEFAULT_WEEKLY_RULES } from "./booking";
 import { neutralizeTagBreakout } from "@/server/ai/prompts/untrusted";
+import { buildBusinessDnaPromptBlock, getBusinessDnaContext } from "@/server/business-dna/context";
 import type { TenantContext } from "@/server/auth/session";
 
 /**
@@ -158,7 +159,11 @@ export async function assistScheduling(
   if (slots.length === 0) return fallback;
 
   try {
-    const crmContext = await buildCrmContext(ctx, entity);
+    const [crmContext, businessDna] = await Promise.all([
+      buildCrmContext(ctx, entity),
+      getBusinessDnaContext(ctx.orgId),
+    ]);
+    const businessDnaBlock = buildBusinessDnaPromptBlock(businessDna);
     const route = routeModel("utility");
     const response = await anthropic.messages.create({
       model: route.model,
@@ -167,7 +172,8 @@ export async function assistScheduling(
         "You are Syveka's scheduling assistant. You are given a user's scheduling request, " +
         "their real free slots (authoritative — never invent times), and optional CRM context. " +
         "Reply briefly in the user's language: recommend 2-3 of the given slots that best match " +
-        "the request. Refer to slots by their ISO start time. Do not fabricate availability.",
+        "the request. Refer to slots by their ISO start time. Do not fabricate availability." +
+        (businessDnaBlock ? `\n\n${businessDnaBlock}` : ""),
       messages: [
         {
           role: "user",

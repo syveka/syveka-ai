@@ -1,13 +1,16 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@/server/auth/session";
+import type * as BusinessDnaContextModule from "@/server/business-dna/context";
 
 const { tenantDbMock, auditMock, emitWorkflowEventMock, anthropicCreateMock } = vi.hoisted(() => ({
   tenantDbMock: vi.fn(),
   auditMock: vi.fn(async () => undefined),
   emitWorkflowEventMock: vi.fn(async () => undefined),
-  anthropicCreateMock: vi.fn(async () => ({
-    content: [{ type: "text", text: "Deal looks healthy.\nNext: send the proposal." }],
-  })),
+  anthropicCreateMock: vi.fn(
+    async (_args: { system: string; messages: Array<{ role: string; content: string }> }) => ({
+      content: [{ type: "text", text: "Deal looks healthy.\nNext: send the proposal." }],
+    }),
+  ),
 }));
 
 vi.mock("@/server/db/tenant", () => ({
@@ -30,6 +33,14 @@ vi.mock("@/server/services/billing/entitlements", () => ({
 
 vi.mock("@/server/integrations/anthropic", () => ({
   anthropic: { messages: { create: anthropicCreateMock } },
+}));
+
+const { getBusinessDnaContextMock } = vi.hoisted(() => ({
+  getBusinessDnaContextMock: vi.fn(async () => null as Record<string, unknown> | null),
+}));
+vi.mock("@/server/business-dna/context", async (importOriginal) => ({
+  ...(await importOriginal<typeof BusinessDnaContextModule>()),
+  getBusinessDnaContext: getBusinessDnaContextMock,
 }));
 
 import {
@@ -524,6 +535,51 @@ describe("deals service", () => {
         expect.anything(),
         expect.objectContaining({ action: "deal.ai_insights" }),
       );
+    });
+
+    it("grounds the sales coach in the org's real Business DNA when configured, and instructs it never to invent price/policy exceptions", async () => {
+      db.deal.findFirst.mockResolvedValueOnce(
+        dealRow("org-a-d1", "org-a", {
+          pipeline: { id: "pipeline-1", stages: [STAGE_OPEN, STAGE_WON] },
+        }),
+      );
+      getBusinessDnaContextMock.mockResolvedValueOnce({
+        displayName: "Acme Oy",
+        industry: null,
+        productsServices: null,
+        supportedLocales: [],
+        brandTone: null,
+        communicationStyle: null,
+        openingHours: null,
+        policies: "No discounts over 10% without manager approval",
+        pricingNotes: null,
+        targetCustomer: null,
+        keyFacts: [],
+      });
+
+      await generateDealInsights(ctx("org-a"), "org-a-d1");
+
+      expect(getBusinessDnaContextMock).toHaveBeenCalledWith("org-a");
+      const system = anthropicCreateMock.mock.calls[0]![0].system;
+      expect(system).toContain("<business_profile>");
+      expect(system).toContain("No discounts over 10% without manager approval");
+      expect(system).toContain(
+        "Never recommend a specific price, discount, or policy exception that isn't supported",
+      );
+    });
+
+    it("omits the business profile section entirely when the org has no Business DNA configured", async () => {
+      db.deal.findFirst.mockResolvedValueOnce(
+        dealRow("org-a-d1", "org-a", {
+          pipeline: { id: "pipeline-1", stages: [STAGE_OPEN, STAGE_WON] },
+        }),
+      );
+      getBusinessDnaContextMock.mockResolvedValueOnce(null);
+
+      await generateDealInsights(ctx("org-a"), "org-a-d1");
+
+      const system = anthropicCreateMock.mock.calls[0]![0].system;
+      expect(system).not.toContain("<business_profile>");
     });
   });
 

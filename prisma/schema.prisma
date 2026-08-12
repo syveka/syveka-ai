@@ -168,15 +168,16 @@ enum InviteStatus {
 // ───────────────────────── BUSINESS DNA ─────────────────────────
 
 /**
- * Business DNA: the operational business context AI Chat, Voice, and Inbox
- * draft generation read (via the shared `getBusinessDnaContext`/
- * `buildBusinessDnaPromptBlock` helpers in `src/server/business-dna/
- * context.ts` — every consumer must go through those, not a direct query,
- * so field coverage never drifts between channels) to act on the
- * organization's behalf. Booking and CRM do not consume it yet. One profile
- * per organization (MVP scope only — see docs/DEVELOPMENT.md before
- * widening this model). `sourceUrl`/`extractedAt` record provenance of the
- * last AI-assisted extraction; raw scraped content is intentionally never
+ * Business DNA: the operational business context AI Chat, Voice, Inbox draft
+ * generation, the Booking assistant (assistScheduling), and the CRM deal
+ * sales-coach (generateDealInsights) read (via the shared
+ * `getBusinessDnaContext`/`buildBusinessDnaPromptBlock` helpers in
+ * `src/server/business-dna/context.ts` — every consumer must go through
+ * those, not a direct query, so field coverage never drifts between
+ * channels) to act on the organization's behalf. One profile per
+ * organization (MVP scope only — see docs/DEVELOPMENT.md before widening
+ * this model). `sourceUrl`/`extractedAt` record provenance of the last
+ * AI-assisted extraction; raw scraped content is intentionally never
  * persisted here.
  */
 model BusinessDNA {
