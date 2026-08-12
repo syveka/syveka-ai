@@ -735,5 +735,20 @@
     "closed": "Suljettu",
     "openTimeLabel": "{day} avautuu",
     "closeTimeLabel": "{day} sulkeutuu"
+  },
+  "setupReadiness": {
+    "title": "Käyttöönoton tila",
+    "items": {
+      "businessDna": "Yrityksen DNA",
+      "emailChannel": "Sähköpostikanava",
+      "booking": "Ajanvaraus",
+      "crm": "CRM"
+    },
+    "state": {
+      "ready": "Valmis",
+      "setup_required": "Vaatii määrityksen",
+      "not_configured": "Ei määritetty",
+      "blocked": "Estynyt"
+    }
   }
 }
