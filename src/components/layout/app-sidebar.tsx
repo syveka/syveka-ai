@@ -31,6 +31,7 @@ type NavItem = {
 
 const NAV: NavItem[] = [
   { href: "/dashboard", key: "dashboard", icon: LayoutDashboard },
+  { href: "/inbox", key: "inbox", icon: Inbox, permission: "inbox:read" },
   { href: "/chat", key: "chat", icon: MessageSquare, permission: "chat:use" },
   { href: "/voice", key: "voice", icon: Phone, permission: "voice:view-calls" },
   { href: "/crm/contacts", key: "contacts", icon: Users, permission: "crm:read" },
@@ -41,7 +42,6 @@ const NAV: NavItem[] = [
   { href: "/knowledge", key: "knowledge", icon: BookOpen, permission: "kb:read" },
   { href: "/prompts", key: "prompts", icon: Sparkles, permission: "prompts:read" },
   { href: "/workflows", key: "workflows", icon: GitBranch, permission: "workflows:view" },
-  { href: "/inbox", key: "inbox", icon: Inbox, permission: "inbox:read" },
   { href: "/notifications", key: "notifications", icon: Bell },
   {
     href: "/settings/business-dna",
