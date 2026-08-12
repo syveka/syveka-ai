@@ -26,44 +26,74 @@ snapshot, not a live feed.
 - Open work: PR #9 (`Prepare and validate first safe staging release`, DRAFT) on the current
   branch. PRs #1–#8 are all merged historical work.
 
-### Addendum (2026-08-12) — read this instead for current state
+### Addendum (2026-08-12, superseded by the Phase 8 addendum below)
 
 The section above is a stale point-in-time snapshot from 2026-07-23; do not act on its branch,
-PR, or milestone facts. As of 2026-08-12: default branch `main`, PR #9 and the
+PR, or milestone facts. As of this addendum: default branch `main`, PR #9 and the
 staging-release-validation work are long since resolved/superseded. 44 more PRs have merged
 since (#10–#53), most recently Phase 6 (**Production Inbox Integration**) Workstreams A–C: #52
 (real Resend inbound/outbound email + security hardening), #53 (thread status/assignment/
 read-unread UI, editable AI drafts). PR #54 (Workstream D — channel-adapter registry foundation
 for future SMS/WhatsApp/web-chat support) is open, CI-green, awaiting review/merge
-authorization. As always: this addendum is also a snapshot, not a live feed — run `git status`,
-`git log`, `gh pr list` before trusting any of it.
+authorization.
+
+### Addendum (2026-08-12, later same day) — read this instead for current state
+
+Phase 6 and Phase 7 both completed and merged since the addendum above (PR #54 through PR #59),
+then **Phase 8** (10 more PRs, #55 is actually Phase 7 — see exact numbering below) also
+completed and merged. Current `main` HEAD: `06c65fb`. Zero open PRs. As always: this addendum is
+also a snapshot, not a live feed — run `git status`, `git log`, `gh pr list` before trusting any
+of it.
+
+**Phase 7** ("MVP Activation & Real Business Workflow", PRs #55–#59): consolidated Business DNA
+into one shared context module (`src/server/business-dna/context.ts`) used identically by Chat/
+Voice/Inbox; added operator-controlled CRM-contact creation from an Inbox thread; moved Inbox to
+the top of the primary nav; added a truthful email-channel setup-status indicator; added a
+"insert real booking link" handoff control in the Inbox reply composer (no fabricated
+availability, reuses the existing public booking flow's own protections).
+
+**Phase 8** ("remaining launch-value gaps", PRs #60–#64): added an owner/admin-only org
+setup-readiness checklist on the Dashboard (`src/server/services/setup-readiness.ts` — Business
+DNA / email channel / booking / CRM, truthful Ready/Setup required/Not configured states, no
+external-provider dimension included since none of Voice/Calendar/Stripe billing is part of the
+core MVP loop this checklist targets); added a structural prompt-injection defense
+(`neutralizeTagBreakout` in `src/server/ai/prompts/untrusted.ts`) wired into every untrusted-data
+prompt wrapper, plus fixed a real "invented opening hours" bug in the AI Chat's
+`getCalendarAvailability` tool (was hardcoded 09–17 Europe/Helsinki regardless of the org's real
+schedule); extended Business DNA into the booking assistant's scheduling replies and the CRM
+deal "sales coach" (which previously had zero org-level grounding — a real gap, not just
+polish); made the booking-link control available when editing an AI draft, not just composing a
+new reply; added operator-controlled linking of an Inbox thread to an **existing** CRM contact
+(not just creating a new one).
 
 ## Current milestone
 
-Phase 6 (**Production Inbox Integration**) is functionally complete pending PR #54 review: real
-email channel (Resend) live end-to-end, thread workflow UI, AI drafts (booking-aware, editable,
-regenerate-in-place), CRM contact auto-match, and a multi-channel adapter foundation (schema +
-registry) ready for a second channel whenever a provider is chosen. The rest of the core
-platform (CRM, Calendar/Booking, AI Chat/RAG, Voice, Billing, Workflows) remains functionally
-complete per the prior milestone.
+The core MVP loop (`Dashboard → Inbox → Thread → Customer context → AI draft → Booking/CRM
+action → approval/send`) is functionally complete, including Business DNA grounding across
+every AI surface that has a genuine use case for it, structural prompt-injection defenses, and a
+truthful org-readiness checklist. The rest of the core platform (CRM, Calendar/Booking, AI
+Chat/RAG, Voice, Billing, Workflows) remains functionally complete per prior milestones.
 
 ## Completed features (verified, not just claimed)
 
 Auth (Supabase, no Clerk), RBAC, Onboarding, Organizations (except self-serve delete), CRM
-(Contacts/Companies/Deals/Activities/Dashboard), Calendar & Booking V1 (incl. AI booking
-assistant, external calendar import sync), Voice AI (Vapi), AI Chat + RAG (Milestone 3
-hardening — upload→extract→chunk→embed→retrieve→cite→moderate→track-cost), Stripe billing,
-Workflows (trigger coverage partially unverified), Notifications, Audit logs, Analytics,
-Superadmin, i18n infrastructure (488/488/488 key parity), Business DNA (settings UI, AI
-extraction, AI chat + Voice context, onboarding nudge), Inbox (email channel, thread workflow,
-booking-aware AI drafts, CRM contact match, multi-channel adapter foundation). Full detail:
-`FEATURE-INVENTORY.md` (Inbox rows updated 2026-08-12; other post-2026-07-23 features not yet
-reflected there).
+(Contacts/Companies/Deals/Activities/Dashboard, deal AI "sales coach" now Business-DNA-grounded),
+Calendar & Booking V1 (incl. AI booking assistant now Business-DNA-grounded, external calendar
+import sync), Voice AI (Vapi), AI Chat + RAG (Milestone 3 hardening —
+upload→extract→chunk→embed→retrieve→cite→moderate→track-cost; `getCalendarAvailability` tool now
+reads the org's real schedule instead of hardcoded hours), Stripe billing, Workflows (trigger
+coverage partially unverified), Notifications, Audit logs, Analytics, Superadmin, i18n
+infrastructure (612/612/612 key parity), Business DNA (settings UI, AI extraction, one shared
+context module consumed by Chat/Voice/Inbox/Booking-assistant/Deal-insights, onboarding nudge),
+Inbox (email channel, thread workflow, booking-aware + Business-DNA-grounded AI drafts, CRM
+contact auto-match + operator-controlled create-or-link, multi-channel adapter foundation,
+booking-link handoff in both compose and edit), org setup-readiness checklist on the Dashboard.
+Full detail: `FEATURE-INVENTORY.md` (Inbox rows updated through Phase 7; Phase 8 additions not
+yet reflected there as of this addendum).
 
 ## Active work
 
-PR #54 — Inbox multi-channel adapter registry foundation (Phase 6 Workstream D), open and
-CI-green as of 2026-08-12, awaiting review/merge authorization. No other PRs open.
+None — zero open PRs as of this addendum (2026-08-12).
 
 ## Known blockers
 
@@ -127,13 +157,16 @@ i18n coverage gaps, or the RLS-bypass nuance. Prefer this documentation set.
 
 ## Exact next task
 
-As of 2026-08-12: get PR #54 reviewed and merged (owner action), then decide whether to pick up
-a real second Inbox channel (SMS/WhatsApp/web chat) or return to the `ROADMAP.md`/
-`CODEX-HANDOFF.md` P0 items below, which have not been re-verified since 2026-07-23:
-
-**P0.1 from `ROADMAP.md`** (unverified currency): fix the failing dependency audit (`npm audit
-fix` for `next`/`postcss`/`sharp`). See `CODEX-HANDOFF.md` for full acceptance criteria — this
-is a Codex implementation task, not a Claude task, unless explicitly asked to do it directly.
+As of the Phase 8 addendum (2026-08-12): no P0 blockers are open. Candidates for the next phase
+(see Phase 8 completion report for full detail, not duplicated here): a global setup-readiness
+widget was shipped (Business DNA/email/booking/CRM) but doesn't yet cover Voice/Calendar/Stripe
+billing readiness; no real second Inbox channel (SMS/WhatsApp/web chat) has been implemented,
+only the registry foundation to add one; `getCalendarAvailability`'s underlying fix (real
+schedule instead of hardcoded hours) has not been extended to any equivalent Voice-side tool
+gap-check. Separately, unrelated to Inbox: **P0.1 from `ROADMAP.md`** (unverified currency since
+2026-07-23): fix the failing dependency audit (`npm audit fix` for `next`/`postcss`/`sharp`). See
+`CODEX-HANDOFF.md` for full acceptance criteria — this is a Codex implementation task, not a
+Claude task, unless explicitly asked to do it directly.
 
 ## Commands safe to run (read-only or local-only, no approval needed)
 
