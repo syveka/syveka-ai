@@ -150,7 +150,12 @@ export default async function InboxThreadPage({
                   <Card className={isInbound ? "" : "bg-primary/5"}>
                     <CardContent className="space-y-2 p-4">
                       {canWrite && !isInbound && message.status !== "SENT" ? (
-                        <DraftMessageBody messageId={message.id} body={message.body} />
+                        <DraftMessageBody
+                          messageId={message.id}
+                          body={message.body}
+                          bookingTypes={activeBookingTypes}
+                          bookingBaseUrl={bookingBaseUrl}
+                        />
                       ) : (
                         <p className="whitespace-pre-wrap text-sm">{message.body}</p>
                       )}
