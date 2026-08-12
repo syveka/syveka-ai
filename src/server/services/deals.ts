@@ -6,6 +6,7 @@ import { tenantDb, type TenantDb } from "@/server/db/tenant";
 import { audit } from "./audit";
 import { noteSubject } from "./contacts";
 import { emitWorkflowEvent } from "./workflow-events";
+import { buildBusinessDnaPromptBlock, getBusinessDnaContext } from "@/server/business-dna/context";
 import type { TenantContext } from "@/server/auth/session";
 import type {
   DealInput,
@@ -579,6 +580,7 @@ export async function generateDealInsights(ctx: TenantContext, dealId: string) {
   });
 
   const language = INSIGHTS_LANGUAGE[ctx.locale] ?? "English";
+  const businessDnaBlock = buildBusinessDnaPromptBlock(await getBusinessDnaContext(ctx.orgId));
   const route = routeModel("summary");
   const response = await anthropic.messages.create({
     model: route.model,
@@ -587,7 +589,10 @@ export async function generateDealInsights(ctx: TenantContext, dealId: string) {
       `You are a sales coach inside Syveka AI, a Finnish CRM. Analyse the deal ` +
       `and reply in ${language} with: (1) a one-sentence health assessment, ` +
       `(2) key risks, (3) 2-3 concrete next steps. Be brief and practical. ` +
-      `Plain text only, no markdown headers.`,
+      `Plain text only, no markdown headers. Never recommend a specific price, ` +
+      `discount, or policy exception that isn't supported by the business ` +
+      `profile below (if provided) or the deal data itself.` +
+      (businessDnaBlock ? `\n\n${businessDnaBlock}` : ""),
     messages: [{ role: "user", content: prompt }],
   });
 
