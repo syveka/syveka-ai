@@ -40,6 +40,7 @@ export default async function InboxPage({
             const contactName = thread.contact
               ? [thread.contact.firstName, thread.contact.lastName].filter(Boolean).join(" ")
               : null;
+            const assigneeName = thread.assignedTo?.fullName ?? null;
             const unread = thread.readAt === null;
             return (
               <Link
@@ -74,6 +75,7 @@ export default async function InboxPage({
                       <p className="truncate text-sm text-muted-foreground">
                         {t(`channel.${thread.channel}`)}
                         {contactName ? ` · ${contactName}` : ""}
+                        {assigneeName ? ` · ${t("detail.assignedTo", { name: assigneeName })}` : ""}
                       </p>
                     </div>
                     <div className="shrink-0 text-end text-xs text-muted-foreground">

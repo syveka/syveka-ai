@@ -4,17 +4,30 @@ import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";
-import { getThread, markThreadRead } from "@/server/services/inbox";
-import { approveMessageAction, generateDraftAction, sendMessageAction } from "@/actions/inbox";
+import { getThread, listAssignableMembers, markThreadRead } from "@/server/services/inbox";
+import {
+  approveMessageAction,
+  generateDraftAction,
+  markThreadUnreadAction,
+  sendMessageAction,
+} from "@/actions/inbox";
 import { Link } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { ReplyForm } from "./reply-form";
+import { AssignmentControls } from "./assignment-controls";
+import { StatusControls } from "./status-controls";
 
 const MESSAGE_BADGE_KEY: Record<string, string> = {
   DRAFT: "draftBadge",
   SENT: "sentBadge",
   FAILED: "failedBadge",
+};
+
+const STATUS_STYLES: Record<string, string> = {
+  OPEN: "bg-primary/10 text-primary",
+  PENDING: "bg-amber-500/10 text-amber-600",
+  CLOSED: "bg-muted text-muted-foreground",
 };
 
 export default async function InboxThreadPage({
@@ -31,9 +44,11 @@ export default async function InboxThreadPage({
 
   const canWrite = can(ctx.role, "inbox:write");
   const canApprove = can(ctx.role, "inbox:approve");
+  const members = canWrite ? await listAssignableMembers(ctx) : [];
   const contactName = thread.contact
     ? [thread.contact.firstName, thread.contact.lastName].filter(Boolean).join(" ")
     : null;
+  const assigneeName = thread.assignedTo?.fullName ?? null;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -41,12 +56,41 @@ export default async function InboxThreadPage({
         <Link href="/inbox" className="text-sm text-muted-foreground hover:underline">
           {t("detail.back")}
         </Link>
-        <h1 className="text-2xl font-semibold">{thread.subject || t("noSubject")}</h1>
+        <div className="flex flex-wrap items-center gap-2">
+          <h1 className="text-2xl font-semibold">{thread.subject || t("noSubject")}</h1>
+          <span
+            className={`rounded-full px-2 py-0.5 text-xs font-medium ${
+              STATUS_STYLES[thread.status] ?? STATUS_STYLES.OPEN
+            }`}
+          >
+            {t(`status.${thread.status}`)}
+          </span>
+        </div>
         <p className="text-sm text-muted-foreground">
           {t(`channel.${thread.channel}`)}
           {contactName ? ` · ${contactName}` : ""}
           {thread.contact?.email ? ` · ${thread.contact.email}` : ""}
         </p>
+        {canWrite ? (
+          <div className="flex flex-wrap items-center gap-4 pt-1">
+            <StatusControls threadId={thread.id} status={thread.status} />
+            <AssignmentControls
+              threadId={thread.id}
+              assignedToId={thread.assignedToId}
+              currentUserId={ctx.userId}
+              members={members}
+            />
+            <form action={markThreadUnreadAction.bind(null, thread.id)}>
+              <Button type="submit" size="sm" variant="ghost">
+                {t("detail.markUnread")}
+              </Button>
+            </form>
+          </div>
+        ) : (
+          <p className="text-sm text-muted-foreground">
+            {assigneeName ? t("detail.assignedTo", { name: assigneeName }) : t("detail.unassigned")}
+          </p>
+        )}
       </div>
 
       <div className="space-y-3">

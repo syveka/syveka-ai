@@ -644,7 +644,15 @@
       "draftBadge": "مسودة",
       "sentBadge": "تم الإرسال",
       "failedBadge": "فشل الإرسال",
-      "error": "حدث خطأ ما. حاول مرة أخرى."
+      "error": "حدث خطأ ما. حاول مرة أخرى.",
+      "status": "الحالة",
+      "saveStatus": "تحديث الحالة",
+      "assignee": "المسؤول",
+      "unassigned": "غير مُسند",
+      "assignedTo": "مُسندة إلى {name}",
+      "assignToMe": "إسناد إليّ",
+      "saveAssignment": "حفظ الإسناد",
+      "markUnread": "تعليم كغير مقروءة"
     }
   },
   "businessDna": {

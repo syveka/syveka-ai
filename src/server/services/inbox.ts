@@ -256,6 +256,27 @@ export async function markThreadRead(ctx: TenantContext, threadId: string) {
   });
 }
 
+/**
+ * Explicit "mark as unread" — an operator flagging a thread for follow-up
+ * after already reading it. Opening the thread again re-marks it read (see
+ * `markThreadRead`), matching common inbox UX.
+ */
+export async function markThreadUnread(ctx: TenantContext, threadId: string) {
+  const db = tenantDb(ctx.orgId);
+  const thread = await db.inboxThread.findFirst({
+    where: { id: threadId, deletedAt: null },
+    select: { id: true },
+  });
+  if (!thread) {
+    throw new InboxError("thread_not_found", "Thread does not belong to this organization");
+  }
+
+  return db.inboxThread.update({
+    where: { id: thread.id },
+    data: { readAt: null },
+  });
+}
+
 export async function createDraftMessage(ctx: TenantContext, input: CreateDraftMessageInput) {
   const db = tenantDb(ctx.orgId);
   const thread = await db.inboxThread.findFirst({

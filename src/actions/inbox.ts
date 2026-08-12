@@ -6,6 +6,7 @@ import {
   approveMessage,
   assignThread,
   createDraftMessage,
+  markThreadUnread,
   sendMessage,
   updateThreadStatus,
   InboxError,
@@ -57,6 +58,14 @@ export async function sendMessageAction(messageId: string): Promise<void> {
   const ctx = await requirePermission("inbox:write");
   const updated = await sendMessage(ctx, messageId);
   revalidatePath(`/inbox/${updated.threadId}`);
+  revalidatePath("/inbox");
+}
+
+/** Plain (void-returning) form action — used directly as a `<form action>` with no useActionState. */
+export async function markThreadUnreadAction(threadId: string): Promise<void> {
+  const ctx = await requirePermission("inbox:write");
+  await markThreadUnread(ctx, threadId);
+  revalidatePath(`/inbox/${threadId}`);
   revalidatePath("/inbox");
 }
 

@@ -59,6 +59,7 @@ import {
   listAssignableMembers,
   listThreads,
   markThreadRead,
+  markThreadUnread,
   recordInboundMessage,
   sendMessage,
   updateThreadStatus,
@@ -427,6 +428,32 @@ describe("inbox service", () => {
       tenantDbMock.mockImplementation((orgId: string) => (orgId === "org-b" ? dbB : db));
 
       await expect(markThreadRead(ctx("org-b"), "org-a-t1")).rejects.toBeInstanceOf(InboxError);
+      expect(tenantDbMock).toHaveBeenLastCalledWith("org-b");
+    });
+  });
+
+  describe("markThreadUnread", () => {
+    it("throws when the thread does not belong to the tenant", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(null);
+      await expect(markThreadUnread(ctx(), "missing")).rejects.toBeInstanceOf(InboxError);
+    });
+
+    it("clears readAt even when the thread is already unread", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(
+        threadRow("org-a-t1", "org-a", { readAt: null }),
+      );
+      await markThreadUnread(ctx("org-a"), "org-a-t1");
+      expect(db.inboxThread.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { readAt: null } }),
+      );
+    });
+
+    it("uses the caller's org for tenant verification (tenant isolation)", async () => {
+      const dbB = createMockDb("org-b");
+      dbB.inboxThread.findFirst.mockResolvedValueOnce(null);
+      tenantDbMock.mockImplementation((orgId: string) => (orgId === "org-b" ? dbB : db));
+
+      await expect(markThreadUnread(ctx("org-b"), "org-a-t1")).rejects.toBeInstanceOf(InboxError);
       expect(tenantDbMock).toHaveBeenLastCalledWith("org-b");
     });
   });

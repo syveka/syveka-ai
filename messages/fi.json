@@ -644,7 +644,15 @@
       "draftBadge": "Luonnos",
       "sentBadge": "Lähetetty",
       "failedBadge": "Lähetys epäonnistui",
-      "error": "Jotain meni pieleen. Yritä uudelleen."
+      "error": "Jotain meni pieleen. Yritä uudelleen.",
+      "status": "Tila",
+      "saveStatus": "Päivitä tila",
+      "assignee": "Vastuuhenkilö",
+      "unassigned": "Ei osoitettu",
+      "assignedTo": "Osoitettu: {name}",
+      "assignToMe": "Ota itselleni",
+      "saveAssignment": "Tallenna osoitus",
+      "markUnread": "Merkitse lukemattomaksi"
     }
   },
   "businessDna": {

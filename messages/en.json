@@ -644,7 +644,15 @@
       "draftBadge": "Draft",
       "sentBadge": "Sent",
       "failedBadge": "Failed to send",
-      "error": "Something went wrong. Please try again."
+      "error": "Something went wrong. Please try again.",
+      "status": "Status",
+      "saveStatus": "Update status",
+      "assignee": "Assignee",
+      "unassigned": "Unassigned",
+      "assignedTo": "Assigned to {name}",
+      "assignToMe": "Assign to me",
+      "saveAssignment": "Save assignment",
+      "markUnread": "Mark as unread"
     }
   },
   "businessDna": {
