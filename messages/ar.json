@@ -746,13 +746,15 @@
       "businessDna": "الهوية التجارية",
       "emailChannel": "قناة البريد الإلكتروني",
       "booking": "الحجز",
-      "crm": "إدارة العملاء"
+      "crm": "إدارة العملاء",
+      "voice": "المساعد الصوتي"
     },
     "state": {
       "ready": "جاهز",
       "setup_required": "يتطلب الإعداد",
       "not_configured": "غير مُعد",
-      "blocked": "محظور"
+      "blocked": "محظور",
+      "verification_required": "يتطلب التحقق"
     }
   }
 }

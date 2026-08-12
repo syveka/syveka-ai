@@ -746,13 +746,15 @@
       "businessDna": "Yrityksen DNA",
       "emailChannel": "Sähköpostikanava",
       "booking": "Ajanvaraus",
-      "crm": "CRM"
+      "crm": "CRM",
+      "voice": "Puheavustaja"
     },
     "state": {
       "ready": "Valmis",
       "setup_required": "Vaatii määrityksen",
       "not_configured": "Ei määritetty",
-      "blocked": "Estynyt"
+      "blocked": "Estynyt",
+      "verification_required": "Vaatii vahvistuksen"
     }
   }
 }

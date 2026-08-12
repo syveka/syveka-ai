@@ -746,13 +746,15 @@
       "businessDna": "Business DNA",
       "emailChannel": "Email channel",
       "booking": "Booking",
-      "crm": "CRM"
+      "crm": "CRM",
+      "voice": "Voice"
     },
     "state": {
       "ready": "Ready",
       "setup_required": "Setup required",
       "not_configured": "Not configured",
-      "blocked": "Blocked"
+      "blocked": "Blocked",
+      "verification_required": "Verification required"
     }
   }
 }
