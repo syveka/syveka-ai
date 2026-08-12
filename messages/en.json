@@ -619,6 +619,11 @@
       "WHATSAPP": "WhatsApp",
       "WEB_CHAT": "Web chat"
     },
+    "channelStatus": {
+      "connected": "Email connected",
+      "mock": "Using a test email provider — messages are simulated, not real",
+      "notConfigured": "Email not configured yet"
+    },
     "status": {
       "OPEN": "Open",
       "PENDING": "Pending",

@@ -1,8 +1,11 @@
 export const dynamic = "force-dynamic";
 
 import { getTranslations } from "next-intl/server";
+import { CheckCircle2, CloudOff, XCircle } from "lucide-react";
 import { requirePermission } from "@/server/auth/guard";
+import { can } from "@/server/auth/permissions";
 import { listThreads } from "@/server/services/inbox";
+import { getEmailChannelAdapter } from "@/server/channels/email";
 import { threadListQuerySchema } from "@/lib/validators/inbox";
 import { Link } from "@/i18n/routing";
 import { Card, CardContent } from "@/components/ui/card";
@@ -22,6 +25,7 @@ export default async function InboxPage({
   const t = await getTranslations("inbox");
   const query = threadListQuerySchema.parse(await searchParams);
   const { data } = await listThreads(ctx, query);
+  const canWrite = can(ctx.role, "inbox:write");
 
   return (
     <div className="space-y-6">
@@ -29,6 +33,8 @@ export default async function InboxPage({
         <h1 className="text-2xl font-semibold">{t("title")}</h1>
         <p className="text-sm text-muted-foreground">{t("subtitle")}</p>
       </div>
+
+      {canWrite ? <EmailChannelStatus /> : null}
 
       {data.length === 0 ? (
         <Card>
@@ -91,5 +97,43 @@ export default async function InboxPage({
         </div>
       )}
     </div>
+  );
+}
+
+/**
+ * Truthful, read-only readout of the email channel's real state — whether
+ * inbound/outbound really go through Resend or are silently simulated by the
+ * mock provider (`shouldUseMockProvider()` in `src/server/channels/email/
+ * index.ts`), which was previously invisible outside server logs. Never
+ * exposes the underlying env var names or internal error detail — just the
+ * three truthful states the rest of the app already uses for integrations
+ * (Connected / Setup required / Not configured), mirroring the Calendar
+ * integrations `StatusBadge` pattern (icon + text, never color alone).
+ */
+async function EmailChannelStatus() {
+  const t = await getTranslations("inbox");
+  const adapter = getEmailChannelAdapter();
+
+  if (adapter.provider === "MOCK") {
+    return (
+      <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
+        <CloudOff className="size-4" />
+        {t("channelStatus.mock")}
+      </p>
+    );
+  }
+  if (adapter.isConfigured()) {
+    return (
+      <p className="flex items-center gap-1.5 text-sm text-primary">
+        <CheckCircle2 className="size-4" />
+        {t("channelStatus.connected")}
+      </p>
+    );
+  }
+  return (
+    <p className="flex items-center gap-1.5 text-sm text-destructive">
+      <XCircle className="size-4" />
+      {t("channelStatus.notConfigured")}
+    </p>
   );
 }
