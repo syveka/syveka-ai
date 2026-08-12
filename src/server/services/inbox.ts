@@ -3,7 +3,7 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { audit } from "./audit";
-import { createContact } from "./contacts";
+import { createContact, listContacts } from "./contacts";
 import { EmailChannelError } from "@/server/channels/email";
 import { getChannelAdapter } from "@/server/channels/registry";
 import type { TenantContext } from "@/server/auth/session";
@@ -27,7 +27,8 @@ export class InboxError extends Error {
       | "not_org_member"
       | "draft_generation_failed"
       | "already_linked"
-      | "no_sender_address",
+      | "no_sender_address"
+      | "contact_not_found",
     message: string,
   ) {
     super(message);
@@ -667,4 +668,66 @@ export async function createContactFromThread(
   });
 
   return { thread: updated, contact };
+}
+
+/**
+ * Explicit operator action linking a thread to an already-existing CRM
+ * contact — the counterpart to `createContactFromThread` for the case the
+ * customer is already a known contact under a different address than the
+ * one auto-match compares against. `contact.findFirst` runs through
+ * `tenantDb`, so a contact id from another organization simply doesn't
+ * resolve (`contact_not_found`) rather than ever cross-tenant linking.
+ */
+export async function linkThreadToContact(ctx: TenantContext, threadId: string, contactId: string) {
+  const db = tenantDb(ctx.orgId);
+  const thread = await db.inboxThread.findFirst({
+    where: { id: threadId, deletedAt: null },
+    select: { id: true, contactId: true },
+  });
+  if (!thread) {
+    throw new InboxError("thread_not_found", "Thread does not belong to this organization");
+  }
+  if (thread.contactId) {
+    throw new InboxError("already_linked", "This thread is already linked to a contact");
+  }
+
+  const contact = await db.contact.findFirst({
+    where: { id: contactId, deletedAt: null },
+    select: { id: true, firstName: true, lastName: true, email: true },
+  });
+  if (!contact) {
+    throw new InboxError("contact_not_found", "Contact does not belong to this organization");
+  }
+
+  const updated = await db.inboxThread.update({
+    where: { id: thread.id },
+    data: { contactId: contact.id },
+  });
+
+  await audit(ctx, {
+    action: "inbox.thread.contact_linked",
+    resourceType: "inbox_thread",
+    resourceId: thread.id,
+    after: { contactId: contact.id, source: "operator_selected" },
+  });
+
+  return { thread: updated, contact };
+}
+
+/**
+ * Read-only contact search for the thread-linking UI — thin wrapper over
+ * `listContacts` returning just the fields the picker needs. Tenant-scoped
+ * via `listContacts`'s own `tenantDb` usage.
+ */
+export async function searchContactsForLink(ctx: TenantContext, query: string) {
+  const { data } = await listContacts(ctx, {
+    q: query,
+    limit: 5,
+    archived: "active",
+  });
+  return data.map((c) => ({
+    id: c.id,
+    name: [c.firstName, c.lastName].filter(Boolean).join(" ") || c.email || c.id,
+    email: c.email,
+  }));
 }

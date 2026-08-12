@@ -669,7 +669,11 @@
       "createContactLastName": "Last name",
       "createContactSuccess": "Contact created and linked.",
       "insertBookingLink": "Insert booking link:",
-      "chooseBookingType": "Choose a booking type…"
+      "chooseBookingType": "Choose a booking type…",
+      "searchExistingContact": "Search existing contacts…",
+      "search": "Search",
+      "linkContact": "Link",
+      "linkContactSuccess": "Contact linked."
     }
   },
   "businessDna": {

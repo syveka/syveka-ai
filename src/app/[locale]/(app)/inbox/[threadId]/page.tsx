@@ -18,6 +18,7 @@ import { StatusControls } from "./status-controls";
 import { GenerateDraftButton } from "./generate-draft-button";
 import { DraftMessageBody } from "./draft-message-body";
 import { CreateContactFromThread } from "./create-contact-from-thread";
+import { LinkExistingContact } from "./link-existing-contact";
 
 const MESSAGE_BADGE_KEY: Record<string, string> = {
   DRAFT: "draftBadge",
@@ -46,6 +47,7 @@ export default async function InboxThreadPage({
   const canWrite = can(ctx.role, "inbox:write");
   const canApprove = can(ctx.role, "inbox:approve");
   const canCreateContact = canWrite && can(ctx.role, "crm:write");
+  const canLinkContact = canWrite && can(ctx.role, "crm:read");
   const canInsertBookingLink = canWrite && can(ctx.role, "booking:manage");
   const members = canWrite ? await listAssignableMembers(ctx) : [];
   const [bookingTypes, org] = canInsertBookingLink
@@ -100,6 +102,7 @@ export default async function InboxThreadPage({
         {!thread.contact && canCreateContact ? (
           <CreateContactFromThread threadId={thread.id} />
         ) : null}
+        {!thread.contact && canLinkContact ? <LinkExistingContact threadId={thread.id} /> : null}
         {thread.upcomingBooking ? (
           <p className="text-sm text-muted-foreground">
             {t("detail.upcomingBooking", {

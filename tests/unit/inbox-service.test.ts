@@ -8,6 +8,7 @@ const {
   emailAdapterMock,
   EmailChannelErrorMock,
   createContactMock,
+  listContactsMock,
 } = vi.hoisted(() => {
   class EmailChannelErrorMock extends Error {
     constructor(
@@ -41,6 +42,7 @@ const {
       id: "new-contact-1",
       firstName: input.firstName,
     })),
+    listContactsMock: vi.fn(async () => ({ data: [] as Record<string, unknown>[] })),
   };
 });
 
@@ -60,6 +62,7 @@ vi.mock("@/server/channels/email", () => ({
 
 vi.mock("@/server/services/contacts", () => ({
   createContact: createContactMock,
+  listContacts: listContactsMock,
 }));
 
 import { Prisma } from "@prisma/client";
@@ -72,11 +75,13 @@ import {
   editDraftMessage,
   getThread,
   InboxError,
+  linkThreadToContact,
   listAssignableMembers,
   listThreads,
   markThreadRead,
   markThreadUnread,
   recordInboundMessage,
+  searchContactsForLink,
   sendMessage,
   updateThreadStatus,
   upsertAiDraftMessage,
@@ -144,7 +149,16 @@ function createMockDb(orgId: string) {
       update: vi.fn(async ({ data }: QueryArgs) => threadRow(`${orgId}-t1`, orgId, data)),
     },
     contact: {
-      findFirst: vi.fn(async (_args: QueryArgs) => null as { id: string } | null),
+      findFirst: vi.fn(
+        async (
+          _args: QueryArgs,
+        ): Promise<{
+          id: string;
+          firstName?: string;
+          lastName?: string | null;
+          email?: string | null;
+        } | null> => null,
+      ),
     },
     booking: {
       findFirst: vi.fn(
@@ -1083,6 +1097,90 @@ describe("inbox service", () => {
       ).rejects.toBeInstanceOf(InboxError);
       expect(tenantDbMock).toHaveBeenLastCalledWith("org-b");
       expect(createContactMock).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("linkThreadToContact", () => {
+    it("throws when the thread does not belong to the tenant", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(null);
+      await expect(linkThreadToContact(ctx("org-a"), "missing", "contact-1")).rejects.toMatchObject(
+        { code: "thread_not_found" },
+      );
+      expect(db.inboxThread.update).not.toHaveBeenCalled();
+    });
+
+    it("refuses to overwrite an already-linked thread", async () => {
+      db.inboxThread.findFirst.mockResolvedValueOnce(
+        threadRow("org-a-t1", "org-a", { contactId: "existing-contact" }),
+      );
+      await expect(
+        linkThreadToContact(ctx("org-a"), "org-a-t1", "contact-1"),
+      ).rejects.toMatchObject({ code: "already_linked" });
+      expect(db.contact.findFirst).not.toHaveBeenCalled();
+    });
+
+    it("throws contact_not_found for a contact id that doesn't resolve in this tenant (no cross-tenant linking)", async () => {
+      db.contact.findFirst.mockResolvedValueOnce(null);
+      await expect(
+        linkThreadToContact(ctx("org-a"), "org-a-t1", "contact-from-org-b"),
+      ).rejects.toMatchObject({ code: "contact_not_found" });
+      expect(db.inboxThread.update).not.toHaveBeenCalled();
+    });
+
+    it("links the thread to the resolved contact and audits with source operator_selected", async () => {
+      db.contact.findFirst.mockResolvedValueOnce({
+        id: "contact-1",
+        firstName: "Jane",
+        lastName: "Doe",
+        email: "jane@example.com",
+      });
+
+      const result = await linkThreadToContact(ctx("org-a"), "org-a-t1", "contact-1");
+
+      expect(db.inboxThread.update).toHaveBeenCalledWith(
+        expect.objectContaining({ data: { contactId: "contact-1" } }),
+      );
+      expect(auditMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({
+          action: "inbox.thread.contact_linked",
+          after: expect.objectContaining({ source: "operator_selected" }),
+        }),
+      );
+      expect(result.contact.id).toBe("contact-1");
+    });
+
+    it("uses the caller's org for tenant verification (tenant isolation)", async () => {
+      const dbB = createMockDb("org-b");
+      dbB.inboxThread.findFirst.mockResolvedValueOnce(null);
+      tenantDbMock.mockImplementation((orgId: string) => (orgId === "org-b" ? dbB : db));
+
+      await expect(
+        linkThreadToContact(ctx("org-b"), "org-a-t1", "contact-1"),
+      ).rejects.toBeInstanceOf(InboxError);
+      expect(tenantDbMock).toHaveBeenLastCalledWith("org-b");
+    });
+  });
+
+  describe("searchContactsForLink", () => {
+    it("delegates to listContacts scoped to the caller's org, mapped to a compact shape", async () => {
+      listContactsMock.mockResolvedValueOnce({
+        data: [
+          { id: "c1", firstName: "Jane", lastName: "Doe", email: "jane@example.com" },
+          { id: "c2", firstName: "Ann", lastName: null, email: null },
+        ],
+      });
+
+      const results = await searchContactsForLink(ctx("org-a"), "jane");
+
+      expect(listContactsMock).toHaveBeenCalledWith(
+        ctx("org-a"),
+        expect.objectContaining({ q: "jane", archived: "active" }),
+      );
+      expect(results).toEqual([
+        { id: "c1", name: "Jane Doe", email: "jane@example.com" },
+        { id: "c2", name: "Ann", email: null },
+      ]);
     });
   });
 });

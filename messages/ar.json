@@ -669,7 +669,11 @@
       "createContactLastName": "اسم العائلة",
       "createContactSuccess": "تم إنشاء جهة الاتصال وربطها.",
       "insertBookingLink": "إدراج رابط الحجز:",
-      "chooseBookingType": "اختر نوع الحجز…"
+      "chooseBookingType": "اختر نوع الحجز…",
+      "searchExistingContact": "ابحث عن جهات اتصال موجودة…",
+      "search": "بحث",
+      "linkContact": "ربط",
+      "linkContactSuccess": "تم ربط جهة الاتصال."
     }
   },
   "businessDna": {
