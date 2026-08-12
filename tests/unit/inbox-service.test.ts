@@ -480,6 +480,10 @@ describe("inbox service", () => {
       expect(db.inboxThread.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: { readAt: expect.any(Date) } }),
       );
+      expect(auditMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ action: "inbox.thread.read", resourceId: "org-a-t1" }),
+      );
     });
 
     it("is a no-op when the thread is already read", async () => {
@@ -488,6 +492,7 @@ describe("inbox service", () => {
       );
       await markThreadRead(ctx("org-a"), "org-a-t1");
       expect(db.inboxThread.update).not.toHaveBeenCalled();
+      expect(auditMock).not.toHaveBeenCalled();
     });
 
     it("uses the caller's org for tenant verification (tenant isolation)", async () => {
@@ -513,6 +518,10 @@ describe("inbox service", () => {
       await markThreadUnread(ctx("org-a"), "org-a-t1");
       expect(db.inboxThread.update).toHaveBeenCalledWith(
         expect.objectContaining({ data: { readAt: null } }),
+      );
+      expect(auditMock).toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ action: "inbox.thread.unread", resourceId: "org-a-t1" }),
       );
     });
 
