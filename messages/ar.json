@@ -667,7 +667,9 @@
       "createContact": "إنشاء جهة اتصال",
       "createContactFirstName": "الاسم الأول",
       "createContactLastName": "اسم العائلة",
-      "createContactSuccess": "تم إنشاء جهة الاتصال وربطها."
+      "createContactSuccess": "تم إنشاء جهة الاتصال وربطها.",
+      "insertBookingLink": "إدراج رابط الحجز:",
+      "chooseBookingType": "اختر نوع الحجز…"
     }
   },
   "businessDna": {
