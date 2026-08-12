@@ -669,7 +669,11 @@
       "createContactLastName": "Sukunimi",
       "createContactSuccess": "Asiakas luotu ja linkitetty.",
       "insertBookingLink": "Lisää varauslinkki:",
-      "chooseBookingType": "Valitse varaustyyppi…"
+      "chooseBookingType": "Valitse varaustyyppi…",
+      "searchExistingContact": "Hae olemassa olevia asiakkaita…",
+      "search": "Hae",
+      "linkContact": "Linkitä",
+      "linkContactSuccess": "Asiakas linkitetty."
     }
   },
   "businessDna": {

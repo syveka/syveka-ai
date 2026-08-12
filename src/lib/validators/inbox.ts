@@ -86,3 +86,13 @@ export const createContactFromThreadSchema = z.object({
   lastName: optionalTrimmed(100),
 });
 export type CreateContactFromThreadInput = z.infer<typeof createContactFromThreadSchema>;
+
+export const linkThreadToContactSchema = z.object({
+  contactId: z.string().uuid(),
+});
+export type LinkThreadToContactInput = z.infer<typeof linkThreadToContactSchema>;
+
+export const searchContactsForLinkSchema = z.object({
+  query: z.string().trim().min(2).max(200),
+});
+export type SearchContactsForLinkInput = z.infer<typeof searchContactsForLinkSchema>;

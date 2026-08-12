@@ -10,7 +10,9 @@ import {
   createContactFromThread,
   createDraftMessage,
   editDraftMessage,
+  linkThreadToContact,
   markThreadUnread,
+  searchContactsForLink,
   sendMessage,
   updateThreadStatus,
   InboxError,
@@ -22,10 +24,17 @@ import {
   createContactFromThreadSchema,
   createDraftMessageSchema,
   editDraftMessageSchema,
+  linkThreadToContactSchema,
+  searchContactsForLinkSchema,
   updateThreadStatusSchema,
 } from "@/lib/validators/inbox";
 
 export type InboxActionState = { error?: string; message?: string };
+
+export type ContactSearchState = {
+  results: { id: string; name: string; email: string | null }[];
+  error?: string;
+};
 
 export async function createDraftMessageAction(
   _prev: InboxActionState,
@@ -173,4 +182,44 @@ export async function createContactFromThreadAction(
   revalidatePath("/inbox");
   revalidatePath("/crm/contacts");
   return { message: "contact_created" };
+}
+
+/** Read-only search — requires inbox:write (this is part of the thread
+ * detail operator surface) and crm:read (it queries CRM contacts). */
+export async function searchContactsForLinkAction(
+  _prev: ContactSearchState,
+  formData: FormData,
+): Promise<ContactSearchState> {
+  const ctx = await requirePermission("inbox:write");
+  if (!can(ctx.role, "crm:read")) {
+    throw new AuthError("Missing permission: crm:read", 403);
+  }
+  const parsed = searchContactsForLinkSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { results: [] };
+
+  const results = await searchContactsForLink(ctx, parsed.data.query);
+  return { results };
+}
+
+export async function linkThreadToContactAction(
+  threadId: string,
+  _prev: InboxActionState,
+  formData: FormData,
+): Promise<InboxActionState> {
+  const ctx = await requirePermission("inbox:write");
+  if (!can(ctx.role, "crm:read")) {
+    throw new AuthError("Missing permission: crm:read", 403);
+  }
+  const parsed = linkThreadToContactSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "invalid_input" };
+
+  try {
+    await linkThreadToContact(ctx, threadId, parsed.data.contactId);
+  } catch (e) {
+    if (e instanceof InboxError) return { error: e.code };
+    return { error: "failed" };
+  }
+  revalidatePath(`/inbox/${threadId}`);
+  revalidatePath("/inbox");
+  return { message: "contact_linked" };
 }
