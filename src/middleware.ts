@@ -37,7 +37,7 @@ function hasSupabaseSessionCookie(request: NextRequest): boolean {
 }
 
 /** Per-request nonce (Web Crypto only — Buffer is unavailable on the Edge runtime). */
-function generateNonce(): string {
+export function generateNonce(): string {
   const bytes = new Uint8Array(16);
   crypto.getRandomValues(bytes);
   let binary = "";
@@ -51,14 +51,40 @@ function generateNonce(): string {
  * Supabase Storage/Google avatars are images only) — see next.config.ts's
  * image `remotePatterns` for the same two origins reflected in `img-src`.
  */
-function buildCsp(nonce: string): string {
+function supabaseCspOrigins(): { https: string; wss: string } | null {
+  try {
+    const url = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL ?? "");
+    if (url.protocol !== "https:") return null;
+    return { https: url.origin, wss: `wss://${url.host}` };
+  } catch {
+    return null;
+  }
+}
+
+export function buildContentSecurityPolicy(nonce: string): string {
+  const supabase = supabaseCspOrigins();
+  const imageOrigins = ["'self'", "data:", "https://lh3.googleusercontent.com"];
+  const connectionOrigins = ["'self'"];
+  if (supabase) {
+    imageOrigins.push(supabase.https);
+    connectionOrigins.push(supabase.https, supabase.wss);
+  }
+
   return [
     "default-src 'self'",
     `script-src 'self' 'nonce-${nonce}' 'strict-dynamic'`,
+    // Several UI components use React style attributes for data-driven widths
+    // and heights. Nonces cannot authorize style attributes, so this is the
+    // narrow compatibility exception; no third-party style origin is allowed.
     "style-src 'self' 'unsafe-inline'",
-    "img-src 'self' data: https://*.supabase.co https://lh3.googleusercontent.com",
+    `img-src ${imageOrigins.join(" ")}`,
     "font-src 'self'",
-    "connect-src 'self' https://*.supabase.co",
+    `connect-src ${connectionOrigins.join(" ")}`,
+    // Vapi recording URLs arrive dynamically in webhook payloads and are
+    // rendered by the existing call-details audio player. Their host is not a
+    // stable configured origin, so HTTPS is the narrowest portable allowance.
+    "media-src 'self' https:",
+    "worker-src 'self'",
     "frame-src 'none'",
     "frame-ancestors 'none'",
     "object-src 'none'",
@@ -68,14 +94,32 @@ function buildCsp(nonce: string): string {
   ].join("; ");
 }
 
+/**
+ * Preserve the response produced by next-intl while forwarding request
+ * headers to Next's renderer. This is the header protocol used internally by
+ * NextResponse.next({ request: { headers } }).
+ */
+function forwardRequestHeaders(response: NextResponse, headers: Headers): void {
+  const existingOverrides = response.headers.get("x-middleware-override-headers");
+  const keys = new Set(
+    existingOverrides
+      ? existingOverrides
+          .split(",")
+          .map((key) => key.trim())
+          .filter(Boolean)
+      : [],
+  );
+
+  for (const [key, value] of headers) {
+    response.headers.set(`x-middleware-request-${key}`, value);
+    keys.add(key);
+  }
+  response.headers.set("x-middleware-override-headers", [...keys].join(","));
+}
+
 export function middleware(request: NextRequest) {
   const nonce = generateNonce();
-  const csp = buildCsp(nonce);
-  // Mutating the incoming request's headers here (rather than only the
-  // response) matters: next-intl's middleware clones from `request.headers`
-  // when it builds its own rewrite/redirect response below, so this nonce
-  // rides along and reaches Server Components via `headers()`.
-  request.headers.set("x-nonce", nonce);
+  const csp = buildContentSecurityPolicy(nonce);
 
   const response = intlMiddleware(request);
   const path = stripLocale(request.nextUrl.pathname);
@@ -101,6 +145,10 @@ export function middleware(request: NextRequest) {
     return redirect;
   }
 
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set("x-nonce", nonce);
+  requestHeaders.set("Content-Security-Policy", csp);
+  forwardRequestHeaders(response, requestHeaders);
   response.headers.set("Content-Security-Policy", csp);
   return response;
 }

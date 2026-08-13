@@ -1,6 +1,17 @@
-import { describe, expect, it } from "vitest";
-import { NextRequest } from "next/server";
-import { middleware } from "@/middleware";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { NextRequest, NextResponse } from "next/server";
+
+const { intlMiddlewareMock } = vi.hoisted(() => ({ intlMiddlewareMock: vi.fn() }));
+
+vi.mock("next-intl/middleware", () => ({
+  default: vi.fn(() => intlMiddlewareMock),
+}));
+
+vi.mock("@/i18n/routing", () => ({
+  routing: { locales: ["en", "fi", "ar"], defaultLocale: "en" },
+}));
+
+import { buildContentSecurityPolicy, generateNonce, middleware } from "@/middleware";
 
 function requestFor(path: string, cookies: Record<string, string> = {}): NextRequest {
   const request = new NextRequest(new URL(path, "http://localhost:3000"));
@@ -11,6 +22,38 @@ function requestFor(path: string, cookies: Record<string, string> = {}): NextReq
 }
 
 describe("middleware CSP", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://abcdefghijklmnop.supabase.co";
+    intlMiddlewareMock.mockImplementation((request: NextRequest) =>
+      NextResponse.next({ request: { headers: new Headers(request.headers) } }),
+    );
+  });
+
+  it("pins browser Supabase traffic to the configured HTTPS and WSS origins", () => {
+    const csp = buildContentSecurityPolicy("test-nonce");
+    expect(csp).toContain(
+      "connect-src 'self' https://abcdefghijklmnop.supabase.co wss://abcdefghijklmnop.supabase.co",
+    );
+    expect(csp).toContain("https://abcdefghijklmnop.supabase.co");
+    expect(csp).not.toContain("*.supabase.co");
+  });
+
+  it("allows only the verified image and media origin classes", () => {
+    const csp = buildContentSecurityPolicy("test-nonce");
+    expect(csp).toContain("https://lh3.googleusercontent.com");
+    expect(csp).toContain("media-src 'self' https:");
+    expect(csp).toContain("frame-src 'none'");
+    expect(csp).not.toContain("unsafe-eval");
+  });
+
+  it("fails closed when the configured Supabase URL is malformed", () => {
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "not-a-url";
+    const csp = buildContentSecurityPolicy("test-nonce");
+    expect(csp).toContain("connect-src 'self'");
+    expect(csp).not.toContain("supabase.co");
+  });
+
   it("sets a nonce-based Content-Security-Policy on a public page response", () => {
     const response = middleware(requestFor("/en/login"));
     const csp = response.headers.get("Content-Security-Policy");
@@ -22,6 +65,18 @@ describe("middleware CSP", () => {
     expect(csp).toContain("frame-ancestors 'none'");
   });
 
+  it("forwards the same nonce and CSP to Next's downstream renderer", () => {
+    const response = middleware(requestFor("/en/login"));
+    const responseCsp = response.headers.get("Content-Security-Policy");
+    const responseNonce = responseCsp?.match(/'nonce-([^']+)'/)?.[1];
+
+    expect(response.headers.get("x-middleware-request-x-nonce")).toBe(responseNonce);
+    expect(response.headers.get("x-middleware-request-content-security-policy")).toBe(responseCsp);
+    const overrides = response.headers.get("x-middleware-override-headers")?.toLowerCase();
+    expect(overrides).toContain("x-nonce");
+    expect(overrides).toContain("content-security-policy");
+  });
+
   it("generates a fresh nonce on every request", () => {
     const first = middleware(requestFor("/en/login")).headers.get("Content-Security-Policy");
     const second = middleware(requestFor("/en/login")).headers.get("Content-Security-Policy");
@@ -29,6 +84,10 @@ describe("middleware CSP", () => {
     const extractNonce = (csp: string | null) => csp?.match(/'nonce-([^']+)'/)?.[1];
     expect(extractNonce(first)).toBeTruthy();
     expect(extractNonce(first)).not.toBe(extractNonce(second));
+  });
+
+  it("generates base64-shaped nonces without Node-only Buffer APIs", () => {
+    expect(generateNonce()).toMatch(/^[A-Za-z0-9+/=]+$/);
   });
 
   it("still applies the CSP header to an auth redirect for a protected route", () => {
