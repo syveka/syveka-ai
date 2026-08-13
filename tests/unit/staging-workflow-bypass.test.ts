@@ -3,7 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 const workflowPath = path.join(__dirname, "../../.github/workflows/staging-release.yml");
-const workflow = fs.readFileSync(workflowPath, "utf8");
+const workflow = fs.readFileSync(workflowPath, "utf8").replace(/\r\n?/g, "\n");
 
 function stepBlock(stepName: string): string {
   const marker = `- name: ${stepName}`;

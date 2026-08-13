@@ -7,7 +7,7 @@ type GateResult = "MATCH" | "MISMATCH_CONFIRMED" | "AMBIGUOUS";
 const workflow = readFileSync(
   resolve(process.cwd(), ".github/workflows/readonly-staging-baseline-checksum.yml"),
   "utf8",
-);
+).replace(/\r\n?/g, "\n");
 
 function classifyAggregate(result: string | null): GateResult {
   if (result === null || !/^[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+\|[0-9]+$/.test(result)) {
