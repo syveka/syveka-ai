@@ -36,7 +36,7 @@ describe("Prisma rhel-openssl-3.0.x engine (Vercel Lambda runtime compatibility)
   });
 
   it("wires a build-artifact verification step into the staging workflow, after the build and before deploy", () => {
-    const workflow = readFileSync(WORKFLOW_PATH, "utf8");
+    const workflow = readFileSync(WORKFLOW_PATH, "utf8").replace(/\r\n?/g, "\n");
     expect(workflow).toContain("node scripts/verify-prisma-engine.mjs");
     const buildIdx = workflow.indexOf("- name: Production build");
     const verifyIdx = workflow.indexOf(

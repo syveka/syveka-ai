@@ -7,6 +7,9 @@ ever conflicts with that file, the charter wins.
 
 ## 1. Commands
 
+Use Node.js 22.x for local development, CI, staging, and production builds. This matches the
+runtime declared in `package.json` and the minimum supported by the current Supabase client.
+
 ```bash
 npm run dev              # Next.js dev server
 npm run build             # prisma generate && next build
