@@ -39,6 +39,10 @@ function extractTenantModels(source: string): string[] {
  * (per the comment at src/server/db/tenant.ts:13-16) or not an org-child model at all
  * (User, Organization). A new schema model must be added to exactly one of these two
  * lists - this test fails until it is.
+ *
+ * StripeWebhookEvent: keyed and queried exclusively by Stripe's own globally-unique
+ * `stripeEventId`, never by organization - see the model's own doc comment in
+ * prisma/schema.prisma and docs/stripe-webhook-reliability.md.
  */
 const DOCUMENTED_EXCLUSIONS = new Set([
   "Message",
@@ -52,6 +56,7 @@ const DOCUMENTED_EXCLUSIONS = new Set([
   "InboxMessage",
   "User",
   "Organization",
+  "StripeWebhookEvent",
 ]);
 
 describe("TENANT_MODELS coverage (src/server/db/tenant.ts)", () => {
