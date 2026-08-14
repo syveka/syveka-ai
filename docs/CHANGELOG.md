@@ -5,6 +5,16 @@ reconstructed from verified Git/GitHub history (`git log`, `gh pr list --state a
 starting baseline — never delete entries below; add new ones above the oldest, newest at top of
 its section, and never rewrite history that's already merged.
 
+## 2026-08-14 — Authentication and tenant-isolation hardening (Draft)
+
+- Revalidated live membership, active-organization state and `integrations:manage` during calendar
+  OAuth callbacks, including a second check immediately before credential persistence.
+- Rejected calendar attendee user IDs and workflow notification recipients that are not current
+  members of the tenant; bound resumed workflow runs to their workflow and organization.
+- Stopped inbox, calendar and Vapi provider ingress from resolving soft-deleted organizations.
+- Added focused negative and success-path regression tests plus the permanent boundary inventory in
+  `docs/auth-tenant-isolation-audit.md`. No dependency or database migration was required.
+
 ## 2026-07-23 — Full project audit and permanent documentation snapshot
 
 Performed a complete repository, architecture, database, security, AI/RAG, CI/CD, and UX audit

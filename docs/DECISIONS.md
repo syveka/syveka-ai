@@ -26,6 +26,16 @@ Add new entries at the bottom with a date; never delete a prior entry (mark supe
 - **2026 (ongoing)** — Previous architecture must not be restarted without evidence of a
   confirmed critical problem and explicit approval.
 
+## Authentication and tenant-bound reference decisions (2026-08-14)
+
+- Signed OAuth state and signed queue/webhook payloads prove message integrity, not continuing
+  tenant authorization. Revalidate live membership, role and organization lifecycle state at the
+  privileged write boundary when a user or tenant may have changed since issuance.
+- Every secondary user/record identifier written by an `unscopedPrisma` path must be bound to the
+  same organization, even when the parent record and outer request are already tenant-scoped.
+- Soft-deleted organizations must not be newly resolved by public/provider ingress. Return the same
+  response as an unknown resource so lifecycle enforcement does not become an enumeration oracle.
+
 ## Architecture decisions confirmed by repository evidence (this audit, 2026-07-23)
 
 - **Tenant isolation is enforced at the application layer** via `tenantDb(orgId)` (a Prisma
