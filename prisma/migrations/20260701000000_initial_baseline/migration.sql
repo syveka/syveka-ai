@@ -82,7 +82,8 @@ DECLARE
     'business_dna',
     'inbox_threads',
     'inbox_messages',
-    'inbox_mailboxes'
+    'inbox_mailboxes',
+    'stripe_webhook_events'
   ];
 -- END LEGACY MISSING TABLES
   -- Foreign keys whose ON UPDATE action may still show a specific, verified

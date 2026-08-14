@@ -61,7 +61,8 @@ describe("staging release migration contract", () => {
         "    'business_dna',\n" +
         "    'inbox_threads',\n" +
         "    'inbox_messages',\n" +
-        "    'inbox_mailboxes'\n" +
+        "    'inbox_mailboxes',\n" +
+        "    'stripe_webhook_events'\n" +
         "  ];\n-- END LEGACY MISSING TABLES",
     );
     expect(contract).not.toContain("ARRAY[]");

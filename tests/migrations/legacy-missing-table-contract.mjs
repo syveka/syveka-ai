@@ -69,13 +69,15 @@ try {
       "    'business_dna',\n" +
       "    'inbox_threads',\n" +
       "    'inbox_messages',\n" +
-      "    'inbox_mailboxes'\n" +
+      "    'inbox_mailboxes',\n" +
+      "    'stripe_webhook_events'\n" +
       "  ];",
     "  legacy_missing_tables TEXT[] := ARRAY[\n" +
       "    'business_dna',\n" +
       "    'inbox_threads',\n" +
       "    'inbox_messages',\n" +
       "    'inbox_mailboxes',\n" +
+      "    'stripe_webhook_events',\n" +
       `    '${fixtureTable}'\n` +
       "  ];",
     "legacy-missing-table declaration",
