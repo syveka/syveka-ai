@@ -311,7 +311,10 @@ export async function handleProviderWebhook(params: {
   const state = await unscopedPrisma.calendarSyncState.findFirst({
     where: {
       webhookSubscriptionId: params.subscriptionId,
-      externalCalendar: { connection: { provider: params.provider } },
+      externalCalendar: {
+        organization: { deletedAt: null },
+        connection: { provider: params.provider },
+      },
     },
     select: { externalCalendarId: true, webhookVerificationSecretHash: true },
   });

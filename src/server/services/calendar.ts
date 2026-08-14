@@ -245,13 +245,10 @@ export async function getEvent(ctx: TenantContext, eventId: string) {
   });
 }
 
-async function syncAttendees(
+async function assertAttendeeRelations(
   db: TenantDb,
-  orgId: string,
-  eventId: string,
   attendees: EventInput["attendees"],
 ): Promise<void> {
-  // Verify contact links stay inside the tenant before writing child rows.
   const contactIds = attendees.map((a) => a.contactId).filter((v): v is string => Boolean(v));
   if (contactIds.length > 0) {
     const found = await db.contact.count({ where: { id: { in: contactIds }, deletedAt: null } });
@@ -259,6 +256,20 @@ async function syncAttendees(
       throw new CalendarError("Attendee contact not in organization", "invalid_relation");
     }
   }
+  // EventAttendee.userId has no database relation to OrganizationMember, so
+  // tenant ownership must be established explicitly before the unscoped child
+  // write. Count unique ids to handle a member appearing more than once.
+  const userIds = attendees.map((a) => a.userId).filter((v): v is string => Boolean(v));
+  if (userIds.length > 0) {
+    const uniqueUserIds = [...new Set(userIds)];
+    const found = await db.organizationMember.count({ where: { userId: { in: uniqueUserIds } } });
+    if (found !== uniqueUserIds.length) {
+      throw new CalendarError("Attendee user is not an organization member", "invalid_relation");
+    }
+  }
+}
+
+async function syncAttendees(eventId: string, attendees: EventInput["attendees"]): Promise<void> {
   // EventAttendee is parent-scoped: operate through the verified event id.
   await unscopedPrisma.eventAttendee.deleteMany({ where: { eventId } });
   if (attendees.length > 0) {
@@ -278,6 +289,7 @@ export async function createEvent(ctx: TenantContext, input: EventInput) {
   validateEventInput(input);
   const db = tenantDb(ctx.orgId);
   await assertRelations(db, ctx.orgId, input);
+  await assertAttendeeRelations(db, input.attendees);
 
   const event = await db.calendarEvent.create({
     data: {
@@ -298,7 +310,7 @@ export async function createEvent(ctx: TenantContext, input: EventInput) {
       source: "MANUAL",
     },
   });
-  await syncAttendees(db, ctx.orgId, event.id, input.attendees);
+  await syncAttendees(event.id, input.attendees);
 
   await audit(ctx, {
     action: "calendar.create",
@@ -318,6 +330,7 @@ export async function updateEvent(ctx: TenantContext, eventId: string, input: Ev
   });
   if (!existing) throw new CalendarError("Event not found", "not_found");
   await assertRelations(db, ctx.orgId, input);
+  await assertAttendeeRelations(db, input.attendees);
 
   const event = await db.calendarEvent.update({
     where: { id: eventId },
@@ -336,7 +349,7 @@ export async function updateEvent(ctx: TenantContext, eventId: string, input: Ev
       ownerId: input.ownerId ?? undefined,
     },
   });
-  await syncAttendees(db, ctx.orgId, eventId, input.attendees);
+  await syncAttendees(eventId, input.attendees);
 
   await audit(ctx, {
     action: "calendar.update",

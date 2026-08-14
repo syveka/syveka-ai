@@ -72,6 +72,28 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.callOrder.length = 0;
   mocks.redisGet.mockResolvedValue(null);
+  mocks.voiceAssistantFindFirst.mockResolvedValue({
+    id: "assistant-1",
+    organizationId: "org-a",
+    enabledTools: [],
+    useKnowledgeBase: false,
+    organization: { members: [{ userId: "owner-1" }] },
+  });
+});
+
+describe("Vapi voice webhook — tenant lifecycle", () => {
+  it("does not resolve an assistant for a soft-deleted organization", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce(null as never);
+    const response = await POST(eocrRequest());
+    expect(response.status).toBe(404);
+    expect(mocks.voiceAssistantFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { vapiAssistantId: "assistant-1", organization: { deletedAt: null } },
+      }),
+    );
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
 });
 
 describe("Vapi voice webhook — end-of-call-report replay protection", () => {

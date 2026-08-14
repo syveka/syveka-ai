@@ -43,7 +43,7 @@ type Db = {
   contact: { findFirst: ReturnType<typeof vi.fn>; count: ReturnType<typeof vi.fn> };
   company: { findFirst: ReturnType<typeof vi.fn> };
   deal: { findFirst: ReturnType<typeof vi.fn> };
-  organizationMember: { findFirst: ReturnType<typeof vi.fn> };
+  organizationMember: { findFirst: ReturnType<typeof vi.fn>; count: ReturnType<typeof vi.fn> };
 };
 
 function makeDb(): Db {
@@ -56,7 +56,10 @@ function makeDb(): Db {
     contact: { findFirst: vi.fn(async () => ({ id: "c-1" })), count: vi.fn(async () => 0) },
     company: { findFirst: vi.fn(async () => ({ id: "co-1" })) },
     deal: { findFirst: vi.fn(async () => ({ id: "d-1" })) },
-    organizationMember: { findFirst: vi.fn(async () => ({ id: "m-1" })) },
+    organizationMember: {
+      findFirst: vi.fn(async () => ({ id: "m-1" })),
+      count: vi.fn(async () => 1),
+    },
   };
 }
 
@@ -96,6 +99,32 @@ describe("tenant isolation", () => {
     await expect(
       createEvent(ctx(), baseInput({ ownerId: "33333333-3333-4333-8333-333333333333" })),
     ).rejects.toMatchObject({ code: "invalid_owner" });
+  });
+
+  it("rejects attendee user ids that are not members before creating the event", async () => {
+    db.organizationMember.count.mockResolvedValue(0);
+    await expect(
+      createEvent(
+        ctx(),
+        baseInput({
+          attendees: [{ userId: "44444444-4444-4444-8444-444444444444" }],
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_relation" });
+    expect(db.organizationMember.count).toHaveBeenCalledWith({
+      where: { userId: { in: ["44444444-4444-4444-8444-444444444444"] } },
+    });
+    expect(db.calendarEvent.create).not.toHaveBeenCalled();
+    expect(unscopedMock.eventAttendee.createMany).not.toHaveBeenCalled();
+  });
+
+  it("allows attendee user ids that belong to the current organization", async () => {
+    const userId = "55555555-5555-4555-8555-555555555555";
+    db.organizationMember.count.mockResolvedValue(1);
+    await createEvent(ctx(), baseInput({ attendees: [{ userId }] }));
+    expect(unscopedMock.eventAttendee.createMany).toHaveBeenCalledWith({
+      data: [expect.objectContaining({ eventId: "evt-1", userId })],
+    });
   });
 });
 

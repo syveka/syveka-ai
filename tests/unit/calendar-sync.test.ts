@@ -393,10 +393,31 @@ describe("handleProviderWebhook", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           webhookSubscriptionId: "sub-1",
-          externalCalendar: { connection: { provider: "GOOGLE" } },
+          externalCalendar: {
+            organization: { deletedAt: null },
+            connection: { provider: "GOOGLE" },
+          },
         }),
       }),
     );
+  });
+
+  it("does not resolve subscriptions for soft-deleted organizations", async () => {
+    unscopedMock.calendarSyncState.findFirst.mockResolvedValue(null);
+    const handled = await handleProviderWebhook({
+      provider: "GOOGLE",
+      subscriptionId: "sub-deleted",
+      presentedSecret: "secret",
+    });
+    expect(handled).toBe(false);
+    expect(unscopedMock.calendarSyncState.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          externalCalendar: expect.objectContaining({ organization: { deletedAt: null } }),
+        }),
+      }),
+    );
+    expect(getFreshTokensMock).not.toHaveBeenCalled();
   });
 });
 

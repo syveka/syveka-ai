@@ -9,6 +9,7 @@ import { encryptToken, decryptToken } from "@/server/integrations/calendar/crypt
 import { ProviderError, type OAuthTokens } from "@/server/integrations/calendar/types";
 import { clientEnv } from "@/env";
 import type { TenantContext } from "@/server/auth/session";
+import { can } from "@/server/auth/permissions";
 
 export class ConnectionError extends Error {
   constructor(
@@ -72,6 +73,23 @@ export function oauthRedirectUri(provider: CalendarProvider): string {
   return `${clientEnv.NEXT_PUBLIC_APP_URL}/api/v1/integrations/calendar/${provider.toLowerCase()}/callback`;
 }
 
+async function assertCurrentIntegrationManager(orgId: string, userId: string): Promise<void> {
+  const membership = await unscopedPrisma.organizationMember.findFirst({
+    where: {
+      organizationId: orgId,
+      userId,
+      organization: { deletedAt: null },
+    },
+    select: { role: true },
+  });
+  if (!membership || !can(membership.role, "integrations:manage")) {
+    // Deliberately collapse removed membership, deleted tenant and insufficient
+    // role into the same OAuth-state failure so the callback cannot enumerate
+    // organization or membership state.
+    throw new ConnectionError("OAuth state is no longer authorized", "bad_state");
+  }
+}
+
 // ── Connection lifecycle ─────────────────────────────────────────────────
 
 export async function listConnections(ctx: TenantContext) {
@@ -121,11 +139,20 @@ export async function completeConnection(params: {
   const { orgId, userId, provider } = verifyOAuthState(params.state);
   if (provider !== params.provider) throw new ConnectionError("Provider mismatch", "bad_state");
 
+  // A signed state proves who started the flow, not that their membership and
+  // role are still valid. Re-check before sending the code to a provider.
+  await assertCurrentIntegrationManager(orgId, userId);
+
   const adapter = getProviderAdapter(provider);
   const tokens = await adapter.exchangeCode({
     code: params.code,
     redirectUri: oauthRedirectUri(provider),
   });
+  const calendars = await adapter.listCalendars(tokens);
+
+  // Provider calls can take long enough for an administrator to revoke access.
+  // Re-check immediately before privileged credentials are persisted.
+  await assertCurrentIntegrationManager(orgId, userId);
 
   const connection = await unscopedPrisma.calendarConnection.upsert({
     where: { organizationId_userId_provider: { organizationId: orgId, userId, provider } },
@@ -154,7 +181,6 @@ export async function completeConnection(params: {
   });
 
   // Discover calendars (idempotent upsert by (connectionId, externalId)).
-  const calendars = await adapter.listCalendars(tokens);
   for (const cal of calendars) {
     await unscopedPrisma.externalCalendar.upsert({
       where: {
