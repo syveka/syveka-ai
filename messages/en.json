@@ -685,6 +685,7 @@
     "invalidInput": "Please check the highlighted fields and try again.",
     "saveFailed": "Could not save. Please try again.",
     "updated": "Updated {date}",
+    "hoursTimezoneHint": "Hours are interpreted in the timezone set under Company.",
     "regenerate": {
       "label": "Regenerate from website",
       "description": "Pull fresh facts from your website. Only the fields it finds are updated — review and save when ready.",
@@ -697,34 +698,51 @@
       "appliedMessage": "Fields updated from the website. Review and save when ready."
     },
     "sections": {
-      "identity": "Identity",
+      "identity": "Company",
       "identityDescription": "How your business is described across Inbox, Voice, Booking and CRM.",
-      "productsAndCustomers": "Products & customers",
+      "services": "Services",
+      "servicesDescription": "Structured services or products your team offers — used for quoting and booking.",
+      "communication": "Communication",
       "openingHours": "Opening hours",
-      "policiesAndPricing": "Policies & pricing",
+      "policies": "Policies",
+      "pricingAndQuotes": "Pricing & quotes",
       "keyFacts": "Key facts"
     },
     "fields": {
       "displayName": "Display name",
       "industry": "Industry",
+      "description": "Short description",
       "supportedLocales": "Supported languages",
+      "timezone": "Timezone",
       "brandTone": "Brand tone",
       "communicationStyle": "Communication style",
-      "productsServices": "Products & services",
+      "responseInstructions": "Response instructions",
+      "productsServices": "Products & services (freeform summary)",
       "targetCustomer": "Target customer",
-      "policies": "Policies",
+      "cancellationPolicy": "Cancellation policy",
+      "bookingPolicy": "Booking policy",
+      "refundPolicy": "Refund / return policy",
+      "paymentPolicy": "Payment policy",
+      "otherPolicies": "Other policies",
+      "currency": "Currency",
+      "quoteInstructions": "Quote instructions",
       "pricingNotes": "Pricing notes",
       "keyFacts": "Key facts"
     },
     "placeholders": {
       "displayName": "Acme Oy",
       "industry": "e.g. plumbing, retail, consulting",
+      "description": "One or two sentences about what you do",
+      "timezone": "e.g. Europe/Helsinki",
       "brandTone": "e.g. friendly, professional, playful",
       "communicationStyle": "e.g. concise, formal, casual",
+      "responseInstructions": "e.g. Always confirm the customer's name before booking",
       "productsServices": "List what you sell or offer…",
       "targetCustomer": "Who are your typical customers?",
-      "policies": "Cancellation, refund, data handling…",
-      "pricingNotes": "Pricing rules, quote templates…",
+      "otherPolicies": "Any other customer-facing policy not covered above…",
+      "currency": "EUR",
+      "quoteInstructions": "How should quotes be phrased? Any constraints?",
+      "pricingNotes": "Pricing rules, general notes…",
       "keyFacts": "One fact per line, e.g.\nWalk-ins welcome\nDelivery within 20km"
     },
     "weekdays": {
@@ -738,7 +756,34 @@
     },
     "closed": "Closed",
     "openTimeLabel": "{day} opening time",
-    "closeTimeLabel": "{day} closing time"
+    "closeTimeLabel": "{day} closing time",
+    "services": {
+      "saveProfileFirst": "Save your Business DNA profile first, then add services.",
+      "empty": "No services added yet.",
+      "inactive": "Inactive",
+      "durationSuffix": "{minutes} min",
+      "defaultCurrencyLabel": "units",
+      "edit": "Edit",
+      "deactivate": "Deactivate",
+      "reactivate": "Reactivate",
+      "add": "Add service",
+      "cancel": "Cancel",
+      "saving": "Saving…",
+      "saveEdit": "Save changes",
+      "fields": {
+        "name": "Name",
+        "duration": "Duration (minutes)",
+        "price": "Price",
+        "priceNote": "Price note",
+        "description": "Description",
+        "active": "Active"
+      },
+      "placeholders": {
+        "duration": "e.g. 60",
+        "price": "e.g. 49.90",
+        "priceNote": "e.g. starting from, per hour"
+      }
+    }
   },
   "setupReadiness": {
     "title": "Setup readiness",
