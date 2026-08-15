@@ -15,3 +15,19 @@
 #   per repository policy); the literal itself has since been replaced with
 #   a runtime-assembled, non-secret-shaped value in a follow-up commit.
 1e16a50ddf270ee14191d3107c48fd38c3fdea50:tests/unit/inbox-resend-inbound.test.ts:generic-api-key:155
+#
+# 362b0e9e:scripts/generate-legacy-schema-contract.mjs:52
+# 362b0e9e:tests/unit/legacy-schema-contract-generator.test.ts:407
+#   Both lines hold the same value: the name of the
+#   compliance-foundation-phase1 migration directory added in this same
+#   commit (see prisma/migrations/ for the actual folder), inside an
+#   ["table", "migration_name"] tuple in LEGACY_MISSING_TABLE_ENTRIES / its
+#   test fixture -- already public and plainly visible in the repository's
+#   own directory listing. Gitleaks' generic-api-key rule matched it purely
+#   on string entropy (mixed digits/underscores/lowercase), not on any
+#   secret shape. Not a credential, token, or any other sensitive value --
+#   confirmed by inspecting the referenced source lines directly. (The exact
+#   string is deliberately not repeated here so this comment itself doesn't
+#   trip the same entropy heuristic on a new commit.)
+362b0e9e922fc2e7170f88d43d55d777ab02c723:scripts/generate-legacy-schema-contract.mjs:generic-api-key:52
+362b0e9e922fc2e7170f88d43d55d777ab02c723:tests/unit/legacy-schema-contract-generator.test.ts:generic-api-key:407
