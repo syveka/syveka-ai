@@ -243,6 +243,40 @@ enum SubStatus {
   PAUSED
 }
 
+enum StripeWebhookEventStatus {
+  RECEIVED
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+/// Durable idempotency ledger for inbound Stripe webhook events (§14.4).
+/// Keyed by Stripe's own globally-unique event id, not by organization --
+/// every lookup is `WHERE stripe_event_id = ...`, never org-scoped, so this
+/// is deliberately excluded from `TENANT_MODELS` (src/server/db/tenant.ts),
+/// the same way `User`/`Organization` are: it is Syveka's own cross-tenant
+/// operational state, not tenant-owned data. `organizationId` is nullable,
+/// best-effort metadata for observability once an event resolves to an org
+/// -- never an access-control boundary for this table.
+model StripeWebhookEvent {
+  id             String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stripeEventId  String                    @unique @map("stripe_event_id")
+  eventType      String                    @map("event_type")
+  status         StripeWebhookEventStatus  @default(RECEIVED)
+  organizationId String?                   @map("organization_id") @db.Uuid
+  objectId       String?                   @map("object_id")
+  attempts       Int                       @default(0)
+  lastError      String?                   @map("last_error")
+  firstSeenAt    DateTime                  @default(now()) @map("first_seen_at")
+  lastAttemptAt  DateTime?                 @map("last_attempt_at")
+  completedAt    DateTime?                 @map("completed_at")
+  createdAt      DateTime                  @default(now()) @map("created_at")
+  updatedAt      DateTime                  @updatedAt @map("updated_at")
+
+  @@index([status, lastAttemptAt])
+  @@map("stripe_webhook_events")
+}
+
 model UsageRecord {
   id             String      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId String      @map("organization_id") @db.Uuid

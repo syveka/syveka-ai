@@ -22,6 +22,7 @@ const expectedOrder = [
   "20260811010000_inbox_mvp_foundation",
   "20260811020000_inbox_unread_and_idempotency",
   "20260812000000_inbox_mailboxes",
+  "20260815000000_stripe_webhook_event_ledger",
 ];
 
 // These eight migrations were published before the staging-release branch.

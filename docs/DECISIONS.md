@@ -58,6 +58,14 @@ Add new entries at the bottom with a date; never delete a prior entry (mark supe
 - **Each major feature ships with a companion doc in `docs/`** describing architecture, RBAC,
   and known limitations at ship time (`ai-chat-production-hardening.md`,
   `calendar-booking-v1.md`, etc.). Continue this convention for future features.
+- **Financial webhook idempotency must be a durable, database-backed state machine, not a
+  Redis-only claim-before-confirm marker.** The Stripe webhook previously set its dedupe key
+  before processing completed, so a transient failure after the claim permanently suppressed
+  Stripe's own retry for that event. See `docs/stripe-webhook-reliability.md` for the
+  RECEIVED/PROCESSING/COMPLETED/FAILED ledger (`stripe_webhook_events`) that replaced it —
+  completion is recorded only inside the same transaction as the business mutation it depends
+  on. Apply the same pattern (not necessarily the same table) to any future inbound webhook
+  whose retries must never be silently dropped.
 
 ## Standing engineering conventions (from `README.md`, verified still enforced)
 

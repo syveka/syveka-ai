@@ -61,7 +61,8 @@ describe("staging release migration contract", () => {
         "    'business_dna',\n" +
         "    'inbox_threads',\n" +
         "    'inbox_messages',\n" +
-        "    'inbox_mailboxes'\n" +
+        "    'inbox_mailboxes',\n" +
+        "    'stripe_webhook_events'\n" +
         "  ];\n-- END LEGACY MISSING TABLES",
     );
     expect(contract).not.toContain("ARRAY[]");
@@ -107,7 +108,7 @@ describe("staging release migration contract", () => {
       "  FOR expected IN\n    SELECT * FROM (VALUES\n      ('Locale'",
       "complete foreign-key contract",
     ).match(/^      \('public', '[^']+', '[^']+_fkey',/gm);
-    expect(columnRows).toHaveLength(520);
+    expect(columnRows).toHaveLength(533);
     expect(foreignKeyRows).toHaveLength(78);
     expect(contract).toContain("expected.table_name = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.source_table = ANY(legacy_missing_tables)");
