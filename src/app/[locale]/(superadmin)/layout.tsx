@@ -18,6 +18,9 @@ export default async function SuperadminLayout({ children }: { children: React.R
         <Link href={"/admin/organizations" as never} className="hover:underline">
           Organizations
         </Link>
+        <Link href={"/admin/compliance" as never} className="hover:underline">
+          Compliance
+        </Link>
         <Link href="/dashboard" className="ms-auto text-muted-foreground hover:underline">
           Exit admin
         </Link>
