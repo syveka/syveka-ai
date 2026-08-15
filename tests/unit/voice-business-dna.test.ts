@@ -73,6 +73,7 @@ function businessDnaMock(orgId: string, row: Record<string, unknown> | null) {
       })),
     },
     businessDNA: { findFirst: vi.fn(async () => row) },
+    businessDnaService: { findMany: vi.fn(async () => []) },
   };
 }
 
@@ -90,7 +91,7 @@ describe("voice assistant sync — Business DNA context", () => {
       brandTone: null,
       communicationStyle: null,
       openingHours: null,
-      policies: null,
+      otherPolicies: null,
       targetCustomer: null,
       keyFacts: [],
     });
@@ -114,7 +115,7 @@ describe("voice assistant sync — Business DNA context", () => {
       brandTone: null,
       communicationStyle: null,
       openingHours: null,
-      policies: null,
+      otherPolicies: null,
       targetCustomer: null,
       keyFacts: [],
     });
@@ -126,7 +127,7 @@ describe("voice assistant sync — Business DNA context", () => {
       brandTone: null,
       communicationStyle: null,
       openingHours: null,
-      policies: null,
+      otherPolicies: null,
       targetCustomer: null,
       keyFacts: [],
     });
@@ -162,7 +163,7 @@ describe("voice assistant sync — Business DNA context", () => {
         brandTone: null,
         communicationStyle: null,
         openingHours: null,
-        policies: null,
+        otherPolicies: null,
         targetCustomer: null,
         keyFacts: [],
       }),

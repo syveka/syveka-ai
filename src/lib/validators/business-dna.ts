@@ -45,6 +45,37 @@ export const openingHoursSchema = z
 
 export const BUSINESS_DNA_LOCALES = ["FI", "EN", "AR"] as const;
 
+/** IANA timezone name (e.g. "Europe/Helsinki"). Validated against the runtime's tz database via Intl. */
+const optionalTimezone = z
+  .string()
+  .trim()
+  .max(100)
+  .optional()
+  .or(z.literal(""))
+  .transform((v) => (v ? v : undefined))
+  .refine(
+    (v) => {
+      if (!v) return true;
+      try {
+        Intl.DateTimeFormat(undefined, { timeZone: v });
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    { message: "invalid IANA timezone" },
+  );
+
+/** ISO 4217 currency code (e.g. "EUR", "USD"). */
+const optionalCurrency = z
+  .string()
+  .trim()
+  .toUpperCase()
+  .regex(/^[A-Z]{3}$/, "must be a 3-letter ISO 4217 code")
+  .optional()
+  .or(z.literal(""))
+  .transform((v) => (v ? v : undefined));
+
 const keyFactsSchema = z.array(z.string().trim().min(1).max(300)).max(20).default([]);
 
 /**
@@ -59,15 +90,24 @@ export const businessDnaSchema = z
   .object({
     displayName: optionalTrimmed(200),
     industry: optionalTrimmed(120),
+    description: optionalTrimmed(1000),
     productsServices: optionalTrimmed(4000),
     supportedLocales: z
       .array(z.enum(BUSINESS_DNA_LOCALES))
       .max(BUSINESS_DNA_LOCALES.length)
       .default([]),
+    timezone: optionalTimezone,
     brandTone: optionalTrimmed(200),
     communicationStyle: optionalTrimmed(200),
+    responseInstructions: optionalTrimmed(2000),
     openingHours: openingHoursSchema.nullish(),
-    policies: optionalTrimmed(4000),
+    cancellationPolicy: optionalTrimmed(2000),
+    bookingPolicy: optionalTrimmed(2000),
+    refundPolicy: optionalTrimmed(2000),
+    paymentPolicy: optionalTrimmed(2000),
+    otherPolicies: optionalTrimmed(4000),
+    currency: optionalCurrency,
+    quoteInstructions: optionalTrimmed(2000),
     pricingNotes: optionalTrimmed(4000),
     targetCustomer: optionalTrimmed(2000),
     keyFacts: keyFactsSchema,
@@ -85,15 +125,24 @@ export const extractedBusinessDnaSchema = z
   .object({
     displayName: optionalTrimmed(200),
     industry: optionalTrimmed(120),
+    description: optionalTrimmed(1000),
     productsServices: optionalTrimmed(4000),
     supportedLocales: z
       .array(z.enum(BUSINESS_DNA_LOCALES))
       .max(BUSINESS_DNA_LOCALES.length)
       .optional(),
+    timezone: optionalTimezone,
     brandTone: optionalTrimmed(200),
     communicationStyle: optionalTrimmed(200),
+    responseInstructions: optionalTrimmed(2000),
     openingHours: openingHoursSchema.nullish(),
-    policies: optionalTrimmed(4000),
+    cancellationPolicy: optionalTrimmed(2000),
+    bookingPolicy: optionalTrimmed(2000),
+    refundPolicy: optionalTrimmed(2000),
+    paymentPolicy: optionalTrimmed(2000),
+    otherPolicies: optionalTrimmed(4000),
+    currency: optionalCurrency,
+    quoteInstructions: optionalTrimmed(2000),
     pricingNotes: optionalTrimmed(4000),
     targetCustomer: optionalTrimmed(2000),
     keyFacts: z.array(z.string().trim().min(1).max(300)).max(20).optional(),
@@ -107,3 +156,25 @@ export const extractBusinessDnaRequestSchema = z
     url: z.string().trim().url().max(2048),
   })
   .strict();
+
+/**
+ * Manual create/update input for one product/service line item.
+ *
+ * Strict for the same trust-boundary reason as `businessDnaSchema`: id,
+ * organizationId, and businessDnaId are never accepted from the client --
+ * they come from TenantContext and the route/action, not request data.
+ */
+export const businessDnaServiceSchema = z
+  .object({
+    name: z.string().trim().min(1).max(200),
+    description: optionalTrimmed(2000),
+    /** Integer cents. Omit when pricing is quote-only (use `priceNote` instead). */
+    priceCents: z.coerce.number().int().min(0).max(100_000_000).optional(),
+    priceNote: optionalTrimmed(200),
+    durationMinutes: z.coerce.number().int().min(0).max(100_000).optional(),
+    isActive: z.coerce.boolean().default(true),
+    sortOrder: z.coerce.number().int().min(0).max(100_000).default(0),
+  })
+  .strict();
+
+export type BusinessDnaServiceInput = z.infer<typeof businessDnaServiceSchema>;

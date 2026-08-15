@@ -21,10 +21,15 @@ function businessDnaHasAnyFact(dna: Awaited<ReturnType<typeof getBusinessDnaCont
     dna.displayName ||
     dna.industry ||
     dna.productsServices ||
-    dna.policies ||
+    dna.otherPolicies ||
+    dna.cancellationPolicy ||
+    dna.bookingPolicy ||
+    dna.refundPolicy ||
+    dna.paymentPolicy ||
     dna.pricingNotes ||
     dna.targetCustomer ||
-    dna.keyFacts.length > 0,
+    dna.keyFacts.length > 0 ||
+    dna.services.length > 0,
   );
 }
 

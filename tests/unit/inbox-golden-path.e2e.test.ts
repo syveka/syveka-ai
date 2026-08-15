@@ -111,6 +111,9 @@ const { store, mocks } = vi.hoisted(() => {
           async () => store.businessDna.find((d) => d.organizationId === orgId) ?? null,
         ),
       },
+      businessDnaService: {
+        findMany: vi.fn(async () => []),
+      },
       booking: {
         findFirst: vi.fn(async ({ where }: { where: Row }) => {
           const rows = store.bookings.filter(
@@ -274,7 +277,7 @@ describe("Inbox golden path (end-to-end)", () => {
       brandTone: "Warm",
       communicationStyle: null,
       openingHours: null,
-      policies: "No refunds after pickup",
+      otherPolicies: "No refunds after pickup",
       pricingNotes: null,
       targetCustomer: null,
       keyFacts: ["Family-owned since 1995"],

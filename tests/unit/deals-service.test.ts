@@ -546,15 +546,25 @@ describe("deals service", () => {
       getBusinessDnaContextMock.mockResolvedValueOnce({
         displayName: "Acme Oy",
         industry: null,
+        description: null,
         productsServices: null,
         supportedLocales: [],
+        timezone: null,
         brandTone: null,
         communicationStyle: null,
+        responseInstructions: null,
         openingHours: null,
-        policies: "No discounts over 10% without manager approval",
+        cancellationPolicy: null,
+        bookingPolicy: null,
+        refundPolicy: null,
+        paymentPolicy: null,
+        otherPolicies: "No discounts over 10% without manager approval",
+        currency: null,
+        quoteInstructions: null,
         pricingNotes: null,
         targetCustomer: null,
         keyFacts: [],
+        services: [],
       });
 
       await generateDealInsights(ctx("org-a"), "org-a-d1");
