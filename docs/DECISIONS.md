@@ -66,6 +66,15 @@ Add new entries at the bottom with a date; never delete a prior entry (mark supe
   completion is recorded only inside the same transaction as the business mutation it depends
   on. Apply the same pattern (not necessarily the same table) to any future inbound webhook
   whose retries must never be silently dropped.
+- **Trust & Compliance data (Issue #74) is Syveka-platform-level, not tenant-owned, and is
+  gated by `requireSuperadmin()`, never tenant RBAC.** GDPR/ISO 27001/NIS2/SOC 2 readiness is
+  tracked in a single reusable `ComplianceControl → ControlFrameworkMapping[] → Evidence[]`
+  model rather than separate per-framework systems — see `docs/compliance/ARCHITECTURE.md` and
+  `docs/compliance/CONTROL_MODEL.md`. **Implementation status and independent-verification
+  status are two separate fields, never collapsed into one `compliant: boolean`**, and no
+  certification may be recorded as `CERTIFIED`/`EXTERNALLY_VERIFIED` without a real issuer and
+  verification reference — see `docs/compliance/SECURITY_CLAIMS.md`. Syveka holds no
+  certifications as of this decision; do not claim otherwise in any customer-facing material.
 
 ## Standing engineering conventions (from `README.md`, verified still enforced)
 
