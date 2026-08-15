@@ -52,6 +52,7 @@ export async function createIncident(input: CreateIncidentInput) {
 export async function updateIncidentStatus(id: string, status: IncidentStatus) {
   const { userId } = await requireSuperadmin();
   const before = await unscopedPrisma.securityIncident.findUnique({ where: { id } });
+  if (!before) throw new Error("Incident not found");
   const incident = await unscopedPrisma.securityIncident.update({
     where: { id },
     data: { status, closedAt: status === "CLOSED" ? new Date() : undefined },
@@ -77,6 +78,7 @@ export type NotificationAssessment = {
 export async function setNotificationAssessment(id: string, input: NotificationAssessment) {
   const { userId } = await requireSuperadmin();
   const before = await unscopedPrisma.securityIncident.findUnique({ where: { id } });
+  if (!before) throw new Error("Incident not found");
   const incident = await unscopedPrisma.securityIncident.update({ where: { id }, data: input });
   await complianceAudit(userId, {
     action: "security_incident.set_notification_assessment",

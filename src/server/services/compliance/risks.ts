@@ -46,6 +46,7 @@ export async function updateRiskStatus(
 ) {
   const { userId } = await requireSuperadmin();
   const before = await unscopedPrisma.complianceRisk.findUnique({ where: { id } });
+  if (!before) throw new Error("Risk not found");
   const risk = await unscopedPrisma.complianceRisk.update({
     where: { id },
     data: { status, residualRiskLevel },

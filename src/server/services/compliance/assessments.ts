@@ -38,6 +38,7 @@ export async function createAssessment(input: CreateAssessmentInput) {
 export async function setDpiaRequirement(id: string, dpiaRequired: DpiaRequirement) {
   const { userId } = await requireSuperadmin();
   const before = await unscopedPrisma.privacySecurityAssessment.findUnique({ where: { id } });
+  if (!before) throw new Error("Assessment not found");
   const assessment = await unscopedPrisma.privacySecurityAssessment.update({
     where: { id },
     data: { dpiaRequired },

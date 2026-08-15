@@ -48,6 +48,7 @@ export async function updateProcessingRecord(
 ) {
   const { userId } = await requireSuperadmin();
   const before = await unscopedPrisma.processingRecord.findUnique({ where: { id } });
+  if (!before) throw new Error("Processing record not found");
   const record = await unscopedPrisma.processingRecord.update({ where: { id }, data: input });
   await complianceAudit(userId, {
     action: "processing_record.update",

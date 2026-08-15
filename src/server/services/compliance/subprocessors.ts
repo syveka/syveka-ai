@@ -52,6 +52,7 @@ export async function createSubprocessor(input: CreateSubprocessorInput) {
 export async function updateSubprocessor(id: string, input: Partial<CreateSubprocessorInput>) {
   const { userId } = await requireSuperadmin();
   const before = await unscopedPrisma.subprocessor.findUnique({ where: { id } });
+  if (!before) throw new Error("Subprocessor not found");
   const subprocessor = await unscopedPrisma.subprocessor.update({ where: { id }, data: input });
   await complianceAudit(userId, {
     action: "subprocessor.update",
@@ -66,6 +67,7 @@ export async function updateSubprocessor(id: string, input: Partial<CreateSubpro
 export async function deactivateSubprocessor(id: string) {
   const { userId } = await requireSuperadmin();
   const before = await unscopedPrisma.subprocessor.findUnique({ where: { id } });
+  if (!before) throw new Error("Subprocessor not found");
   const subprocessor = await unscopedPrisma.subprocessor.update({
     where: { id },
     data: { active: false },

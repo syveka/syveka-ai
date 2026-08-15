@@ -50,6 +50,7 @@ export async function createDataSubjectRequest(input: CreateDsrInput) {
 export async function setIdentityVerification(id: string, status: IdentityVerificationStatus) {
   const { userId } = await requireSuperadmin();
   const before = await unscopedPrisma.dataSubjectRequest.findUnique({ where: { id } });
+  if (!before) throw new Error("Request not found");
   const request = await unscopedPrisma.dataSubjectRequest.update({
     where: { id },
     data: { identityVerificationStatus: status },
@@ -64,14 +65,21 @@ export async function setIdentityVerification(id: string, status: IdentityVerifi
   return request;
 }
 
-/** Identity must be VERIFIED before a request can move past RECEIVED -- see tests/unit/compliance-tenant-isolation.test.ts. */
+/**
+ * Identity must be VERIFIED before a request can move to IN_PROGRESS or
+ * COMPLETED -- see tests/unit/compliance-workflows.test.ts. WITHDRAWN and
+ * REJECTED are both exempt: WITHDRAWN because the requester pulled the
+ * request themselves, REJECTED because "we could not verify who you are"
+ * is itself a legitimate, common rejection reason -- requiring VERIFIED
+ * identity before REJECTED would make that outcome unreachable.
+ */
 export async function updateDsrStatus(id: string, status: DsrStatus, rejectionReason?: string) {
   const { userId } = await requireSuperadmin();
   const before = await unscopedPrisma.dataSubjectRequest.findUnique({ where: { id } });
   if (!before) throw new Error("Request not found");
+  const identityExemptStatuses: DsrStatus[] = ["RECEIVED", "WITHDRAWN", "REJECTED"];
   if (
-    status !== "RECEIVED" &&
-    status !== "WITHDRAWN" &&
+    !identityExemptStatuses.includes(status) &&
     before.identityVerificationStatus !== "VERIFIED"
   ) {
     throw new Error("Identity must be verified before processing this request");

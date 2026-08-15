@@ -233,6 +233,80 @@ describe("compliance domain: superadmin actions are audit-logged", () => {
   });
 });
 
+describe("compliance domain: evidence cannot store secrets or oversized payloads", () => {
+  const validEvidence = {
+    controlId: "ctrl-1",
+    sourceType: "CI_RUN" as const,
+    sourceIdentifier: "https://github.com/syveka/syveka-ai/actions/runs/123",
+    resultStatus: "PASS" as const,
+    summary: "CI run 123 passed all required checks.",
+    collectedAt: new Date(),
+  };
+
+  it("accepts a normal reference-shaped evidence entry", async () => {
+    const { addEvidence } = await import("@/server/services/compliance/controls");
+    await expect(addEvidence(validEvidence)).resolves.toBeDefined();
+    expect(mocks.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("rejects a summary that exceeds the length cap", async () => {
+    const { addEvidence } = await import("@/server/services/compliance/controls");
+    await expect(addEvidence({ ...validEvidence, summary: "x".repeat(1001) })).rejects.toThrow(
+      /exceeds/,
+    );
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a sourceIdentifier that exceeds the length cap", async () => {
+    const { addEvidence } = await import("@/server/services/compliance/controls");
+    await expect(
+      addEvidence({ ...validEvidence, sourceIdentifier: "x".repeat(501) }),
+    ).rejects.toThrow(/exceeds/);
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+
+  // Fixtures are built via concatenation, not literal strings, so a static
+  // secret scanner reading this source file can't pattern-match them as
+  // real credentials (they only assemble into a secret-like shape at
+  // runtime, purely to exercise SECRET_SHAPE_PATTERNS in controls.ts).
+  const secretLikeFixtures: [string, string][] = [
+    ["Stripe secret key", "leaked key: " + "sk_" + "live_4eC39HqLyjWDarjtT1zdp7dc"],
+    ["Stripe/Svix webhook secret", "whsec_" + "MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw"],
+    ["AWS access key", "AKIA" + "IOSFODNN7EXAMPLE" + " was used here"],
+    ["GitHub token", "token " + "ghp_" + "16C7e42F292c6912E7710c838347Ae178B4a"],
+    ["PEM private key header", "-----BEGIN " + "RSA PRIVATE KEY-----"],
+    ["bearer token", "Authorization: " + "Bearer " + "abcdefghijklmnopqrstuvwxyz012345"],
+    [
+      "JWT-shaped string",
+      "eyJhbGciOiJIUzI1NiJ9." +
+        "eyJzdWIiOiIxMjM0NTY3ODkwIn0." +
+        "dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U",
+    ],
+  ];
+
+  it.each(secretLikeFixtures)(
+    "rejects evidence text containing a %s",
+    async (_label, secretLike) => {
+      const { addEvidence } = await import("@/server/services/compliance/controls");
+      await expect(addEvidence({ ...validEvidence, summary: secretLike })).rejects.toThrow(
+        /credential shape/,
+      );
+      expect(mocks.create).not.toHaveBeenCalled();
+    },
+  );
+
+  it("rejects a secret-shaped sourceIdentifier too, not just summary", async () => {
+    const { addEvidence } = await import("@/server/services/compliance/controls");
+    await expect(
+      addEvidence({
+        ...validEvidence,
+        sourceIdentifier: "sk_" + "live_4eC39HqLyjWDarjtT1zdp7dc",
+      }),
+    ).rejects.toThrow(/credential shape/);
+    expect(mocks.create).not.toHaveBeenCalled();
+  });
+});
+
 describe("compliance domain: RLS is declared for every new table, with zero policies", () => {
   const migrationSql = readFileSync(
     resolve(

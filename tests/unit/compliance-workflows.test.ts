@@ -99,6 +99,37 @@ describe("data subject requests", () => {
     expect(mocks.dsrUpdate).toHaveBeenCalledTimes(1);
   });
 
+  it("allows moving status to REJECTED even when identity is unverified (regression: rejecting because identity couldn't be verified must stay reachable)", async () => {
+    mocks.dsrFindUnique.mockResolvedValueOnce({
+      id: "dsr-1",
+      identityVerificationStatus: "UNVERIFIED",
+    });
+    const { updateDsrStatus } = await import("@/server/services/compliance/dsr");
+    await expect(
+      updateDsrStatus("dsr-1", "REJECTED", "identity could not be verified"),
+    ).resolves.toBeDefined();
+    expect(mocks.dsrUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("still blocks moving status to COMPLETED before identity is VERIFIED", async () => {
+    mocks.dsrFindUnique.mockResolvedValueOnce({
+      id: "dsr-1",
+      identityVerificationStatus: "PENDING",
+    });
+    const { updateDsrStatus } = await import("@/server/services/compliance/dsr");
+    await expect(updateDsrStatus("dsr-1", "COMPLETED")).rejects.toThrow(
+      /Identity must be verified/,
+    );
+    expect(mocks.dsrUpdate).not.toHaveBeenCalled();
+  });
+
+  it("throws a clear error when the request does not exist", async () => {
+    mocks.dsrFindUnique.mockResolvedValueOnce(null);
+    const { updateDsrStatus } = await import("@/server/services/compliance/dsr");
+    await expect(updateDsrStatus("missing-id", "WITHDRAWN")).rejects.toThrow(/not found/i);
+    expect(mocks.dsrUpdate).not.toHaveBeenCalled();
+  });
+
   it("allows moving status forward once identity is VERIFIED", async () => {
     mocks.dsrFindUnique.mockResolvedValueOnce({
       id: "dsr-1",

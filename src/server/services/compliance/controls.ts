@@ -59,6 +59,7 @@ export type UpdateControlInput = Partial<CreateControlInput>;
 export async function updateControl(id: string, input: UpdateControlInput) {
   const { userId } = await requireSuperadmin();
   const before = await unscopedPrisma.complianceControl.findUnique({ where: { id } });
+  if (!before) throw new Error("Control not found");
   const control = await unscopedPrisma.complianceControl.update({ where: { id }, data: input });
   await complianceAudit(userId, {
     action: "compliance_control.update",
@@ -100,9 +101,52 @@ export type AddEvidenceInput = {
   reviewDueAt?: Date;
 };
 
-/** `summary`/`sourceIdentifier` must be references, never secrets/tokens/raw payloads/PII. */
+const MAX_SUMMARY_LENGTH = 1000;
+const MAX_SOURCE_IDENTIFIER_LENGTH = 500;
+
+/** Common credential shapes -- a reference/summary should never look like one of these. */
+const SECRET_SHAPE_PATTERNS = [
+  /\bsk_(live|test)_[a-zA-Z0-9]+/, // Stripe secret keys
+  /\bwhsec_[a-zA-Z0-9]+/, // Stripe/Svix webhook secrets
+  /\bAKIA[0-9A-Z]{16}\b/, // AWS access key IDs
+  /\bgh[pousr]_[a-zA-Z0-9]{20,}/, // GitHub tokens
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/, // PEM private keys
+  /\bBearer\s+[a-zA-Z0-9._-]{20,}/i, // bearer tokens
+  /\beyJ[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\.[a-zA-Z0-9_-]{10,}\b/, // JWT-shaped
+];
+
+/**
+ * Fail closed rather than silently store: evidence fields are references
+ * (a CI run URL, a test file path, a short summary), never raw payloads or
+ * credentials (Step 5's security requirement). Length caps stop someone
+ * pasting a full log/response dump in as "evidence"; the pattern list
+ * catches the most common credential shapes. Not exhaustive -- this is a
+ * guardrail against accidental misuse, not a substitute for reviewing what
+ * gets passed in.
+ */
+function assertEvidenceTextIsSafe(summary: string, sourceIdentifier: string) {
+  if (summary.length > MAX_SUMMARY_LENGTH) {
+    throw new Error(
+      `Evidence summary exceeds ${MAX_SUMMARY_LENGTH} characters -- store a reference, not a payload`,
+    );
+  }
+  if (sourceIdentifier.length > MAX_SOURCE_IDENTIFIER_LENGTH) {
+    throw new Error(
+      `Evidence sourceIdentifier exceeds ${MAX_SOURCE_IDENTIFIER_LENGTH} characters -- store a reference, not a payload`,
+    );
+  }
+  for (const pattern of SECRET_SHAPE_PATTERNS) {
+    if (pattern.test(summary) || pattern.test(sourceIdentifier)) {
+      throw new Error(
+        "Evidence text matches a known credential shape -- never store secrets/tokens as compliance evidence",
+      );
+    }
+  }
+}
+
 export async function addEvidence(input: AddEvidenceInput) {
   const { userId } = await requireSuperadmin();
+  assertEvidenceTextIsSafe(input.summary, input.sourceIdentifier);
   const evidence = await unscopedPrisma.complianceEvidence.create({ data: input });
   await complianceAudit(userId, {
     action: "compliance_evidence.create",
