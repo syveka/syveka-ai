@@ -389,6 +389,7 @@ describe("legacy schema contract generator", () => {
     '  ["inbox_messages", "20260811010000_inbox_mvp_foundation"],\n' +
     '  ["inbox_mailboxes", "20260812000000_inbox_mailboxes"],\n' +
     '  ["stripe_webhook_events", "20260815000000_stripe_webhook_event_ledger"],\n' +
+    '  ["business_dna_services", "20260815020000_business_dna_mvp"],\n' +
     "];";
 
   it("fails closed when a legacy-missing table references a nonexistent migration directory", () => {
@@ -467,7 +468,8 @@ describe("legacy schema contract generator", () => {
         "    'inbox_threads',\n" +
         "    'inbox_messages',\n" +
         "    'inbox_mailboxes',\n" +
-        "    'stripe_webhook_events'\n" +
+        "    'stripe_webhook_events',\n" +
+        "    'business_dna_services'\n" +
         "  ];",
     );
     expect(legacyMissingTablesDeclarationOf(stdout)).toBe(

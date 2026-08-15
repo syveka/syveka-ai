@@ -21,12 +21,15 @@ const tableName = (model) => model.dbName ?? model.name;
 //     time by 20260811010000_inbox_mvp_foundation.
 //   - stripe_webhook_events: same situation, created for the first time by
 //     20260815000000_stripe_webhook_event_ledger.
+//   - business_dna_services: same situation, created for the first time by
+//     20260815020000_business_dna_mvp.
 const LEGACY_MISSING_TABLE_ENTRIES = [
   ["business_dna", "20260811000000_business_dna_v1"],
   ["inbox_threads", "20260811010000_inbox_mvp_foundation"],
   ["inbox_messages", "20260811010000_inbox_mvp_foundation"],
   ["inbox_mailboxes", "20260812000000_inbox_mailboxes"],
   ["stripe_webhook_events", "20260815000000_stripe_webhook_event_ledger"],
+  ["business_dna_services", "20260815020000_business_dna_mvp"],
 ];
 
 const actualTableNames = new Set(models.map(tableName));
@@ -495,6 +498,7 @@ for (const table of [
   "voice_assistants",
   "webhook_endpoints",
   "business_dna",
+  "business_dna_services",
 ]) {
   addPolicy(table, `${table}_select`, "SELECT", "organization_id=auth_org_id");
   addPolicy(table, `${table}_insert`, "INSERT", "", "organization_id=auth_org_id");

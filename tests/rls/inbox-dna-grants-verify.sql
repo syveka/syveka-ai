@@ -23,6 +23,8 @@ begin
     and (table_name, privilege_type) not in (
       ('business_dna', 'SELECT'), ('business_dna', 'INSERT'),
       ('business_dna', 'UPDATE'), ('business_dna', 'DELETE'),
+      ('business_dna_services', 'SELECT'), ('business_dna_services', 'INSERT'),
+      ('business_dna_services', 'UPDATE'), ('business_dna_services', 'DELETE'),
       ('inbox_threads', 'SELECT'), ('inbox_threads', 'INSERT'),
       ('inbox_messages', 'SELECT'),
       ('inbox_mailboxes', 'SELECT')
@@ -36,6 +38,8 @@ begin
     values
       ('business_dna', 'SELECT'), ('business_dna', 'INSERT'),
       ('business_dna', 'UPDATE'), ('business_dna', 'DELETE'),
+      ('business_dna_services', 'SELECT'), ('business_dna_services', 'INSERT'),
+      ('business_dna_services', 'UPDATE'), ('business_dna_services', 'DELETE'),
       ('inbox_threads', 'SELECT'), ('inbox_threads', 'INSERT'),
       ('inbox_messages', 'SELECT'),
       ('inbox_mailboxes', 'SELECT')

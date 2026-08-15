@@ -91,6 +91,7 @@ model Organization {
   auditLogs             AuditLog[]
   tags                  Tag[]
   businessDNA           BusinessDNA?
+  businessDnaServices   BusinessDnaService[]
   inboxThreads          InboxThread[]
   inboxMailboxes        InboxMailbox[]
 
@@ -184,17 +185,32 @@ model BusinessDNA {
   id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
   organizationId String @unique @map("organization_id") @db.Uuid
 
-  displayName        String?  @map("display_name")
-  industry           String?
-  productsServices   String?  @map("products_services")
-  supportedLocales   Locale[] @default([]) @map("supported_locales")
-  brandTone          String?  @map("brand_tone")
-  communicationStyle String?  @map("communication_style")
-  openingHours       Json?    @map("opening_hours")
-  policies           String?
-  pricingNotes       String?  @map("pricing_notes")
-  targetCustomer     String?  @map("target_customer")
-  keyFacts           String[] @default([]) @map("key_facts")
+  displayName          String?  @map("display_name")
+  industry             String?
+  description          String?
+  productsServices     String?  @map("products_services")
+  supportedLocales     Locale[] @default([]) @map("supported_locales")
+  timezone             String?
+  brandTone            String?  @map("brand_tone")
+  communicationStyle   String?  @map("communication_style")
+  /// Preferred response style + language behavior instructions for AI consumers.
+  responseInstructions String?  @map("response_instructions")
+  openingHours         Json?    @map("opening_hours")
+  cancellationPolicy   String?  @map("cancellation_policy")
+  bookingPolicy        String?  @map("booking_policy")
+  refundPolicy         String?  @map("refund_policy")
+  paymentPolicy        String?  @map("payment_policy")
+  /// Catch-all for policies not covered by the four structured fields above.
+  /// Prisma field renamed from the original `policies`; the underlying
+  /// column (and any existing data) is unchanged via `@map`.
+  otherPolicies        String?  @map("policies")
+  currency             String?
+  /// Quote templates/instructions for AI-generated quotes -- separate from
+  /// `pricingNotes`, which stays freeform pricing rules/constraints.
+  quoteInstructions    String?  @map("quote_instructions")
+  pricingNotes         String?  @map("pricing_notes")
+  targetCustomer       String?  @map("target_customer")
+  keyFacts             String[] @default([]) @map("key_facts")
 
   sourceUrl   String?   @map("source_url")
   extractedAt DateTime? @map("extracted_at")
@@ -202,9 +218,43 @@ model BusinessDNA {
   createdAt DateTime @default(now()) @map("created_at")
   updatedAt DateTime @updatedAt @map("updated_at")
 
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  organization Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  services     BusinessDnaService[]
 
   @@map("business_dna")
+}
+
+/// Structured products/services list (Business DNA MVP). Kept separate from
+/// `BusinessDNA.productsServices` (a freeform summary/legacy field) because
+/// individual items need their own active state, price, and duration --
+/// exactly the case the schema is meant to structure rather than leave as
+/// one text blob. Directly organization-scoped (like Contact/Deal) rather
+/// than parent-relation-scoped, since services get their own independent
+/// CRUD surface.
+model BusinessDnaService {
+  id             String @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String @map("organization_id") @db.Uuid
+  businessDnaId  String @map("business_dna_id") @db.Uuid
+
+  name            String
+  description     String?
+  /// Integer cents, matching the repo-wide money convention. Null when
+  /// pricing is quote-only (see `priceNote`, e.g. "starting from", "contact us").
+  priceCents      Int?    @map("price_cents")
+  priceNote       String? @map("price_note")
+  durationMinutes Int?    @map("duration_minutes")
+  isActive        Boolean @default(true) @map("is_active")
+  sortOrder       Int     @default(0) @map("sort_order")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  businessDna  BusinessDNA  @relation(fields: [businessDnaId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, isActive])
+  @@index([businessDnaId])
+  @@map("business_dna_services")
 }
 
 // ───────────────────────── BILLING ─────────────────────────
@@ -259,19 +309,19 @@ enum StripeWebhookEventStatus {
 /// best-effort metadata for observability once an event resolves to an org
 /// -- never an access-control boundary for this table.
 model StripeWebhookEvent {
-  id             String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  stripeEventId  String                    @unique @map("stripe_event_id")
-  eventType      String                    @map("event_type")
-  status         StripeWebhookEventStatus  @default(RECEIVED)
-  organizationId String?                   @map("organization_id") @db.Uuid
-  objectId       String?                   @map("object_id")
-  attempts       Int                       @default(0)
-  lastError      String?                   @map("last_error")
-  firstSeenAt    DateTime                  @default(now()) @map("first_seen_at")
-  lastAttemptAt  DateTime?                 @map("last_attempt_at")
-  completedAt    DateTime?                 @map("completed_at")
-  createdAt      DateTime                  @default(now()) @map("created_at")
-  updatedAt      DateTime                  @updatedAt @map("updated_at")
+  id             String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stripeEventId  String                   @unique @map("stripe_event_id")
+  eventType      String                   @map("event_type")
+  status         StripeWebhookEventStatus @default(RECEIVED)
+  organizationId String?                  @map("organization_id") @db.Uuid
+  objectId       String?                  @map("object_id")
+  attempts       Int                      @default(0)
+  lastError      String?                  @map("last_error")
+  firstSeenAt    DateTime                 @default(now()) @map("first_seen_at")
+  lastAttemptAt  DateTime?                @map("last_attempt_at")
+  completedAt    DateTime?                @map("completed_at")
+  createdAt      DateTime                 @default(now()) @map("created_at")
+  updatedAt      DateTime                 @updatedAt @map("updated_at")
 
   @@index([status, lastAttemptAt])
   @@map("stripe_webhook_events")
@@ -547,7 +597,9 @@ model InboxThread {
   assignedToId   String?           @map("assigned_to_id") @db.Uuid
   externalId     String?           @map("external_id")
   lastMessageAt  DateTime?         @map("last_message_at")
-  /** Null = unread (reset to null whenever a new inbound message arrives). */
+  /**
+   * Null = unread (reset to null whenever a new inbound message arrives).
+   */
   readAt         DateTime?         @map("read_at")
   createdAt      DateTime          @default(now()) @map("created_at")
   updatedAt      DateTime          @updatedAt @map("updated_at")

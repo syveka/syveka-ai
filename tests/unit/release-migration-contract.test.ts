@@ -62,7 +62,8 @@ describe("staging release migration contract", () => {
         "    'inbox_threads',\n" +
         "    'inbox_messages',\n" +
         "    'inbox_mailboxes',\n" +
-        "    'stripe_webhook_events'\n" +
+        "    'stripe_webhook_events',\n" +
+        "    'business_dna_services'\n" +
         "  ];\n-- END LEGACY MISSING TABLES",
     );
     expect(contract).not.toContain("ARRAY[]");
@@ -108,8 +109,8 @@ describe("staging release migration contract", () => {
       "  FOR expected IN\n    SELECT * FROM (VALUES\n      ('Locale'",
       "complete foreign-key contract",
     ).match(/^      \('public', '[^']+', '[^']+_fkey',/gm);
-    expect(columnRows).toHaveLength(533);
-    expect(foreignKeyRows).toHaveLength(78);
+    expect(columnRows).toHaveLength(554);
+    expect(foreignKeyRows).toHaveLength(80);
     expect(contract).toContain("expected.table_name = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.source_table = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.target_table = ANY(legacy_missing_tables)");
@@ -165,9 +166,10 @@ describe("staging release migration contract", () => {
       expect(releaseInvariantRows.has(row)).toBe(true);
     }
     expect(securityRows).toHaveLength(86);
-    expect(releaseInvariantRows.size).toBe(90);
+    expect(releaseInvariantRows.size).toBe(94);
     // The only rows release-invariants carries beyond security-baseline are
-    // business_dna's — anything else diverging would be real, unexplained drift.
+    // business_dna's and business_dna_services' — anything else diverging
+    // would be real, unexplained drift.
     const extraRows = [...releaseInvariantRows].filter((row) => !securityRows.includes(row));
     expect(extraRows.sort()).toEqual(
       [
@@ -175,6 +177,10 @@ describe("staging release migration contract", () => {
         "      ('public', 'business_dna', 'business_dna_insert', 'PERMISSIVE', 'INSERT', '{authenticated}', '', 'organization_id=auth_org_id'),",
         "      ('public', 'business_dna', 'business_dna_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),",
         "      ('public', 'business_dna', 'business_dna_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+        "      ('public', 'business_dna_services', 'business_dna_services_delete', 'PERMISSIVE', 'DELETE', '{authenticated}', 'organization_id=auth_org_idandauth_role=anyarray[''owner'',''admin'',''manager'']', ''),",
+        "      ('public', 'business_dna_services', 'business_dna_services_insert', 'PERMISSIVE', 'INSERT', '{authenticated}', '', 'organization_id=auth_org_id'),",
+        "      ('public', 'business_dna_services', 'business_dna_services_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),",
+        "      ('public', 'business_dna_services', 'business_dna_services_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
       ].sort(),
     );
     expect(rlsPolicyContract(security)).toContain("messages_select");

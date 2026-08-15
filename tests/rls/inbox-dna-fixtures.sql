@@ -24,6 +24,11 @@ where organization_id in (
   '51111111-0000-4000-8000-000000000000',
   '52222222-0000-4000-8000-000000000000'
 );
+delete from business_dna_services
+where organization_id in (
+  '51111111-0000-4000-8000-000000000000',
+  '52222222-0000-4000-8000-000000000000'
+);
 delete from business_dna
 where organization_id in (
   '51111111-0000-4000-8000-000000000000',
@@ -70,6 +75,28 @@ insert into business_dna (
     '53000000-0000-4000-8000-000000000002',
     '52222222-0000-4000-8000-000000000000',
     'Inbox DNA Org B',
+    now()
+  );
+
+insert into business_dna_services (
+  id, organization_id, business_dna_id, name, price_cents, is_active, updated_at
+) values
+  (
+    '53500000-0000-4000-8000-000000000001',
+    '51111111-0000-4000-8000-000000000000',
+    '53000000-0000-4000-8000-000000000001',
+    'Org A service',
+    1000,
+    true,
+    now()
+  ),
+  (
+    '53500000-0000-4000-8000-000000000002',
+    '52222222-0000-4000-8000-000000000000',
+    '53000000-0000-4000-8000-000000000002',
+    'Org B service',
+    2000,
+    true,
     now()
   );
 

@@ -5,10 +5,11 @@
 -- the administrative connection, via the harness's exit trap, after the
 -- client-side assertions in tests/rls/inbox-dna-isolation.sql complete --
 -- whether they passed, failed, or the client connection itself never
--- succeeded. Deleting the two organizations cascades to business_dna,
--- inbox_mailboxes, and inbox_threads (which itself cascades to
--- inbox_messages), so verifying the two organizations are gone is sufficient
--- to verify the whole fixture set is gone.
+-- succeeded. Deleting the two organizations cascades to business_dna (which
+-- itself cascades to business_dna_services), inbox_mailboxes, and
+-- inbox_threads (which itself cascades to inbox_messages), so verifying the
+-- two organizations are gone is sufficient to verify the whole fixture set
+-- is gone.
 
 delete from organizations
 where id in (
@@ -67,5 +68,15 @@ begin
   );
   if remaining <> 0 then
     raise exception 'INBOX-DNA CLEANUP FAIL: % inbox_threads fixture row(s) remain (cascade did not run)', remaining;
+  end if;
+
+  select count(*) into remaining
+  from business_dna_services
+  where organization_id in (
+    '51111111-0000-4000-8000-000000000000',
+    '52222222-0000-4000-8000-000000000000'
+  );
+  if remaining <> 0 then
+    raise exception 'INBOX-DNA CLEANUP FAIL: % business_dna_services fixture row(s) remain (cascade did not run)', remaining;
   end if;
 end $$;
