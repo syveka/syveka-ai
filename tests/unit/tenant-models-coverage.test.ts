@@ -43,6 +43,11 @@ function extractTenantModels(source: string): string[] {
  * StripeWebhookEvent: keyed and queried exclusively by Stripe's own globally-unique
  * `stripeEventId`, never by organization - see the model's own doc comment in
  * prisma/schema.prisma and docs/stripe-webhook-reliability.md.
+ *
+ * Compliance domain (Issue #74, Phase 1): Syveka-platform-level security/compliance
+ * posture, not tenant-owned data - gated by requireSuperadmin(), never scoped by
+ * organization. See prisma/schema.prisma's own doc comment on this block and
+ * docs/compliance/ARCHITECTURE.md.
  */
 const DOCUMENTED_EXCLUSIONS = new Set([
   "Message",
@@ -57,6 +62,24 @@ const DOCUMENTED_EXCLUSIONS = new Set([
   "User",
   "Organization",
   "StripeWebhookEvent",
+  "ComplianceControl",
+  "ControlFrameworkMapping",
+  "ComplianceEvidence",
+  "ComplianceRisk",
+  "SecurityPolicy",
+  "PolicyAcknowledgement",
+  "SecurityIncident",
+  "IncidentEvent",
+  "Subprocessor",
+  "ProcessingRecord",
+  "DataSubjectRequest",
+  "DsrEvent",
+  "RetentionPolicy",
+  "RetentionExecution",
+  "PrivacySecurityAssessment",
+  "AccessReview",
+  "Certification",
+  "ComplianceAuditLog",
 ]);
 
 describe("TENANT_MODELS coverage (src/server/db/tenant.ts)", () => {

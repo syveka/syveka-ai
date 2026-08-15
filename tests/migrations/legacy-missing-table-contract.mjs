@@ -70,7 +70,25 @@ try {
       "    'inbox_threads',\n" +
       "    'inbox_messages',\n" +
       "    'inbox_mailboxes',\n" +
-      "    'stripe_webhook_events'\n" +
+      "    'stripe_webhook_events',\n" +
+      "    'compliance_controls',\n" +
+      "    'control_framework_mappings',\n" +
+      "    'compliance_evidence',\n" +
+      "    'compliance_risks',\n" +
+      "    'security_policies',\n" +
+      "    'policy_acknowledgements',\n" +
+      "    'security_incidents',\n" +
+      "    'incident_events',\n" +
+      "    'subprocessors',\n" +
+      "    'processing_records',\n" +
+      "    'data_subject_requests',\n" +
+      "    'dsr_events',\n" +
+      "    'retention_policies',\n" +
+      "    'retention_executions',\n" +
+      "    'privacy_security_assessments',\n" +
+      "    'access_reviews',\n" +
+      "    'certifications',\n" +
+      "    'compliance_audit_log'\n" +
       "  ];",
     "  legacy_missing_tables TEXT[] := ARRAY[\n" +
       "    'business_dna',\n" +
@@ -78,6 +96,24 @@ try {
       "    'inbox_messages',\n" +
       "    'inbox_mailboxes',\n" +
       "    'stripe_webhook_events',\n" +
+      "    'compliance_controls',\n" +
+      "    'control_framework_mappings',\n" +
+      "    'compliance_evidence',\n" +
+      "    'compliance_risks',\n" +
+      "    'security_policies',\n" +
+      "    'policy_acknowledgements',\n" +
+      "    'security_incidents',\n" +
+      "    'incident_events',\n" +
+      "    'subprocessors',\n" +
+      "    'processing_records',\n" +
+      "    'data_subject_requests',\n" +
+      "    'dsr_events',\n" +
+      "    'retention_policies',\n" +
+      "    'retention_executions',\n" +
+      "    'privacy_security_assessments',\n" +
+      "    'access_reviews',\n" +
+      "    'certifications',\n" +
+      "    'compliance_audit_log',\n" +
       `    '${fixtureTable}'\n` +
       "  ];",
     "legacy-missing-table declaration",
