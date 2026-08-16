@@ -143,6 +143,31 @@ begin
     raise exception 'INBOX-DNA RLS FAIL: own-tenant business_dna update affected % row(s), expected 1', affected_rows;
   end if;
 
+  -- business_dna: an owner of org A, authorized to update their own row,
+  -- cannot reassign it to org B via UPDATE ... SET organization_id.
+  -- business_dna_update's WITH CHECK (20260816000000_business_dna_rls_update
+  -- _with_check) revalidates the RESULTING row, not just the row being
+  -- matched -- this is the RLS hardening this migration exists to prove.
+  begin
+    update business_dna
+    set organization_id = '52222222-0000-4000-8000-000000000000'
+    where organization_id = '51111111-0000-4000-8000-000000000000';
+    raise exception 'INBOX-DNA RLS FAIL: business_dna organization_id reassignment (A -> B) was allowed';
+  exception when insufficient_privilege or check_violation then
+    null;
+  end;
+
+  -- business_dna: a guessed org B business_dna id cannot be updated directly
+  -- by primary key, independent of whether the attacker also happens to
+  -- filter by organization_id.
+  update business_dna
+  set display_name = 'Hijacked by guessed id'
+  where id = '53000000-0000-4000-8000-000000000002';
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 0 then
+    raise exception 'INBOX-DNA RLS FAIL: guessed org B business_dna id was updatable, affected % row(s)', affected_rows;
+  end if;
+
   -- business_dna_services: own-tenant row visible, cross-tenant row hidden.
   select count(*) into n from business_dna_services;
   if n <> 1 then
@@ -179,6 +204,39 @@ begin
   get diagnostics affected_rows = row_count;
   if affected_rows <> 1 then
     raise exception 'INBOX-DNA RLS FAIL: own-tenant business_dna_services update affected % row(s), expected 1', affected_rows;
+  end if;
+
+  -- business_dna_services: an org A writer, authorized to update their own
+  -- service, cannot move it to org B via UPDATE ... SET organization_id.
+  -- Same WITH CHECK hardening as business_dna above.
+  begin
+    update business_dna_services
+    set organization_id = '52222222-0000-4000-8000-000000000000'
+    where organization_id = '51111111-0000-4000-8000-000000000000';
+    raise exception 'INBOX-DNA RLS FAIL: business_dna_services organization_id reassignment (A -> B) was allowed';
+  exception when insufficient_privilege or check_violation then
+    null;
+  end;
+
+  -- business_dna_services: a guessed org B service id cannot be updated
+  -- directly by primary key.
+  update business_dna_services
+  set name = 'Hijacked by guessed id'
+  where id = '53500000-0000-4000-8000-000000000002';
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 0 then
+    raise exception 'INBOX-DNA RLS FAIL: guessed org B business_dna_services id was updatable, affected % row(s)', affected_rows;
+  end if;
+
+  -- business_dna_services: a guessed org B service id cannot be
+  -- deactivated/reactivated directly by primary key either -- the same
+  -- tenant boundary applies to a state-toggle write as to any other update.
+  update business_dna_services
+  set is_active = not is_active
+  where id = '53500000-0000-4000-8000-000000000002';
+  get diagnostics affected_rows = row_count;
+  if affected_rows <> 0 then
+    raise exception 'INBOX-DNA RLS FAIL: guessed org B business_dna_services id was deactivatable, affected % row(s)', affected_rows;
   end if;
 
   -- business_dna_services: cross-tenant delete rejected (zero rows affected).
