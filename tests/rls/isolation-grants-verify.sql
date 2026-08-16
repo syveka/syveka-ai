@@ -23,7 +23,22 @@ begin
     and (table_name, privilege_type) not in (
       ('contacts', 'SELECT'), ('contacts', 'INSERT'),
       ('organizations', 'SELECT'),
-      ('subscriptions', 'INSERT')
+      ('subscriptions', 'INSERT'),
+      ('teams', 'SELECT'), ('teams', 'UPDATE'),
+      ('companies', 'SELECT'), ('companies', 'UPDATE'),
+      ('pipelines', 'SELECT'), ('pipelines', 'UPDATE'),
+      ('tags', 'SELECT'), ('tags', 'UPDATE'),
+      ('deals', 'SELECT'), ('deals', 'UPDATE'),
+      ('activities', 'SELECT'), ('activities', 'UPDATE'),
+      ('calendar_events', 'SELECT'), ('calendar_events', 'UPDATE'),
+      ('conversations', 'SELECT'), ('conversations', 'UPDATE'),
+      ('collections', 'SELECT'), ('collections', 'UPDATE'),
+      ('documents', 'SELECT'), ('documents', 'UPDATE'),
+      ('workflows', 'SELECT'), ('workflows', 'UPDATE'),
+      ('voice_assistants', 'SELECT'), ('voice_assistants', 'UPDATE'),
+      ('webhook_endpoints', 'SELECT'), ('webhook_endpoints', 'UPDATE'),
+      ('prompts', 'SELECT'), ('prompts', 'UPDATE'),
+      ('notifications', 'SELECT'), ('notifications', 'UPDATE')
     );
   if extra_count <> 0 then
     raise exception 'ISOLATION PRIVILEGE ALLOWLIST FAIL: % privilege(s) granted beyond the allowlist', extra_count;
