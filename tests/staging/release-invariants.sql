@@ -144,7 +144,14 @@ begin
         and (policy_command <> 'INSERT' or policy_qual <> '' or policy_check <> 'organization_id=auth_org_id') then
         raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected INSERT predicate', contract_table, contract_policy;
       elsif contract_policy = contract_table || '_update'
-        and (policy_command <> 'UPDATE' or policy_qual <> 'organization_id=auth_org_id' or policy_check <> '') then
+        and (
+          policy_command <> 'UPDATE'
+          or policy_qual <> 'organization_id=auth_org_id'
+          -- 20260817000000_tenant_update_rls_with_check_hardening: WITH CHECK
+          -- now mirrors USING, closing the tenant-reassignment-via-UPDATE gap
+          -- (see docs/RLS-UPDATE-WITH-CHECK-HARDENING.md).
+          or policy_check <> 'organization_id=auth_org_id'
+        ) then
         raise exception 'STAGING RELEASE FAIL: policy %.% has an unexpected UPDATE predicate', contract_table, contract_policy;
       elsif contract_policy = contract_table || '_delete'
         and (
