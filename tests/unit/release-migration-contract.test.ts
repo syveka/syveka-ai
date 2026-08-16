@@ -62,7 +62,25 @@ describe("staging release migration contract", () => {
         "    'inbox_threads',\n" +
         "    'inbox_messages',\n" +
         "    'inbox_mailboxes',\n" +
-        "    'stripe_webhook_events'\n" +
+        "    'stripe_webhook_events',\n" +
+        "    'compliance_controls',\n" +
+        "    'control_framework_mappings',\n" +
+        "    'compliance_evidence',\n" +
+        "    'compliance_risks',\n" +
+        "    'security_policies',\n" +
+        "    'policy_acknowledgements',\n" +
+        "    'security_incidents',\n" +
+        "    'incident_events',\n" +
+        "    'subprocessors',\n" +
+        "    'processing_records',\n" +
+        "    'data_subject_requests',\n" +
+        "    'dsr_events',\n" +
+        "    'retention_policies',\n" +
+        "    'retention_executions',\n" +
+        "    'privacy_security_assessments',\n" +
+        "    'access_reviews',\n" +
+        "    'certifications',\n" +
+        "    'compliance_audit_log'\n" +
         "  ];\n-- END LEGACY MISSING TABLES",
     );
     expect(contract).not.toContain("ARRAY[]");
@@ -108,8 +126,8 @@ describe("staging release migration contract", () => {
       "  FOR expected IN\n    SELECT * FROM (VALUES\n      ('Locale'",
       "complete foreign-key contract",
     ).match(/^      \('public', '[^']+', '[^']+_fkey',/gm);
-    expect(columnRows).toHaveLength(533);
-    expect(foreignKeyRows).toHaveLength(78);
+    expect(columnRows).toHaveLength(742);
+    expect(foreignKeyRows).toHaveLength(85);
     expect(contract).toContain("expected.table_name = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.source_table = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.target_table = ANY(legacy_missing_tables)");

@@ -259,19 +259,19 @@ enum StripeWebhookEventStatus {
 /// best-effort metadata for observability once an event resolves to an org
 /// -- never an access-control boundary for this table.
 model StripeWebhookEvent {
-  id             String                    @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
-  stripeEventId  String                    @unique @map("stripe_event_id")
-  eventType      String                    @map("event_type")
-  status         StripeWebhookEventStatus  @default(RECEIVED)
-  organizationId String?                   @map("organization_id") @db.Uuid
-  objectId       String?                   @map("object_id")
-  attempts       Int                       @default(0)
-  lastError      String?                   @map("last_error")
-  firstSeenAt    DateTime                  @default(now()) @map("first_seen_at")
-  lastAttemptAt  DateTime?                 @map("last_attempt_at")
-  completedAt    DateTime?                 @map("completed_at")
-  createdAt      DateTime                  @default(now()) @map("created_at")
-  updatedAt      DateTime                  @updatedAt @map("updated_at")
+  id             String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  stripeEventId  String                   @unique @map("stripe_event_id")
+  eventType      String                   @map("event_type")
+  status         StripeWebhookEventStatus @default(RECEIVED)
+  organizationId String?                  @map("organization_id") @db.Uuid
+  objectId       String?                  @map("object_id")
+  attempts       Int                      @default(0)
+  lastError      String?                  @map("last_error")
+  firstSeenAt    DateTime                 @default(now()) @map("first_seen_at")
+  lastAttemptAt  DateTime?                @map("last_attempt_at")
+  completedAt    DateTime?                @map("completed_at")
+  createdAt      DateTime                 @default(now()) @map("created_at")
+  updatedAt      DateTime                 @updatedAt @map("updated_at")
 
   @@index([status, lastAttemptAt])
   @@map("stripe_webhook_events")
@@ -547,7 +547,9 @@ model InboxThread {
   assignedToId   String?           @map("assigned_to_id") @db.Uuid
   externalId     String?           @map("external_id")
   lastMessageAt  DateTime?         @map("last_message_at")
-  /** Null = unread (reset to null whenever a new inbound message arrives). */
+  /**
+   * Null = unread (reset to null whenever a new inbound message arrives).
+   */
   readAt         DateTime?         @map("read_at")
   createdAt      DateTime          @default(now()) @map("created_at")
   updatedAt      DateTime          @updatedAt @map("updated_at")
@@ -1363,4 +1365,616 @@ model AuditLog {
   @@index([organizationId, createdAt])
   @@index([organizationId, resourceType, resourceId])
   @@map("audit_logs")
+}
+
+// ============================================================================
+// Trust & Compliance foundation (Issue #74, Phase 1) -- see
+// docs/compliance/FINLAND_BASELINE.md and docs/compliance/ARCHITECTURE.md.
+//
+// This is Syveka's OWN internal security/compliance posture (GDPR / ISO 27001
+// readiness / NIS2 / SOC 2 mapping), not a per-tenant customer feature yet.
+// Every model below is Syveka-platform-level data, gated by requireSuperadmin()
+// at the service layer -- never tenant-owned, so none of these are added to
+// TENANT_MODELS (src/server/db/tenant.ts), the same reasoning that already
+// excludes User/Organization/StripeWebhookEvent. Where a model references a
+// specific tenant (SecurityIncident.affectedOrganizationId,
+// DataSubjectRequest.relatedOrganizationId), that reference is nullable,
+// best-effort metadata for reporting only -- never an access-control boundary.
+//
+// owner/actor/createdBy fields are plain nullable `String @db.Uuid` columns
+// without a formal Prisma relation to User, matching the precedent set by
+// StripeWebhookEvent.organizationId: soft references for observability, not
+// referential-integrity-enforced FKs. This avoids adding ~15 new back-relation
+// arrays to the shared User model for what are optional attribution fields.
+// ============================================================================
+
+enum ComplianceFramework {
+  GDPR
+  ISO27001
+  NIS2
+  SOC2
+  HIPAA
+}
+
+/// Distinguishes "is it built" from "how verified is that claim" (never collapse
+/// these into one boolean -- see docs/compliance/SECURITY_CLAIMS.md).
+enum ControlImplementationStatus {
+  IMPLEMENTED
+  PARTIAL
+  MISSING
+  NOT_APPLICABLE
+  EXTERNAL_VERIFICATION_REQUIRED
+}
+
+/// Claim-safety ladder (Step 18): a control/certification may only be described
+/// as CERTIFIED once independently verified -- never inferred from code review.
+enum ClaimVerificationState {
+  TECHNICALLY_IMPLEMENTED
+  INTERNALLY_REVIEWED
+  EXTERNAL_AUDIT_REQUIRED
+  EXTERNALLY_VERIFIED
+  CERTIFIED
+}
+
+enum ControlCategory {
+  GOVERNANCE
+  ACCESS_CONTROL
+  DATA_PROTECTION
+  CRYPTOGRAPHY
+  LOGGING_MONITORING
+  INCIDENT_MANAGEMENT
+  BUSINESS_CONTINUITY
+  SUPPLIER_RISK
+  SECURE_DEVELOPMENT
+  PHYSICAL_ENVIRONMENTAL
+  HUMAN_RESOURCES
+  ASSET_MANAGEMENT
+  NETWORK_SECURITY
+}
+
+/// The one reusable control record. FrameworkMapping[] lets one control map to
+/// many frameworks without duplicating the technical description five times.
+model ComplianceControl {
+  id                   String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  controlKey           String                      @unique @map("control_key")
+  title                String
+  description          String
+  category             ControlCategory
+  implementationStatus ControlImplementationStatus @default(MISSING) @map("implementation_status")
+  verificationState    ClaimVerificationState      @default(TECHNICALLY_IMPLEMENTED) @map("verification_state")
+  ownerUserId          String?                     @map("owner_user_id") @db.Uuid
+  reviewDate           DateTime?                   @map("review_date")
+  implementationNotes  String?                     @map("implementation_notes")
+  exceptionNotes       String?                     @map("exception_notes")
+  createdAt            DateTime                    @default(now()) @map("created_at")
+  updatedAt            DateTime                    @updatedAt @map("updated_at")
+
+  frameworkMappings ControlFrameworkMapping[]
+  evidence          ComplianceEvidence[]
+  mitigatedRisks    ComplianceRisk[]
+
+  @@index([category])
+  @@index([implementationStatus])
+  @@map("compliance_controls")
+}
+
+/// Our own internal identifiers/descriptions -- never copyrighted standard text.
+model ControlFrameworkMapping {
+  id                 String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  controlId          String              @map("control_id") @db.Uuid
+  framework          ComplianceFramework
+  frameworkReference String              @map("framework_reference")
+  notes              String?
+  createdAt          DateTime            @default(now()) @map("created_at")
+
+  control ComplianceControl @relation(fields: [controlId], references: [id], onDelete: Cascade)
+
+  @@unique([controlId, framework, frameworkReference])
+  @@index([framework])
+  @@map("control_framework_mappings")
+}
+
+enum EvidenceSourceType {
+  CI_RUN
+  TEST_SUITE
+  SECURITY_SCAN
+  DEPENDENCY_AUDIT
+  SECRET_SCAN
+  RLS_TEST
+  MIGRATION
+  AUDIT_LOG
+  ACCESS_REVIEW
+  POLICY_DOCUMENT
+  VENDOR_REVIEW
+  MANUAL_ATTESTATION
+  OTHER
+}
+
+enum EvidenceResultStatus {
+  PASS
+  FAIL
+  PARTIAL
+  NOT_APPLICABLE
+  UNKNOWN
+}
+
+/// A reference to evidence, never the evidence itself: a CI run URL, a test
+/// file path, a migration name, a content hash -- never raw payloads, secrets,
+/// tokens, or unnecessary PII.
+model ComplianceEvidence {
+  id               String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  controlId        String               @map("control_id") @db.Uuid
+  sourceType       EvidenceSourceType   @map("source_type")
+  sourceIdentifier String               @map("source_identifier")
+  resultStatus     EvidenceResultStatus @map("result_status")
+  summary          String
+  contentHash      String?              @map("content_hash")
+  collectedAt      DateTime             @map("collected_at")
+  reviewDueAt      DateTime?            @map("review_due_at")
+  createdAt        DateTime             @default(now()) @map("created_at")
+
+  control ComplianceControl @relation(fields: [controlId], references: [id], onDelete: Cascade)
+
+  @@index([controlId])
+  @@index([reviewDueAt])
+  @@map("compliance_evidence")
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum RiskStatus {
+  OPEN
+  MITIGATING
+  ACCEPTED
+  CLOSED
+}
+
+/// Simple, documented likelihood x impact scoring -- see
+/// docs/compliance/CONTROL_MODEL.md for the matrix. No invented precision.
+model ComplianceRisk {
+  id                  String     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  riskKey             String     @unique @map("risk_key")
+  title               String
+  description         String
+  category            String
+  assetOrSystem       String     @map("asset_or_system")
+  threatDescription   String     @map("threat_description")
+  likelihood          RiskLevel
+  impact              RiskLevel
+  inherentRiskLevel   RiskLevel  @map("inherent_risk_level")
+  mitigationControlId String?    @map("mitigation_control_id") @db.Uuid
+  residualRiskLevel   RiskLevel? @map("residual_risk_level")
+  ownerUserId         String?    @map("owner_user_id") @db.Uuid
+  status              RiskStatus @default(OPEN)
+  reviewDate          DateTime?  @map("review_date")
+  createdAt           DateTime   @default(now()) @map("created_at")
+  updatedAt           DateTime   @updatedAt @map("updated_at")
+
+  mitigationControl ComplianceControl? @relation(fields: [mitigationControlId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@map("compliance_risks")
+}
+
+enum PolicyStatus {
+  DRAFT
+  APPROVED
+  PUBLISHED
+  RETIRED
+}
+
+/// Versioning/acknowledgement only -- not a document-management product.
+/// `documentRef` points at the policy text (repo path or external doc URL);
+/// the policy body itself is not duplicated into the database.
+model SecurityPolicy {
+  id                      String       @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  policyKey               String       @map("policy_key")
+  title                   String
+  version                 String
+  status                  PolicyStatus @default(DRAFT)
+  ownerUserId             String?      @map("owner_user_id") @db.Uuid
+  effectiveDate           DateTime?    @map("effective_date")
+  reviewDate              DateTime?    @map("review_date")
+  approvedAt              DateTime?    @map("approved_at")
+  approvedByUserId        String?      @map("approved_by_user_id") @db.Uuid
+  documentRef             String       @map("document_ref")
+  acknowledgementRequired Boolean      @default(false) @map("acknowledgement_required")
+  createdAt               DateTime     @default(now()) @map("created_at")
+  updatedAt               DateTime     @updatedAt @map("updated_at")
+
+  acknowledgements PolicyAcknowledgement[]
+
+  @@unique([policyKey, version])
+  @@map("security_policies")
+}
+
+model PolicyAcknowledgement {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  policyId       String   @map("policy_id") @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  acknowledgedAt DateTime @default(now()) @map("acknowledged_at")
+
+  policy SecurityPolicy @relation(fields: [policyId], references: [id], onDelete: Cascade)
+
+  @@unique([policyId, userId])
+  @@map("policy_acknowledgements")
+}
+
+enum IncidentSeverity {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+enum IncidentStatus {
+  DETECTED
+  INVESTIGATING
+  CONTAINED
+  REMEDIATING
+  RESOLVED
+  CLOSED
+}
+
+/// Deliberately UNKNOWN-capable: legal notification applicability is a human
+/// review decision, never an automatic inference from engineering data.
+enum NotificationRequirement {
+  UNKNOWN
+  YES
+  NO
+}
+
+model SecurityIncident {
+  id                            String                  @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  incidentKey                   String                  @unique @map("incident_key")
+  title                         String
+  description                   String
+  severity                      IncidentSeverity
+  status                        IncidentStatus          @default(DETECTED)
+  detectedAt                    DateTime                @map("detected_at")
+  occurredAt                    DateTime?               @map("occurred_at")
+  affectedOrganizationId        String?                 @map("affected_organization_id") @db.Uuid
+  affectedSystems               String?                 @map("affected_systems")
+  affectedDataCategories        String?                 @map("affected_data_categories")
+  containmentNotes              String?                 @map("containment_notes")
+  remediationNotes              String?                 @map("remediation_notes")
+  ownerUserId                   String?                 @map("owner_user_id") @db.Uuid
+  postmortemRef                 String?                 @map("postmortem_ref")
+  notificationRequired          NotificationRequirement @default(UNKNOWN) @map("notification_required")
+  notificationEarlyWarningDueAt DateTime?               @map("notification_early_warning_due_at")
+  notificationAuthorityDueAt    DateTime?               @map("notification_authority_due_at")
+  notificationFinalReportDueAt  DateTime?               @map("notification_final_report_due_at")
+  closedAt                      DateTime?               @map("closed_at")
+  createdAt                     DateTime                @default(now()) @map("created_at")
+  updatedAt                     DateTime                @updatedAt @map("updated_at")
+
+  events IncidentEvent[]
+
+  @@index([status])
+  @@index([affectedOrganizationId])
+  @@map("security_incidents")
+}
+
+/// Append-only timeline -- the service layer exposes create only, never
+/// update/delete, so an incident's history cannot be silently rewritten.
+model IncidentEvent {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  incidentId      String   @map("incident_id") @db.Uuid
+  occurredAt      DateTime @map("occurred_at")
+  description     String
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  incident SecurityIncident @relation(fields: [incidentId], references: [id], onDelete: Cascade)
+
+  @@index([incidentId, occurredAt])
+  @@map("incident_events")
+}
+
+enum SubprocessorRole {
+  PROCESSOR
+  SUBPROCESSOR
+  CONTROLLER
+  JOINT_CONTROLLER
+}
+
+/// UNKNOWN is a real, first-class value throughout this model: never guess a
+/// contractual or residency fact that hasn't been verified against an actual
+/// signed agreement or provider documentation.
+enum TransferSafeguard {
+  UNKNOWN
+  NONE
+  SCC
+  ADEQUACY_DECISION
+  OTHER_SAFEGUARD
+}
+
+enum DpaStatus {
+  UNKNOWN
+  NOT_REQUIRED
+  PENDING
+  SIGNED
+}
+
+enum ReviewStatus {
+  UNKNOWN
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETE
+}
+
+model Subprocessor {
+  id                    String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  name                  String
+  servicePurpose        String            @map("service_purpose")
+  dataCategories        String            @map("data_categories")
+  role                  SubprocessorRole  @default(SUBPROCESSOR)
+  region                String?
+  dataResidency         String?           @map("data_residency")
+  internationalTransfer TransferSafeguard @default(UNKNOWN) @map("international_transfer")
+  dpaStatus             DpaStatus         @default(UNKNOWN) @map("dpa_status")
+  securityReviewStatus  ReviewStatus      @default(UNKNOWN) @map("security_review_status")
+  riskLevel             RiskLevel         @default(MEDIUM) @map("risk_level")
+  ownerUserId           String?           @map("owner_user_id") @db.Uuid
+  reviewDate            DateTime?         @map("review_date")
+  active                Boolean           @default(true)
+  notes                 String?
+  createdAt             DateTime          @default(now()) @map("created_at")
+  updatedAt             DateTime          @updatedAt @map("updated_at")
+
+  @@unique([name])
+  @@map("subprocessors")
+}
+
+/// Consent is only ONE of six possible lawful bases -- never the default.
+enum LawfulBasis {
+  CONSENT
+  CONTRACT
+  LEGAL_OBLIGATION
+  VITAL_INTERESTS
+  PUBLIC_TASK
+  LEGITIMATE_INTERESTS
+}
+
+enum DpiaRequirement {
+  UNKNOWN
+  NOT_REQUIRED
+  REQUIRED
+  IN_PROGRESS
+  COMPLETE
+}
+
+/// Records-of-processing-activities (ROPA) foundation.
+model ProcessingRecord {
+  id                     String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  activityKey            String          @unique @map("activity_key")
+  name                   String
+  purpose                String
+  dataCategories         String          @map("data_categories")
+  dataSubjectCategories  String          @map("data_subject_categories")
+  lawfulBasis            LawfulBasis     @map("lawful_basis")
+  recipients             String?
+  processorNotes         String?         @map("processor_notes")
+  retentionPeriod        String          @map("retention_period")
+  internationalTransfers String?         @map("international_transfers")
+  safeguards             String?
+  systemLocation         String?         @map("system_location")
+  ownerUserId            String?         @map("owner_user_id") @db.Uuid
+  reviewDate             DateTime?       @map("review_date")
+  dpiaStatus             DpiaRequirement @default(UNKNOWN) @map("dpia_status")
+  createdAt              DateTime        @default(now()) @map("created_at")
+  updatedAt              DateTime        @updatedAt @map("updated_at")
+
+  @@map("processing_records")
+}
+
+enum DsrType {
+  ACCESS
+  EXPORT
+  RECTIFICATION
+  ERASURE
+  RESTRICTION
+  OBJECTION
+  PORTABILITY
+}
+
+enum IdentityVerificationStatus {
+  UNVERIFIED
+  PENDING
+  VERIFIED
+  REJECTED
+}
+
+enum DsrStatus {
+  RECEIVED
+  IN_PROGRESS
+  COMPLETED
+  REJECTED
+  WITHDRAWN
+}
+
+model DataSubjectRequest {
+  id                         String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestKey                 String                     @unique @map("request_key")
+  requestType                DsrType                    @map("request_type")
+  subjectContactReference    String                     @map("subject_contact_reference")
+  relatedOrganizationId      String?                    @map("related_organization_id") @db.Uuid
+  receivedAt                 DateTime                   @map("received_at")
+  identityVerificationStatus IdentityVerificationStatus @default(UNVERIFIED) @map("identity_verification_status")
+  status                     DsrStatus                  @default(RECEIVED)
+  deadlineAt                 DateTime                   @map("deadline_at")
+  assignedOwnerUserId        String?                    @map("assigned_owner_user_id") @db.Uuid
+  completedAt                DateTime?                  @map("completed_at")
+  rejectionReason            String?                    @map("rejection_reason")
+  createdAt                  DateTime                   @default(now()) @map("created_at")
+  updatedAt                  DateTime                   @updatedAt @map("updated_at")
+
+  events DsrEvent[]
+
+  @@index([status])
+  @@index([relatedOrganizationId])
+  @@map("data_subject_requests")
+}
+
+/// Append-only audit trail for a single request -- create only, never mutated.
+model DsrEvent {
+  id              String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  requestId       String   @map("request_id") @db.Uuid
+  occurredAt      DateTime @map("occurred_at")
+  description     String
+  createdByUserId String?  @map("created_by_user_id") @db.Uuid
+  createdAt       DateTime @default(now()) @map("created_at")
+
+  request DataSubjectRequest @relation(fields: [requestId], references: [id], onDelete: Cascade)
+
+  @@index([requestId, occurredAt])
+  @@map("dsr_events")
+}
+
+/// Policy definitions only -- Phase 1 does not execute destructive deletion.
+model RetentionPolicy {
+  id                 String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  dataCategory       String   @unique @map("data_category")
+  retentionPeriod    String   @map("retention_period")
+  tenantOverridable  Boolean  @default(false) @map("tenant_overridable")
+  legalHoldSupported Boolean  @default(true) @map("legal_hold_supported")
+  notes              String?
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  executions RetentionExecution[]
+
+  @@map("retention_policies")
+}
+
+enum RetentionExecutionStatus {
+  SCHEDULED
+  EXECUTED
+  SKIPPED
+  HELD
+}
+
+/// Evidence that a retention decision was made/carried out -- not the deletion
+/// mechanism itself. Phase 1 records eligibility and outcome; it does not run
+/// destructive deletion (see docs/compliance/OPERATIONS.md).
+model RetentionExecution {
+  id                String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  retentionPolicyId String?                  @map("retention_policy_id") @db.Uuid
+  dataCategory      String                   @map("data_category")
+  scheduledFor      DateTime?                @map("scheduled_for")
+  executedAt        DateTime?                @map("executed_at")
+  status            RetentionExecutionStatus @default(SCHEDULED)
+  recordCount       Int?                     @map("record_count")
+  notes             String?
+  createdAt         DateTime                 @default(now()) @map("created_at")
+
+  retentionPolicy RetentionPolicy? @relation(fields: [retentionPolicyId], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@map("retention_executions")
+}
+
+enum AssessmentType {
+  NEW_AI_FEATURE
+  NEW_INTEGRATION
+  SENSITIVE_PROCESSING
+  HIGH_RISK_PROCESSING
+  MAJOR_DATA_FLOW_CHANGE
+  OTHER
+}
+
+/// Lightweight DPIA-triggering assessment -- not a full DPIA workflow product.
+model PrivacySecurityAssessment {
+  id              String          @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  assessmentKey   String          @unique @map("assessment_key")
+  assessmentType  AssessmentType  @map("assessment_type")
+  featureOrSystem String          @map("feature_or_system")
+  reason          String
+  risksIdentified String?         @map("risks_identified")
+  safeguards      String?
+  ownerUserId     String?         @map("owner_user_id") @db.Uuid
+  dpiaRequired    DpiaRequirement @default(UNKNOWN) @map("dpia_required")
+  reviewStatus    ReviewStatus    @default(UNKNOWN) @map("review_status")
+  reviewDate      DateTime?       @map("review_date")
+  createdAt       DateTime        @default(now()) @map("created_at")
+  updatedAt       DateTime        @updatedAt @map("updated_at")
+
+  @@map("privacy_security_assessments")
+}
+
+enum AccessReviewScope {
+  PRIVILEGED_USERS
+  ORG_ADMINS
+  API_KEYS
+  SERVICE_ACCOUNTS
+  INTERNAL_ADMIN_ROLES
+}
+
+/// Evidence that a periodic access review happened -- reuses existing
+/// RBAC/superadmin data at query time; does not duplicate it.
+model AccessReview {
+  id                String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  reviewKey         String            @unique @map("review_key")
+  scope             AccessReviewScope
+  performedByUserId String?           @map("performed_by_user_id") @db.Uuid
+  performedAt       DateTime          @map("performed_at")
+  findingsSummary   String            @map("findings_summary")
+  staleAccessFound  Boolean           @default(false) @map("stale_access_found")
+  actionsTaken      String?           @map("actions_taken")
+  nextReviewDueAt   DateTime?         @map("next_review_due_at")
+  createdAt         DateTime          @default(now()) @map("created_at")
+
+  @@map("access_reviews")
+}
+
+/// Certification/attestation metadata (Step 18 claim safety). A row here
+/// represents a REAL, externally-issued certificate or report -- creating one
+/// without verificationReference + issuer + verificationState=CERTIFIED is a
+/// documentation violation of docs/compliance/SECURITY_CLAIMS.md, enforced by
+/// application-layer validation, not a database constraint (the DB cannot
+/// verify an external fact).
+model Certification {
+  id                    String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  framework             ComplianceFramework
+  certificationType     String                 @map("certification_type")
+  scope                 String
+  issuer                String?
+  issueDate             DateTime?              @map("issue_date")
+  expiryDate            DateTime?              @map("expiry_date")
+  verificationReference String?                @map("verification_reference")
+  verificationState     ClaimVerificationState @default(INTERNALLY_REVIEWED) @map("verification_state")
+  createdAt             DateTime               @default(now()) @map("created_at")
+  updatedAt             DateTime               @updatedAt @map("updated_at")
+
+  @@index([framework])
+  @@map("certifications")
+}
+
+/// Append-only audit trail for compliance-domain actions. A dedicated table,
+/// not a reuse of AuditLog: AuditLog.organizationId is required (NOT NULL,
+/// onDelete: Cascade to Organization) because it is tenant-scoped by design --
+/// every compliance action here is Syveka-platform-level and has no
+/// organization to cascade from. Same reasoning as StripeWebhookEvent needing
+/// its own ledger rather than being forced into a tenant-shaped table.
+model ComplianceAuditLog {
+  id           String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  actorUserId  String?  @map("actor_user_id") @db.Uuid
+  actorType    String   @default("user") @map("actor_type")
+  action       String
+  resourceType String   @map("resource_type")
+  resourceId   String?  @map("resource_id")
+  before       Json?
+  after        Json?
+  ip           String?
+  userAgent    String?  @map("user_agent")
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  @@index([resourceType, resourceId])
+  @@index([createdAt])
+  @@map("compliance_audit_log")
 }

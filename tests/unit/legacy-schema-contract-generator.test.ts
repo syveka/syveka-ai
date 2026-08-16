@@ -389,6 +389,24 @@ describe("legacy schema contract generator", () => {
     '  ["inbox_messages", "20260811010000_inbox_mvp_foundation"],\n' +
     '  ["inbox_mailboxes", "20260812000000_inbox_mailboxes"],\n' +
     '  ["stripe_webhook_events", "20260815000000_stripe_webhook_event_ledger"],\n' +
+    '  ["compliance_controls", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["control_framework_mappings", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["compliance_evidence", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["compliance_risks", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["security_policies", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["policy_acknowledgements", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["security_incidents", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["incident_events", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["subprocessors", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["processing_records", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["data_subject_requests", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["dsr_events", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["retention_policies", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["retention_executions", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["privacy_security_assessments", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["access_reviews", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["certifications", "20260815010000_compliance_foundation_phase1"],\n' +
+    '  ["compliance_audit_log", "20260815010000_compliance_foundation_phase1"],\n' +
     "];";
 
   it("fails closed when a legacy-missing table references a nonexistent migration directory", () => {
@@ -467,7 +485,25 @@ describe("legacy schema contract generator", () => {
         "    'inbox_threads',\n" +
         "    'inbox_messages',\n" +
         "    'inbox_mailboxes',\n" +
-        "    'stripe_webhook_events'\n" +
+        "    'stripe_webhook_events',\n" +
+        "    'compliance_controls',\n" +
+        "    'control_framework_mappings',\n" +
+        "    'compliance_evidence',\n" +
+        "    'compliance_risks',\n" +
+        "    'security_policies',\n" +
+        "    'policy_acknowledgements',\n" +
+        "    'security_incidents',\n" +
+        "    'incident_events',\n" +
+        "    'subprocessors',\n" +
+        "    'processing_records',\n" +
+        "    'data_subject_requests',\n" +
+        "    'dsr_events',\n" +
+        "    'retention_policies',\n" +
+        "    'retention_executions',\n" +
+        "    'privacy_security_assessments',\n" +
+        "    'access_reviews',\n" +
+        "    'certifications',\n" +
+        "    'compliance_audit_log'\n" +
         "  ];",
     );
     expect(legacyMissingTablesDeclarationOf(stdout)).toBe(

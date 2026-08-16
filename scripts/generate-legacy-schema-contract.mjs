@@ -21,12 +21,37 @@ const tableName = (model) => model.dbName ?? model.name;
 //     time by 20260811010000_inbox_mvp_foundation.
 //   - stripe_webhook_events: same situation, created for the first time by
 //     20260815000000_stripe_webhook_event_ledger.
+//   - compliance_controls, control_framework_mappings, compliance_evidence,
+//     compliance_risks, security_policies, policy_acknowledgements,
+//     security_incidents, incident_events, subprocessors, processing_records,
+//     data_subject_requests, dsr_events, retention_policies,
+//     retention_executions, privacy_security_assessments, access_reviews,
+//     certifications, compliance_audit_log: same situation, created for the
+//     first time by 20260815010000_compliance_foundation_phase1.
 const LEGACY_MISSING_TABLE_ENTRIES = [
   ["business_dna", "20260811000000_business_dna_v1"],
   ["inbox_threads", "20260811010000_inbox_mvp_foundation"],
   ["inbox_messages", "20260811010000_inbox_mvp_foundation"],
   ["inbox_mailboxes", "20260812000000_inbox_mailboxes"],
   ["stripe_webhook_events", "20260815000000_stripe_webhook_event_ledger"],
+  ["compliance_controls", "20260815010000_compliance_foundation_phase1"],
+  ["control_framework_mappings", "20260815010000_compliance_foundation_phase1"],
+  ["compliance_evidence", "20260815010000_compliance_foundation_phase1"],
+  ["compliance_risks", "20260815010000_compliance_foundation_phase1"],
+  ["security_policies", "20260815010000_compliance_foundation_phase1"],
+  ["policy_acknowledgements", "20260815010000_compliance_foundation_phase1"],
+  ["security_incidents", "20260815010000_compliance_foundation_phase1"],
+  ["incident_events", "20260815010000_compliance_foundation_phase1"],
+  ["subprocessors", "20260815010000_compliance_foundation_phase1"],
+  ["processing_records", "20260815010000_compliance_foundation_phase1"],
+  ["data_subject_requests", "20260815010000_compliance_foundation_phase1"],
+  ["dsr_events", "20260815010000_compliance_foundation_phase1"],
+  ["retention_policies", "20260815010000_compliance_foundation_phase1"],
+  ["retention_executions", "20260815010000_compliance_foundation_phase1"],
+  ["privacy_security_assessments", "20260815010000_compliance_foundation_phase1"],
+  ["access_reviews", "20260815010000_compliance_foundation_phase1"],
+  ["certifications", "20260815010000_compliance_foundation_phase1"],
+  ["compliance_audit_log", "20260815010000_compliance_foundation_phase1"],
 ];
 
 const actualTableNames = new Set(models.map(tableName));
