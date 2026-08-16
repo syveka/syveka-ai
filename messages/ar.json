@@ -685,6 +685,7 @@
     "invalidInput": "يرجى مراجعة الحقول المميزة والمحاولة مرة أخرى.",
     "saveFailed": "تعذر الحفظ. يرجى المحاولة مرة أخرى.",
     "updated": "آخر تحديث {date}",
+    "hoursTimezoneHint": "تُفسَّر ساعات العمل وفق المنطقة الزمنية المحددة في قسم الشركة.",
     "regenerate": {
       "label": "إعادة الاستخراج من الموقع الإلكتروني",
       "description": "اجلب أحدث الحقائق من موقعك الإلكتروني. يتم تحديث الحقول التي يتم العثور عليها فقط — راجع واحفظ عند الجاهزية.",
@@ -697,34 +698,51 @@
       "appliedMessage": "تم تحديث الحقول من الموقع الإلكتروني. راجع واحفظ عند الجاهزية."
     },
     "sections": {
-      "identity": "الهوية",
+      "identity": "الشركة",
       "identityDescription": "كيفية وصف شركتك عبر صندوق الوارد والمساعد الصوتي والحجز وإدارة علاقات العملاء.",
-      "productsAndCustomers": "المنتجات والعملاء",
+      "services": "الخدمات",
+      "servicesDescription": "الخدمات أو المنتجات المنظمة التي يقدمها فريقك — تُستخدم في عروض الأسعار والحجز.",
+      "communication": "التواصل",
       "openingHours": "ساعات العمل",
-      "policiesAndPricing": "السياسات والتسعير",
+      "policies": "السياسات",
+      "pricingAndQuotes": "التسعير وعروض الأسعار",
       "keyFacts": "الحقائق الأساسية"
     },
     "fields": {
       "displayName": "اسم العرض",
       "industry": "المجال",
+      "description": "وصف قصير",
       "supportedLocales": "اللغات المدعومة",
+      "timezone": "المنطقة الزمنية",
       "brandTone": "نبرة العلامة التجارية",
       "communicationStyle": "أسلوب التواصل",
-      "productsServices": "المنتجات والخدمات",
+      "responseInstructions": "تعليمات الرد",
+      "productsServices": "المنتجات والخدمات (ملخص حر)",
       "targetCustomer": "العميل المستهدف",
-      "policies": "السياسات",
+      "cancellationPolicy": "سياسة الإلغاء",
+      "bookingPolicy": "سياسة الحجز",
+      "refundPolicy": "سياسة الاسترداد",
+      "paymentPolicy": "سياسة الدفع",
+      "otherPolicies": "سياسات أخرى",
+      "currency": "العملة",
+      "quoteInstructions": "تعليمات عروض الأسعار",
       "pricingNotes": "ملاحظات التسعير",
       "keyFacts": "الحقائق الأساسية"
     },
     "placeholders": {
       "displayName": "Acme Oy",
       "industry": "مثال: السباكة، البيع بالتجزئة، الاستشارات",
+      "description": "جملة أو جملتان عمّا تقدمه شركتك",
+      "timezone": "مثال: Europe/Helsinki",
       "brandTone": "مثال: ودود، احترافي، مرح",
       "communicationStyle": "مثال: موجز، رسمي، غير رسمي",
+      "responseInstructions": "مثال: تأكد دائماً من اسم العميل قبل الحجز",
       "productsServices": "اذكر ما تبيعه أو تقدمه…",
       "targetCustomer": "من هم عملاؤك النموذجيون؟",
-      "policies": "الإلغاء، الاسترداد، التعامل مع البيانات…",
-      "pricingNotes": "قواعد التسعير، نماذج عروض الأسعار…",
+      "otherPolicies": "أي سياسة أخرى تواجه العملاء ولم تُذكر أعلاه…",
+      "currency": "EUR",
+      "quoteInstructions": "كيف ينبغي صياغة عروض الأسعار؟ هل هناك قيود؟",
+      "pricingNotes": "قواعد التسعير، ملاحظات عامة…",
       "keyFacts": "حقيقة واحدة في كل سطر، مثال:\nنرحب بالزبائن دون موعد\nالتوصيل ضمن 20 كم"
     },
     "weekdays": {
@@ -738,7 +756,34 @@
     },
     "closed": "مغلق",
     "openTimeLabel": "وقت فتح {day}",
-    "closeTimeLabel": "وقت إغلاق {day}"
+    "closeTimeLabel": "وقت إغلاق {day}",
+    "services": {
+      "saveProfileFirst": "احفظ ملف الهوية التجارية أولاً، ثم أضف الخدمات.",
+      "empty": "لم تتم إضافة أي خدمات بعد.",
+      "inactive": "غير نشط",
+      "durationSuffix": "{minutes} دقيقة",
+      "defaultCurrencyLabel": "وحدة",
+      "edit": "تعديل",
+      "deactivate": "تعطيل",
+      "reactivate": "إعادة التفعيل",
+      "add": "إضافة خدمة",
+      "cancel": "إلغاء",
+      "saving": "جارٍ الحفظ…",
+      "saveEdit": "حفظ التغييرات",
+      "fields": {
+        "name": "الاسم",
+        "duration": "المدة (بالدقائق)",
+        "price": "السعر",
+        "priceNote": "ملاحظة السعر",
+        "description": "الوصف",
+        "active": "نشط"
+      },
+      "placeholders": {
+        "duration": "مثال: 60",
+        "price": "مثال: 49.90",
+        "priceNote": "مثال: يبدأ من، بالساعة"
+      }
+    }
   },
   "setupReadiness": {
     "title": "جاهزية الإعداد",

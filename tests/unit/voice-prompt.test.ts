@@ -1,7 +1,35 @@
 import { describe, expect, it } from "vitest";
 import { buildVoiceSystemPrompt } from "@/server/ai/prompts/voice";
+import type { BusinessDnaContext } from "@/server/business-dna/context";
 
 const disclosure = "Start by disclosing that you are an AI assistant and the call may be recorded.";
+
+function dna(overrides: Partial<BusinessDnaContext> = {}): BusinessDnaContext {
+  return {
+    displayName: null,
+    industry: null,
+    description: null,
+    productsServices: null,
+    supportedLocales: [],
+    timezone: null,
+    brandTone: null,
+    communicationStyle: null,
+    responseInstructions: null,
+    openingHours: null,
+    cancellationPolicy: null,
+    bookingPolicy: null,
+    refundPolicy: null,
+    paymentPolicy: null,
+    otherPolicies: null,
+    currency: null,
+    quoteInstructions: null,
+    pricingNotes: null,
+    targetCustomer: null,
+    keyFacts: [],
+    services: [],
+    ...overrides,
+  };
+}
 
 describe("buildVoiceSystemPrompt", () => {
   it("falls back to just the disclosure and human-authored prompt when Business DNA is absent", () => {
@@ -18,19 +46,15 @@ describe("buildVoiceSystemPrompt", () => {
   it("includes the Business DNA block, wrapped as untrusted data, when present", () => {
     const result = buildVoiceSystemPrompt({
       disclosure,
-      businessDna: {
+      businessDna: dna({
         displayName: "Acme Bakery",
         industry: "Bakery",
         productsServices: "Custom cakes",
         supportedLocales: ["EN", "FI"],
         brandTone: "Warm",
-        communicationStyle: null,
-        openingHours: null,
-        policies: "No refunds after pickup",
-        pricingNotes: null,
-        targetCustomer: null,
+        otherPolicies: "No refunds after pickup",
         keyFacts: ["Open since 1995"],
-      },
+      }),
       assistantSystemPrompt: "You are a helpful receptionist.",
       transferNumber: null,
     });
@@ -49,44 +73,20 @@ describe("buildVoiceSystemPrompt", () => {
   it("never fabricates a field Business DNA left null", () => {
     const result = buildVoiceSystemPrompt({
       disclosure,
-      businessDna: {
-        displayName: "Acme Bakery",
-        industry: null,
-        productsServices: null,
-        supportedLocales: [],
-        brandTone: null,
-        communicationStyle: null,
-        openingHours: null,
-        policies: null,
-        pricingNotes: null,
-        targetCustomer: null,
-        keyFacts: [],
-      },
+      businessDna: dna({ displayName: "Acme Bakery" }),
       assistantSystemPrompt: "Prompt.",
       transferNumber: null,
     });
     expect(result).toContain("Display name: Acme Bakery");
     expect(result).not.toContain("Industry:");
-    expect(result).not.toContain("Policies:");
+    expect(result).not.toContain("Other policies:");
     expect(result).not.toContain("Key facts:");
   });
 
   it("omits the Business DNA block entirely when every field is empty", () => {
     const result = buildVoiceSystemPrompt({
       disclosure,
-      businessDna: {
-        displayName: null,
-        industry: null,
-        productsServices: null,
-        supportedLocales: [],
-        brandTone: null,
-        communicationStyle: null,
-        openingHours: null,
-        policies: null,
-        pricingNotes: null,
-        targetCustomer: null,
-        keyFacts: [],
-      },
+      businessDna: dna(),
       assistantSystemPrompt: "Prompt.",
       transferNumber: null,
     });
@@ -96,24 +96,14 @@ describe("buildVoiceSystemPrompt", () => {
   it("formats well-formed opening hours and silently skips malformed days", () => {
     const result = buildVoiceSystemPrompt({
       disclosure,
-      businessDna: {
-        displayName: null,
-        industry: null,
-        productsServices: null,
-        supportedLocales: [],
-        brandTone: null,
-        communicationStyle: null,
+      businessDna: dna({
         openingHours: {
           monday: { closed: false, open: "09:00", close: "17:00" },
           tuesday: { closed: true },
           wednesday: { closed: false, open: "not-a-time", close: "17:00" },
           notADay: { closed: false, open: "10:00", close: "12:00" },
         },
-        policies: null,
-        pricingNotes: null,
-        targetCustomer: null,
-        keyFacts: [],
-      },
+      }),
       assistantSystemPrompt: "Prompt.",
       transferNumber: null,
     });
@@ -126,19 +116,7 @@ describe("buildVoiceSystemPrompt", () => {
   it("silently ignores a malformed (non-object) openingHours value", () => {
     const result = buildVoiceSystemPrompt({
       disclosure,
-      businessDna: {
-        displayName: "Acme",
-        industry: null,
-        productsServices: null,
-        supportedLocales: [],
-        brandTone: null,
-        communicationStyle: null,
-        openingHours: "not an object",
-        policies: null,
-        pricingNotes: null,
-        targetCustomer: null,
-        keyFacts: [],
-      },
+      businessDna: dna({ displayName: "Acme", openingHours: "not an object" }),
       assistantSystemPrompt: "Prompt.",
       transferNumber: null,
     });

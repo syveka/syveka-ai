@@ -85,15 +85,25 @@ describe("assistScheduling", () => {
     getBusinessDnaContextMock.mockResolvedValueOnce({
       displayName: "Acme Spa",
       industry: null,
+      description: null,
       productsServices: null,
       supportedLocales: [],
+      timezone: null,
       brandTone: "Warm and relaxed",
       communicationStyle: null,
+      responseInstructions: null,
       openingHours: null,
-      policies: "24h cancellation notice required",
+      cancellationPolicy: null,
+      bookingPolicy: null,
+      refundPolicy: null,
+      paymentPolicy: null,
+      otherPolicies: "24h cancellation notice required",
+      currency: null,
+      quoteInstructions: null,
       pricingNotes: null,
       targetCustomer: null,
       keyFacts: [],
+      services: [],
     });
 
     await assistScheduling(ctx(), "book 30 min");

@@ -87,6 +87,35 @@ describe("extractBusinessDnaFromUrl", () => {
     );
   });
 
+  it("accepts the current structured field names (otherPolicies, currency, timezone, etc.) the prompt actually requests", async () => {
+    anthropicCreateMock.mockResolvedValueOnce({
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({
+            displayName: "Acme Bakery",
+            description: "A neighborhood bakery",
+            timezone: "Europe/Helsinki",
+            responseInstructions: "Always greet warmly",
+            cancellationPolicy: "24h notice",
+            bookingPolicy: "Book ahead",
+            refundPolicy: "No refunds",
+            paymentPolicy: "Card only",
+            otherPolicies: "See website for full terms",
+            currency: "EUR",
+            quoteInstructions: "Always include VAT",
+          }),
+        },
+      ],
+    });
+
+    const result = await extractBusinessDnaFromUrl("https://acme.example.com");
+
+    expect(result.data.otherPolicies).toBe("See website for full terms");
+    expect(result.data.currency).toBe("EUR");
+    expect(result.data.timezone).toBe("Europe/Helsinki");
+  });
+
   it("never persists anything itself — the caller decides via upsertBusinessDNA", async () => {
     // No tenantDb/prisma mock is wired for this module at all; if the
     // extraction service tried to touch the database this test file's

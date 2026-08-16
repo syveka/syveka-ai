@@ -4,5 +4,6 @@
 revoke select on inbox_mailboxes from :"role_name";
 revoke select on inbox_messages from :"role_name";
 revoke select, insert on inbox_threads from :"role_name";
+revoke select, insert, update, delete on business_dna_services from :"role_name";
 revoke select, insert, update, delete on business_dna from :"role_name";
 revoke usage on schema public from :"role_name";

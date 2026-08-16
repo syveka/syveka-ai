@@ -50,6 +50,7 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
   "AuditLog",
   "Prompt",
   "BusinessDNA",
+  "BusinessDnaService",
   "InboxThread",
   "InboxMailbox",
 ]);

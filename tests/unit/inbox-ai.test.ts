@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => {
     tenantDb: vi.fn(),
     inboxThreadFindFirst: vi.fn(),
     businessDnaFindFirst: vi.fn(async (): Promise<Record<string, unknown> | null> => null),
+    businessDnaServiceFindMany: vi.fn(async () => [] as unknown[]),
     bookingFindFirst: vi.fn(async (): Promise<Record<string, unknown> | null> => null),
     contactFindFirst: vi.fn(async (): Promise<Record<string, unknown> | null> => null),
     dealFindFirst: vi.fn(async (): Promise<Record<string, unknown> | null> => null),
@@ -67,6 +68,7 @@ describe("generateEmailDraft", () => {
     mocks.tenantDb.mockReturnValue({
       inboxThread: { findFirst: mocks.inboxThreadFindFirst },
       businessDNA: { findFirst: mocks.businessDnaFindFirst },
+      businessDnaService: { findMany: mocks.businessDnaServiceFindMany },
       booking: { findFirst: mocks.bookingFindFirst },
       contact: { findFirst: mocks.contactFindFirst },
       deal: { findFirst: mocks.dealFindFirst },
@@ -77,6 +79,7 @@ describe("generateEmailDraft", () => {
       contact: null,
     });
     mocks.businessDnaFindFirst.mockResolvedValue(null);
+    mocks.businessDnaServiceFindMany.mockResolvedValue([]);
     mocks.bookingFindFirst.mockResolvedValue(null);
     mocks.contactFindFirst.mockResolvedValue(null);
     mocks.dealFindFirst.mockResolvedValue(null);
@@ -100,12 +103,21 @@ describe("generateEmailDraft", () => {
     mocks.businessDnaFindFirst.mockResolvedValueOnce({
       displayName: "Acme Bakery",
       industry: "Bakery",
+      description: null,
       productsServices: "Custom cakes",
       supportedLocales: [],
+      timezone: null,
       brandTone: null,
       communicationStyle: null,
+      responseInstructions: null,
       openingHours: null,
-      policies: "No refunds after pickup",
+      cancellationPolicy: null,
+      bookingPolicy: null,
+      refundPolicy: null,
+      paymentPolicy: null,
+      otherPolicies: "No refunds after pickup",
+      currency: null,
+      quoteInstructions: null,
       pricingNotes: null,
       targetCustomer: null,
       keyFacts: ["Open since 1995"],

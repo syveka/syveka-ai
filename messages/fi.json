@@ -685,6 +685,7 @@
     "invalidInput": "Tarkista korostetut kentät ja yritä uudelleen.",
     "saveFailed": "Tallennus epäonnistui. Yritä uudelleen.",
     "updated": "Päivitetty {date}",
+    "hoursTimezoneHint": "Aukioloajat tulkitaan Perustiedot-osiossa asetetussa aikavyöhykkeessä.",
     "regenerate": {
       "label": "Päivitä verkkosivustolta",
       "description": "Hae tuoreet tiedot verkkosivustoltasi. Vain löydetyt kentät päivitetään — tarkista ja tallenna, kun olet valmis.",
@@ -697,34 +698,51 @@
       "appliedMessage": "Kentät päivitetty verkkosivustolta. Tarkista ja tallenna, kun olet valmis."
     },
     "sections": {
-      "identity": "Perustiedot",
+      "identity": "Yritys",
       "identityDescription": "Miten yritystäsi kuvataan Postilaatikossa, Puheavustajassa, Ajanvarauksessa ja CRM:ssä.",
-      "productsAndCustomers": "Tuotteet ja asiakkaat",
+      "services": "Palvelut",
+      "servicesDescription": "Jäsennellyt palvelut tai tuotteet, joita tarjoatte — käytetään tarjouksissa ja ajanvarauksessa.",
+      "communication": "Viestintä",
       "openingHours": "Aukioloajat",
-      "policiesAndPricing": "Käytännöt ja hinnoittelu",
+      "policies": "Käytännöt",
+      "pricingAndQuotes": "Hinnoittelu ja tarjoukset",
       "keyFacts": "Keskeiset faktat"
     },
     "fields": {
       "displayName": "Näyttönimi",
       "industry": "Toimiala",
+      "description": "Lyhyt kuvaus",
       "supportedLocales": "Tuetut kielet",
+      "timezone": "Aikavyöhyke",
       "brandTone": "Brändin sävy",
       "communicationStyle": "Viestintätyyli",
-      "productsServices": "Tuotteet ja palvelut",
+      "responseInstructions": "Vastausohjeet",
+      "productsServices": "Tuotteet ja palvelut (vapaamuotoinen yhteenveto)",
       "targetCustomer": "Kohdeasiakas",
-      "policies": "Käytännöt",
+      "cancellationPolicy": "Peruutuskäytäntö",
+      "bookingPolicy": "Varauskäytäntö",
+      "refundPolicy": "Palautuskäytäntö",
+      "paymentPolicy": "Maksukäytäntö",
+      "otherPolicies": "Muut käytännöt",
+      "currency": "Valuutta",
+      "quoteInstructions": "Tarjousohjeet",
       "pricingNotes": "Hinnoittelutiedot",
       "keyFacts": "Keskeiset faktat"
     },
     "placeholders": {
       "displayName": "Acme Oy",
       "industry": "esim. putkityöt, vähittäiskauppa, konsultointi",
+      "description": "Yksi tai kaksi lausetta siitä, mitä teette",
+      "timezone": "esim. Europe/Helsinki",
       "brandTone": "esim. ystävällinen, ammattimainen, leikkisä",
       "communicationStyle": "esim. ytimekäs, virallinen, rento",
+      "responseInstructions": "esim. Vahvista aina asiakkaan nimi ennen varausta",
       "productsServices": "Listaa myymäsi tuotteet tai palvelut…",
       "targetCustomer": "Millaisia asiakkaitasi tyypillisesti ovat?",
-      "policies": "Peruutus, palautus, tietojenkäsittely…",
-      "pricingNotes": "Hinnoittelusäännöt, tarjouspohjat…",
+      "otherPolicies": "Muut asiakkaille näkyvät käytännöt…",
+      "currency": "EUR",
+      "quoteInstructions": "Miten tarjoukset tulisi muotoilla? Onko rajoituksia?",
+      "pricingNotes": "Hinnoittelusäännöt, yleiset huomiot…",
       "keyFacts": "Yksi fakta per rivi, esim.\nKävelyasiakkaat tervetulleita\nToimitus 20 km säteellä"
     },
     "weekdays": {
@@ -738,7 +756,34 @@
     },
     "closed": "Suljettu",
     "openTimeLabel": "{day} avautuu",
-    "closeTimeLabel": "{day} sulkeutuu"
+    "closeTimeLabel": "{day} sulkeutuu",
+    "services": {
+      "saveProfileFirst": "Tallenna ensin yrityksesi DNA-profiili, sitten voit lisätä palveluita.",
+      "empty": "Palveluita ei ole vielä lisätty.",
+      "inactive": "Ei aktiivinen",
+      "durationSuffix": "{minutes} min",
+      "defaultCurrencyLabel": "yksikköä",
+      "edit": "Muokkaa",
+      "deactivate": "Poista käytöstä",
+      "reactivate": "Ota uudelleen käyttöön",
+      "add": "Lisää palvelu",
+      "cancel": "Peruuta",
+      "saving": "Tallennetaan…",
+      "saveEdit": "Tallenna muutokset",
+      "fields": {
+        "name": "Nimi",
+        "duration": "Kesto (minuuttia)",
+        "price": "Hinta",
+        "priceNote": "Hintahuomautus",
+        "description": "Kuvaus",
+        "active": "Aktiivinen"
+      },
+      "placeholders": {
+        "duration": "esim. 60",
+        "price": "esim. 49,90",
+        "priceNote": "esim. alkaen, tuntihinta"
+      }
+    }
   },
   "setupReadiness": {
     "title": "Käyttöönoton tila",

@@ -117,6 +117,38 @@ describe("business-dna service", () => {
       expect(data.extractedAt).toBeNull();
     });
 
+    it("maps every new structured field through to the write, never dropping one", async () => {
+      await upsertBusinessDNA(
+        ctx("org-a"),
+        minimalInput({
+          description: "A neighborhood bakery",
+          timezone: "Europe/Helsinki",
+          responseInstructions: "Always greet warmly",
+          cancellationPolicy: "24h notice",
+          bookingPolicy: "Book ahead",
+          refundPolicy: "No refunds",
+          paymentPolicy: "Card only",
+          otherPolicies: "See website",
+          currency: "EUR",
+          quoteInstructions: "Always include VAT",
+        }),
+      );
+
+      const data = db.businessDNA.create.mock.calls[0]![0]!.data;
+      expect(data).toMatchObject({
+        description: "A neighborhood bakery",
+        timezone: "Europe/Helsinki",
+        responseInstructions: "Always greet warmly",
+        cancellationPolicy: "24h notice",
+        bookingPolicy: "Book ahead",
+        refundPolicy: "No refunds",
+        paymentPolicy: "Card only",
+        otherPolicies: "See website",
+        currency: "EUR",
+        quoteInstructions: "Always include VAT",
+      });
+    });
+
     it("uses the caller's org for every operation (tenant isolation)", async () => {
       const dbB = createMockDb();
       tenantDbMock.mockImplementation((orgId: string) => (orgId === "org-b" ? dbB : db));

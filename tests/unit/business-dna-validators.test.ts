@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   businessDnaSchema,
+  businessDnaServiceSchema,
   extractBusinessDnaRequestSchema,
   extractedBusinessDnaSchema,
   openingHoursSchema,
@@ -72,6 +73,57 @@ describe("businessDnaSchema", () => {
     });
     expect(parsed.success).toBe(false);
   });
+
+  it("accepts a well-formed IANA timezone", () => {
+    const parsed = businessDnaSchema.safeParse({ timezone: "Europe/Helsinki" });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.timezone).toBe("Europe/Helsinki");
+  });
+
+  it("rejects a timezone string that is not a real IANA zone", () => {
+    const parsed = businessDnaSchema.safeParse({ timezone: "Not/A_Real_Zone" });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("treats an empty-string timezone as absent", () => {
+    const parsed = businessDnaSchema.safeParse({ timezone: "" });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.timezone).toBeUndefined();
+  });
+
+  it("accepts and uppercases a lowercase 3-letter currency code", () => {
+    const parsed = businessDnaSchema.safeParse({ currency: "eur" });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.currency).toBe("EUR");
+  });
+
+  it("rejects a currency code that is not exactly 3 letters", () => {
+    expect(businessDnaSchema.safeParse({ currency: "EURO" }).success).toBe(false);
+    expect(businessDnaSchema.safeParse({ currency: "E1" }).success).toBe(false);
+  });
+
+  it("accepts the new structured policy fields independently of otherPolicies", () => {
+    const parsed = businessDnaSchema.safeParse({
+      cancellationPolicy: "24h notice",
+      bookingPolicy: "Book ahead",
+      refundPolicy: "No refunds",
+      paymentPolicy: "Card only",
+      otherPolicies: "See website",
+    });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.cancellationPolicy).toBe("24h notice");
+      expect(parsed.data.bookingPolicy).toBe("Book ahead");
+      expect(parsed.data.refundPolicy).toBe("No refunds");
+      expect(parsed.data.paymentPolicy).toBe("Card only");
+      expect(parsed.data.otherPolicies).toBe("See website");
+    }
+  });
+
+  it("rejects the legacy field name 'policies' as an unknown key (renamed to otherPolicies)", () => {
+    const parsed = businessDnaSchema.safeParse({ policies: "No refunds" });
+    expect(parsed.success).toBe(false);
+  });
 });
 
 describe("openingHoursSchema", () => {
@@ -139,5 +191,78 @@ describe("extractedBusinessDnaSchema", () => {
       competitorAnalysis: "should not be accepted",
     });
     expect(result.success).toBe(false);
+  });
+});
+
+describe("businessDnaServiceSchema", () => {
+  it("accepts a minimal service with just a name", () => {
+    const parsed = businessDnaServiceSchema.safeParse({ name: "Haircut" });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) {
+      expect(parsed.data.isActive).toBe(true);
+      expect(parsed.data.sortOrder).toBe(0);
+      expect(parsed.data.priceCents).toBeUndefined();
+    }
+  });
+
+  it("rejects a missing/empty name", () => {
+    expect(businessDnaServiceSchema.safeParse({}).success).toBe(false);
+    expect(businessDnaServiceSchema.safeParse({ name: "" }).success).toBe(false);
+    expect(businessDnaServiceSchema.safeParse({ name: "   " }).success).toBe(false);
+  });
+
+  it("coerces a numeric-string priceCents to an integer", () => {
+    const parsed = businessDnaServiceSchema.safeParse({ name: "Haircut", priceCents: "2500" });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.priceCents).toBe(2500);
+  });
+
+  it("rejects a non-integer priceCents (e.g. a stray decimal major-unit value)", () => {
+    const parsed = businessDnaServiceSchema.safeParse({ name: "Haircut", priceCents: 10.5 });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects NaN priceCents (the deliberate fail-closed sentinel for malformed price input)", () => {
+    const parsed = businessDnaServiceSchema.safeParse({ name: "Haircut", priceCents: Number.NaN });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects a negative priceCents", () => {
+    expect(businessDnaServiceSchema.safeParse({ name: "Haircut", priceCents: -1 }).success).toBe(
+      false,
+    );
+  });
+
+  it("rejects a negative durationMinutes", () => {
+    expect(
+      businessDnaServiceSchema.safeParse({ name: "Haircut", durationMinutes: -1 }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a client-supplied id, organizationId, or businessDnaId", () => {
+    expect(
+      businessDnaServiceSchema.safeParse({
+        name: "Haircut",
+        id: "11111111-1111-4111-8111-111111111111",
+      }).success,
+    ).toBe(false);
+    expect(
+      businessDnaServiceSchema.safeParse({
+        name: "Haircut",
+        organizationId: "other-org",
+      }).success,
+    ).toBe(false);
+    expect(
+      businessDnaServiceSchema.safeParse({
+        name: "Haircut",
+        businessDnaId: "other-dna",
+      }).success,
+    ).toBe(false);
+  });
+
+  it("coerces the isActive checkbox presence into a boolean", () => {
+    const parsed = businessDnaServiceSchema.safeParse({ name: "Haircut", isActive: "true" });
+    expect(parsed.success).toBe(true);
+    if (parsed.success) expect(parsed.data.isActive).toBe(true);
   });
 });
