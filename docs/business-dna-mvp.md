@@ -238,42 +238,36 @@ uses the existing logical Tailwind utilities for RTL safety.
 
 ## Remaining security debt
 
-RLS `UPDATE` policies lacking `WITH CHECK` (see "RLS UPDATE hardening" above), scanned repo-wide
-via a live `pg_policies` query against a fully-migrated database:
+RLS `UPDATE` policies lacking `WITH CHECK`, originally scanned repo-wide via a live `pg_policies`
+query against a fully-migrated database when this section was first written. The 14 CRM/Calendar/
+Documents/Workflows/Voice/Webhooks tables plus `prompts` and `notifications` were subsequently
+hardened by `20260817000000_tenant_update_rls_with_check_hardening` — see
+`docs/RLS-UPDATE-WITH-CHECK-HARDENING.md` for the full audit, the two special-ownership cases
+(`prompts`' global/null-org prompts, `notifications`' dual org+user ownership), and live test
+coverage. Only `users_self_update` remains deliberately unhardened (self-referential identity
+data, not tenant-owned; documented reasoning in that file).
 
-| Table                   | `UPDATE USING`?                    | `UPDATE WITH CHECK`? | Tenant reassignment possible?                                    | Status                                               |
-| ----------------------- | ---------------------------------- | -------------------- | ---------------------------------------------------------------- | ---------------------------------------------------- |
-| `business_dna`          | yes (`organization_id`)            | **yes**              | no                                                               | Fixed (this pass)                                    |
-| `business_dna_services` | yes (`organization_id`)            | **yes**              | no                                                               | Fixed (this pass)                                    |
-| `activities`            | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — CRM module                                |
-| `calendar_events`       | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Calendar module                           |
-| `collections`           | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Documents module                          |
-| `companies`             | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — CRM module                                |
-| `contacts`              | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — CRM module                                |
-| `conversations`         | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Chat module                               |
-| `deals`                 | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — CRM module                                |
-| `documents`             | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Documents module                          |
-| `pipelines`             | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — CRM module                                |
-| `prompts`               | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Prompt Library                            |
-| `tags`                  | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — CRM module                                |
-| `teams`                 | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — core org module                           |
-| `voice_assistants`      | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Voice module                              |
-| `webhook_endpoints`     | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Webhooks module                           |
-| `workflows`             | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Workflows module                          |
-| `notifications`         | yes (`user_id`, not org-scoped)    | no                   | yes, in principle (user reassignment, not tenant)                | Deferred — out of scope (identity, not Business DNA) |
-| `users`                 | yes (`id = auth.uid()`, self only) | no                   | no (primary-key uniqueness prevents claiming another user's row) | Deferred — out of scope, low risk                    |
-
-Every one of these tables' `UPDATE` policy is generated by the same shared loop in
-`scripts/generate-legacy-schema-contract.mjs` (the 14 CRM/Calendar/Documents/Workflows/Voice/
-Webhooks tables) or hand-declared individually (`prompts`, `notifications`, `users`) in
-`20260719000000_initial_security_baseline`. In every case, the application layer never sends a
-client-supplied `organizationId` on update (the same `tenantDb` + `.strict()` pattern documented
-above), so this is a defense-in-depth gap, not a currently-reachable exploit through Syveka's own
-API/UI. It becomes reachable only through direct authenticated Postgres/PostgREST-style access. A
-future dedicated pass should add the same `ALTER POLICY ... WITH CHECK` treatment to the 14
-CRM/Calendar/Documents/Workflows/Voice/Webhooks tables (one small, mechanical migration, since
-they all share the identical `organization_id = auth_org_id()` shape) and separately evaluate
-`prompts` (same shape) and `notifications`/`users` (different, user-scoped shape, lower priority).
+| Table                   | `UPDATE USING`?                    | `UPDATE WITH CHECK`? | Tenant reassignment possible?                                    | Status                              |
+| ----------------------- | ---------------------------------- | -------------------- | ---------------------------------------------------------------- | ----------------------------------- |
+| `business_dna`          | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `business_dna_services` | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `activities`            | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `calendar_events`       | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `collections`           | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `companies`             | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `contacts`              | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `conversations`         | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `deals`                 | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `documents`             | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `pipelines`             | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `prompts`               | yes (`organization_id`)            | **yes**              | no                                                               | Fixed (see special case in the doc) |
+| `tags`                  | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `teams`                 | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `voice_assistants`      | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `webhook_endpoints`     | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `workflows`             | yes (`organization_id`)            | **yes**              | no                                                               | Fixed                               |
+| `notifications`         | yes (`user_id`, not org-scoped)    | **yes**              | no                                                               | Fixed (see special case in the doc) |
+| `users`                 | yes (`id = auth.uid()`, self only) | no                   | no (primary-key uniqueness prevents claiming another user's row) | Deferred — out of scope, low risk   |
 
 ## Intentionally deferred beyond MVP
 

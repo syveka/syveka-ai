@@ -482,6 +482,13 @@ const addPolicy = (table, name, command, using = "", check = "") => {
   policies.push(["public", table, name, "PERMISSIVE", command, "{authenticated}", using, check]);
 };
 
+// All 14 of these tables' UPDATE policies carry a WITH CHECK
+// (20260817000000_tenant_update_rls_with_check_hardening, following
+// business_dna/business_dna_services' own earlier
+// 20260816000000_business_dna_rls_update_with_check) so a caller authorized
+// to update a row they currently own cannot also reassign its
+// organization_id to another tenant. See
+// docs/security/RLS_UPDATE_WITH_CHECK_HARDENING.md for the full audit.
 for (const table of [
   "teams",
   "companies",
@@ -500,7 +507,13 @@ for (const table of [
 ]) {
   addPolicy(table, `${table}_select`, "SELECT", "organization_id=auth_org_id");
   addPolicy(table, `${table}_insert`, "INSERT", "", "organization_id=auth_org_id");
-  addPolicy(table, `${table}_update`, "UPDATE", "organization_id=auth_org_id");
+  addPolicy(
+    table,
+    `${table}_update`,
+    "UPDATE",
+    "organization_id=auth_org_id",
+    "organization_id=auth_org_id",
+  );
   addPolicy(
     table,
     `${table}_delete`,
@@ -508,12 +521,6 @@ for (const table of [
     "organization_id=auth_org_idandauth_role=anyarray['owner','admin','manager']",
   );
 }
-// business_dna and business_dna_services' UPDATE policies additionally carry
-// a WITH CHECK (20260816000000_business_dna_rls_update_with_check) so a
-// caller authorized to update a row they currently own cannot also reassign
-// its organization_id to another tenant. The 14 tables above share the same
-// USING-only UPDATE shape as a pre-existing, deliberately out-of-scope
-// pattern (see docs/business-dna-mvp.md's RLS hardening section).
 for (const table of ["business_dna", "business_dna_services"]) {
   addPolicy(table, `${table}_select`, "SELECT", "organization_id=auth_org_id");
   addPolicy(table, `${table}_insert`, "INSERT", "", "organization_id=auth_org_id");
@@ -572,7 +579,18 @@ addPolicy(
   "organization_idisnullororganization_id=auth_org_id",
 );
 addPolicy("prompts", "prompts_insert", "INSERT", "", "organization_id=auth_org_id");
-addPolicy("prompts", "prompts_update", "UPDATE", "organization_id=auth_org_id");
+// A NULL organization_id (global/system prompt) never matches this USING
+// clause for an authenticated caller, so global prompts are untouched by
+// this policy either way; the WITH CHECK only closes the org-owned-prompt
+// reassignment/promotion-to-global gap (20260817000000_tenant_update_rls_
+// with_check_hardening).
+addPolicy(
+  "prompts",
+  "prompts_update",
+  "UPDATE",
+  "organization_id=auth_org_id",
+  "organization_id=auth_org_id",
+);
 addPolicy(
   "prompts",
   "prompts_delete",
@@ -585,7 +603,18 @@ addPolicy(
   "SELECT",
   "user_id=uidandorganization_id=auth_org_id",
 );
-addPolicy("notifications", "notifications_update", "UPDATE", "user_id=uid");
+// Dual-owned (organization_id AND user_id are both real, independent
+// columns) -- the WITH CHECK mirrors notifications_select's own predicate
+// exactly, not the generic organization_id-only shape, since a
+// notification's true access boundary is "this org AND this specific
+// user" (20260817000000_tenant_update_rls_with_check_hardening).
+addPolicy(
+  "notifications",
+  "notifications_update",
+  "UPDATE",
+  "user_id=uid",
+  "user_id=uidandorganization_id=auth_org_id",
+);
 addPolicy(
   "audit_logs",
   "audit_select",
