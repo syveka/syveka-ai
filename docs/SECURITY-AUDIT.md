@@ -231,3 +231,31 @@ this document is not mistaken for a statement that they're unreviewed:
 This addendum is itself a snapshot, not a live feed. A dedicated, from-scratch security review of
 Inbox and Business DNA — with the same file/line-level evidence standard as the rest of this
 document — has not been performed and should not be assumed equivalent to one.
+
+### Addendum (2026-08-17) — `tenantDb()` write-payload override closed for update/upsert/updateMany
+
+A repository-wide launch-readiness audit re-verified the residual risk PR #73 had flagged as
+latent-but-unexploited: `tenantDb(orgId)`'s Prisma Client Extension (`src/server/db/tenant.ts`)
+injected `organizationId` into the `where` clause of `update`/`delete`/`upsert`/`updateMany`, but
+— unlike `create()`, which safely spreads-then-overrides `data.organizationId` — never touched
+the `data`/`create`/`update` write payload of those four operations. A caller passing a raw,
+client-influenced object as that payload (e.g. `tenantDb(orgId).document.update({ where, data:
+{ ...clientBody } })`) could have had `organizationId` silently reassigned to whatever the client
+supplied, planting or moving a row into another tenant despite the `where` clause correctly
+scoping the _lookup_.
+
+Audited every live call site (grep for `.upsert(`, cross-referenced against `.update(`/
+`.updateMany(` on `tenantDb(...)` instances): as of this snapshot, no call site passes a raw
+client-supplied object into these payloads — every one either uses `unscopedPrisma` with an
+explicit server-derived `organizationId`, or builds the payload from named, individually-typed
+fields. **This was not exploitable through any current code path**, matching PR #73's own
+assessment. It was fixed anyway, defensively, because it is a foundational shared security
+primitive used by all 37 `TENANT_MODELS`-listed models, and the asymmetry with `create()` was a
+standing trap for any future caller who reasonably assumed `tenantDb()` fully protects every
+write the way it protects `create()`.
+
+Fix: `update`, `upsert`, and `updateMany` now override `organizationId` in their write payload(s)
+the same way `create()` already did, after any caller-supplied value. Covered by
+`tests/unit/tenant-db.test.ts`, which drives `tenantDb()`'s `$allOperations` interceptor directly
+for every write-shaped operation and asserts a spoofed `organizationId` is always overridden, not
+merely accepted-and-ignored in `where`.
