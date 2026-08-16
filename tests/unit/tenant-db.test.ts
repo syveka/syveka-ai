@@ -56,9 +56,12 @@ describe("tenantDb() write-payload tenant scoping (src/server/db/tenant.ts)", ()
     };
     await allOperations({ model: "Document", operation: "update", args, query });
 
-    const sentArgs = query.mock.calls[0]![0] as Record<string, unknown>;
-    expect(sentArgs.where).toMatchObject({ organizationId: ORG_A });
-    expect(sentArgs.data).toMatchObject({ organizationId: ORG_A });
+    // Exact equality (not toMatchObject): proves the override doesn't come at the
+    // cost of silently dropping other where/data fields the caller supplied.
+    expect(query).toHaveBeenCalledWith({
+      where: { id: "doc-1", organizationId: ORG_A },
+      data: { organizationId: ORG_A, title: "renamed" },
+    });
   });
 
   it("upsert: overrides a spoofed organizationId in both the create and update payloads", async () => {
@@ -71,10 +74,11 @@ describe("tenantDb() write-payload tenant scoping (src/server/db/tenant.ts)", ()
     };
     await allOperations({ model: "Document", operation: "upsert", args, query });
 
-    const sentArgs = query.mock.calls[0]![0] as Record<string, unknown>;
-    expect(sentArgs.where).toMatchObject({ organizationId: ORG_A });
-    expect(sentArgs.create).toMatchObject({ organizationId: ORG_A });
-    expect(sentArgs.update).toMatchObject({ organizationId: ORG_A });
+    expect(query).toHaveBeenCalledWith({
+      where: { id: "doc-1", organizationId: ORG_A },
+      create: { organizationId: ORG_A, title: "new" },
+      update: { organizationId: ORG_A, title: "changed" },
+    });
   });
 
   it("upsert: still injects organizationId when create/update omit it entirely", async () => {
@@ -87,9 +91,11 @@ describe("tenantDb() write-payload tenant scoping (src/server/db/tenant.ts)", ()
     };
     await allOperations({ model: "Document", operation: "upsert", args, query });
 
-    const sentArgs = query.mock.calls[0]![0] as Record<string, unknown>;
-    expect(sentArgs.create).toMatchObject({ organizationId: ORG_A, title: "new" });
-    expect(sentArgs.update).toMatchObject({ organizationId: ORG_A, title: "changed" });
+    expect(query).toHaveBeenCalledWith({
+      where: { id: "doc-1", organizationId: ORG_A },
+      create: { organizationId: ORG_A, title: "new" },
+      update: { organizationId: ORG_A, title: "changed" },
+    });
   });
 
   it("updateMany: overrides a spoofed organizationId in the data payload, not just where", async () => {
@@ -101,9 +107,10 @@ describe("tenantDb() write-payload tenant scoping (src/server/db/tenant.ts)", ()
     };
     await allOperations({ model: "Document", operation: "updateMany", args, query });
 
-    const sentArgs = query.mock.calls[0]![0] as Record<string, unknown>;
-    expect(sentArgs.where).toMatchObject({ organizationId: ORG_A });
-    expect(sentArgs.data).toMatchObject({ organizationId: ORG_A });
+    expect(query).toHaveBeenCalledWith({
+      where: { collectionId: "col-1", organizationId: ORG_A },
+      data: { organizationId: ORG_A, title: "bulk-renamed" },
+    });
   });
 
   it("delete: injects organizationId into where (no data payload exists for delete)", async () => {
