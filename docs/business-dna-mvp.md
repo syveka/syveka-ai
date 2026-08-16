@@ -113,6 +113,43 @@ Cross-tenant protection for services is layered:
   `OWNER`/`ADMIN`/`MANAGER`. Verified live against Postgres (see Testing below): cross-tenant
   `SELECT`/`INSERT`/`UPDATE`/`DELETE` are all rejected; own-tenant operations succeed.
 
+### RLS UPDATE hardening: WITH CHECK on tenant reassignment
+
+Both `business_dna_update` and `business_dna_services_update` originally carried only a `USING
+(organization_id = auth_org_id())` clause. `USING` alone is evaluated against a row's state
+**before** an `UPDATE` to decide whether the row is even visible to touch — PostgreSQL does not
+otherwise verify that the _resulting_ row still satisfies the policy. Without a `WITH CHECK`
+clause, a member of organization A who is authorized to update a row they currently own could, in
+principle, execute an `UPDATE` that also changes `organization_id` to organization B, moving the
+row out of their own tenant.
+
+`20260816000000_business_dna_rls_update_with_check` closes this by adding
+`WITH CHECK (organization_id = auth_org_id())` to both policies via `ALTER POLICY` (which leaves
+the existing `USING` clause untouched). PostgreSQL now independently validates the row **after**
+the write; an `UPDATE` that would leave the row under any `organization_id` other than the
+caller's own is rejected by the database itself, regardless of what the application layer sends.
+`DELETE` policies are unaffected — a delete has no resulting row to check, and role restriction
+already covers it.
+
+Verified live (`tests/rls/inbox-dna-isolation.sql`):
+
+- An organization-A owner cannot reassign their own `business_dna` or `business_dna_services` row
+  to organization B via `UPDATE ... SET organization_id = ...` (rejected with
+  `insufficient_privilege`/`check_violation`, row provably unchanged after rollback).
+- A guessed organization-B `business_dna` id, or `business_dna_services` id, cannot be updated —
+  or, for a service, deactivated/reactivated — by primary key alone, independent of whether the
+  caller also happens to filter by `organization_id`.
+
+This RLS `UPDATE` policy shape (`USING`-only, no `WITH CHECK`) is a pattern shared by every other
+organization-owned table in this schema (`activities`, `calendar_events`, `collections`,
+`companies`, `contacts`, `conversations`, `deals`, `documents`, `pipelines`, `prompts`, `tags`,
+`teams`, `voice_assistants`, `webhook_endpoints`, plus the user-scoped `notifications` and
+`users`). Business DNA's two tables are fixed here because they were this task's scope; the
+remaining tables are a **known, deferred security debt** — see "Remaining security debt" below.
+Fixing them safely requires touching CRM, Calendar, Chat, Documents, Workflows, Voice, Webhooks,
+Prompts, Notifications and Users in one coordinated pass, which is deliberately out of scope for a
+Business DNA–focused change.
+
 ## Agent consumption contract
 
 All AI modules should consume Business DNA through `src/server/business-dna/context.ts`.
@@ -179,6 +216,11 @@ uses the existing logical Tailwind utilities for RTL safety.
 
 - `20260815020000_business_dna_mvp` is additive-only: new nullable columns on `business_dna`, the
   new `business_dna_services` table, and its RLS policies. No data-destructive statements.
+- `20260816000000_business_dna_rls_update_with_check` adds `WITH CHECK` to both tables' `UPDATE`
+  policies via `ALTER POLICY` (see "RLS UPDATE hardening" above). Additive/policy-only — no table,
+  column, or data change. Verified against both a fresh install (all 21 migrations replayed from
+  an empty schema) and an upgrade from the already-migrated chain (applied alone on top of a
+  database that already had all 20 prior migrations).
 - The legacy schema-contract generator (`scripts/generate-legacy-schema-contract.mjs`) and its
   regenerated artifacts (`prisma/sql/006_legacy_baseline_preflight.sql`, the
   `20260701000000_initial_baseline` living-baseline migration) were updated in lockstep via the
@@ -193,6 +235,45 @@ uses the existing logical Tailwind utilities for RTL safety.
   block was added to `inbox-dna-isolation.sql` (positioned before the existing `business_dna`
   delete test, since `business_dna_services` cascades from `business_dna` and would otherwise be
   tested against already-deleted rows within the same transaction).
+
+## Remaining security debt
+
+RLS `UPDATE` policies lacking `WITH CHECK` (see "RLS UPDATE hardening" above), scanned repo-wide
+via a live `pg_policies` query against a fully-migrated database:
+
+| Table                   | `UPDATE USING`?                    | `UPDATE WITH CHECK`? | Tenant reassignment possible?                                    | Status                                               |
+| ----------------------- | ---------------------------------- | -------------------- | ---------------------------------------------------------------- | ---------------------------------------------------- |
+| `business_dna`          | yes (`organization_id`)            | **yes**              | no                                                               | Fixed (this pass)                                    |
+| `business_dna_services` | yes (`organization_id`)            | **yes**              | no                                                               | Fixed (this pass)                                    |
+| `activities`            | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — CRM module                                |
+| `calendar_events`       | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Calendar module                           |
+| `collections`           | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Documents module                          |
+| `companies`             | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — CRM module                                |
+| `contacts`              | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — CRM module                                |
+| `conversations`         | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Chat module                               |
+| `deals`                 | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — CRM module                                |
+| `documents`             | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Documents module                          |
+| `pipelines`             | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — CRM module                                |
+| `prompts`               | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Prompt Library                            |
+| `tags`                  | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — CRM module                                |
+| `teams`                 | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — core org module                           |
+| `voice_assistants`      | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Voice module                              |
+| `webhook_endpoints`     | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Webhooks module                           |
+| `workflows`             | yes (`organization_id`)            | no                   | yes, in principle                                                | Deferred — Workflows module                          |
+| `notifications`         | yes (`user_id`, not org-scoped)    | no                   | yes, in principle (user reassignment, not tenant)                | Deferred — out of scope (identity, not Business DNA) |
+| `users`                 | yes (`id = auth.uid()`, self only) | no                   | no (primary-key uniqueness prevents claiming another user's row) | Deferred — out of scope, low risk                    |
+
+Every one of these tables' `UPDATE` policy is generated by the same shared loop in
+`scripts/generate-legacy-schema-contract.mjs` (the 14 CRM/Calendar/Documents/Workflows/Voice/
+Webhooks tables) or hand-declared individually (`prompts`, `notifications`, `users`) in
+`20260719000000_initial_security_baseline`. In every case, the application layer never sends a
+client-supplied `organizationId` on update (the same `tenantDb` + `.strict()` pattern documented
+above), so this is a defense-in-depth gap, not a currently-reachable exploit through Syveka's own
+API/UI. It becomes reachable only through direct authenticated Postgres/PostgREST-style access. A
+future dedicated pass should add the same `ALTER POLICY ... WITH CHECK` treatment to the 14
+CRM/Calendar/Documents/Workflows/Voice/Webhooks tables (one small, mechanical migration, since
+they all share the identical `organization_id = auth_org_id()` shape) and separately evaluate
+`prompts` (same shape) and `notifications`/`users` (different, user-scoped shape, lower priority).
 
 ## Intentionally deferred beyond MVP
 
