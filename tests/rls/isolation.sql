@@ -123,6 +123,35 @@ begin
   raise notice 'ALL TENANT-UPDATE-HARDENING ASSERTIONS PASSED (organization_id-scoped tables)';
 end $$;
 
+-- prompts special case: organization_id is nullable (a NULL row is a
+-- global/system prompt, per prompts_select). The loop above already proves
+-- an org-owned prompt cannot be reassigned to another specific
+-- organization; this proves it separately cannot be "promoted" to global
+-- by nulling organization_id -- prompts_update's WITH CHECK
+-- (organization_id = auth_org_id()) evaluates to NULL, not TRUE, for a
+-- NULL row, so PostgreSQL rejects the write the same way it rejects a
+-- reassignment to a different organization.
+do $$
+declare
+  affected_rows integer;
+begin
+  begin
+    update prompts set organization_id = null where id = 'ce000000-0000-4000-8000-000000000001';
+    raise exception 'TENANT-UPDATE FAIL: prompts.organization_id was set to NULL (promoted to global)';
+  exception when insufficient_privilege or check_violation then
+    null;
+  end;
+
+  select count(*) into affected_rows
+  from prompts
+  where id = 'ce000000-0000-4000-8000-000000000001' and organization_id is not null;
+  if affected_rows <> 1 then
+    raise exception 'TENANT-UPDATE FAIL: org A prompt no longer has a non-null organization_id after the rejected attempt';
+  end if;
+
+  raise notice 'ALL TENANT-UPDATE-HARDENING ASSERTIONS PASSED (prompts NULL-promotion)';
+end $$;
+
 -- notifications: dual-owned (organization_id AND user_id). Its own UPDATE
 -- WITH CHECK (user_id = auth.uid() AND organization_id = auth_org_id())
 -- mirrors notifications_select's predicate, not the generic
@@ -154,6 +183,24 @@ begin
   get diagnostics affected_rows = row_count;
   if affected_rows <> 0 then
     raise exception 'TENANT-UPDATE FAIL: guessed org B notifications.id was updatable, affected % row(s)', affected_rows;
+  end if;
+
+  -- cannot reassign own notification to a different user (a variant beyond
+  -- pure org reassignment, since notifications is dual-owned).
+  begin
+    update notifications
+    set user_id = 'ffffffff-0000-4000-8000-000000000000'
+    where id = 'cf000000-0000-4000-8000-000000000001';
+    raise exception 'TENANT-UPDATE FAIL: notifications.user_id reassignment was allowed';
+  exception when insufficient_privilege or check_violation then
+    null;
+  end;
+  if not exists (
+    select 1 from notifications
+    where id = 'cf000000-0000-4000-8000-000000000001'
+      and user_id = 'a0000000-0000-4000-8000-000000000001'
+  ) then
+    raise exception 'TENANT-UPDATE FAIL: org A notification user_id no longer matches its original owner after the rejected attempt';
   end if;
 
   raise notice 'ALL TENANT-UPDATE-HARDENING ASSERTIONS PASSED (notifications)';
