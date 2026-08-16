@@ -162,15 +162,50 @@ describe("staging release migration contract", () => {
     const securityRows = policyRows(rlsContract);
     const releaseInvariantRows = new Set(policyRows(rlsPolicyContract(releaseInvariants)));
     expect(securityRows.length).toBeGreaterThan(0);
-    for (const row of securityRows) {
+    // security-baseline is checksum-pinned and its mid-deploy contract is
+    // necessarily frozen at its own point in migration history, so it still
+    // declares these 16 UPDATE policies with their ORIGINAL (USING-only)
+    // shape. 20260817000000_tenant_update_rls_with_check_hardening ALTERs
+    // each of them later in the same deploy to add WITH CHECK -- the one
+    // deliberate, reviewed case where a later migration changes an EXISTING
+    // policy's shape rather than only adding new tables. These are excluded
+    // from the strict "every security-baseline row must still appear
+    // verbatim in release-invariants" check below; their superseding
+    // (current) row text is asserted as part of extraRows instead, exactly
+    // like business_dna's own earlier WITH CHECK hardening.
+    const SUPERSEDED_UPDATE_ROWS = [
+      "      ('public', 'activities', 'activities_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+      "      ('public', 'calendar_events', 'calendar_events_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+      "      ('public', 'collections', 'collections_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+      "      ('public', 'companies', 'companies_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+      "      ('public', 'contacts', 'contacts_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+      "      ('public', 'conversations', 'conversations_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+      "      ('public', 'deals', 'deals_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+      "      ('public', 'documents', 'documents_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+      "      ('public', 'notifications', 'notifications_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'user_id=uid', ''),",
+      "      ('public', 'pipelines', 'pipelines_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+      "      ('public', 'prompts', 'prompts_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+      "      ('public', 'tags', 'tags_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+      "      ('public', 'teams', 'teams_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+      "      ('public', 'voice_assistants', 'voice_assistants_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+      "      ('public', 'webhook_endpoints', 'webhook_endpoints_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+      "      ('public', 'workflows', 'workflows_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', '')",
+    ];
+    for (const row of SUPERSEDED_UPDATE_ROWS) {
+      expect(securityRows).toContain(row);
+    }
+    const currentSecurityRows = securityRows.filter((row) => !SUPERSEDED_UPDATE_ROWS.includes(row));
+    for (const row of currentSecurityRows) {
       expect(releaseInvariantRows.has(row)).toBe(true);
     }
     expect(securityRows).toHaveLength(86);
     expect(releaseInvariantRows.size).toBe(94);
-    // The only rows release-invariants carries beyond security-baseline are
-    // business_dna's and business_dna_services' — anything else diverging
-    // would be real, unexplained drift.
-    const extraRows = [...releaseInvariantRows].filter((row) => !securityRows.includes(row));
+    // The only rows release-invariants carries beyond the still-current
+    // (non-superseded) security-baseline rows are business_dna's,
+    // business_dna_services', and the 16 superseded UPDATE policies' current
+    // (WITH CHECK-hardened) text — anything else diverging would be real,
+    // unexplained drift.
+    const extraRows = [...releaseInvariantRows].filter((row) => !currentSecurityRows.includes(row));
     expect(extraRows.sort()).toEqual(
       [
         "      ('public', 'business_dna', 'business_dna_delete', 'PERMISSIVE', 'DELETE', '{authenticated}', 'organization_id=auth_org_idandauth_role=anyarray[''owner'',''admin'',''manager'']', ''),",
@@ -181,6 +216,22 @@ describe("staging release migration contract", () => {
         "      ('public', 'business_dna_services', 'business_dna_services_insert', 'PERMISSIVE', 'INSERT', '{authenticated}', '', 'organization_id=auth_org_id'),",
         "      ('public', 'business_dna_services', 'business_dna_services_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),",
         "      ('public', 'business_dna_services', 'business_dna_services_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'activities', 'activities_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'calendar_events', 'calendar_events_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'collections', 'collections_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'companies', 'companies_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'contacts', 'contacts_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'conversations', 'conversations_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'deals', 'deals_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'documents', 'documents_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'notifications', 'notifications_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'user_id=uid', 'user_id=uidandorganization_id=auth_org_id'),",
+        "      ('public', 'pipelines', 'pipelines_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'prompts', 'prompts_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'tags', 'tags_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'teams', 'teams_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'voice_assistants', 'voice_assistants_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'webhook_endpoints', 'webhook_endpoints_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'workflows', 'workflows_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id')",
       ].sort(),
     );
     expect(rlsPolicyContract(security)).toContain("messages_select");

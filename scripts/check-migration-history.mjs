@@ -25,6 +25,7 @@ const expectedOrder = [
   "20260815000000_stripe_webhook_event_ledger",
   "20260815020000_business_dna_mvp",
   "20260816000000_business_dna_rls_update_with_check",
+  "20260817000000_tenant_update_rls_with_check_hardening",
 ];
 
 // These eight migrations were published before the staging-release branch.
