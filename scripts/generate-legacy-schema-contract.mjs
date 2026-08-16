@@ -497,12 +497,33 @@ for (const table of [
   "workflows",
   "voice_assistants",
   "webhook_endpoints",
-  "business_dna",
-  "business_dna_services",
 ]) {
   addPolicy(table, `${table}_select`, "SELECT", "organization_id=auth_org_id");
   addPolicy(table, `${table}_insert`, "INSERT", "", "organization_id=auth_org_id");
   addPolicy(table, `${table}_update`, "UPDATE", "organization_id=auth_org_id");
+  addPolicy(
+    table,
+    `${table}_delete`,
+    "DELETE",
+    "organization_id=auth_org_idandauth_role=anyarray['owner','admin','manager']",
+  );
+}
+// business_dna and business_dna_services' UPDATE policies additionally carry
+// a WITH CHECK (20260816000000_business_dna_rls_update_with_check) so a
+// caller authorized to update a row they currently own cannot also reassign
+// its organization_id to another tenant. The 14 tables above share the same
+// USING-only UPDATE shape as a pre-existing, deliberately out-of-scope
+// pattern (see docs/business-dna-mvp.md's RLS hardening section).
+for (const table of ["business_dna", "business_dna_services"]) {
+  addPolicy(table, `${table}_select`, "SELECT", "organization_id=auth_org_id");
+  addPolicy(table, `${table}_insert`, "INSERT", "", "organization_id=auth_org_id");
+  addPolicy(
+    table,
+    `${table}_update`,
+    "UPDATE",
+    "organization_id=auth_org_id",
+    "organization_id=auth_org_id",
+  );
   addPolicy(
     table,
     `${table}_delete`,

@@ -176,11 +176,11 @@ describe("staging release migration contract", () => {
         "      ('public', 'business_dna', 'business_dna_delete', 'PERMISSIVE', 'DELETE', '{authenticated}', 'organization_id=auth_org_idandauth_role=anyarray[''owner'',''admin'',''manager'']', ''),",
         "      ('public', 'business_dna', 'business_dna_insert', 'PERMISSIVE', 'INSERT', '{authenticated}', '', 'organization_id=auth_org_id'),",
         "      ('public', 'business_dna', 'business_dna_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),",
-        "      ('public', 'business_dna', 'business_dna_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+        "      ('public', 'business_dna', 'business_dna_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
         "      ('public', 'business_dna_services', 'business_dna_services_delete', 'PERMISSIVE', 'DELETE', '{authenticated}', 'organization_id=auth_org_idandauth_role=anyarray[''owner'',''admin'',''manager'']', ''),",
         "      ('public', 'business_dna_services', 'business_dna_services_insert', 'PERMISSIVE', 'INSERT', '{authenticated}', '', 'organization_id=auth_org_id'),",
         "      ('public', 'business_dna_services', 'business_dna_services_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),",
-        "      ('public', 'business_dna_services', 'business_dna_services_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', ''),",
+        "      ('public', 'business_dna_services', 'business_dna_services_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
       ].sort(),
     );
     expect(rlsPolicyContract(security)).toContain("messages_select");
