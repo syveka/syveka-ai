@@ -56,6 +56,22 @@ describe("businessDnaSchema", () => {
     });
     expect(parsed.success).toBe(false);
   });
+
+  it("rejects an organizationId supplied by the client", () => {
+    const parsed = businessDnaSchema.safeParse({
+      displayName: "Acme",
+      organizationId: "00000000-0000-0000-0000-000000000999",
+    });
+    expect(parsed.success).toBe(false);
+  });
+
+  it("rejects arbitrary unknown top-level fields instead of silently stripping them", () => {
+    const parsed = businessDnaSchema.safeParse({
+      displayName: "Acme",
+      isSuperadmin: true,
+    });
+    expect(parsed.success).toBe(false);
+  });
 });
 
 describe("openingHoursSchema", () => {
@@ -78,6 +94,13 @@ describe("openingHoursSchema", () => {
     });
     expect(parsed.success).toBe(false);
   });
+
+  it("rejects unknown fields inside a weekday", () => {
+    const parsed = openingHoursSchema.safeParse({
+      monday: { open: "09:00", close: "17:00", closed: false, organizationId: "other-org" },
+    });
+    expect(parsed.success).toBe(false);
+  });
 });
 
 describe("extractBusinessDnaRequestSchema", () => {
@@ -89,6 +112,15 @@ describe("extractBusinessDnaRequestSchema", () => {
     expect(extractBusinessDnaRequestSchema.safeParse({ url: "https://example.com" }).success).toBe(
       true,
     );
+  });
+
+  it("rejects unknown request fields", () => {
+    expect(
+      extractBusinessDnaRequestSchema.safeParse({
+        url: "https://example.com",
+        organizationId: "other-org",
+      }).success,
+    ).toBe(false);
   });
 });
 
@@ -102,15 +134,10 @@ describe("extractedBusinessDnaSchema", () => {
   });
 
   it("rejects unknown top-level keys the model might hallucinate", () => {
-    // AI output validation must not silently accept arbitrary extra fields.
     const result = extractedBusinessDnaSchema.safeParse({
       displayName: "Acme",
       competitorAnalysis: "should not be accepted",
     });
-    // Extra keys are stripped by default zod object behavior; displayName still parses.
-    expect(result.success).toBe(true);
-    if (result.success) {
-      expect((result.data as Record<string, unknown>).competitorAnalysis).toBeUndefined();
-    }
+    expect(result.success).toBe(false);
   });
 });
