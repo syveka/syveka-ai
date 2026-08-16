@@ -66,6 +66,15 @@ Add new entries at the bottom with a date; never delete a prior entry (mark supe
   completion is recorded only inside the same transaction as the business mutation it depends
   on. Apply the same pattern (not necessarily the same table) to any future inbound webhook
   whose retries must never be silently dropped.
+- **`tenantDb(orgId)` must override `organizationId` in every write payload it touches, not just
+  `where`.** A 2026-08-17 audit found `update`/`upsert`/`updateMany` injected `organizationId`
+  into `where` but left the `data`/`create`/`update` payload unguarded — unlike `create()`, which
+  already spread-then-overrode it. No live call site was exploitable (all confirmed either
+  `unscopedPrisma` with a server-derived `organizationId`, or built from named fields), but the
+  asymmetry was a standing trap for a future caller. Fixed defensively in
+  `security/p1-tenantdb-upsert-payload-injection`; see `docs/SECURITY-AUDIT.md`'s 2026-08-17
+  addendum. Any future operation added to `tenantDb()`'s interceptor that carries a write payload
+  must override `organizationId` in that payload, not only in `where`.
 
 ## Standing engineering conventions (from `README.md`, verified still enforced)
 
