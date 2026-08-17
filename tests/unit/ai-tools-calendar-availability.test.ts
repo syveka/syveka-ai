@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { tenantDbMock, scheduleFindFirstMock, eventFindManyMock, auditMock } = vi.hoisted(() => ({
   tenantDbMock: vi.fn(),
@@ -24,12 +24,26 @@ function identity(orgId = "org-a"): ToolIdentity {
 describe("getCalendarAvailability tool", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    // The tool computes slots against the real system clock (`now: new Date()` in
+    // src/server/ai/tools/index.ts, correctly clamping out already-passed slots on
+    // "today"). Every scenario below targets 2026-08-17 (a Monday), so freeze "now"
+    // to the day before - safely earlier than that day's 00:00 Europe/Helsinki
+    // (2026-08-16T21:00:00Z) - or the clamp would start eating into the expected
+    // slots the instant a real run's wall-clock time reaches 2026-08-17, exactly as
+    // happened here. Matches the frozen-clock convention already used in
+    // tests/unit/booking-service.test.ts.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-16T10:00:00.000Z"));
     tenantDbMock.mockReturnValue({
       availabilitySchedule: { findFirst: scheduleFindFirstMock },
       calendarEvent: { findMany: eventFindManyMock },
     });
     scheduleFindFirstMock.mockResolvedValue(null);
     eventFindManyMock.mockResolvedValue([]);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it("falls back to the generic Mon-Fri 09:00-17:00 default and flags it when the org has no schedule configured", async () => {
