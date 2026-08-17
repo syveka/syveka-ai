@@ -223,7 +223,7 @@ describe("createPublicBooking", () => {
     // transactions racing under READ COMMITTED. See the "serializes concurrent
     // booking attempts" test below for the actual concurrency-safety regression
     // coverage (the advisory lock call), and
-    // tests/integration/booking-concurrency.mjs for a real-Postgres proof.
+    // tests/integration/booking-concurrency.sh for a real-Postgres proof.
     unscopedMock.calendarEvent.findMany.mockResolvedValue([]);
     txMock.calendarEvent.findFirst.mockResolvedValue({ id: "concurrent-evt" });
     await expect(
