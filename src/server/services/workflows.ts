@@ -24,6 +24,22 @@ export async function upsertWorkflow(
 ) {
   const db = tenantDb(ctx.orgId);
 
+  const notificationUserIds = [
+    ...new Set(
+      input.steps.flatMap((step) =>
+        step.type === "notify.member" && step.userId ? [step.userId] : [],
+      ),
+    ),
+  ];
+  if (notificationUserIds.length > 0) {
+    const memberCount = await db.organizationMember.count({
+      where: { userId: { in: notificationUserIds } },
+    });
+    if (memberCount !== notificationUserIds.length) {
+      throw new Error("Notification recipient is not a current organization member");
+    }
+  }
+
   if (workflowId) {
     const before = await db.workflow.findFirstOrThrow({ where: { id: workflowId } });
     const workflow = await db.workflow.update({

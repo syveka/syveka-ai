@@ -78,9 +78,17 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // Create or resume the run record (resumable across wait steps, §17.2)
-  const run = runId
+  const existingRun = runId
+    ? await unscopedPrisma.workflowRun.findFirst({
+        where: { id: runId, workflowId, organizationId: orgId },
+      })
+    : null;
+  if (runId && !existingRun) {
+    return NextResponse.json({ skipped: "workflow run not found" });
+  }
+  const run = existingRun
     ? await unscopedPrisma.workflowRun.update({
-        where: { id: runId },
+        where: { id: existingRun.id },
         data: { status: "RUNNING" },
       })
     : await unscopedPrisma.workflowRun.create({
@@ -202,17 +210,30 @@ export async function POST(request: Request): Promise<NextResponse> {
         }
 
         case "notify.member": {
-          await unscopedPrisma.notification.create({
-            data: {
+          const recipientId = step.userId ?? workflow.createdById;
+          const recipient = await unscopedPrisma.organizationMember.findFirst({
+            where: {
               organizationId: orgId,
-              userId: step.userId ?? workflow.createdById,
-              type: "workflow.notification",
-              title: interpolate(step.title, ctx),
-              body: step.body ? interpolate(step.body, ctx) : undefined,
-              href: `/workflows/${workflowId}`,
+              userId: recipientId,
+              organization: { deletedAt: null },
             },
+            select: { id: true },
           });
-          results.push({ stepId: step.id, status: "ok" });
+          if (!recipient) {
+            results.push({ stepId: step.id, status: "skipped" });
+          } else {
+            await unscopedPrisma.notification.create({
+              data: {
+                organizationId: orgId,
+                userId: recipientId,
+                type: "workflow.notification",
+                title: interpolate(step.title, ctx),
+                body: step.body ? interpolate(step.body, ctx) : undefined,
+                href: `/workflows/${workflowId}`,
+              },
+            });
+            results.push({ stepId: step.id, status: "ok" });
+          }
           break;
         }
 
@@ -245,16 +266,26 @@ export async function POST(request: Request): Promise<NextResponse> {
     const message = err instanceof Error ? err.message.slice(0, 500) : "step failed";
     results.push({ stepId: "error", status: "failed", output: message });
     await persist("FAILED", message);
-    await unscopedPrisma.notification.create({
-      data: {
+    const creatorMembership = await unscopedPrisma.organizationMember.findFirst({
+      where: {
         organizationId: orgId,
         userId: workflow.createdById,
-        type: "workflow.failed",
-        title: workflow.name,
-        body: message,
-        href: `/workflows/${workflowId}`,
+        organization: { deletedAt: null },
       },
+      select: { id: true },
     });
+    if (creatorMembership) {
+      await unscopedPrisma.notification.create({
+        data: {
+          organizationId: orgId,
+          userId: workflow.createdById,
+          type: "workflow.failed",
+          title: workflow.name,
+          body: message,
+          href: `/workflows/${workflowId}`,
+        },
+      });
+    }
     // QStash retries (3x) then DLQ (§17.2)
     return NextResponse.json({ error: message }, { status: 500 });
   }

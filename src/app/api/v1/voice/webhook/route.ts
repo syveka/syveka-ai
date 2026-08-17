@@ -52,7 +52,7 @@ async function resolveAssistant(
 ) {
   if (!vapiAssistantId) return null;
   return unscopedPrisma.voiceAssistant.findFirst({
-    where: { vapiAssistantId },
+    where: { vapiAssistantId, organization: { deletedAt: null } },
     select: {
       id: true,
       organizationId: true,

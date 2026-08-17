@@ -35,7 +35,18 @@ describe("resolveOrgIdByMailboxAddress", () => {
         where: {
           address: { equals: "Acme-Oy@Inbox.Syveka.Ai", mode: "insensitive" },
           channel: "EMAIL",
+          organization: { deletedAt: null },
         },
+      }),
+    );
+  });
+
+  it("does not resolve mailboxes for soft-deleted organizations", async () => {
+    mocks.unscopedMailboxFindFirst.mockResolvedValueOnce(null);
+    await expect(resolveOrgIdByMailboxAddress("deleted@example.com", "EMAIL")).resolves.toBeNull();
+    expect(mocks.unscopedMailboxFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ organization: { deletedAt: null } }),
       }),
     );
   });

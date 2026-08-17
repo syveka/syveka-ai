@@ -26,7 +26,11 @@ export async function resolveOrgIdByMailboxAddress(
   channel: InboxChannel,
 ): Promise<string | null> {
   const mailbox = await unscopedPrisma.inboxMailbox.findFirst({
-    where: { address: { equals: address.trim(), mode: "insensitive" }, channel },
+    where: {
+      address: { equals: address.trim(), mode: "insensitive" },
+      channel,
+      organization: { deletedAt: null },
+    },
     select: { organizationId: true },
   });
   return mailbox?.organizationId ?? null;

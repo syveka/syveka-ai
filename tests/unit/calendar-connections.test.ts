@@ -3,7 +3,9 @@ import { createHmac, randomBytes } from "node:crypto";
 
 const { unscopedMock } = vi.hoisted(() => ({
   unscopedMock: {
-    calendarConnection: { findFirst: vi.fn(), update: vi.fn() },
+    organizationMember: { findFirst: vi.fn() },
+    calendarConnection: { findFirst: vi.fn(), update: vi.fn(), upsert: vi.fn() },
+    externalCalendar: { upsert: vi.fn() },
   },
 }));
 
@@ -17,8 +19,10 @@ import {
   buildOAuthState,
   verifyOAuthState,
   ConnectionError,
+  completeConnection,
 } from "@/server/services/calendar-connections";
 import { encryptToken } from "@/server/integrations/calendar/crypto";
+import { mockCalendarAdapter, mockProviderTestApi } from "@/server/integrations/calendar/mock";
 import type { TenantContext } from "@/server/auth/session";
 
 function connectionRow(overrides: Record<string, unknown> = {}) {
@@ -131,5 +135,70 @@ describe("OAuth state signing (fail-closed)", () => {
 
     expect(() => verifyOAuthState(forgedState)).toThrow(ConnectionError);
     expect(() => verifyOAuthState(forgedState)).toThrow(/not configured/i);
+  });
+});
+
+describe("OAuth callback authorization freshness", () => {
+  const ctx: TenantContext = {
+    userId: "user-a",
+    email: "user@example.com",
+    orgId: "org-a",
+    role: "ADMIN",
+    locale: "en",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockProviderTestApi.reset();
+    process.env.CALENDAR_OAUTH_STATE_SECRET = "dedicated-state-secret-at-least-16-chars";
+    process.env.CALENDAR_TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+    unscopedMock.calendarConnection.upsert.mockResolvedValue({ id: "conn-1" });
+    unscopedMock.externalCalendar.upsert.mockResolvedValue({ id: "cal-1" });
+  });
+
+  it("rejects a callback after membership is revoked without exchanging the code", async () => {
+    unscopedMock.organizationMember.findFirst.mockResolvedValue(null);
+    const exchangeSpy = vi.spyOn(mockCalendarAdapter, "exchangeCode");
+
+    await expect(
+      completeConnection({ provider: "MOCK", code: "code", state: buildOAuthState(ctx, "MOCK") }),
+    ).rejects.toMatchObject({ code: "bad_state" });
+    expect(exchangeSpy).not.toHaveBeenCalled();
+    expect(unscopedMock.calendarConnection.upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects a callback after an administrator is downgraded", async () => {
+    unscopedMock.organizationMember.findFirst.mockResolvedValue({ role: "VIEWER" });
+    await expect(
+      completeConnection({ provider: "MOCK", code: "code", state: buildOAuthState(ctx, "MOCK") }),
+    ).rejects.toMatchObject({ code: "bad_state" });
+    expect(unscopedMock.organizationMember.findFirst).toHaveBeenCalledWith({
+      where: {
+        organizationId: "org-a",
+        userId: "user-a",
+        organization: { deletedAt: null },
+      },
+      select: { role: true },
+    });
+  });
+
+  it("re-checks authorization after provider calls and refuses to persist on mid-flow revocation", async () => {
+    unscopedMock.organizationMember.findFirst
+      .mockResolvedValueOnce({ role: "ADMIN" })
+      .mockResolvedValueOnce(null);
+    await expect(
+      completeConnection({ provider: "MOCK", code: "code", state: buildOAuthState(ctx, "MOCK") }),
+    ).rejects.toMatchObject({ code: "bad_state" });
+    expect(unscopedMock.organizationMember.findFirst).toHaveBeenCalledTimes(2);
+    expect(unscopedMock.calendarConnection.upsert).not.toHaveBeenCalled();
+  });
+
+  it("persists the connection for a current administrator in an active organization", async () => {
+    unscopedMock.organizationMember.findFirst.mockResolvedValue({ role: "ADMIN" });
+    await expect(
+      completeConnection({ provider: "MOCK", code: "code", state: buildOAuthState(ctx, "MOCK") }),
+    ).resolves.toEqual({ orgId: "org-a", connectionId: "conn-1" });
+    expect(unscopedMock.organizationMember.findFirst).toHaveBeenCalledTimes(2);
+    expect(unscopedMock.calendarConnection.upsert).toHaveBeenCalledTimes(1);
   });
 });
