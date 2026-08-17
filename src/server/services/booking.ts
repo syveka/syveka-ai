@@ -277,6 +277,25 @@ export async function getPublicSlots(params: {
   return { slots, timezone: parts.timezone, durationMinutes: duration };
 }
 
+/**
+ * Serializes concurrent booking writes for the same calendar owner so the
+ * assertSlotStillFree() check below can't race another transaction. Postgres's
+ * default READ COMMITTED isolation lets two concurrent transactions each run
+ * assertSlotStillFree's SELECT before either commits its INSERT - neither sees the
+ * other's uncommitted write, so both pass the "slot is free" check and both create
+ * a CalendarEvent/Booking for the same instant. A transaction-scoped advisory lock
+ * (auto-released on commit/rollback, no schema change required) forces the second
+ * transaction to wait here until the first finishes, so its own check correctly
+ * observes whatever the first transaction just committed.
+ */
+async function lockOwnerCalendarForBooking(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+  ownerId: string,
+): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId}), hashtext(${ownerId}))`;
+}
+
 async function assertSlotStillFree(
   tx: Prisma.TransactionClient,
   orgId: string,
@@ -305,9 +324,12 @@ async function assertSlotStillFree(
 }
 
 /**
- * Guest-facing booking creation. Double-booking protection: the requested
- * slot is validated against computed availability, then re-checked inside
- * the write transaction so two concurrent guests cannot both commit.
+ * Guest-facing booking creation. Double-booking protection: the requested slot is
+ * validated against computed availability, then re-checked inside the write
+ * transaction under lockOwnerCalendarForBooking()'s advisory lock - the lock, not
+ * the transaction alone, is what prevents two concurrent guests from both
+ * committing (see that function's comment for why a bare re-check isn't enough
+ * under Postgres's default READ COMMITTED isolation).
  */
 export async function createPublicBooking(params: {
   orgSlug: string;
@@ -351,6 +373,7 @@ export async function createPublicBooking(params: {
           : null;
 
   const created = await unscopedPrisma.$transaction(async (tx) => {
+    await lockOwnerCalendarForBooking(tx, orgId, bookingType.ownerId);
     await assertSlotStillFree(
       tx,
       orgId,
@@ -552,6 +575,7 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
 
   const orgId = oldBooking.organizationId;
   const result = await unscopedPrisma.$transaction(async (tx) => {
+    await lockOwnerCalendarForBooking(tx, orgId, bookingType.ownerId);
     await assertSlotStillFree(
       tx,
       orgId,
