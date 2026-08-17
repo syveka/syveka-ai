@@ -75,6 +75,19 @@ Add new entries at the bottom with a date; never delete a prior entry (mark supe
   `security/p1-tenantdb-upsert-payload-injection`; see `docs/SECURITY-AUDIT.md`'s 2026-08-17
   addendum. Any future operation added to `tenantDb()`'s interceptor that carries a write payload
   must override `organizationId` in that payload, not only in `where`.
+- **A "re-check inside `$transaction`" is not, by itself, concurrency-safe under Postgres's
+  default READ COMMITTED isolation.** A 2026-08-17 audit found `createPublicBooking`/
+  `rescheduleBookingViaToken` (`src/server/services/booking.ts`) documented as having
+  "transactional double-booking protection," but the re-check was a plain `SELECT` with no lock —
+  two concurrent transactions each see the other's write as absent until commit, so both can pass
+  the check and both insert, producing two bookings for one slot. Proven against a real Postgres
+  instance (not just a mocked unit test) via `tests/integration/booking-concurrency.sh`. Fixed by
+  taking a transaction-scoped `pg_advisory_xact_lock` keyed on `(organizationId, ownerId)` before
+  the check, so the second transaction blocks until the first commits/rolls back instead of
+  racing it — see `lockOwnerCalendarForBooking()`'s comment. **Apply the same scrutiny to any
+  future check-then-write inside a `$transaction`**: only a `SELECT ... FOR UPDATE`, an advisory
+  lock, a unique/exclusion constraint, or `SERIALIZABLE` isolation with retry actually closes this
+  class of race — re-running the same query inside the transaction does not.
 
 ## Standing engineering conventions (from `README.md`, verified still enforced)
 
