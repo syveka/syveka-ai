@@ -2,13 +2,14 @@ import "server-only";
 
 import { z } from "zod";
 import type Anthropic from "@anthropic-ai/sdk";
-import { tenantDb } from "@/server/db/tenant";
+import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { retrieveChunks } from "@/server/ai/rag";
 import { can, type Permission } from "@/server/auth/permissions";
 import type { Role } from "@prisma/client";
 import { audit } from "@/server/services/audit";
 import { computeAvailableSlots, type DateOverride, type WeeklyRule } from "@/server/calendar/slots";
 import { addDaysUtc, isValidTimezone, zonedTimeToUtc } from "@/server/calendar/timezone";
+import { lockOrgCalendar } from "@/server/calendar/locks";
 import { DEFAULT_WEEKLY_RULES } from "@/server/services/booking";
 
 /**
@@ -240,6 +241,8 @@ const getCalendarAvailability = defineTool({
   },
 });
 
+type BookMeetingResult = { ok: true; eventId: string } | { ok: false; reason: "slot_taken" };
+
 const bookMeeting = defineTool({
   name: "bookMeeting",
   description:
@@ -253,43 +256,64 @@ const bookMeeting = defineTool({
   }),
   permission: "calendar:write",
   execute: async (id, input) => {
-    const db = tenantDb(id.orgId);
     const startsAt = new Date(input.startsAt);
     const endsAt = new Date(startsAt.getTime() + input.durationMinutes * 60_000);
 
-    const conflict = await db.calendarEvent.findFirst({
-      where: {
-        deletedAt: null,
-        status: { not: "CANCELED" },
-        startsAt: { lt: endsAt },
-        endsAt: { gt: startsAt },
-      },
-    });
-    if (conflict) return { booked: false, reason: "slot_taken" };
+    // Books into the org's single shared calendar (see getCalendarAvailability's
+    // matching org-wide busy check, and lockOrgCalendar's comment) - conflicts
+    // are checked and serialized organization-wide, not per calendar owner.
+    const result = await unscopedPrisma.$transaction(async (tx): Promise<BookMeetingResult> => {
+      await lockOrgCalendar(tx, id.orgId);
 
-    const event = await db.calendarEvent.create({
-      data: {
-        organizationId: id.orgId,
-        title: input.title,
-        description: input.notes,
-        startsAt,
-        endsAt,
-        contactId: input.contactId,
-        createdById: id.userId,
-        source: id.actorType === "voice_ai" ? "VOICE_AI" : "MANUAL",
-      },
+      const conflict = await tx.calendarEvent.findFirst({
+        where: {
+          organizationId: id.orgId,
+          deletedAt: null,
+          status: { not: "CANCELED" },
+          startsAt: { lt: endsAt },
+          endsAt: { gt: startsAt },
+        },
+        select: { id: true },
+      });
+      if (conflict) return { ok: false, reason: "slot_taken" };
+
+      if (input.contactId) {
+        // Tenancy check (mirrors logActivity): a model-supplied contactId is
+        // untrusted input and CalendarEvent.contactId has no DB-level FK, so
+        // nothing else would catch a cross-tenant or nonexistent id here.
+        await tx.contact.findFirstOrThrow({
+          where: { id: input.contactId, organizationId: id.orgId },
+        });
+      }
+
+      const event = await tx.calendarEvent.create({
+        data: {
+          organizationId: id.orgId,
+          title: input.title,
+          description: input.notes,
+          startsAt,
+          endsAt,
+          contactId: input.contactId,
+          createdById: id.userId,
+          source: id.actorType === "voice_ai" ? "VOICE_AI" : "MANUAL",
+        },
+      });
+      return { ok: true, eventId: event.id };
     });
+
+    if (!result.ok) return { booked: false, reason: result.reason };
+
     await audit(
       { orgId: id.orgId, userId: id.userId },
       {
         action: "calendar.book",
         resourceType: "calendar_event",
-        resourceId: event.id,
+        resourceId: result.eventId,
         actorType: id.actorType,
         after: { title: input.title, startsAt: input.startsAt },
       },
     );
-    return { booked: true, eventId: event.id, startsAt: input.startsAt };
+    return { booked: true, eventId: result.eventId, startsAt: input.startsAt };
   },
 });
 
