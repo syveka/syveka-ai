@@ -88,6 +88,23 @@ Add new entries at the bottom with a date; never delete a prior entry (mark supe
   future check-then-write inside a `$transaction`**: only a `SELECT ... FOR UPDATE`, an advisory
   lock, a unique/exclusion constraint, or `SERIALIZABLE` isolation with retry actually closes this
   class of race — re-running the same query inside the transaction does not.
+- **`deepmerge-ts` is pinned to `8.0.1` via `package.json`'s `overrides`** (same mechanism already
+  used for `next`'s `postcss`/`sharp` and `nanoid`). `@prisma/config` — a transitive dependency of
+  the `prisma` CLI, itself pulled into the production `npm audit --omit=dev` closure because
+  `@prisma/client` declares `"prisma": "*"` as a peer dependency — pins `deepmerge-ts` to an exact
+  `7.1.5`, vulnerable to [GHSA-ggr8-5vv4-36mx](https://github.com/advisories/GHSA-ggr8-5vv4-36mx)
+  (stack exhaustion merging recursive object graphs). As of this fix, every published `prisma`
+  version from `6.13.0-dev.1` through the current `latest` (`7.9.1`) still depends on the same
+  vulnerable pin — there is no available Prisma release that resolves this yet, so an override was
+  the only viable fix. `deepmerge-ts` has zero dependencies of its own; `@prisma/config` only
+  imports its basic `deepmerge` function (not `deepmergeInto` or the advanced type/metadata APIs
+  `8.0.0`'s changelog documents as breaking), and `@prisma/config` is tooling-only (used by CLI
+  commands like `prisma generate`/`validate`/`migrate`, never by `@prisma/client`'s runtime query
+  execution) — bounding the blast radius of a mismatch to Prisma tooling, not the deployed app.
+  Verified via the full local suite (tests, typecheck, lint, format, i18n, build, `prisma
+validate`/`generate`, migration history check) after the override, all passing. **Revisit this
+  override once Prisma ships a release with a patched `@prisma/config`** — remove it rather than
+  leaving it to drift once the upstream fix lands.
 - **The AI `bookMeeting`/`getCalendarAvailability` tools (`src/server/ai/tools/index.ts`)
   intentionally treat "the company calendar" as one shared, organization-wide bookable resource,
   not per-staff-member scheduling** — confirmed by both tools' conflict/busy queries having no
