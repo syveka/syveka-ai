@@ -259,3 +259,25 @@ the same way `create()` already did, after any caller-supplied value. Covered by
 `tests/unit/tenant-db.test.ts`, which drives `tenantDb()`'s `$allOperations` interceptor directly
 for every write-shaped operation and asserts a spoofed `organizationId` is always overridden, not
 merely accepted-and-ignored in `where`.
+
+### Addendum (2026-08-17) — AI `bookMeeting` tool: unvalidated cross-tenant `contactId`
+
+Found while independently reviewing a separate concurrency finding in the same function
+(`src/server/ai/tools/index.ts`): the `bookMeeting` tool's optional, model-supplied `contactId`
+input was passed directly into `calendarEvent.create()`'s `data.contactId` with no check that it
+belongs to the caller's organization. `CalendarEvent.contactId` has no `@relation` declared in
+`prisma/schema.prisma` — no DB-level foreign key exists — so nothing else in the write path would
+have rejected a nonexistent or cross-tenant id either. The sibling `logActivity` tool, which takes
+a structurally identical `contactId` input, already guards this with
+`db.contact.findFirstOrThrow({ where: { id: input.contactId } })` (tenant-scoped via `tenantDb`)
+before use — `bookMeeting` was simply missing the same one-line discipline.
+
+Confidence: real, but bounded impact. `contactId` isn't attacker-_choosable_ in the sense of a
+raw HTTP parameter — it only reaches `bookMeeting` via the model's own tool-call arguments, which
+in the chat/voice product surfaces are populated from `searchContacts` results already scoped to
+the caller's tenant — so the practical trigger is a hallucinated or injected UUID, not a
+straightforward IDOR from an external caller. Still fixed, since nothing in the architecture
+actually prevented it: `bookMeeting` now calls
+`tx.contact.findFirstOrThrow({ where: { id: input.contactId, organizationId: id.orgId } })`
+inside its transaction before attaching a supplied `contactId`, matching `logActivity`'s pattern.
+Covered by `tests/unit/ai-tools-book-meeting.test.ts`.

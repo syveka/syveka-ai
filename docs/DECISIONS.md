@@ -84,10 +84,32 @@ Add new entries at the bottom with a date; never delete a prior entry (mark supe
   instance (not just a mocked unit test) via `tests/integration/booking-concurrency.sh`. Fixed by
   taking a transaction-scoped `pg_advisory_xact_lock` keyed on `(organizationId, ownerId)` before
   the check, so the second transaction blocks until the first commits/rolls back instead of
-  racing it — see `lockOwnerCalendarForBooking()`'s comment. **Apply the same scrutiny to any
+  racing it — see `lockOwnerCalendar()`'s comment (`src/server/calendar/locks.ts`). **Apply the same scrutiny to any
   future check-then-write inside a `$transaction`**: only a `SELECT ... FOR UPDATE`, an advisory
   lock, a unique/exclusion constraint, or `SERIALIZABLE` isolation with retry actually closes this
   class of race — re-running the same query inside the transaction does not.
+- **The AI `bookMeeting`/`getCalendarAvailability` tools (`src/server/ai/tools/index.ts`)
+  intentionally treat "the company calendar" as one shared, organization-wide bookable resource,
+  not per-staff-member scheduling** — confirmed by both tools' conflict/busy queries having no
+  owner filter, `CalendarEvent.ownerId` being left `null` on AI-created events, and the tool's own
+  description ("Book a meeting into the company calendar"). A 2026-08-17 review found `bookMeeting`
+  had no concurrency protection at all (not even a bare `$transaction` re-check) — two concurrent
+  tool executions for the same slot could both create a conflicting event. Fixed with
+  `lockOrgCalendar()` (`src/server/calendar/locks.ts`), an organization-scoped
+  `pg_advisory_xact_lock` — **not** the owner-scoped `lockOwnerCalendar()` used by the guest
+  booking flow, because a per-owner lock would not serialize between two different users'
+  concurrent `bookMeeting` calls, which is exactly the scope this tool's own conflict check
+  evaluates. **Known, deliberately deferred limitation:** `lockOrgCalendar()` and
+  `lockOwnerCalendar()` intentionally do not serialize against each other, so a concurrent AI-tool
+  booking and guest-flow booking for the same underlying time slot are not currently reconciled —
+  closing that gap requires unifying both paths under one lock domain, a larger change than this
+  fix's scope.
+- **A model-supplied tool argument referencing another record (e.g. `bookMeeting`'s optional
+  `contactId`) must be tenancy-checked before use if the referenced column has no DB-level foreign
+  key.** Found during the same review: `CalendarEvent.contactId` has no `@relation` in
+  `prisma/schema.prisma`, so nothing at the database layer would have caught a cross-tenant or
+  nonexistent id — `bookMeeting` now verifies it the same way `logActivity` already did
+  (`tx.contact.findFirstOrThrow({ where: { id, organizationId } })`) before attaching it.
 
 ## Standing engineering conventions (from `README.md`, verified still enforced)
 
