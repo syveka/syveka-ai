@@ -200,7 +200,7 @@ describe("staging release migration contract", () => {
       expect(releaseInvariantRows.has(row)).toBe(true);
     }
     expect(securityRows).toHaveLength(86);
-    expect(releaseInvariantRows.size).toBe(94);
+    expect(releaseInvariantRows.size).toBe(95);
     // The only rows release-invariants carries beyond the still-current
     // (non-superseded) security-baseline rows are business_dna's,
     // business_dna_services', and the 16 superseded UPDATE policies' current
@@ -233,6 +233,7 @@ describe("staging release migration contract", () => {
         "      ('public', 'voice_assistants', 'voice_assistants_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
         "      ('public', 'webhook_endpoints', 'webhook_endpoints_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
         "      ('public', 'workflows', 'workflows_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id')",
+        "      ('public', 'workflow_step_executions', 'workflow_step_executions_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),",
       ].sort(),
     );
     expect(rlsPolicyContract(security)).toContain("messages_select");

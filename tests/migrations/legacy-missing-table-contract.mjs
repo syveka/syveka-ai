@@ -71,7 +71,8 @@ try {
       "    'inbox_messages',\n" +
       "    'inbox_mailboxes',\n" +
       "    'stripe_webhook_events',\n" +
-      "    'business_dna_services'\n" +
+      "    'business_dna_services',\n" +
+      "    'workflow_step_executions'\n" +
       "  ];",
     "  legacy_missing_tables TEXT[] := ARRAY[\n" +
       "    'business_dna',\n" +
@@ -80,6 +81,7 @@ try {
       "    'inbox_mailboxes',\n" +
       "    'stripe_webhook_events',\n" +
       "    'business_dna_services',\n" +
+      "    'workflow_step_executions',\n" +
       `    '${fixtureTable}'\n` +
       "  ];",
     "legacy-missing-table declaration",
