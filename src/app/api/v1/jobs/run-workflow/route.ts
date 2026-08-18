@@ -75,9 +75,19 @@ function isUniqueViolation(err: unknown): boolean {
 }
 
 type StepClaimResult =
-  | { claimed: true; stepExecutionId: string }
+  | { claimed: true; stepExecutionId: string; startedAt: Date }
   | { claimed: false; reason: "succeeded"; output: unknown }
   | { claimed: false; reason: "in_progress" };
+
+/**
+ * Thrown when a step's completion/failure write loses an optimistic-
+ * concurrency race to another worker that reclaimed the same step in the
+ * meantime (see claimStep()'s `startedAt` fencing token below). This is not
+ * a step failure: the reclaiming worker's own attempt is the one of record,
+ * so callers must treat it as "already handled elsewhere," never as a
+ * reason to fail the run or overwrite the winner's status.
+ */
+class StepFencedError extends Error {}
 
 /**
  * Durable, atomic per-(workflowRunId, stepId) claim - closes the crash
@@ -94,6 +104,16 @@ type StepClaimResult =
  * mid-step (see STALE_STEP_CLAIM_MS): that worker already holds this
  * step's own CLAIMED row, so the new claimant's create() collides and, if
  * not yet stale, backs off instead of re-running the step concurrently.
+ *
+ * The returned `startedAt` is a fencing token, not just a timestamp: a
+ * worker whose claim goes stale and gets reclaimed by another delivery
+ * (still possible if the first worker is merely slow, not dead) must not be
+ * able to complete/fail the step after the fact using its now-superseded
+ * claim - completeStep()/failStep() require this exact `startedAt` to still
+ * be current before writing, so a superseded worker's write is rejected
+ * (and, for DB-local steps, its side effect rolled back with it) rather
+ * than silently double-executing or clobbering the reclaiming worker's
+ * result.
  */
 async function claimStep(
   unscopedPrisma: Prisma.TransactionClient,
@@ -108,7 +128,7 @@ async function claimStep(
         status: "CLAIMED",
       },
     });
-    return { claimed: true, stepExecutionId: created.id };
+    return { claimed: true, stepExecutionId: created.id, startedAt: created.startedAt };
   } catch (err) {
     if (!isUniqueViolation(err)) throw err;
 
@@ -127,28 +147,32 @@ async function claimStep(
 
     // Atomic reclaim: a conditional UPDATE, not read-then-write - same
     // guarantee as the run-level reclaim above.
+    const reclaimedStartedAt = new Date();
     const reclaimed = await unscopedPrisma.workflowStepExecution.updateMany({
       where: {
         id: existing.id,
         OR: [{ status: "FAILED" }, { status: "CLAIMED", startedAt: { lt: staleSince } }],
       },
-      data: { status: "CLAIMED", error: null, startedAt: new Date(), finishedAt: null },
+      data: { status: "CLAIMED", error: null, startedAt: reclaimedStartedAt, finishedAt: null },
     });
     if (reclaimed.count === 0) {
       return { claimed: false, reason: "in_progress" };
     }
-    return { claimed: true, stepExecutionId: existing.id };
+    return { claimed: true, stepExecutionId: existing.id, startedAt: reclaimedStartedAt };
   }
 }
 
 async function completeStep(
   unscopedPrisma: Prisma.TransactionClient,
-  stepExecutionId: string,
+  claim: { stepExecutionId: string; startedAt: Date },
   output: unknown,
   externalRef?: string,
 ): Promise<void> {
-  await unscopedPrisma.workflowStepExecution.update({
-    where: { id: stepExecutionId },
+  // Fencing guard: only the worker whose claim is still current (its
+  // `startedAt` hasn't been overwritten by a later reclaim) may record
+  // completion. See claimStep()'s doc comment.
+  const written = await unscopedPrisma.workflowStepExecution.updateMany({
+    where: { id: claim.stepExecutionId, startedAt: claim.startedAt },
     data: {
       status: "SUCCEEDED",
       output: output === undefined ? undefined : (output as Prisma.InputJsonValue),
@@ -156,19 +180,22 @@ async function completeStep(
       finishedAt: new Date(),
     },
   });
+  if (written.count === 0) throw new StepFencedError();
 }
 
 async function failStep(
   unscopedPrisma: Prisma.TransactionClient,
-  stepExecutionId: string,
+  claim: { stepExecutionId: string; startedAt: Date },
   error: string,
 ): Promise<void> {
   // Best-effort: the outer run-level catch already persists the run's own
   // FAILED status/error from the same thrown error, so a failure recording
-  // this step's own status must never mask or replace that.
+  // this step's own status must never mask or replace that. Also
+  // fencing-guarded (see completeStep) so a superseded worker's failure
+  // can never overwrite a reclaiming worker's SUCCEEDED/FAILED status.
   await unscopedPrisma.workflowStepExecution
-    .update({
-      where: { id: stepExecutionId },
+    .updateMany({
+      where: { id: claim.stepExecutionId, startedAt: claim.startedAt },
       data: { status: "FAILED", error: error.slice(0, 500), finishedAt: new Date() },
     })
     .catch(() => undefined);
@@ -391,18 +418,27 @@ export async function POST(request: Request): Promise<NextResponse> {
             const text = res.content[0]?.type === "text" ? res.content[0].text : "";
             const truncated = text.slice(0, 2000);
             ctx.vars[step.outputVar] = truncated;
-            await completeStep(unscopedPrisma, claim.stepExecutionId, truncated);
+            try {
+              await completeStep(unscopedPrisma, claim, truncated);
+            } catch (completeErr) {
+              // Lost the fencing race after the (provider-deduped) call
+              // already succeeded - another worker's claim/completion is
+              // the one of record. Not a failure: proceed as ok.
+              if (!(completeErr instanceof StepFencedError)) throw completeErr;
+            }
             results.push({ stepId: step.id, status: "ok", output: truncated });
             await recordUsage(orgId, "AI_TOKENS_OUT", res.usage.output_tokens, {
               feature: "workflow",
               workflowId,
             });
           } catch (stepErr) {
-            await failStep(
-              unscopedPrisma,
-              claim.stepExecutionId,
-              stepErr instanceof Error ? stepErr.message : "ai.generate failed",
-            );
+            if (!(stepErr instanceof StepFencedError)) {
+              await failStep(
+                unscopedPrisma,
+                claim,
+                stepErr instanceof Error ? stepErr.message : "ai.generate failed",
+              );
+            }
             throw stepErr;
           }
           break;
@@ -438,14 +474,20 @@ export async function POST(request: Request): Promise<NextResponse> {
               // contract and its limits.
               idempotencyKey: claim.stepExecutionId,
             });
-            await completeStep(unscopedPrisma, claim.stepExecutionId, undefined, sent.id);
+            try {
+              await completeStep(unscopedPrisma, claim, undefined, sent.id);
+            } catch (completeErr) {
+              if (!(completeErr instanceof StepFencedError)) throw completeErr;
+            }
             results.push({ stepId: step.id, status: "ok" });
           } catch (stepErr) {
-            await failStep(
-              unscopedPrisma,
-              claim.stepExecutionId,
-              stepErr instanceof Error ? stepErr.message : "email.send failed",
-            );
+            if (!(stepErr instanceof StepFencedError)) {
+              await failStep(
+                unscopedPrisma,
+                claim,
+                stepErr instanceof Error ? stepErr.message : "email.send failed",
+              );
+            }
             throw stepErr;
           }
           break;
@@ -473,7 +515,13 @@ export async function POST(request: Request): Promise<NextResponse> {
             // DB-local side effect: creating the Activity and marking the
             // step SUCCEEDED commit atomically together, so there is no
             // crash window between them at all (unlike email/AI, which
-            // call an external API that cannot join this transaction).
+            // call an external API that cannot join this transaction). The
+            // fencing-guarded updateMany (see completeStep) is what makes
+            // this genuinely exactly-once even against a stale-but-still-
+            // alive worker: if another worker reclaimed this step in the
+            // meantime, the guard matches zero rows and the throw rolls
+            // back the activity.create() in this same transaction too -
+            // this worker never durably creates the Activity at all.
             await unscopedPrisma.$transaction(async (tx) => {
               await tx.activity.create({
                 data: {
@@ -485,16 +533,24 @@ export async function POST(request: Request): Promise<NextResponse> {
                   metadata: { via: "workflow", workflowId },
                 },
               });
-              await tx.workflowStepExecution.update({
-                where: { id: claim.stepExecutionId },
+              const written = await tx.workflowStepExecution.updateMany({
+                where: { id: claim.stepExecutionId, startedAt: claim.startedAt },
                 data: { status: "SUCCEEDED", finishedAt: new Date() },
               });
+              if (written.count === 0) throw new StepFencedError();
             });
             results.push({ stepId: step.id, status: "ok" });
           } catch (stepErr) {
+            if (stepErr instanceof StepFencedError) {
+              // Lost the race entirely - our activity.create() above was
+              // rolled back with it. Another worker's attempt is the one
+              // of record; this step is done, just not by us.
+              results.push({ stepId: step.id, status: "ok" });
+              break;
+            }
             await failStep(
               unscopedPrisma,
-              claim.stepExecutionId,
+              claim,
               stepErr instanceof Error ? stepErr.message : "crm.create_activity failed",
             );
             throw stepErr;
@@ -516,7 +572,8 @@ export async function POST(request: Request): Promise<NextResponse> {
             return NextResponse.json({ ok: true, skipped: "step_in_progress", stepId: step.id });
           }
           try {
-            // Same atomic-transaction treatment as crm.create_activity.
+            // Same atomic-transaction + fencing treatment as
+            // crm.create_activity.
             await unscopedPrisma.$transaction(async (tx) => {
               await tx.notification.create({
                 data: {
@@ -528,16 +585,21 @@ export async function POST(request: Request): Promise<NextResponse> {
                   href: `/workflows/${workflowId}`,
                 },
               });
-              await tx.workflowStepExecution.update({
-                where: { id: claim.stepExecutionId },
+              const written = await tx.workflowStepExecution.updateMany({
+                where: { id: claim.stepExecutionId, startedAt: claim.startedAt },
                 data: { status: "SUCCEEDED", finishedAt: new Date() },
               });
+              if (written.count === 0) throw new StepFencedError();
             });
             results.push({ stepId: step.id, status: "ok" });
           } catch (stepErr) {
+            if (stepErr instanceof StepFencedError) {
+              results.push({ stepId: step.id, status: "ok" });
+              break;
+            }
             await failStep(
               unscopedPrisma,
-              claim.stepExecutionId,
+              claim,
               stepErr instanceof Error ? stepErr.message : "notify.member failed",
             );
             throw stepErr;
@@ -579,7 +641,15 @@ export async function POST(request: Request): Promise<NextResponse> {
             },
             { delaySeconds: step.seconds },
           );
-          await completeStep(unscopedPrisma, claim.stepExecutionId, undefined);
+          try {
+            await completeStep(unscopedPrisma, claim, undefined);
+          } catch (completeErr) {
+            // Lost the fencing race after already enqueueing our own resume
+            // - harmless: a duplicate resume converges via the
+            // duplicate_wait_resume check above, and another worker's claim
+            // is the one of record.
+            if (!(completeErr instanceof StepFencedError)) throw completeErr;
+          }
           return NextResponse.json({ ok: true, waiting: step.seconds });
         }
       }

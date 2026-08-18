@@ -180,9 +180,25 @@ validate`/`generate`, migration history check) after the override, all passing. 
   `startedAt` is never bumped by each step's own checkpoint can be reclaimed as "stale" by a
   second worker while the first is still legitimately mid-step, and it is the _step_-level claim,
   not the run-level one, that prevents both from executing the same step. Guarantees are
-  step-type-specific, not one blanket claim:
+  step-type-specific, not one blanket claim. A follow-up adversarial review the same day found
+  that the claim/reclaim mechanism above, on its own, was **not** sufficient for the DB-local step
+  types: `claimStep()`'s reclaim is purely time-based, and `completeStep()`/`failStep()` originally
+  wrote by `stepExecutionId` alone with no check that the completing worker's claim was still
+  current. Reproduced against real Postgres: a worker that claims a step, stalls past
+  `STALE_STEP_CLAIM_MS` while still alive (not crashed), gets reclaimed by a second worker, then
+  resumes and completes its own (superseded) attempt — this created a second, genuinely duplicate
+  `Activity` row, because nothing rejected the first worker's belated write. Fixed by making
+  `claimStep()`'s returned `startedAt` a fencing token: `completeStep()`/`failStep()`, and the
+  crm.create_activity/notify.member transactions directly, now require an `updateMany` guarded on
+  `{ id, startedAt }` to match before writing; a worker whose claim was reclaimed in the meantime
+  has a stale `startedAt`, matches zero rows, and (for the DB-local, transactional steps) has its
+  side-effect insert rolled back with it in the same transaction — see
+  `tests/integration/run-workflow-step-fencing.mjs` for the real-Postgres proof of both the
+  pre-fix double-Activity outcome and the post-fix single-Activity outcome.
   - `crm.create_activity`/`notify.member` (DB-local): the side effect and the step's SUCCEEDED
-    marker commit in one `$transaction` — genuinely exactly-once, no crash window at all.
+    marker commit in one `$transaction`, guarded by the fencing token above — genuinely
+    exactly-once against both a plain crash-and-retry and a stale-but-still-alive worker's belated
+    completion.
   - `email.send`: the claim's id is passed as Resend's own `Idempotency-Key`
     (`resend`@4.8.0's `CreateEmailRequestOptions`/`IdempotentRequest`, confirmed directly from the
     installed SDK's types) — a retry after an ambiguous outcome (Resend accepted the send but the
@@ -193,7 +209,15 @@ validate`/`generate`, migration history check) after the override, all passing. 
     stable key), and a SUCCEEDED claim's cached output is reused directly on replay without
     calling the provider again — bounds duplicate billing to the single case where the process
     dies between the provider call returning and `completeStep()` persisting it, which provider
-    idempotency also covers when honored.
+    idempotency also covers when honored. For both `email.send` and `ai.generate`, the fencing
+    token above guards `completeStep()`'s own ledger write, but the actual double-send/double-bill
+    protection in the stale-worker scenario comes from a different property: a step's
+    `stepExecutionId` (the idempotency key) never changes across a reclaim, only `startedAt` does
+    — so a reclaimed worker and the stale worker it superseded still share the exact same provider
+    idempotency key, and it is the provider's own dedup, not this fencing guard, that prevents two
+    real sends/generations. The fencing guard's role for these two step types is narrower: it
+    stops a belated `completeStep()` from overwriting a fresher ledger row, not from causing a
+    duplicate external side effect (which the shared key already rules out).
   - `wait.duration`: also claimed — an already-SUCCEEDED claim (the WAITING persist + resume
     enqueue already happened) makes a later duplicate delivery stop immediately
     (`{skipped: "duplicate_wait_resume"}`) rather than fall through and run subsequent steps

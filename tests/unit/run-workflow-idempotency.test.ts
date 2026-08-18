@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => {
     // trigger-level test below (none of which exercise step-level replay
     // itself - see run-workflow-step-idempotency.test.ts for that) claims
     // fresh and completes normally, same as before this ledger existed.
-    stepExecCreate: vi.fn(async (_args: unknown) => ({ id: "step-exec-1" })),
+    stepExecCreate: vi.fn(async (_args: unknown) => ({ id: "step-exec-1", startedAt: new Date() })),
     stepExecUpdate: vi.fn(async (_args: unknown) => ({}) as Record<string, unknown>),
     stepExecUpdateMany: vi.fn(async (_args: unknown) => ({ count: 1 })),
     stepExecFindFirst: vi.fn(async (_args: unknown) => null as Record<string, unknown> | null),
@@ -70,7 +70,10 @@ vi.mock("@/server/db/tenant", () => ({
       fn({
         activity: { create: mocks.activityCreate },
         notification: { create: mocks.notificationCreate },
-        workflowStepExecution: { update: mocks.stepExecUpdate },
+        workflowStepExecution: {
+          update: mocks.stepExecUpdate,
+          updateMany: mocks.stepExecUpdateMany,
+        },
       }),
     ),
   },

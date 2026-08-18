@@ -12,8 +12,8 @@ class FakePrismaKnownError extends Error {
  * A minimal in-memory stand-in for the workflow_step_executions /
  * workflow_runs tables, enforcing the same uniqueness/state-transition
  * rules as the real Postgres schema (see prisma/schema.prisma and
- * tests/integration/run-workflow-claim-concurrency.sh for the real-DB
- * proof of the same invariants). Used so multi-delivery crash/retry
+ * tests/integration/run-workflow-step-fencing.mjs for the real-DB proof of
+ * the fencing invariant specifically). Used so multi-delivery crash/retry
  * scenarios can be expressed as "call POST twice against shared state"
  * instead of hand-sequencing dozens of one-off mock return values.
  */
@@ -203,19 +203,28 @@ function createFakeDb() {
           where,
           data,
         }: {
-          where: { id: string; OR: Array<Record<string, unknown>> };
+          where: { id: string; OR?: Array<Record<string, unknown>>; startedAt?: Date };
           data: Partial<StepExec>;
         }) => {
           const s = stepExecs.get(where.id);
           if (!s) return { count: 0 };
-          const matches = where.OR.some((cond) => {
-            if (cond.status === "FAILED") return s.status === "FAILED";
-            if (cond.status === "CLAIMED" && typeof cond.startedAt === "object") {
-              const lt = (cond.startedAt as { lt: Date }).lt;
-              return s.status === "CLAIMED" && s.startedAt < lt;
-            }
-            return false;
-          });
+          // Two call shapes hit this mock: the reclaim guard (OR of stale
+          // conditions, from claimStep) and the fencing guard (plain
+          // startedAt equality, from completeStep/failStep) - both must be
+          // honored for the fencing fix's control flow to be exercised.
+          let matches: boolean;
+          if (where.OR) {
+            matches = where.OR.some((cond) => {
+              if (cond.status === "FAILED") return s.status === "FAILED";
+              if (cond.status === "CLAIMED" && typeof cond.startedAt === "object") {
+                const lt = (cond.startedAt as { lt: Date }).lt;
+                return s.status === "CLAIMED" && s.startedAt < lt;
+              }
+              return false;
+            });
+          } else {
+            matches = s.startedAt.getTime() === where.startedAt!.getTime();
+          }
           if (!matches) return { count: 0 };
           Object.assign(s, data);
           return { count: 1 };
@@ -604,5 +613,75 @@ describe("step-level idempotency: concurrent overlap during a stale run-level re
     expect(res.status).toBe(200);
     expect(await res.json()).toMatchObject({ skipped: "step_in_progress" });
     expect(fakeDb.activity.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("step-level idempotency: fencing against a stale-but-still-alive worker", () => {
+  it("a belated completion using a superseded (pre-reclaim) claim is rejected instead of double-executing the side effect", async () => {
+    // See tests/integration/run-workflow-step-fencing.mjs for the real-
+    // Postgres version of this exact scenario (this test proves the same
+    // control flow at the application/mock level).
+    const run = await fakeDb.workflowRun.create({
+      data: {
+        workflowId: WORKFLOW,
+        organizationId: ORG,
+        triggerData: {},
+        sourceEventKey: "deal.won:fencing",
+      },
+    });
+
+    // Worker A's original claim - already stale (older than
+    // STALE_STEP_CLAIM_MS), simulating a worker that is slow, not dead.
+    // Worker A's own remembered claim.startedAt is exactly this same value:
+    // it's what claimStep() returned to Worker A at the (simulated) moment
+    // it claimed, and never changes on Worker A's side afterward.
+    const workerAClaim = await fakeDb.workflowStepExecution.create({
+      data: { organizationId: ORG, workflowRunId: run.id, stepId: "s1" },
+    });
+    const workerAStartedAt = new Date(Date.now() - 10 * 60_000);
+    workerAClaim.startedAt = workerAStartedAt;
+    fakeDb.stepExecs.set(workerAClaim.id, workerAClaim);
+
+    fakeDb.workflow.findFirst.mockResolvedValue(
+      twoStepWorkflow({
+        steps: [
+          {
+            id: "s1",
+            type: "crm.create_activity",
+            contactIdVar: "trigger.contactId",
+            activityType: "NOTE",
+            subject: "Worker B's activity",
+          },
+        ],
+      }),
+    );
+
+    // Worker B (a fresh delivery) drives the run through the real route,
+    // reclaims s1 as stale, and completes it normally.
+    const resB = await post(
+      freshTriggerPayload({
+        sourceEventKey: "deal.won:fencing",
+        runId: run.id,
+        resumeFromIndex: 0,
+      }),
+    );
+    expect(resB.status).toBe(200);
+    expect(fakeDb.activity.create).toHaveBeenCalledTimes(1);
+    expect(fakeDb.stepExecs.get(workerAClaim.id)!.status).toBe("SUCCEEDED");
+
+    // Worker A, unaware it was reclaimed, now belatedly tries to complete
+    // the same step using its own (now-superseded) claim - exactly what
+    // completeStep()'s fencing-guarded updateMany does internally.
+    const belated = await fakeDb.workflowStepExecution.updateMany({
+      where: { id: workerAClaim.id, startedAt: workerAStartedAt },
+      data: { status: "SUCCEEDED", finishedAt: new Date() },
+    });
+
+    // Rejected: Worker B's reclaim already advanced startedAt, so Worker
+    // A's write matches zero rows instead of silently overwriting Worker
+    // B's result (or, in the real crm.create_activity transaction, instead
+    // of durably committing a second Activity - see the .mjs script).
+    expect(belated.count).toBe(0);
+    expect(fakeDb.stepExecs.get(workerAClaim.id)!.status).toBe("SUCCEEDED");
   });
 });
