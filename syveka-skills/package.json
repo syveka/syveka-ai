@@ -1,0 +1,26 @@
+{
+  "name": "@syveka/skills",
+  "version": "0.1.0-mvp",
+  "private": true,
+  "description": "Syveka Master Skill - a model-agnostic orchestration, governance, evidence, and verification layer for AI agents.",
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit",
+    "demo:bug-fix": "tsx examples/demo-bug-fix/run.ts",
+    "demo:ui-improvement": "tsx examples/demo-ui-improvement/run.ts",
+    "demo:skill-discovery": "tsx examples/demo-skill-discovery/run.ts"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "zod": "^3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0",
+    "vitest": "^3.2.0"
+  }
+}
