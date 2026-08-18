@@ -302,18 +302,30 @@ export async function moveDeal(ctx: TenantContext, input: MoveDealInput) {
     after: { stage: newStage.name },
   });
 
-  await emitWorkflowEvent(ctx.orgId, "deal.stage_changed", {
-    dealId: input.dealId,
-    from: deal.stage.name,
-    to: newStage.name,
-    valueCents: deal.valueCents,
-  });
+  // Deal transitions have no external event id of their own (unlike a
+  // booking or call, this is a synchronous internal mutation, not something
+  // a queue/webhook redelivers). Derive a deterministic occurrence identity
+  // instead: dealId + the target stage + the deal's own pre-mutation
+  // updatedAt. Two concurrent/duplicate calls for the *same* transition both
+  // read the same pre-update `deal` (neither has committed yet), so they
+  // compute the same key and correctly collide; a later, genuinely distinct
+  // transition necessarily happens after some update bumped `updatedAt`
+  // again, so it always gets a new key instead of being suppressed.
+  const transitionEventId = `${input.dealId}:${deal.updatedAt.toISOString()}:${newStage.id}`;
+
+  await emitWorkflowEvent(
+    ctx.orgId,
+    "deal.stage_changed",
+    { dealId: input.dealId, from: deal.stage.name, to: newStage.name, valueCents: deal.valueCents },
+    transitionEventId,
+  );
   if (newStage.isWon) {
-    await emitWorkflowEvent(ctx.orgId, "deal.won", {
-      dealId: input.dealId,
-      title: deal.title,
-      valueCents: deal.valueCents,
-    });
+    await emitWorkflowEvent(
+      ctx.orgId,
+      "deal.won",
+      { dealId: input.dealId, title: deal.title, valueCents: deal.valueCents },
+      transitionEventId,
+    );
   }
 }
 

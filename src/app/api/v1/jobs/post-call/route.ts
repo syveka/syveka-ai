@@ -142,12 +142,17 @@ export async function POST(request: Request): Promise<NextResponse> {
     });
   }
 
-  await emitWorkflowEvent(orgId, "call.completed", {
-    callId: call.id,
-    contactId,
-    durationSeconds: call.durationSeconds,
-    sentiment: call.sentiment,
-  });
+  await emitWorkflowEvent(
+    orgId,
+    "call.completed",
+    {
+      callId: call.id,
+      contactId,
+      durationSeconds: call.durationSeconds,
+      sentiment: call.sentiment,
+    },
+    call.id,
+  );
 
   return NextResponse.json({ ok: true });
 }

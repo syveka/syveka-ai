@@ -8,6 +8,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
+/**
+ * A claimed-but-never-finished run older than this is treated as abandoned
+ * (crashed/killed worker, nothing left to resume it) and becomes eligible
+ * for reclaim by the next delivery, rather than staying stuck in RUNNING
+ * forever. Comfortably longer than this route's own `maxDuration` (300s) -
+ * the platform itself kills any execution before that, so a still-RUNNING
+ * row past this threshold cannot be a legitimately in-progress attempt.
+ * Mirrors the Stripe webhook ledger's STALE_PROCESSING_MS.
+ */
+const STALE_RUNNING_MS = 6 * 60_000;
+
 const payloadSchema = z.object({
   workflowId: z.string().uuid(),
   orgId: z.string().uuid(),
@@ -15,6 +26,10 @@ const payloadSchema = z.object({
   triggerData: z.record(z.unknown()),
   runId: z.string().uuid().optional(), // resume after wait step
   resumeFromIndex: z.number().int().optional(),
+  // Present on every fresh, event-driven trigger (emitWorkflowEvent) -
+  // absent for manual/test runs and wait-step resumes, both of which always
+  // carry `runId` instead and never reach the claim path below.
+  sourceEventKey: z.string().min(1).optional(),
 });
 
 type StepResult = { stepId: string; status: "ok" | "skipped" | "failed"; output?: unknown };
@@ -68,7 +83,17 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const parsed = payloadSchema.safeParse(JSON.parse(rawBody));
   if (!parsed.success) return NextResponse.json({ error: "invalid payload" }, { status: 400 });
-  const { workflowId, orgId, triggerData, runId, resumeFromIndex } = parsed.data;
+  const { workflowId, orgId, triggerData, runId, resumeFromIndex, sourceEventKey } = parsed.data;
+
+  // Fail closed rather than silently creating an unprotected duplicate-prone
+  // run: every fresh-trigger caller (emitWorkflowEvent) supplies
+  // sourceEventKey; only resumes (which always carry runId instead) don't.
+  if (!runId && !sourceEventKey) {
+    return NextResponse.json(
+      { error: "missing sourceEventKey for fresh trigger" },
+      { status: 400 },
+    );
+  }
 
   const workflow = await unscopedPrisma.workflow.findFirst({
     where: { id: workflowId, organizationId: orgId },
@@ -77,20 +102,81 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ skipped: "workflow inactive or gone" });
   }
 
-  // Create or resume the run record (resumable across wait steps, §17.2)
-  const run = runId
-    ? await unscopedPrisma.workflowRun.update({
-        where: { id: runId },
-        data: { status: "RUNNING" },
-      })
-    : await unscopedPrisma.workflowRun.create({
+  // Create, resume, or claim the run record. Resuming (runId set) always
+  // proceeds - it's this route's own delayed continuation of a run it
+  // already owns. A fresh trigger (no runId) must win an atomic claim on
+  // sourceEventKey first: at most one accepted run per source event, per
+  // workflow, per org (see WorkflowRun.sourceEventKey's unique constraint).
+  // This is a create-first-catch-conflict claim, not check-then-create - the
+  // unique constraint, not application logic, is what makes it race-proof
+  // under two concurrent deliveries of the same event.
+  let run: Prisma.WorkflowRunGetPayload<Record<string, never>>;
+  if (runId) {
+    run = await unscopedPrisma.workflowRun.update({
+      where: { id: runId },
+      data: { status: "RUNNING" },
+    });
+  } else {
+    try {
+      run = await unscopedPrisma.workflowRun.create({
         data: {
           workflowId,
           organizationId: orgId,
           triggerData: triggerData as Prisma.InputJsonValue,
           status: "RUNNING",
+          sourceEventKey,
         },
       });
+    } catch (err) {
+      const isUniqueViolation =
+        typeof err === "object" && err !== null && "code" in err && err.code === "P2002";
+      if (!isUniqueViolation) throw err;
+
+      // Lost the create to an existing row for this exact source event.
+      // SUCCEEDED/WAITING, or RUNNING within STALE_RUNNING_MS, means another
+      // delivery already owns or finished this event - acknowledge without
+      // reprocessing. Only FAILED, or RUNNING past the staleness window
+      // (inferred crash - nothing left to resume it), is reclaimable.
+      const existing = await unscopedPrisma.workflowRun.findFirst({
+        where: { organizationId: orgId, workflowId, sourceEventKey },
+      });
+      const staleSince = new Date(Date.now() - STALE_RUNNING_MS);
+      const isReclaimable =
+        existing?.status === "FAILED" ||
+        (existing?.status === "RUNNING" && existing.startedAt < staleSince);
+      if (!existing || !isReclaimable) {
+        return NextResponse.json({
+          skipped: "duplicate_trigger",
+          duplicate: existing?.status === "SUCCEEDED",
+        });
+      }
+
+      // Atomic reclaim: a conditional UPDATE, not read-then-write. Under two
+      // concurrent reclaim attempts, Postgres row-level locking guarantees
+      // exactly one `updateMany` matches; the loser's count is 0.
+      const reclaimed = await unscopedPrisma.workflowRun.updateMany({
+        where: {
+          organizationId: orgId,
+          workflowId,
+          sourceEventKey,
+          OR: [{ status: "FAILED" }, { status: "RUNNING", startedAt: { lt: staleSince } }],
+        },
+        data: {
+          status: "RUNNING",
+          stepResults: [],
+          error: null,
+          finishedAt: null,
+          startedAt: new Date(),
+        },
+      });
+      if (reclaimed.count === 0) {
+        return NextResponse.json({ skipped: "duplicate_trigger", duplicate: false });
+      }
+      run = await unscopedPrisma.workflowRun.findFirstOrThrow({
+        where: { organizationId: orgId, workflowId, sourceEventKey },
+      });
+    }
+  }
 
   const steps = workflow.steps as unknown as WorkflowStep[];
   const results: StepResult[] = (run.stepResults as StepResult[]) ?? [];
