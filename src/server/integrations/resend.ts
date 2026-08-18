@@ -17,15 +17,26 @@ export async function sendEmail(params: {
   subject: string;
   react: ReactElement;
   replyTo?: string;
+  /**
+   * Forwarded as Resend's own `Idempotency-Key` header: a retry that reuses
+   * the same key is deduplicated by Resend itself, not just by our own
+   * records, closing the crash window between the send succeeding and our
+   * own persistence of that fact (see claimStep()/completeStep() in
+   * src/app/api/v1/jobs/run-workflow/route.ts).
+   */
+  idempotencyKey?: string;
 }): Promise<{ id: string }> {
   const { EMAIL_FROM } = getResendEnv();
-  const { data, error } = await getResend().emails.send({
-    from: EMAIL_FROM,
-    to: params.to,
-    subject: params.subject,
-    react: params.react,
-    replyTo: params.replyTo,
-  });
+  const { data, error } = await getResend().emails.send(
+    {
+      from: EMAIL_FROM,
+      to: params.to,
+      subject: params.subject,
+      react: params.react,
+      replyTo: params.replyTo,
+    },
+    params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : undefined,
+  );
   if (error || !data) throw new Error(`Resend error: ${error?.message ?? "unknown"}`);
   return { id: data.id };
 }

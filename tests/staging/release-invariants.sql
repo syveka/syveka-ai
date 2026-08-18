@@ -339,6 +339,7 @@ BEGIN
       ('public', 'webhook_endpoints', 'webhook_endpoints_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),
       ('public', 'webhook_endpoints', 'webhook_endpoints_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),
       ('public', 'workflow_runs', 'workflow_runs_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),
+      ('public', 'workflow_step_executions', 'workflow_step_executions_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),
       ('public', 'workflows', 'workflows_delete', 'PERMISSIVE', 'DELETE', '{authenticated}', 'organization_id=auth_org_idandauth_role=anyarray[''owner'',''admin'',''manager'']', ''),
       ('public', 'workflows', 'workflows_insert', 'PERMISSIVE', 'INSERT', '{authenticated}', '', 'organization_id=auth_org_id'),
       ('public', 'workflows', 'workflows_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),
