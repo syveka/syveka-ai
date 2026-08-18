@@ -170,7 +170,7 @@ describe("createPublicBooking", () => {
         data: expect.objectContaining({ type: "MEETING", organizationId: "org-a" }),
       }),
     );
-    expect(emitMock).toHaveBeenCalledWith("org-a", "booking.created", expect.anything());
+    expect(emitMock).toHaveBeenCalledWith("org-a", "booking.created", expect.anything(), "bk-1");
     expect(auditMock).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ action: "booking.create" }),
