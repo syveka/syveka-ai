@@ -17,6 +17,16 @@ const mocks = vi.hoisted(() => {
     runUpdateMany: vi.fn(async (_args: unknown) => ({ count: 1 })),
     runFindFirst: vi.fn(async (_args: unknown) => null as Record<string, unknown> | null),
     runFindFirstOrThrow: vi.fn(async (_args: unknown) => ({}) as Record<string, unknown>),
+    // Step-execution ledger (src/app/api/v1/jobs/run-workflow/route.ts's
+    // claimStep/completeStep). Defaulted in beforeEach so every existing
+    // trigger-level test below (none of which exercise step-level replay
+    // itself - see run-workflow-step-idempotency.test.ts for that) claims
+    // fresh and completes normally, same as before this ledger existed.
+    stepExecCreate: vi.fn(async (_args: unknown) => ({ id: "step-exec-1" })),
+    stepExecUpdate: vi.fn(async (_args: unknown) => ({}) as Record<string, unknown>),
+    stepExecUpdateMany: vi.fn(async (_args: unknown) => ({ count: 1 })),
+    stepExecFindFirst: vi.fn(async (_args: unknown) => null as Record<string, unknown> | null),
+    stepExecFindFirstOrThrow: vi.fn(async (_args: unknown) => ({}) as Record<string, unknown>),
     contactFindFirst: vi.fn(async (_args: unknown) => ({ id: "contact-1" })),
     activityCreate: vi.fn(async (_args: unknown) => ({})),
     notificationCreate: vi.fn(async (_args: unknown) => ({})),
@@ -41,9 +51,28 @@ vi.mock("@/server/db/tenant", () => ({
       findFirst: mocks.runFindFirst,
       findFirstOrThrow: mocks.runFindFirstOrThrow,
     },
+    workflowStepExecution: {
+      create: mocks.stepExecCreate,
+      update: mocks.stepExecUpdate,
+      updateMany: mocks.stepExecUpdateMany,
+      findFirst: mocks.stepExecFindFirst,
+      findFirstOrThrow: mocks.stepExecFindFirstOrThrow,
+    },
     contact: { findFirst: mocks.contactFindFirst },
     activity: { create: mocks.activityCreate },
     notification: { create: mocks.notificationCreate },
+    // DB-local steps (crm.create_activity/notify.member) run their side
+    // effect + step-completion update in one transaction; the same mocked
+    // methods work fine as the `tx` client here since none of these tests
+    // assert transactional atomicity itself (see
+    // run-workflow-step-idempotency.test.ts for that).
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) =>
+      fn({
+        activity: { create: mocks.activityCreate },
+        notification: { create: mocks.notificationCreate },
+        workflowStepExecution: { update: mocks.stepExecUpdate },
+      }),
+    ),
   },
 }));
 vi.mock("@/server/jobs/queue", () => ({ enqueue: mocks.enqueue }));
