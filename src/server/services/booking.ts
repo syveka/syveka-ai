@@ -442,13 +442,18 @@ export async function createPublicBooking(params: {
     },
   ).catch(() => undefined);
 
-  await emitWorkflowEvent(orgId, "booking.created", {
-    bookingId: created.booking.id,
-    bookingType: bookingType.name,
-    guestName: input.name,
-    guestEmail: input.email,
-    startsAt: startsAt.toISOString(),
-  }).catch(() => undefined);
+  await emitWorkflowEvent(
+    orgId,
+    "booking.created",
+    {
+      bookingId: created.booking.id,
+      bookingType: bookingType.name,
+      guestName: input.name,
+      guestEmail: input.email,
+      startsAt: startsAt.toISOString(),
+    },
+    created.booking.id,
+  ).catch(() => undefined);
 
   return { ...created, manageToken, bookingType };
 }
@@ -513,10 +518,12 @@ export async function cancelBookingViaToken(raw: string, reason?: string) {
     },
   ).catch(() => undefined);
 
-  await emitWorkflowEvent(booking.organizationId, "booking.canceled", {
-    bookingId: booking.id,
-    guestEmail: booking.guestEmail,
-  }).catch(() => undefined);
+  await emitWorkflowEvent(
+    booking.organizationId,
+    "booking.canceled",
+    { bookingId: booking.id, guestEmail: booking.guestEmail },
+    booking.id,
+  ).catch(() => undefined);
 
   return booking;
 }
@@ -653,11 +660,19 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
     },
   ).catch(() => undefined);
 
-  await emitWorkflowEvent(orgId, "booking.rescheduled", {
-    bookingId: result.booking.id,
-    guestEmail: oldBooking.guestEmail,
-    startsAt: startsAt.toISOString(),
-  }).catch(() => undefined);
+  await emitWorkflowEvent(
+    orgId,
+    "booking.rescheduled",
+    {
+      bookingId: result.booking.id,
+      guestEmail: oldBooking.guestEmail,
+      startsAt: startsAt.toISOString(),
+    },
+    // The successor booking's own id - fresh per reschedule occurrence, so
+    // this is naturally distinct from both the original booking and any
+    // later reschedule of the same booking (each creates its own successor).
+    result.booking.id,
+  ).catch(() => undefined);
 
   return { ...result, manageToken, bookingType };
 }

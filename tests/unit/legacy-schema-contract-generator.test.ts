@@ -310,9 +310,12 @@ describe("legacy schema contract generator", () => {
     expect(result.stderr).toContain("api_keys.scopes");
   });
 
-  it("emits exactly the one approved legacy-missing column", () => {
+  it("emits exactly the two approved legacy-missing columns", () => {
     const rows = legacyMissingColumnsOf(runGenerator(generatorSource).stdout);
-    expect(rows).toEqual(["'calendar_sync_states.webhook_verification_secret_hash'"]);
+    expect(rows).toEqual([
+      "'calendar_sync_states.webhook_verification_secret_hash'",
+      "'workflow_runs.source_event_key'",
+    ]);
   });
 
   it("generates a legacy-missing-columns block that matches the committed preflight SQL exactly", () => {

@@ -72,9 +72,12 @@ DECLARE
   --     20260728000000_calendar_webhook_verification_secret (not a published/resolved
   --     migration) adds it for real later in the same deploy; after that migration
   --     completes, the database must have the correctly shaped column like any other.
+  --   - workflow_runs.source_event_key: same situation, added by
+  --     20260818000000_workflow_run_source_event_key.
   legacy_missing_columns TEXT[] := ARRAY[
 -- BEGIN LEGACY MISSING COLUMNS
-    'calendar_sync_states.webhook_verification_secret_hash'
+    'calendar_sync_states.webhook_verification_secret_hash',
+    'workflow_runs.source_event_key'
 -- END LEGACY MISSING COLUMNS
   ];
 -- BEGIN LEGACY MISSING TABLES
@@ -915,6 +918,7 @@ BEGIN
       ('workflow_runs', 'finished_at', 'timestamp(3) without time zone', 'false', '', '', ''),
       ('workflow_runs', 'id', 'uuid', 'true', '', '', 'gen_random_uuid'),
       ('workflow_runs', 'organization_id', 'uuid', 'true', '', '', ''),
+      ('workflow_runs', 'source_event_key', 'text', 'false', '', '', ''),
       ('workflow_runs', 'started_at', 'timestamp(3) without time zone', 'true', '', '', 'current_timestamp'),
       ('workflow_runs', 'status', '"RunStatus"', 'true', '', '', '''running'''),
       ('workflow_runs', 'step_results', 'jsonb', 'true', '', '', '''[]'''),

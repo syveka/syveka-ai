@@ -5,7 +5,7 @@ import type * as BusinessDnaContextModule from "@/server/business-dna/context";
 const { tenantDbMock, auditMock, emitWorkflowEventMock, anthropicCreateMock } = vi.hoisted(() => ({
   tenantDbMock: vi.fn(),
   auditMock: vi.fn(async () => undefined),
-  emitWorkflowEventMock: vi.fn(async () => undefined),
+  emitWorkflowEventMock: vi.fn(async (..._args: unknown[]) => undefined),
   anthropicCreateMock: vi.fn(
     async (_args: { system: string; messages: Array<{ role: string; content: string }> }) => ({
       content: [{ type: "text", text: "Deal looks healthy.\nNext: send the proposal." }],
@@ -111,6 +111,7 @@ function dealRow(id: string, orgId: string, overrides: Record<string, unknown> =
     closedAt: null as Date | null,
     lostReason: null as string | null,
     createdAt: new Date("2026-07-01T00:00:00Z"),
+    updatedAt: new Date("2026-07-01T00:00:00Z"),
     deletedAt: null,
     ...overrides,
   };
@@ -351,12 +352,25 @@ describe("deals service", () => {
         "org-a",
         "deal.stage_changed",
         expect.objectContaining({ from: "Tarjous", to: "Voitettu" }),
+        expect.any(String),
       );
       expect(emitWorkflowEventMock).toHaveBeenCalledWith(
         "org-a",
         "deal.won",
         expect.objectContaining({ dealId: "deal-1" }),
+        expect.any(String),
       );
+      // Both events from the same transition share one occurrence identity
+      // (only the trigger-type prefix inside emitWorkflowEvent differs), so
+      // duplicating this stage-change call can never run "stage_changed" but
+      // skip "won", or vice versa.
+      const stageChangedEventId = emitWorkflowEventMock.mock.calls.find(
+        (call) => call[1] === "deal.stage_changed",
+      )?.[3];
+      const wonEventId = emitWorkflowEventMock.mock.calls.find(
+        (call) => call[1] === "deal.won",
+      )?.[3];
+      expect(stageChangedEventId).toBe(wonEventId);
     });
 
     it("rejects a stage that belongs to a different pipeline", async () => {
