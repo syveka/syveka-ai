@@ -81,7 +81,8 @@ DECLARE
     'inbox_messages',
     'inbox_mailboxes',
     'stripe_webhook_events',
-    'business_dna_services'
+    'business_dna_services',
+    'workflow_step_executions'
   ];
 -- END LEGACY MISSING TABLES
   -- Foreign keys whose ON UPDATE action may still show a specific, verified
@@ -918,6 +919,16 @@ BEGIN
       ('workflow_runs', 'step_results', 'jsonb', 'true', '', '', '''[]'''),
       ('workflow_runs', 'trigger_data', 'jsonb', 'true', '', '', ''),
       ('workflow_runs', 'workflow_id', 'uuid', 'true', '', '', ''),
+      ('workflow_step_executions', 'error', 'text', 'false', '', '', ''),
+      ('workflow_step_executions', 'external_ref', 'text', 'false', '', '', ''),
+      ('workflow_step_executions', 'finished_at', 'timestamp(3) without time zone', 'false', '', '', ''),
+      ('workflow_step_executions', 'id', 'uuid', 'true', '', '', 'gen_random_uuid'),
+      ('workflow_step_executions', 'organization_id', 'uuid', 'true', '', '', ''),
+      ('workflow_step_executions', 'output', 'jsonb', 'false', '', '', ''),
+      ('workflow_step_executions', 'started_at', 'timestamp(3) without time zone', 'true', '', '', 'current_timestamp'),
+      ('workflow_step_executions', 'status', '"StepExecutionStatus"', 'true', '', '', '''claimed'''),
+      ('workflow_step_executions', 'step_id', 'text', 'true', '', '', ''),
+      ('workflow_step_executions', 'workflow_run_id', 'uuid', 'true', '', '', ''),
       ('workflows', 'created_at', 'timestamp(3) without time zone', 'true', '', '', 'current_timestamp'),
       ('workflows', 'created_by_id', 'uuid', 'true', '', '', ''),
       ('workflows', 'description', 'text', 'false', '', '', ''),
@@ -1077,6 +1088,8 @@ BEGIN
       ('public', 'workflows', 'workflows_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'workflow_runs', 'workflow_runs_workflow_id_fkey', '{workflow_id}', 'public', 'workflows', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'workflow_runs', 'workflow_runs_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
+      ('public', 'workflow_step_executions', 'workflow_step_executions_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
+      ('public', 'workflow_step_executions', 'workflow_step_executions_workflow_run_id_fkey', '{workflow_run_id}', 'public', 'workflow_runs', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'notifications', 'notifications_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'notifications', 'notifications_user_id_fkey', '{user_id}', 'public', 'users', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'api_keys', 'api_keys_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),

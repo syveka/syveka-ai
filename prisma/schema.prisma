@@ -57,43 +57,44 @@ model Organization {
   updatedAt        DateTime  @updatedAt @map("updated_at")
   deletedAt        DateTime? @map("deleted_at")
 
-  members               OrganizationMember[]
-  invitations           Invitation[]
-  teams                 Team[]
-  subscription          Subscription?
-  usageRecords          UsageRecord[]
-  contacts              Contact[]
-  companies             Company[]
-  deals                 Deal[]
-  pipelines             Pipeline[]
-  activities            Activity[]
-  calendarEvents        CalendarEvent[]
-  calendarConnections   CalendarConnection[]
-  externalCalendars     ExternalCalendar[]
-  calendarSyncStates    CalendarSyncState[]
-  availabilitySchedules AvailabilitySchedule[]
-  bookingTypes          BookingType[]
-  bookings              Booking[]
-  reminders             Reminder[]
-  conversations         Conversation[]
-  documents             Document[]
-  conversationDocuments ConversationDocument[]
-  documentUploadIntents DocumentUploadIntent[]
-  collections           Collection[]
-  prompts               Prompt[]
-  workflows             Workflow[]
-  workflowRuns          WorkflowRun[]
-  voiceAssistants       VoiceAssistant[]
-  voiceCalls            VoiceCall[]
-  notifications         Notification[]
-  apiKeys               ApiKey[]
-  webhookEndpoints      WebhookEndpoint[]
-  auditLogs             AuditLog[]
-  tags                  Tag[]
-  businessDNA           BusinessDNA?
-  businessDnaServices   BusinessDnaService[]
-  inboxThreads          InboxThread[]
-  inboxMailboxes        InboxMailbox[]
+  members                OrganizationMember[]
+  invitations            Invitation[]
+  teams                  Team[]
+  subscription           Subscription?
+  usageRecords           UsageRecord[]
+  contacts               Contact[]
+  companies              Company[]
+  deals                  Deal[]
+  pipelines              Pipeline[]
+  activities             Activity[]
+  calendarEvents         CalendarEvent[]
+  calendarConnections    CalendarConnection[]
+  externalCalendars      ExternalCalendar[]
+  calendarSyncStates     CalendarSyncState[]
+  availabilitySchedules  AvailabilitySchedule[]
+  bookingTypes           BookingType[]
+  bookings               Booking[]
+  reminders              Reminder[]
+  conversations          Conversation[]
+  documents              Document[]
+  conversationDocuments  ConversationDocument[]
+  documentUploadIntents  DocumentUploadIntent[]
+  collections            Collection[]
+  prompts                Prompt[]
+  workflows              Workflow[]
+  workflowRuns           WorkflowRun[]
+  workflowStepExecutions WorkflowStepExecution[]
+  voiceAssistants        VoiceAssistant[]
+  voiceCalls             VoiceCall[]
+  notifications          Notification[]
+  apiKeys                ApiKey[]
+  webhookEndpoints       WebhookEndpoint[]
+  auditLogs              AuditLog[]
+  tags                   Tag[]
+  businessDNA            BusinessDNA?
+  businessDnaServices    BusinessDnaService[]
+  inboxThreads           InboxThread[]
+  inboxMailboxes         InboxMailbox[]
 
   @@map("organizations")
 }
@@ -1335,8 +1336,9 @@ model WorkflowRun {
   startedAt      DateTime  @default(now()) @map("started_at")
   finishedAt     DateTime? @map("finished_at")
 
-  workflow     Workflow     @relation(fields: [workflowId], references: [id], onDelete: Cascade)
-  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workflow       Workflow                @relation(fields: [workflowId], references: [id], onDelete: Cascade)
+  organization   Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  stepExecutions WorkflowStepExecution[]
 
   @@unique([organizationId, workflowId, sourceEventKey])
   @@index([organizationId, startedAt])
@@ -1349,6 +1351,46 @@ enum RunStatus {
   FAILED
   CANCELED
   WAITING
+}
+
+/**
+ * Durable, atomic claim for one (workflowRunId, stepId) side-effecting step
+ * execution - closes the crash window PR #84's run-level claim leaves open:
+ * a reclaimed FAILED/stale-RUNNING run restarts its step loop from index 0,
+ * so without this ledger a step that already durably succeeded (e.g. an
+ * email already sent, an Activity already created) would run again. See
+ * claimStep()/completeStep()/failStep() in
+ * src/app/api/v1/jobs/run-workflow/route.ts for the create-first-catch-P2002
+ * claim and the reclaim rules per status. `output` caches the step's result
+ * (mirroring StepResult.output) so a skipped, already-SUCCEEDED step can
+ * still feed later steps' interpolation without re-executing.
+ * `externalRef` records a provider-side id (e.g. Resend's message id) for
+ * observability - it is not itself the correctness mechanism.
+ */
+model WorkflowStepExecution {
+  id             String              @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String              @map("organization_id") @db.Uuid
+  workflowRunId  String              @map("workflow_run_id") @db.Uuid
+  stepId         String              @map("step_id")
+  status         StepExecutionStatus @default(CLAIMED)
+  output         Json?
+  externalRef    String?             @map("external_ref")
+  error          String?
+  startedAt      DateTime            @default(now()) @map("started_at")
+  finishedAt     DateTime?           @map("finished_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  workflowRun  WorkflowRun  @relation(fields: [workflowRunId], references: [id], onDelete: Cascade)
+
+  @@unique([workflowRunId, stepId])
+  @@index([organizationId, startedAt])
+  @@map("workflow_step_executions")
+}
+
+enum StepExecutionStatus {
+  CLAIMED
+  SUCCEEDED
+  FAILED
 }
 
 // ───────────────────────── PLATFORM ─────────────────────────

@@ -27,6 +27,7 @@ const expectedOrder = [
   "20260816000000_business_dna_rls_update_with_check",
   "20260817000000_tenant_update_rls_with_check_hardening",
   "20260818000000_workflow_run_source_event_key",
+  "20260818010000_workflow_step_execution",
 ];
 
 // These eight migrations were published before the staging-release branch.

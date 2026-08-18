@@ -23,6 +23,8 @@ const tableName = (model) => model.dbName ?? model.name;
 //     20260815000000_stripe_webhook_event_ledger.
 //   - business_dna_services: same situation, created for the first time by
 //     20260815020000_business_dna_mvp.
+//   - workflow_step_executions: same situation, created for the first time by
+//     20260818010000_workflow_step_execution.
 const LEGACY_MISSING_TABLE_ENTRIES = [
   ["business_dna", "20260811000000_business_dna_v1"],
   ["inbox_threads", "20260811010000_inbox_mvp_foundation"],
@@ -30,6 +32,7 @@ const LEGACY_MISSING_TABLE_ENTRIES = [
   ["inbox_mailboxes", "20260812000000_inbox_mailboxes"],
   ["stripe_webhook_events", "20260815000000_stripe_webhook_event_ledger"],
   ["business_dna_services", "20260815020000_business_dna_mvp"],
+  ["workflow_step_executions", "20260818010000_workflow_step_execution"],
 ];
 
 const actualTableNames = new Set(models.map(tableName));
@@ -546,6 +549,7 @@ for (const table of [
   "usage_records",
   "voice_calls",
   "workflow_runs",
+  "workflow_step_executions",
   "invitations",
   "api_keys",
   "conversation_documents",
