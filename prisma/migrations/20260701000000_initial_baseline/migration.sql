@@ -915,6 +915,7 @@ BEGIN
       ('workflow_runs', 'finished_at', 'timestamp(3) without time zone', 'false', '', '', ''),
       ('workflow_runs', 'id', 'uuid', 'true', '', '', 'gen_random_uuid'),
       ('workflow_runs', 'organization_id', 'uuid', 'true', '', '', ''),
+      ('workflow_runs', 'source_event_key', 'text', 'false', '', '', ''),
       ('workflow_runs', 'started_at', 'timestamp(3) without time zone', 'true', '', '', 'current_timestamp'),
       ('workflow_runs', 'status', '"RunStatus"', 'true', '', '', '''running'''),
       ('workflow_runs', 'step_results', 'jsonb', 'true', '', '', '''[]'''),

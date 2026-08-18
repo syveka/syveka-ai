@@ -1324,12 +1324,21 @@ model WorkflowRun {
   triggerData    Json      @map("trigger_data")
   stepResults    Json      @default("[]") @map("step_results")
   error          String?
+  // Null for manual/test runs (created directly with a runId, never through
+  // the claim path below) and for legacy rows predating this column -
+  // Postgres treats distinct NULLs as non-conflicting, so this never blocks
+  // on those. Non-null for every event-driven trigger (see emitWorkflowEvent
+  // in src/server/services/workflow-events.ts) - the source event's own
+  // stable identity, scoped per workflow so multiple workflows subscribed to
+  // the same event each still run once.
+  sourceEventKey String?   @map("source_event_key")
   startedAt      DateTime  @default(now()) @map("started_at")
   finishedAt     DateTime? @map("finished_at")
 
   workflow     Workflow     @relation(fields: [workflowId], references: [id], onDelete: Cascade)
   organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
 
+  @@unique([organizationId, workflowId, sourceEventKey])
   @@index([organizationId, startedAt])
   @@map("workflow_runs")
 }
