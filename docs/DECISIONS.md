@@ -127,6 +127,38 @@ validate`/`generate`, migration history check) after the override, all passing. 
   `prisma/schema.prisma`, so nothing at the database layer would have caught a cross-tenant or
   nonexistent id — `bookMeeting` now verifies it the same way `logActivity` already did
   (`tx.contact.findFirstOrThrow({ where: { id, organizationId } })`) before attaching it.
+- **Workflow triggers now enforce at-most-one-accepted-run-per-source-event, not "exactly-once
+  side effects."** A 2026-08-18 review found `emitWorkflowEvent()`
+  (`src/server/services/workflow-events.ts`) enqueued `run-workflow` jobs with no event identity
+  at all — a redelivered/retried/duplicated trigger (QStash's own 3x retry-on-failure included)
+  unconditionally created a second `WorkflowRun` and re-ran every step, repeating side effects
+  (email, CRM activity, notifications, AI usage). `enqueue()` already supported a
+  `deduplicationId` option (used by `voice/webhook`'s post-call job and `calendar-sync`'s
+  pagination continuation) but this call site never used it. Fixed with a persistent,
+  tenant-scoped claim: `WorkflowRun.sourceEventKey` (nullable, additive) is now
+  `@@unique([organizationId, workflowId, sourceEventKey])`, and the `run-workflow` job route
+  claims it with a create-first-catch-conflict pattern (unique constraint, not
+  check-then-create) modeled directly on the Stripe webhook ledger
+  (`src/app/api/v1/webhooks/stripe/route.ts`): SUCCEEDED/WAITING or non-stale RUNNING is a no-op
+  duplicate; FAILED or RUNNING past `STALE_RUNNING_MS` (6 min, past this route's own 300s
+  `maxDuration` so a still-RUNNING row past it cannot be legitimately in-progress) is reclaimed
+  via a guarded `updateMany`, preserving QStash's existing retry-on-failure behavior instead of
+  permanently poisoning a transiently-failed event. `emitWorkflowEvent()`'s `sourceEventId` param
+  is required (not optional) precisely so a future call site can't silently skip this the way the
+  original one did. Canonical identity per trigger: booking lifecycle events use the specific
+  lifecycle row's own id (a reschedule creates a fresh successor booking, so this is naturally
+  distinct per occurrence); `call.completed` uses the `VoiceCall` row id; deal transitions
+  (`deal.stage_changed`/`deal.won`) have no external event id, so the key is derived from the
+  deal's own pre-mutation `updatedAt` plus the target stage — concurrent/duplicate calls for the
+  _same_ transition read the same pre-update timestamp and collide, while a later, genuinely
+  distinct transition always has a newer one. **Known, deliberately out-of-scope gap:** this
+  closes trigger-level duplication (the same source event creating >1 accepted run), not
+  step-level exactly-once — a worker crash mid-run after some steps already executed and before
+  QStash's own redelivery still resumes the _same_ run rather than a fresh one, so already-run
+  non-idempotent steps are not re-protected; that is a separate, larger workflow-engine change.
+  `contact.created` and `schedule.cron` are defined trigger types in the workflow builder UI with
+  no corresponding `emitWorkflowEvent()` call anywhere — pre-existing, unimplemented, unrelated
+  to this fix.
 
 ## Standing engineering conventions (from `README.md`, verified still enforced)
 
