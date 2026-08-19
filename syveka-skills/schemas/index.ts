@@ -22,6 +22,24 @@ export type RegistryStatus = z.infer<typeof registryStatusSchema>;
 export const trustLevelSchema = z.enum(["TRUSTED", "CONDITIONAL", "UNTRUSTED"]);
 export type TrustLevel = z.infer<typeof trustLevelSchema>;
 
+/**
+ * How far a registry entry's integration has actually progressed, distinct
+ * from `status` (which is about review APPROVAL, not implementation state).
+ * A REFERENCE entry may be status APPROVED yet integration_state REFERENCE
+ * (studied, not built); an entry only earns VERIFIED once its provider
+ * code exists AND the tests/evals proving it actually works have run and
+ * passed - not on the strength of a code review alone. See
+ * docs/skills-registry.md "Integration state vs. review status".
+ */
+export const integrationStateSchema = z.enum([
+  "REFERENCE", // studied/documented only, no provider code
+  "REVIEWED", // security review complete, no provider code yet
+  "INSTALLED", // provider code exists, not exercised against the real dependency
+  "CONNECTED", // provider code has been run against the real dependency at least once, manually
+  "VERIFIED", // automated tests/evals exercising the real integration have passed
+]);
+export type IntegrationState = z.infer<typeof integrationStateSchema>;
+
 /** A provider/skill registry entry - one row per capability implementation. */
 export const registryEntrySchema = z.object({
   id: z.string().min(1),
@@ -35,6 +53,7 @@ export const registryEntrySchema = z.object({
   trust_level: trustLevelSchema,
   risk_level: riskLevelSchema,
   status: registryStatusSchema,
+  integration_state: integrationStateSchema,
   supported_agents: z.array(z.string()),
   permissions: z.array(z.string()),
   network_access: z.boolean(),

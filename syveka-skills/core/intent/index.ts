@@ -54,7 +54,13 @@ const RULES: Rule[] = [
   {
     taskType: "ui_improvement",
     capabilities: ["ui.component.search", "ui.taste.evaluate"],
-    keywords: /\b(dashboard|ui|component|design|page|frontend|layout)\b/i,
+    // "page" was deliberately removed from this list (found during
+    // Milestone 2's Scrapling work): it's too generic and false-positived
+    // on genuinely non-UI requests like "research the competitor's
+    // pricing page" - see evals/scrapling-provider.test.ts. dashboard/ui/
+    // component/design/frontend/layout are all much more specifically
+    // UI-shaped signals.
+    keywords: /\b(dashboard|ui|component|design|frontend|layout)\b/i,
   },
   {
     taskType: "skill_discovery",
@@ -63,7 +69,7 @@ const RULES: Rule[] = [
   },
   {
     taskType: "web_research",
-    capabilities: ["research.web.fetch", "research.web.extract"],
+    capabilities: ["web.research"],
     keywords: /\b(research|competitor|website analysis|scrape|extract data from)\b/i,
   },
   {

@@ -61,6 +61,7 @@ describe("capability routing", () => {
         trust_level: "UNTRUSTED" as const,
         risk_level: "HIGH" as const,
         status: "REJECTED" as const,
+        integration_state: "INSTALLED" as const,
         supported_agents: [],
         permissions: [],
         network_access: true,
