@@ -9,6 +9,21 @@ import { isIP } from "node:net";
  * module is deliberately provider-independent: it has no Scrapling import
  * and no knowledge of how the fetch is actually performed, so it could
  * gate any future web-fetching provider the same way.
+ *
+ * KNOWN LIMITATION - DNS rebinding / TOCTOU: `validateUrl()` resolves and
+ * checks the hostname exactly once, here, before the Docker container ever
+ * starts. The container's own fetch (Scrapling/curl_cffi) then performs its
+ * *own*, separate DNS resolution moments later. A hostile DNS server fully
+ * controlling the target's DNS could answer this check with a public IP and
+ * then answer the container's later lookup with a private/internal one -
+ * this module has no way to pin the fetch to the exact IP it validated. Not
+ * fixed in this milestone (would require a custom low-level HTTP client
+ * with connect-time IP pinning, replacing Scrapling's own networking - out
+ * of scope for a single-fetch MVP capability). Treated as an accepted,
+ * disclosed residual risk, not a solved problem - do not read this module
+ * as providing complete SSRF resistance against a fully hostile DNS
+ * operator; it resists the far more common case of a fixed private/
+ * metadata/loopback target.
  */
 
 export interface UrlPolicyResult {
