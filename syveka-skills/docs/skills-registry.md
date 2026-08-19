@@ -21,6 +21,7 @@ Scrapling entry is transcribed directly from that document's fields.
 | `trust_level`                                                            | `TRUSTED` / `CONDITIONAL` / `UNTRUSTED` - used for routing rank when multiple providers serve one capability   |
 | `risk_level`                                                             | `LOW` / `MEDIUM` / `HIGH`                                                                                      |
 | `status`                                                                 | `APPROVED` / `EXPERIMENTAL` / `REVIEW` / `REJECTED` / `RESEARCH_ONLY`                                          |
+| `integration_state`                                                      | `REFERENCE` / `REVIEWED` / `INSTALLED` / `CONNECTED` / `VERIFIED` - see below, distinct from `status`          |
 | `supported_agents`                                                       | Which adapters can legitimately offer this capability                                                          |
 | `permissions`, `network_access`, `filesystem_access`, `scripts`, `hooks` | The concrete capability footprint a security reviewer checked                                                  |
 | `dependencies`                                                           | Direct dependencies, for supply-chain awareness                                                                |
@@ -43,21 +44,45 @@ Scrapling entry is transcribed directly from that document's fields.
 `core/registry/eligibleForRouting()` is the single choke point enforcing this - see
 `docs/architecture.md`.
 
-## Current seed entries (as of this MVP)
+## Integration state vs. review status
 
-| id                       | capability                 | status                 | notes                                                          |
-| ------------------------ | -------------------------- | ---------------------- | -------------------------------------------------------------- |
-| `local-engineering-test` | `engineering.test`         | APPROVED               | First-party, local, no network                                 |
-| `local-git-diff`         | `engineering.diff_capture` | APPROVED               | First-party, local, no network                                 |
-| `local-skill-registry`   | `skill.discovery`          | APPROVED               | First-party, searches this registry only                       |
-| `scrapling`              | `research.web.fetch`       | APPROVED (conditional) | Reviewed, not installed - see `docs/skills/SECURITY_REVIEW.md` |
-| `shadcn-mcp`             | `ui.component.provide`     | REVIEW                 | Not independently reviewed yet                                 |
-| `twentyfirst-dev`        | `ui.component.discover`    | REVIEW                 | Metered service, needs owner approval before any use           |
-| `claude-video`           | `video.analyze`            | REVIEW                 | Not independently reviewed yet                                 |
+`status` answers "has this been reviewed and approved to route to." `integration_state` answers a
+different question: "how far has the actual code integration progressed." A registry entry can be
+`status: "APPROVED"` while `integration_state: "REFERENCE"` (the review said yes, nobody has
+written provider code yet) - the two axes are independent on purpose.
 
-Notice only 3 of 7 entries are `APPROVED`, and all 3 of those are first-party/local. This is
-intentional, not a shortfall to apologize for: it's the registry accurately reflecting what has
-actually been reviewed, which is the entire point of having one.
+| State       | Meaning                                                                            |
+| ----------- | ---------------------------------------------------------------------------------- |
+| `REFERENCE` | Studied/documented only - no provider code exists                                  |
+| `REVIEWED`  | Security review complete - still no provider code                                  |
+| `INSTALLED` | Provider code exists, has not yet been exercised against the real dependency       |
+| `CONNECTED` | Provider code has been run against the real dependency at least once, manually     |
+| `VERIFIED`  | Automated tests/evals exercising the real integration have actually run and passed |
+
+**`VERIFIED` is earned, not granted.** Marking an entry `VERIFIED` on the strength of a code
+review, a design document, or "it should work" is exactly the failure mode this field exists to
+prevent - see `evals/scrapling-live.test.ts` for what actually had to pass (real Docker, real
+network, 5/5) before Scrapling's entry was allowed to say `VERIFIED`, and
+`docs/skills/scrapling-integration.md`'s "Milestone 2" section for two real bugs that live testing
+caught which a code review alone did not (a `--read-only` flag incompatible with the image's own
+entrypoint, and an external test service that stopped behaving as documented).
+
+## Current seed entries (as of this milestone)
+
+| id                       | capability                 | status                 | integration_state | notes                                                                |
+| ------------------------ | -------------------------- | ---------------------- | ----------------- | -------------------------------------------------------------------- |
+| `local-engineering-test` | `engineering.test`         | APPROVED               | VERIFIED          | First-party, local, no network                                       |
+| `local-git-diff`         | `engineering.diff_capture` | APPROVED               | VERIFIED          | First-party, local, no network                                       |
+| `local-skill-registry`   | `skill.discovery`          | APPROVED               | VERIFIED          | First-party, searches this registry only                             |
+| `scrapling`              | `web.research`             | APPROVED (conditional) | VERIFIED          | Real Docker-isolated provider, live-tested - see Milestone 2 section |
+| `shadcn-mcp`             | `ui.component.provide`     | REVIEW                 | REFERENCE         | Not independently reviewed yet                                       |
+| `twentyfirst-dev`        | `ui.component.discover`    | REVIEW                 | REFERENCE         | Metered service, needs owner approval before any use                 |
+| `claude-video`           | `video.analyze`            | REVIEW                 | REFERENCE         | Not independently reviewed yet                                       |
+
+Scrapling is the first (and so far only) externally-sourced entry to reach `VERIFIED` - everything
+else either stayed first-party/local or is still honestly `REFERENCE`. This is intentional, not a
+shortfall to apologize for: it's the registry accurately reflecting what has actually been
+reviewed and proven, which is the entire point of having one.
 
 ## Production evolution path (not built in this MVP)
 

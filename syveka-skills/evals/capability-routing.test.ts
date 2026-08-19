@@ -61,6 +61,7 @@ describe("capability routing", () => {
         trust_level: "UNTRUSTED" as const,
         risk_level: "HIGH" as const,
         status: "REJECTED" as const,
+        integration_state: "INSTALLED" as const,
         supported_agents: [],
         permissions: [],
         network_access: true,
@@ -106,5 +107,87 @@ describe("capability routing", () => {
     };
     const route = await routeCapability("engineering.test", providerMap);
     expect(route.outcome).toBe("PROVIDER_UNAVAILABLE");
+  });
+
+  it("excludes an APPROVED entry whose integration_state is still REFERENCE, INSTALLED, or REVIEWED - status alone is not enough", async () => {
+    // Found during independent adversarial review of PR #87/#88:
+    // eligibleForRouting() originally only checked `status`, so an
+    // APPROVED-but-never-built entry would have been treated as routable
+    // if a provider ever happened to be wired into providerMap under its
+    // id (e.g. a copy-paste mistake or premature wiring). integration_state
+    // must be checked too, independently of status - see
+    // docs/skills-registry.md "Integration state vs. review status".
+    const { eligibleForRouting } = await import("../core/registry/index.js");
+    const base = {
+      id: "hypothetical-thing",
+      name: "Hypothetical Thing",
+      capability: "hypothetical.capability",
+      provider: "hypothetical-thing",
+      source: "https://example.test/hypothetical",
+      license: "MIT",
+      trust_level: "TRUSTED" as const,
+      risk_level: "LOW" as const,
+      status: "APPROVED" as const,
+      supported_agents: [],
+      permissions: [],
+      network_access: false,
+      filesystem_access: false,
+      scripts: false,
+      hooks: false,
+      dependencies: [],
+      credential_requirements: [],
+      approval_required: false,
+      installation_scope: "none" as const,
+      last_reviewed: "2026-08-19",
+      last_updated: "2026-08-19",
+      security_notes:
+        "APPROVED in principle - integration_state governs whether it's actually routable.",
+    };
+
+    for (const integration_state of ["REFERENCE", "REVIEWED", "INSTALLED"] as const) {
+      const entries = [{ ...base, integration_state }];
+      expect(
+        eligibleForRouting(entries),
+        `integration_state=${integration_state} must be excluded`,
+      ).toHaveLength(0);
+    }
+
+    for (const integration_state of ["CONNECTED", "VERIFIED"] as const) {
+      const entries = [{ ...base, integration_state }];
+      expect(
+        eligibleForRouting(entries),
+        `integration_state=${integration_state} must be included`,
+      ).toHaveLength(1);
+    }
+  });
+
+  it("a REVIEW+VERIFIED entry is still excluded - status and integration_state are both required, neither alone is sufficient", async () => {
+    const { eligibleForRouting } = await import("../core/registry/index.js");
+    const entry = {
+      id: "reviewed-but-not-approved",
+      name: "Reviewed But Not Approved",
+      capability: "some.capability",
+      provider: "reviewed-but-not-approved",
+      source: "https://example.test/x",
+      license: "MIT",
+      trust_level: "TRUSTED" as const,
+      risk_level: "LOW" as const,
+      status: "REVIEW" as const, // review not yet complete/approved
+      integration_state: "VERIFIED" as const, // even though tests pass
+      supported_agents: [],
+      permissions: [],
+      network_access: false,
+      filesystem_access: false,
+      scripts: false,
+      hooks: false,
+      dependencies: [],
+      credential_requirements: [],
+      approval_required: false,
+      installation_scope: "none" as const,
+      last_reviewed: "2026-08-19",
+      last_updated: "2026-08-19",
+      security_notes: "Passing tests does not substitute for a completed approval review.",
+    };
+    expect(eligibleForRouting([entry])).toHaveLength(0);
   });
 });

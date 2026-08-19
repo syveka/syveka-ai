@@ -19,6 +19,7 @@ export const REGISTRY: RegistryEntry[] = [
     trust_level: "TRUSTED",
     risk_level: "LOW",
     status: "APPROVED",
+    integration_state: "VERIFIED",
     supported_agents: ["claude-code", "codex", "gemini-cli"],
     permissions: ["fs:read", "process:spawn:local"],
     network_access: false,
@@ -45,6 +46,7 @@ export const REGISTRY: RegistryEntry[] = [
     trust_level: "TRUSTED",
     risk_level: "LOW",
     status: "APPROVED",
+    integration_state: "VERIFIED",
     supported_agents: ["claude-code", "codex", "gemini-cli"],
     permissions: ["fs:read"],
     network_access: false,
@@ -69,6 +71,7 @@ export const REGISTRY: RegistryEntry[] = [
     trust_level: "TRUSTED",
     risk_level: "LOW",
     status: "APPROVED",
+    integration_state: "VERIFIED",
     supported_agents: ["claude-code", "codex", "gemini-cli"],
     permissions: [],
     network_access: false,
@@ -88,31 +91,60 @@ export const REGISTRY: RegistryEntry[] = [
   {
     id: "scrapling",
     name: "Scrapling",
-    capability: "research.web.fetch",
+    capability: "web.research",
     provider: "scrapling",
     version: "0.4.14",
     commit: "5d213a2d4764002bfc4fed33c32fe09fa8b0bf7f",
     source: "https://github.com/D4Vinci/Scrapling",
     license: "BSD-3-Clause",
     trust_level: "CONDITIONAL",
-    risk_level: "MEDIUM",
+    // LOW: this milestone wires ONLY plain public-page HTTP extraction
+    // (Scrapling's `get` command / curl_cffi engine) - no stealth mode, no
+    // cookies, no auth, no proxies, no browser automation. Any of those
+    // would raise this back to MEDIUM/HIGH and require separate review and
+    // explicit owner approval before being wired in - see
+    // providers/scrapling/index.ts's module doc comment and
+    // docs/skills/scrapling-integration.md.
+    risk_level: "LOW",
     status: "APPROVED",
+    // Milestone 2 (Scrapling as the first real external provider): real
+    // provider code exists (providers/scrapling/index.ts), isolated in a
+    // locked-down disposable Docker container, gated by a real SSRF/URL
+    // policy (providers/scrapling/url-policy.ts) evaluated before any
+    // network access. VERIFIED earned via evals/scrapling-live.test.ts
+    // (opt-in, SYVEKA_SCRAPLING_LIVE=1) actually run against real Docker +
+    // real network and passing 5/5: safe public-page fetch with correct
+    // structured evidence, a real redirect-to-cloud-metadata-address
+    // rejected by Scrapling's own safe-redirect mode, no hang past the
+    // timeout ceiling, no response exceeding the size cap, and a real 404
+    // handled without a fabricated success. See docs/skills-registry.md
+    // for the full evidence trail and docs/skills/scrapling-integration.md
+    // for the isolation-design tradeoffs found along the way.
+    integration_state: "VERIFIED",
     supported_agents: ["claude-code", "codex", "gemini-cli"],
-    permissions: ["network:egress"],
+    permissions: ["network:egress", "container:run"],
     network_access: true,
     filesystem_access: false,
     scripts: true,
     hooks: false,
-    dependencies: ["lxml", "curl_cffi", "playwright"],
+    dependencies: ["lxml", "curl_cffi"],
     credential_requirements: [],
     approval_required: true,
     installation_scope: "container",
     last_reviewed: "2026-08-19",
     last_updated: "2026-08-19",
     security_notes:
-      "PASS WITH CONDITIONS. Built-in SSRF protection covers the HTTP engine only, " +
-      "not the browser-based fetch tools. Not installed anywhere - reviewed only. " +
-      "See docs/skills/SECURITY_REVIEW.md for the full writeup.",
+      "PASS WITH CONDITIONS (re-confirmed current as of this milestone - same version/commit, " +
+      "no drift). Real provider wired for plain public-page HTTP extraction ONLY: ephemeral " +
+      "Docker isolation (--rm, all capabilities dropped, no-new-privileges, bridge-only " +
+      "network, memory/CPU caps; NOT a read-only rootfs - attempted, reverted after live " +
+      "testing found it incompatible with this image's uv-based entrypoint, see " +
+      "providers/scrapling/index.ts), a real SSRF/URL policy (protocol allowlist, " +
+      "localhost/private-IP/link-local including cloud metadata/multicast/reserved ranges, " +
+      "real DNS resolution) evaluated before every fetch, request timeout, and a response-size " +
+      "cap. Stealth mode, Cloudflare bypass, cookies, auth, and proxies remain disabled - not " +
+      "reviewed or approved for use. See docs/skills/SECURITY_REVIEW.md for the original review and " +
+      "docs/skills/scrapling-integration.md for the architecture this implements.",
   },
   {
     id: "shadcn-mcp",
@@ -124,6 +156,7 @@ export const REGISTRY: RegistryEntry[] = [
     trust_level: "TRUSTED",
     risk_level: "LOW",
     status: "REVIEW",
+    integration_state: "REFERENCE",
     supported_agents: ["claude-code", "codex", "gemini-cli"],
     permissions: ["network:egress"],
     network_access: true,
@@ -151,6 +184,7 @@ export const REGISTRY: RegistryEntry[] = [
     trust_level: "UNTRUSTED",
     risk_level: "MEDIUM",
     status: "REVIEW",
+    integration_state: "REFERENCE",
     supported_agents: ["claude-code"],
     permissions: ["network:egress"],
     network_access: true,
@@ -177,6 +211,7 @@ export const REGISTRY: RegistryEntry[] = [
     trust_level: "UNTRUSTED",
     risk_level: "MEDIUM",
     status: "REVIEW",
+    integration_state: "REFERENCE",
     supported_agents: ["claude-code"],
     permissions: ["network:egress", "filesystem:write"],
     network_access: true,

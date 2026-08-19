@@ -21,9 +21,32 @@ export function findById(id: string): RegistryEntry | undefined {
  * narrower than "everything in the registry" - REJECTED and RESEARCH_ONLY
  * entries exist in the registry for documentation/audit purposes but must
  * never be routable, even if nothing else claims their capability.
+ *
+ * Gates on BOTH independent axes, not just `status`: a registry entry can
+ * be `status: "APPROVED"` (the review said yes) while `integration_state`
+ * is still `"REFERENCE"` or `"REVIEWED"` (no provider code exists yet) or
+ * `"INSTALLED"` (code exists but has never been run against the real
+ * dependency) - none of those are safe to route to, regardless of review
+ * status. Only `"CONNECTED"` (manually run at least once) or `"VERIFIED"`
+ * (automated evals actually exercised the real integration and passed)
+ * represent code a caller could reasonably have wired into a real
+ * providerMap. See docs/skills-registry.md "Integration state vs. review
+ * status" for the full precedence rules this enforces.
+ *
+ * Found during independent adversarial review of PR #87/#88: this function
+ * predates `integration_state` (added later, in Milestone 2's schema
+ * change) and was never updated to gate on it - `status` alone was
+ * sufficient before that field existed, but became an incomplete safety
+ * net once a second, independent trust axis was introduced without also
+ * teaching this function about it. Fixed here, on the branch that
+ * introduced the field, rather than left as documentation-only.
  */
 export function eligibleForRouting(entries: RegistryEntry[]): RegistryEntry[] {
-  return entries.filter((e) => e.status === "APPROVED" || e.status === "EXPERIMENTAL");
+  return entries.filter(
+    (e) =>
+      (e.status === "APPROVED" || e.status === "EXPERIMENTAL") &&
+      (e.integration_state === "CONNECTED" || e.integration_state === "VERIFIED"),
+  );
 }
 
 const STOPWORDS = new Set([

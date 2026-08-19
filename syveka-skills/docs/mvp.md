@@ -1,5 +1,11 @@
 # Syveka Master Skill — MVP Scope
 
+> **Update (Milestone 2):** web research (`web.research`, was `research.web.fetch`/
+> `research.web.extract` in this original document) moved from stub to a real, live-tested
+> Scrapling provider. The rest of this document describes the original MVP baseline and is
+> otherwise still accurate - see `docs/skills/scrapling-integration.md`'s "Milestone 2" section
+> and `docs/provider-model.md` for what changed.
+
 ## What this MVP proves
 
 That the core governance loop (intent -> plan -> route -> permission -> execute -> evidence ->

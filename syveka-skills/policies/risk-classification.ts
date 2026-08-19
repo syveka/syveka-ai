@@ -34,6 +34,15 @@ export const LOW_RISK_ACTIONS = [
   "test.run.local",
   "lint.run",
   "typecheck.run",
+  // Plain public-page fetch only (Scrapling's HTTP engine, no stealth/
+  // cookies/auth/proxy) - see providers/scrapling/index.ts. Deliberately
+  // narrow and explicit: "web.research.public" is classified, but
+  // "web.research.stealth"/"web.research.authenticated"/etc. are NOT
+  // listed anywhere in this file, so they fall through to DEFAULT_RISK
+  // (HIGH) below and require explicit approval - do not add them here
+  // without a separate security review and explicit owner sign-off, per
+  // the Milestone 2 task brief.
+  "web.research.public",
 ] as const;
 
 /**
