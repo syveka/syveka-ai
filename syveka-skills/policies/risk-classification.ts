@@ -26,6 +26,14 @@ export const MEDIUM_RISK_ACTIONS = [
   "fs.write.project",
   "tool.generate.external",
   "vcs.push",
+  // Local Chromium + bundled-FFmpeg render of one reviewed, first-party
+  // composition - see providers/remotion/index.ts. Deliberately narrow:
+  // "video.render.local" is classified, but "video.render.remote"/
+  // "video.publish"/"video.upload" are NOT listed anywhere in this file,
+  // so they fall through to DEFAULT_RISK (HIGH) below and require
+  // explicit approval - matching the same pattern "web.research.public"
+  // uses above for Scrapling.
+  "video.render.local",
 ] as const;
 
 export const LOW_RISK_ACTIONS = [

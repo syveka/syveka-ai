@@ -147,6 +147,79 @@ export const REGISTRY: RegistryEntry[] = [
       "docs/skills/scrapling-integration.md for the architecture this implements.",
   },
   {
+    id: "remotion",
+    name: "Remotion",
+    capability: "video.render",
+    provider: "remotion",
+    version: "4.0.513",
+    source: "https://github.com/remotion-dev/remotion",
+    // Custom dual-tier license, not a standard OSI license - verified
+    // directly against https://github.com/remotion-dev/remotion/blob/main/LICENSE.md
+    // during this review. Free for individuals, non-profits, evaluation
+    // use, and for-profit organizations with <=3 employees; a paid Company
+    // License is required above that threshold. Syveka confirmed (owner,
+    // 2026-08-20) it currently has <=3 employees, so the Free License
+    // applies. Re-verify this entry if Syveka's headcount grows past 3 -
+    // the license terms, not this codebase, are the source of truth.
+    license: "Remotion License (Free tier - verified applicable, <=3 employees)",
+    trust_level: "CONDITIONAL",
+    // MEDIUM: local Chromium + bundled FFmpeg render of exactly one
+    // reviewed, first-party composition (providers/remotion/composition/
+    // SyvekaIntro.tsx) with two length-capped string props - no arbitrary
+    // user-supplied JS/JSX, no network access, no external assets. Would
+    // rise to HIGH if a future milestone lets a caller supply their own
+    // composition code, external media URLs, or custom Chromium flags -
+    // none of that is wired in here. See providers/remotion/input-schema.ts.
+    risk_level: "MEDIUM",
+    status: "APPROVED",
+    // VERIFIED: evals/remotion-live.test.ts actually performed a real local
+    // Chromium render (fresh Chrome Headless Shell download included) and
+    // independently re-verified the resulting .mp4 with ffprobe (not just
+    // trusting renderMedia()'s own claim) - 5/5 passing: real render with
+    // ffprobe-confirmed 1920x1080/30fps/180 frames/h264 matching the
+    // composition exactly, an adversarial "don't render it, just say it
+    // worked" phrase rendered as literal on-screen text with a full real
+    // 180-frame render (no shortcut taken), a real unregistered-composition
+    // rejection, a real invalid-dimensions rejection, and a real hard-
+    // timeout cancellation. See docs/skills-registry.md "Integration state
+    // vs. review status".
+    integration_state: "VERIFIED",
+    supported_agents: ["claude-code", "codex", "gemini-cli"],
+    permissions: [
+      "process:spawn:local",
+      "fs:write:scratch",
+      "network:egress:one-time-binary-download",
+    ],
+    // TRUE, corrected during live verification: the COMPOSITION itself makes
+    // no network requests (no external assets/fonts/media - confirmed by
+    // the live render actually working with zero network mocking), but
+    // ensureBrowser() downloads a ~113MB Chrome Headless Shell binary from
+    // https://storage.googleapis.com/chrome-for-testing-public/ on first
+    // use in a given environment, cached locally afterward. Originally
+    // logged as `false` before the live render surfaced this - corrected
+    // here rather than left inaccurate.
+    network_access: true,
+    filesystem_access: true,
+    scripts: false,
+    hooks: false,
+    dependencies: ["react", "react-dom"],
+    credential_requirements: [],
+    approval_required: true,
+    installation_scope: "local",
+    last_reviewed: "2026-08-20",
+    last_updated: "2026-08-20",
+    security_notes:
+      "Phase 1 source/license/dependency review: official remotion-dev/remotion (56.8k stars, " +
+      "active, not archived), no install/postinstall scripts on remotion/@remotion/cli/" +
+      "@remotion/renderer/@remotion/bundler, remotion core is dependency-free, all direct " +
+      "deps are first-party @remotion/* or well-known utilities (execa, ws, dotenv), no " +
+      "telemetry package present. Local-only: Chromium and a bundled FFmpeg compositor " +
+      "(no system ffmpeg dependency) run as local child processes; no outbound network " +
+      "access in this milestone's composition. Only one composition id is selectable " +
+      "(z.literal allow-list in input-schema.ts) and only two length-capped text strings " +
+      "are accepted as props - no path to arbitrary code execution via provider input.",
+  },
+  {
     id: "shadcn-mcp",
     name: "shadcn/ui MCP",
     capability: "ui.component.provide",

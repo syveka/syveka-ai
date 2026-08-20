@@ -15,10 +15,18 @@
     "node": ">=20"
   },
   "dependencies": {
+    "@remotion/bundler": "4.0.513",
+    "@remotion/cli": "4.0.513",
+    "@remotion/renderer": "4.0.513",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.513",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
     "tsx": "^4.19.0",
     "typescript": "^5.6.0",
     "vitest": "^3.2.0"
