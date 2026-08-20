@@ -20,5 +20,17 @@
     "paths": { "@/*": ["./src/*"] }
   },
   "include": ["next-env.d.ts", "**/*.ts", "**/*.tsx", ".next/types/**/*.ts"],
-  "exclude": ["node_modules", "supabase/functions"]
+  // syveka-skills is a fully separate subproject with its own package.json,
+  // node_modules, and tsconfig.json (see syveka-skills/tsconfig.json) -
+  // already independently typechecked via its own `npm run typecheck`.
+  // Pre-existing gap only now surfaced: previous syveka-skills additions
+  // (e.g. the Scrapling provider) happened to depend only on packages
+  // already present at the root (zod, Node builtins), so this root
+  // tsconfig sweeping up syveka-skills/**.ts(x) via the broad include glob
+  // below never actually failed before. Remotion is the first syveka-skills
+  // dependency genuinely absent from the root's own node_modules, which
+  // correctly exposed that this subproject was never meant to be in this
+  // tsconfig's scope at all - excluding it here matches the existing
+  // architectural boundary, not weakening it.
+  "exclude": ["node_modules", "supabase/functions", "syveka-skills"]
 }
