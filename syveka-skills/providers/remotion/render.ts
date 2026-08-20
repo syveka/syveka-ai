@@ -223,6 +223,18 @@ export async function renderComposition(
     });
 
     const fileStat = await stat(outputPath);
+    // KNOWN LIMITATION, found during PR review, deliberately not changed
+    // here: unlike the failure path below, outputDir is NOT removed on
+    // success - the rendered file is the actual deliverable and the only
+    // reasonable caller (providers/remotion/index.ts) returns outputPath
+    // for something downstream to read, so deleting it here would destroy
+    // the result before anyone could use it. This means every successful
+    // render leaves an orphaned `%TEMP%/syveka-remotion-*` directory behind
+    // indefinitely - there is no consumer yet that copies the file
+    // elsewhere and signals "done, safe to delete." Accepted as a real,
+    // disclosed limitation for this milestone rather than guessed at with
+    // an arbitrary TTL or an unrequested cleanup API; revisit once a real
+    // caller's actual consumption pattern is known.
     return {
       ok: true,
       result: {
