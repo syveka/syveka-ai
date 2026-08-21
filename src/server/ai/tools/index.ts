@@ -210,8 +210,22 @@ async function resolveServiceDurationMinutes(
   serviceName: string | undefined,
 ): Promise<number | null> {
   if (!serviceName) return null;
+  // BusinessDnaService.name has no uniqueness constraint (DB or app-level -
+  // see src/server/services/business-dna-services.ts, which never checks
+  // for an existing name before creating one) - an org can genuinely have
+  // two services sharing a name or differing only by case. Found during PR
+  // #91 review: without an explicit orderBy, findFirst's result for a
+  // duplicate name is whatever order Postgres happens to return, not
+  // guaranteed stable across calls - the AI could resolve a *different*
+  // duration for the "same" service name on two separate requests. Ordered
+  // the same way listBusinessDnaServices() orders its listing (sortOrder,
+  // then name) so at least the choice is deterministic given current data -
+  // this does not (and cannot, without a broader product decision on
+  // whether duplicate service names should be allowed at all) fully
+  // resolve the ambiguity itself.
   const service = await tenantDb(orgId).businessDnaService.findFirst({
     where: { isActive: true, name: { equals: serviceName, mode: "insensitive" } },
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }, { createdAt: "asc" }],
     select: { durationMinutes: true },
   });
   return service?.durationMinutes ?? null;

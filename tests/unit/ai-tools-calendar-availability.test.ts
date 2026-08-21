@@ -172,5 +172,22 @@ describe("getCalendarAvailability tool", () => {
       })) as { durationMinutes: number };
       expect(result.durationMinutes).toBe(30);
     });
+
+    it("resolves duplicate-name services deterministically (PR #91 review finding: BusinessDnaService.name has no uniqueness constraint)", async () => {
+      // The query itself must specify an explicit, stable orderBy - matching
+      // listBusinessDnaServices()'s own convention - so that if an org has
+      // two services sharing a name, the same one is always picked, not an
+      // arbitrary one determined by whatever order Postgres happens to
+      // return without an ORDER BY.
+      await getCalendarAvailability.execute(identity(), {
+        date: "2026-08-17",
+        serviceName: "Haircut",
+      });
+      expect(serviceFindFirstMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: [{ sortOrder: "asc" }, { name: "asc" }, { createdAt: "asc" }],
+        }),
+      );
+    });
   });
 });

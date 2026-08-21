@@ -12,7 +12,7 @@ import {
   type WeeklyRule,
 } from "@/server/calendar/slots";
 import { isValidTimezone } from "@/server/calendar/timezone";
-import { lockOwnerCalendar } from "@/server/calendar/locks";
+import { lockContactEmail, lockOwnerCalendar } from "@/server/calendar/locks";
 import type { TenantContext } from "@/server/auth/session";
 import type { BookingTypeInput, PublicBookingInput } from "@/lib/validators/booking";
 
@@ -395,11 +395,15 @@ export async function createPublicBooking(params: {
     // Find-then-create, not upsert: Contact has no unique constraint on
     // (organizationId, email) - only an index (schema.prisma) - a real
     // customer can legitimately share an email with another contact record.
-    // A genuinely concurrent first-time booking by the same new email could
-    // still race into two Contact rows; accepted as a narrow, disclosed
-    // limitation (the AI tool's own createContact has the same shape of
-    // race, tracked separately) - this fix targets the far more common
-    // "repeat guest, sequential bookings" case, which it closes completely.
+    // Serialized via lockContactEmail (a dedicated advisory lock, distinct
+    // from lockOwnerCalendar above) so two concurrent bookings for the SAME
+    // new guest email - including across two DIFFERENT booking types/owners,
+    // which lockOwnerCalendar's per-owner key does not itself serialize -
+    // cannot both pass the find-then-create race. Found and closed during
+    // PR #91 review with a deterministic real-Postgres reproduction; the
+    // AI tool's own createContact has a similar-shaped gap, tracked
+    // separately since it has no equivalent transaction to hook into here.
+    await lockContactEmail(tx, orgId, input.email);
     let matchedContact = await tx.contact.findFirst({
       where: { organizationId: orgId, email: input.email, deletedAt: null },
       select: { id: true },

@@ -321,7 +321,14 @@ describe("createPublicBooking", () => {
     // blocks here instead of racing assertSlotStillFree's SELECT under READ
     // COMMITTED (src/server/services/booking.ts's lockOwnerCalendarForBooking).
     expect(callOrder).toEqual(["lock", "conflict-check", "create-event"]);
-    expect(txMock.$executeRaw).toHaveBeenCalledTimes(1);
+    // Two advisory locks are now taken per booking: lockOwnerCalendar (asserted
+    // above via callOrder, first call) and lockContactEmail (PR #91 review fix
+    // for the duplicate-Contact race across different booking types/owners -
+    // see src/server/calendar/locks.ts and tests/integration/contact-race-concurrency.sh).
+    // The Contact block runs after the event/booking write in this mock's
+    // control flow, so its $executeRaw call lands on the default (unpushed)
+    // implementation rather than the "Once" one - only the call count changes.
+    expect(txMock.$executeRaw).toHaveBeenCalledTimes(2);
   });
 
   it("busy owner calendars remove the slot up front", async () => {
