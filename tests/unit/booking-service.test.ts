@@ -1,34 +1,44 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicBookingInput } from "@/lib/validators/booking";
 
-const { unscopedMock, txMock, auditMock, emitMock, issueTokenMock, resolveTokenMock } = vi.hoisted(
-  () => {
-    const txMock = {
-      $executeRaw: vi.fn(async () => 0),
-      calendarEvent: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
-      contact: { findFirst: vi.fn() },
-      eventAttendee: { create: vi.fn() },
-      booking: { create: vi.fn(), update: vi.fn() },
-      activity: { create: vi.fn() },
-      reminder: { updateMany: vi.fn() },
-    };
-    return {
-      txMock,
-      unscopedMock: {
-        bookingType: { findFirst: vi.fn() },
-        availabilitySchedule: { findFirst: vi.fn(async () => null) },
-        calendarEvent: {
-          findMany: vi.fn(async (): Promise<Array<{ startsAt: Date; endsAt: Date }>> => []),
-        },
-        $transaction: vi.fn(async (fn: (tx: typeof txMock) => Promise<unknown>) => fn(txMock)),
+const {
+  unscopedMock,
+  txMock,
+  auditMock,
+  emitMock,
+  issueTokenMock,
+  resolveTokenMock,
+  consumeTokenAtomicMock,
+  invalidateBookingTokensMock,
+} = vi.hoisted(() => {
+  const txMock = {
+    $executeRaw: vi.fn(async () => 0),
+    calendarEvent: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
+    contact: { findFirst: vi.fn(), create: vi.fn() },
+    eventAttendee: { create: vi.fn() },
+    booking: { create: vi.fn(), update: vi.fn(), findUniqueOrThrow: vi.fn() },
+    activity: { create: vi.fn() },
+    reminder: { updateMany: vi.fn() },
+    bookingToken: { updateMany: vi.fn() },
+  };
+  return {
+    txMock,
+    unscopedMock: {
+      bookingType: { findFirst: vi.fn() },
+      availabilitySchedule: { findFirst: vi.fn(async () => null) },
+      calendarEvent: {
+        findMany: vi.fn(async (): Promise<Array<{ startsAt: Date; endsAt: Date }>> => []),
       },
-      auditMock: vi.fn(async () => undefined),
-      emitMock: vi.fn(async () => undefined),
-      issueTokenMock: vi.fn(async () => "raw-manage-token"),
-      resolveTokenMock: vi.fn(),
-    };
-  },
-);
+      $transaction: vi.fn(async (fn: (tx: typeof txMock) => Promise<unknown>) => fn(txMock)),
+    },
+    auditMock: vi.fn(async () => undefined),
+    emitMock: vi.fn(async () => undefined),
+    issueTokenMock: vi.fn(async () => "raw-manage-token"),
+    resolveTokenMock: vi.fn(),
+    consumeTokenAtomicMock: vi.fn(async () => undefined),
+    invalidateBookingTokensMock: vi.fn(async () => undefined),
+  };
+});
 
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: unscopedMock,
@@ -38,13 +48,23 @@ vi.mock("@/server/services/audit", () => ({ audit: auditMock }));
 vi.mock("@/server/services/workflow-events", () => ({ emitWorkflowEvent: emitMock }));
 vi.mock("@/server/services/booking-tokens", () => ({
   issueToken: issueTokenMock,
-  invalidateBookingTokens: vi.fn(async () => undefined),
+  invalidateBookingTokens: invalidateBookingTokensMock,
   resolveToken: resolveTokenMock,
-  consumeToken: vi.fn(async () => undefined),
+  consumeTokenAtomic: consumeTokenAtomicMock,
+  BookingTokenError: class BookingTokenError extends Error {
+    constructor(
+      message: string,
+      public readonly code: "invalid" | "expired" | "used",
+    ) {
+      super(message);
+      this.name = "BookingTokenError";
+    }
+  },
 }));
 
 import {
   BookingError,
+  cancelBookingViaToken,
   createPublicBooking,
   getPublicSlots,
   rescheduleBookingViaToken,
@@ -100,7 +120,9 @@ beforeEach(() => {
   txMock.calendarEvent.findFirst.mockResolvedValue(null); // no conflict inside tx
   txMock.calendarEvent.create.mockResolvedValue({ id: "evt-1" });
   txMock.contact.findFirst.mockResolvedValue(null);
+  txMock.contact.create.mockResolvedValue({ id: "contact-new" });
   txMock.eventAttendee.create.mockResolvedValue({});
+  txMock.bookingToken.updateMany.mockResolvedValue({ count: 1 }); // token claim succeeds by default
   txMock.booking.create.mockImplementation(async (args: { data: Record<string, unknown> }) => ({
     id: "bk-1",
     organizationId: "org-a",
@@ -182,6 +204,51 @@ describe("createPublicBooking", () => {
     await createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() });
     expect(txMock.eventAttendee.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ contactId: "contact-9" }) }),
+    );
+    expect(txMock.contact.create).not.toHaveBeenCalled();
+  });
+
+  it("creates a new CRM contact (as a LEAD) for a brand-new guest, splitting name into first/last", async () => {
+    // Regression test for the First Customer Readiness audit finding: a
+    // brand-new guest's public booking previously never created a Contact
+    // at all (findFirst-only, contactId stayed null everywhere).
+    txMock.contact.findFirst.mockResolvedValue(null);
+    await createPublicBooking({
+      orgSlug: "acme",
+      typeSlug: "intro-call",
+      input: input({ name: "Jane Customer", phone: "+358401234567" }),
+    });
+    expect(txMock.contact.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          organizationId: "org-a",
+          firstName: "Jane",
+          lastName: "Customer",
+          email: "guest@example.com",
+          phone: "+358401234567",
+          source: "public-booking",
+        }),
+      }),
+    );
+    expect(txMock.eventAttendee.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ contactId: "contact-new" }) }),
+    );
+    expect(txMock.activity.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ contactId: "contact-new" }) }),
+    );
+  });
+
+  it("handles a single-word guest name without a lastName", async () => {
+    txMock.contact.findFirst.mockResolvedValue(null);
+    await createPublicBooking({
+      orgSlug: "acme",
+      typeSlug: "intro-call",
+      input: input({ name: "Cher" }),
+    });
+    expect(txMock.contact.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ firstName: "Cher", lastName: null }),
+      }),
     );
   });
 
@@ -298,10 +365,55 @@ describe("rescheduleBookingViaToken", () => {
     txMock.calendarEvent.update.mockResolvedValue({});
     txMock.reminder.updateMany.mockResolvedValue({ count: 0 });
     txMock.booking.update.mockResolvedValue({});
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(oldBooking());
   });
 
   // Tuesday 2026-02-03, 10:00 Helsinki = 08:00Z (winter).
   const NEW_START = "2026-02-03T08:00:00.000Z";
+
+  it("consumes the token INSIDE the same transaction as the mutation, before any write", async () => {
+    const callOrder: string[] = [];
+    consumeTokenAtomicMock.mockImplementationOnce(async () => {
+      callOrder.push("consume-token");
+    });
+    txMock.booking.findUniqueOrThrow.mockImplementationOnce(async () => {
+      callOrder.push("re-fetch-status");
+      return oldBooking();
+    });
+    txMock.$executeRaw.mockImplementationOnce(async () => {
+      callOrder.push("lock");
+      return 0;
+    });
+    txMock.booking.update.mockImplementationOnce(async () => {
+      callOrder.push("cancel-old-booking");
+      return {};
+    });
+
+    await rescheduleBookingViaToken("raw-token", NEW_START);
+
+    expect(callOrder).toEqual(["consume-token", "re-fetch-status", "lock", "cancel-old-booking"]);
+  });
+
+  it("rejects (whole transaction rolls back) when the token was already consumed by a concurrent request", async () => {
+    const { BookingTokenError } = await import("@/server/services/booking-tokens");
+    consumeTokenAtomicMock.mockRejectedValueOnce(
+      new BookingTokenError("Token already used", "used"),
+    );
+
+    await expect(rescheduleBookingViaToken("raw-token", NEW_START)).rejects.toMatchObject({
+      code: "used",
+    });
+    expect(txMock.booking.update).not.toHaveBeenCalled();
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the freshly re-read booking is already canceled (closes the pre-transaction-only status-check gap)", async () => {
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(oldBooking({ status: "CANCELED" }));
+    await expect(rescheduleBookingViaToken("raw-token", NEW_START)).rejects.toMatchObject({
+      code: "already_canceled",
+    });
+    expect(txMock.booking.update).not.toHaveBeenCalled();
+  });
 
   it("serializes concurrent reschedule attempts: acquires the owner-calendar advisory lock before checking/writing", async () => {
     const callOrder: string[] = [];
@@ -331,6 +443,85 @@ describe("rescheduleBookingViaToken", () => {
       code: "slot_taken",
     });
     expect(txMock.booking.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("cancelBookingViaToken", () => {
+  function confirmedBooking(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "bk-old",
+      organizationId: "org-a",
+      bookingTypeId: "bt-1",
+      eventId: "evt-old",
+      status: "CONFIRMED",
+      guestName: "Guest One",
+      guestEmail: "guest@example.com",
+      startsAt: new Date(VALID_START),
+      endsAt: new Date(new Date(VALID_START).getTime() + 60 * 60_000),
+      bookingType: bookingType(),
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    resolveTokenMock.mockResolvedValue({
+      id: "token-1",
+      purpose: "CANCEL",
+      booking: confirmedBooking(),
+    });
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(confirmedBooking());
+    txMock.booking.update.mockResolvedValue({});
+    txMock.calendarEvent.update.mockResolvedValue({});
+    txMock.reminder.updateMany.mockResolvedValue({ count: 0 });
+  });
+
+  it("cancels a confirmed booking: consumes the token atomically, cancels the event, records CRM activity", async () => {
+    const result = await cancelBookingViaToken("raw-token", "change of plans");
+
+    expect(consumeTokenAtomicMock).toHaveBeenCalledWith(txMock, "token-1");
+    expect(txMock.booking.update).toHaveBeenCalledWith({
+      where: { id: "bk-old" },
+      data: expect.objectContaining({ status: "CANCELED", cancelReason: "change of plans" }),
+    });
+    expect(txMock.calendarEvent.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "evt-old" } }),
+    );
+    expect(txMock.activity.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: "MEETING" }) }),
+    );
+    expect(invalidateBookingTokensMock).toHaveBeenCalledWith("bk-old");
+    expect(emitMock).toHaveBeenCalledWith("org-a", "booking.canceled", expect.anything(), "bk-old");
+    expect(result.id).toBe("bk-old");
+  });
+
+  it("rejects (rolls back, no mutation) when the token was already consumed by a concurrent request", async () => {
+    const { BookingTokenError } = await import("@/server/services/booking-tokens");
+    consumeTokenAtomicMock.mockRejectedValueOnce(
+      new BookingTokenError("Token already used", "used"),
+    );
+
+    await expect(cancelBookingViaToken("raw-token")).rejects.toMatchObject({ code: "used" });
+    expect(txMock.booking.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the freshly re-read booking is already canceled, even if the pre-fetched copy looked confirmed", async () => {
+    // This is the exact gap the audit found: the OLD code checked
+    // `record.booking.status` (fetched before the transaction) and never
+    // re-verified inside it. Simulating a concurrent cancel having already
+    // landed by the time this transaction's re-fetch runs.
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(confirmedBooking({ status: "CANCELED" }));
+    await expect(cancelBookingViaToken("raw-token")).rejects.toMatchObject({
+      code: "already_canceled",
+    });
+    expect(txMock.booking.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects canceling a booking that already started", async () => {
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(
+      confirmedBooking({ startsAt: new Date("2026-01-01T00:00:00Z") }),
+    );
+    await expect(cancelBookingViaToken("raw-token")).rejects.toMatchObject({ code: "too_late" });
+    expect(txMock.booking.update).not.toHaveBeenCalled();
   });
 });
 
