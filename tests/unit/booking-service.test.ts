@@ -4,6 +4,7 @@ import type { PublicBookingInput } from "@/lib/validators/booking";
 const {
   unscopedMock,
   txMock,
+  tenantDbMock,
   auditMock,
   emitMock,
   issueTokenMock,
@@ -31,6 +32,7 @@ const {
       },
       $transaction: vi.fn(async (fn: (tx: typeof txMock) => Promise<unknown>) => fn(txMock)),
     },
+    tenantDbMock: vi.fn(),
     auditMock: vi.fn(async () => undefined),
     emitMock: vi.fn(async () => undefined),
     issueTokenMock: vi.fn(async () => "raw-manage-token"),
@@ -42,7 +44,7 @@ const {
 
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: unscopedMock,
-  tenantDb: vi.fn(),
+  tenantDb: tenantDbMock,
 }));
 vi.mock("@/server/services/audit", () => ({ audit: auditMock }));
 vi.mock("@/server/services/workflow-events", () => ({ emitWorkflowEvent: emitMock }));
@@ -64,6 +66,7 @@ vi.mock("@/server/services/booking-tokens", () => ({
 
 import {
   BookingError,
+  cancelBookingAsOwner,
   cancelBookingViaToken,
   createPublicBooking,
   getPublicSlots,
@@ -528,6 +531,109 @@ describe("cancelBookingViaToken", () => {
       confirmedBooking({ startsAt: new Date("2026-01-01T00:00:00Z") }),
     );
     await expect(cancelBookingViaToken("raw-token")).rejects.toMatchObject({ code: "too_late" });
+    expect(txMock.booking.update).not.toHaveBeenCalled();
+  });
+});
+
+describe("cancelBookingAsOwner", () => {
+  function confirmedBooking(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "bk-old",
+      organizationId: "org-a",
+      bookingTypeId: "bt-1",
+      eventId: "evt-old",
+      status: "CONFIRMED",
+      guestName: "Guest One",
+      guestEmail: "guest@example.com",
+      startsAt: new Date(VALID_START),
+      endsAt: new Date(new Date(VALID_START).getTime() + 60 * 60_000),
+      bookingType: bookingType(),
+      ...overrides,
+    };
+  }
+
+  function ownerCtx(orgId = "org-a") {
+    return {
+      userId: "owner-1",
+      email: "owner@test.fi",
+      orgId,
+      role: "OWNER" as const,
+      locale: "en",
+    };
+  }
+
+  beforeEach(() => {
+    tenantDbMock.mockReturnValue({ booking: { findFirst: vi.fn(async () => ({ id: "bk-old" })) } });
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(confirmedBooking());
+    txMock.booking.update.mockResolvedValue({});
+    txMock.calendarEvent.update.mockResolvedValue({});
+    txMock.reminder.updateMany.mockResolvedValue({ count: 0 });
+  });
+
+  it("cancels a confirmed booking without a token: same atomic side effects as the guest path (Booking, CalendarEvent, Reminders, CRM activity)", async () => {
+    const result = await cancelBookingAsOwner(ownerCtx(), "bk-old", "owner canceled by phone");
+
+    expect(tenantDbMock).toHaveBeenCalledWith("org-a");
+    // No token machinery involved - this is an authenticated, session-based cancel.
+    expect(consumeTokenAtomicMock).not.toHaveBeenCalled();
+    expect(txMock.booking.update).toHaveBeenCalledWith({
+      where: { id: "bk-old" },
+      data: expect.objectContaining({
+        status: "CANCELED",
+        cancelReason: "owner canceled by phone",
+      }),
+    });
+    expect(txMock.calendarEvent.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "evt-old" } }),
+    );
+    expect(txMock.reminder.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { eventId: "evt-old", status: "SCHEDULED" } }),
+    );
+    expect(txMock.activity.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: "MEETING" }) }),
+    );
+    expect(invalidateBookingTokensMock).toHaveBeenCalledWith("bk-old");
+    expect(emitMock).toHaveBeenCalledWith("org-a", "booking.canceled", expect.anything(), "bk-old");
+    expect(result.id).toBe("bk-old");
+  });
+
+  it("attributes the audit entry to the real owner, not a system actor (unlike the token path)", async () => {
+    await cancelBookingAsOwner(ownerCtx(), "bk-old");
+    expect(auditMock).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "owner-1", orgId: "org-a" }),
+      expect.objectContaining({ action: "booking.cancel" }),
+    );
+    // No actorType override - audit() defaults it to "user" when omitted,
+    // unlike cancelBookingViaToken's explicit actorType: "system".
+    expect(auditMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({ actorType: expect.anything() }),
+    );
+  });
+
+  it("rejects a booking that does not belong to the caller's org (tenant isolation) before touching the transaction", async () => {
+    tenantDbMock.mockReturnValue({ booking: { findFirst: vi.fn(async () => null) } });
+    await expect(cancelBookingAsOwner(ownerCtx("org-b"), "bk-old")).rejects.toMatchObject({
+      code: "not_found",
+    });
+    expect(unscopedMock.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the booking is already canceled", async () => {
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(confirmedBooking({ status: "CANCELED" }));
+    await expect(cancelBookingAsOwner(ownerCtx(), "bk-old")).rejects.toMatchObject({
+      code: "already_canceled",
+    });
+    expect(txMock.booking.update).not.toHaveBeenCalled();
+  });
+
+  it("rejects canceling a booking that already started", async () => {
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(
+      confirmedBooking({ startsAt: new Date("2026-01-01T00:00:00Z") }),
+    );
+    await expect(cancelBookingAsOwner(ownerCtx(), "bk-old")).rejects.toMatchObject({
+      code: "too_late",
+    });
     expect(txMock.booking.update).not.toHaveBeenCalled();
   });
 });

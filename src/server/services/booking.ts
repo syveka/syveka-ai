@@ -504,6 +504,56 @@ export async function getBookingByToken(raw: string) {
   return record.booking;
 }
 
+/**
+ * Shared atomic core for both cancel paths (guest token and authenticated
+ * owner): re-reads booking status inside the transaction (closing the replay
+ * window a pre-transaction-only check would leave open), then cancels the
+ * booking, its calendar event, and any still-scheduled reminders together so
+ * neither path can produce a state where one of these updates but not the
+ * others.
+ */
+async function cancelBookingCore(
+  tx: Prisma.TransactionClient,
+  bookingId: string,
+  reason: string | undefined,
+) {
+  const fresh = await tx.booking.findUniqueOrThrow({
+    where: { id: bookingId },
+    include: { bookingType: true },
+  });
+  if (fresh.status === "CANCELED") {
+    throw new BookingError("Already canceled", "already_canceled");
+  }
+  if (fresh.startsAt < new Date()) {
+    throw new BookingError("Booking already started", "too_late");
+  }
+
+  await tx.booking.update({
+    where: { id: bookingId },
+    data: { status: "CANCELED", canceledAt: new Date(), cancelReason: reason ?? null },
+  });
+  if (fresh.eventId) {
+    await tx.calendarEvent.update({
+      where: { id: fresh.eventId },
+      data: { status: "CANCELED", canceledAt: new Date() },
+    });
+    await tx.reminder.updateMany({
+      where: { eventId: fresh.eventId, status: "SCHEDULED" },
+      data: { status: "CANCELED" },
+    });
+  }
+  await tx.activity.create({
+    data: {
+      organizationId: fresh.organizationId,
+      type: "MEETING",
+      subject: `Booking canceled: ${fresh.bookingType.name}`,
+      body: `${fresh.guestName} canceled.${reason ? ` Reason: ${reason}` : ""}`,
+      metadata: { bookingId: fresh.id, kind: "canceled" },
+    },
+  });
+  return fresh;
+}
+
 export async function cancelBookingViaToken(raw: string, reason?: string) {
   const { resolveToken, consumeTokenAtomic } = await import("./booking-tokens");
   const record = await resolveToken(raw, "CANCEL");
@@ -515,42 +565,7 @@ export async function cancelBookingViaToken(raw: string, reason?: string) {
     // pre-transaction-only check would leave open (see consumeTokenAtomic's
     // doc comment).
     await consumeTokenAtomic(tx, record.id);
-
-    const fresh = await tx.booking.findUniqueOrThrow({
-      where: { id: bookingId },
-      include: { bookingType: true },
-    });
-    if (fresh.status === "CANCELED") {
-      throw new BookingError("Already canceled", "already_canceled");
-    }
-    if (fresh.startsAt < new Date()) {
-      throw new BookingError("Booking already started", "too_late");
-    }
-
-    await tx.booking.update({
-      where: { id: bookingId },
-      data: { status: "CANCELED", canceledAt: new Date(), cancelReason: reason ?? null },
-    });
-    if (fresh.eventId) {
-      await tx.calendarEvent.update({
-        where: { id: fresh.eventId },
-        data: { status: "CANCELED", canceledAt: new Date() },
-      });
-      await tx.reminder.updateMany({
-        where: { eventId: fresh.eventId, status: "SCHEDULED" },
-        data: { status: "CANCELED" },
-      });
-    }
-    await tx.activity.create({
-      data: {
-        organizationId: fresh.organizationId,
-        type: "MEETING",
-        subject: `Booking canceled: ${fresh.bookingType.name}`,
-        body: `${fresh.guestName} canceled.${reason ? ` Reason: ${reason}` : ""}`,
-        metadata: { bookingId: fresh.id, kind: "canceled" },
-      },
-    });
-    return fresh;
+    return cancelBookingCore(tx, bookingId, reason);
   });
 
   // Belt-and-braces: also invalidate any OTHER outstanding tokens for this
@@ -568,6 +583,49 @@ export async function cancelBookingViaToken(raw: string, reason?: string) {
       after: { reason: reason ?? null },
     },
   ).catch(() => undefined);
+
+  await emitWorkflowEvent(
+    booking.organizationId,
+    "booking.canceled",
+    { bookingId: booking.id, guestEmail: booking.guestEmail },
+    booking.id,
+  ).catch(() => undefined);
+
+  return booking;
+}
+
+/**
+ * Owner-authenticated equivalent of cancelBookingViaToken, for a booking
+ * canceled from the owner's own calendar UI (calendar.ts's cancelEvent)
+ * rather than the guest's token link. Found missing during Pilot-readiness
+ * review: cancelEvent() only flipped CalendarEvent.status, leaving
+ * Booking.status stale (CONFIRMED), reminders still SCHEDULED (the guest
+ * would still get a reminder for an appointment the owner believes is
+ * canceled), and the guest never notified. Reuses cancelBookingCore so both
+ * paths leave the exact same state and notify the guest identically -
+ * tenant ownership is verified via tenantDb before the transaction runs,
+ * exactly as every other owner-authenticated booking read already does
+ * (see listBookings above).
+ */
+export async function cancelBookingAsOwner(ctx: TenantContext, bookingId: string, reason?: string) {
+  const existing = await tenantDb(ctx.orgId).booking.findFirst({
+    where: { id: bookingId },
+    select: { id: true },
+  });
+  if (!existing) throw new BookingError("Booking not found", "not_found");
+
+  const booking = await unscopedPrisma.$transaction((tx) =>
+    cancelBookingCore(tx, bookingId, reason),
+  );
+
+  await invalidateBookingTokens(booking.id);
+
+  await audit(ctx, {
+    action: "booking.cancel",
+    resourceType: "booking",
+    resourceId: booking.id,
+    after: { reason: reason ?? null },
+  }).catch(() => undefined);
 
   await emitWorkflowEvent(
     booking.organizationId,
