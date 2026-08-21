@@ -12,7 +12,7 @@ import {
   type WeeklyRule,
 } from "@/server/calendar/slots";
 import { isValidTimezone } from "@/server/calendar/timezone";
-import { lockOwnerCalendar } from "@/server/calendar/locks";
+import { lockContactEmail, lockOwnerCalendar } from "@/server/calendar/locks";
 import type { TenantContext } from "@/server/auth/session";
 import type { BookingTypeInput, PublicBookingInput } from "@/lib/validators/booking";
 
@@ -43,6 +43,17 @@ export const DEFAULT_WEEKLY_RULES: WeeklyRule[] = [1, 2, 3, 4, 5].map((weekday) 
   startMinute: 9 * 60,
   endMinute: 17 * 60,
 }));
+
+/** A guest booking form only collects one free-text name field; Contact wants firstName/lastName separately. */
+function splitGuestName(fullName: string): { firstName: string; lastName: string | null } {
+  const trimmed = fullName.trim();
+  const spaceIndex = trimmed.indexOf(" ");
+  if (spaceIndex === -1) return { firstName: trimmed, lastName: null };
+  return {
+    firstName: trimmed.slice(0, spaceIndex),
+    lastName: trimmed.slice(spaceIndex + 1).trim() || null,
+  };
+}
 
 // ── Booking type management (tenant side) ────────────────────────────────
 
@@ -381,15 +392,42 @@ export async function createPublicBooking(params: {
       },
     });
 
-    const matchedContact = await tx.contact.findFirst({
+    // Find-then-create, not upsert: Contact has no unique constraint on
+    // (organizationId, email) - only an index (schema.prisma) - a real
+    // customer can legitimately share an email with another contact record.
+    // Serialized via lockContactEmail (a dedicated advisory lock, distinct
+    // from lockOwnerCalendar above) so two concurrent bookings for the SAME
+    // new guest email - including across two DIFFERENT booking types/owners,
+    // which lockOwnerCalendar's per-owner key does not itself serialize -
+    // cannot both pass the find-then-create race. Found and closed during
+    // PR #91 review with a deterministic real-Postgres reproduction; the
+    // AI tool's own createContact has a similar-shaped gap, tracked
+    // separately since it has no equivalent transaction to hook into here.
+    await lockContactEmail(tx, orgId, input.email);
+    let matchedContact = await tx.contact.findFirst({
       where: { organizationId: orgId, email: input.email, deletedAt: null },
       select: { id: true },
     });
+    if (!matchedContact) {
+      const { firstName, lastName } = splitGuestName(input.name);
+      matchedContact = await tx.contact.create({
+        data: {
+          organizationId: orgId,
+          firstName,
+          lastName,
+          email: input.email,
+          phone: input.phone ?? null,
+          source: "public-booking",
+          gdprConsentAt: input.consent ? new Date() : null,
+        },
+        select: { id: true },
+      });
+    }
 
     await tx.eventAttendee.create({
       data: {
         eventId: event.id,
-        contactId: matchedContact?.id ?? null,
+        contactId: matchedContact.id,
         email: input.email,
         name: input.name,
         status: "ACCEPTED",
@@ -417,7 +455,7 @@ export async function createPublicBooking(params: {
     await tx.activity.create({
       data: {
         organizationId: orgId,
-        contactId: matchedContact?.id ?? null,
+        contactId: matchedContact.id,
         type: "MEETING",
         subject: `Booking: ${bookingType.name}`,
         body: `${input.name} (${input.email}) booked ${bookingType.name}.`,
@@ -426,7 +464,7 @@ export async function createPublicBooking(params: {
       },
     });
 
-    return { booking, event, contactId: matchedContact?.id ?? null };
+    return { booking, event, contactId: matchedContact.id };
   });
 
   const manageToken = await issueToken(created.booking.id, "MANAGE");
@@ -467,44 +505,57 @@ export async function getBookingByToken(raw: string) {
 }
 
 export async function cancelBookingViaToken(raw: string, reason?: string) {
-  const { resolveToken, consumeToken } = await import("./booking-tokens");
+  const { resolveToken, consumeTokenAtomic } = await import("./booking-tokens");
   const record = await resolveToken(raw, "CANCEL");
-  const booking = record.booking;
+  const bookingId = record.booking.id;
 
-  if (booking.status === "CANCELED") {
-    throw new BookingError("Already canceled", "already_canceled");
-  }
-  if (booking.startsAt < new Date()) {
-    throw new BookingError("Booking already started", "too_late");
-  }
+  const booking = await unscopedPrisma.$transaction(async (tx) => {
+    // Atomically claims this token AND re-reads booking status inside the
+    // same transaction as the mutation below - closes the replay window a
+    // pre-transaction-only check would leave open (see consumeTokenAtomic's
+    // doc comment).
+    await consumeTokenAtomic(tx, record.id);
 
-  await unscopedPrisma.$transaction(async (tx) => {
+    const fresh = await tx.booking.findUniqueOrThrow({
+      where: { id: bookingId },
+      include: { bookingType: true },
+    });
+    if (fresh.status === "CANCELED") {
+      throw new BookingError("Already canceled", "already_canceled");
+    }
+    if (fresh.startsAt < new Date()) {
+      throw new BookingError("Booking already started", "too_late");
+    }
+
     await tx.booking.update({
-      where: { id: booking.id },
+      where: { id: bookingId },
       data: { status: "CANCELED", canceledAt: new Date(), cancelReason: reason ?? null },
     });
-    if (booking.eventId) {
+    if (fresh.eventId) {
       await tx.calendarEvent.update({
-        where: { id: booking.eventId },
+        where: { id: fresh.eventId },
         data: { status: "CANCELED", canceledAt: new Date() },
       });
       await tx.reminder.updateMany({
-        where: { eventId: booking.eventId, status: "SCHEDULED" },
+        where: { eventId: fresh.eventId, status: "SCHEDULED" },
         data: { status: "CANCELED" },
       });
     }
     await tx.activity.create({
       data: {
-        organizationId: booking.organizationId,
+        organizationId: fresh.organizationId,
         type: "MEETING",
-        subject: `Booking canceled: ${booking.bookingType.name}`,
-        body: `${booking.guestName} canceled.${reason ? ` Reason: ${reason}` : ""}`,
-        metadata: { bookingId: booking.id, kind: "canceled" },
+        subject: `Booking canceled: ${fresh.bookingType.name}`,
+        body: `${fresh.guestName} canceled.${reason ? ` Reason: ${reason}` : ""}`,
+        metadata: { bookingId: fresh.id, kind: "canceled" },
       },
     });
+    return fresh;
   });
 
-  await consumeToken(record.id, record.purpose);
+  // Belt-and-braces: also invalidate any OTHER outstanding tokens for this
+  // booking (e.g. if more than one was ever issued) - the token actually
+  // used above is already consumed atomically by consumeTokenAtomic.
   await invalidateBookingTokens(booking.id);
 
   await audit(
@@ -529,7 +580,7 @@ export async function cancelBookingViaToken(raw: string, reason?: string) {
 }
 
 export async function rescheduleBookingViaToken(raw: string, newStartIso: string) {
-  const { resolveToken, consumeToken } = await import("./booking-tokens");
+  const { resolveToken, consumeTokenAtomic } = await import("./booking-tokens");
   const record = await resolveToken(raw, "RESCHEDULE");
   const oldBooking = record.booking;
 
@@ -564,6 +615,15 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
 
   const orgId = oldBooking.organizationId;
   const result = await unscopedPrisma.$transaction(async (tx) => {
+    // Atomically claims this token AND re-reads booking status inside the
+    // same transaction as the mutation below - see consumeTokenAtomic's doc
+    // comment and cancelBookingViaToken's identical treatment above.
+    await consumeTokenAtomic(tx, record.id);
+    const freshOld = await tx.booking.findUniqueOrThrow({ where: { id: oldBooking.id } });
+    if (freshOld.status === "CANCELED") {
+      throw new BookingError("Booking was canceled", "already_canceled");
+    }
+
     await lockOwnerCalendar(tx, orgId, bookingType.ownerId);
     await assertSlotStillFree(
       tx,
@@ -644,7 +704,9 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
     return { booking, event };
   });
 
-  await consumeToken(record.id, record.purpose);
+  // Belt-and-braces: also invalidate any OTHER outstanding tokens for the
+  // old booking - the token actually used above is already consumed
+  // atomically by consumeTokenAtomic, inside the same transaction.
   await invalidateBookingTokens(oldBooking.id);
   const manageToken = await issueToken(result.booking.id, "MANAGE");
 

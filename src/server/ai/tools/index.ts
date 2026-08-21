@@ -194,11 +194,51 @@ async function resolveOrgDefaultSchedule(orgId: string): Promise<{
   };
 }
 
+/**
+ * Resolves a named service's real duration from Business DNA - the same
+ * source getBusinessDnaContext() already uses to tell the model prices, so
+ * a service "entered once in settings" drives both what the AI SAYS about
+ * it and what the AI actually books, instead of the model having to guess
+ * or default to a fixed 30 minutes regardless of the real service. Case-
+ * insensitive exact match on name; returns null (caller falls back to its
+ * own default) when no service name is given or no active match exists -
+ * never throws, since an unmatched name is a normal case (a custom/one-off
+ * meeting with no corresponding catalog service), not an error.
+ */
+async function resolveServiceDurationMinutes(
+  orgId: string,
+  serviceName: string | undefined,
+): Promise<number | null> {
+  if (!serviceName) return null;
+  // BusinessDnaService.name has no uniqueness constraint (DB or app-level -
+  // see src/server/services/business-dna-services.ts, which never checks
+  // for an existing name before creating one) - an org can genuinely have
+  // two services sharing a name or differing only by case. Found during PR
+  // #91 review: without an explicit orderBy, findFirst's result for a
+  // duplicate name is whatever order Postgres happens to return, not
+  // guaranteed stable across calls - the AI could resolve a *different*
+  // duration for the "same" service name on two separate requests. Ordered
+  // the same way listBusinessDnaServices() orders its listing (sortOrder,
+  // then name) so at least the choice is deterministic given current data -
+  // this does not (and cannot, without a broader product decision on
+  // whether duplicate service names should be allowed at all) fully
+  // resolve the ambiguity itself.
+  const service = await tenantDb(orgId).businessDnaService.findFirst({
+    where: { isActive: true, name: { equals: serviceName, mode: "insensitive" } },
+    orderBy: [{ sortOrder: "asc" }, { name: "asc" }, { createdAt: "asc" }],
+    select: { durationMinutes: true },
+  });
+  return service?.durationMinutes ?? null;
+}
+
 const getCalendarAvailability = defineTool({
   name: "getCalendarAvailability",
   description:
-    "Get free 30-minute booking slots for a given date (ISO yyyy-mm-dd), computed from the organization's actual configured availability schedule (or a generic Mon-Fri 09:00-17:00 default if none is configured yet — the response flags which one was used).",
-  schema: z.object({ date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/) }),
+    "Get free booking slots for a given date (ISO yyyy-mm-dd). Pass serviceName (matching a name from the business's services) whenever the customer is asking about a specific service, so slots reflect its real duration - otherwise defaults to 30-minute slots. Computed from the organization's actual configured availability schedule (or a generic Mon-Fri 09:00-17:00 default if none is configured yet — the response flags which one was used).",
+  schema: z.object({
+    date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+    serviceName: z.string().max(200).optional(),
+  }),
   permission: "calendar:read",
   execute: async (id, input) => {
     const db = tenantDb(id.orgId);
@@ -208,6 +248,8 @@ const getCalendarAvailability = defineTool({
     );
     const dayStart = zonedTimeToUtc(year, month, day, 0, timezone);
     const dayEnd = addDaysUtc(dayStart, 1);
+    const durationMinutes =
+      (await resolveServiceDurationMinutes(id.orgId, input.serviceName)) ?? 30;
 
     const events = await db.calendarEvent.findMany({
       where: {
@@ -227,12 +269,13 @@ const getCalendarAvailability = defineTool({
       from: dayStart,
       to: dayEnd,
       now: new Date(),
-      durationMinutes: 30,
+      durationMinutes,
     });
 
     return {
       date: input.date,
       timezone,
+      durationMinutes,
       freeSlots: slots.slice(0, 12).map((s) => s.toISOString()),
       // When false, these are generic default hours, not the org's real
       // schedule — the system prompt instructs the model to caveat this.
@@ -246,18 +289,23 @@ type BookMeetingResult = { ok: true; eventId: string } | { ok: false; reason: "s
 const bookMeeting = defineTool({
   name: "bookMeeting",
   description:
-    "Book a meeting into the company calendar. Only after the user/caller confirmed the slot.",
+    "Book a meeting into the company calendar. Only after the user/caller confirmed the slot. Pass serviceName (matching a name from the business's services) whenever the booking is for a specific service, so the real service duration is used - only pass an explicit durationMinutes to override that (e.g. a custom/one-off meeting with no matching service); defaults to 30 minutes if neither resolves.",
   schema: z.object({
     title: z.string().min(1).max(200),
     startsAt: z.string().datetime(),
-    durationMinutes: z.number().int().min(15).max(240).default(30),
+    serviceName: z.string().max(200).optional(),
+    durationMinutes: z.number().int().min(15).max(240).optional(),
     contactId: z.string().uuid().optional(),
     notes: z.string().max(2000).optional(),
   }),
   permission: "calendar:write",
   execute: async (id, input) => {
+    const durationMinutes =
+      input.durationMinutes ??
+      (await resolveServiceDurationMinutes(id.orgId, input.serviceName)) ??
+      30;
     const startsAt = new Date(input.startsAt);
-    const endsAt = new Date(startsAt.getTime() + input.durationMinutes * 60_000);
+    const endsAt = new Date(startsAt.getTime() + durationMinutes * 60_000);
 
     // Books into the org's single shared calendar (see getCalendarAvailability's
     // matching org-wide busy check, and lockOrgCalendar's comment) - conflicts

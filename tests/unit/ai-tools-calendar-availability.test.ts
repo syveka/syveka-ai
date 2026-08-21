@@ -1,11 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-const { tenantDbMock, scheduleFindFirstMock, eventFindManyMock, auditMock } = vi.hoisted(() => ({
-  tenantDbMock: vi.fn(),
-  scheduleFindFirstMock: vi.fn(),
-  eventFindManyMock: vi.fn(async () => [] as { startsAt: Date; endsAt: Date }[]),
-  auditMock: vi.fn(async () => undefined),
-}));
+const { tenantDbMock, scheduleFindFirstMock, eventFindManyMock, serviceFindFirstMock, auditMock } =
+  vi.hoisted(() => ({
+    tenantDbMock: vi.fn(),
+    scheduleFindFirstMock: vi.fn(),
+    eventFindManyMock: vi.fn(async () => [] as { startsAt: Date; endsAt: Date }[]),
+    serviceFindFirstMock: vi.fn(async () => null as { durationMinutes: number | null } | null),
+    auditMock: vi.fn(async () => undefined),
+  }));
 
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: tenantDbMock,
@@ -37,9 +39,11 @@ describe("getCalendarAvailability tool", () => {
     tenantDbMock.mockReturnValue({
       availabilitySchedule: { findFirst: scheduleFindFirstMock },
       calendarEvent: { findMany: eventFindManyMock },
+      businessDnaService: { findFirst: serviceFindFirstMock },
     });
     scheduleFindFirstMock.mockResolvedValue(null);
     eventFindManyMock.mockResolvedValue([]);
+    serviceFindFirstMock.mockResolvedValue(null);
   });
 
   afterEach(() => {
@@ -133,5 +137,57 @@ describe("getCalendarAvailability tool", () => {
   it("scopes both the schedule lookup and the busy-event lookup to the caller's org (tenant isolation)", async () => {
     await getCalendarAvailability.execute(identity("org-b"), { date: "2026-08-17" });
     expect(tenantDbMock).toHaveBeenCalledWith("org-b");
+  });
+
+  describe("serviceName duration resolution (First Customer Readiness milestone)", () => {
+    it("uses the named service's real duration instead of the 30-minute default", async () => {
+      serviceFindFirstMock.mockResolvedValueOnce({ durationMinutes: 45 });
+
+      const result = (await getCalendarAvailability.execute(identity(), {
+        date: "2026-08-17",
+        serviceName: "Haircut",
+      })) as { durationMinutes: number };
+
+      expect(serviceFindFirstMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { isActive: true, name: { equals: "Haircut", mode: "insensitive" } },
+        }),
+      );
+      expect(result.durationMinutes).toBe(45);
+    });
+
+    it("falls back to 30 minutes when no service name is given", async () => {
+      const result = (await getCalendarAvailability.execute(identity(), {
+        date: "2026-08-17",
+      })) as { durationMinutes: number };
+      expect(serviceFindFirstMock).not.toHaveBeenCalled();
+      expect(result.durationMinutes).toBe(30);
+    });
+
+    it("falls back to 30 minutes when the named service doesn't match anything (never throws)", async () => {
+      serviceFindFirstMock.mockResolvedValueOnce(null);
+      const result = (await getCalendarAvailability.execute(identity(), {
+        date: "2026-08-17",
+        serviceName: "Nonexistent Service",
+      })) as { durationMinutes: number };
+      expect(result.durationMinutes).toBe(30);
+    });
+
+    it("resolves duplicate-name services deterministically (PR #91 review finding: BusinessDnaService.name has no uniqueness constraint)", async () => {
+      // The query itself must specify an explicit, stable orderBy - matching
+      // listBusinessDnaServices()'s own convention - so that if an org has
+      // two services sharing a name, the same one is always picked, not an
+      // arbitrary one determined by whatever order Postgres happens to
+      // return without an ORDER BY.
+      await getCalendarAvailability.execute(identity(), {
+        date: "2026-08-17",
+        serviceName: "Haircut",
+      });
+      expect(serviceFindFirstMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          orderBy: [{ sortOrder: "asc" }, { name: "asc" }, { createdAt: "asc" }],
+        }),
+      );
+    });
   });
 });

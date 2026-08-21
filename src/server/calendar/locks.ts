@@ -48,3 +48,30 @@ export async function lockOwnerCalendar(
 export async function lockOrgCalendar(tx: Prisma.TransactionClient, orgId: string): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId}), 0)`;
 }
+
+/**
+ * Serializes the Contact find-then-create critical section in
+ * createPublicBooking() (src/server/services/booking.ts) for one
+ * (organization, guest email) pair. Found necessary during PR #91 review:
+ * lockOwnerCalendar()'s advisory lock is keyed on (orgId, ownerId), so two
+ * concurrent bookings for *different* booking types (different owners)
+ * within the same org - a real scenario, e.g. two services booked at once
+ * by the same brand-new customer - are never serialized against each
+ * other, and a bare find-then-create can commit two Contact rows for the
+ * same new email. Reproduced with a deterministic real-Postgres test before
+ * this fix, confirmed closed after it.
+ *
+ * A single combined hashtext() over "orgId:email" (not two separate
+ * hashtext() calls) with a fixed second key (`1`) keeps this lock domain
+ * fully distinct from lockOwnerCalendar's (hashtext(orgId), hashtext(ownerId))
+ * and lockOrgCalendar's (hashtext(orgId), 0) - a same-org booking and a
+ * same-org contact-email claim can never accidentally collide on the same
+ * two-key advisory lock.
+ */
+export async function lockContactEmail(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+  email: string,
+): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId} || ':' || ${email}), 1)`;
+}

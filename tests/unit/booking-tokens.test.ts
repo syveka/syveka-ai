@@ -16,7 +16,7 @@ vi.mock("@/server/db/tenant", () => ({
 
 import {
   BookingTokenError,
-  consumeToken,
+  consumeTokenAtomic,
   generateRawToken,
   hashToken,
   invalidateBookingTokens,
@@ -109,20 +109,33 @@ describe("token validation", () => {
 });
 
 describe("token consumption", () => {
-  it("consumes single-purpose tokens", async () => {
-    bookingTokenMock.update.mockResolvedValue({});
-    await consumeToken("tok-1", "CANCEL");
-    expect(bookingTokenMock.update).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { id: "tok-1" } }),
-    );
+  // consumeTokenAtomic is the real single-use enforcement for MANAGE tokens
+  // (the only purpose ever actually issued) - a conditional UPDATE inside
+  // the caller's own transaction, not a separate post-commit call. See its
+  // doc comment in booking-tokens.ts for the full "why" (First Customer
+  // Readiness audit, 2026-08-21).
+  const txMock = { bookingToken: { updateMany: vi.fn() } };
+
+  it("marks the token used when it was still unclaimed - the normal, single-request case", async () => {
+    txMock.bookingToken.updateMany.mockResolvedValue({ count: 1 });
+    await consumeTokenAtomic(txMock as never, "tok-1");
+    expect(txMock.bookingToken.updateMany).toHaveBeenCalledWith({
+      where: { id: "tok-1", usedAt: null },
+      data: { usedAt: expect.any(Date) },
+    });
   });
 
-  it("keeps MANAGE tokens live", async () => {
-    await consumeToken("tok-1", "MANAGE");
-    expect(bookingTokenMock.update).not.toHaveBeenCalled();
+  it("throws 'used' (does not silently succeed) when another request already consumed it first", async () => {
+    // This is the exact race the audit found: two near-simultaneous
+    // requests on the same link. The conditional UPDATE's WHERE clause
+    // matches zero rows for the loser once the winner's row is committed.
+    txMock.bookingToken.updateMany.mockResolvedValue({ count: 0 });
+    await expect(consumeTokenAtomic(txMock as never, "tok-1")).rejects.toMatchObject({
+      code: "used",
+    });
   });
 
-  it("invalidates all outstanding tokens for a booking", async () => {
+  it("invalidates all outstanding tokens for a booking (belt-and-braces cleanup, not the primary single-use guard)", async () => {
     bookingTokenMock.updateMany.mockResolvedValue({ count: 2 });
     await invalidateBookingTokens("bk-1");
     expect(bookingTokenMock.updateMany).toHaveBeenCalledWith(
