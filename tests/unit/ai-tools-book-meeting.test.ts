@@ -1,20 +1,24 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-const { txMock, transactionMock, auditMock } = vi.hoisted(() => {
-  const txMock = {
-    $executeRaw: vi.fn(async () => 0),
-    calendarEvent: { findFirst: vi.fn(), create: vi.fn() },
-    contact: { findFirstOrThrow: vi.fn() },
-  };
-  return {
-    txMock,
-    transactionMock: vi.fn(async (fn: (tx: typeof txMock) => Promise<unknown>) => fn(txMock)),
-    auditMock: vi.fn(async () => undefined),
-  };
-});
+const { txMock, transactionMock, auditMock, tenantDbMock, serviceFindFirstMock } = vi.hoisted(
+  () => {
+    const txMock = {
+      $executeRaw: vi.fn(async () => 0),
+      calendarEvent: { findFirst: vi.fn(), create: vi.fn() },
+      contact: { findFirstOrThrow: vi.fn() },
+    };
+    return {
+      txMock,
+      transactionMock: vi.fn(async (fn: (tx: typeof txMock) => Promise<unknown>) => fn(txMock)),
+      auditMock: vi.fn(async () => undefined),
+      tenantDbMock: vi.fn(),
+      serviceFindFirstMock: vi.fn(async () => null as { durationMinutes: number | null } | null),
+    };
+  },
+);
 
 vi.mock("@/server/db/tenant", () => ({
-  tenantDb: vi.fn(),
+  tenantDb: tenantDbMock,
   unscopedPrisma: { $transaction: transactionMock },
 }));
 vi.mock("@/server/services/audit", () => ({ audit: auditMock }));
@@ -42,6 +46,8 @@ beforeEach(() => {
   txMock.calendarEvent.findFirst.mockResolvedValue(null); // no conflict
   txMock.calendarEvent.create.mockResolvedValue({ id: "evt-1" });
   txMock.contact.findFirstOrThrow.mockResolvedValue({ id: "contact-1" });
+  serviceFindFirstMock.mockResolvedValue(null);
+  tenantDbMock.mockReturnValue({ businessDnaService: { findFirst: serviceFindFirstMock } });
 });
 
 describe("bookMeeting tool", () => {
@@ -122,5 +128,39 @@ describe("bookMeeting tool", () => {
         data: expect.objectContaining({ contactId: "33333333-3333-4333-8333-333333333333" }),
       }),
     );
+  });
+
+  describe("serviceName duration resolution (First Customer Readiness milestone)", () => {
+    it("books using the named service's real duration instead of a caller-guessed default", async () => {
+      serviceFindFirstMock.mockResolvedValueOnce({ durationMinutes: 45 });
+
+      const result = await bookMeeting.execute(
+        identity(),
+        input({ durationMinutes: undefined, serviceName: "Haircut" }),
+      );
+
+      expect(result).toMatchObject({ booked: true });
+      expect(serviceFindFirstMock).toHaveBeenCalledWith(
+        expect.objectContaining({
+          where: { isActive: true, name: { equals: "Haircut", mode: "insensitive" } },
+        }),
+      );
+      const created = txMock.calendarEvent.create.mock.calls[0]![0].data;
+      expect(created.endsAt.getTime() - created.startsAt.getTime()).toBe(45 * 60_000);
+    });
+
+    it("an explicit durationMinutes overrides service-name resolution", async () => {
+      serviceFindFirstMock.mockResolvedValueOnce({ durationMinutes: 45 });
+      await bookMeeting.execute(identity(), input({ durationMinutes: 15, serviceName: "Haircut" }));
+      expect(serviceFindFirstMock).not.toHaveBeenCalled();
+      const created = txMock.calendarEvent.create.mock.calls[0]![0].data;
+      expect(created.endsAt.getTime() - created.startsAt.getTime()).toBe(15 * 60_000);
+    });
+
+    it("falls back to 30 minutes when neither durationMinutes nor a matching service is given", async () => {
+      await bookMeeting.execute(identity(), input({ durationMinutes: undefined }));
+      const created = txMock.calendarEvent.create.mock.calls[0]![0].data;
+      expect(created.endsAt.getTime() - created.startsAt.getTime()).toBe(30 * 60_000);
+    });
   });
 });
