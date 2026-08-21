@@ -1,21 +1,49 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@/server/auth/session";
 
-const { tenantDbMock, unscopedMock, auditMock } = vi.hoisted(() => ({
-  tenantDbMock: vi.fn(),
-  unscopedMock: {
-    eventAttendee: { deleteMany: vi.fn(), createMany: vi.fn() },
-  },
-  auditMock: vi.fn(async () => undefined),
-}));
+const { tenantDbMock, unscopedMock, auditMock, cancelBookingAsOwnerMock, BookingErrorMock } =
+  vi.hoisted(() => {
+    class BookingErrorMock extends Error {
+      constructor(
+        message: string,
+        public readonly code: string,
+      ) {
+        super(message);
+        this.name = "BookingError";
+      }
+    }
+    return {
+      tenantDbMock: vi.fn(),
+      unscopedMock: {
+        eventAttendee: { deleteMany: vi.fn(), createMany: vi.fn() },
+      },
+      auditMock: vi.fn(async () => undefined),
+      cancelBookingAsOwnerMock: vi.fn(),
+      BookingErrorMock,
+    };
+  });
 
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: tenantDbMock,
   unscopedPrisma: unscopedMock,
 }));
 vi.mock("@/server/services/audit", () => ({ audit: auditMock }));
+// cancelEvent() delegates to booking.ts's cancelBookingAsOwner for
+// BOOKING-source events - mocked here so this file can test the delegation
+// decision in isolation, without re-testing cancelBookingAsOwner's own
+// atomic logic (covered in tests/unit/booking-service.test.ts).
+vi.mock("@/server/services/booking", () => ({
+  cancelBookingAsOwner: cancelBookingAsOwnerMock,
+  BookingError: BookingErrorMock,
+}));
 
-import { CalendarError, createEvent, findConflicts, listEvents } from "@/server/services/calendar";
+import {
+  CalendarError,
+  cancelEvent,
+  createEvent,
+  findConflicts,
+  listEvents,
+} from "@/server/services/calendar";
 import type { EventInput } from "@/lib/validators/calendar";
 
 function ctx(orgId = "org-a"): TenantContext {
@@ -39,6 +67,8 @@ type Db = {
     findMany: ReturnType<typeof vi.fn>;
     create: ReturnType<typeof vi.fn>;
     findFirst: ReturnType<typeof vi.fn>;
+    findUniqueOrThrow: ReturnType<typeof vi.fn>;
+    update: ReturnType<typeof vi.fn>;
   };
   contact: { findFirst: ReturnType<typeof vi.fn>; count: ReturnType<typeof vi.fn> };
   company: { findFirst: ReturnType<typeof vi.fn> };
@@ -52,6 +82,8 @@ function makeDb(): Db {
       findMany: vi.fn(async () => []),
       create: vi.fn(async () => ({ id: "evt-1", startsAt: new Date() })),
       findFirst: vi.fn(async () => null),
+      findUniqueOrThrow: vi.fn(async () => ({ id: "evt-1", status: "CANCELED" })),
+      update: vi.fn(async () => ({ id: "evt-1", status: "CANCELED" })),
     },
     contact: { findFirst: vi.fn(async () => ({ id: "c-1" })), count: vi.fn(async () => 0) },
     company: { findFirst: vi.fn(async () => ({ id: "co-1" })) },
@@ -204,5 +236,92 @@ describe("recurring expansion in listEvents", () => {
     });
     expect(events).toHaveLength(3);
     expect(events.every((e) => e.isOccurrence)).toBe(true);
+  });
+});
+
+describe("cancelEvent", () => {
+  it("throws not_found for a missing/deleted event, without touching booking.ts at all", async () => {
+    db.calendarEvent.findFirst.mockResolvedValue(null);
+    await expect(cancelEvent(ctx(), "evt-missing")).rejects.toMatchObject({ code: "not_found" });
+    expect(cancelBookingAsOwnerMock).not.toHaveBeenCalled();
+  });
+
+  it("MANUAL/VOICE_AI-source event (no linked Booking): unchanged behavior - a plain CalendarEvent status flip, cancelBookingAsOwner never called", async () => {
+    db.calendarEvent.findFirst.mockResolvedValue({
+      id: "evt-1",
+      title: "Team sync",
+      booking: null,
+    });
+
+    const result = await cancelEvent(ctx(), "evt-1");
+
+    expect(cancelBookingAsOwnerMock).not.toHaveBeenCalled();
+    expect(db.calendarEvent.update).toHaveBeenCalledWith({
+      where: { id: "evt-1" },
+      data: expect.objectContaining({ status: "CANCELED" }),
+    });
+    expect(auditMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "calendar.cancel" }),
+    );
+    expect(result.status).toBe("CANCELED");
+  });
+
+  it("BOOKING-source event: delegates to cancelBookingAsOwner instead of the plain status flip (the fix - previously this only updated CalendarEvent, leaving Booking/Reminder stale)", async () => {
+    db.calendarEvent.findFirst.mockResolvedValue({
+      id: "evt-1",
+      title: "Haircut w/ guest",
+      booking: { id: "bk-1" },
+    });
+    cancelBookingAsOwnerMock.mockResolvedValue({ id: "bk-1" });
+
+    await cancelEvent(ctx("org-a"), "evt-1");
+
+    expect(cancelBookingAsOwnerMock).toHaveBeenCalledWith(ctx("org-a"), "bk-1");
+    // The generic CalendarEvent-only cancel path must NOT also run - the
+    // atomic core inside cancelBookingAsOwner is solely responsible for the
+    // CalendarEvent write in this branch.
+    expect(db.calendarEvent.update).not.toHaveBeenCalled();
+    expect(db.calendarEvent.findUniqueOrThrow).toHaveBeenCalledWith({ where: { id: "evt-1" } });
+  });
+
+  it("maps cancelBookingAsOwner's already_canceled BookingError to an equivalent CalendarError", async () => {
+    db.calendarEvent.findFirst.mockResolvedValue({
+      id: "evt-1",
+      title: "Haircut w/ guest",
+      booking: { id: "bk-1" },
+    });
+    cancelBookingAsOwnerMock.mockRejectedValue(
+      new BookingErrorMock("Already canceled", "already_canceled"),
+    );
+
+    await expect(cancelEvent(ctx(), "evt-1")).rejects.toMatchObject({
+      code: "already_canceled",
+    });
+  });
+
+  it("maps cancelBookingAsOwner's too_late BookingError to an equivalent CalendarError", async () => {
+    db.calendarEvent.findFirst.mockResolvedValue({
+      id: "evt-1",
+      title: "Haircut w/ guest",
+      booking: { id: "bk-1" },
+    });
+    cancelBookingAsOwnerMock.mockRejectedValue(
+      new BookingErrorMock("Booking already started", "too_late"),
+    );
+
+    await expect(cancelEvent(ctx(), "evt-1")).rejects.toMatchObject({ code: "too_late" });
+  });
+
+  it("propagates a non-BookingError failure unchanged (no silent swallow)", async () => {
+    db.calendarEvent.findFirst.mockResolvedValue({
+      id: "evt-1",
+      title: "Haircut w/ guest",
+      booking: { id: "bk-1" },
+    });
+    const dbError = new Error("connection reset");
+    cancelBookingAsOwnerMock.mockRejectedValue(dbError);
+
+    await expect(cancelEvent(ctx(), "evt-1")).rejects.toBe(dbError);
   });
 });

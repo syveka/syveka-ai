@@ -9,6 +9,7 @@ import {
 } from "@/server/calendar/recurrence";
 import { isValidTimezone } from "@/server/calendar/timezone";
 import { intervalsOverlap } from "@/server/calendar/slots";
+import { cancelBookingAsOwner, BookingError } from "./booking";
 import type { TenantContext } from "@/server/auth/session";
 import type { EventFilters, EventInput } from "@/lib/validators/calendar";
 import type { Prisma } from "@prisma/client";
@@ -22,7 +23,9 @@ export class CalendarError extends Error {
       | "invalid_recurrence"
       | "invalid_owner"
       | "invalid_relation"
-      | "conflict",
+      | "conflict"
+      | "already_canceled"
+      | "too_late",
   ) {
     super(message);
     this.name = "CalendarError";
@@ -353,9 +356,31 @@ export async function cancelEvent(ctx: TenantContext, eventId: string) {
   const db = tenantDb(ctx.orgId);
   const existing = await db.calendarEvent.findFirst({
     where: { id: eventId, deletedAt: null },
-    select: { id: true, title: true },
+    select: { id: true, title: true, booking: { select: { id: true } } },
   });
   if (!existing) throw new CalendarError("Event not found", "not_found");
+
+  // A BOOKING-source event has a linked Booking (guest capture, reminders,
+  // manage token) that a plain CalendarEvent.status flip leaves stale - route
+  // through the same atomic cancellation the guest's own manage link uses so
+  // the owner's Cancel button produces a complete, identical outcome instead
+  // of silently desyncing Booking/Reminder state (see cancelBookingAsOwner's
+  // doc comment in booking.ts).
+  if (existing.booking) {
+    try {
+      await cancelBookingAsOwner(ctx, existing.booking.id);
+    } catch (e) {
+      if (e instanceof BookingError) {
+        if (e.code === "not_found") throw new CalendarError("Event not found", "not_found");
+        if (e.code === "already_canceled") {
+          throw new CalendarError("Already canceled", "already_canceled");
+        }
+        if (e.code === "too_late") throw new CalendarError("Booking already started", "too_late");
+      }
+      throw e;
+    }
+    return db.calendarEvent.findUniqueOrThrow({ where: { id: eventId } });
+  }
 
   const event = await db.calendarEvent.update({
     where: { id: eventId },

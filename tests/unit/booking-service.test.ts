@@ -4,19 +4,26 @@ import type { PublicBookingInput } from "@/lib/validators/booking";
 const {
   unscopedMock,
   txMock,
+  tenantDbMock,
   auditMock,
   emitMock,
   issueTokenMock,
   resolveTokenMock,
   consumeTokenAtomicMock,
   invalidateBookingTokensMock,
+  sendBookingLifecycleNotificationsMock,
 } = vi.hoisted(() => {
   const txMock = {
     $executeRaw: vi.fn(async () => 0),
     calendarEvent: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     contact: { findFirst: vi.fn(), create: vi.fn() },
     eventAttendee: { create: vi.fn() },
-    booking: { create: vi.fn(), update: vi.fn(), findUniqueOrThrow: vi.fn() },
+    booking: {
+      create: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      findUniqueOrThrow: vi.fn(),
+    },
     activity: { create: vi.fn() },
     reminder: { updateMany: vi.fn() },
     bookingToken: { updateMany: vi.fn() },
@@ -31,18 +38,20 @@ const {
       },
       $transaction: vi.fn(async (fn: (tx: typeof txMock) => Promise<unknown>) => fn(txMock)),
     },
+    tenantDbMock: vi.fn(),
     auditMock: vi.fn(async () => undefined),
     emitMock: vi.fn(async () => undefined),
     issueTokenMock: vi.fn(async () => "raw-manage-token"),
     resolveTokenMock: vi.fn(),
     consumeTokenAtomicMock: vi.fn(async () => undefined),
     invalidateBookingTokensMock: vi.fn(async () => undefined),
+    sendBookingLifecycleNotificationsMock: vi.fn(async () => undefined),
   };
 });
 
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: unscopedMock,
-  tenantDb: vi.fn(),
+  tenantDb: tenantDbMock,
 }));
 vi.mock("@/server/services/audit", () => ({ audit: auditMock }));
 vi.mock("@/server/services/workflow-events", () => ({ emitWorkflowEvent: emitMock }));
@@ -61,9 +70,13 @@ vi.mock("@/server/services/booking-tokens", () => ({
     }
   },
 }));
+vi.mock("@/server/services/booking-notifications", () => ({
+  sendBookingLifecycleNotifications: sendBookingLifecycleNotificationsMock,
+}));
 
 import {
   BookingError,
+  cancelBookingAsOwner,
   cancelBookingViaToken,
   createPublicBooking,
   getPublicSlots,
@@ -371,7 +384,7 @@ describe("rescheduleBookingViaToken", () => {
     });
     txMock.calendarEvent.update.mockResolvedValue({});
     txMock.reminder.updateMany.mockResolvedValue({ count: 0 });
-    txMock.booking.update.mockResolvedValue({});
+    txMock.booking.updateMany.mockResolvedValue({ count: 1 });
     txMock.booking.findUniqueOrThrow.mockResolvedValue(oldBooking());
   });
 
@@ -391,9 +404,9 @@ describe("rescheduleBookingViaToken", () => {
       callOrder.push("lock");
       return 0;
     });
-    txMock.booking.update.mockImplementationOnce(async () => {
+    txMock.booking.updateMany.mockImplementationOnce(async () => {
       callOrder.push("cancel-old-booking");
-      return {};
+      return { count: 1 };
     });
 
     await rescheduleBookingViaToken("raw-token", NEW_START);
@@ -410,7 +423,7 @@ describe("rescheduleBookingViaToken", () => {
     await expect(rescheduleBookingViaToken("raw-token", NEW_START)).rejects.toMatchObject({
       code: "used",
     });
-    expect(txMock.booking.update).not.toHaveBeenCalled();
+    expect(txMock.booking.updateMany).not.toHaveBeenCalled();
     expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
   });
 
@@ -419,7 +432,7 @@ describe("rescheduleBookingViaToken", () => {
     await expect(rescheduleBookingViaToken("raw-token", NEW_START)).rejects.toMatchObject({
       code: "already_canceled",
     });
-    expect(txMock.booking.update).not.toHaveBeenCalled();
+    expect(txMock.booking.updateMany).not.toHaveBeenCalled();
   });
 
   it("serializes concurrent reschedule attempts: acquires the owner-calendar advisory lock before checking/writing", async () => {
@@ -451,6 +464,23 @@ describe("rescheduleBookingViaToken", () => {
     });
     expect(txMock.booking.create).not.toHaveBeenCalled();
   });
+
+  it("PR #92 adversarial review: loses the race to a concurrent owner-cancel (updateMany claims zero rows) - rejects BEFORE canceling the old calendar event or creating a successor", async () => {
+    // Simulates a real-Postgres race found during PR #92 review: an
+    // owner-cancel (which shares no lock/token with this guest-reschedule
+    // path) commits between this call's freshOld read and its own guarded
+    // update, so the update's WHERE clause matches zero rows. Before this
+    // fix, the old booking-update here was unconditional and would have
+    // silently resurrected a booking the owner just canceled.
+    txMock.booking.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(rescheduleBookingViaToken("raw-token", NEW_START)).rejects.toMatchObject({
+      code: "already_canceled",
+    });
+    expect(txMock.calendarEvent.update).not.toHaveBeenCalled();
+    expect(txMock.reminder.updateMany).not.toHaveBeenCalled();
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+    expect(txMock.booking.create).not.toHaveBeenCalled();
+  });
 });
 
 describe("cancelBookingViaToken", () => {
@@ -477,7 +507,7 @@ describe("cancelBookingViaToken", () => {
       booking: confirmedBooking(),
     });
     txMock.booking.findUniqueOrThrow.mockResolvedValue(confirmedBooking());
-    txMock.booking.update.mockResolvedValue({});
+    txMock.booking.updateMany.mockResolvedValue({ count: 1 });
     txMock.calendarEvent.update.mockResolvedValue({});
     txMock.reminder.updateMany.mockResolvedValue({ count: 0 });
   });
@@ -486,8 +516,12 @@ describe("cancelBookingViaToken", () => {
     const result = await cancelBookingViaToken("raw-token", "change of plans");
 
     expect(consumeTokenAtomicMock).toHaveBeenCalledWith(txMock, "token-1");
-    expect(txMock.booking.update).toHaveBeenCalledWith({
-      where: { id: "bk-old" },
+    // Guarded, not a blind update: excludes CANCELED/RESCHEDULED so a
+    // concurrent second caller's updateMany matches zero rows instead of
+    // silently re-applying every side effect below a second time (see
+    // cancelBookingCore's doc comment).
+    expect(txMock.booking.updateMany).toHaveBeenCalledWith({
+      where: { id: "bk-old", status: { notIn: ["CANCELED", "RESCHEDULED"] } },
       data: expect.objectContaining({ status: "CANCELED", cancelReason: "change of plans" }),
     });
     expect(txMock.calendarEvent.update).toHaveBeenCalledWith(
@@ -508,7 +542,7 @@ describe("cancelBookingViaToken", () => {
     );
 
     await expect(cancelBookingViaToken("raw-token")).rejects.toMatchObject({ code: "used" });
-    expect(txMock.booking.update).not.toHaveBeenCalled();
+    expect(txMock.booking.updateMany).not.toHaveBeenCalled();
   });
 
   it("rejects when the freshly re-read booking is already canceled, even if the pre-fetched copy looked confirmed", async () => {
@@ -520,7 +554,7 @@ describe("cancelBookingViaToken", () => {
     await expect(cancelBookingViaToken("raw-token")).rejects.toMatchObject({
       code: "already_canceled",
     });
-    expect(txMock.booking.update).not.toHaveBeenCalled();
+    expect(txMock.booking.updateMany).not.toHaveBeenCalled();
   });
 
   it("rejects canceling a booking that already started", async () => {
@@ -528,7 +562,155 @@ describe("cancelBookingViaToken", () => {
       confirmedBooking({ startsAt: new Date("2026-01-01T00:00:00Z") }),
     );
     await expect(cancelBookingViaToken("raw-token")).rejects.toMatchObject({ code: "too_late" });
-    expect(txMock.booking.update).not.toHaveBeenCalled();
+    expect(txMock.booking.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("PR #92 adversarial review: loses the race to a concurrent canceler (updateMany claims zero rows) - rejects, no duplicate side effects", async () => {
+    txMock.booking.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(cancelBookingViaToken("raw-token")).rejects.toMatchObject({
+      code: "already_canceled",
+    });
+    expect(txMock.calendarEvent.update).not.toHaveBeenCalled();
+    expect(txMock.activity.create).not.toHaveBeenCalled();
+  });
+});
+
+describe("cancelBookingAsOwner", () => {
+  function confirmedBooking(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "bk-old",
+      organizationId: "org-a",
+      bookingTypeId: "bt-1",
+      eventId: "evt-old",
+      status: "CONFIRMED",
+      guestName: "Guest One",
+      guestEmail: "guest@example.com",
+      startsAt: new Date(VALID_START),
+      endsAt: new Date(new Date(VALID_START).getTime() + 60 * 60_000),
+      bookingType: bookingType(),
+      ...overrides,
+    };
+  }
+
+  function ownerCtx(orgId = "org-a") {
+    return {
+      userId: "owner-1",
+      email: "owner@test.fi",
+      orgId,
+      role: "OWNER" as const,
+      locale: "en",
+    };
+  }
+
+  beforeEach(() => {
+    tenantDbMock.mockReturnValue({ booking: { findFirst: vi.fn(async () => ({ id: "bk-old" })) } });
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(confirmedBooking());
+    txMock.booking.updateMany.mockResolvedValue({ count: 1 });
+    txMock.calendarEvent.update.mockResolvedValue({});
+    txMock.reminder.updateMany.mockResolvedValue({ count: 0 });
+  });
+
+  it("cancels a confirmed booking without a token: same atomic side effects as the guest path (Booking, CalendarEvent, Reminders, CRM activity)", async () => {
+    const result = await cancelBookingAsOwner(ownerCtx(), "bk-old", "owner canceled by phone");
+
+    expect(tenantDbMock).toHaveBeenCalledWith("org-a");
+    // No token machinery involved - this is an authenticated, session-based cancel.
+    expect(consumeTokenAtomicMock).not.toHaveBeenCalled();
+    expect(txMock.booking.updateMany).toHaveBeenCalledWith({
+      where: { id: "bk-old", status: { notIn: ["CANCELED", "RESCHEDULED"] } },
+      data: expect.objectContaining({
+        status: "CANCELED",
+        cancelReason: "owner canceled by phone",
+      }),
+    });
+    expect(txMock.calendarEvent.update).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: "evt-old" } }),
+    );
+    expect(txMock.reminder.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { eventId: "evt-old", status: "SCHEDULED" } }),
+    );
+    expect(txMock.activity.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: "MEETING" }) }),
+    );
+    expect(invalidateBookingTokensMock).toHaveBeenCalledWith("bk-old");
+    expect(emitMock).toHaveBeenCalledWith("org-a", "booking.canceled", expect.anything(), "bk-old");
+    // The fix for the missing-notification defect found during review: the
+    // guest must get the same cancellation email the token-cancel path
+    // sends (src/app/api/v1/booking/manage/[token]/route.ts).
+    expect(sendBookingLifecycleNotificationsMock).toHaveBeenCalledWith({
+      kind: "cancellation",
+      bookingId: "bk-old",
+    });
+    expect(result.id).toBe("bk-old");
+  });
+
+  it("attributes the audit entry to the real owner, not a system actor (unlike the token path)", async () => {
+    await cancelBookingAsOwner(ownerCtx(), "bk-old");
+    expect(auditMock).toHaveBeenCalledWith(
+      expect.objectContaining({ userId: "owner-1", orgId: "org-a" }),
+      expect.objectContaining({ action: "booking.cancel" }),
+    );
+    // No actorType override - audit() defaults it to "user" when omitted,
+    // unlike cancelBookingViaToken's explicit actorType: "system".
+    expect(auditMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.not.objectContaining({ actorType: expect.anything() }),
+    );
+  });
+
+  it("rejects a booking that does not belong to the caller's org (tenant isolation) before touching the transaction", async () => {
+    tenantDbMock.mockReturnValue({ booking: { findFirst: vi.fn(async () => null) } });
+    await expect(cancelBookingAsOwner(ownerCtx("org-b"), "bk-old")).rejects.toMatchObject({
+      code: "not_found",
+    });
+    expect(unscopedMock.$transaction).not.toHaveBeenCalled();
+  });
+
+  it("rejects when the booking is already canceled", async () => {
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(confirmedBooking({ status: "CANCELED" }));
+    await expect(cancelBookingAsOwner(ownerCtx(), "bk-old")).rejects.toMatchObject({
+      code: "already_canceled",
+    });
+    expect(txMock.booking.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects canceling a booking that already started", async () => {
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(
+      confirmedBooking({ startsAt: new Date("2026-01-01T00:00:00Z") }),
+    );
+    await expect(cancelBookingAsOwner(ownerCtx(), "bk-old")).rejects.toMatchObject({
+      code: "too_late",
+    });
+    expect(txMock.booking.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a booking that has already been RESCHEDULED (superseded by a successor) - it is no longer the guest's active appointment", async () => {
+    // Found during PR #92 adversarial review: without this, canceling an
+    // already-rescheduled booking would flip its status back to CANCELED
+    // and send the guest a misleading "your booking was canceled" email for
+    // an appointment that is actually still live at its new time.
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(confirmedBooking({ status: "RESCHEDULED" }));
+    await expect(cancelBookingAsOwner(ownerCtx(), "bk-old")).rejects.toMatchObject({
+      code: "already_canceled",
+    });
+    expect(txMock.booking.updateMany).not.toHaveBeenCalled();
+    expect(sendBookingLifecycleNotificationsMock).not.toHaveBeenCalled();
+  });
+
+  it("PR #92 adversarial review: loses the race to a concurrent canceler (updateMany claims zero rows) - rejects and does NOT re-apply any side effect", async () => {
+    // Simulates the real-Postgres race this review found and fixed: another
+    // transaction's guarded update already committed CANCELED/RESCHEDULED
+    // between this call's initial findUniqueOrThrow read and its own
+    // updateMany, so updateMany's WHERE clause matches zero rows.
+    txMock.booking.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(cancelBookingAsOwner(ownerCtx(), "bk-old")).rejects.toMatchObject({
+      code: "already_canceled",
+    });
+    expect(txMock.calendarEvent.update).not.toHaveBeenCalled();
+    expect(txMock.reminder.updateMany).not.toHaveBeenCalled();
+    expect(txMock.activity.create).not.toHaveBeenCalled();
+    expect(emitMock).not.toHaveBeenCalled();
+    expect(sendBookingLifecycleNotificationsMock).not.toHaveBeenCalled();
   });
 });
 
