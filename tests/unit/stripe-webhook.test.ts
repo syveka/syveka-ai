@@ -244,6 +244,30 @@ describe("failure before completion, then a successful Stripe retry", () => {
       data: expect.objectContaining({ status: "COMPLETED" }),
     });
   });
+
+  // Characterization test, added before refactoring sanitizeErrorMessage()
+  // into a shared utility (see src/lib/utils.ts) - proves the CURRENT
+  // behavior (URL redaction + 500-char truncation) so the refactor can be
+  // verified to preserve it exactly, not just "still compiles."
+  it("redacts URLs and truncates the persisted lastError, never the raw error text", async () => {
+    const event = fakeEvent("customer.subscription.deleted", fakeSubscription({ id: "sub_del" }));
+    mocks.constructEvent.mockReturnValue(event);
+    const longUrl = "https://user:super-secret-pw@db.internal:5432/app?" + "x".repeat(600);
+    mocks.invalidateEntitlements.mockRejectedValue(new Error(`connection failed: ${longUrl}`));
+
+    const res = await POST(webhookRequest("{}"));
+
+    expect(res.status).toBe(500);
+    expect(mocks.ledgerUpdate).toHaveBeenCalledWith({
+      where: { stripeEventId: "evt_123" },
+      data: expect.objectContaining({ status: "FAILED" }),
+    });
+    const data = mocks.ledgerUpdate.mock.calls[0]![0].data!;
+    const lastError = data.lastError as string;
+    expect(lastError).not.toContain("super-secret-pw");
+    expect(lastError).toContain("[redacted-url]");
+    expect(lastError.length).toBeLessThanOrEqual(500);
+  });
 });
 
 describe("concurrent or near-concurrent duplicate deliveries", () => {

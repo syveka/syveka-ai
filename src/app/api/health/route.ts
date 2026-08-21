@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { sanitizeErrorMessage } from "@/server/security/error-sanitization";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -6,11 +7,7 @@ export const dynamic = "force-dynamic";
 /** Strips URLs/credentials so failure causes are visible without leaking secrets. */
 function sanitizeError(err: unknown): { name: string; message: string } {
   const name = err instanceof Error ? err.constructor.name : typeof err;
-  const rawMessage = err instanceof Error ? err.message : String(err);
-  const message = rawMessage
-    .replace(/[a-zA-Z][a-zA-Z0-9+.-]*:\/\/\S+/g, "[redacted-url]")
-    .slice(0, 200);
-  return { name, message };
+  return { name, message: sanitizeErrorMessage(err, 200) };
 }
 
 /** Uptime probe (§24): DB + Redis reachability. */

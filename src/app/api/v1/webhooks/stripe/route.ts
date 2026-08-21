@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { sanitizeErrorMessage as sanitizeErrorMessageShared } from "@/server/security/error-sanitization";
 import type Stripe from "stripe";
 import type { Prisma } from "@prisma/client";
 import type { unscopedPrisma as prismaClient } from "@/server/db/tenant";
@@ -31,8 +32,7 @@ const STALE_PROCESSING_MS = 5 * 60_000;
 
 /** Truncated, URL-redacted error text -- never the raw Stripe payload or a stack trace. */
 function sanitizeErrorMessage(err: unknown): string {
-  const raw = err instanceof Error ? err.message : String(err);
-  return raw.replace(/[a-zA-Z][a-zA-Z0-9+.-]*:\/\/\S+/g, "[redacted-url]").slice(0, 500);
+  return sanitizeErrorMessageShared(err, 500);
 }
 
 /** Best-effort (orgId, objectId) extraction for ledger observability only -- never used for auth. */
