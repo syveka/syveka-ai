@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { unscopedPrisma } from "@/server/db/tenant";
-import type { BookingTokenPurpose } from "@prisma/client";
+import type { BookingTokenPurpose, Prisma } from "@prisma/client";
 
 /**
  * Secure expiring booking tokens (§public cancel/reschedule links).
@@ -83,13 +83,40 @@ export async function resolveToken(raw: string, purpose: BookingTokenPurpose) {
   return record;
 }
 
-/** Mark single-use tokens consumed (MANAGE tokens stay live until expiry). */
-export async function consumeToken(tokenId: string, purpose: BookingTokenPurpose): Promise<void> {
-  if (purpose === "MANAGE") return;
-  await unscopedPrisma.bookingToken.update({
-    where: { id: tokenId },
+/**
+ * Atomically, single-use-consume a token INSIDE the same transaction that
+ * performs the booking mutation it authorizes. MANAGE tokens (the only
+ * purpose actually ever issued - see issueToken() call sites) previously
+ * had no real single-use enforcement: the token was never marked used at
+ * all for "MANAGE", and real invalidation happened via a separate,
+ * non-atomic invalidateBookingTokens() call *after* the mutating
+ * transaction had already committed - leaving a window where two
+ * near-simultaneous requests on the same still-valid link (a double-click,
+ * a client retry, or genuine reuse) could both pass a pre-transaction
+ * status check and both mutate the booking. Found during the First
+ * Customer Readiness audit (2026-08-21), not previously tracked.
+ *
+ * This is a conditional UPDATE, not read-then-write - the same
+ * fencing/claim pattern already used for calendar slot locking
+ * (assertSlotStillFree) and workflow step claims
+ * (WorkflowStepExecution.updateMany in run-workflow/route.ts): under two
+ * concurrent transactions, Postgres serializes on the row and re-evaluates
+ * the WHERE clause after acquiring the lock, so exactly one `updateMany`
+ * can ever match `usedAt: null` for a given token - the loser sees
+ * count 0 and this throws, causing its entire transaction (including any
+ * booking mutation attempted after this call) to roll back.
+ */
+export async function consumeTokenAtomic(
+  tx: Prisma.TransactionClient,
+  tokenId: string,
+): Promise<void> {
+  const result = await tx.bookingToken.updateMany({
+    where: { id: tokenId, usedAt: null },
     data: { usedAt: new Date() },
   });
+  if (result.count === 0) {
+    throw new BookingTokenError("Token already used", "used");
+  }
 }
 
 /** Invalidate all outstanding tokens for a booking (cancel/reschedule flows). */
