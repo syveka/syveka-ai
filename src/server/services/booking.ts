@@ -521,17 +521,37 @@ async function cancelBookingCore(
     where: { id: bookingId },
     include: { bookingType: true },
   });
-  if (fresh.status === "CANCELED") {
+  if (fresh.status === "CANCELED" || fresh.status === "RESCHEDULED") {
+    // A RESCHEDULED booking has already been superseded by a successor
+    // booking (rescheduledFromId) - it is no longer the guest's active
+    // appointment, so "canceling" it here would flip a historical record's
+    // status and could send the guest a misleading cancellation email for
+    // an appointment that is actually still live at its new time.
     throw new BookingError("Already canceled", "already_canceled");
   }
   if (fresh.startsAt < new Date()) {
     throw new BookingError("Booking already started", "too_late");
   }
 
-  await tx.booking.update({
-    where: { id: bookingId },
+  // Guarded, not a blind update: closes the race between two callers that
+  // both pass the status check above before either commits (e.g. an
+  // owner-cancel racing a guest-token-cancel or a guest-token-reschedule, or
+  // two concurrent owner-cancels - neither has any other serialization to
+  // fall back on once inside this shared core; cancelBookingViaToken's
+  // token-consumption guard runs BEFORE this and doesn't protect what
+  // happens in here, and rescheduleBookingViaToken's own booking-update is
+  // guarded the same way below for the same reason). Whichever
+  // transaction's UPDATE lands first wins the row lock; the second one, on
+  // unblocking, re-evaluates this WHERE clause against the now-committed
+  // row, matches zero rows, and must reject here instead of silently
+  // re-running every side effect below a second time.
+  const claimed = await tx.booking.updateMany({
+    where: { id: bookingId, status: { notIn: ["CANCELED", "RESCHEDULED"] } },
     data: { status: "CANCELED", canceledAt: new Date(), cancelReason: reason ?? null },
   });
+  if (claimed.count === 0) {
+    throw new BookingError("Already canceled", "already_canceled");
+  }
   if (fresh.eventId) {
     await tx.calendarEvent.update({
       where: { id: fresh.eventId },
@@ -634,6 +654,16 @@ export async function cancelBookingAsOwner(ctx: TenantContext, bookingId: string
     booking.id,
   ).catch(() => undefined);
 
+  // Same notification the guest's own manage-link cancel sends (see
+  // src/app/api/v1/booking/manage/[token]/route.ts) - found missing during
+  // Pilot-readiness review. Redis-idempotency-guarded inside
+  // sendBookingLifecycleNotifications itself, so this is safe even if
+  // called more than once for the same booking/kind.
+  const { sendBookingLifecycleNotifications } = await import("./booking-notifications");
+  await sendBookingLifecycleNotifications({ kind: "cancellation", bookingId: booking.id }).catch(
+    () => undefined,
+  );
+
   return booking;
 }
 
@@ -694,6 +724,23 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
       oldBooking.eventId ?? undefined,
     );
 
+    // Guarded, not a blind update: closes the race against a concurrent
+    // owner-cancel (calendar.ts's cancelEvent -> booking.ts's
+    // cancelBookingAsOwner), which shares no lock or token with this path
+    // and can cancel this same booking between the freshOld read above and
+    // this update. Whichever side's UPDATE lands first wins the row lock;
+    // the loser's UPDATE re-evaluates this WHERE clause against the
+    // now-committed row, matches zero rows, and must reject here - BEFORE
+    // canceling the old calendar event or creating a successor - instead of
+    // resurrecting a booking the other caller just canceled.
+    const claimed = await tx.booking.updateMany({
+      where: { id: oldBooking.id, status: { notIn: ["CANCELED", "RESCHEDULED"] } },
+      data: { status: "RESCHEDULED" },
+    });
+    if (claimed.count === 0) {
+      throw new BookingError("Booking was canceled", "already_canceled");
+    }
+
     if (oldBooking.eventId) {
       await tx.calendarEvent.update({
         where: { id: oldBooking.eventId },
@@ -704,10 +751,6 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
         data: { status: "CANCELED" },
       });
     }
-    await tx.booking.update({
-      where: { id: oldBooking.id },
-      data: { status: "RESCHEDULED" },
-    });
 
     const event = await tx.calendarEvent.create({
       data: {
