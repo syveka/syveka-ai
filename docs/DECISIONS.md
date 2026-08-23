@@ -293,6 +293,72 @@ validate`/`generate`, migration history check) after the override, all passing. 
     SMS-based voice confirmation; pushing manually-created (non-`BookingType`) dashboard calendar
     events; an admin UI to retry a FAILED/AMBIGUOUS push.
 
+- **Adversarial review of the unified booking lifecycle (2026-08-23) found three real gaps in
+  the Google-push subsystem, closed as follows — plus one launch-relevant limitation that
+  remains genuinely open, not fixed.**
+  - **AI-default `BookingType` race (merge-blocker, fixed):** `saveBookingType`'s "clear other
+    defaults" cleanup was two separate, non-transactional statements — two concurrent claims for
+    _different_ `BookingType` rows don't share a row-level lock, so under READ COMMITTED both
+    could commit before either's cleanup saw the other, leaving the org with **two** defaults (or,
+    with different timing, **zero**). Proven live against real Postgres —
+    `tests/integration/ai-default-booking-type-concurrency.sh` reliably reproduces both a
+    two-true and a zero-true outcome without the fix. Fixed with a dedicated
+    `lockAiDefaultBookingType()` advisory lock (`src/server/calendar/locks.ts`, fixed key `2` —
+    deliberately its own domain, never `lockOrgCalendar`'s `0` or `lockContactEmail`'s `1`),
+    taken as the first statement of a real transaction wrapping claim + cleanup. Real-Postgres
+    proof also covers tenant isolation (a concurrent claim in a different org never touches this
+    org's rows) and shows the fixed path deterministically leaves exactly one default across
+    repeated runs. `resolveAiDefaultBookingType()` also now fails loudly
+    (`ai_booking_type_ambiguous`) instead of silently picking an arbitrary row if legacy-corrupted
+    state is ever found with more than one default — `findFirst` with no `orderBy` has no stable
+    row order in Postgres, the same class of bug already fixed once for
+    `resolveServiceDurationMinutes` (see above).
+  - **Outbound push crash-window (fixed, partially):** `GoogleSyncStatus.PENDING` existed in the
+    schema but was dead code — nothing ever wrote it, so a process crash between Google
+    successfully creating an event and our own follow-up DB write left the row looking exactly
+    like "never attempted" (`NOT_APPLICABLE`), silently orphaning a real Google event forever.
+    Both `pushBookingEventToGoogle` and `cancelBookingEventOnGoogle` now atomically claim PENDING
+    immediately before the network call. This makes the crash window _observable_ — a stuck
+    PENDING row is now a visible signal something needs attention — it does **not** by itself
+    reconcile anything; no automatic retry or cleanup was added, deliberately.
+  - **Outbound push / inbound sync duplicate race (fixed):** a Syveka-originated event can be
+    reported back by Google's own webhook/inbound sync _before_ `pushBookingEventToGoogle`'s
+    follow-up write links our row by `(externalCalendarId, externalId)` — `applyRemoteEvent`
+    would then miss the match and create a second, duplicate `CalendarEvent`. Fixed by stamping
+    our own `CalendarEvent.id` as a Google `extendedProperties.private` value at push-create time
+    (`google.ts`'s `createEvent`, key `syvekaEventId` — private extended properties are only
+    ever visible to/editable by the application that set them) and round-tripping it back as
+    `ExternalEvent.correlationId`; `applyRemoteEvent` falls back to a correlation-id lookup **only
+    when the primary-key lookup misses**, verifies the correlated row belongs to the same
+    organization and isn't already linked, and otherwise falls through to the unmodified
+    create-new-row path — genuinely external events (no marker) are completely unaffected. See
+    `tests/unit/calendar-sync.test.ts`'s "outbound push / inbound sync duplicate race" suite for a
+    same-code-path reproduction of the pre-fix duplicate alongside the post-fix non-duplicate
+    outcome (not a real-Postgres proof — this one is a deterministic ordering property of the
+    lookup logic itself, not a timing race, so a mocked reproduction is the right level).
+  - **Concurrent double outbound push (D3, hardened):** the SYNCED-only idempotency guard
+    protected against a _sequential_ re-push but not two genuinely concurrent invocations for the
+    same event both reaching Google. Both push functions now claim their PENDING transition via a
+    single guarded `updateMany` (`WHERE google_sync_status NOT IN (...)`) rather than a
+    read-then-write check — a real serialization primitive: Postgres's own row-level lock on the
+    target row means two concurrent claims can never both win. Proven live against real Postgres
+    (`tests/integration/google-push-claim-concurrency.sh`, 100% reproducible across repeated
+    runs — this one needs no timing-window luck, unlike the AI-default proof above, because a
+    single UPDATE's atomicity is a hard guarantee, not a race). This closes the _simultaneous_
+    case; it does not by itself make a future sequential "retry" mechanism safe to build without
+    also reconciling against Google's actual state first.
+  - **Google reschedule push — still explicitly out of scope, and genuinely customer-visible.**
+    `rescheduleBookingViaToken` was not touched. A booking that was previously pushed to Google
+    (`SYNCED`) and is then rescheduled locally cancels the old `CalendarEvent` and creates a new
+    successor _only in Syveka_ — neither the stale old-time event is removed from Google Calendar
+    nor is the corrected new time ever pushed there. **The business's real Google Calendar keeps
+    showing the appointment at the wrong time indefinitely after any reschedule of a previously-
+    synced booking**, until a human manually fixes it there. This is not a code defect introduced
+    by the push feature — it's the direct, foreseeable consequence of shipping create/cancel push
+    while reschedule push remains a separate, deferred PR. Flag this to whoever is deciding launch
+    readiness; do not let "reschedule push not implemented" read as a purely internal/technical
+    gap when evaluating it.
+
 ## Standing engineering conventions (from `README.md`, verified still enforced)
 
 - Never import `@/server/db/prisma` outside `src/server/db` (ESLint-enforced) — business code

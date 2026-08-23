@@ -34,6 +34,15 @@ export type ExternalEvent = {
   allDay: boolean;
   status: "confirmed" | "tentative" | "cancelled";
   attendees: Array<{ email?: string; name?: string }>;
+  /**
+   * Our own CalendarEvent id, round-tripped back by the provider when this
+   * remote event was originally created by our own outbound push (P2 fix:
+   * outbound/inbound duplicate race). Present only when the provider
+   * supports it (Google: `extendedProperties.private`) and only for events
+   * we pushed — absent for genuinely external events. Undefined, never a
+   * client-supplied/untrusted value from anywhere but our own prior push.
+   */
+  correlationId?: string;
 };
 
 export type SyncPage = {
@@ -66,6 +75,14 @@ export type CreateEventInput = {
   startsAt: Date;
   endsAt: Date;
   timezone: string;
+  /**
+   * Our own CalendarEvent id. Providers that support private extended/custom
+   * properties (Google) should stamp it on the created event so a later
+   * inbound sync can recognize "this remote event is actually mine, just not
+   * yet linked" instead of creating a duplicate row — see `ExternalEvent`'s
+   * matching field and `applyRemoteEvent` in calendar-sync.ts.
+   */
+  correlationId: string;
 };
 
 export type CreateEventResult = {

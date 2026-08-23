@@ -29,11 +29,16 @@ const {
     activity: { create: vi.fn() },
     reminder: { updateMany: vi.fn() },
     bookingToken: { updateMany: vi.fn() },
+    bookingType: {
+      create: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(async () => ({ count: 0 })),
+    },
   };
   return {
     txMock,
     unscopedMock: {
-      bookingType: { findFirst: vi.fn() },
+      bookingType: { findFirst: vi.fn(), findMany: vi.fn() },
       availabilitySchedule: { findFirst: vi.fn(async () => null) },
       calendarEvent: {
         findMany: vi.fn(async (): Promise<Array<{ startsAt: Date; endsAt: Date }>> => []),
@@ -90,6 +95,7 @@ import {
   createVoiceBooking,
   getPublicSlots,
   rescheduleBookingViaToken,
+  saveBookingType,
 } from "@/server/services/booking";
 
 // Booking type: Mon–Fri 09–17 Helsinki fallback schedule (schedule = null).
@@ -379,9 +385,9 @@ describe("createVoiceBooking (P2: unified booking lifecycle - bookMeeting's voic
   }
 
   beforeEach(() => {
-    unscopedMock.bookingType.findFirst.mockResolvedValue(
+    unscopedMock.bookingType.findMany.mockResolvedValue([
       bookingType({ id: "bt-ai", name: "Haircut", ownerId: "owner-1", isAiBookingDefault: true }),
-    );
+    ]);
     txMock.calendarEvent.create.mockResolvedValue({ id: "evt-voice-1" });
     txMock.contact.findFirst.mockResolvedValue(null);
     txMock.contact.create.mockResolvedValue({ id: "contact-voice-1" });
@@ -392,16 +398,27 @@ describe("createVoiceBooking (P2: unified booking lifecycle - bookMeeting's voic
   });
 
   it("fails loudly - never guesses a BookingType - when the org has no AI-default configured", async () => {
-    unscopedMock.bookingType.findFirst.mockResolvedValue(null);
+    unscopedMock.bookingType.findMany.mockResolvedValue([]);
     await expect(createVoiceBooking(voiceInput())).rejects.toMatchObject({
       code: "ai_booking_type_not_configured",
     });
     expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
   });
 
+  it("fails loudly - never silently picks one - when legacy-corrupted state has more than one AI-default", async () => {
+    unscopedMock.bookingType.findMany.mockResolvedValue([
+      bookingType({ id: "bt-ai-1", isAiBookingDefault: true }),
+      bookingType({ id: "bt-ai-2", isAiBookingDefault: true }),
+    ]);
+    await expect(createVoiceBooking(voiceInput())).rejects.toMatchObject({
+      code: "ai_booking_type_ambiguous",
+    });
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
   it("resolves the AI-default BookingType by isAiBookingDefault, never by guessing from a service name", async () => {
     await createVoiceBooking(voiceInput());
-    expect(unscopedMock.bookingType.findFirst).toHaveBeenCalledWith(
+    expect(unscopedMock.bookingType.findMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: {
           organizationId: "org-a",
@@ -498,6 +515,102 @@ describe("createVoiceBooking (P2: unified booking lifecycle - bookMeeting's voic
         }),
       }),
     );
+  });
+});
+
+describe("saveBookingType — isAiBookingDefault enforcement (P2 Fix 1: race-safety)", () => {
+  function ctx(orgId = "org-a") {
+    return {
+      userId: "owner-1",
+      email: "owner@test.fi",
+      orgId,
+      role: "OWNER" as const,
+      locale: "en",
+    };
+  }
+
+  function bookingTypeInput(overrides: Record<string, unknown> = {}) {
+    return {
+      slug: "haircut",
+      name: "Haircut",
+      description: undefined,
+      durationMinutes: 30,
+      durationOptions: [30],
+      locationType: "IN_PERSON" as const,
+      location: undefined,
+      bufferBeforeMinutes: 0,
+      bufferAfterMinutes: 0,
+      minNoticeMinutes: 60,
+      maxWindowDays: 60,
+      brandColor: undefined,
+      confirmationMessage: undefined,
+      collectPhone: false,
+      collectCompany: false,
+      requiresConsent: true,
+      isActive: true,
+      isAiBookingDefault: false,
+      scheduleId: undefined,
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    tenantDbMock.mockReturnValue({
+      availabilitySchedule: { findFirst: vi.fn(async () => null) },
+      bookingType: {
+        create: vi.fn(async () => ({ id: "bt-new" })),
+        update: vi.fn(async () => ({ id: "bt-1" })),
+      },
+    });
+    txMock.bookingType.create.mockResolvedValue({ id: "bt-new" });
+    txMock.bookingType.update.mockResolvedValue({ id: "bt-1" });
+    txMock.bookingType.updateMany.mockResolvedValue({ count: 0 });
+  });
+
+  it("editing a non-default BookingType never takes the lock or the transactional path (no invariant at risk)", async () => {
+    await saveBookingType(ctx(), bookingTypeInput({ isAiBookingDefault: false }), "bt-1");
+    expect(unscopedMock.$transaction).not.toHaveBeenCalled();
+    expect(txMock.$executeRaw).not.toHaveBeenCalled();
+    expect(auditMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "booking_type.update" }),
+    );
+  });
+
+  it("setting the first AI default: acquires the lock BEFORE writing the claim and BEFORE the cleanup - proves real ordering, not just that cleanup ran", async () => {
+    const callOrder: string[] = [];
+    txMock.$executeRaw.mockImplementationOnce(async () => {
+      callOrder.push("lock");
+      return 0;
+    });
+    txMock.bookingType.create.mockImplementationOnce(async () => {
+      callOrder.push("create");
+      return { id: "bt-new" };
+    });
+    txMock.bookingType.updateMany.mockImplementationOnce(async () => {
+      callOrder.push("cleanup");
+      return { count: 0 };
+    });
+
+    await saveBookingType(ctx(), bookingTypeInput({ isAiBookingDefault: true }));
+
+    expect(callOrder).toEqual(["lock", "create", "cleanup"]);
+    // Lock key must be the trusted ctx.orgId, not anything client-supplied.
+    expect(txMock.$executeRaw).toHaveBeenCalledWith(expect.anything(), "org-a");
+  });
+
+  it("changing the default: cleanup excludes the newly-claimed row and is tenant-scoped, still inside the lock", async () => {
+    await saveBookingType(ctx(), bookingTypeInput({ isAiBookingDefault: true }), "bt-1");
+    expect(txMock.bookingType.updateMany).toHaveBeenCalledWith({
+      where: { organizationId: "org-a", id: { not: "bt-1" }, isAiBookingDefault: true },
+      data: { isAiBookingDefault: false },
+    });
+  });
+
+  it("no default configured yet: resolveAiDefaultBookingType (exercised via createVoiceBooking above) already proves the fail-loud path; this proves saveBookingType itself never writes isAiBookingDefault=true implicitly", async () => {
+    await saveBookingType(ctx(), bookingTypeInput({ isAiBookingDefault: false }), "bt-1");
+    expect(tenantDbMock).toHaveBeenCalledWith("org-a");
+    expect(txMock.bookingType.updateMany).not.toHaveBeenCalled();
   });
 });
 

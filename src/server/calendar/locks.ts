@@ -75,3 +75,29 @@ export async function lockContactEmail(
 ): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId} || ':' || ${email}), 1)`;
 }
+
+/**
+ * Serializes AI-default BookingType claims within one organization
+ * (src/server/services/booking.ts's saveBookingType, whenever a caller sets
+ * isAiBookingDefault=true). Distinct fixed second key (`2`) from
+ * lockOrgCalendar's (`0`) and lockContactEmail's (`1`) - deliberately its
+ * own lock domain, never intended to interact with booking-slot scheduling.
+ *
+ * A plain transaction around "update the claimed row, then clear other
+ * defaults" is NOT sufficient on its own: two concurrent transactions each
+ * claiming a DIFFERENT BookingType as the default touch different rows, so
+ * neither's row-level lock serializes against the other under READ
+ * COMMITTED - each can commit its own "true" write before the other's
+ * "clear other defaults" cleanup runs, and depending on interleaving this
+ * can leave the org with zero true rows (both cleanups fire after seeing
+ * the other's committed true value) rather than exactly one. Taking this
+ * lock as the transaction's first statement forces the second concurrent
+ * claim to fully wait for the first's claim-and-cleanup to commit before
+ * it even starts, closing that race. See docs/DECISIONS.md.
+ */
+export async function lockAiDefaultBookingType(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId}), 2)`;
+}

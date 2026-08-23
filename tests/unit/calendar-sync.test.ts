@@ -202,6 +202,110 @@ describe("idempotent import sync", () => {
   });
 });
 
+describe("outbound push / inbound sync duplicate race (P2 Fix 3 / D1)", () => {
+  // Reproduces the exact race: pushBookingEventToGoogle calls Google
+  // successfully, but an inbound sync/webhook for that same remote event
+  // arrives BEFORE pushBookingEventToGoogle's own follow-up write links our
+  // row by (externalCalendarId, externalId) — so the primary-key lookup
+  // misses. `correlated` represents OUR row: created by the push, not yet
+  // linked (externalId still null).
+  function correlatedLocalRow(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "evt-local-42",
+      organizationId: "org-a",
+      externalId: null,
+      externalEtag: null,
+      updatedAt: new Date(),
+      deletedAt: null,
+      ...overrides,
+    };
+  }
+
+  it("PRE-FIX REPRODUCTION: without a correlationId on the remote event, the race creates a duplicate CalendarEvent", async () => {
+    // No correlationId at all on the remote event — this is exactly what
+    // every inbound event looked like before the Fix 3 change (google.ts
+    // didn't stamp extendedProperties yet), and is still what a genuinely
+    // external event (never pushed by us) looks like today.
+    mockProviderTestApi.seedEvents("mock-primary", [remoteEvent({ correlationId: undefined })]);
+    // Primary-key lookup misses (the race: our own linking write hasn't
+    // landed yet) — the ONLY lookup applyRemoteEvent has without a
+    // correlationId to fall back on.
+    unscopedMock.calendarEvent.findUnique.mockResolvedValueOnce(null);
+
+    const result = await syncExternalCalendar("extcal-1");
+
+    expect(result.imported).toBe(1); // a NEW, duplicate row was created
+    expect(unscopedMock.calendarEvent.create).toHaveBeenCalled();
+  });
+
+  it("POST-FIX: a correlationId matching our own unlinked row is recognized and UPDATEs that row instead of creating a duplicate", async () => {
+    mockProviderTestApi.seedEvents("mock-primary", [
+      remoteEvent({ correlationId: "evt-local-42" }),
+    ]);
+    // First call: primary-key (externalCalendarId, externalId) lookup — miss,
+    // same race as the pre-fix reproduction above.
+    unscopedMock.calendarEvent.findUnique.mockResolvedValueOnce(null);
+    // Second call: applyRemoteEvent's correlationId fallback lookup (by our
+    // own row id) — finds the row the push created, not yet linked.
+    unscopedMock.calendarEvent.findUnique.mockResolvedValueOnce(correlatedLocalRow());
+
+    const result = await syncExternalCalendar("extcal-1");
+
+    expect(result.imported).toBe(0); // no duplicate
+    expect(result.updated).toBe(1);
+    expect(unscopedMock.calendarEvent.create).not.toHaveBeenCalled();
+    expect(unscopedMock.calendarEvent.update).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { id: "evt-local-42" },
+        data: expect.objectContaining({
+          externalCalendarId: "extcal-1",
+          externalId: "remote-1",
+        }),
+      }),
+    );
+  });
+
+  it("a correlationId that does not belong to this organization is ignored (tenant isolation) — falls through to the normal create path, never linked cross-tenant", async () => {
+    mockProviderTestApi.seedEvents("mock-primary", [
+      remoteEvent({ correlationId: "evt-other-org" }),
+    ]);
+    unscopedMock.calendarEvent.findUnique.mockResolvedValueOnce(null); // primary-key miss
+    unscopedMock.calendarEvent.findUnique.mockResolvedValueOnce(
+      correlatedLocalRow({ id: "evt-other-org", organizationId: "org-b" }), // different org
+    );
+
+    const result = await syncExternalCalendar("extcal-1");
+
+    expect(result.imported).toBe(1); // safe fallback: created as a new row, not linked to org-b's
+    expect(unscopedMock.calendarEvent.update).not.toHaveBeenCalled();
+  });
+
+  it("a correlationId pointing at an ALREADY-linked row is ignored (never re-links/overwrites an existing link) — falls through to create", async () => {
+    mockProviderTestApi.seedEvents("mock-primary", [
+      remoteEvent({ correlationId: "evt-already-linked" }),
+    ]);
+    unscopedMock.calendarEvent.findUnique.mockResolvedValueOnce(null); // primary-key miss
+    unscopedMock.calendarEvent.findUnique.mockResolvedValueOnce(
+      correlatedLocalRow({ id: "evt-already-linked", externalId: "some-other-google-id" }),
+    );
+
+    const result = await syncExternalCalendar("extcal-1");
+
+    expect(result.imported).toBe(1);
+    expect(unscopedMock.calendarEvent.update).not.toHaveBeenCalled();
+  });
+
+  it("genuinely external events (no correlationId, never pushed by us) are completely unaffected — inbound sync is not weakened", async () => {
+    mockProviderTestApi.seedEvents("mock-primary", [remoteEvent({ correlationId: undefined })]);
+    unscopedMock.calendarEvent.findUnique.mockResolvedValueOnce(null);
+    const result = await syncExternalCalendar("extcal-1");
+    expect(result.imported).toBe(1);
+    expect(unscopedMock.calendarEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ source: "GOOGLE" }) }),
+    );
+  });
+});
+
 describe("webhook verification secret helper", () => {
   it("generates non-empty, unique secrets", () => {
     const a = generateWebhookSecret();

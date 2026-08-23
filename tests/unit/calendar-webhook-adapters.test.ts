@@ -59,6 +59,7 @@ describe("Google adapter: createEvent (P2: unified booking lifecycle push)", () 
       startsAt: new Date("2026-08-17T10:00:00Z"),
       endsAt: new Date("2026-08-17T10:30:00Z"),
       timezone: "Europe/Helsinki",
+      correlationId: "evt-local-1",
     });
 
     expect(result).toEqual({ externalId: "google-evt-1", etag: "etag-1" });
@@ -71,6 +72,23 @@ describe("Google adapter: createEvent (P2: unified booking lifecycle push)", () 
       timeZone: "Europe/Helsinki",
     });
     expect(body).not.toHaveProperty("attendees");
+  });
+
+  it("stamps our own CalendarEvent id as a private extended property, so inbound sync can recognize this event as ours before our own follow-up write links it (P2 fix: outbound/inbound duplicate race)", async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(jsonResponse({ id: "google-evt-2", etag: "etag-2" }));
+
+    await googleCalendarAdapter.createEvent!(tokens, "primary", {
+      title: "Haircut",
+      startsAt: new Date("2026-08-17T10:00:00Z"),
+      endsAt: new Date("2026-08-17T10:30:00Z"),
+      timezone: "Europe/Helsinki",
+      correlationId: "evt-local-42",
+    });
+
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(init!.body as string);
+    expect(body.extendedProperties).toEqual({ private: { syvekaEventId: "evt-local-42" } });
   });
 });
 

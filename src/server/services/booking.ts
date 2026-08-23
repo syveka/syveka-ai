@@ -12,7 +12,12 @@ import {
   type WeeklyRule,
 } from "@/server/calendar/slots";
 import { isValidTimezone } from "@/server/calendar/timezone";
-import { lockContactEmail, lockOrgCalendar, lockOwnerCalendar } from "@/server/calendar/locks";
+import {
+  lockAiDefaultBookingType,
+  lockContactEmail,
+  lockOrgCalendar,
+  lockOwnerCalendar,
+} from "@/server/calendar/locks";
 import type { TenantContext } from "@/server/auth/session";
 import type { BookingTypeInput, PublicBookingInput } from "@/lib/validators/booking";
 
@@ -31,7 +36,8 @@ export class BookingError extends Error {
       | "invalid_slot"
       | "too_late"
       | "already_canceled"
-      | "ai_booking_type_not_configured",
+      | "ai_booking_type_not_configured"
+      | "ai_booking_type_ambiguous",
   ) {
     super(message);
     this.name = "BookingError";
@@ -119,20 +125,39 @@ export async function saveBookingType(
   };
 
   try {
-    const result = bookingTypeId
-      ? await db.bookingType.update({ where: { id: bookingTypeId }, data })
-      : await db.bookingType.create({
-          data: { ...data, organizationId: ctx.orgId, ownerId: ctx.userId },
-        });
+    // Claiming isAiBookingDefault=true is race-sensitive (at most one per
+    // org) and needs real serialization across concurrent claims touching
+    // DIFFERENT rows - see lockAiDefaultBookingType's doc comment for why a
+    // plain transaction alone is not sufficient. Only this branch pays for
+    // the lock + unscoped-with-manual-scoping write: a claim of `false` (or
+    // omitted) can never create a second true row on its own, so it keeps
+    // the original tenantDb path unchanged.
+    const result = input.isAiBookingDefault
+      ? await unscopedPrisma.$transaction(async (tx) => {
+          await lockAiDefaultBookingType(tx, ctx.orgId);
 
-    if (input.isAiBookingDefault) {
-      // Single AI-default per org, same pattern as AvailabilitySchedule.isDefault
-      // above (saveSchedule): enforced in application code, not a DB constraint.
-      await db.bookingType.updateMany({
-        where: { id: { not: result.id }, isAiBookingDefault: true },
-        data: { isAiBookingDefault: false },
-      });
-    }
+          const row = bookingTypeId
+            ? await tx.bookingType.update({
+                where: { id: bookingTypeId, organizationId: ctx.orgId },
+                data: { ...data, organizationId: ctx.orgId },
+              })
+            : await tx.bookingType.create({
+                data: { ...data, organizationId: ctx.orgId, ownerId: ctx.userId },
+              });
+
+          // Still inside the lock: no concurrent claim in this org can
+          // observe or race this cleanup - see lockAiDefaultBookingType.
+          await tx.bookingType.updateMany({
+            where: { organizationId: ctx.orgId, id: { not: row.id }, isAiBookingDefault: true },
+            data: { isAiBookingDefault: false },
+          });
+          return row;
+        })
+      : bookingTypeId
+        ? await db.bookingType.update({ where: { id: bookingTypeId }, data })
+        : await db.bookingType.create({
+            data: { ...data, organizationId: ctx.orgId, ownerId: ctx.userId },
+          });
 
     await audit(ctx, {
       action: bookingTypeId ? "booking_type.update" : "booking_type.create",
@@ -533,10 +558,21 @@ export type VoiceBookingInput = {
  * guessing which BookingType the voice assistant should book into.
  */
 async function resolveAiDefaultBookingType(orgId: string) {
-  const bookingType = await unscopedPrisma.bookingType.findFirst({
+  // Fetches up to 2 - enough to detect "more than one" without pulling a
+  // potentially large list - and orders deterministically so that IF this
+  // function is ever reached in a legacy-corrupted state (an org somehow
+  // has more than one row with isAiBookingDefault=true - saveBookingType's
+  // lockAiDefaultBookingType now prevents this going forward, but stale
+  // data or a pre-fix write could still exist), it fails loudly with a
+  // specific, actionable error rather than silently picking an arbitrary
+  // row that could differ between calls (findFirst with no orderBy has no
+  // stable row order in Postgres).
+  const candidates = await unscopedPrisma.bookingType.findMany({
     where: { organizationId: orgId, isAiBookingDefault: true, isActive: true, deletedAt: null },
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
+    take: 2,
   });
-  if (!bookingType) {
+  if (candidates.length === 0) {
     throw new BookingError(
       "No AI-default booking type is configured for this organization. An owner must mark one " +
         'Booking Type as "Use for AI/voice bookings" in Calendar → Booking Types before the ' +
@@ -544,7 +580,15 @@ async function resolveAiDefaultBookingType(orgId: string) {
       "ai_booking_type_not_configured",
     );
   }
-  return bookingType;
+  if (candidates.length > 1) {
+    throw new BookingError(
+      "More than one AI-default booking type is configured for this organization, which should " +
+        "never happen. An owner must fix this in Calendar → Booking Types (only one should have " +
+        '"Use for AI/voice bookings" enabled) before the voice assistant can book appointments.',
+      "ai_booking_type_ambiguous",
+    );
+  }
+  return candidates[0]!;
 }
 
 /**

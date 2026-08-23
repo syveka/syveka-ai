@@ -10,7 +10,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const { unscopedMock, getFreshTokensMock, adapterMock } = vi.hoisted(() => ({
   unscopedMock: {
-    calendarEvent: { findUnique: vi.fn(), update: vi.fn(async () => ({})) },
+    calendarEvent: {
+      findUnique: vi.fn(),
+      update: vi.fn(async () => ({})),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+    },
     calendarConnection: { findFirst: vi.fn() },
     externalCalendar: { findFirst: vi.fn(), findUnique: vi.fn() },
   },
@@ -67,6 +71,11 @@ beforeEach(() => {
     externalId: "google-primary",
   });
   getFreshTokensMock.mockResolvedValue({ accessToken: "token", scopes: [] });
+  // The atomic-claim guard (D2/D3 hardening): succeeds by default so
+  // existing scenarios reach adapter.createEvent/cancelEvent unchanged;
+  // individual tests override this to (count: 0) to prove the claim-loses
+  // path never calls the adapter a second time.
+  unscopedMock.calendarEvent.updateMany.mockResolvedValue({ count: 1 });
 });
 
 describe("pushBookingEventToGoogle", () => {
@@ -203,6 +212,64 @@ describe("pushBookingEventToGoogle", () => {
     expect(outcome).toBe("failed");
     expect(adapterMock.createEvent).not.toHaveBeenCalled();
   });
+
+  describe("PENDING state transition (P2 Fix 2: crash-window observability)", () => {
+    it("claims PENDING via the atomic guarded UPDATE BEFORE calling Google - proves ordering, not just that it happened", async () => {
+      unscopedMock.calendarEvent.findUnique.mockResolvedValue(calendarEvent());
+      const callOrder: string[] = [];
+      unscopedMock.calendarEvent.updateMany.mockImplementationOnce(async () => {
+        callOrder.push("claim-pending");
+        return { count: 1 };
+      });
+      adapterMock.createEvent.mockImplementationOnce(async () => {
+        callOrder.push("call-google");
+        return { externalId: "google-evt-1", etag: "etag-1" };
+      });
+
+      await pushBookingEventToGoogle({ orgId: "org-a", ownerId: "owner-1", eventId: "evt-1" });
+
+      expect(callOrder).toEqual(["claim-pending", "call-google"]);
+      expect(unscopedMock.calendarEvent.updateMany).toHaveBeenCalledWith({
+        where: { id: "evt-1", googleSyncStatus: { notIn: ["PENDING", "SYNCED"] } },
+        data: { googleSyncStatus: "PENDING", googleSyncError: null },
+      });
+    });
+
+    it("D3: when the atomic claim loses (count 0), never calls Google a second time", async () => {
+      unscopedMock.calendarEvent.findUnique.mockResolvedValue(calendarEvent());
+      unscopedMock.calendarEvent.updateMany.mockResolvedValue({ count: 0 });
+      // Simulates the row already having transitioned to PENDING by a
+      // concurrent winner, discovered by the post-claim-loss re-read.
+      unscopedMock.calendarEvent.findUnique.mockResolvedValueOnce(calendarEvent());
+      unscopedMock.calendarEvent.findUnique.mockResolvedValueOnce({
+        googleSyncStatus: "PENDING",
+      });
+
+      const outcome = await pushBookingEventToGoogle({
+        orgId: "org-a",
+        ownerId: "owner-1",
+        eventId: "evt-1",
+      });
+
+      expect(adapterMock.createEvent).not.toHaveBeenCalled();
+      expect(outcome).toBe("ambiguous");
+    });
+
+    it("D3: when the atomic claim loses because the row is already SYNCED, reports synced without calling Google", async () => {
+      unscopedMock.calendarEvent.findUnique.mockResolvedValueOnce(calendarEvent());
+      unscopedMock.calendarEvent.updateMany.mockResolvedValue({ count: 0 });
+      unscopedMock.calendarEvent.findUnique.mockResolvedValueOnce({ googleSyncStatus: "SYNCED" });
+
+      const outcome = await pushBookingEventToGoogle({
+        orgId: "org-a",
+        ownerId: "owner-1",
+        eventId: "evt-1",
+      });
+
+      expect(adapterMock.createEvent).not.toHaveBeenCalled();
+      expect(outcome).toBe("synced");
+    });
+  });
 });
 
 describe("cancelBookingEventOnGoogle", () => {
@@ -272,5 +339,53 @@ describe("cancelBookingEventOnGoogle", () => {
 
     const outcome = await cancelBookingEventOnGoogle({ eventId: "evt-1" });
     expect(outcome).toBe("ambiguous");
+  });
+
+  describe("PENDING state transition (P2 Fix 2/D3)", () => {
+    function syncedRow() {
+      return calendarEvent({
+        googleSyncStatus: "SYNCED",
+        externalCalendarId: "extcal-1",
+        externalId: "google-evt-1",
+      });
+    }
+
+    beforeEach(() => {
+      unscopedMock.externalCalendar.findUnique.mockResolvedValue({
+        externalId: "google-primary",
+        connectionId: "conn-1",
+        connection: { userId: "owner-1" },
+      });
+    });
+
+    it("claims PENDING (SYNCED -> PENDING) via the atomic guarded UPDATE BEFORE calling Google", async () => {
+      unscopedMock.calendarEvent.findUnique.mockResolvedValue(syncedRow());
+      const callOrder: string[] = [];
+      unscopedMock.calendarEvent.updateMany.mockImplementationOnce(async () => {
+        callOrder.push("claim-pending");
+        return { count: 1 };
+      });
+      adapterMock.cancelEvent.mockImplementationOnce(async () => {
+        callOrder.push("call-google");
+      });
+
+      await cancelBookingEventOnGoogle({ eventId: "evt-1" });
+
+      expect(callOrder).toEqual(["claim-pending", "call-google"]);
+      expect(unscopedMock.calendarEvent.updateMany).toHaveBeenCalledWith({
+        where: { id: "evt-1", googleSyncStatus: "SYNCED" },
+        data: { googleSyncStatus: "PENDING", googleSyncError: null },
+      });
+    });
+
+    it("D3: when the atomic claim loses (a concurrent cancel already claimed it), never calls Google a second time", async () => {
+      unscopedMock.calendarEvent.findUnique.mockResolvedValue(syncedRow());
+      unscopedMock.calendarEvent.updateMany.mockResolvedValue({ count: 0 });
+
+      const outcome = await cancelBookingEventOnGoogle({ eventId: "evt-1" });
+
+      expect(adapterMock.cancelEvent).not.toHaveBeenCalled();
+      expect(outcome).toBe("not_applicable");
+    });
   });
 });

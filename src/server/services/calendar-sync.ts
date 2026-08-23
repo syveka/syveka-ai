@@ -68,12 +68,44 @@ async function applyRemoteEvent(
   remote: ExternalEvent,
   source: "GOOGLE" | "OUTLOOK",
 ): Promise<"created" | "updated" | "skipped"> {
-  const existing = await unscopedPrisma.calendarEvent.findUnique({
+  let existing = await unscopedPrisma.calendarEvent.findUnique({
     where: {
       externalCalendarId_externalId: { externalCalendarId, externalId: remote.externalId },
     },
     select: { id: true, externalEtag: true, updatedAt: true, deletedAt: true },
   });
+
+  // Outbound-push/inbound-sync duplicate race guard (P2 fix): a
+  // Syveka-originated event can be reported back by an inbound sync/webhook
+  // before pushBookingEventToGoogle's own follow-up write links it by
+  // (externalCalendarId, externalId) - or, in the crash-window case, that
+  // write may never happen at all. remote.correlationId (Google's
+  // extendedProperties.private, round-tripped) tells us this remote event
+  // is actually OUR row, just not yet linked, instead of a genuinely new
+  // external event - so we UPDATE (and link) that row instead of creating
+  // a duplicate. Org-scoped as defense in depth even though the id is only
+  // ever populated from our own prior push. Falls through to the normal
+  // create-new-row path (never weakened) whenever there is no correlation
+  // match - the overwhelming majority of real inbound events, which never
+  // carry this property at all.
+  let linkage: { externalCalendarId?: string; externalId?: string } = {};
+  if (!existing && remote.correlationId) {
+    const correlated = await unscopedPrisma.calendarEvent.findUnique({
+      where: { id: remote.correlationId },
+      select: {
+        id: true,
+        organizationId: true,
+        externalId: true,
+        externalEtag: true,
+        updatedAt: true,
+        deletedAt: true,
+      },
+    });
+    if (correlated && correlated.organizationId === orgId && !correlated.externalId) {
+      existing = correlated;
+      linkage = { externalCalendarId, externalId: remote.externalId };
+    }
+  }
 
   const data = {
     title: remote.title,
@@ -115,7 +147,10 @@ async function applyRemoteEvent(
     return "skipped"; // no remote change
   }
 
-  await unscopedPrisma.calendarEvent.update({ where: { id: existing.id }, data });
+  await unscopedPrisma.calendarEvent.update({
+    where: { id: existing.id },
+    data: { ...data, ...linkage },
+  });
   return "updated";
 }
 
@@ -358,21 +393,42 @@ async function findGooglePushTarget(
  * Push-creates a Syveka-originated booking's CalendarEvent on the owner's
  * connected Google Calendar, if any. Best-effort: never throws — a failed or
  * ambiguous push does not fail the booking (see the `GoogleSyncStatus` enum
- * doc comment in prisma/schema.prisma). Idempotent: a CalendarEvent already
- * SYNCED is not re-pushed.
+ * doc comment in prisma/schema.prisma).
+ *
+ * State machine: NOT_APPLICABLE/FAILED/AMBIGUOUS -> PENDING -> SYNCED |
+ * FAILED | AMBIGUOUS. The NOT_APPLICABLE/FAILED/AMBIGUOUS -> PENDING step is
+ * an ATOMIC CLAIM (a guarded `updateMany`, not a read-then-write check) taken
+ * immediately before calling Google: idempotent AND race-safe — a
+ * CalendarEvent already SYNCED or already PENDING is never re-pushed, and
+ * two genuinely concurrent callers for the same event can never both win the
+ * claim, so at most one ever calls `adapter.createEvent`. PENDING is also
+ * this function's crash-window marker: if the process dies after Google
+ * succeeds but before the SYNCED write below commits, the row is left
+ * visibly PENDING (an unresolved attempt) rather than indistinguishable
+ * from "never attempted." PENDING does NOT by itself reconcile that crash
+ * window — nothing auto-resolves a stuck PENDING row (see below).
  *
  * On success, `externalCalendarId`/`externalId` are set to the SAME columns
  * the inbound sync (`applyRemoteEvent` above) keys its
  * upsert-by-(externalCalendarId, externalId) on — so the next inbound sync
  * of this calendar matches this row and UPDATEs it instead of importing a
- * second, duplicate CalendarEvent. This is the mechanism that keeps
- * outbound push and inbound sync from ever producing a duplicate.
+ * second, duplicate CalendarEvent. `correlationId` (Google
+ * extendedProperties, see google.ts) closes the remaining gap: an inbound
+ * sync that arrives BEFORE this function's own SYNCED write commits (a real
+ * race — Google's webhook can fire before our own follow-up write lands)
+ * still recognizes the remote event as ours via `applyRemoteEvent`'s
+ * correlation-id fallback, instead of creating a duplicate row.
  *
  * NO automatic retry on FAILED or AMBIGUOUS: a caller-initiated retry (e.g.
  * a human clicking "retry" after inspecting the failure) is safe; a
  * background job blindly retrying is not, because an AMBIGUOUS outcome
  * means we do not know whether the first attempt actually created the event
  * on Google — retrying it automatically could create a second one there.
+ * The atomic claim above prevents two SIMULTANEOUS invocations from both
+ * calling Google, but does not by itself make an eventual retry mechanism
+ * safe to build without also reconciling against Google's actual state
+ * first — a stuck PENDING/FAILED/AMBIGUOUS row can still be retried later
+ * by a human, sequentially, same as before this hardening.
  */
 export async function pushBookingEventToGoogle(params: {
   orgId: string;
@@ -422,6 +478,33 @@ export async function pushBookingEventToGoogle(params: {
     return "failed";
   }
 
+  // Atomically claim this push immediately before the network call (D2/D3
+  // fix). This is a real serialization primitive, not a read-then-write
+  // check: two callers racing this single guarded UPDATE rely on
+  // Postgres's row-level lock on `event.id` to let only one of them
+  // transition into PENDING, so at most one ever calls adapter.createEvent
+  // for this event — the loser backs off instead of risking a second
+  // Google event. It also plants the crash-window marker (state machine:
+  // NOT_APPLICABLE/FAILED/AMBIGUOUS -> PENDING -> SYNCED/FAILED/AMBIGUOUS)
+  // *before* the call below, so a process crash between Google succeeding
+  // and our own persistence leaves a visibly unresolved PENDING row
+  // instead of one indistinguishable from "never attempted." PENDING does
+  // NOT by itself resolve that crash window — nothing reconciles a stuck
+  // PENDING row automatically; see this function's top doc comment.
+  const claimed = await unscopedPrisma.calendarEvent.updateMany({
+    where: { id: event.id, googleSyncStatus: { notIn: ["PENDING", "SYNCED"] } },
+    data: { googleSyncStatus: "PENDING", googleSyncError: null },
+  });
+  if (claimed.count === 0) {
+    const current = await unscopedPrisma.calendarEvent.findUnique({
+      where: { id: event.id },
+      select: { googleSyncStatus: true },
+    });
+    // Someone else's concurrent call already claimed (or completed) this
+    // push. Never call Google a second time for the same event.
+    return current?.googleSyncStatus === "SYNCED" ? "synced" : "ambiguous";
+  }
+
   try {
     const result = await adapter.createEvent(tokens, target.calendarExternalId, {
       title: event.title,
@@ -430,6 +513,7 @@ export async function pushBookingEventToGoogle(params: {
       startsAt: event.startsAt,
       endsAt: event.endsAt,
       timezone: event.timezone,
+      correlationId: event.id,
     });
     await unscopedPrisma.calendarEvent.update({
       where: { id: event.id },
@@ -461,8 +545,16 @@ export async function pushBookingEventToGoogle(params: {
 
 /**
  * Push-cancels a previously push-created event. No-op (returns
- * "not_applicable") if the event was never synced to Google. Same
- * no-auto-retry contract as pushBookingEventToGoogle — see its doc comment.
+ * "not_applicable") if the event was never synced to Google, or if a
+ * concurrent call already claimed/handled it.
+ *
+ * State machine: SYNCED -> PENDING -> NOT_APPLICABLE (canceled, reset to
+ * the "no active push" state) | FAILED | AMBIGUOUS. The SYNCED -> PENDING
+ * step is an atomic claim (guarded `updateMany`, not a read-then-write
+ * check) taken immediately before calling Google, same mechanism and same
+ * crash-window/race-safety rationale as pushBookingEventToGoogle's own
+ * NOT_APPLICABLE/FAILED/AMBIGUOUS -> PENDING claim — see its doc comment.
+ * Same no-auto-retry contract too.
  */
 export async function cancelBookingEventOnGoogle(params: {
   eventId: string;
@@ -496,6 +588,17 @@ export async function cancelBookingEventOnGoogle(params: {
     await markCalendarEventPush(event.id, "FAILED", errorMessage(e));
     return "failed";
   }
+
+  // Atomic claim (same D2/D3 pattern as pushBookingEventToGoogle): only a
+  // still-SYNCED row can be claimed, and the guarded UPDATE's row-level
+  // lock means two concurrent cancel-push attempts for the same event can
+  // never both call Google. State machine: SYNCED -> PENDING -> NOT_
+  // APPLICABLE (canceled) | FAILED | AMBIGUOUS.
+  const claimed = await unscopedPrisma.calendarEvent.updateMany({
+    where: { id: event.id, googleSyncStatus: "SYNCED" },
+    data: { googleSyncStatus: "PENDING", googleSyncError: null },
+  });
+  if (claimed.count === 0) return "not_applicable"; // already claimed/handled concurrently
 
   try {
     await adapter.cancelEvent(tokens, externalCalendar.externalId, event.externalId);

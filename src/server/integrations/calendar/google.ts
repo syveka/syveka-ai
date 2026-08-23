@@ -50,6 +50,17 @@ async function googleFetch<T>(url: string, accessToken: string, init?: RequestIn
   return (await res.json()) as T;
 }
 
+/**
+ * Private extended-property key we stamp on every event we push-create, so
+ * a later inbound sync can recognize it as ours before our own outbound
+ * code has linked it by (externalCalendarId, externalId) — see
+ * ExternalEvent.correlationId's doc comment and calendar-sync.ts's
+ * applyRemoteEvent. Google's `extendedProperties.private` values are only
+ * ever visible to/editable by the application that set them, so this can't
+ * be spoofed by another app or a manual Google Calendar edit.
+ */
+const CORRELATION_PROPERTY_KEY = "syvekaEventId";
+
 type GoogleEvent = {
   id: string;
   etag?: string;
@@ -60,6 +71,7 @@ type GoogleEvent = {
   start?: { date?: string; dateTime?: string };
   end?: { date?: string; dateTime?: string };
   attendees?: Array<{ email?: string; displayName?: string }>;
+  extendedProperties?: { private?: Record<string, string> };
 };
 
 function mapEvent(e: GoogleEvent): ExternalEvent | { deletedId: string } {
@@ -78,6 +90,7 @@ function mapEvent(e: GoogleEvent): ExternalEvent | { deletedId: string } {
     allDay,
     status: e.status === "tentative" ? "tentative" : "confirmed",
     attendees: (e.attendees ?? []).map((a) => ({ email: a.email, name: a.displayName })),
+    correlationId: e.extendedProperties?.private?.[CORRELATION_PROPERTY_KEY],
   };
 }
 
@@ -301,6 +314,7 @@ export const googleCalendarAdapter: CalendarProviderAdapter = {
           location: event.location,
           start: { dateTime: event.startsAt.toISOString(), timeZone: event.timezone },
           end: { dateTime: event.endsAt.toISOString(), timeZone: event.timezone },
+          extendedProperties: { private: { [CORRELATION_PROPERTY_KEY]: event.correlationId } },
         }),
       },
     );
