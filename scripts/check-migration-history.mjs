@@ -29,6 +29,7 @@ const expectedOrder = [
   "20260818000000_workflow_run_source_event_key",
   "20260818010000_workflow_step_execution",
   "20260823000000_unified_booking_lifecycle_google_push",
+  "20260823010000_booking_types_ai_default_unique_index",
 ];
 
 // These eight migrations were published before the staging-release branch.

@@ -942,9 +942,15 @@ model BookingType {
   /// The single BookingType the AI voice tool (bookMeeting) books into for this
   /// org. Never inferred from an AI-spoken service name — see
   /// src/server/services/booking.ts's resolveAiDefaultBookingType(). At most one
-  /// per org, enforced in application code (saveBookingType), mirroring
-  /// AvailabilitySchedule.isDefault's existing pattern rather than a DB
-  /// constraint.
+  /// per org: serialized in application code via an advisory lock
+  /// (lockAiDefaultBookingType, src/server/calendar/locks.ts, in
+  /// saveBookingType) AND backstopped at the database layer by a partial
+  /// unique index — "booking_types_organization_id_is_ai_booking_default_key"
+  /// ON booking_types (organization_id) WHERE is_ai_booking_default = true,
+  /// migration 20260823010000_booking_types_ai_default_unique_index. Prisma's
+  /// schema DSL has no syntax for a partial (WHERE-qualified) unique index —
+  /// like this repo's RLS policies, that constraint exists only in raw
+  /// migration SQL, never as a directive here.
   isAiBookingDefault  Boolean      @default(false) @map("is_ai_booking_default")
   createdAt           DateTime     @default(now()) @map("created_at")
   updatedAt           DateTime     @updatedAt @map("updated_at")

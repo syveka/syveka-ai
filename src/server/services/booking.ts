@@ -136,7 +136,28 @@ export async function saveBookingType(
       ? await unscopedPrisma.$transaction(async (tx) => {
           await lockAiDefaultBookingType(tx, ctx.orgId);
 
-          const row = bookingTypeId
+          // Clear any other current default FIRST, before claiming the new
+          // one. Required now that the DB-level partial unique index
+          // (booking_types_organization_id_is_ai_booking_default_key,
+          // migration 20260823010000) exists: a non-deferrable unique index
+          // is checked immediately per statement, so briefly having two
+          // true rows in this org - the old one still true at the instant
+          // the new one is set true - would violate it even though the
+          // transaction's net effect is a single true row. Clearing first
+          // means at most one row is ever true, at any instant, inside this
+          // transaction. Still inside the lock: no concurrent claim in this
+          // org can observe or race this cleanup - see
+          // lockAiDefaultBookingType.
+          await tx.bookingType.updateMany({
+            where: {
+              organizationId: ctx.orgId,
+              isAiBookingDefault: true,
+              ...(bookingTypeId ? { id: { not: bookingTypeId } } : {}),
+            },
+            data: { isAiBookingDefault: false },
+          });
+
+          return bookingTypeId
             ? await tx.bookingType.update({
                 where: { id: bookingTypeId, organizationId: ctx.orgId },
                 data: { ...data, organizationId: ctx.orgId },
@@ -144,14 +165,6 @@ export async function saveBookingType(
             : await tx.bookingType.create({
                 data: { ...data, organizationId: ctx.orgId, ownerId: ctx.userId },
               });
-
-          // Still inside the lock: no concurrent claim in this org can
-          // observe or race this cleanup - see lockAiDefaultBookingType.
-          await tx.bookingType.updateMany({
-            where: { organizationId: ctx.orgId, id: { not: row.id }, isAiBookingDefault: true },
-            data: { isAiBookingDefault: false },
-          });
-          return row;
         })
       : bookingTypeId
         ? await db.bookingType.update({ where: { id: bookingTypeId }, data })

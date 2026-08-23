@@ -577,24 +577,31 @@ describe("saveBookingType — isAiBookingDefault enforcement (P2 Fix 1: race-saf
     );
   });
 
-  it("setting the first AI default: acquires the lock BEFORE writing the claim and BEFORE the cleanup - proves real ordering, not just that cleanup ran", async () => {
+  it("setting the first AI default: acquires the lock, THEN clears any other default, THEN claims the new one - proves real ordering, not just that cleanup ran", async () => {
     const callOrder: string[] = [];
     txMock.$executeRaw.mockImplementationOnce(async () => {
       callOrder.push("lock");
       return 0;
     });
-    txMock.bookingType.create.mockImplementationOnce(async () => {
-      callOrder.push("create");
-      return { id: "bt-new" };
-    });
     txMock.bookingType.updateMany.mockImplementationOnce(async () => {
       callOrder.push("cleanup");
       return { count: 0 };
     });
+    txMock.bookingType.create.mockImplementationOnce(async () => {
+      callOrder.push("create");
+      return { id: "bt-new" };
+    });
 
     await saveBookingType(ctx(), bookingTypeInput({ isAiBookingDefault: true }));
 
-    expect(callOrder).toEqual(["lock", "create", "cleanup"]);
+    // Cleanup MUST run before the claim, not after: once the DB-level
+    // partial unique index (booking_types_organization_id_is_ai_booking_
+    // default_key) exists, a non-deferrable unique index is checked
+    // immediately per statement - claiming the new default before clearing
+    // the old one would briefly leave two rows true in the same
+    // transaction and fail with a constraint violation. Proven against
+    // real Postgres in tests/integration/ai-default-booking-type-unique-index.sh.
+    expect(callOrder).toEqual(["lock", "cleanup", "create"]);
     // Lock key must be the trusted ctx.orgId, not anything client-supplied.
     expect(txMock.$executeRaw).toHaveBeenCalledWith(expect.anything(), "org-a");
   });
