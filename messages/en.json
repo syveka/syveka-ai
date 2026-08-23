@@ -413,6 +413,7 @@
       "collectPhone": "Ask for phone",
       "collectCompany": "Ask for company",
       "confirmationMessage": "Confirmation message",
+      "aiBookingDefault": "Use for AI/voice bookings",
       "slugTaken": "This URL slug is already in use"
     }
   },

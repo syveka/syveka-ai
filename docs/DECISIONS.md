@@ -228,6 +228,70 @@ validate`/`generate`, migration history check) after the override, all passing. 
     response is lost before `completeStep()` runs, and that provider has no idempotency support (or
     the key's retention window has lapsed), the outcome is truly ambiguous — this is an inherent
     limit of distributed side effects, not something this fix papers over.
+- **Unified booking lifecycle (P2, 2026-08-23): voice bookings now produce a real `Booking`, not
+  just a bare `CalendarEvent`, and creation/cancellation push to the owner's connected Google
+  Calendar.** Prior state: the `bookMeeting` AI tool (`src/server/ai/tools/index.ts`) created only a
+  `CalendarEvent` — no `Booking`, so it never entered the confirmation-email/reminder pipeline
+  (`sendBookingLifecycleNotifications`/`scheduleEventReminders`, both wired only to the public
+  web-booking routes) — and no `CalendarProviderAdapter` had any write method at all, so an
+  AI-booked or web-booked appointment never appeared on the business's actual Google Calendar
+  despite the OAuth connection already requesting write scope (`calendar.events`, unused until now).
+  - **Explicit pilot-default `BookingType`, never inferred from an AI-spoken service name.**
+    `BookingType.isAiBookingDefault` (new column) marks the one `BookingType` `bookMeeting` books
+    into; `resolveAiDefaultBookingType()` (`src/server/services/booking.ts`) fails loudly with a
+    `BookingError("ai_booking_type_not_configured", ...)` — surfaced to the model as a tool error,
+    not guessed — when an org hasn't configured one. "At most one default per org" is enforced in
+    `saveBookingType()`, application-code-side, mirroring `AvailabilitySchedule.isDefault`'s
+    existing pattern rather than adding a DB constraint.
+  - **`bookMeeting` now branches on `ToolIdentity.actorType`.** The tool is shared with the in-app
+    AI chat (`actorType: "user"`), which has no "guest" concept and must keep its existing
+    bare-`CalendarEvent` behavior unchanged (an internal, non-customer meeting shouldn't require a
+    guest email or a public `BookingType`). Only the `actorType: "voice_ai"` path was changed:
+    `createVoiceBooking()` (`src/server/services/booking.ts`) creates the same
+    `Booking`+`CalendarEvent`+`Contact`/`EventAttendee` shape `createPublicBooking` does, so voice
+    bookings flow through the exact same confirmation/reminder/cancellation code as guest web
+    bookings. `guestName`/`guestEmail` are optional at the shared Zod schema level (so the chat path
+    is unaffected) but required inside the voice branch — missing either returns a
+    `missing_guest_details` tool result asking the model to collect them, rather than silently
+    proceeding without a way to confirm the appointment (there is no SMS provider in this codebase,
+    so email is the only channel available for a voice-booked confirmation).
+  - **Deliberately still uses `lockOrgCalendar()` + an org-wide conflict check, not
+    `bookingType.ownerId`-scoped.** Unifying voice's shared-calendar model with the guest flow's
+    per-owner, buffered model (the gap already noted above under `lockOrgCalendar()`'s entry) is
+    out of scope for this change — only the default `BookingType`'s _identity_ (name/location for
+    notifications, `ownerId` for the Google push target) is borrowed, not its
+    schedule/buffer/window fields. That gap is unchanged and still open.
+  - **Outbound Google push (`pushBookingEventToGoogle`/`cancelBookingEventOnGoogle`,
+    `src/server/services/calendar-sync.ts`) is create/cancel only — reschedule push is explicitly
+    out of scope** (a separate follow-up PR). Both functions are best-effort and never throw: a
+    failed or ambiguous push never fails the booking itself. Google-only for now (`createEvent`/
+    `cancelEvent` are optional on `CalendarProviderAdapter`; Microsoft's adapter doesn't implement
+    them, so a Microsoft-connected org's bookings simply aren't pushed — silently, not an error).
+  - **No attendees are sent on the pushed Google event, deliberately** — Google would otherwise
+    auto-email the guest a calendar invite from the business's own account, duplicating (and
+    potentially conflicting with) Syveka's own confirmation email. The pushed event exists purely
+    so the calendar owner sees the appointment where they actually look.
+  - **Duplicate-prevention mechanism: outbound push reuses the exact same `externalCalendarId`/
+    `externalId` columns the inbound sync's `applyRemoteEvent()` upsert key already uses.** On a
+    successful push, those columns are set to the Google-assigned event id; the next inbound sync
+    of that calendar then matches this row by `(externalCalendarId, externalId)` and UPDATEs it
+    instead of importing a second, duplicate `CalendarEvent`. No new dedup mechanism was invented.
+  - **FAILED vs. AMBIGUOUS classification, and why nothing auto-retries either.** A
+    `ProviderError` (Google responded — even a 5xx counts, since a synchronous REST `events.insert`
+    non-2xx response means no event was created) is classified FAILED. Anything else — `fetch`
+    itself throwing (DNS failure, connection reset, abort) — means no response was ever received,
+    so it is impossible to know whether Google actually created the event before the failure:
+    classified AMBIGUOUS. Both are recorded on `CalendarEvent.googleSyncStatus`/`googleSyncError`
+    and **never automatically retried** — retrying an AMBIGUOUS outcome could create a duplicate
+    event on Google if the first attempt actually succeeded. Nothing in this codebase re-invokes
+    either push function on a recurring/background basis (no cron, no queue re-enqueue on
+    failure) — the guarantee holds structurally, not by a suppressed-retry flag. A future
+    human-triggered "retry this push" admin action would be safe to add; a background sweep would
+    not be, without first adding a real reconciliation check against Google's own state.
+  - **Not done in this change (see the P2 completion report for the full list):** reschedule push;
+    unifying `lockOrgCalendar`/`lockOwnerCalendar`'s lock domains; a Microsoft push implementation;
+    SMS-based voice confirmation; pushing manually-created (non-`BookingType`) dashboard calendar
+    events; an admin UI to retry a FAILED/AMBIGUOUS push.
 
 ## Standing engineering conventions (from `README.md`, verified still enforced)
 

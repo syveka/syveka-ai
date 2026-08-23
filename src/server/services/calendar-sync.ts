@@ -322,3 +322,210 @@ export async function handleProviderWebhook(params: {
   await syncExternalCalendar(state.externalCalendarId);
   return true;
 }
+
+// ── Outbound push (P2: unified booking lifecycle) ────────────────────────
+
+export type PushOutcome = "not_applicable" | "synced" | "failed" | "ambiguous";
+
+/**
+ * Finds the calendar owner's connected, primary Google calendar, if any.
+ * Returns null when there is none — callers must treat that as "skip the
+ * push, the booking still succeeds" rather than an error: Google Calendar
+ * sync is an optional enhancement to a booking, never a precondition for it.
+ */
+async function findGooglePushTarget(
+  orgId: string,
+  ownerId: string,
+): Promise<{ connectionId: string; calendarExternalId: string; calendarId: string } | null> {
+  const connection = await unscopedPrisma.calendarConnection.findFirst({
+    where: { organizationId: orgId, userId: ownerId, provider: "GOOGLE", status: "CONNECTED" },
+    select: { id: true },
+  });
+  if (!connection) return null;
+  const calendar = await unscopedPrisma.externalCalendar.findFirst({
+    where: { connectionId: connection.id, isPrimary: true },
+    select: { id: true, externalId: true },
+  });
+  if (!calendar) return null;
+  return {
+    connectionId: connection.id,
+    calendarExternalId: calendar.externalId,
+    calendarId: calendar.id,
+  };
+}
+
+/**
+ * Push-creates a Syveka-originated booking's CalendarEvent on the owner's
+ * connected Google Calendar, if any. Best-effort: never throws — a failed or
+ * ambiguous push does not fail the booking (see the `GoogleSyncStatus` enum
+ * doc comment in prisma/schema.prisma). Idempotent: a CalendarEvent already
+ * SYNCED is not re-pushed.
+ *
+ * On success, `externalCalendarId`/`externalId` are set to the SAME columns
+ * the inbound sync (`applyRemoteEvent` above) keys its
+ * upsert-by-(externalCalendarId, externalId) on — so the next inbound sync
+ * of this calendar matches this row and UPDATEs it instead of importing a
+ * second, duplicate CalendarEvent. This is the mechanism that keeps
+ * outbound push and inbound sync from ever producing a duplicate.
+ *
+ * NO automatic retry on FAILED or AMBIGUOUS: a caller-initiated retry (e.g.
+ * a human clicking "retry" after inspecting the failure) is safe; a
+ * background job blindly retrying is not, because an AMBIGUOUS outcome
+ * means we do not know whether the first attempt actually created the event
+ * on Google — retrying it automatically could create a second one there.
+ */
+export async function pushBookingEventToGoogle(params: {
+  orgId: string;
+  ownerId: string;
+  eventId: string;
+}): Promise<PushOutcome> {
+  const event = await unscopedPrisma.calendarEvent.findUnique({
+    where: { id: params.eventId },
+    select: {
+      id: true,
+      organizationId: true,
+      title: true,
+      description: true,
+      location: true,
+      startsAt: true,
+      endsAt: true,
+      timezone: true,
+      googleSyncStatus: true,
+      deletedAt: true,
+    },
+  });
+  if (!event || event.organizationId !== params.orgId || event.deletedAt) {
+    return "not_applicable";
+  }
+  if (event.googleSyncStatus === "SYNCED") return "synced"; // already pushed — idempotent no-op
+
+  const target = await findGooglePushTarget(params.orgId, params.ownerId);
+  if (!target) {
+    // No connected Google calendar — this is the common, expected case for
+    // a pilot org that hasn't connected Google yet. Leave googleSyncStatus
+    // at its NOT_APPLICABLE default; nothing to write.
+    return "not_applicable";
+  }
+
+  const adapter = getProviderAdapter("GOOGLE");
+  if (typeof adapter.createEvent !== "function") return "not_applicable";
+
+  let tokens;
+  try {
+    tokens = await getFreshTokens(target.connectionId, params.orgId);
+  } catch (e) {
+    // A definitive failure to even obtain valid credentials (e.g. no refresh
+    // token, refresh rejected) — getFreshTokens already recorded
+    // NEEDS_REAUTH on the connection. No request was ever sent to Google, so
+    // this is FAILED, not AMBIGUOUS.
+    await markCalendarEventPush(event.id, "FAILED", errorMessage(e));
+    return "failed";
+  }
+
+  try {
+    const result = await adapter.createEvent(tokens, target.calendarExternalId, {
+      title: event.title,
+      description: event.description ?? undefined,
+      location: event.location ?? undefined,
+      startsAt: event.startsAt,
+      endsAt: event.endsAt,
+      timezone: event.timezone,
+    });
+    await unscopedPrisma.calendarEvent.update({
+      where: { id: event.id },
+      data: {
+        externalCalendarId: target.calendarId,
+        externalId: result.externalId,
+        externalEtag: result.etag ?? null,
+        googleSyncStatus: "SYNCED",
+        googleSyncError: null,
+      },
+    });
+    return "synced";
+  } catch (e) {
+    // A ProviderError means Google responded with a definitive error (or we
+    // got a clean 401/429/4xx/5xx) — we know for certain no event was
+    // created. Anything else (fetch itself throwing: DNS failure, connection
+    // reset, abort) means we never got a response at all, so we cannot tell
+    // whether Google actually created the event before the failure —
+    // AMBIGUOUS, and per this function's contract, never auto-retried.
+    const outcome: PushOutcome = e instanceof ProviderError ? "failed" : "ambiguous";
+    await markCalendarEventPush(
+      event.id,
+      outcome === "failed" ? "FAILED" : "AMBIGUOUS",
+      errorMessage(e),
+    );
+    return outcome;
+  }
+}
+
+/**
+ * Push-cancels a previously push-created event. No-op (returns
+ * "not_applicable") if the event was never synced to Google. Same
+ * no-auto-retry contract as pushBookingEventToGoogle — see its doc comment.
+ */
+export async function cancelBookingEventOnGoogle(params: {
+  eventId: string;
+}): Promise<PushOutcome> {
+  const event = await unscopedPrisma.calendarEvent.findUnique({
+    where: { id: params.eventId },
+    select: {
+      id: true,
+      organizationId: true,
+      externalCalendarId: true,
+      externalId: true,
+      googleSyncStatus: true,
+    },
+  });
+  if (!event || !event.externalCalendarId || !event.externalId) return "not_applicable";
+  if (event.googleSyncStatus !== "SYNCED") return "not_applicable"; // never successfully pushed, or already handled
+
+  const externalCalendar = await unscopedPrisma.externalCalendar.findUnique({
+    where: { id: event.externalCalendarId },
+    select: { externalId: true, connectionId: true, connection: { select: { userId: true } } },
+  });
+  if (!externalCalendar) return "not_applicable";
+
+  const adapter = getProviderAdapter("GOOGLE");
+  if (typeof adapter.cancelEvent !== "function") return "not_applicable";
+
+  let tokens;
+  try {
+    tokens = await getFreshTokens(externalCalendar.connectionId, event.organizationId);
+  } catch (e) {
+    await markCalendarEventPush(event.id, "FAILED", errorMessage(e));
+    return "failed";
+  }
+
+  try {
+    await adapter.cancelEvent(tokens, externalCalendar.externalId, event.externalId);
+    await markCalendarEventPush(event.id, "NOT_APPLICABLE", null);
+    return "synced";
+  } catch (e) {
+    const outcome: PushOutcome = e instanceof ProviderError ? "failed" : "ambiguous";
+    await markCalendarEventPush(
+      event.id,
+      outcome === "failed" ? "FAILED" : "AMBIGUOUS",
+      errorMessage(e),
+    );
+    return outcome;
+  }
+}
+
+function errorMessage(e: unknown): string {
+  // Sanitized: error messages in this codebase's ProviderError/network paths
+  // never include tokens or headers (see google.ts) — only status codes and
+  // generic descriptions. Truncated defensively regardless.
+  const message = e instanceof Error ? e.message : "unknown error";
+  return message.slice(0, 500);
+}
+
+async function markCalendarEventPush(
+  eventId: string,
+  status: "FAILED" | "AMBIGUOUS" | "NOT_APPLICABLE",
+  error: string | null,
+): Promise<void> {
+  await unscopedPrisma.calendarEvent
+    .update({ where: { id: eventId }, data: { googleSyncStatus: status, googleSyncError: error } })
+    .catch(() => undefined);
+}

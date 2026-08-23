@@ -12,11 +12,13 @@ const {
   consumeTokenAtomicMock,
   invalidateBookingTokensMock,
   sendBookingLifecycleNotificationsMock,
+  cancelBookingEventOnGoogleMock,
+  pushBookingEventToGoogleMock,
 } = vi.hoisted(() => {
   const txMock = {
     $executeRaw: vi.fn(async () => 0),
     calendarEvent: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
-    contact: { findFirst: vi.fn(), create: vi.fn() },
+    contact: { findFirst: vi.fn(), findFirstOrThrow: vi.fn(), create: vi.fn() },
     eventAttendee: { create: vi.fn() },
     booking: {
       create: vi.fn(),
@@ -46,6 +48,8 @@ const {
     consumeTokenAtomicMock: vi.fn(async () => undefined),
     invalidateBookingTokensMock: vi.fn(async () => undefined),
     sendBookingLifecycleNotificationsMock: vi.fn(async () => undefined),
+    cancelBookingEventOnGoogleMock: vi.fn(async () => "not_applicable" as const),
+    pushBookingEventToGoogleMock: vi.fn(async () => "not_applicable" as const),
   };
 });
 
@@ -73,12 +77,17 @@ vi.mock("@/server/services/booking-tokens", () => ({
 vi.mock("@/server/services/booking-notifications", () => ({
   sendBookingLifecycleNotifications: sendBookingLifecycleNotificationsMock,
 }));
+vi.mock("@/server/services/calendar-sync", () => ({
+  cancelBookingEventOnGoogle: cancelBookingEventOnGoogleMock,
+  pushBookingEventToGoogle: pushBookingEventToGoogleMock,
+}));
 
 import {
   BookingError,
   cancelBookingAsOwner,
   cancelBookingViaToken,
   createPublicBooking,
+  createVoiceBooking,
   getPublicSlots,
   rescheduleBookingViaToken,
 } from "@/server/services/booking";
@@ -351,6 +360,144 @@ describe("createPublicBooking", () => {
     await expect(
       createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
     ).rejects.toMatchObject({ code: "invalid_slot" });
+  });
+});
+
+describe("createVoiceBooking (P2: unified booking lifecycle - bookMeeting's voice path)", () => {
+  function voiceInput(overrides: Record<string, unknown> = {}) {
+    return {
+      orgId: "org-a",
+      actorUserId: "owner-1",
+      title: "Haircut with Maria",
+      startsAt: VALID_START,
+      durationMinutes: 30,
+      timezone: "Europe/Helsinki",
+      guestName: "Maria Virtanen",
+      guestEmail: "maria@example.fi",
+      ...overrides,
+    };
+  }
+
+  beforeEach(() => {
+    unscopedMock.bookingType.findFirst.mockResolvedValue(
+      bookingType({ id: "bt-ai", name: "Haircut", ownerId: "owner-1", isAiBookingDefault: true }),
+    );
+    txMock.calendarEvent.create.mockResolvedValue({ id: "evt-voice-1" });
+    txMock.contact.findFirst.mockResolvedValue(null);
+    txMock.contact.create.mockResolvedValue({ id: "contact-voice-1" });
+    txMock.booking.create.mockResolvedValue({
+      id: "booking-voice-1",
+      startsAt: new Date(VALID_START),
+    });
+  });
+
+  it("fails loudly - never guesses a BookingType - when the org has no AI-default configured", async () => {
+    unscopedMock.bookingType.findFirst.mockResolvedValue(null);
+    await expect(createVoiceBooking(voiceInput())).rejects.toMatchObject({
+      code: "ai_booking_type_not_configured",
+    });
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("resolves the AI-default BookingType by isAiBookingDefault, never by guessing from a service name", async () => {
+    await createVoiceBooking(voiceInput());
+    expect(unscopedMock.bookingType.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          organizationId: "org-a",
+          isAiBookingDefault: true,
+          isActive: true,
+          deletedAt: null,
+        },
+      }),
+    );
+  });
+
+  it("books: creates a real Booking + CalendarEvent(source VOICE_AI) + EventAttendee + CRM activity, issues a manage token, audits as booking.create, emits booking.created", async () => {
+    const result = await createVoiceBooking(voiceInput());
+
+    expect(txMock.calendarEvent.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          organizationId: "org-a",
+          title: "Haircut with Maria",
+          source: "VOICE_AI",
+        }),
+      }),
+    );
+    expect(txMock.eventAttendee.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({ email: "maria@example.fi", name: "Maria Virtanen" }),
+      }),
+    );
+    expect(txMock.booking.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          bookingTypeId: "bt-ai",
+          guestName: "Maria Virtanen",
+          guestEmail: "maria@example.fi",
+        }),
+      }),
+    );
+    expect(auditMock).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: "org-a", userId: "owner-1" }),
+      expect.objectContaining({ action: "booking.create", actorType: "voice_ai" }),
+    );
+    expect(emitMock).toHaveBeenCalledWith(
+      "org-a",
+      "booking.created",
+      expect.anything(),
+      "booking-voice-1",
+    );
+    expect(result.manageToken).toBe("raw-manage-token");
+    expect(result.bookingType.ownerId).toBe("owner-1");
+  });
+
+  it("rejects a race: an org-wide conflict (same shared-calendar model bookMeeting has always used) blocks the write", async () => {
+    txMock.calendarEvent.findFirst.mockResolvedValue({ id: "conflicting-evt" });
+    await expect(createVoiceBooking(voiceInput())).rejects.toMatchObject({ code: "slot_taken" });
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("uses a caller-supplied contactId directly after a tenancy check, skipping contact find-or-create", async () => {
+    txMock.contact.findFirstOrThrow.mockResolvedValue({ id: "contact-existing" });
+    await createVoiceBooking(voiceInput({ contactId: "contact-existing" }));
+    expect(txMock.contact.findFirstOrThrow).toHaveBeenCalledWith({
+      where: { id: "contact-existing", organizationId: "org-a" },
+    });
+    expect(txMock.contact.findFirst).not.toHaveBeenCalled();
+    expect(txMock.contact.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a contactId that does not belong to the caller's organization", async () => {
+    txMock.contact.findFirstOrThrow.mockRejectedValue(new Error("No Contact found"));
+    await expect(
+      createVoiceBooking(voiceInput({ contactId: "cross-tenant-contact" })),
+    ).rejects.toThrow();
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("matches an existing contact by guest email instead of creating a duplicate", async () => {
+    txMock.contact.findFirst.mockResolvedValue({ id: "matched-contact" });
+    await createVoiceBooking(voiceInput());
+    expect(txMock.contact.create).not.toHaveBeenCalled();
+    expect(txMock.eventAttendee.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ contactId: "matched-contact" }) }),
+    );
+  });
+
+  it("creates a new CRM contact (source voice-ai) for a brand-new caller", async () => {
+    await createVoiceBooking(voiceInput({ guestPhone: "+358401234567" }));
+    expect(txMock.contact.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          organizationId: "org-a",
+          email: "maria@example.fi",
+          phone: "+358401234567",
+          source: "voice-ai",
+        }),
+      }),
+    );
   });
 });
 
@@ -642,6 +789,18 @@ describe("cancelBookingAsOwner", () => {
       bookingId: "bk-old",
     });
     expect(result.id).toBe("bk-old");
+  });
+
+  it("push-cancels the Google Calendar event after the DB cancellation commits (P2: unified booking lifecycle)", async () => {
+    await cancelBookingAsOwner(ownerCtx(), "bk-old");
+    expect(cancelBookingEventOnGoogleMock).toHaveBeenCalledWith({ eventId: "evt-old" });
+  });
+
+  it("never throws if the Google push-cancel itself fails - the DB cancellation has already committed", async () => {
+    cancelBookingEventOnGoogleMock.mockRejectedValueOnce(new Error("network failure"));
+    await expect(cancelBookingAsOwner(ownerCtx(), "bk-old")).resolves.toMatchObject({
+      id: "bk-old",
+    });
   });
 
   it("attributes the audit entry to the real owner, not a system actor (unlike the token path)", async () => {

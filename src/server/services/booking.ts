@@ -1,6 +1,6 @@
 import "server-only";
 
-import { Prisma } from "@prisma/client";
+import { Prisma, type Locale } from "@prisma/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { audit } from "./audit";
 import { emitWorkflowEvent } from "./workflow-events";
@@ -12,7 +12,7 @@ import {
   type WeeklyRule,
 } from "@/server/calendar/slots";
 import { isValidTimezone } from "@/server/calendar/timezone";
-import { lockContactEmail, lockOwnerCalendar } from "@/server/calendar/locks";
+import { lockContactEmail, lockOrgCalendar, lockOwnerCalendar } from "@/server/calendar/locks";
 import type { TenantContext } from "@/server/auth/session";
 import type { BookingTypeInput, PublicBookingInput } from "@/lib/validators/booking";
 
@@ -30,7 +30,8 @@ export class BookingError extends Error {
       | "slot_taken"
       | "invalid_slot"
       | "too_late"
-      | "already_canceled",
+      | "already_canceled"
+      | "ai_booking_type_not_configured",
   ) {
     super(message);
     this.name = "BookingError";
@@ -114,6 +115,7 @@ export async function saveBookingType(
     requiresConsent: input.requiresConsent,
     isActive: input.isActive,
     scheduleId: input.scheduleId ?? null,
+    isAiBookingDefault: input.isAiBookingDefault,
   };
 
   try {
@@ -122,6 +124,16 @@ export async function saveBookingType(
       : await db.bookingType.create({
           data: { ...data, organizationId: ctx.orgId, ownerId: ctx.userId },
         });
+
+    if (input.isAiBookingDefault) {
+      // Single AI-default per org, same pattern as AvailabilitySchedule.isDefault
+      // above (saveSchedule): enforced in application code, not a DB constraint.
+      await db.bookingType.updateMany({
+        where: { id: { not: result.id }, isAiBookingDefault: true },
+        data: { isAiBookingDefault: false },
+      });
+    }
+
     await audit(ctx, {
       action: bookingTypeId ? "booking_type.update" : "booking_type.create",
       resourceType: "booking_type",
@@ -496,6 +508,202 @@ export async function createPublicBooking(params: {
   return { ...created, manageToken, bookingType };
 }
 
+// ── Voice/AI booking path (bookMeeting tool) ─────────────────────────────
+
+export type VoiceBookingInput = {
+  orgId: string;
+  actorUserId: string;
+  title: string;
+  startsAt: string; // ISO
+  durationMinutes: number;
+  timezone: string;
+  guestName: string;
+  guestEmail: string;
+  guestPhone?: string;
+  notes?: string;
+  contactId?: string;
+  guestLocale?: Locale;
+};
+
+/**
+ * Resolves the org's single explicit AI-default BookingType. NEVER inferred
+ * from an AI-spoken service name (see BookingType.isAiBookingDefault's doc
+ * comment in prisma/schema.prisma) — fails loudly and clearly when unset,
+ * per the approved architectural constraint for this feature, rather than
+ * guessing which BookingType the voice assistant should book into.
+ */
+async function resolveAiDefaultBookingType(orgId: string) {
+  const bookingType = await unscopedPrisma.bookingType.findFirst({
+    where: { organizationId: orgId, isAiBookingDefault: true, isActive: true, deletedAt: null },
+  });
+  if (!bookingType) {
+    throw new BookingError(
+      "No AI-default booking type is configured for this organization. An owner must mark one " +
+        'Booking Type as "Use for AI/voice bookings" in Calendar → Booking Types before the ' +
+        "voice assistant can book appointments.",
+      "ai_booking_type_not_configured",
+    );
+  }
+  return bookingType;
+}
+
+/**
+ * Voice/AI booking creation (bookMeeting tool, src/server/ai/tools/index.ts).
+ * Produces the SAME `Booking` + `CalendarEvent` + `Contact`/`EventAttendee`
+ * shape as `createPublicBooking` above, so voice bookings flow through the
+ * exact same confirmation-email, reminder, and cancellation code as guest
+ * web bookings — one source of truth, not a parallel system.
+ *
+ * Deliberately reuses `lockOrgCalendar()` + an org-wide (not
+ * `bookingType.ownerId`-scoped) conflict check, matching bookMeeting's
+ * existing, unchanged concurrency model and `getCalendarAvailability`'s
+ * existing (also org-wide, bufferless) slot computation — see
+ * docs/DECISIONS.md's "AI tools intentionally treat the company calendar as
+ * one shared bookable resource" entry. Unifying that with the guest flow's
+ * per-owner, buffered model is out of scope for this change (see the P2
+ * completion report's "Unresolved issues" section); only the *default
+ * BookingType's identity* (name/location for notifications, ownerId for the
+ * Google push target) is borrowed here, not its schedule/buffer/window
+ * fields.
+ */
+export async function createVoiceBooking(input: VoiceBookingInput) {
+  const bookingType = await resolveAiDefaultBookingType(input.orgId);
+  const orgId = input.orgId;
+  const startsAt = new Date(input.startsAt);
+  const endsAt = new Date(startsAt.getTime() + input.durationMinutes * 60_000);
+
+  const created = await unscopedPrisma.$transaction(async (tx) => {
+    await lockOrgCalendar(tx, orgId);
+
+    const conflict = await tx.calendarEvent.findFirst({
+      where: {
+        organizationId: orgId,
+        deletedAt: null,
+        status: { not: "CANCELED" },
+        startsAt: { lt: endsAt },
+        endsAt: { gt: startsAt },
+      },
+      select: { id: true },
+    });
+    if (conflict) throw new BookingError("Slot no longer available", "slot_taken");
+
+    let contactId = input.contactId ?? null;
+    if (contactId) {
+      // Tenancy check: a model-supplied contactId is untrusted input and
+      // CalendarEvent.contactId has no DB-level FK (see docs/DECISIONS.md).
+      await tx.contact.findFirstOrThrow({ where: { id: contactId, organizationId: orgId } });
+    } else {
+      // Find-then-create, lock-guarded exactly like createPublicBooking's
+      // identical block above — same race, same fix.
+      await lockContactEmail(tx, orgId, input.guestEmail);
+      const matched = await tx.contact.findFirst({
+        where: { organizationId: orgId, email: input.guestEmail, deletedAt: null },
+        select: { id: true },
+      });
+      if (matched) {
+        contactId = matched.id;
+      } else {
+        const { firstName, lastName } = splitGuestName(input.guestName);
+        const createdContact = await tx.contact.create({
+          data: {
+            organizationId: orgId,
+            firstName,
+            lastName,
+            email: input.guestEmail,
+            phone: input.guestPhone ?? null,
+            source: "voice-ai",
+          },
+          select: { id: true },
+        });
+        contactId = createdContact.id;
+      }
+    }
+
+    const event = await tx.calendarEvent.create({
+      data: {
+        organizationId: orgId,
+        createdById: input.actorUserId,
+        title: input.title,
+        description: input.notes ?? null,
+        location: bookingType.location ?? null,
+        timezone: input.timezone,
+        startsAt,
+        endsAt,
+        contactId,
+        source: "VOICE_AI",
+      },
+    });
+
+    await tx.eventAttendee.create({
+      data: {
+        eventId: event.id,
+        contactId,
+        email: input.guestEmail,
+        name: input.guestName,
+        status: "ACCEPTED",
+      },
+    });
+
+    const booking = await tx.booking.create({
+      data: {
+        organizationId: orgId,
+        bookingTypeId: bookingType.id,
+        eventId: event.id,
+        guestName: input.guestName,
+        guestEmail: input.guestEmail,
+        guestPhone: input.guestPhone ?? null,
+        guestNotes: input.notes ?? null,
+        guestTimezone: input.timezone,
+        guestLocale: input.guestLocale ?? null,
+        startsAt,
+        endsAt,
+      },
+    });
+
+    await tx.activity.create({
+      data: {
+        organizationId: orgId,
+        contactId,
+        type: "MEETING",
+        subject: `Booking: ${bookingType.name}`,
+        body: `${input.guestName} (${input.guestEmail}) booked ${bookingType.name} via the AI voice assistant.`,
+        dueAt: startsAt,
+        metadata: { bookingId: booking.id, kind: "booked", via: "voice_ai" },
+      },
+    });
+
+    return { booking, event, contactId };
+  });
+
+  const manageToken = await issueToken(created.booking.id, "MANAGE");
+
+  await audit(
+    { orgId, userId: input.actorUserId },
+    {
+      action: "booking.create",
+      resourceType: "booking",
+      resourceId: created.booking.id,
+      actorType: "voice_ai",
+      after: { guestEmail: input.guestEmail, startsAt: startsAt.toISOString() },
+    },
+  ).catch(() => undefined);
+
+  await emitWorkflowEvent(
+    orgId,
+    "booking.created",
+    {
+      bookingId: created.booking.id,
+      bookingType: bookingType.name,
+      guestName: input.guestName,
+      guestEmail: input.guestEmail,
+      startsAt: startsAt.toISOString(),
+    },
+    created.booking.id,
+  ).catch(() => undefined);
+
+  return { ...created, manageToken, bookingType };
+}
+
 // ── Cancel / reschedule via secure tokens ────────────────────────────────
 
 export async function getBookingByToken(raw: string) {
@@ -663,6 +871,14 @@ export async function cancelBookingAsOwner(ctx: TenantContext, bookingId: string
   await sendBookingLifecycleNotifications({ kind: "cancellation", bookingId: booking.id }).catch(
     () => undefined,
   );
+
+  // Best-effort Google push-cancel (P2: unified booking lifecycle). Never
+  // throws (see cancelBookingEventOnGoogle's contract) and never blocks the
+  // cancellation, which has already committed above.
+  if (booking.eventId) {
+    const { cancelBookingEventOnGoogle } = await import("./calendar-sync");
+    await cancelBookingEventOnGoogle({ eventId: booking.eventId }).catch(() => undefined);
+  }
 
   return booking;
 }

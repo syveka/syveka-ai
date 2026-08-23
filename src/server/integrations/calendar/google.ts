@@ -3,6 +3,8 @@ import "server-only";
 import {
   ProviderError,
   type CalendarProviderAdapter,
+  type CreateEventInput,
+  type CreateEventResult,
   type ExternalCalendarInfo,
   type ExternalEvent,
   type SyncPage,
@@ -272,5 +274,57 @@ export const googleCalendarAdapter: CalendarProviderAdapter = {
         resourceId: subscription.resourceId,
       }),
     }).catch(() => undefined);
+  },
+
+  /**
+   * Push-create (P2: booking lifecycle unification). No `attendees` field is
+   * sent deliberately: Google would otherwise auto-email the guest a
+   * calendar invite from the business's own Google account, duplicating (and
+   * possibly conflicting with) Syveka's own confirmation email. This event
+   * exists on Google purely so the calendar owner sees the appointment where
+   * they actually look; guest-facing confirmation stays on Syveka's side.
+   */
+  async createEvent(
+    tokens,
+    calendarExternalId,
+    event: CreateEventInput,
+  ): Promise<CreateEventResult> {
+    const data = await googleFetch<{ id: string; etag?: string }>(
+      `${API}/calendars/${encodeURIComponent(calendarExternalId)}/events`,
+      tokens.accessToken,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          summary: event.title,
+          description: event.description,
+          location: event.location,
+          start: { dateTime: event.startsAt.toISOString(), timeZone: event.timezone },
+          end: { dateTime: event.endsAt.toISOString(), timeZone: event.timezone },
+        }),
+      },
+    );
+    return { externalId: data.id, etag: data.etag };
+  },
+
+  /**
+   * Push-cancel. Uses raw `fetch` rather than `googleFetch` because a
+   * successful DELETE returns 204 with no body, which `googleFetch`'s
+   * unconditional `res.json()` would throw on. A 404/410 (already gone -
+   * deleted manually on Google, or never actually created) is treated as a
+   * successful no-op, not an error - required for idempotent, safe retry of
+   * the cancellation flow itself (distinct from the "no auto-retry on an
+   * ambiguous CREATE" rule: re-issuing a DELETE for an id that may already
+   * be gone can never create a duplicate).
+   */
+  async cancelEvent(tokens, calendarExternalId, externalEventId): Promise<void> {
+    const res = await fetch(
+      `${API}/calendars/${encodeURIComponent(calendarExternalId)}/events/${encodeURIComponent(externalEventId)}`,
+      { method: "DELETE", headers: { Authorization: `Bearer ${tokens.accessToken}` } },
+    );
+    if (res.status === 404 || res.status === 410 || res.status === 204 || res.ok) return;
+    if (res.status === 401) throw new ProviderError("Google token rejected", "token_expired");
+    if (res.status === 429) throw new ProviderError("Google rate limit", "rate_limited", true);
+    throw new ProviderError(`Google API ${res.status}`, "remote_error", res.status >= 500);
   },
 };

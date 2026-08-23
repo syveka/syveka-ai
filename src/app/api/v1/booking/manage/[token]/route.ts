@@ -114,9 +114,16 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ t
   const { token } = await params;
   try {
     const canceled = await booking.cancelBookingViaToken(token, reason);
-    await notifications
-      .sendBookingLifecycleNotifications({ kind: "cancellation", bookingId: canceled.id })
-      .catch(() => undefined);
+    const { cancelBookingEventOnGoogle } = await import("@/server/services/calendar-sync");
+    await Promise.allSettled([
+      notifications.sendBookingLifecycleNotifications({
+        kind: "cancellation",
+        bookingId: canceled.id,
+      }),
+      canceled.eventId
+        ? cancelBookingEventOnGoogle({ eventId: canceled.eventId })
+        : Promise.resolve(),
+    ]);
     return NextResponse.json({ status: "canceled" });
   } catch (e) {
     if (e instanceof tokens.BookingTokenError) {

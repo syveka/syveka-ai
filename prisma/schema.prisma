@@ -702,6 +702,17 @@ model CalendarEvent {
   externalCalendarId String?     @map("external_calendar_id") @db.Uuid
   externalId         String?     @map("external_id")
   externalEtag       String?     @map("external_etag")
+  /// Outbound push status: whether this Syveka-originated booking has been
+  /// pushed to the org's connected Google Calendar. Reuses externalCalendarId
+  /// / externalId (normally populated by the inbound sync) to record the id
+  /// Google assigned on push-create — that dual use is deliberate: the next
+  /// inbound sync then matches this row by (externalCalendarId, externalId)
+  /// and UPDATEs it instead of importing a duplicate. See
+  /// src/server/services/calendar-sync.ts's pushBookingEventToGoogle().
+  googleSyncStatus   GoogleSyncStatus @default(NOT_APPLICABLE) @map("google_sync_status")
+  /// Last push error, sanitized (message only, never tokens/headers). Null
+  /// once a push succeeds.
+  googleSyncError    String?     @map("google_sync_error")
   attendees          Json        @default("[]") // deprecated: use EventAttendee rows
   canceledAt         DateTime?   @map("canceled_at")
   deletedAt          DateTime?   @map("deleted_at")
@@ -736,6 +747,19 @@ enum EventStatus {
   CONFIRMED
   TENTATIVE
   CANCELED
+}
+
+/// Outbound Google Calendar push state for a Syveka-originated CalendarEvent.
+/// AMBIGUOUS means the push's outcome is unknown (e.g. a network-level
+/// failure with no response received) - by design, nothing auto-retries an
+/// AMBIGUOUS or FAILED push, to avoid risking a duplicate event on Google.
+/// See docs/DECISIONS.md and the Task 2 completion report for the rationale.
+enum GoogleSyncStatus {
+  NOT_APPLICABLE
+  PENDING
+  SYNCED
+  FAILED
+  AMBIGUOUS
 }
 
 /// Tenant-scoped via parent CalendarEvent (like Message → Conversation).
@@ -915,6 +939,13 @@ model BookingType {
   collectCompany      Boolean      @default(false) @map("collect_company")
   requiresConsent     Boolean      @default(true) @map("requires_consent")
   isActive            Boolean      @default(true) @map("is_active")
+  /// The single BookingType the AI voice tool (bookMeeting) books into for this
+  /// org. Never inferred from an AI-spoken service name — see
+  /// src/server/services/booking.ts's resolveAiDefaultBookingType(). At most one
+  /// per org, enforced in application code (saveBookingType), mirroring
+  /// AvailabilitySchedule.isDefault's existing pattern rather than a DB
+  /// constraint.
+  isAiBookingDefault  Boolean      @default(false) @map("is_ai_booking_default")
   createdAt           DateTime     @default(now()) @map("created_at")
   updatedAt           DateTime     @updatedAt @map("updated_at")
   deletedAt           DateTime?    @map("deleted_at")

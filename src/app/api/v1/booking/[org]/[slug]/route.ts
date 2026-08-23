@@ -18,12 +18,14 @@ export async function POST(
     { publicBookingSchema },
     { sendBookingLifecycleNotifications },
     { scheduleEventReminders },
+    { pushBookingEventToGoogle },
   ] = await Promise.all([
     import("@/server/integrations/redis"),
     import("@/server/services/booking"),
     import("@/lib/validators/booking"),
     import("@/server/services/booking-notifications"),
     import("@/server/services/reminders"),
+    import("@/server/services/calendar-sync"),
   ]);
 
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "anon";
@@ -54,6 +56,11 @@ export async function POST(
         orgId: result.booking.organizationId,
         eventId: result.event.id,
         startsAt: result.booking.startsAt,
+      }),
+      pushBookingEventToGoogle({
+        orgId: result.booking.organizationId,
+        ownerId: result.bookingType.ownerId,
+        eventId: result.event.id,
       }),
     ]);
 

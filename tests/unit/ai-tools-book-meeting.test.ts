@@ -1,21 +1,46 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type * as BookingServiceModule from "@/server/services/booking";
 
-const { txMock, transactionMock, auditMock, tenantDbMock, serviceFindFirstMock } = vi.hoisted(
-  () => {
-    const txMock = {
-      $executeRaw: vi.fn(async () => 0),
-      calendarEvent: { findFirst: vi.fn(), create: vi.fn() },
-      contact: { findFirstOrThrow: vi.fn() },
-    };
-    return {
-      txMock,
-      transactionMock: vi.fn(async (fn: (tx: typeof txMock) => Promise<unknown>) => fn(txMock)),
-      auditMock: vi.fn(async () => undefined),
-      tenantDbMock: vi.fn(),
-      serviceFindFirstMock: vi.fn(async () => null as { durationMinutes: number | null } | null),
-    };
-  },
-);
+const {
+  txMock,
+  transactionMock,
+  auditMock,
+  tenantDbMock,
+  serviceFindFirstMock,
+  scheduleFindFirstMock,
+  createVoiceBookingMock,
+  sendNotificationsMock,
+  scheduleRemindersMock,
+  pushToGoogleMock,
+  MockBookingError,
+} = vi.hoisted(() => {
+  const txMock = {
+    $executeRaw: vi.fn(async () => 0),
+    calendarEvent: { findFirst: vi.fn(), create: vi.fn() },
+    contact: { findFirstOrThrow: vi.fn() },
+  };
+  /** Mirrors BookingError's real shape (code + message + instanceof-checkable). */
+  class MockBookingError extends Error {
+    code: string;
+    constructor(message: string, code: string) {
+      super(message);
+      this.code = code;
+    }
+  }
+  return {
+    txMock,
+    transactionMock: vi.fn(async (fn: (tx: typeof txMock) => Promise<unknown>) => fn(txMock)),
+    auditMock: vi.fn(async () => undefined),
+    tenantDbMock: vi.fn(),
+    serviceFindFirstMock: vi.fn(async () => null as { durationMinutes: number | null } | null),
+    scheduleFindFirstMock: vi.fn(async () => null as unknown),
+    createVoiceBookingMock: vi.fn(),
+    sendNotificationsMock: vi.fn(async () => undefined),
+    scheduleRemindersMock: vi.fn(async () => undefined),
+    pushToGoogleMock: vi.fn(async () => "not_applicable" as const),
+    MockBookingError,
+  };
+});
 
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: tenantDbMock,
@@ -23,6 +48,16 @@ vi.mock("@/server/db/tenant", () => ({
 }));
 vi.mock("@/server/services/audit", () => ({ audit: auditMock }));
 vi.mock("@/server/ai/rag", () => ({ retrieveChunks: vi.fn() }));
+vi.mock("@/server/services/booking", async (importOriginal) => ({
+  ...(await importOriginal<typeof BookingServiceModule>()),
+  createVoiceBooking: createVoiceBookingMock,
+  BookingError: MockBookingError,
+}));
+vi.mock("@/server/services/booking-notifications", () => ({
+  sendBookingLifecycleNotifications: sendNotificationsMock,
+}));
+vi.mock("@/server/services/reminders", () => ({ scheduleEventReminders: scheduleRemindersMock }));
+vi.mock("@/server/services/calendar-sync", () => ({ pushBookingEventToGoogle: pushToGoogleMock }));
 
 import { TOOL_REGISTRY, type ToolIdentity } from "@/server/ai/tools";
 
@@ -47,7 +82,12 @@ beforeEach(() => {
   txMock.calendarEvent.create.mockResolvedValue({ id: "evt-1" });
   txMock.contact.findFirstOrThrow.mockResolvedValue({ id: "contact-1" });
   serviceFindFirstMock.mockResolvedValue(null);
-  tenantDbMock.mockReturnValue({ businessDnaService: { findFirst: serviceFindFirstMock } });
+  scheduleFindFirstMock.mockResolvedValue(null);
+  tenantDbMock.mockReturnValue({
+    businessDnaService: { findFirst: serviceFindFirstMock },
+    availabilitySchedule: { findFirst: scheduleFindFirstMock },
+  });
+  pushToGoogleMock.mockResolvedValue("not_applicable");
 });
 
 describe("bookMeeting tool", () => {
@@ -162,5 +202,132 @@ describe("bookMeeting tool", () => {
       const created = txMock.calendarEvent.create.mock.calls[0]![0].data;
       expect(created.endsAt.getTime() - created.startsAt.getTime()).toBe(30 * 60_000);
     });
+  });
+});
+
+describe("bookMeeting tool — voice_ai path (P2: unified booking lifecycle)", () => {
+  function voiceIdentity(overrides: Partial<ToolIdentity> = {}): ToolIdentity {
+    return {
+      orgId: "org-a",
+      userId: "owner-1",
+      role: "MANAGER",
+      actorType: "voice_ai",
+      callerPhone: "+358401234567",
+      assistantLanguage: "FI",
+      ...overrides,
+    };
+  }
+
+  function voiceBookingResult(overrides: Record<string, unknown> = {}) {
+    return {
+      booking: { id: "booking-1", startsAt: new Date("2026-08-17T10:00:00.000Z") },
+      event: { id: "evt-1" },
+      contactId: "contact-1",
+      manageToken: "manage-token-1",
+      bookingType: { id: "bt-1", name: "Haircut", ownerId: "owner-1", location: null },
+      ...overrides,
+    };
+  }
+
+  it("refuses to book without asking the model for guestName/guestEmail first - never guesses them", async () => {
+    const result = await bookMeeting.execute(voiceIdentity(), input());
+    expect(result).toMatchObject({ booked: false, reason: "missing_guest_details" });
+    expect(createVoiceBookingMock).not.toHaveBeenCalled();
+    expect(sendNotificationsMock).not.toHaveBeenCalled();
+  });
+
+  it("creates a real Booking (not a bare CalendarEvent) and fires confirmation, reminder, and Google push", async () => {
+    createVoiceBookingMock.mockResolvedValue(voiceBookingResult());
+
+    const result = await bookMeeting.execute(
+      voiceIdentity(),
+      input({ guestName: "Maria Virtanen", guestEmail: "maria@example.fi" }),
+    );
+
+    expect(result).toMatchObject({ booked: true, eventId: "evt-1", bookingId: "booking-1" });
+    expect(createVoiceBookingMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: "org-a",
+        actorUserId: "owner-1",
+        guestName: "Maria Virtanen",
+        guestEmail: "maria@example.fi",
+        guestPhone: "+358401234567", // fell back to identity.callerPhone
+        guestLocale: "FI", // from identity.assistantLanguage
+        timezone: "Europe/Helsinki", // resolveOrgDefaultSchedule's fallback default
+      }),
+    );
+    expect(sendNotificationsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: "confirmation",
+        bookingId: "booking-1",
+        manageToken: "manage-token-1",
+      }),
+    );
+    expect(scheduleRemindersMock).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: "org-a", eventId: "evt-1" }),
+    );
+    expect(pushToGoogleMock).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: "org-a", ownerId: "owner-1", eventId: "evt-1" }),
+    );
+    // createVoiceBooking already audits "booking.create" internally - no
+    // second, duplicate audit call from bookMeeting itself for this path.
+    expect(auditMock).not.toHaveBeenCalled();
+  });
+
+  it("an explicitly passed guestPhone wins over identity.callerPhone", async () => {
+    createVoiceBookingMock.mockResolvedValue(voiceBookingResult());
+    await bookMeeting.execute(
+      voiceIdentity(),
+      input({ guestName: "Maria", guestEmail: "maria@example.fi", guestPhone: "+358409999999" }),
+    );
+    expect(createVoiceBookingMock).toHaveBeenCalledWith(
+      expect.objectContaining({ guestPhone: "+358409999999" }),
+    );
+  });
+
+  it("surfaces a missing pilot-default BookingType as a loud, specific tool error - never silently guesses one", async () => {
+    createVoiceBookingMock.mockRejectedValue(
+      new MockBookingError(
+        "No AI-default booking type configured",
+        "ai_booking_type_not_configured",
+      ),
+    );
+
+    const result = await bookMeeting.execute(
+      voiceIdentity(),
+      input({ guestName: "Maria", guestEmail: "maria@example.fi" }),
+    );
+
+    expect(result).toMatchObject({ booked: false, reason: "ai_booking_type_not_configured" });
+    expect(sendNotificationsMock).not.toHaveBeenCalled();
+    expect(scheduleRemindersMock).not.toHaveBeenCalled();
+    expect(pushToGoogleMock).not.toHaveBeenCalled();
+  });
+
+  it("surfaces a slot_taken race from createVoiceBooking the same way", async () => {
+    createVoiceBookingMock.mockRejectedValue(
+      new MockBookingError("Slot no longer available", "slot_taken"),
+    );
+    const result = await bookMeeting.execute(
+      voiceIdentity(),
+      input({ guestName: "Maria", guestEmail: "maria@example.fi" }),
+    );
+    expect(result).toMatchObject({ booked: false, reason: "slot_taken" });
+  });
+
+  it("propagates a non-BookingError from createVoiceBooking (unexpected failure) rather than swallowing it", async () => {
+    createVoiceBookingMock.mockRejectedValue(new Error("db unreachable"));
+    await expect(
+      bookMeeting.execute(
+        voiceIdentity(),
+        input({ guestName: "Maria", guestEmail: "maria@example.fi" }),
+      ),
+    ).rejects.toThrow("db unreachable");
+  });
+
+  it("does not need guestName/guestEmail for the in-app chat path (actorType 'user') - unchanged behavior", async () => {
+    const result = await bookMeeting.execute(identity(), input());
+    expect(result).toMatchObject({ booked: true, eventId: "evt-1" });
+    expect(createVoiceBookingMock).not.toHaveBeenCalled();
   });
 });

@@ -2,6 +2,7 @@ import "server-only";
 
 import { z } from "zod";
 import type Anthropic from "@anthropic-ai/sdk";
+import type { Locale } from "@prisma/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { retrieveChunks } from "@/server/ai/rag";
 import { can, type Permission } from "@/server/auth/permissions";
@@ -24,6 +25,13 @@ export type ToolIdentity = {
   userId: string; // acting user, or assistant owner for voice
   role: Role;
   actorType: "user" | "voice_ai";
+  /** Caller's phone number (voice only) — used as a guestPhone fallback when
+   * bookMeeting isn't explicitly given one. Never set for actorType "user". */
+  callerPhone?: string;
+  /** The voice assistant's configured language (voice only) — used to set
+   * the resulting Booking's guestLocale so confirmation/reminder emails are
+   * sent in the right language. Never set for actorType "user". */
+  assistantLanguage?: Locale;
 };
 
 type ToolDef<S extends z.ZodTypeAny> = {
@@ -286,10 +294,121 @@ const getCalendarAvailability = defineTool({
 
 type BookMeetingResult = { ok: true; eventId: string } | { ok: false; reason: "slot_taken" };
 
+/**
+ * Voice path (actorType "voice_ai" only, P2: unified booking lifecycle):
+ * creates a real Booking (not just a bare CalendarEvent), tied to the org's
+ * explicit AI-default BookingType, so voice-booked appointments flow
+ * through the exact same confirmation-email, reminder, and cancellation
+ * code as guest web bookings (src/server/services/booking.ts's
+ * createVoiceBooking). Never inferred from serviceName - if no
+ * BookingType.isAiBookingDefault is configured, createVoiceBooking fails
+ * loudly with a clear error the caller (this function) surfaces back to the
+ * model as a tool error, not a guess.
+ *
+ * guestName/guestEmail are optional at the schema level (bookMeeting is
+ * shared with the in-app AI chat, where a "guest" doesn't make sense - see
+ * the chat branch below) but required here: a phone call has no other
+ * reliable way to reach the caller with a confirmation, since there is no
+ * SMS provider in this codebase (see docs/PROJECT-STATUS.md /
+ * the P2 completion report's "Unresolved issues").
+ */
+async function bookVoiceMeeting(
+  id: ToolIdentity,
+  input: {
+    title: string;
+    startsAt: string;
+    notes?: string;
+    contactId?: string;
+    guestName?: string;
+    guestEmail?: string;
+    guestPhone?: string;
+  },
+  durationMinutes: number,
+): Promise<unknown> {
+  if (!input.guestName || !input.guestEmail) {
+    return {
+      booked: false,
+      reason: "missing_guest_details",
+      message:
+        "guestName and guestEmail are required to book this appointment for a phone caller. " +
+        "Ask the caller for their name and an email address to send their confirmation to, then " +
+        "call bookMeeting again with those included.",
+    };
+  }
+
+  const { createVoiceBooking, BookingError } = await import("@/server/services/booking");
+  const { timezone } = await resolveOrgDefaultSchedule(id.orgId);
+
+  let created;
+  try {
+    created = await createVoiceBooking({
+      orgId: id.orgId,
+      actorUserId: id.userId,
+      title: input.title,
+      startsAt: input.startsAt,
+      durationMinutes,
+      timezone,
+      guestName: input.guestName,
+      guestEmail: input.guestEmail,
+      guestPhone: input.guestPhone ?? id.callerPhone,
+      notes: input.notes,
+      contactId: input.contactId,
+      guestLocale: id.assistantLanguage,
+    });
+  } catch (e) {
+    if (e instanceof BookingError) {
+      // Loud, specific failure back to the model - e.g.
+      // "ai_booking_type_not_configured" or "slot_taken" - never a silent
+      // guess. See createVoiceBooking's own doc comment.
+      return { booked: false, reason: e.code, message: e.message };
+    }
+    throw e;
+  }
+
+  // Post-commit side effects, mirroring the public booking route's pattern
+  // exactly (src/app/api/v1/booking/[org]/[slug]/route.ts): fire-and-forget,
+  // never fail the booking that already committed above. createVoiceBooking
+  // already audited this as "booking.create" (resourceType "booking") - no
+  // second audit call here, to avoid a duplicate log entry for one booking.
+  const [
+    { sendBookingLifecycleNotifications },
+    { scheduleEventReminders },
+    { pushBookingEventToGoogle },
+  ] = await Promise.all([
+    import("@/server/services/booking-notifications"),
+    import("@/server/services/reminders"),
+    import("@/server/services/calendar-sync"),
+  ]);
+  await Promise.allSettled([
+    sendBookingLifecycleNotifications({
+      kind: "confirmation",
+      bookingId: created.booking.id,
+      manageToken: created.manageToken,
+    }),
+    scheduleEventReminders({
+      orgId: id.orgId,
+      eventId: created.event.id,
+      startsAt: created.booking.startsAt,
+    }),
+    pushBookingEventToGoogle({
+      orgId: id.orgId,
+      ownerId: created.bookingType.ownerId,
+      eventId: created.event.id,
+    }),
+  ]);
+
+  return {
+    booked: true,
+    eventId: created.event.id,
+    bookingId: created.booking.id,
+    startsAt: input.startsAt,
+  };
+}
+
 const bookMeeting = defineTool({
   name: "bookMeeting",
   description:
-    "Book a meeting into the company calendar. Only after the user/caller confirmed the slot. Pass serviceName (matching a name from the business's services) whenever the booking is for a specific service, so the real service duration is used - only pass an explicit durationMinutes to override that (e.g. a custom/one-off meeting with no matching service); defaults to 30 minutes if neither resolves.",
+    "Book a meeting into the company calendar. Only after the user/caller confirmed the slot. Pass serviceName (matching a name from the business's services) whenever the booking is for a specific service, so the real service duration is used - only pass an explicit durationMinutes to override that (e.g. a custom/one-off meeting with no matching service); defaults to 30 minutes if neither resolves. For a PHONE CALLER, also pass guestName and guestEmail (ask the caller for both) so they receive a booking confirmation - required for phone bookings.",
   schema: z.object({
     title: z.string().min(1).max(200),
     startsAt: z.string().datetime(),
@@ -297,6 +416,9 @@ const bookMeeting = defineTool({
     durationMinutes: z.number().int().min(15).max(240).optional(),
     contactId: z.string().uuid().optional(),
     notes: z.string().max(2000).optional(),
+    guestName: z.string().min(1).max(200).optional(),
+    guestEmail: z.string().email().max(320).optional(),
+    guestPhone: z.string().max(30).optional(),
   }),
   permission: "calendar:write",
   execute: async (id, input) => {
@@ -304,6 +426,13 @@ const bookMeeting = defineTool({
       input.durationMinutes ??
       (await resolveServiceDurationMinutes(id.orgId, input.serviceName)) ??
       30;
+
+    if (id.actorType === "voice_ai") {
+      return bookVoiceMeeting(id, input, durationMinutes);
+    }
+
+    // ── In-app AI chat path (unchanged): bare CalendarEvent, no Booking,
+    // no guest concept - preserved exactly as it worked before this change.
     const startsAt = new Date(input.startsAt);
     const endsAt = new Date(startsAt.getTime() + durationMinutes * 60_000);
 
@@ -343,7 +472,7 @@ const bookMeeting = defineTool({
           endsAt,
           contactId: input.contactId,
           createdById: id.userId,
-          source: id.actorType === "voice_ai" ? "VOICE_AI" : "MANUAL",
+          source: "MANUAL",
         },
       });
       return { ok: true, eventId: event.id };

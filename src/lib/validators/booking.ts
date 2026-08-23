@@ -118,6 +118,7 @@ export const bookingTypeSchema = z.object({
   collectCompany: z.coerce.boolean().default(false),
   requiresConsent: z.coerce.boolean().default(true),
   isActive: z.coerce.boolean().default(true),
+  isAiBookingDefault: z.coerce.boolean().default(false),
   scheduleId: z
     .string()
     .optional()

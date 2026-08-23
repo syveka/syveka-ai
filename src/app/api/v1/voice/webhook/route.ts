@@ -58,6 +58,7 @@ async function resolveAssistant(
       organizationId: true,
       enabledTools: true,
       useKnowledgeBase: true,
+      language: true,
       organization: {
         select: { members: { where: { role: "OWNER" }, select: { userId: true }, take: 1 } },
       },
@@ -107,6 +108,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         userId: ownerUserId,
         role: "MANAGER",
         actorType: "voice_ai",
+        callerPhone: message.call?.customer?.number,
+        assistantLanguage: assistant.language,
       };
       const enabled = new Set([
         ...((assistant.enabledTools as string[]) ?? []),

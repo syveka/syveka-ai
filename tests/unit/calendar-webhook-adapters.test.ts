@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { googleCalendarAdapter } from "@/server/integrations/calendar/google";
 import { microsoftCalendarAdapter } from "@/server/integrations/calendar/microsoft";
 import { mockCalendarAdapter } from "@/server/integrations/calendar/mock";
-import type { OAuthTokens } from "@/server/integrations/calendar/types";
+import { ProviderError, type OAuthTokens } from "@/server/integrations/calendar/types";
 
 const tokens: OAuthTokens = { accessToken: "access-token", scopes: [] };
 
@@ -45,6 +45,71 @@ describe("Google adapter: subscribeWebhook", () => {
     expect(sub).not.toHaveProperty("token");
     expect(sub).not.toHaveProperty("verificationSecret");
     expect(JSON.stringify(sub)).not.toContain("my-verification-secret");
+  });
+});
+
+describe("Google adapter: createEvent (P2: unified booking lifecycle push)", () => {
+  it("sends title/location/start/end with the given timezone, and never sends attendees (avoids Google auto-emailing the guest a duplicate invite)", async () => {
+    const fetchMock = vi.mocked(fetch);
+    fetchMock.mockResolvedValue(jsonResponse({ id: "google-evt-1", etag: "etag-1" }));
+
+    const result = await googleCalendarAdapter.createEvent!(tokens, "primary", {
+      title: "Haircut with Maria",
+      location: "Salon Helsinki",
+      startsAt: new Date("2026-08-17T10:00:00Z"),
+      endsAt: new Date("2026-08-17T10:30:00Z"),
+      timezone: "Europe/Helsinki",
+    });
+
+    expect(result).toEqual({ externalId: "google-evt-1", etag: "etag-1" });
+    const [, init] = fetchMock.mock.calls[0]!;
+    const body = JSON.parse(init!.body as string);
+    expect(body.summary).toBe("Haircut with Maria");
+    expect(body.location).toBe("Salon Helsinki");
+    expect(body.start).toEqual({
+      dateTime: "2026-08-17T10:00:00.000Z",
+      timeZone: "Europe/Helsinki",
+    });
+    expect(body).not.toHaveProperty("attendees");
+  });
+});
+
+describe("Google adapter: cancelEvent (P2: unified booking lifecycle push)", () => {
+  it("204 (deleted) resolves without throwing", async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: true, status: 204 } as Response);
+    await expect(
+      googleCalendarAdapter.cancelEvent!(tokens, "primary", "google-evt-1"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("404 (already gone) resolves without throwing - idempotent, required for the 'missing/deleted external event' edge case", async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 404 } as Response);
+    await expect(
+      googleCalendarAdapter.cancelEvent!(tokens, "primary", "google-evt-1"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("410 (gone) resolves without throwing", async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 410 } as Response);
+    await expect(
+      googleCalendarAdapter.cancelEvent!(tokens, "primary", "google-evt-1"),
+    ).resolves.toBeUndefined();
+  });
+
+  it("401 throws a token_expired ProviderError", async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 401 } as Response);
+    await expect(
+      googleCalendarAdapter.cancelEvent!(tokens, "primary", "google-evt-1"),
+    ).rejects.toMatchObject({
+      code: "token_expired",
+    });
+  });
+
+  it("a real server error (500) throws a ProviderError, not a silent success", async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 500 } as Response);
+    await expect(
+      googleCalendarAdapter.cancelEvent!(tokens, "primary", "google-evt-1"),
+    ).rejects.toBeInstanceOf(ProviderError);
   });
 });
 

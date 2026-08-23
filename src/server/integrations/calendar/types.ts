@@ -58,6 +58,21 @@ export type WebhookSubscription = {
   expiresAt?: Date;
 };
 
+/** A Syveka-originated event to push-create on the provider (P2: booking lifecycle unification). */
+export type CreateEventInput = {
+  title: string;
+  description?: string;
+  location?: string;
+  startsAt: Date;
+  endsAt: Date;
+  timezone: string;
+};
+
+export type CreateEventResult = {
+  externalId: string;
+  etag?: string;
+};
+
 export interface CalendarProviderAdapter {
   readonly provider: CalendarProvider;
   /** True when client id/secret are configured for this environment. */
@@ -85,6 +100,31 @@ export interface CalendarProviderAdapter {
     verificationSecret: string,
   ): Promise<WebhookSubscription | null>;
   unsubscribeWebhook(tokens: OAuthTokens, subscription: WebhookSubscription): Promise<void>;
+
+  /**
+   * Push-create a Syveka-originated event on the provider (P2: booking
+   * lifecycle unification, Google only for now). Optional — a provider that
+   * doesn't yet support outbound push simply omits it; callers must check
+   * for its presence (`typeof adapter.createEvent === "function"`) before
+   * calling and degrade to a no-op (booking still succeeds locally).
+   */
+  createEvent?(
+    tokens: OAuthTokens,
+    calendarExternalId: string,
+    event: CreateEventInput,
+  ): Promise<CreateEventResult>;
+
+  /**
+   * Push-cancel a previously push-created event. MUST be idempotent: a
+   * "not found" response (the event is already gone, or was manually
+   * deleted on the provider) is a successful no-op, not an error — never
+   * throw for that case.
+   */
+  cancelEvent?(
+    tokens: OAuthTokens,
+    calendarExternalId: string,
+    externalEventId: string,
+  ): Promise<void>;
 }
 
 export class ProviderError extends Error {

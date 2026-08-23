@@ -413,6 +413,7 @@
       "collectPhone": "Kysy puhelinnumero",
       "collectCompany": "Kysy yritys",
       "confirmationMessage": "Vahvistusviesti",
+      "aiBookingDefault": "Käytä tekoäly-/puheluvarauksiin",
       "slugTaken": "URL-tunnus on jo käytössä"
     }
   },

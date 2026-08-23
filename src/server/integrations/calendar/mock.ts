@@ -1,5 +1,8 @@
+import { ProviderError } from "./types";
 import type {
   CalendarProviderAdapter,
+  CreateEventInput,
+  CreateEventResult,
   ExternalCalendarInfo,
   ExternalEvent,
   OAuthTokens,
@@ -14,11 +17,18 @@ import type {
  * end-to-end. Never enabled in production unless CALENDAR_MOCK_PROVIDER=1.
  */
 
+/** Forced outcome for the next createEvent/cancelEvent call, for edge-case tests. */
+type PushFailureMode = "provider_error" | "network_error";
+
 type MockState = {
   calendars: ExternalCalendarInfo[];
   eventsByCalendar: Map<string, ExternalEvent[]>;
   deletedByCalendar: Map<string, string[]>;
   cursorCounter: number;
+  pushedEvents: Map<string, CreateEventInput>; // externalId -> what was pushed
+  eventIdCounter: number;
+  nextCreateFailure: PushFailureMode | null;
+  nextCancelFailure: PushFailureMode | null;
 };
 
 function freshState(): MockState {
@@ -35,6 +45,10 @@ function freshState(): MockState {
     eventsByCalendar: new Map(),
     deletedByCalendar: new Map(),
     cursorCounter: 0,
+    pushedEvents: new Map(),
+    eventIdCounter: 0,
+    nextCreateFailure: null,
+    nextCancelFailure: null,
   };
 }
 
@@ -50,6 +64,17 @@ export const mockProviderTestApi = {
   },
   markDeleted(calendarExternalId: string, externalIds: string[]): void {
     state.deletedByCalendar.set(calendarExternalId, externalIds);
+  },
+  /** Forces the next createEvent() call to fail this way (one-shot). */
+  forceNextCreateFailure(mode: PushFailureMode): void {
+    state.nextCreateFailure = mode;
+  },
+  /** Forces the next cancelEvent() call to fail this way (one-shot). */
+  forceNextCancelFailure(mode: PushFailureMode): void {
+    state.nextCancelFailure = mode;
+  },
+  pushedEvents(): Map<string, CreateEventInput> {
+    return state.pushedEvents;
   },
 };
 
@@ -126,5 +151,38 @@ export const mockCalendarAdapter: CalendarProviderAdapter = {
 
   async unsubscribeWebhook(): Promise<void> {
     // no-op
+  },
+
+  async createEvent(
+    _tokens,
+    _calendarExternalId,
+    event: CreateEventInput,
+  ): Promise<CreateEventResult> {
+    if (state.nextCreateFailure) {
+      const mode = state.nextCreateFailure;
+      state.nextCreateFailure = null;
+      if (mode === "provider_error") {
+        throw new ProviderError("Mock provider rejected the event", "remote_error");
+      }
+      // Simulates a network-level failure (no response received) - the case
+      // callers must classify as AMBIGUOUS, not FAILED.
+      throw new TypeError("mock network failure");
+    }
+    state.eventIdCounter += 1;
+    const externalId = `mock-pushed-${state.eventIdCounter}`;
+    state.pushedEvents.set(externalId, event);
+    return { externalId, etag: `mock-etag-${state.eventIdCounter}` };
+  },
+
+  async cancelEvent(_tokens, _calendarExternalId, externalEventId): Promise<void> {
+    if (state.nextCancelFailure) {
+      const mode = state.nextCancelFailure;
+      state.nextCancelFailure = null;
+      if (mode === "provider_error") {
+        throw new ProviderError("Mock provider rejected the cancellation", "remote_error");
+      }
+      throw new TypeError("mock network failure");
+    }
+    state.pushedEvents.delete(externalEventId); // idempotent: absent id is a silent no-op
   },
 };

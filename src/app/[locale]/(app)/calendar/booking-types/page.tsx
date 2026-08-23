@@ -51,6 +51,7 @@ export default async function BookingTypesPage() {
           collectCompany: bt.collectCompany,
           requiresConsent: bt.requiresConsent,
           isActive: bt.isActive,
+          isAiBookingDefault: bt.isAiBookingDefault,
           scheduleId: bt.scheduleId,
         }))}
       />

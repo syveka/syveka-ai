@@ -413,6 +413,7 @@
       "collectPhone": "طلب رقم الهاتف",
       "collectCompany": "طلب اسم الشركة",
       "confirmationMessage": "رسالة التأكيد",
+      "aiBookingDefault": "استخدام لحجوزات الذكاء الاصطناعي/المكالمات الصوتية",
       "slugTaken": "معرّف الرابط مستخدم بالفعل"
     }
   },

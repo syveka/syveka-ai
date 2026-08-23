@@ -32,6 +32,7 @@ export type BookingTypeData = {
   collectCompany: boolean;
   requiresConsent: boolean;
   isActive: boolean;
+  isAiBookingDefault: boolean;
   scheduleId: string | null;
 };
 
@@ -351,6 +352,16 @@ function BookingTypeDialog({
                   className="size-4"
                 />
                 {t("bookingTypes.collectCompany")}
+              </label>
+              <label className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  name="isAiBookingDefault"
+                  value="true"
+                  defaultChecked={bookingType?.isAiBookingDefault}
+                  className="size-4"
+                />
+                {t("bookingTypes.aiBookingDefault")}
               </label>
             </div>
 
