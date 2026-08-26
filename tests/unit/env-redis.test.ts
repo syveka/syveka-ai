@@ -5,6 +5,9 @@ const SNAPSHOT_KEYS = [
   "SKIP_ENV_VALIDATION",
   "UPSTASH_REDIS_REST_URL",
   "UPSTASH_REDIS_REST_TOKEN",
+  "AI_CHAT_USER_RATE_LIMIT",
+  "AI_CHAT_ORG_RATE_LIMIT",
+  "AI_CHAT_RATE_WINDOW_SECONDS",
 ] as const;
 const snapshot = Object.fromEntries(SNAPSHOT_KEYS.map((key) => [key, process.env[key]]));
 
@@ -26,6 +29,9 @@ describe("getRedisEnv", () => {
     expect(getRedisEnv()).toEqual({
       UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
       UPSTASH_REDIS_REST_TOKEN: "test-token",
+      AI_CHAT_USER_RATE_LIMIT: 30,
+      AI_CHAT_ORG_RATE_LIMIT: 300,
+      AI_CHAT_RATE_WINDOW_SECONDS: 60,
     });
   });
 
@@ -35,5 +41,18 @@ describe("getRedisEnv", () => {
     process.env.UPSTASH_REDIS_REST_TOKEN = "test-token";
 
     expect(() => getRedisEnv()).toThrow(/UPSTASH_REDIS_REST_URL/);
+  });
+
+  it("reports only Redis-scoped fields when Redis configuration is missing", () => {
+    delete process.env.SKIP_ENV_VALIDATION;
+    delete process.env.UPSTASH_REDIS_REST_URL;
+    delete process.env.UPSTASH_REDIS_REST_TOKEN;
+    delete process.env.STRIPE_SECRET_KEY;
+    delete process.env.VAPI_API_KEY;
+    delete process.env.QSTASH_TOKEN;
+
+    expect(() => getRedisEnv()).toThrow(
+      "Invalid Redis environment variables: UPSTASH_REDIS_REST_URL, UPSTASH_REDIS_REST_TOKEN",
+    );
   });
 });

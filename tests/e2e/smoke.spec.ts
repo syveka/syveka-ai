@@ -50,7 +50,13 @@ test.describe("public", () => {
 });
 
 test.describe("authenticated", () => {
-  test.skip(!process.env.E2E_USER_EMAIL, "requires seeded E2E user");
+  test.beforeAll(() => {
+    if (!process.env.E2E_USER_EMAIL || !process.env.E2E_USER_PASSWORD) {
+      throw new Error(
+        "Authenticated staging smoke tests require E2E_USER_EMAIL and E2E_USER_PASSWORD.",
+      );
+    }
+  });
 
   test.beforeEach(async ({ page }) => {
     await page.goto("/login");

@@ -2,7 +2,7 @@ import "server-only";
 
 import { Redis } from "@upstash/redis";
 import { Ratelimit } from "@upstash/ratelimit";
-import { env, getRedisEnv } from "@/env";
+import { getRedisEnv } from "@/env";
 
 let redisClient: Redis | null = null;
 
@@ -36,7 +36,9 @@ let rateLimitersClient: RateLimiters | null = null;
 
 function getRateLimiters(): RateLimiters {
   const client = getRedis();
-  const window = `${env.AI_CHAT_RATE_WINDOW_SECONDS} s` as const;
+  const { AI_CHAT_USER_RATE_LIMIT, AI_CHAT_ORG_RATE_LIMIT, AI_CHAT_RATE_WINDOW_SECONDS } =
+    getRedisEnv();
+  const window = `${AI_CHAT_RATE_WINDOW_SECONDS} s` as const;
   rateLimitersClient ??= {
     api: new Ratelimit({
       redis: client,
@@ -50,12 +52,12 @@ function getRateLimiters(): RateLimiters {
     }),
     aiChatUser: new Ratelimit({
       redis: client,
-      limiter: Ratelimit.slidingWindow(env.AI_CHAT_USER_RATE_LIMIT, window),
+      limiter: Ratelimit.slidingWindow(AI_CHAT_USER_RATE_LIMIT, window),
       prefix: "rl:ai:user",
     }),
     aiChatOrg: new Ratelimit({
       redis: client,
-      limiter: Ratelimit.slidingWindow(env.AI_CHAT_ORG_RATE_LIMIT, window),
+      limiter: Ratelimit.slidingWindow(AI_CHAT_ORG_RATE_LIMIT, window),
       prefix: "rl:ai:org",
     }),
     anonDemo: new Ratelimit({

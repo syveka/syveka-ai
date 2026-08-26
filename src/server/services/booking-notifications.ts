@@ -3,7 +3,7 @@ import "server-only";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { sendEmail } from "@/server/integrations/resend";
 import { seenIdempotencyKey } from "@/server/integrations/redis";
-import { clientEnv } from "@/env";
+import { getAppUrlEnv } from "@/env";
 import {
   BookingEmail,
   bookingEmailSubject,
@@ -53,7 +53,7 @@ export async function sendBookingLifecycleNotifications(params: {
   const locale: BookingEmailLocale =
     booking.guestLocale === "FI" ? "fi" : booking.guestLocale === "AR" ? "ar" : "en";
   const manageUrl = params.manageToken
-    ? `${clientEnv.NEXT_PUBLIC_APP_URL}/booking/manage/${params.manageToken}`
+    ? `${getAppUrlEnv().NEXT_PUBLIC_APP_URL}/booking/manage/${params.manageToken}`
     : undefined;
 
   const whenText = formatWhen(booking.startsAt, booking.endsAt, booking.guestTimezone, locale);

@@ -8,7 +8,7 @@ import { sendEmail } from "@/server/integrations/resend";
 import { InvitationEmail } from "../../../emails/invitation";
 import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
-import { env } from "@/env";
+import { getAppUrlEnv } from "@/env";
 
 const INVITE_EXPIRY_DAYS = 7;
 
@@ -56,7 +56,7 @@ export async function inviteMember(
         : `You've been invited to ${org.name} on Syveka`,
     react: InvitationEmail({
       orgName: org.name,
-      inviteUrl: `${env.NEXT_PUBLIC_APP_URL}/invite/${invitation.token}`,
+      inviteUrl: `${getAppUrlEnv().NEXT_PUBLIC_APP_URL}/invite/${invitation.token}`,
       locale: org.defaultLocale,
     }),
   });

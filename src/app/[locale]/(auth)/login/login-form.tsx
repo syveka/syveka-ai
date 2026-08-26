@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { loginAction, type AuthActionState } from "@/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -12,6 +12,7 @@ import { Link } from "@/i18n/routing";
 export function LoginForm() {
   const t = useTranslations("auth");
   const tc = useTranslations("common");
+  const locale = useLocale();
   const [state, action, pending] = useActionState<AuthActionState, FormData>(loginAction, {});
 
   return (
@@ -21,6 +22,7 @@ export function LoginForm() {
       </CardHeader>
       <CardContent>
         <form action={action} className="space-y-4">
+          <input type="hidden" name="locale" value={locale} />
           <div className="space-y-2">
             <Label htmlFor="email">{t("email")}</Label>
             <Input id="email" name="email" type="email" autoComplete="email" required />

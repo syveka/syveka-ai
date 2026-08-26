@@ -5,7 +5,7 @@ import { requirePermission } from "@/server/auth/guard";
 import { listBookingTypes } from "@/server/services/booking";
 import { listSchedules } from "@/server/services/availability";
 import { tenantDb } from "@/server/db/tenant";
-import { clientEnv } from "@/env";
+import { getAppUrlEnv } from "@/env";
 import { BookingTypesManager } from "@/components/calendar/booking-types-manager";
 import { Link } from "@/i18n/routing";
 
@@ -30,7 +30,7 @@ export default async function BookingTypesPage() {
         <p className="text-sm text-muted-foreground">{t("bookingTypes.subtitle")}</p>
       </div>
       <BookingTypesManager
-        baseUrl={`${clientEnv.NEXT_PUBLIC_APP_URL}/book/${org?.slug ?? ""}`}
+        baseUrl={`${getAppUrlEnv().NEXT_PUBLIC_APP_URL}/book/${org?.slug ?? ""}`}
         schedules={schedules.map((s) => ({ id: s.id, name: s.name }))}
         types={types.map((bt) => ({
           id: bt.id,

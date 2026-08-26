@@ -81,6 +81,19 @@ if (mode === "identity") {
     throw new Error("STAGING_OPENAI_API_KEY is not shaped like an OpenAI API key.");
   }
   console.log("The staging embedding provider configuration is present.");
+} else if (mode === "runtime") {
+  requireSettings([
+    "NEXT_PUBLIC_APP_URL",
+    "NEXT_PUBLIC_SUPABASE_URL",
+    "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+    "DATABASE_URL",
+    "UPSTASH_REDIS_REST_URL",
+    "UPSTASH_REDIS_REST_TOKEN",
+  ]);
+  console.log("Required staging runtime setting names are present.");
+} else if (mode === "e2e") {
+  requireSettings(["E2E_USER_EMAIL", "E2E_USER_PASSWORD"]);
+  console.log("Required authenticated staging E2E setting names are present.");
 } else {
-  throw new Error("STAGING_CONFIG_MODE must be identity, storage, or embedding.");
+  throw new Error("STAGING_CONFIG_MODE must be identity, storage, embedding, runtime, or e2e.");
 }

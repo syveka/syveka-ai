@@ -8,7 +8,7 @@ import { getThread, listAssignableMembers, markThreadRead } from "@/server/servi
 import { listBookingTypes } from "@/server/services/booking";
 import { approveMessageAction, markThreadUnreadAction, sendMessageAction } from "@/actions/inbox";
 import { tenantDb } from "@/server/db/tenant";
-import { clientEnv } from "@/env";
+import { getAppUrlEnv } from "@/env";
 import { Link } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -62,7 +62,7 @@ export default async function InboxThreadPage({
   const activeBookingTypes = bookingTypes
     .filter((bt) => bt.isActive)
     .map((bt) => ({ slug: bt.slug, name: bt.name }));
-  const bookingBaseUrl = `${clientEnv.NEXT_PUBLIC_APP_URL}/book/${org?.slug ?? ""}`;
+  const bookingBaseUrl = `${getAppUrlEnv().NEXT_PUBLIC_APP_URL}/book/${org?.slug ?? ""}`;
   const contactName = thread.contact
     ? [thread.contact.firstName, thread.contact.lastName].filter(Boolean).join(" ")
     : null;

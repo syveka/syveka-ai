@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { resetPasswordAction, type AuthActionState } from "@/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -11,6 +11,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 export function ResetPasswordForm() {
   const t = useTranslations("auth");
   const tc = useTranslations("common");
+  const locale = useLocale();
   const [state, action, pending] = useActionState<AuthActionState, FormData>(
     resetPasswordAction,
     {},
@@ -23,6 +24,7 @@ export function ResetPasswordForm() {
       </CardHeader>
       <CardContent>
         <form action={action} className="space-y-4">
+          <input type="hidden" name="locale" value={locale} />
           <div className="space-y-2">
             <Label htmlFor="password">{t("password")}</Label>
             <Input
