@@ -125,7 +125,7 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
   // to just the human-authored prompt) when the org hasn't filled it in yet.
   const businessDna = await getBusinessDnaContext(orgId);
 
-  const { NEXT_PUBLIC_APP_URL, VAPI_WEBHOOK_SECRET } = getVapiEnv();
+  const { NEXT_PUBLIC_APP_URL, VAPI_WEBHOOK_CREDENTIAL_ID } = getVapiEnv();
   const config: VapiAssistantConfig = {
     name: assistant.name,
     firstMessage: assistant.firstMessage,
@@ -139,7 +139,7 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
     voiceProvider: assistant.voiceProvider,
     voiceId: assistant.voiceId,
     serverUrl: `${NEXT_PUBLIC_APP_URL}/api/v1/voice/webhook`,
-    serverUrlSecret: VAPI_WEBHOOK_SECRET,
+    serverCredentialId: VAPI_WEBHOOK_CREDENTIAL_ID,
     tools: vapiToolsFor(toolNames),
     maxDurationSeconds: 15 * 60, // §16.5
   };

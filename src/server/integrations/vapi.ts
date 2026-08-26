@@ -31,7 +31,8 @@ export type VapiAssistantConfig = {
   voiceProvider: string;
   voiceId?: string | null;
   serverUrl: string; // our webhook
-  serverUrlSecret: string;
+  /** ID of a Vapi Custom Credential (HMAC) — never the secret value itself (§13.2). */
+  serverCredentialId: string;
   tools: Array<{ name: string; description: string; parameters: object }>;
   maxDurationSeconds: number;
 };
@@ -58,7 +59,9 @@ function toVapiPayload(cfg: VapiAssistantConfig) {
               cfg.voiceId ?? (cfg.language === "fi" ? "fi-FI-SelmaNeural" : "en-US-JennyNeural"),
           },
     transcriber: { provider: "deepgram", model: "nova-2", language: cfg.language },
-    server: { url: cfg.serverUrl, secret: cfg.serverUrlSecret },
+    // Custom Credential reference, not the legacy inline `server.secret` — Vapi
+    // resolves the actual HMAC key server-side from the credential (§13.2).
+    server: { url: cfg.serverUrl, credentialId: cfg.serverCredentialId },
     maxDurationSeconds: cfg.maxDurationSeconds,
     recordingEnabled: true,
   };
