@@ -198,6 +198,9 @@ export function getResendEnv(): z.infer<typeof resendEnvSchema> {
 const redisEnvSchema = serverSchema.pick({
   UPSTASH_REDIS_REST_URL: true,
   UPSTASH_REDIS_REST_TOKEN: true,
+  AI_CHAT_USER_RATE_LIMIT: true,
+  AI_CHAT_ORG_RATE_LIMIT: true,
+  AI_CHAT_RATE_WINDOW_SECONDS: true,
 });
 
 export function getRedisEnv(): z.infer<typeof redisEnvSchema> {
@@ -205,6 +208,9 @@ export function getRedisEnv(): z.infer<typeof redisEnvSchema> {
     return {
       UPSTASH_REDIS_REST_URL: process.env.UPSTASH_REDIS_REST_URL ?? "",
       UPSTASH_REDIS_REST_TOKEN: process.env.UPSTASH_REDIS_REST_TOKEN ?? "",
+      AI_CHAT_USER_RATE_LIMIT: process.env.AI_CHAT_USER_RATE_LIMIT as unknown as number,
+      AI_CHAT_ORG_RATE_LIMIT: process.env.AI_CHAT_ORG_RATE_LIMIT as unknown as number,
+      AI_CHAT_RATE_WINDOW_SECONDS: process.env.AI_CHAT_RATE_WINDOW_SECONDS as unknown as number,
     };
   }
 
@@ -231,26 +237,61 @@ export function getRedisEnv(): z.infer<typeof redisEnvSchema> {
  * ai/chat's blanket catch -- doesn't swallow non-auth errors). Same root
  * cause and same fix shape as `getRedisEnv()` above.
  */
-const supabaseServerEnvSchema = z.object({
+const supabaseAuthEnvSchema = z.object({
   NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
   NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
+});
+
+const supabaseAdminEnvSchema = supabaseAuthEnvSchema.extend({
   SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
 });
 
-export function getSupabaseServerEnv(): z.infer<typeof supabaseServerEnvSchema> {
+export function getSupabaseAuthEnv(): z.infer<typeof supabaseAuthEnvSchema> {
   if (process.env.SKIP_ENV_VALIDATION === "1") {
     return {
       NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
       NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+    };
+  }
+
+  const parsed = supabaseAuthEnvSchema.safeParse(process.env);
+  if (!parsed.success) {
+    const invalidFields = Object.keys(parsed.error.flatten().fieldErrors);
+    console.error("Invalid Supabase auth environment variables:", invalidFields);
+    throw new Error(`Invalid Supabase auth environment variables: ${invalidFields.join(", ")}`);
+  }
+  return parsed.data;
+}
+
+export function getSupabaseAdminEnv(): z.infer<typeof supabaseAdminEnvSchema> {
+  if (process.env.SKIP_ENV_VALIDATION === "1") {
+    return {
+      ...getSupabaseAuthEnv(),
       SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
     };
   }
 
-  const parsed = supabaseServerEnvSchema.safeParse(process.env);
+  const parsed = supabaseAdminEnvSchema.safeParse(process.env);
   if (!parsed.success) {
     const invalidFields = Object.keys(parsed.error.flatten().fieldErrors);
-    console.error("Invalid Supabase environment variables:", invalidFields);
-    throw new Error(`Invalid Supabase environment variables: ${invalidFields.join(", ")}`);
+    console.error("Invalid Supabase admin environment variables:", invalidFields);
+    throw new Error(`Invalid Supabase admin environment variables: ${invalidFields.join(", ")}`);
+  }
+  return parsed.data;
+}
+
+const appUrlEnvSchema = z.object({ NEXT_PUBLIC_APP_URL: z.string().url() });
+
+export function getAppUrlEnv(): z.infer<typeof appUrlEnvSchema> {
+  if (process.env.SKIP_ENV_VALIDATION === "1") {
+    return { NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL ?? "" };
+  }
+
+  const parsed = appUrlEnvSchema.safeParse(process.env);
+  if (!parsed.success) {
+    const invalidFields = Object.keys(parsed.error.flatten().fieldErrors);
+    console.error("Invalid application URL environment variable:", invalidFields);
+    throw new Error(`Invalid application URL environment variable: ${invalidFields.join(", ")}`);
   }
   return parsed.data;
 }
@@ -268,7 +309,7 @@ export function getSupabaseServerEnv(): z.infer<typeof supabaseServerEnvSchema> 
  * misconfigured field anywhere in that schema would throw unhandled and 500
  * every one of the six QStash job routes (post-call, run-workflow,
  * usage-rollup, send-reminder, embed-document, calendar-sync) at once. Same
- * root cause and same fix shape as `getRedisEnv()`/`getSupabaseServerEnv()`
+ * root cause and same fix shape as `getRedisEnv()`/`getSupabaseAuthEnv()`
  * above.
  */
 const qstashEnvSchema = z.object({

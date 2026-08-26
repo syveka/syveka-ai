@@ -1,12 +1,10 @@
 "use client";
 
 import { createBrowserClient } from "@supabase/ssr";
-import { clientEnv } from "@/env";
+import { getSupabaseAuthEnv } from "@/env";
 
 /** Browser Supabase client — anon key, RLS enforced. */
 export function createClient() {
-  return createBrowserClient(
-    clientEnv.NEXT_PUBLIC_SUPABASE_URL,
-    clientEnv.NEXT_PUBLIC_SUPABASE_ANON_KEY,
-  );
+  const { NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY } = getSupabaseAuthEnv();
+  return createBrowserClient(NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY);
 }

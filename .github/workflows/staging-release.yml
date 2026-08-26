@@ -190,11 +190,19 @@ jobs:
       - name: Build staging deployment with pinned Vercel CLI
         run: |
           npx --yes "vercel@$VERCEL_CLI_VERSION" pull --yes --environment=preview --token="$STAGING_VERCEL_TOKEN"
+          STAGING_CONFIG_MODE=runtime node --env-file=.vercel/.env.preview.local scripts/validate-staging-config.mjs
           npx --yes "vercel@$VERCEL_CLI_VERSION" build --token="$STAGING_VERCEL_TOKEN"
         env:
           STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+
+      - name: Require authenticated staging E2E credentials
+        run: node scripts/validate-staging-config.mjs
+        env:
+          STAGING_CONFIG_MODE: e2e
+          E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
 
       - name: Deploy staging application
         id: deploy

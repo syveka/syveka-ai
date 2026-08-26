@@ -5,9 +5,17 @@ import { headers } from "next/headers";
 import { createSupabaseServer } from "@/server/supabase/server";
 import { rateLimiters } from "@/server/integrations/redis";
 import { loginSchema, registerSchema } from "@/lib/validators/auth";
-import { env } from "@/env";
+import { getAppUrlEnv } from "@/env";
+import { localizedPath, normalizeLocale } from "@/lib/auth-redirect";
 
 export type AuthActionState = { error?: string; message?: string };
+
+function authCallbackUrl(locale: ReturnType<typeof normalizeLocale>, next: `/${string}`): string {
+  const { NEXT_PUBLIC_APP_URL } = getAppUrlEnv();
+  const callback = new URL("/api/auth/callback", NEXT_PUBLIC_APP_URL);
+  callback.searchParams.set("next", localizedPath(locale, next));
+  return callback.toString();
+}
 
 async function clientIp(): Promise<string> {
   const h = await headers();
@@ -28,7 +36,7 @@ export async function loginAction(
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
   if (error) return { error: "invalid_credentials" };
 
-  redirect("/dashboard");
+  redirect(localizedPath(normalizeLocale(formData.get("locale")), "/dashboard"));
 }
 
 export async function registerAction(
@@ -40,6 +48,7 @@ export async function registerAction(
 
   const parsed = registerSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
+  const locale = normalizeLocale(formData.get("locale"));
 
   const supabase = await createSupabaseServer();
   const { error } = await supabase.auth.signUp({
@@ -47,7 +56,7 @@ export async function registerAction(
     password: parsed.data.password,
     options: {
       data: { full_name: parsed.data.fullName },
-      emailRedirectTo: `${env.NEXT_PUBLIC_APP_URL}/onboarding`,
+      emailRedirectTo: authCallbackUrl(locale, "/onboarding"),
     },
   });
   if (error) return { error: "signup_failed" };
@@ -64,11 +73,12 @@ export async function magicLinkAction(
 
   const email = String(formData.get("email") ?? "");
   if (!email.includes("@")) return { error: "invalid_input" };
+  const locale = normalizeLocale(formData.get("locale"));
 
   const supabase = await createSupabaseServer();
   const { error } = await supabase.auth.signInWithOtp({
     email,
-    options: { emailRedirectTo: `${env.NEXT_PUBLIC_APP_URL}/dashboard` },
+    options: { emailRedirectTo: authCallbackUrl(locale, "/dashboard") },
   });
   if (error) return { error: "magic_link_failed" };
   return { message: "verify_email_sent" };
@@ -89,11 +99,12 @@ export async function forgotPasswordAction(
 
   const email = String(formData.get("email") ?? "");
   if (!email.includes("@")) return { error: "invalid_input" };
+  const locale = normalizeLocale(formData.get("locale"));
 
   const supabase = await createSupabaseServer();
   // Always report success — do not leak account existence (§13)
   await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${env.NEXT_PUBLIC_APP_URL}/reset-password`,
+    redirectTo: authCallbackUrl(locale, "/reset-password"),
   });
   return { message: "verify_email_sent" };
 }
@@ -109,5 +120,5 @@ export async function resetPasswordAction(
   const { error } = await supabase.auth.updateUser({ password });
   if (error) return { error: "reset_failed" };
 
-  redirect("/dashboard");
+  redirect(localizedPath(normalizeLocale(formData.get("locale")), "/dashboard"));
 }

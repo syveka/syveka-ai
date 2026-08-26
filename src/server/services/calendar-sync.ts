@@ -5,7 +5,7 @@ import { unscopedPrisma } from "@/server/db/tenant";
 import { getProviderAdapter } from "@/server/integrations/calendar";
 import { ProviderError, type ExternalEvent } from "@/server/integrations/calendar/types";
 import { getFreshTokens, markConnectionStatus } from "./calendar-connections";
-import { clientEnv } from "@/env";
+import { getAppUrlEnv } from "@/env";
 
 /**
  * Webhook verification secret (P0.2): a fresh 32-byte value generated per subscription,
@@ -263,7 +263,7 @@ export async function ensureWebhookSubscription(
 
   const adapter = getProviderAdapter(calendar.connection.provider);
   const tokens = await getFreshTokens(calendar.connectionId, calendar.organizationId);
-  const callbackUrl = `${clientEnv.NEXT_PUBLIC_APP_URL}/api/v1/webhooks/calendar/${calendar.connection.provider.toLowerCase()}`;
+  const callbackUrl = `${getAppUrlEnv().NEXT_PUBLIC_APP_URL}/api/v1/webhooks/calendar/${calendar.connection.provider.toLowerCase()}`;
   const verificationSecret = generateWebhookSecret();
   const sub = await adapter.subscribeWebhook(
     tokens,

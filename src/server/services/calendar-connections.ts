@@ -7,7 +7,7 @@ import { audit } from "./audit";
 import { getProviderAdapter } from "@/server/integrations/calendar";
 import { encryptToken, decryptToken } from "@/server/integrations/calendar/crypto";
 import { ProviderError, type OAuthTokens } from "@/server/integrations/calendar/types";
-import { clientEnv } from "@/env";
+import { getAppUrlEnv } from "@/env";
 import type { TenantContext } from "@/server/auth/session";
 
 export class ConnectionError extends Error {
@@ -69,7 +69,7 @@ export function verifyOAuthState(state: string): {
 }
 
 export function oauthRedirectUri(provider: CalendarProvider): string {
-  return `${clientEnv.NEXT_PUBLIC_APP_URL}/api/v1/integrations/calendar/${provider.toLowerCase()}/callback`;
+  return `${getAppUrlEnv().NEXT_PUBLIC_APP_URL}/api/v1/integrations/calendar/${provider.toLowerCase()}/callback`;
 }
 
 // ── Connection lifecycle ─────────────────────────────────────────────────
