@@ -34,6 +34,7 @@ vi.mock("@/env", () => ({
   getVapiEnv: () => ({
     VAPI_API_KEY: "test",
     VAPI_WEBHOOK_SECRET: "a".repeat(32),
+    VAPI_WEBHOOK_CREDENTIAL_ID: "cred_test",
     NEXT_PUBLIC_APP_URL: "https://app.example.com",
   }),
 }));

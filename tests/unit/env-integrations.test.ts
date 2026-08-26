@@ -13,6 +13,7 @@ const ENV_KEYS = [
   "STRIPE_PRICE_PRO_ANNUAL",
   "VAPI_API_KEY",
   "VAPI_WEBHOOK_SECRET",
+  "VAPI_WEBHOOK_CREDENTIAL_ID",
   "OPENAI_API_KEY",
   "ANTHROPIC_API_KEY",
   "AI_RETRY_MAX_ATTEMPTS",
@@ -40,6 +41,7 @@ function setStripeEnv() {
 function setVapiEnv() {
   process.env.VAPI_API_KEY = "vapi-provider-isolation";
   process.env.VAPI_WEBHOOK_SECRET = "vapi-webhook-secret-at-least-16";
+  process.env.VAPI_WEBHOOK_CREDENTIAL_ID = "cred_vapi_provider_isolation";
   process.env.NEXT_PUBLIC_APP_URL = "https://app.example.test";
 }
 
@@ -127,6 +129,7 @@ describe("provider-isolated environment getters", () => {
     expect(getVapiEnv()).toEqual({
       VAPI_API_KEY: "vapi-provider-isolation",
       VAPI_WEBHOOK_SECRET: "vapi-webhook-secret-at-least-16",
+      VAPI_WEBHOOK_CREDENTIAL_ID: "cred_vapi_provider_isolation",
       NEXT_PUBLIC_APP_URL: "https://app.example.test",
     });
   });

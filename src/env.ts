@@ -17,6 +17,10 @@ const serverSchema = z.object({
 
   VAPI_API_KEY: z.string().min(1),
   VAPI_WEBHOOK_SECRET: z.string().min(16),
+  // ID of a Vapi Custom Credential (HMAC) — not itself a secret, just a
+  // reference; the credential's key material lives only in Vapi and in
+  // VAPI_WEBHOOK_SECRET above, never in this value.
+  VAPI_WEBHOOK_CREDENTIAL_ID: z.string().min(1),
 
   STRIPE_SECRET_KEY: z.string().startsWith("sk_"),
   STRIPE_WEBHOOK_SECRET: z.string().startsWith("whsec_"),
@@ -106,7 +110,7 @@ export function getStripeEnv(): z.infer<typeof stripeEnvSchema> {
 }
 
 const vapiEnvSchema = serverSchema
-  .pick({ VAPI_API_KEY: true, VAPI_WEBHOOK_SECRET: true })
+  .pick({ VAPI_API_KEY: true, VAPI_WEBHOOK_SECRET: true, VAPI_WEBHOOK_CREDENTIAL_ID: true })
   .extend({ NEXT_PUBLIC_APP_URL: z.string().url() });
 
 export function getVapiEnv(): z.infer<typeof vapiEnvSchema> {
@@ -114,6 +118,7 @@ export function getVapiEnv(): z.infer<typeof vapiEnvSchema> {
     return {
       VAPI_API_KEY: process.env.VAPI_API_KEY as string,
       VAPI_WEBHOOK_SECRET: process.env.VAPI_WEBHOOK_SECRET as string,
+      VAPI_WEBHOOK_CREDENTIAL_ID: process.env.VAPI_WEBHOOK_CREDENTIAL_ID as string,
       NEXT_PUBLIC_APP_URL: process.env.NEXT_PUBLIC_APP_URL as string,
     };
   }

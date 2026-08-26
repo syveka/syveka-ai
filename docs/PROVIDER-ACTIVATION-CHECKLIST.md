@@ -68,14 +68,23 @@ Webhook endpoint: `{NEXT_PUBLIC_APP_URL}/api/v1/webhooks/inbox-email/resend`.
 
 ## 5. Vapi (voice AI)
 
-**Required:** `VAPI_API_KEY`, `VAPI_WEBHOOK_SECRET` (min 16 chars).
+**Required:** `VAPI_API_KEY`, `VAPI_WEBHOOK_SECRET` (min 16 chars), `VAPI_WEBHOOK_CREDENTIAL_ID`.
 
 - Create a Vapi account and assistant; the app provisions/syncs assistant config against the
   Vapi API using `VAPI_API_KEY`.
 - Webhook endpoint (server-events: tool-calls, status updates, end-of-call reports):
-  `{NEXT_PUBLIC_APP_URL}/api/v1/voice/webhook`. Configure this as the assistant's server URL in
-  the Vapi dashboard, with `VAPI_WEBHOOK_SECRET` as the shared HMAC-SHA256 signing secret
-  (verified constant-time server-side).
+  `{NEXT_PUBLIC_APP_URL}/api/v1/voice/webhook`, verified with HMAC-SHA256 over the raw body
+  (constant-time compare server-side).
+- **Do not use Vapi's legacy inline `server.secret`** — it sends the raw secret verbatim in
+  `X-Vapi-Secret`, which this app's verification does not accept (it expects an HMAC digest, not
+  a raw value). Instead, create a **Custom Credential** in the Vapi dashboard: type HMAC,
+  algorithm SHA256, Payload Format `{body}` (signs the raw request body), Signature Header
+  `x-vapi-signature`, secret = the same value as `VAPI_WEBHOOK_SECRET`. Put the resulting
+  credential's ID in `VAPI_WEBHOOK_CREDENTIAL_ID` — the app references it via
+  `server.credentialId` and never pushes the secret value itself to Vapi's API. **This exact
+  field shape (`server.credentialId`) is verified against Vapi's live documentation, not against
+  this repository alone — confirm it against the current Vapi dashboard/docs before relying on it
+  in production.**
 - Phone number provisioning (+358 numbers) happens through the app's voice settings once the
   assistant is active.
 - [ ] **Manual verification required**: place one real call through the provisioned number and
