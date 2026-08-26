@@ -206,9 +206,11 @@ jobs:
         run: npm ci
       - name: Deploy complete migration history to empty PostgreSQL
         run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/migrations/supabase-compatibility.sql
           npx prisma migrate deploy
           npx prisma migrate status
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/migrations/business-dna-table-privileges.sql
           # The deprecated Calendar/Booking wrapper is intentionally rerunnable.
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/005_calendar_booking_rls.sql
           psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f prisma/sql/005_calendar_booking_rls.sql
@@ -264,6 +266,7 @@ jobs:
       - name: Provision a non-superuser, Supabase-like execution role
         run: |
           set -euo pipefail
+          psql "$PGADMIN_URL" -v ON_ERROR_STOP=1 -c "create role anon nologin"
           psql "$PGADMIN_URL" -v ON_ERROR_STOP=1 -c "create role authenticated nologin"
           psql "$PGADMIN_URL" -v ON_ERROR_STOP=1 -c "create role supabase_like login password 'supabase_like' createrole nosuperuser nobypassrls"
           psql "$PGADMIN_URL" -v ON_ERROR_STOP=1 -c "create database rls_non_superuser owner supabase_like"
@@ -276,6 +279,7 @@ jobs:
           psql "$PGADMIN_TARGET_URL" -v ON_ERROR_STOP=1 -c 'create extension if not exists vector'
           psql "$PGADMIN_TARGET_URL" -v ON_ERROR_STOP=1 -c 'create extension if not exists pgcrypto'
           psql "$PGADMIN_TARGET_URL" -v ON_ERROR_STOP=1 -c 'create extension if not exists "uuid-ossp"'
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/migrations/supabase-compatibility.sql
           not_a_member="$(psql "$PGADMIN_URL" -Atqc "select not pg_has_role('supabase_like', 'authenticated', 'member')")"
           if [ "$not_a_member" != "t" ]; then
             echo "supabase_like must not start out as a member of authenticated."
@@ -285,6 +289,7 @@ jobs:
         run: |
           npx prisma migrate deploy
           npx prisma migrate status
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/migrations/business-dna-table-privileges.sql
       - name: Confirm the old grant-to-current_user pattern is gone
         shell: bash
         run: |
@@ -492,6 +497,7 @@ jobs:
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -c "do \$\$ begin if (select confupdtype from pg_constraint where conname = 'conversation_documents_organization_id_fkey') <> 'c' then raise exception 'conversation_documents_organization_id_fkey was not upgraded to ON UPDATE CASCADE'; end if; end \$\$"
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
           psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql
+          psql "$DIRECT_URL" -v ON_ERROR_STOP=1 -f tests/migrations/business-dna-table-privileges.sql
           bash scripts/ci/run-rls-check.sh iso tests/rls/isolation-grants.sql tests/rls/isolation-revokes.sql tests/rls/isolation-fixtures.sql tests/rls/isolation-cleanup.sql tests/rls/isolation.sql tests/rls/isolation-grants-verify.sql
           bash scripts/ci/run-rls-check.sh cal tests/rls/calendar-booking-grants.sql tests/rls/calendar-booking-revokes.sql tests/rls/calendar-booking-fixtures.sql tests/rls/calendar-booking-cleanup.sql tests/rls/calendar-booking-isolation.sql tests/rls/calendar-booking-grants-verify.sql
           bash scripts/ci/run-rls-check.sh dna tests/rls/inbox-dna-grants.sql tests/rls/inbox-dna-revokes.sql tests/rls/inbox-dna-fixtures.sql tests/rls/inbox-dna-cleanup.sql tests/rls/inbox-dna-isolation.sql tests/rls/inbox-dna-grants-verify.sql

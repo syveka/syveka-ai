@@ -30,7 +30,14 @@ do $$
 declare
   enabled_count integer;
   dna_policy_count integer;
+  checked_table text;
+  checked_privilege text;
+  checked_privileges text[] := array['TRUNCATE', 'REFERENCES', 'TRIGGER'];
 begin
+  if current_setting('server_version_num')::integer >= 170000 then
+    checked_privileges := array_append(checked_privileges, 'MAINTAIN');
+  end if;
+
   select count(*) into enabled_count
   from pg_class
   where oid in (
@@ -68,6 +75,20 @@ begin
   if dna_policy_count <> 8 then
     raise exception 'INBOX-DNA RLS FAIL: expected 8 authenticated business_dna/business_dna_services policies, found %', dna_policy_count;
   end if;
+
+  foreach checked_table in array array['business_dna', 'business_dna_services'] loop
+    foreach checked_privilege in array checked_privileges loop
+      if has_table_privilege(
+        current_user,
+        format('public.%I', checked_table),
+        checked_privilege
+      ) then
+        raise exception
+          'INBOX-DNA ACL FAIL: authenticated client role has inherited % on public.%',
+          checked_privilege, checked_table;
+      end if;
+    end loop;
+  end loop;
 
   if exists (
     select 1
