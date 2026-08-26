@@ -14,7 +14,8 @@ declare
     '20260715230000_security_invariant_corrections',
     '20260718000000_calendar_booking_rls',
     '20260719000000_initial_security_baseline',
-    '20260726000000_normalize_list_column_nullability'
+    '20260726000000_normalize_list_column_nullability',
+    '20260826000000_harden_business_dna_table_privileges'
   ];
   protected_tables text[] := array[
     'users', 'organizations', 'organization_members', 'teams', 'invitations',
@@ -47,7 +48,15 @@ declare
     'invitations', 'api_keys', 'conversation_documents', 'external_calendars',
     'availability_schedules', 'booking_types', 'bookings'
   ];
+  checked_role text;
+  checked_table text;
+  checked_privilege text;
+  checked_privileges text[] := array['TRUNCATE', 'REFERENCES', 'TRIGGER'];
 begin
+  if current_setting('server_version_num')::integer >= 170000 then
+    checked_privileges := array_append(checked_privileges, 'MAINTAIN');
+  end if;
+
   select expected.migration_name
   into missing_name
   from unnest(expected_migrations) as expected(migration_name)
@@ -62,6 +71,38 @@ begin
 
   if missing_name is not null then
     raise exception 'STAGING RELEASE FAIL: migration % is not successfully applied', missing_name;
+  end if;
+
+  foreach checked_role in array array['anon', 'authenticated'] loop
+    foreach checked_table in array array['business_dna', 'business_dna_services'] loop
+      foreach checked_privilege in array checked_privileges loop
+        if has_table_privilege(
+          checked_role,
+          format('public.%I', checked_table),
+          checked_privilege
+        ) then
+          raise exception
+            'STAGING RELEASE FAIL: role % has unsafe % privilege on public.%',
+            checked_role, checked_privilege, checked_table;
+        end if;
+      end loop;
+    end loop;
+  end loop;
+
+  if exists (
+    select 1
+    from pg_default_acl as defaults
+    join pg_roles as owner_role on owner_role.oid = defaults.defaclrole
+    join pg_namespace as namespace on namespace.oid = defaults.defaclnamespace
+    cross join lateral aclexplode(defaults.defaclacl) as privilege
+    join pg_roles as grantee_role on grantee_role.oid = privilege.grantee
+    where owner_role.rolname = 'postgres'
+      and namespace.nspname = 'public'
+      and defaults.defaclobjtype = 'r'
+      and grantee_role.rolname in ('anon', 'authenticated')
+      and privilege.privilege_type in ('TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN')
+  ) then
+    raise exception 'STAGING RELEASE FAIL: postgres public-table defaults grant an unsafe privilege to anon/authenticated';
   end if;
 
   if exists (
