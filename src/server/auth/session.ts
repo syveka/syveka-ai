@@ -23,37 +23,12 @@ export class AuthError extends Error {
   }
 }
 
-/**
- * TEMPORARY staging-only diagnostic logging for the BLOCKER A session
- * investigation (2026-08-27). Event name + safe metadata only — never
- * cookie values, tokens, email, or headers. Self-contained per file so
- * each can be reverted independently. Remove after root cause is proven.
- */
-function logAuthEvent(event: string, fields: Record<string, unknown> = {}): void {
-  console.log(JSON.stringify({ diag: "session", event, ...fields }));
-}
-
 /** Raw session user or null. Cached per request. */
 export const getSessionUser = cache(async () => {
-  logAuthEvent("get_session_user_started");
   const supabase = await createSupabaseServer();
   const {
     data: { user },
-    error,
   } = await supabase.auth.getUser();
-
-  if (error) {
-    logAuthEvent("supabase_get_user_failure", {
-      code: error.code ?? null,
-      status: error.status ?? null,
-      name: error.name,
-    });
-  } else if (!user) {
-    logAuthEvent("session_user_missing");
-  } else {
-    logAuthEvent("supabase_get_user_success");
-  }
-
   return user;
 });
 
@@ -64,10 +39,7 @@ export const getSessionUser = cache(async () => {
  */
 export const getTenantContext = cache(async (): Promise<TenantContext> => {
   const user = await getSessionUser();
-  if (!user) {
-    logAuthEvent("tenant_context_auth_failure");
-    throw new AuthError("Not authenticated", 401);
-  }
+  if (!user) throw new AuthError("Not authenticated", 401);
 
   const claimOrg = (user.app_metadata?.last_active_org ?? null) as string | null;
 
