@@ -10,16 +10,6 @@ import { localizedPath, normalizeLocale } from "@/lib/auth-redirect";
 
 export type AuthActionState = { error?: string; message?: string };
 
-/**
- * TEMPORARY staging-only diagnostic logging — narrowly scoped to just the
- * Supabase sign-in result for the ongoing invalid_credentials investigation
- * (2026-08-28). Never logs email, password, tokens, cookies, or headers.
- * Remove once the root cause is confirmed.
- */
-function logSigninEvent(event: string, fields: Record<string, unknown> = {}): void {
-  console.log(JSON.stringify({ diag: "login_action", event, ...fields }));
-}
-
 function authCallbackUrl(locale: ReturnType<typeof normalizeLocale>, next: `/${string}`): string {
   const { NEXT_PUBLIC_APP_URL } = getAppUrlEnv();
   const callback = new URL("/api/auth/callback", NEXT_PUBLIC_APP_URL);
@@ -36,50 +26,17 @@ export async function loginAction(
   _prev: AuthActionState,
   formData: FormData,
 ): Promise<AuthActionState> {
-  logSigninEvent("login_action_started");
-
   const { success } = await rateLimiters.auth.limit(`login:${await clientIp()}`);
-  logSigninEvent(success ? "rate_limit_allowed" : "rate_limit_blocked");
   if (!success) return { error: "rate_limited" };
 
   const parsed = loginSchema.safeParse(Object.fromEntries(formData));
-  if (!parsed.success) {
-    logSigninEvent("invalid_input", {
-      fields: parsed.error.issues.map((issue) => issue.path.join(".")),
-    });
-    return { error: "invalid_input" };
-  }
+  if (!parsed.success) return { error: "invalid_input" };
 
-  let destination: string;
-  try {
-    const supabase = await createSupabaseServer();
-    logSigninEvent("signin_with_password_reached");
-    const { error } = await supabase.auth.signInWithPassword(parsed.data);
+  const supabase = await createSupabaseServer();
+  const { error } = await supabase.auth.signInWithPassword(parsed.data);
+  if (error) return { error: "invalid_credentials" };
 
-    if (error) {
-      logSigninEvent("supabase_signin_failure", {
-        code: error.code ?? null,
-        status: error.status ?? null,
-        name: error.name,
-      });
-      return { error: "invalid_credentials" };
-    }
-
-    logSigninEvent("supabase_signin_success");
-    destination = localizedPath(normalizeLocale(formData.get("locale")), "/dashboard");
-  } catch (e) {
-    // Deliberately outside the redirect() call below — Next.js's redirect()
-    // throws its own internal control-flow signal, which must never be
-    // caught and logged here as an unexpected exception.
-    logSigninEvent("unexpected_exception", {
-      errorClass: e instanceof Error ? e.constructor.name : typeof e,
-      errorName: e instanceof Error ? e.name : undefined,
-    });
-    throw e;
-  }
-
-  logSigninEvent("redirect_attempted", { destination });
-  redirect(destination);
+  redirect(localizedPath(normalizeLocale(formData.get("locale")), "/dashboard"));
 }
 
 export async function registerAction(
