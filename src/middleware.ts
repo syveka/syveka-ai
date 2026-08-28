@@ -1,6 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import createIntlMiddleware from "next-intl/middleware";
 import { routing } from "@/i18n/routing";
+import { createSupabaseMiddlewareClient } from "@/server/supabase/server";
 
 const intlMiddleware = createIntlMiddleware(routing);
 
@@ -30,10 +31,17 @@ function stripLocale(pathname: string): string {
   return pathname;
 }
 
-function hasSupabaseSessionCookie(request: NextRequest): boolean {
-  return request.cookies
-    .getAll()
-    .some((cookie) => cookie.name.startsWith("sb-") && cookie.name.includes("-auth-token"));
+/**
+ * Copies every cookie the Supabase middleware client set (e.g. a refreshed
+ * access/refresh token pair) onto a different outgoing response — needed
+ * whenever middleware builds a *new* NextResponse (a redirect, or the
+ * locale-rewritten response from next-intl) instead of returning the
+ * Supabase client's own response object directly.
+ */
+function copySupabaseCookies(from: NextResponse, to: NextResponse): void {
+  for (const cookie of from.cookies.getAll()) {
+    to.cookies.set(cookie);
+  }
 }
 
 /** Per-request nonce (Web Crypto only — Buffer is unavailable on the Edge runtime). */
@@ -117,30 +125,58 @@ function forwardRequestHeaders(response: NextResponse, headers: Headers): void {
   response.headers.set("x-middleware-override-headers", [...keys].join(","));
 }
 
-export function middleware(request: NextRequest) {
+export async function middleware(request: NextRequest): Promise<NextResponse> {
   const nonce = generateNonce();
   const csp = buildContentSecurityPolicy(nonce);
+
+  // Must be the first thing done with the request/cookies, and getUser()
+  // must be called immediately after — no other cookie-touching logic in
+  // between — per Supabase's own documented middleware pattern. getUser()
+  // actually revalidates the session against Supabase; a cookie merely
+  // existing (or naming a stale/invalid session) is never treated as
+  // authenticated.
+  const { supabase, response: supabaseResponse } = createSupabaseMiddlewareClient(request);
+  const {
+    data: { user },
+    error: sessionError,
+  } = await supabase.auth.getUser();
+
+  // Non-sensitive: never logs tokens, cookies, or user data. Kept permanently —
+  // this is the only signal that distinguishes a bounded Supabase Auth
+  // timeout/network error (see createSupabaseMiddlewareClient's timeoutFetch)
+  // from a genuinely invalid/expired session, both of which surface here as
+  // `user: null`.
+  if (sessionError) {
+    console.error(
+      JSON.stringify({
+        event: "middleware_session_check_failed",
+        name: sessionError.name,
+        status: sessionError.status ?? null,
+      }),
+    );
+  }
 
   const response = intlMiddleware(request);
   const path = stripLocale(request.nextUrl.pathname);
   const isProtected = PROTECTED_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
   const isAuthPage = AUTH_PAGES.some((p) => path === p || path.startsWith(`${p}/`));
-  const hasSession = hasSupabaseSessionCookie(request);
 
-  if (isProtected && !hasSession) {
+  if (isProtected && !user) {
     const url = request.nextUrl.clone();
     url.pathname = "/login";
     url.searchParams.set("next", path);
     const redirect = NextResponse.redirect(url);
+    copySupabaseCookies(supabaseResponse.current, redirect);
     redirect.headers.set("Content-Security-Policy", csp);
     return redirect;
   }
 
-  if (isAuthPage && hasSession) {
+  if (isAuthPage && user) {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
     url.search = "";
     const redirect = NextResponse.redirect(url);
+    copySupabaseCookies(supabaseResponse.current, redirect);
     redirect.headers.set("Content-Security-Policy", csp);
     return redirect;
   }
@@ -149,6 +185,7 @@ export function middleware(request: NextRequest) {
   requestHeaders.set("x-nonce", nonce);
   requestHeaders.set("Content-Security-Policy", csp);
   forwardRequestHeaders(response, requestHeaders);
+  copySupabaseCookies(supabaseResponse.current, response);
   response.headers.set("Content-Security-Policy", csp);
   return response;
 }
