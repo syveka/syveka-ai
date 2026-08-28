@@ -63,26 +63,11 @@ describe("GET /api/health", () => {
       ),
     );
     await GET();
-    const calls = (console.error as ReturnType<typeof vi.fn>).mock.calls;
-    const [label, details] = calls[0]!;
+    expect(console.error).toHaveBeenCalledTimes(1);
+    const [label, details] = (console.error as ReturnType<typeof vi.fn>).mock.calls[0]!;
     expect(label).toBe("health check: database failed");
     expect(details.name).toBe("Error");
     expect(details.message).not.toContain("super-secret-pw");
     expect(details.message).toContain("[redacted-url]");
-  });
-
-  it("also logs safe, secret-free structural metadata for DATABASE_URL/DIRECT_URL on database failure", async () => {
-    queryRawMock.mockRejectedValue(new Error("boom"));
-    await GET();
-    const calls = (console.error as ReturnType<typeof vi.fn>).mock.calls;
-    expect(calls).toHaveLength(4);
-    expect(calls[1]![0]).toBe("health check: DATABASE_URL structure");
-    expect(calls[2]![0]).toBe("health check: DIRECT_URL structure");
-    expect(calls[3]![0]).toBe("health check: DATABASE_URL structure (post-sanitize)");
-    const serialized = calls
-      .slice(1)
-      .map(([, details]) => JSON.stringify(details))
-      .join("");
-    expect(serialized).not.toMatch(/postgresql:\/\//);
   });
 });

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { PrismaClient } from "@prisma/client";
-import { sanitizeConnectionString } from "./connection-string-diagnostics";
+import { sanitizeConnectionString } from "./connection-string-sanitizer";
 
 /**
  * Raw Prisma client on the SERVICE-ROLE connection (bypasses RLS).
@@ -15,7 +15,7 @@ import { sanitizeConnectionString } from "./connection-string-diagnostics";
  * make DB connectivity checks fail for the wrong reason. `sanitizeConnectionString`
  * strips whitespace/CR-LF/a trailing bare `?` that a dashboard paste can
  * introduce and that Prisma's stricter parser (unlike a lenient WHATWG URL
- * parse) rejects outright — see connection-string-diagnostics.ts.
+ * parse) rejects outright — see connection-string-sanitizer.ts.
  */
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
