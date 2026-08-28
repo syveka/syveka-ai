@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { queryRawMock, pingMock } = vi.hoisted(() => ({
@@ -69,5 +70,25 @@ describe("GET /api/health", () => {
     expect(details.name).toBe("Error");
     expect(details.message).not.toContain("super-secret-pw");
     expect(details.message).toContain("[redacted-url]");
+  });
+
+  it("logs a non-reversible password fingerprint for DATABASE_URL on database failure, never the password itself", async () => {
+    const original = process.env.DATABASE_URL;
+    process.env.DATABASE_URL =
+      "postgresql://postgres.abc:theRealPassword@aws-0-eu.pooler.supabase.com:6543/postgres";
+    try {
+      queryRawMock.mockRejectedValue(new Error("boom"));
+      await GET();
+      const calls = (console.error as ReturnType<typeof vi.fn>).mock.calls;
+      expect(calls).toHaveLength(2);
+      const [label, fingerprint] = calls[1]!;
+      expect(label).toBe("health check: DATABASE_URL password fingerprint");
+      expect(fingerprint).toBe(createHash("sha256").update("theRealPassword").digest("hex"));
+      const serialized = JSON.stringify(calls);
+      expect(serialized).not.toContain("theRealPassword");
+    } finally {
+      if (original === undefined) delete process.env.DATABASE_URL;
+      else process.env.DATABASE_URL = original;
+    }
   });
 });
