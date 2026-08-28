@@ -75,10 +75,14 @@ describe("GET /api/health", () => {
     queryRawMock.mockRejectedValue(new Error("boom"));
     await GET();
     const calls = (console.error as ReturnType<typeof vi.fn>).mock.calls;
-    expect(calls).toHaveLength(3);
+    expect(calls).toHaveLength(4);
     expect(calls[1]![0]).toBe("health check: DATABASE_URL structure");
     expect(calls[2]![0]).toBe("health check: DIRECT_URL structure");
-    const serialized = JSON.stringify(calls[1]![1]) + JSON.stringify(calls[2]![1]);
+    expect(calls[3]![0]).toBe("health check: DATABASE_URL structure (post-sanitize)");
+    const serialized = calls
+      .slice(1)
+      .map(([, details]) => JSON.stringify(details))
+      .join("");
     expect(serialized).not.toMatch(/postgresql:\/\//);
   });
 });

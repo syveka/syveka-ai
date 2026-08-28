@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { sanitizeErrorMessage } from "@/server/security/error-sanitization";
-import { classifyDbUrl } from "@/server/db/connection-string-diagnostics";
+import { classifyDbUrl, sanitizeConnectionString } from "@/server/db/connection-string-diagnostics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -31,6 +31,12 @@ export async function GET(): Promise<NextResponse> {
     // once the root cause is confirmed and fixed.
     console.error("health check: DATABASE_URL structure", classifyDbUrl(process.env.DATABASE_URL));
     console.error("health check: DIRECT_URL structure", classifyDbUrl(process.env.DIRECT_URL));
+    console.error(
+      "health check: DATABASE_URL structure (post-sanitize)",
+      classifyDbUrl(
+        process.env.DATABASE_URL ? sanitizeConnectionString(process.env.DATABASE_URL) : undefined,
+      ),
+    );
   }
   try {
     await redis.ping();

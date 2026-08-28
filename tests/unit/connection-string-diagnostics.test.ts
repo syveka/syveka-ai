@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { classifyDbUrl } from "@/server/db/connection-string-diagnostics";
+import { classifyDbUrl, sanitizeConnectionString } from "@/server/db/connection-string-diagnostics";
 
 describe("classifyDbUrl", () => {
   it("classifies a well-formed transaction-pooler URL with pgbouncer params", () => {
@@ -89,5 +89,42 @@ describe("classifyDbUrl", () => {
     );
     const serialized = JSON.stringify(result);
     expect(serialized).not.toContain(secret);
+  });
+});
+
+describe("sanitizeConnectionString", () => {
+  const clean =
+    "postgresql://postgres.abcdefghijk:pw@aws-0-eu-north-1.pooler.supabase.com:6543/postgres?pgbouncer=true&connection_limit=1";
+
+  it("strips a trailing embedded newline and a leftover trailing '?' — the exact corruption pattern observed live in staging (questionMarkCount: 2, containsNewlineOrCarriageReturn: true, but query keys still exactly ['pgbouncer','connection_limit'])", () => {
+    const corrupted = `${clean}\n?`;
+    expect(classifyDbUrl(corrupted).questionMarkCount).toBe(2);
+    expect(classifyDbUrl(corrupted).queryParamNames).toEqual(["pgbouncer", "connection_limit"]);
+
+    const sanitized = sanitizeConnectionString(corrupted);
+    expect(sanitized).toBe(clean);
+    const result = classifyDbUrl(sanitized);
+    expect(result.questionMarkCount).toBe(1);
+    expect(result.hasLeadingOrTrailingWhitespace).toBe(false);
+    expect(result.containsNewlineOrCarriageReturn).toBe(false);
+  });
+
+  it("trims leading/trailing whitespace", () => {
+    expect(sanitizeConnectionString(`  ${clean}  `)).toBe(clean);
+  });
+
+  it("strips embedded carriage returns and newlines anywhere in the string", () => {
+    expect(sanitizeConnectionString(`postgresql://a:b@\r\nhost:5432/db`)).toBe(
+      "postgresql://a:b@host:5432/db",
+    );
+  });
+
+  it("is a no-op on an already-clean connection string", () => {
+    expect(sanitizeConnectionString(clean)).toBe(clean);
+  });
+
+  it("does not corrupt a value that legitimately has no query string", () => {
+    const noQuery = "postgresql://postgres:pw@db.abcdefghijk.supabase.co:5432/postgres";
+    expect(sanitizeConnectionString(noQuery)).toBe(noQuery);
   });
 });
