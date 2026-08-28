@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { sanitizeErrorMessage } from "@/server/security/error-sanitization";
+import { classifyDbUrl } from "@/server/db/connection-string-diagnostics";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -24,6 +25,12 @@ export async function GET(): Promise<NextResponse> {
   } catch (err) {
     checks.database = "fail";
     console.error("health check: database failed", sanitizeError(err));
+    // TEMPORARY (2026-08-28): structural-only diagnostic for the staging
+    // malformed-connection-string investigation. Never logs the password or
+    // full connection string — see connection-string-diagnostics.ts. Remove
+    // once the root cause is confirmed and fixed.
+    console.error("health check: DATABASE_URL structure", classifyDbUrl(process.env.DATABASE_URL));
+    console.error("health check: DIRECT_URL structure", classifyDbUrl(process.env.DIRECT_URL));
   }
   try {
     await redis.ping();
