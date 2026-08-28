@@ -138,7 +138,23 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const { supabase, response: supabaseResponse } = createSupabaseMiddlewareClient(request);
   const {
     data: { user },
+    error: sessionError,
   } = await supabase.auth.getUser();
+
+  // Non-sensitive: never logs tokens, cookies, or user data. Kept permanently —
+  // this is the only signal that distinguishes a bounded Supabase Auth
+  // timeout/network error (see createSupabaseMiddlewareClient's timeoutFetch)
+  // from a genuinely invalid/expired session, both of which surface here as
+  // `user: null`.
+  if (sessionError) {
+    console.error(
+      JSON.stringify({
+        event: "middleware_session_check_failed",
+        name: sessionError.name,
+        status: sessionError.status ?? null,
+      }),
+    );
+  }
 
   const response = intlMiddleware(request);
   const path = stripLocale(request.nextUrl.pathname);

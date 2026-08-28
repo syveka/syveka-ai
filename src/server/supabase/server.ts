@@ -44,6 +44,27 @@ export function createSupabaseRouteClient(request: NextRequest, response: NextRe
 }
 
 /**
+ * Vercel Edge Middleware is killed by the platform (MIDDLEWARE_INVOCATION_TIMEOUT,
+ * surfaced to the browser as a 504) after ~25s with no way for our own code to
+ * intervene. `@supabase/auth-js` issues its `/auth/v1/user` fetch with no
+ * AbortController or timeout of its own (see its `_handleRequest`), so any
+ * transient slowness reaching Supabase's Auth API — for any reason — hangs the
+ * *entire* middleware invocation up to that platform limit instead of failing
+ * fast. Bounding the request ourselves, scoped to only this middleware client,
+ * turns an unbounded platform-level 504 into a fast, handled "treat as
+ * unauthenticated" outcome (fail closed on protected routes, per §4).
+ */
+const MIDDLEWARE_AUTH_TIMEOUT_MS = 8000;
+
+function timeoutFetch(timeoutMs: number): typeof fetch {
+  return (input, init) => {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    return fetch(input, { ...init, signal: controller.signal }).finally(() => clearTimeout(timer));
+  };
+}
+
+/**
  * Middleware Supabase client — the documented @supabase/ssr Next.js
  * middleware pattern. Unlike a route handler, middleware must keep the
  * request's own cookie jar in sync too (not just the response), because
@@ -75,6 +96,9 @@ export function createSupabaseMiddlewareClient(request: NextRequest): {
           response.current.cookies.set(name, value, options);
         }
       },
+    },
+    global: {
+      fetch: timeoutFetch(MIDDLEWARE_AUTH_TIMEOUT_MS),
     },
   });
 
