@@ -316,8 +316,19 @@ jobs:
             fi
             # Location is our own deployment's redirect target, never a token/cookie --
             # host+path only (query strings on Vercel's protection redirects carry a nonce).
-            location=$(grep -i '^location:' "$headers_file" 2>/dev/null | head -1 |
-              sed -E 's/^[Ll]ocation:[[:space:]]*//' | tr -d '\r\n')
+            # `grep` exits 1 when a response has no Location header (true on nearly every
+            # non-redirect attempt, including a plain curl connection failure) -- under
+            # `pipefail` that makes the whole pipeline fail, which `set -e` then treats as
+            # fatal, aborting the retry loop on attempt 1 instead of retrying for the full
+            # budget. `|| true` (binding to the whole preceding pipeline, per bash's
+            # operator precedence) keeps a genuine no-match a normal, retryable outcome
+            # instead of a script-ending error.
+            location="$(
+              grep -i '^location:' "$headers_file" 2>/dev/null |
+                head -1 |
+                sed -E 's/^[Ll]ocation:[[:space:]]*//' |
+                tr -d '\r\n' || true
+            )"
             location="${location%%\?*}"
             echo "Attempt $attempt/$max_attempts: status=$status body=${body} ${location:+location=$location}"
             rm -f "$headers_file" "$body_file"

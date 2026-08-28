@@ -1,4 +1,6 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -65,5 +67,56 @@ describe("staging-release.yml health-check retry budget", () => {
     expect(block).toMatch(/grep\s+-i\s+'\^location:'/);
     // Strips the query string so a Vercel SSO nonce never lands in CI logs.
     expect(block).toContain('location="${location%%\\?*}"');
+  });
+
+  describe("Location extraction survives set -euo pipefail on a no-Location response", () => {
+    // Extracts the ACTUAL assignment lines from the workflow (not a hand-copied
+    // duplicate that could drift out of sync) and executes them under bash with
+    // set -euo pipefail, so this proves real runtime behavior of the deployed
+    // script rather than just matching text in the YAML.
+    function locationAssignmentSnippet(): string {
+      const block = stepBlock("Wait for staging health");
+      const startMarker = 'location="$(';
+      const start = block.indexOf(startMarker);
+      expect(start, 'location="$(...)" assignment not found').toBeGreaterThan(-1);
+      const endMarker = 'location="${location%%\\?*}"';
+      const endIdx = block.indexOf(endMarker, start);
+      expect(endIdx, "location query-strip line not found").toBeGreaterThan(-1);
+      return block.slice(start, endIdx + endMarker.length);
+    }
+
+    function runAgainstHeaders(headersFileContent: string): { exitCode: number; stdout: string } {
+      const snippet = locationAssignmentSnippet();
+      const headersFile = path.join(
+        os.tmpdir(),
+        `staging-health-headers-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
+      );
+      fs.writeFileSync(headersFile, headersFileContent);
+      const script = `set -euo pipefail\nheaders_file="${headersFile}"\n${snippet}\necho "REACHED:[$location]"\n`;
+      try {
+        const stdout = execFileSync("bash", ["-c", script], { encoding: "utf8" });
+        return { exitCode: 0, stdout };
+      } catch (error) {
+        const err = error as { status: number | null; stdout?: string };
+        return { exitCode: err.status ?? 1, stdout: err.stdout ?? "" };
+      } finally {
+        fs.rmSync(headersFile, { force: true });
+      }
+    }
+
+    it("does not abort before the retry/logging line when the response has no Location header", () => {
+      const headers = "HTTP/1.1 503 Service Unavailable\r\ncontent-type: application/json\r\n";
+      const result = runAgainstHeaders(headers);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("REACHED:[]");
+    });
+
+    it("still extracts a real redirect Location and strips its query string", () => {
+      const headers =
+        "HTTP/1.1 307 Temporary Redirect\r\nlocation: https://example.com/login?nonce=abc123\r\n";
+      const result = runAgainstHeaders(headers);
+      expect(result.exitCode).toBe(0);
+      expect(result.stdout).toContain("REACHED:[https://example.com/login]");
+    });
   });
 });
