@@ -25,7 +25,7 @@ shipping on the 3-pack, any certification/safety/medical claim, battery
 claims, delivery dates, inventory counts, refund/return policy. An assistant
 answer citing any of these before they're entered into Business DNA is a
 fabrication, not a feature — Business DNA context degrades gracefully to
-silence on a missing field (see §4), it never invents one.
+silence on a missing field (see §5), it never invents one.
 
 ## 2. One-time setup (do this once, before the first test call)
 
@@ -35,13 +35,33 @@ silence on a missing field (see §4), it never invents one.
    options in the assistant config). Set `enabledTools` to exactly:
    `searchKnowledgeBase`, `createContact`, `logActivity`. **Do not enable**
    `getCalendarAvailability`/`bookMeeting` — Fruppi is a product retailer,
-   not an appointment business (see §7).
+   not an appointment business (see §6).
 4. Activate the assistant. This performs the first Business DNA → Vapi sync.
 5. **Standing rule for the whole pilot window:** after _any_ edit to
    Fruppi's Business DNA, re-open and re-save the Voice Assistant settings
-   page (`/voice/[assistantId]`) before the next test call. See §4 for why.
+   page (`/voice/[assistantId]`) before the next test call. See §5 for why.
 
-## 3. Supported vs. unsupported
+## 3. Pre-call checklist (run before every test session, not just once)
+
+Run this in order before dialing in for a batch of test calls — most
+avoidable "wrong answer" incidents trace back to skipping one of these:
+
+1. `curl https://syveka-ai-staging.vercel.app/api/health` → confirm
+   `database: ok` and `redis: ok`. If not, stop — do not place test calls
+   against a degraded backend.
+2. If Business DNA was edited since the last test session, re-open and
+   re-save the Voice Assistant settings page (§2 step 5, §5). Confirm the
+   save succeeded (no error toast) before proceeding.
+3. Confirm which assistant/language you're about to call — FI, EN, and AR
+   are separate assistant configs; calling the wrong one tests the wrong
+   case.
+4. Confirm you're calling the Fruppi assistant for Track A cases, or the
+   separate "Syveka Booking QA" tenant's assistant for Track B cases (§6) —
+   never mix the two in one session.
+5. Have the test matrix (§9) open and know which case number you're about
+   to run, so the transcript can be matched to it afterward.
+
+## 4. Supported vs. unsupported
 
 **Answer:** product identity/description, single/double/triple pricing,
 savings math, store/contact info, callback/lead capture.
@@ -50,7 +70,7 @@ savings math, store/contact info, callback/lead capture.
 claims, unconfirmed shipping, unsourced inventory or delivery dates, any
 refund/return policy not actually entered into Business DNA.
 
-## 4. Business DNA → voice: how it actually works
+## 5. Business DNA → voice: how it actually works
 
 Confirmed by reading `src/server/services/voice.ts` and
 `src/server/business-dna/context.ts` directly:
@@ -73,7 +93,7 @@ mid-pilot edit is the one way a call can give a stale answer that isn't the
 AI's fault — that's exactly test case #33 below, and it's expected to fail
 if the rule is skipped, which is the point of including it.
 
-## 5. Booking: deliberately not part of the Fruppi pilot
+## 6. Booking: deliberately not part of the Fruppi pilot
 
 Fruppi sells toys; it does not take appointments. Forcing a booking flow
 onto it would test against a distorted business model. Booking concurrency,
@@ -83,7 +103,7 @@ advisory-lock ordering, cross-tenant rejection, all passing) — test them
 against a **separate** synthetic tenant (e.g. "Syveka Booking QA"), never
 against Fruppi data. Cases 24–31 below assume that separate tenant.
 
-## 6. Contact/lead capture: what's covered, what isn't
+## 7. Contact/lead capture: what's covered, what isn't
 
 Covered and tested: phone-based match-before-create (a repeat caller is
 matched, not duplicated, via a fallback phone lookup in the post-call job);
@@ -102,7 +122,7 @@ double-click would behave today. If it happens during the pilot, it's
 visible and correctable (merge/delete a duplicate contact), not a silent
 data-integrity failure.
 
-## 7. Dashboard evidence — what Ehab can check without opening raw tables
+## 8. Dashboard evidence — what Ehab can check without opening raw tables
 
 - **Voice → Calls list:** caller number, assistant, timestamp, duration,
   sentiment badge, status.
@@ -117,7 +137,7 @@ data-integrity failure.
   the call detail page doesn't already show one linked (it currently
   doesn't surface a direct link — a minor, non-blocking gap, see P2 list).
 
-## 8. The 35-case supervised test matrix
+## 9. The 35-case supervised test matrix
 
 Run Track A (cases 1–23, 32–35) against the Fruppi tenant. Run Track B
 (cases 24–31) against a separate synthetic booking tenant. For every case:
@@ -158,11 +178,33 @@ criterion.
 | 30  | Malformed/wrong HMAC               | any                                         | Garbage or incorrect signature                          | 401, no DB touch                                          | No VoiceCall created                                                                  | Signature checked before any query                                          |
 | 31  | Valid HMAC                         | any                                         | Correct signature                                       | Proceeds normally                                         | —                                                                                     | Baseline positive case                                                      |
 | 32  | Missing Business DNA               | Fresh tenant, no Business DNA saved         | Any product question                                    | States it doesn't have that info                          | —                                                                                     | No fabrication, no crash                                                    |
-| 33  | Stale Business DNA                 | Edit Business DNA, do NOT re-save assistant | Ask about the changed fact                              | Answers with the OLD data                                 | —                                                                                     | **Expected failure** — proves §4; confirms the re-save rule is load-bearing |
+| 33  | Stale Business DNA                 | Edit Business DNA, do NOT re-save assistant | Ask about the changed fact                              | Answers with the OLD data                                 | —                                                                                     | **Expected failure** — proves §5; confirms the re-save rule is load-bearing |
 | 34  | Owner notification failure         | any (simulated)                             | Normal completed call                                   | Core call data still persisted even if notification fails | VoiceCall/Contact intact                                                              | Notification isn't in the same transaction as core data                     |
-| 35  | Dashboard evidence                 | any                                         | Normal completed call                                   | —                                                         | Caller, time, duration, status, sentiment, summary, transcript, recording all visible | Per §7                                                                      |
+| 35  | Dashboard evidence                 | any                                         | Normal completed call                                   | —                                                         | Caller, time, duration, status, sentiment, summary, transcript, recording all visible | Per §8                                                                      |
 
-## 9. Troubleshooting / rollback runbook
+## 10. After every call — verification checklist
+
+Run this after each test call, pass or fail, before moving to the next
+matrix case:
+
+1. Open the call in Voice → Calls (§8) — confirm a row exists with the
+   correct caller/assistant/timestamp. If no row appears at all, treat it
+   as a webhook failure, not a "the call didn't happen" — see §11.
+2. Read the transcript. Note the exact case number from §9 it corresponds
+   to and whether the AI's answer matched the expected behavior.
+3. If contact capture was attempted, confirm in CRM → Contacts (search by
+   phone) that exactly the expected number of contacts exist for that
+   caller — zero if refused, one if given, never more than one for a
+   single new caller in a single call.
+4. Check the Notifications page for the matching `call.completed` entry.
+5. If anything doesn't match §9's expected behavior for that case, do
+   **not** immediately treat it as a bug — first re-check whether it's one
+   of the two documented, expected exceptions (case #33's stale-data
+   result if Business DNA was recently edited without a re-save; or the
+   known contact-dedup limitation in §7). If it matches neither, follow
+   §11 for the specific symptom.
+
+## 11. Troubleshooting / rollback runbook
 
 **AI gives a wrong or invented answer:** stop test calls immediately.
 Screenshot the transcript from the call detail page. Check whether the
@@ -183,7 +225,7 @@ not attempt to re-diagnose from first principles; check whether
 anything else.
 
 **Duplicate lead or booking appears:** check whether it was a _genuine_
-double `createContact` call (known, accepted limitation, §6 — deduplicate
+double `createContact` call (known, accepted limitation, §7 — deduplicate
 manually, no system fix needed for the pilot) versus a retry-related
 duplicate (would indicate the idempotency fix in this session's PR #100
 regressed — treat as a real bug, stop and investigate before continuing).
@@ -200,11 +242,11 @@ not mean the call data is lost. Verify the underlying data first before
 assuming a bigger problem.
 
 **Business DNA seems stale:** re-open and re-save the Voice Assistant
-settings page (§2 step 5, §4). This is expected, documented behavior, not
+settings page (§2 step 5, §5). This is expected, documented behavior, not
 a bug — confirm the re-save actually happened before treating it as an
 incident.
 
-## 10. Issue classification
+## 12. Issue classification
 
 **P0 — would block this pilot:** none identified as of this writing. Every
 concrete gap found (post-call job idempotency, contact matching) has been
@@ -222,7 +264,7 @@ fixed and tested; every remaining gap below is deliberately non-blocking.
 **P2 — later improvement, do not let it block anything:**
 
 - Automatic Business DNA → Vapi re-sync (currently a manual, documented
-  procedure — §2 step 5, §4).
+  procedure — §2 step 5, §5).
 - Reconciling the AI booking tool's org-wide calendar lock with the public
   guest-booking flow's per-owner lock (pre-existing, documented in
   `docs/DECISIONS.md`, irrelevant to Fruppi since Fruppi doesn't book).
