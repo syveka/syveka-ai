@@ -46,6 +46,16 @@ export async function POST(request: Request): Promise<NextResponse> {
   });
   if (!call) return NextResponse.json({ skipped: "call not found" });
 
+  // Idempotency guard against QStash retrying this job invocation after a
+  // partial failure (distinct from the webhook's own dedupe key, which only
+  // prevents the same end-of-call-report *event* from being enqueued twice
+  // — see src/app/api/v1/voice/webhook/route.ts). Without this, a retry
+  // would double-record VOICE_MINUTES usage and create a duplicate CRM
+  // activity/summary. Set only after every step below completes.
+  if (call.postCallProcessedAt) {
+    return NextResponse.json({ ok: true, alreadyProcessed: true });
+  }
+
   // 1. Usage metering — minutes rounded up (§14.2)
   const minutes = Math.max(1, Math.ceil((call.durationSeconds ?? 0) / 60));
   await recordUsage(orgId, "VOICE_MINUTES", minutes, { callId: call.id });
@@ -153,6 +163,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     },
     call.id,
   );
+
+  await unscopedPrisma.voiceCall.update({
+    where: { id: call.id },
+    data: { postCallProcessedAt: new Date() },
+  });
 
   return NextResponse.json({ ok: true });
 }

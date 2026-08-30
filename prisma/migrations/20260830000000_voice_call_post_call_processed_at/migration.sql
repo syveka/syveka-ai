@@ -1,0 +1,14 @@
+-- First-voice-pilot hardening: the post-call job (src/app/api/v1/jobs/post-call/route.ts)
+-- had no guard against QStash retrying a job invocation whose handler failed
+-- partway through (distinct from the webhook's own dedupe key, which only
+-- prevents the same end-of-call-report *event* from being enqueued twice).
+-- A retried invocation would double-record VOICE_MINUTES usage (affecting the
+-- quota gate in the webhook's status-update handler) and create a duplicate
+-- CRM activity/call summary.
+--
+-- post_call_processed_at is set only after every step (usage metering,
+-- contact match/create, AI summary, owner notification, workflow event)
+-- completes successfully. The job checks this first and short-circuits on a
+-- retry of an already-completed call. Nullable and additive: existing rows
+-- and any future manually-inserted test rows are unaffected.
+ALTER TABLE "voice_calls" ADD COLUMN "post_call_processed_at" TIMESTAMP(3);
