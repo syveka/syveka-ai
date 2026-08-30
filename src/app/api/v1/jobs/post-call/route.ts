@@ -57,8 +57,31 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // 1. Usage metering — minutes rounded up (§14.2)
+  //
+  // The postCallProcessedAt guard above only catches a retry of a call that
+  // already finished successfully (e.g. the response was lost after a 200).
+  // QStash retries because a *prior attempt failed partway through* just as
+  // often, and postCallProcessedAt is only set at the very end — a retry of
+  // that kind reaches this line with postCallProcessedAt still null. recordUsage
+  // is a bare INSERT with no upsert-by-call key, so without this explicit
+  // existence check, that retry would double-count VOICE_MINUTES (and the
+  // quota gate in the webhook's status-update handler would over-count with
+  // it). Steps 2 and 4 below don't need the same treatment: contact match/
+  // create already falls back to a phone lookup that finds step 2's own
+  // prior result, and emitWorkflowEvent has its own sourceEventKey-based
+  // idempotency (see workflow-events.ts).
   const minutes = Math.max(1, Math.ceil((call.durationSeconds ?? 0) / 60));
-  await recordUsage(orgId, "VOICE_MINUTES", minutes, { callId: call.id });
+  const usageAlreadyRecorded = await unscopedPrisma.usageRecord.findFirst({
+    where: {
+      organizationId: orgId,
+      metric: "VOICE_MINUTES",
+      metadata: { path: ["callId"], equals: call.id },
+    },
+    select: { id: true },
+  });
+  if (!usageAlreadyRecorded) {
+    await recordUsage(orgId, "VOICE_MINUTES", minutes, { callId: call.id });
+  }
 
   // 2. Contact match/create from caller number (§16.4)
   let contactId = call.contactId;
@@ -87,8 +110,16 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // 3. AI summary + sentiment (Haiku-class, §15.2)
+  //
+  // `!call.summary` guards against the same partial-failure retry as step 1:
+  // if this step already succeeded on a prior attempt (summary/sentiment/
+  // actionsTaken written, activity created) but a *later* step failed, a
+  // retry must not re-run it and create a second VOICE_AI_CALL activity for
+  // the same call. Safe for calls whose transcript is too short to summarize
+  // in the first place too: call.summary stays null and this block is
+  // skipped identically on every attempt, so there's nothing to duplicate.
   const transcriptText = JSON.stringify(call.transcript ?? []).slice(0, 30_000);
-  if (transcriptText.length > 10) {
+  if (transcriptText.length > 10 && !call.summary) {
     try {
       const { model, maxTokens } = routeModel("summary");
       const res = await anthropic.messages.create({

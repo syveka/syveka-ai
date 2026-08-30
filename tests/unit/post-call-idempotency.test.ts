@@ -9,6 +9,7 @@ type CallRow = {
   status: string;
   durationSeconds: number;
   transcript: unknown;
+  summary: string | null;
   sentiment: string | null;
   postCallProcessedAt: Date | null;
   assistant: { name: string; language: string };
@@ -26,6 +27,7 @@ function freshCallRow(): CallRow {
     status: "COMPLETED",
     durationSeconds: 90,
     transcript: [{ role: "user", text: "hello, do you have the strawberry toy?" }],
+    summary: null,
     sentiment: null,
     postCallProcessedAt: null,
     assistant: { name: "Fruppi Assistant", language: "EN" },
@@ -36,6 +38,7 @@ const mocks = vi.hoisted(() => ({
   verifyJobRequest: vi.fn(async (req: Request): Promise<string | null> => await req.text()),
   voiceCallFindFirst: vi.fn(async (): Promise<unknown> => null),
   voiceCallUpdate: vi.fn(async (..._args: unknown[]) => ({})),
+  usageRecordFindFirst: vi.fn(async (): Promise<{ id: string } | null> => null),
   contactFindFirst: vi.fn(async (): Promise<{ id: string } | null> => null),
   contactCreate: vi.fn(async () => ({ id: "contact-new-1" })),
   activityCreate: vi.fn(async () => ({ id: "activity-1" })),
@@ -61,6 +64,7 @@ vi.mock("@/server/jobs/verify", () => ({ verifyJobRequest: mocks.verifyJobReques
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {
     voiceCall: { findFirst: mocks.voiceCallFindFirst, update: mocks.voiceCallUpdate },
+    usageRecord: { findFirst: mocks.usageRecordFindFirst },
     contact: { findFirst: mocks.contactFindFirst, create: mocks.contactCreate },
     activity: { create: mocks.activityCreate },
     organizationMember: { findFirst: mocks.organizationMemberFindFirst },
@@ -93,6 +97,7 @@ beforeEach(() => {
   vi.clearAllMocks();
   mocks.verifyJobRequest.mockImplementation(async (req: Request) => await req.text());
   mocks.voiceCallFindFirst.mockResolvedValue(freshCallRow());
+  mocks.usageRecordFindFirst.mockResolvedValue(null);
   mocks.contactFindFirst.mockResolvedValue(null);
 });
 
@@ -152,5 +157,43 @@ describe("post-call job — idempotency against QStash-level retry", () => {
     const response = await POST(jobRequest());
     expect(response.status).toBe(401);
     expect(mocks.voiceCallFindFirst).not.toHaveBeenCalled();
+  });
+
+  describe("partial-failure retry (postCallProcessedAt still null, but earlier steps already succeeded)", () => {
+    it("usage already recorded for this call: does not double-record on retry", async () => {
+      mocks.usageRecordFindFirst.mockResolvedValue({ id: "usage-record-1" });
+      const response = await POST(jobRequest());
+      expect(response.status).toBe(200);
+
+      expect(mocks.recordUsage).not.toHaveBeenCalled();
+      // Everything after the usage step still runs — this call never fully completed.
+      expect(mocks.contactCreate).toHaveBeenCalledTimes(1);
+      expect(mocks.activityCreate).toHaveBeenCalledTimes(1);
+      const calls = mocks.voiceCallUpdate.mock.calls as UpdateCall[];
+      const markerCall = calls.find(([args]) => "postCallProcessedAt" in args.data);
+      expect(markerCall).toBeDefined();
+    });
+
+    it("summary already generated for this call: does not create a duplicate activity on retry", async () => {
+      mocks.voiceCallFindFirst.mockResolvedValue({
+        ...freshCallRow(),
+        contactId: "contact-existing-1",
+        summary: "Caller asked about the strawberry toy.",
+        sentiment: "positive",
+      });
+      mocks.usageRecordFindFirst.mockResolvedValue({ id: "usage-record-1" });
+
+      const response = await POST(jobRequest());
+      expect(response.status).toBe(200);
+
+      expect(mocks.recordUsage).not.toHaveBeenCalled();
+      expect(mocks.anthropicCreate).not.toHaveBeenCalled();
+      expect(mocks.activityCreate).not.toHaveBeenCalled();
+      // The call still gets marked processed once this (final, previously
+      // incomplete) attempt reaches the end.
+      const calls = mocks.voiceCallUpdate.mock.calls as UpdateCall[];
+      const markerCall = calls.find(([args]) => "postCallProcessedAt" in args.data);
+      expect(markerCall).toBeDefined();
+    });
   });
 });
