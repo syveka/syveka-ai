@@ -195,6 +195,37 @@ rest of the page's established pattern). Read-only roles see the same page with 
 disabled (`fieldset[disabled]`) and no services controls. All new copy is translated FI/EN/AR and
 uses the existing logical Tailwind utilities for RTL safety.
 
+## Website extraction review (conflict / missing-field indicators)
+
+`RegenerateFromWebsite` never persists on its own (see "Agent consumption contract" boundary
+above — Save is the only write path), but before this feature the merge into form state
+(`mergeExtractedTextFields`) applied every field the extraction returned unconditionally,
+including silently overwriting a field the user had already filled in with something different.
+`src/lib/business-dna/classify-extracted.ts` now classifies every extraction against the current
+form value before anything is applied:
+
+- **SAME** — extraction agrees (after whitespace/line-ending/case-insensitive normalization,
+  comparison-only — display always uses the raw value). No indicator.
+- **NEW** — current value is empty, extraction found something. Applied automatically (nothing to
+  lose) with a subtle "Found from website" indicator.
+- **CONFLICT** — both values are non-empty and meaningfully different. **Never auto-applied.** An
+  inline card shows both values side by side with explicit "Keep current" / "Use website value"
+  actions (`FieldReviewIndicator`, `resolveFieldConflict`) — the field only changes on that
+  explicit click.
+- **MISSING** — an important field (`IMPORTANT_TEXT_FIELDS`: `displayName`, `description`,
+  `productsServices`, `currency` — an editorial product choice, not a schema constraint; nothing
+  in `businessDnaSchema` is actually required) has no current value and the extraction found
+  nothing either. Shown as "Not found on website — please verify," not an error.
+
+Scoped out of this classification (documented limitation, not an oversight): opening hours. The
+existing merge (`mergeExtractedOpeningHours`) already treats an extraction as a full-week
+replacement — days it doesn't mention fall back to a closed default — which would make almost
+every partial extraction register as a false conflict on the unmentioned days. Redesigning that
+merge to be conflict-aware was out of scope for this pass; opening hours keep their pre-existing
+auto-merge behavior unchanged. Per-service (name/price/duration) conflict detection was likewise
+deferred — text/profile-field conflicts were the priority; see the mission's own explicit
+allowance for this.
+
 ## Backward compatibility
 
 - No existing Business DNA data was destroyed or renamed at the database-column level.
