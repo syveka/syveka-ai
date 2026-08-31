@@ -8,14 +8,22 @@ import { DAY_KEYS, type DayKey, type WeekHours } from "@/lib/business-dna/openin
 import {
   mergeExtractedOpeningHours,
   mergeExtractedSupportedLocales,
-  mergeExtractedTextFields,
 } from "@/lib/business-dna/merge-extracted";
+import {
+  applyAutoAcceptedFields,
+  classifyExtractedTextFields,
+  classifySupportedLocales,
+  resolveFieldConflict,
+  type FieldClassificationResult,
+  type TextFieldClassifications,
+} from "@/lib/business-dna/classify-extracted";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { RegenerateFromWebsite } from "./regenerate-from-website";
 import { BusinessDnaServices, type BusinessDnaServiceItem } from "./business-dna-services";
+import { FieldReviewIndicator } from "./field-review-indicator";
 
 const TEXTAREA_CLASS =
   "w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
@@ -119,9 +127,19 @@ export function BusinessDnaForm({
   const [hours, setHours] = useState<WeekHours>(initial.openingHours);
   const [justSaved, setJustSaved] = useState(false);
   const [justRegenerated, setJustRegenerated] = useState(false);
+  const [fieldReview, setFieldReview] = useState<TextFieldClassifications | null>(null);
+  const [localeReview, setLocaleReview] = useState<FieldClassificationResult | null>(null);
+  const [extractionSourceUrl, setExtractionSourceUrl] = useState<string | null>(null);
 
   useEffect(() => {
-    if (state.message === "saved") setJustSaved(true);
+    if (state.message === "saved") {
+      setJustSaved(true);
+      // A successful save means whatever the reviewer decided is now
+      // persisted — stale review indicators from before the save would be
+      // confusing to keep showing.
+      setFieldReview(null);
+      setLocaleReview(null);
+    }
   }, [state.message]);
 
   function setDay(day: DayKey, patch: Partial<WeekHours[DayKey]>) {
@@ -137,17 +155,68 @@ export function BusinessDnaForm({
   }
 
   /**
-   * Merges only the fields the extraction actually returned — every field
-   * is optional in `ExtractedBusinessDNA` (a scrape may only surface a
-   * handful of facts), so anything absent leaves the human-edited value
-   * untouched rather than being cleared.
+   * Classifies every field the extraction touches against the current form
+   * state (see src/lib/business-dna/classify-extracted.ts) instead of
+   * blindly merging. NEW fields (current empty) are safe to auto-apply
+   * immediately — there is nothing to lose. CONFLICT fields are NEVER
+   * auto-applied: the human must explicitly pick "Keep current" or "Use
+   * website value" per field (`resolveFieldConflict` below). Opening hours
+   * are deliberately excluded from conflict detection and keep the
+   * existing whole-week-replace merge behavior — the existing merge design
+   * already treats a partial week extraction as a full replacement (days
+   * it doesn't mention fall back to a closed default), which would make
+   * almost every extraction register as a false conflict on unmentioned
+   * days; see docs/business-dna-mvp.md's "Website extraction review" section
+   * for this scoped limitation.
    */
-  function handleExtracted(data: ExtractedBusinessDNA) {
-    setValues((prev) => mergeExtractedTextFields(prev, data));
-    setSupportedLocales((prev) => mergeExtractedSupportedLocales(prev, data));
+  function handleExtracted(data: ExtractedBusinessDNA, sourceUrl: string) {
+    const textClassifications = classifyExtractedTextFields(values, data);
+    const localeClassification = classifySupportedLocales(supportedLocales, data.supportedLocales);
+
+    setValues((prev) => applyAutoAcceptedFields(prev, textClassifications));
+    if (localeClassification.classification === "NEW") {
+      setSupportedLocales((prev) => mergeExtractedSupportedLocales(prev, data));
+    }
     setHours((prev) => mergeExtractedOpeningHours(prev, data));
+
+    setFieldReview(textClassifications);
+    setLocaleReview(localeClassification.classification === "SAME" ? null : localeClassification);
+    setExtractionSourceUrl(sourceUrl);
     setJustRegenerated(true);
     setJustSaved(false);
+  }
+
+  /** Called when the user explicitly resolves a single conflicting field — see resolveFieldConflict in classify-extracted.ts for the pure decision logic this wraps. */
+  function handleFieldReviewChoice(field: keyof TextFieldValues, useWebsiteValue: boolean) {
+    const review = fieldReview?.[field];
+    if (review) {
+      setValues((prev) => resolveFieldConflict(prev, field, review, useWebsiteValue));
+    }
+    setFieldReview((prev) =>
+      prev ? { ...prev, [field]: { ...prev[field], classification: "SAME" } } : prev,
+    );
+  }
+
+  function resolveLocaleConflict(useWebsiteValue: boolean) {
+    if (useWebsiteValue && localeReview?.extracted) {
+      setSupportedLocales(localeReview.extracted.split(", ").filter(Boolean));
+    }
+    setLocaleReview(null);
+  }
+
+  /** One indicator call site per field, reusing the same classification map and handlers. */
+  function fieldReviewFor(field: keyof TextFieldValues, fieldLabel: string) {
+    return (
+      <FieldReviewIndicator
+        classification={fieldReview?.[field]?.classification}
+        fieldLabel={fieldLabel}
+        currentValue={values[field]}
+        extractedValue={fieldReview?.[field]?.extracted ?? null}
+        sourceUrl={extractionSourceUrl}
+        onKeepCurrent={() => handleFieldReviewChoice(field, false)}
+        onUseWebsite={() => handleFieldReviewChoice(field, true)}
+      />
+    );
   }
 
   return (
@@ -173,8 +242,8 @@ export function BusinessDnaForm({
 
       {readOnly ? null : (
         <RegenerateFromWebsite
-          onExtracted={(data) => {
-            handleExtracted(data);
+          onExtracted={(data, sourceUrl) => {
+            handleExtracted(data, sourceUrl);
           }}
         />
       )}
@@ -203,6 +272,7 @@ export function BusinessDnaForm({
                       maxLength={200}
                       placeholder={t("placeholders.displayName")}
                     />
+                    {fieldReviewFor("displayName", t("fields.displayName"))}
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="industry">{t("fields.industry")}</Label>
@@ -214,6 +284,7 @@ export function BusinessDnaForm({
                       maxLength={120}
                       placeholder={t("placeholders.industry")}
                     />
+                    {fieldReviewFor("industry", t("fields.industry"))}
                   </div>
                 </div>
                 <div className="space-y-1.5">
@@ -228,6 +299,7 @@ export function BusinessDnaForm({
                     placeholder={t("placeholders.description")}
                     className={TEXTAREA_CLASS}
                   />
+                  {fieldReviewFor("description", t("fields.description"))}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1.5">
@@ -247,6 +319,15 @@ export function BusinessDnaForm({
                         </label>
                       ))}
                     </div>
+                    <FieldReviewIndicator
+                      classification={localeReview?.classification}
+                      fieldLabel={t("fields.supportedLocales")}
+                      currentValue={localeReview?.current ?? ""}
+                      extractedValue={localeReview?.extracted ?? null}
+                      sourceUrl={extractionSourceUrl}
+                      onKeepCurrent={() => resolveLocaleConflict(false)}
+                      onUseWebsite={() => resolveLocaleConflict(true)}
+                    />
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="timezone">{t("fields.timezone")}</Label>
@@ -258,6 +339,7 @@ export function BusinessDnaForm({
                       maxLength={100}
                       placeholder={t("placeholders.timezone")}
                     />
+                    {fieldReviewFor("timezone", t("fields.timezone"))}
                   </div>
                 </div>
               </fieldset>
@@ -284,6 +366,7 @@ export function BusinessDnaForm({
                       maxLength={200}
                       placeholder={t("placeholders.brandTone")}
                     />
+                    {fieldReviewFor("brandTone", t("fields.brandTone"))}
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="communicationStyle">{t("fields.communicationStyle")}</Label>
@@ -295,6 +378,7 @@ export function BusinessDnaForm({
                       maxLength={200}
                       placeholder={t("placeholders.communicationStyle")}
                     />
+                    {fieldReviewFor("communicationStyle", t("fields.communicationStyle"))}
                   </div>
                 </div>
                 <div className="space-y-1.5">
@@ -309,6 +393,7 @@ export function BusinessDnaForm({
                     placeholder={t("placeholders.responseInstructions")}
                     className={TEXTAREA_CLASS}
                   />
+                  {fieldReviewFor("responseInstructions", t("fields.responseInstructions"))}
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="targetCustomer">{t("fields.targetCustomer")}</Label>
@@ -322,6 +407,7 @@ export function BusinessDnaForm({
                     placeholder={t("placeholders.targetCustomer")}
                     className={TEXTAREA_CLASS}
                   />
+                  {fieldReviewFor("targetCustomer", t("fields.targetCustomer"))}
                 </div>
               </fieldset>
             </CardContent>
@@ -399,6 +485,7 @@ export function BusinessDnaForm({
                       maxLength={2000}
                       className={TEXTAREA_CLASS}
                     />
+                    {fieldReviewFor("cancellationPolicy", t("fields.cancellationPolicy"))}
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="bookingPolicy">{t("fields.bookingPolicy")}</Label>
@@ -411,6 +498,7 @@ export function BusinessDnaForm({
                       maxLength={2000}
                       className={TEXTAREA_CLASS}
                     />
+                    {fieldReviewFor("bookingPolicy", t("fields.bookingPolicy"))}
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -425,6 +513,7 @@ export function BusinessDnaForm({
                       maxLength={2000}
                       className={TEXTAREA_CLASS}
                     />
+                    {fieldReviewFor("refundPolicy", t("fields.refundPolicy"))}
                   </div>
                   <div className="space-y-1.5">
                     <Label htmlFor="paymentPolicy">{t("fields.paymentPolicy")}</Label>
@@ -437,6 +526,7 @@ export function BusinessDnaForm({
                       maxLength={2000}
                       className={TEXTAREA_CLASS}
                     />
+                    {fieldReviewFor("paymentPolicy", t("fields.paymentPolicy"))}
                   </div>
                 </div>
                 <div className="space-y-1.5">
@@ -451,6 +541,7 @@ export function BusinessDnaForm({
                     placeholder={t("placeholders.otherPolicies")}
                     className={TEXTAREA_CLASS}
                   />
+                  {fieldReviewFor("otherPolicies", t("fields.otherPolicies"))}
                 </div>
               </fieldset>
             </CardContent>
@@ -476,6 +567,7 @@ export function BusinessDnaForm({
                       maxLength={3}
                       placeholder={t("placeholders.currency")}
                     />
+                    {fieldReviewFor("currency", t("fields.currency"))}
                   </div>
                 </div>
                 <div className="space-y-1.5">
@@ -490,6 +582,7 @@ export function BusinessDnaForm({
                     placeholder={t("placeholders.pricingNotes")}
                     className={TEXTAREA_CLASS}
                   />
+                  {fieldReviewFor("pricingNotes", t("fields.pricingNotes"))}
                 </div>
                 <div className="space-y-1.5">
                   <Label htmlFor="quoteInstructions">{t("fields.quoteInstructions")}</Label>
@@ -503,6 +596,7 @@ export function BusinessDnaForm({
                     placeholder={t("placeholders.quoteInstructions")}
                     className={TEXTAREA_CLASS}
                   />
+                  {fieldReviewFor("quoteInstructions", t("fields.quoteInstructions"))}
                 </div>
               </fieldset>
             </CardContent>
@@ -527,6 +621,7 @@ export function BusinessDnaForm({
                   placeholder={t("placeholders.keyFacts")}
                   className={TEXTAREA_CLASS}
                 />
+                {fieldReviewFor("keyFacts", t("fields.keyFacts"))}
               </fieldset>
             </CardContent>
           </Card>
@@ -589,6 +684,7 @@ export function BusinessDnaForm({
                 placeholder={t("placeholders.productsServices")}
                 className={TEXTAREA_CLASS}
               />
+              {fieldReviewFor("productsServices", t("fields.productsServices"))}
             </div>
           </CardContent>
         </Card>

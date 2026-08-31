@@ -695,7 +695,21 @@
       "rateLimited": "Too many extraction attempts. Try again later.",
       "failed": "Could not extract from that URL. Please check it and try again.",
       "reviewHint": "This never saves automatically — review the fields below first.",
-      "appliedMessage": "Fields updated from the website. Review and save when ready."
+      "appliedMessage": "Fields updated from the website. Fields marked below need your review before saving."
+    },
+    "review": {
+      "conflictTitle": "Different information found",
+      "currentValueLabel": "Current",
+      "websiteValueLabel": "Website",
+      "keepCurrent": "Keep current",
+      "keepCurrentAria": "Keep the current value for {field}",
+      "useWebsite": "Use website value",
+      "useWebsiteAria": "Use the website value for {field}",
+      "newFound": "Found from website",
+      "newFoundOn": "Found on {domain}",
+      "missing": "Not found on website — please verify",
+      "resolvedKept": "Kept your current value.",
+      "resolvedUsedWebsite": "Updated from the website."
     },
     "sections": {
       "identity": "Company",
