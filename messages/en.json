@@ -685,6 +685,10 @@
     "invalidInput": "Please check the highlighted fields and try again.",
     "saveFailed": "Could not save. Please try again.",
     "updated": "Updated {date}",
+    "errorTitle": "Business DNA could not load",
+    "errorDescription": "Refresh the page or try again in a moment.",
+    "retry": "Try again",
+    "errorDetailsToggle": "Show details",
     "hoursTimezoneHint": "Hours are interpreted in the timezone set under Company.",
     "regenerate": {
       "label": "Regenerate from website",
