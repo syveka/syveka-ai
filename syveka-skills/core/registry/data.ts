@@ -301,4 +301,71 @@ export const REGISTRY: RegistryEntry[] = [
       "Not yet independently reviewed (Phase 2F of the original Skills Lab bootstrap " +
       "was never completed - see docs/skills/SKILLS_REGISTRY.md). Not installed.",
   },
+  {
+    id: "chrome-devtools-mcp",
+    name: "Chrome DevTools MCP",
+    capability: "browser.debug",
+    provider: "chrome-devtools-mcp",
+    source: "https://github.com/ChromeDevTools/chrome-devtools-mcp",
+    license: "Apache-2.0",
+    trust_level: "TRUSTED",
+    risk_level: "MEDIUM",
+    status: "REVIEW",
+    integration_state: "REFERENCE",
+    supported_agents: ["claude-code", "codex", "gemini-cli"],
+    permissions: ["network:egress", "process:spawn:local", "filesystem:write:scratch"],
+    network_access: true,
+    filesystem_access: true,
+    scripts: true,
+    hooks: false,
+    dependencies: ["puppeteer-core"],
+    credential_requirements: [],
+    approval_required: true,
+    installation_scope: "none",
+    last_reviewed: "2026-08-31",
+    last_updated: "2026-08-31",
+    security_notes:
+      "AI Skills Foundation pass (2026-08-31): evaluated at a design level only - no live " +
+      "Docker/network test performed (contrast with Scrapling's live-verified entry above). " +
+      "Official Google Chrome DevTools team package; drives/introspects a real Chrome instance " +
+      "(console errors, network failures, DOM, performance traces) - complementary to " +
+      "Playwright (which drives/asserts UI) rather than a duplicate. Recommended for local, " +
+      "interactive, human-supervised debugging only, never a standing CI dependency, never " +
+      "pointed at production - see docs/skills/chrome-devtools-mcp-evaluation.md for the full " +
+      "writeup and the reasoning against jumping straight to APPROVED.",
+  },
+  {
+    id: "firecrawl",
+    name: "Firecrawl",
+    capability: "web.research",
+    provider: "firecrawl",
+    source: "https://github.com/firecrawl/firecrawl",
+    license: "AGPL-3.0 (self-hosted) / commercial (hosted API)",
+    trust_level: "UNTRUSTED",
+    risk_level: "MEDIUM",
+    status: "REJECTED",
+    integration_state: "REFERENCE",
+    supported_agents: [],
+    permissions: [],
+    network_access: true,
+    filesystem_access: false,
+    scripts: false,
+    hooks: false,
+    dependencies: [],
+    credential_requirements: ["api_key"],
+    approval_required: true,
+    installation_scope: "none",
+    last_reviewed: "2026-08-31",
+    last_updated: "2026-08-31",
+    security_notes:
+      "AI Skills Foundation pass (2026-08-31): REJECTED, not for a security defect but because " +
+      "it duplicates a capability ('web.research') this registry's `scrapling` entry already " +
+      "serves at integration_state VERIFIED (real Docker isolation, real SSRF policy, live-" +
+      "tested - see that entry above and docs/skills/scrapling-integration.md). Adopting " +
+      "Firecrawl's hosted API alongside would mean a second, unreviewed, paid third-party " +
+      "dependency for the identical job and the same vendor-lock-in tradeoff already weighed " +
+      "against in docs/skills/scrapling-integration.md section 6. Re-open only if a concrete " +
+      "requirement Scrapling's provider cannot meet is identified - see " +
+      "docs/skills/AI-FOUNDATION-AUDIT.md section 5.",
+  },
 ];
