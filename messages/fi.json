@@ -695,7 +695,21 @@
       "rateLimited": "Liian monta noutoyritystä. Yritä myöhemmin uudelleen.",
       "failed": "Tietoja ei voitu noutaa osoitteesta. Tarkista osoite ja yritä uudelleen.",
       "reviewHint": "Tämä ei tallenna automaattisesti — tarkista alla olevat kentät ensin.",
-      "appliedMessage": "Kentät päivitetty verkkosivustolta. Tarkista ja tallenna, kun olet valmis."
+      "appliedMessage": "Kentät päivitetty verkkosivustolta. Alla merkityt kentät kaipaavat tarkistustasi ennen tallennusta."
+    },
+    "review": {
+      "conflictTitle": "Löytyi eriäviä tietoja",
+      "currentValueLabel": "Nykyinen",
+      "websiteValueLabel": "Verkkosivusto",
+      "keepCurrent": "Säilytä nykyinen",
+      "keepCurrentAria": "Säilytä kentän {field} nykyinen arvo",
+      "useWebsite": "Käytä verkkosivuston arvoa",
+      "useWebsiteAria": "Käytä kentän {field} verkkosivustolta löytynyttä arvoa",
+      "newFound": "Löytyi verkkosivustolta",
+      "newFoundOn": "Löytyi osoitteesta {domain}",
+      "missing": "Ei löytynyt verkkosivustolta — tarkista tämä kenttä",
+      "resolvedKept": "Nykyinen arvo säilytetty.",
+      "resolvedUsedWebsite": "Päivitetty verkkosivustolta."
     },
     "sections": {
       "identity": "Yritys",
