@@ -86,8 +86,10 @@ used today only for embeddings (`embed`/`embedOne`) and moderation
 (`isFlaggedByModeration`) — never for chat completion. This is an incomplete feature, not a bug in
 working code, and touching the 8 existing call sites' error handling is out of scope for a
 foundation pass ("do not rewrite stable systems"). This pass adds one new, additive, opt-in file
-(`src/server/ai/fallback.ts`) implementing the missing failover as a wrapper any call site can
-adopt later — it changes no existing behavior today (see §6).
+(`src/server/ai/fallback.ts`) — control-flow **scaffolding** toward failover, not failover itself:
+no call site adopts it, and no real alternate execution path (an OpenAI chat completion) exists
+for it to fall over to yet. It changes no existing behavior today (see §6). **Cross-provider
+failover remains NOT WIRED in production after this pass.**
 
 ### Business DNA — already implements most of Phase 7
 

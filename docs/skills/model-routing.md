@@ -1,7 +1,10 @@
 # Model Routing — What Exists, What This Pass Adds
 
 Syveka's product-facing model router already exists at `src/server/ai/router.ts` — this document
-explains it and records the one gap this pass closes additively.
+explains it and records one real gap in it. **This pass adds opt-in scaffolding toward closing
+that gap (`src/server/ai/fallback.ts`) — it does not close it.** No production call site uses this
+scaffolding; cross-provider failover is **NOT WIRED** into any live product path today. See "What
+this pass adds" below for the precise, non-overstated claim.
 
 ## The existing router
 
@@ -39,10 +42,15 @@ _"Providers are wrapped behind this uniform signature so the model router can fa
 OpenAI"_ — but no code path does that failover today. `src/server/integrations/openai.ts` exists
 and is used for embeddings/moderation only, never chat completion.
 
-## What this pass adds: `src/server/ai/fallback.ts` (additive, opt-in, zero behavior change today)
+## What this pass adds: `src/server/ai/fallback.ts` — opt-in control-flow scaffolding, NOT wired
 
-A new, tested utility — `withModelFallback()` — that a call site _may_ adopt to get real
-failover, without any existing call site being touched in this pass:
+**This is scaffolding, not operational failover.** A new, tested, currently-unused utility —
+`withModelFallback()` — that a call site _may_ adopt in a future, separate, independently-tested
+PR. As of this PR: no production call site imports or calls it; no product-level cross-provider
+failover exists or is claimed to exist. `src/server/integrations/openai.ts` still has no chat-
+completion execution path (only embeddings/moderation) — adding one, and wiring it as an automatic
+alternate for the 8 existing Anthropic call sites, is deliberately out of scope here and would need
+its own focused PR with its own tests, not a claim folded into this foundation pass.
 
 ```ts
 export async function withModelFallback<T>(
@@ -67,8 +75,8 @@ tool, not the elimination of the last mile.
 
 ## Fallback trigger conditions (matches Phase 4's list)
 
-| Condition                                   | Handled by                                                                                                                                                                                                                                                                                                                                                                                                               |
-| ------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Provider unavailable / rate limit / timeout | `isTransientAiError` (existing, reused)                                                                                                                                                                                                                                                                                                                                                                                  |
-| Model unavailable                           | Same — a 404/model-not-found from the SDK is treated the same as any other transient provider failure by the existing classifier                                                                                                                                                                                                                                                                                         |
-| Budget constraint                           | Per-call cost _estimation_ already exists (`src/server/ai/cost.ts`'s `estimateAiCost`/`estimateAiCostUsd`, used in the chat route and `conversations.ts`) — but nothing enforces a ceiling from it today; it's observability, not a budget gate. Out of scope for this pass; the natural place a future budget check would live is alongside the existing `recordUsage`/billing-entitlements system, not a new mechanism |
+| Condition                                   | Handled by                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Provider unavailable / rate limit / timeout | `isTransientAiError` (existing, reused) — checks HTTP 408, 409, 429, any `>=500`, and a fixed set of network-error codes (`ECONNRESET`, `ETIMEDOUT`, `ENETUNREACH`, `rate_limit_exceeded`, `server_error`). Verified by reading `src/server/ai/retry.ts` directly, not assumed.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| Model unavailable (404 / invalid model id)  | **NOT currently transient — corrected from an earlier draft of this document, which incorrectly stated 404 was treated as transient.** `isTransientAiError` does not special-case 404, and 404 is neither `>= 500` nor in the network-error-code set, so `withModelFallback` will **not** fail over on a 404 today; the error propagates. This is deliberate, not an oversight fixed in this pass: a 404 far more often means bad configuration (a typo'd or deprecated model id) than a transient provider condition, and silently failing over would hide that misconfiguration instead of surfacing it. Expanding the classifier to treat 404 as transient is a separate, focused decision that needs its own review — not a side effect of this documentation correction. |
+| Budget constraint                           | Per-call cost _estimation_ already exists (`src/server/ai/cost.ts`'s `estimateAiCost`/`estimateAiCostUsd`, used in the chat route and `conversations.ts`) — but nothing enforces a ceiling from it today; it's observability, not a budget gate. Out of scope for this pass; the natural place a future budget check would live is alongside the existing `recordUsage`/billing-entitlements system, not a new mechanism                                                                                                                                                                                                                                                                                                                                                      |

@@ -21,9 +21,9 @@ already existed and why almost everything below is "extend," not "build."
         │
         ├── src/server/integrations/anthropic.ts (streamClaude, tool-use loop)
         ├── src/server/integrations/openai.ts    (embeddings, moderation)
-        └── src/server/ai/fallback.ts             (NEW — opt-in cross-provider
-                                                     failover, adopted by
-                                                     future call sites)
+        └── src/server/ai/fallback.ts             (NEW — opt-in scaffolding,
+                                                     NOT WIRED into any
+                                                     call site yet)
         │
         ▼
   PRODUCT SURFACES: Chat · Voice (Vapi) · Inbox · Booking · CRM · Business DNA
