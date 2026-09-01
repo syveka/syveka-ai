@@ -10,7 +10,13 @@ const workflow = fs.readFileSync(
   path.join(__dirname, "../../.github/workflows/staging-release.yml"),
   "utf8",
 );
+const playwrightConfig = fs.readFileSync(
+  path.join(__dirname, "../../playwright.config.ts"),
+  "utf8",
+);
 const smoke = fs.readFileSync(path.join(__dirname, "../e2e/smoke.spec.ts"), "utf8");
+const authSetup = fs.readFileSync(path.join(__dirname, "../e2e/auth.setup.ts"), "utf8");
+const authHelper = fs.readFileSync(path.join(__dirname, "../e2e/helpers/auth.ts"), "utf8");
 
 const coreRuntimeNames = [
   "NEXT_PUBLIC_APP_URL",
@@ -44,6 +50,11 @@ describe("staging runtime configuration gate", () => {
     expect(workflow).toContain("secrets.STAGING_E2E_USER_EMAIL");
     expect(workflow).toContain("secrets.STAGING_E2E_USER_PASSWORD");
     expect(smoke).not.toContain("test.skip(!process.env.E2E_USER_EMAIL");
-    expect(smoke).toContain("Authenticated staging smoke tests require");
+    expect(authSetup).toContain("requireE2EUserCredentials()");
+    expect(authHelper).toContain("This spec requires E2E_USER_EMAIL and E2E_USER_PASSWORD.");
+    expect(playwrightConfig).toContain('name: "auth-setup"');
+    expect(playwrightConfig).toContain('dependencies: ["auth-setup"]');
+    expect(playwrightConfig).toContain('storageState: "test-results/.auth/e2e-user.json"');
+    expect(smoke).toContain("storageState: { cookies: [], origins: [] }");
   });
 });

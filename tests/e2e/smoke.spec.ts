@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { openAuthenticatedE2EDashboard, requireE2EUserCredentials } from "./helpers/auth";
 
 /**
  * Critical-journey smoke suite (§23). Runs against preview/staging.
@@ -6,6 +7,8 @@ import { test, expect } from "@playwright/test";
  */
 
 test.describe("public", () => {
+  test.use({ storageState: { cookies: [], origins: [] } });
+
   test("authentication UI starts", async ({ page }) => {
     await page.goto("/login");
     await expect(page.locator("#email")).toBeVisible();
@@ -50,20 +53,10 @@ test.describe("public", () => {
 });
 
 test.describe("authenticated", () => {
-  test.beforeAll(() => {
-    if (!process.env.E2E_USER_EMAIL || !process.env.E2E_USER_PASSWORD) {
-      throw new Error(
-        "Authenticated staging smoke tests require E2E_USER_EMAIL and E2E_USER_PASSWORD.",
-      );
-    }
-  });
+  test.beforeAll(requireE2EUserCredentials);
 
   test.beforeEach(async ({ page }) => {
-    await page.goto("/login");
-    await page.fill("#email", process.env.E2E_USER_EMAIL!);
-    await page.fill("#password", process.env.E2E_USER_PASSWORD!);
-    await page.getByRole("button", { name: /kirjaudu|log in/i }).click();
-    await page.waitForURL(/\/dashboard/);
+    await openAuthenticatedE2EDashboard(page);
   });
 
   test("dashboard shows KPI cards", async ({ page }) => {

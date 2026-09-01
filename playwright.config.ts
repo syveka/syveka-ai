@@ -52,7 +52,21 @@ export default defineConfig({
       : undefined,
   },
   projects: [
-    { name: "desktop", use: { ...devices["Desktop Chrome"] } },
-    { name: "mobile", use: { ...devices["Pixel 7"] } }, // §9 mobile-critical surfaces
+    { name: "auth-setup", testMatch: /auth\.setup\.ts/ },
+    {
+      name: "desktop",
+      testIgnore: /auth\.setup\.ts/,
+      dependencies: ["auth-setup"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "test-results/.auth/e2e-user.json",
+      },
+    },
+    {
+      name: "mobile",
+      testIgnore: /auth\.setup\.ts/,
+      dependencies: ["auth-setup"],
+      use: { ...devices["Pixel 7"], storageState: "test-results/.auth/e2e-user.json" },
+    }, // §9 mobile-critical surfaces
   ],
 });
