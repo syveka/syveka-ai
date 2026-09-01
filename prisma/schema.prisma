@@ -1274,6 +1274,12 @@ model VoiceCall {
   recordingUrl    String?       @map("recording_url")
   actionsTaken    Json          @default("[]") @map("actions_taken")
   createdAt       DateTime      @default(now()) @map("created_at")
+  // Set only after the post-call job (usage metering, contact match/create,
+  // AI summary, owner notification, workflow event) fully completes. Guards
+  // against QStash retrying a job whose handler failed partway through --
+  // distinct from the webhook's own dedupe key, which only prevents the same
+  // end-of-call-report event from being *enqueued* twice.
+  postCallProcessedAt DateTime? @map("post_call_processed_at")
 
   organization Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   assistant    VoiceAssistant @relation(fields: [assistantId], references: [id], onDelete: Cascade)

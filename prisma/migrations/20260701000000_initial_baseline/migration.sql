@@ -74,10 +74,13 @@ DECLARE
   --     completes, the database must have the correctly shaped column like any other.
   --   - workflow_runs.source_event_key: same situation, added by
   --     20260818000000_workflow_run_source_event_key.
+  --   - voice_calls.post_call_processed_at: same situation, added by
+  --     20260830000000_voice_call_post_call_processed_at.
   legacy_missing_columns TEXT[] := ARRAY[
 -- BEGIN LEGACY MISSING COLUMNS
     'calendar_sync_states.webhook_verification_secret_hash',
-    'workflow_runs.source_event_key'
+    'workflow_runs.source_event_key',
+    'voice_calls.post_call_processed_at'
 -- END LEGACY MISSING COLUMNS
   ];
 -- BEGIN LEGACY MISSING TABLES
@@ -900,6 +903,7 @@ BEGIN
       ('voice_calls', 'ended_reason', 'text', 'false', '', '', ''),
       ('voice_calls', 'id', 'uuid', 'true', '', '', 'gen_random_uuid'),
       ('voice_calls', 'organization_id', 'uuid', 'true', '', '', ''),
+      ('voice_calls', 'post_call_processed_at', 'timestamp(3) without time zone', 'false', '', '', ''),
       ('voice_calls', 'recording_url', 'text', 'false', '', '', ''),
       ('voice_calls', 'sentiment', 'text', 'false', '', '', ''),
       ('voice_calls', 'started_at', 'timestamp(3) without time zone', 'true', '', '', ''),
