@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { loginAsE2EUser, requireE2EUserCredentials } from "./helpers/auth";
+import { openAuthenticatedE2EDashboard, requireE2EUserCredentials } from "./helpers/auth";
 
 /**
  * Business DNA had zero e2e coverage before this spec (see
@@ -21,7 +21,7 @@ test.describe("business dna", () => {
   test.beforeAll(requireE2EUserCredentials);
 
   test.beforeEach(async ({ page }) => {
-    await loginAsE2EUser(page);
+    await openAuthenticatedE2EDashboard(page);
   });
 
   test("page loads without a client-side exception", async ({ page }) => {
