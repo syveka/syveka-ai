@@ -37,7 +37,32 @@ export type VapiAssistantConfig = {
   maxDurationSeconds: number;
 };
 
-function toVapiPayload(cfg: VapiAssistantConfig) {
+/**
+ * Azure neural voice fallback per language (used only when no explicit
+ * `voiceId` is configured). Arabic has its own entry rather than falling
+ * through to the English default — `en-US-JennyNeural` cannot speak Arabic
+ * text.
+ */
+const DEFAULT_AZURE_VOICE: Record<VapiAssistantConfig["language"], string> = {
+  fi: "fi-FI-SelmaNeural",
+  en: "en-US-JennyNeural",
+  ar: "ar-SA-ZariyahNeural",
+};
+
+/**
+ * Deepgram transcriber model per language. Nova-2 does not support Arabic
+ * at all (Deepgram's own docs list its supported languages, and Arabic is
+ * absent) — Arabic calls need the dedicated Nova-3 Arabic model instead.
+ * Finnish and English stay on the already-verified nova-2 default.
+ */
+const DEEPGRAM_MODEL: Record<VapiAssistantConfig["language"], string> = {
+  fi: "nova-2",
+  en: "nova-2",
+  ar: "nova-3",
+};
+
+/** Exported for direct unit testing of the per-language voice/transcriber selection. */
+export function toVapiPayload(cfg: VapiAssistantConfig) {
   return {
     name: cfg.name,
     firstMessage: cfg.firstMessage,
@@ -53,12 +78,12 @@ function toVapiPayload(cfg: VapiAssistantConfig) {
     voice:
       cfg.voiceProvider === "elevenlabs"
         ? { provider: "11labs", voiceId: cfg.voiceId ?? "" }
-        : {
-            provider: "azure",
-            voiceId:
-              cfg.voiceId ?? (cfg.language === "fi" ? "fi-FI-SelmaNeural" : "en-US-JennyNeural"),
-          },
-    transcriber: { provider: "deepgram", model: "nova-2", language: cfg.language },
+        : { provider: "azure", voiceId: cfg.voiceId ?? DEFAULT_AZURE_VOICE[cfg.language] },
+    transcriber: {
+      provider: "deepgram",
+      model: DEEPGRAM_MODEL[cfg.language],
+      language: cfg.language,
+    },
     // Custom Credential reference, not the legacy inline `server.secret` — Vapi
     // resolves the actual HMAC key server-side from the credential (§13.2).
     server: { url: cfg.serverUrl, credentialId: cfg.serverCredentialId },
