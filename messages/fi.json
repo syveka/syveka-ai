@@ -685,6 +685,10 @@
     "invalidInput": "Tarkista korostetut kentät ja yritä uudelleen.",
     "saveFailed": "Tallennus epäonnistui. Yritä uudelleen.",
     "updated": "Päivitetty {date}",
+    "errorTitle": "Yrityksen DNA:ta ei voitu ladata",
+    "errorDescription": "Päivitä sivu tai yritä hetken kuluttua uudelleen.",
+    "retry": "Yritä uudelleen",
+    "errorDetailsToggle": "Näytä tiedot",
     "hoursTimezoneHint": "Aukioloajat tulkitaan Perustiedot-osiossa asetetussa aikavyöhykkeessä.",
     "regenerate": {
       "label": "Päivitä verkkosivustolta",
