@@ -166,21 +166,35 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // 4. Notify org owner + workflow trigger (§16.4)
+  //
+  // Same partial-failure retry gap as steps 1 and 3: a retry whose prior
+  // attempt got past this point but failed before the postCallProcessedAt
+  // marker (e.g. emitWorkflowEvent's enqueue call failing, or the marker
+  // write itself failing) would otherwise create a second `call.completed`
+  // notification for the same call. `href` is `/voice/calls/${call.id}` —
+  // unique per call — so it's the natural existence key, matching the same
+  // find-before-create idiom step 1 already uses for usageRecord.
   const owner = await unscopedPrisma.organizationMember.findFirst({
     where: { organizationId: orgId, role: "OWNER" },
     select: { userId: true },
   });
   if (owner) {
-    await unscopedPrisma.notification.create({
-      data: {
-        organizationId: orgId,
-        userId: owner.userId,
-        type: "call.completed",
-        title: call.assistant.name,
-        body: `${call.callerNumber ?? "Unknown"} · ${minutes} min`,
-        href: `/voice/calls/${call.id}`,
-      },
+    const notificationAlreadySent = await unscopedPrisma.notification.findFirst({
+      where: { organizationId: orgId, type: "call.completed", href: `/voice/calls/${call.id}` },
+      select: { id: true },
     });
+    if (!notificationAlreadySent) {
+      await unscopedPrisma.notification.create({
+        data: {
+          organizationId: orgId,
+          userId: owner.userId,
+          type: "call.completed",
+          title: call.assistant.name,
+          body: `${call.callerNumber ?? "Unknown"} · ${minutes} min`,
+          href: `/voice/calls/${call.id}`,
+        },
+      });
+    }
   }
 
   await emitWorkflowEvent(

@@ -43,6 +43,7 @@ const mocks = vi.hoisted(() => ({
   contactCreate: vi.fn(async () => ({ id: "contact-new-1" })),
   activityCreate: vi.fn(async () => ({ id: "activity-1" })),
   organizationMemberFindFirst: vi.fn(async () => ({ userId: "owner-1" })),
+  notificationFindFirst: vi.fn(async (): Promise<{ id: string } | null> => null),
   notificationCreate: vi.fn(async () => ({ id: "notif-1" })),
   recordUsage: vi.fn(async (..._args: unknown[]) => {}),
   emitWorkflowEvent: vi.fn(async (..._args: unknown[]) => {}),
@@ -68,7 +69,7 @@ vi.mock("@/server/db/tenant", () => ({
     contact: { findFirst: mocks.contactFindFirst, create: mocks.contactCreate },
     activity: { create: mocks.activityCreate },
     organizationMember: { findFirst: mocks.organizationMemberFindFirst },
-    notification: { create: mocks.notificationCreate },
+    notification: { findFirst: mocks.notificationFindFirst, create: mocks.notificationCreate },
   },
 }));
 vi.mock("@/server/integrations/anthropic", () => ({
@@ -99,6 +100,7 @@ beforeEach(() => {
   mocks.voiceCallFindFirst.mockResolvedValue(freshCallRow());
   mocks.usageRecordFindFirst.mockResolvedValue(null);
   mocks.contactFindFirst.mockResolvedValue(null);
+  mocks.notificationFindFirst.mockResolvedValue(null);
 });
 
 describe("post-call job — idempotency against QStash-level retry", () => {
@@ -191,6 +193,32 @@ describe("post-call job — idempotency against QStash-level retry", () => {
       expect(mocks.activityCreate).not.toHaveBeenCalled();
       // The call still gets marked processed once this (final, previously
       // incomplete) attempt reaches the end.
+      const calls = mocks.voiceCallUpdate.mock.calls as UpdateCall[];
+      const markerCall = calls.find(([args]) => "postCallProcessedAt" in args.data);
+      expect(markerCall).toBeDefined();
+    });
+
+    it("notification already sent for this call: does not create a duplicate on retry", async () => {
+      // Simulates a retry whose prior attempt got past the notification
+      // step (step 4) but failed before postCallProcessedAt was set — e.g.
+      // emitWorkflowEvent's enqueue call failing, or the marker write itself
+      // failing.
+      mocks.voiceCallFindFirst.mockResolvedValue({
+        ...freshCallRow(),
+        contactId: "contact-existing-1",
+        summary: "Caller asked about the strawberry toy.",
+        sentiment: "positive",
+      });
+      mocks.usageRecordFindFirst.mockResolvedValue({ id: "usage-record-1" });
+      mocks.notificationFindFirst.mockResolvedValue({ id: "notif-already-sent-1" });
+
+      const response = await POST(jobRequest());
+      expect(response.status).toBe(200);
+
+      expect(mocks.notificationCreate).not.toHaveBeenCalled();
+      // The workflow trigger and completion marker still fire — this call
+      // never fully completed.
+      expect(mocks.emitWorkflowEvent).toHaveBeenCalledTimes(1);
       const calls = mocks.voiceCallUpdate.mock.calls as UpdateCall[];
       const markerCall = calls.find(([args]) => "postCallProcessedAt" in args.data);
       expect(markerCall).toBeDefined();
