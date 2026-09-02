@@ -369,3 +369,19 @@ jobs:
           E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      - name: Upload Playwright traces on failure
+        # Without this, a failed staging E2E run's trace.zip/error-context.md
+        # (the only way to see the actual DOM/network state at the moment of
+        # failure, e.g. exactly what a reported-empty login-error alert
+        # really contained) only ever existed on the ephemeral runner disk
+        # and was unrecoverable the instant the job ended -- every prior
+        # staging auth failure had to be diagnosed from the test's own text
+        # assertion message alone, with no way to confirm or rule out
+        # competing explanations after the fact.
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: staging-e2e-test-results
+          path: test-results/
+          retention-days: 7
