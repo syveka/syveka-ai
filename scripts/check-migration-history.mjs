@@ -30,6 +30,7 @@ const expectedOrder = [
   "20260818010000_workflow_step_execution",
   "20260826000000_harden_business_dna_table_privileges",
   "20260830000000_voice_call_post_call_processed_at",
+  "20260902000000_handle_new_user_email_reconciliation",
 ];
 
 // These eight migrations were published before the staging-release branch.
