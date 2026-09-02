@@ -16,6 +16,12 @@
 -- fkey's ON UPDATE CASCADE), not orphaned or duplicated.
 BEGIN;
 
+-- An unrelated bystander user, present the whole time, to prove the
+-- reconciliation UPDATE's `WHERE email = NEW.email` never touches a row it
+-- shouldn't.
+INSERT INTO users (id, email, full_name, updated_at) VALUES
+  ('60000000-0000-4000-8000-000000000099', 'bystander-fixture@example.test', 'Bystander Name', '2020-01-01'::timestamptz);
+
 -- Simulates the pre-existing state: a public.users row was created for this
 -- email by a *previous* auth.users identity that has since been deleted.
 INSERT INTO users (id, email, full_name, updated_at) VALUES
@@ -64,6 +70,16 @@ BEGIN
   IF membership_count <> 1 THEN
     RAISE EXCEPTION 'expected the pre-existing organization membership to now reference the new auth id via ON UPDATE CASCADE, found %', membership_count;
   END IF;
+
+  PERFORM 1
+    FROM users
+    WHERE id = '60000000-0000-4000-8000-000000000099'
+      AND email = 'bystander-fixture@example.test'
+      AND full_name = 'Bystander Name'
+      AND updated_at = '2020-01-01'::timestamptz;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'expected the unrelated bystander user to be completely untouched by the reconciliation';
+  END IF;
 END $$;
 
 -- Companion case: a genuinely brand-new user (no pre-existing public.users
@@ -84,6 +100,37 @@ BEGIN
       AND full_name = 'Brand New';
   IF row_count <> 1 THEN
     RAISE EXCEPTION 'expected a brand-new user with no prior row to be inserted normally, found %', row_count;
+  END IF;
+END $$;
+
+-- Companion case: the pre-existing ON CONFLICT (id) DO NOTHING path, for a
+-- public.users row that already has the *same* id the new auth.users insert
+-- will use (e.g. pre-seeded by a fixture load) -- proving the new
+-- reconciliation UPDATE (whose WHERE clause excludes id = NEW.id) is a
+-- guaranteed no-op here, and the original insert-suppression behavior for a
+-- matching id is unchanged: existing fields must not be overwritten.
+INSERT INTO users (id, email, full_name, updated_at) VALUES
+  ('60000000-0000-4000-8000-000000000006', 'same-id-fixture@example.test', 'Pre-seeded Name', now());
+
+INSERT INTO auth.users (id, email, raw_user_meta_data) VALUES
+  ('60000000-0000-4000-8000-000000000006', 'same-id-fixture@example.test', '{"full_name": "Should Not Overwrite"}'::jsonb);
+
+DO $$
+DECLARE
+  row_count integer;
+BEGIN
+  SELECT count(*) INTO row_count FROM users WHERE email = 'same-id-fixture@example.test';
+  IF row_count <> 1 THEN
+    RAISE EXCEPTION 'expected exactly one row for the pre-seeded same-id case, found %', row_count;
+  END IF;
+
+  PERFORM 1
+    FROM users
+    WHERE id = '60000000-0000-4000-8000-000000000006'
+      AND email = 'same-id-fixture@example.test'
+      AND full_name = 'Pre-seeded Name';
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'expected ON CONFLICT (id) DO NOTHING to leave the pre-seeded row untouched (full_name must still be "Pre-seeded Name")';
   END IF;
 END $$;
 
