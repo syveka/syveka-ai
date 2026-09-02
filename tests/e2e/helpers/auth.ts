@@ -22,7 +22,26 @@ export function requireE2EUserCredentials(): void {
   }
 }
 
+/**
+ * Playwright's own failure diagnostics (error-context.md's ARIA "Page
+ * snapshot", generated on every test failure regardless of trace/screenshot
+ * config -- confirmed directly, there is no config flag to suppress it)
+ * include the live value of any visible form field, unmasked, even for
+ * type="password" inputs. Every loginDiagnostic() call site throws shortly
+ * after typing the real E2E password into #password, so it must be cleared
+ * first or that password ends up captured in plain text in a failure
+ * artifact. Best-effort: the field may not exist on every page this is
+ * called from (e.g. once already on /dashboard).
+ */
+async function clearPasswordField(page: Page): Promise<void> {
+  await page
+    .locator("#password")
+    .fill("", { timeout: 1_000 })
+    .catch(() => {});
+}
+
 async function loginDiagnostic(page: Page, reason: string): Promise<Error> {
+  await clearPasswordField(page);
   const url = new URL(page.url());
   const alert = page.getByRole("alert");
   const alertText = (await alert.isVisible().catch(() => false))

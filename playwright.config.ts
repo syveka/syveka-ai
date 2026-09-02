@@ -52,7 +52,18 @@ export default defineConfig({
       : undefined,
   },
   projects: [
-    { name: "auth-setup", testMatch: /auth\.setup\.ts/ },
+    {
+      name: "auth-setup",
+      testMatch: /auth\.setup\.ts/,
+      // Never trace this project: it types the real E2E password into a
+      // live form field, and Playwright's trace unconditionally records
+      // every action's arguments (including .fill() calls) and DOM
+      // snapshots (including live input values, via its own
+      // __playwright_value__ marker) regardless of what happens
+      // afterward -- confirmed directly against a real trace.zip. There is
+      // no way to keep tracing on here and redact it after the fact.
+      use: { trace: "off" },
+    },
     {
       name: "desktop",
       testIgnore: /auth\.setup\.ts/,
