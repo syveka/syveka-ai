@@ -379,9 +379,18 @@ jobs:
         # staging auth failure had to be diagnosed from the test's own text
         # assertion message alone, with no way to confirm or rule out
         # competing explanations after the fact.
+        #
+        # test-results/.auth/ is deliberately excluded: auth.setup.ts writes
+        # the full browser storageState there (cookies + localStorage,
+        # including the live Supabase session tokens) on every *successful*
+        # sign-in, regardless of whether a *later*, unrelated test in the
+        # same job fails. Uploading it would hand out a ready-to-replay,
+        # no-credentials-needed session for the staging E2E account.
         if: failure()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: staging-e2e-test-results
-          path: test-results/
+          path: |
+            test-results/
+            !test-results/.auth/
           retention-days: 7

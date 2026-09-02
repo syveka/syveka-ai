@@ -4,12 +4,15 @@ import { classifyE2ELoginPathname, loginAsE2EUser } from "../e2e/helpers/auth";
 
 type LoginDestination = { url: string; alert?: string };
 
-function pageFor(destination: LoginDestination): Page {
+function pageFor(
+  destination: LoginDestination,
+): Page & { passwordFieldFill: ReturnType<typeof vi.fn> } {
   let currentUrl = "https://staging.example.test/login";
   const alert = {
     isVisible: vi.fn(async () => Boolean(destination.alert)),
     textContent: vi.fn(async () => destination.alert ?? null),
   };
+  const passwordFieldFill = vi.fn(async () => {});
 
   return {
     goto: vi.fn(async () => {
@@ -20,11 +23,15 @@ function pageFor(destination: LoginDestination): Page {
     getByRole: vi.fn((role: string) =>
       role === "button" ? { click: vi.fn(async () => void (currentUrl = destination.url)) } : alert,
     ),
+    locator: vi.fn((selector: string) =>
+      selector === "#password" ? { fill: passwordFieldFill } : { fill: vi.fn(async () => {}) },
+    ),
+    passwordFieldFill,
     url: vi.fn(() => currentUrl),
     waitForLoadState: vi.fn(async () => {}),
     waitForTimeout: vi.fn(async () => {}),
     evaluate: vi.fn(async () => "complete"),
-  } as unknown as Page;
+  } as unknown as Page & { passwordFieldFill: ReturnType<typeof vi.fn> };
 }
 
 describe("loginAsE2EUser", () => {
@@ -68,6 +75,20 @@ describe("loginAsE2EUser", () => {
     await expect(
       loginAsE2EUser(pageFor({ url: "https://staging.example.test/en/settings/profile" })),
     ).rejects.toThrow(/unexpected route.*pathname="\/en\/settings\/profile"/);
+  });
+
+  /**
+   * Playwright's own error-context.md (generated on every test failure,
+   * independent of trace/screenshot config) captures the live value of any
+   * visible form field, unmasked, even for type="password" inputs -- proven
+   * directly against a real Playwright run. Every failure path here must
+   * clear #password first, or a failed staging E2E run would leak the real
+   * account password in a downloadable artifact.
+   */
+  it("clears the password field before throwing, on every failure path", async () => {
+    const page = pageFor({ url: "https://staging.example.test/login", alert: "Invalid" });
+    await expect(loginAsE2EUser(page)).rejects.toThrow();
+    expect(page.passwordFieldFill).toHaveBeenCalledWith("", { timeout: 1_000 });
   });
 });
 
