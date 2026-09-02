@@ -205,9 +205,19 @@ jobs:
           E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
 
       - name: Ensure staging E2E organization fixture
+        # A one-off script, not the deployed serverless app, so it must use
+        # the direct/session connection (STAGING_DIRECT_URL) rather than
+        # STAGING_DATABASE_URL's transaction-pooler connection -- Prisma's
+        # runtime PrismaClient (which this script calls; unlike `prisma
+        # migrate`, which always prefers directUrl) reads `url`/DATABASE_URL
+        # exclusively, so pointing it at the same secret already proven to
+        # work moments earlier (by "Apply Prisma migrations to staging" and
+        # "Verify Prisma migration status", both directUrl-based) rather than
+        # the untested-until-here STAGING_DATABASE_URL avoids relying on a
+        # connection string this workflow never actually exercises otherwise.
         run: npx tsx scripts/ensure-e2e-org-fixture.ts
         env:
-          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          DATABASE_URL: ${{ secrets.STAGING_DIRECT_URL }}
           DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
           E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
           SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
