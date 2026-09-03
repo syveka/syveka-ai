@@ -173,5 +173,62 @@ describe("staging runtime configuration gate", () => {
       expect(result.output).not.toContain("[SENSITIVE]");
       expect(result.output).not.toContain("ERR_INVALID_URL");
     });
+
+    it("rejects a value wrapped in literal quote characters without leaking it", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+        DATABASE_URL:
+          '"postgresql://postgres.abcdefghijklmnopqrst:pw@aws-0.pooler.supabase.com:6543/postgres"',
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("DATABASE_URL is not a valid URL.");
+      expect(result.output).not.toContain("aws-0.pooler.supabase.com");
+      expect(result.output).not.toContain("ERR_INVALID_URL");
+    });
+
+    it("rejects a bare hostname with no scheme without leaking it", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: "abcdefghijklmnopqrst.supabase.co",
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("NEXT_PUBLIC_SUPABASE_URL is not a valid URL.");
+      expect(result.output).not.toContain("abcdefghijklmnopqrst.supabase.co");
+      expect(result.output).not.toContain("ERR_INVALID_URL");
+    });
+
+    /**
+     * The WHATWG URL parser strips leading/trailing spaces and all internal
+     * ASCII tab/newline characters before parsing, so these do NOT trip the
+     * malformed-URL guard -- documenting that behavior explicitly here so it
+     * isn't mistaken for a gap. (Whitespace corruption of the Next.js app's
+     * OWN Supabase client env vars is a separate, already-fixed concern --
+     * see the `.trim()` calls in src/env.ts.)
+     */
+    it("tolerates leading/trailing whitespace and embedded newlines (WHATWG URL behavior)", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: " https://abcdefghijklmnopqrst.supabase.co\n",
+      });
+      expect(result.status).toBe(0);
+    });
+
+    /**
+     * A duplicated-protocol value ("https://https://...") is syntactically a
+     * valid URL to `new URL()` -- it just parses to the wrong hostname
+     * ("https"). It never reaches parseUrl's catch block, but is still
+     * caught safely by the existing hostname cross-check, whose error
+     * message never includes the raw value either.
+     */
+    it("rejects a duplicated-protocol value via the hostname check, not by leaking it", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: "https://https://abcdefghijklmnopqrst.supabase.co",
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("does not match STAGING_SUPABASE_PROJECT_REF");
+      expect(result.output).not.toContain("abcdefghijklmnopqrst.supabase.co");
+    });
   });
 });
