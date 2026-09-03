@@ -242,20 +242,29 @@ export function getRedisEnv(): z.infer<typeof redisEnvSchema> {
  * ai/chat's blanket catch -- doesn't swallow non-auth errors). Same root
  * cause and same fix shape as `getRedisEnv()` above.
  */
+// `.trim()` runs before `.url()`/`.min(1)`: Vercel's env var text fields (and
+// copy/paste in general) can silently introduce a trailing newline or
+// surrounding whitespace -- already proven live on this exact staging
+// environment for DATABASE_URL (see connection-string-sanitizer.ts), which a
+// lenient WHATWG URL parse (and Zod's `.url()`, built on it) tolerates
+// without ever flagging it. An untrimmed anon key or Supabase URL wouldn't
+// fail this validation, but would make every Supabase Auth API call
+// (signInWithPassword included) carry a corrupted URL/apikey header,
+// surfacing only as a generic, otherwise-unexplained auth rejection.
 const supabaseAuthEnvSchema = z.object({
-  NEXT_PUBLIC_SUPABASE_URL: z.string().url(),
-  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().min(1),
+  NEXT_PUBLIC_SUPABASE_URL: z.string().trim().url(),
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: z.string().trim().min(1),
 });
 
 const supabaseAdminEnvSchema = supabaseAuthEnvSchema.extend({
-  SUPABASE_SERVICE_ROLE_KEY: z.string().min(1),
+  SUPABASE_SERVICE_ROLE_KEY: z.string().trim().min(1),
 });
 
 export function getSupabaseAuthEnv(): z.infer<typeof supabaseAuthEnvSchema> {
   if (process.env.SKIP_ENV_VALIDATION === "1") {
     return {
-      NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ?? "",
-      NEXT_PUBLIC_SUPABASE_ANON_KEY: process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "",
+      NEXT_PUBLIC_SUPABASE_URL: (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").trim(),
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").trim(),
     };
   }
 
@@ -272,7 +281,7 @@ export function getSupabaseAdminEnv(): z.infer<typeof supabaseAdminEnvSchema> {
   if (process.env.SKIP_ENV_VALIDATION === "1") {
     return {
       ...getSupabaseAuthEnv(),
-      SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ?? "",
+      SUPABASE_SERVICE_ROLE_KEY: (process.env.SUPABASE_SERVICE_ROLE_KEY ?? "").trim(),
     };
   }
 
