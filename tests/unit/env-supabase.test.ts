@@ -59,4 +59,39 @@ describe("scoped Supabase environment getters", () => {
 
     expect(() => getSupabaseAuthEnv()).toThrow(/NEXT_PUBLIC_SUPABASE_URL/);
   });
+
+  /**
+   * DATABASE_URL was already proven, live on this exact staging environment
+   * (see connection-string-sanitizer.ts), to occasionally carry a trailing
+   * newline/whitespace that a lenient WHATWG URL parse (which Zod's `.url()`
+   * is built on) tolerates silently. Nothing previously stopped the same
+   * corruption from reaching NEXT_PUBLIC_SUPABASE_URL/ANON_KEY/
+   * SUPABASE_SERVICE_ROLE_KEY -- which wouldn't fail validation, but would
+   * make every Supabase Auth API call carry a corrupted URL/apikey header.
+   */
+  it("trims trailing whitespace/newlines from Supabase URL, anon key, and service-role key", () => {
+    delete process.env.SKIP_ENV_VALIDATION;
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co\n ";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = " test-anon-key\n";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = "\ttest-service-role-key\r\n";
+
+    expect(getSupabaseAuthEnv()).toEqual({
+      NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "test-anon-key",
+    });
+    expect(getSupabaseAdminEnv().SUPABASE_SERVICE_ROLE_KEY).toBe("test-service-role-key");
+  });
+
+  it("also trims when SKIP_ENV_VALIDATION bypasses full validation", () => {
+    process.env.SKIP_ENV_VALIDATION = "1";
+    process.env.NEXT_PUBLIC_SUPABASE_URL = "https://example.supabase.co\n";
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY = " test-anon-key ";
+    process.env.SUPABASE_SERVICE_ROLE_KEY = " test-service-role-key\n";
+
+    expect(getSupabaseAuthEnv()).toEqual({
+      NEXT_PUBLIC_SUPABASE_URL: "https://example.supabase.co",
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: "test-anon-key",
+    });
+    expect(getSupabaseAdminEnv().SUPABASE_SERVICE_ROLE_KEY).toBe("test-service-role-key");
+  });
 });
