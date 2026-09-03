@@ -196,6 +196,13 @@ jobs:
           STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+          # Compared against Vercel's own pulled NEXT_PUBLIC_SUPABASE_URL/
+          # DATABASE_URL (from .env.preview.local, loaded via --env-file
+          # above) inside validate-staging-config.mjs's "runtime" mode --
+          # confirms the deployed app's Vercel-managed config still points
+          # at the same staging Supabase project this workflow's migrations
+          # and E2E fixture just ran against, not a stale or drifted one.
+          STAGING_SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
 
       - name: Require authenticated staging E2E credentials
         run: node scripts/validate-staging-config.mjs
