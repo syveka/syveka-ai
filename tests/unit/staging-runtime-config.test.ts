@@ -1,6 +1,41 @@
 import fs from "node:fs";
 import path from "node:path";
+import { execFileSync } from "node:child_process";
 import { describe, expect, it } from "vitest";
+
+const scriptPath = path.join(__dirname, "../../scripts/validate-staging-config.mjs");
+
+/**
+ * Runs the actual script (not just a text-containment check on its source)
+ * to prove the "runtime" mode's project-ref cross-check genuinely rejects a
+ * Vercel-pulled config that has drifted onto a different Supabase project
+ * than the one the rest of staging-release just ran migrations/the E2E
+ * fixture against -- not just that the check's code exists.
+ */
+function runValidateStagingConfig(env: Record<string, string>): { status: number; output: string } {
+  try {
+    const output = execFileSync("node", [scriptPath], {
+      env: { ...process.env, ...env },
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    return { status: 0, output };
+  } catch (error) {
+    const err = error as { status: number | null; stdout?: string; stderr?: string };
+    return { status: err.status ?? 1, output: `${err.stdout ?? ""}${err.stderr ?? ""}` };
+  }
+}
+
+const baseRuntimeEnv = {
+  STAGING_CONFIG_MODE: "runtime",
+  STAGING_SUPABASE_PROJECT_REF: "abcdefghijklmnopqrst",
+  NEXT_PUBLIC_APP_URL: "https://staging.invalid",
+  NEXT_PUBLIC_SUPABASE_ANON_KEY: "anon-key-placeholder",
+  DATABASE_URL:
+    "postgresql://postgres.abcdefghijklmnopqrst:pw@aws-0.pooler.supabase.com:6543/postgres",
+  UPSTASH_REDIS_REST_URL: "https://example.upstash.io",
+  UPSTASH_REDIS_REST_TOKEN: "token-placeholder",
+};
 
 const script = fs.readFileSync(
   path.join(__dirname, "../../scripts/validate-staging-config.mjs"),
@@ -56,5 +91,36 @@ describe("staging runtime configuration gate", () => {
     expect(playwrightConfig).toContain('dependencies: ["auth-setup"]');
     expect(playwrightConfig).toContain('storageState: "test-results/.auth/e2e-user.json"');
     expect(smoke).toContain("storageState: { cookies: [], origins: [] }");
+  });
+
+  describe("runtime mode project-ref verification (executes the real script)", () => {
+    it("passes when the Vercel-pulled config matches the staging project ref", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+      });
+      expect(result.status).toBe(0);
+      expect(result.output).toContain("the deployed Supabase project matches staging");
+    });
+
+    it("rejects a Vercel-pulled NEXT_PUBLIC_SUPABASE_URL pointing at a different project", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: "https://zzzzzzzzzzzzzzzzzzzz.supabase.co",
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("does not match STAGING_SUPABASE_PROJECT_REF");
+    });
+
+    it("rejects a Vercel-pulled DATABASE_URL pointing at a different project", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+        DATABASE_URL:
+          "postgresql://postgres.zzzzzzzzzzzzzzzzzzzz:pw@aws-0.pooler.supabase.com:6543/postgres",
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("does not identify the staging Supabase project ref");
+    });
   });
 });

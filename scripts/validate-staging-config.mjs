@@ -83,6 +83,7 @@ if (mode === "identity") {
   console.log("The staging embedding provider configuration is present.");
 } else if (mode === "runtime") {
   requireSettings([
+    "STAGING_SUPABASE_PROJECT_REF",
     "NEXT_PUBLIC_APP_URL",
     "NEXT_PUBLIC_SUPABASE_URL",
     "NEXT_PUBLIC_SUPABASE_ANON_KEY",
@@ -90,7 +91,39 @@ if (mode === "identity") {
     "UPSTASH_REDIS_REST_URL",
     "UPSTASH_REDIS_REST_TOKEN",
   ]);
-  console.log("Required staging runtime setting names are present.");
+
+  // These come from Vercel's own pulled Preview environment config (via
+  // `vercel pull`), not from the GitHub Actions secrets the rest of this
+  // workflow (migrations, the E2E fixture script, RLS checks) operates
+  // against -- nothing before this point cross-checks that Vercel's config
+  // actually still points at the same staging Supabase project. A drifted
+  // or stale value here would deploy an app that authenticates against a
+  // different Supabase project than the one the fixture just seeded,
+  // producing a login failure with no other visible symptom.
+  const projectRef = process.env.STAGING_SUPABASE_PROJECT_REF;
+  requireProjectRef(projectRef);
+  const supabaseUrl = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  if (supabaseUrl.hostname !== `${projectRef}.supabase.co`) {
+    throw new Error(
+      "NEXT_PUBLIC_SUPABASE_URL (from Vercel's pulled Preview environment) does not match " +
+        "STAGING_SUPABASE_PROJECT_REF -- the deployed app would authenticate against a " +
+        "different Supabase project than the one migrations and the E2E fixture just ran against.",
+    );
+  }
+  const databaseUrl = new URL(process.env.DATABASE_URL);
+  const identifiesProject =
+    databaseUrl.hostname.includes(projectRef) || databaseUrl.username.includes(projectRef);
+  if (!identifiesProject) {
+    throw new Error(
+      "DATABASE_URL (from Vercel's pulled Preview environment) does not identify the " +
+        "staging Supabase project ref -- the deployed app would read from a different " +
+        "database than the one migrations and the E2E fixture just ran against.",
+    );
+  }
+
+  console.log(
+    "Required staging runtime setting names are present, and the deployed Supabase project matches staging.",
+  );
 } else if (mode === "e2e") {
   requireSettings(["E2E_USER_EMAIL", "E2E_USER_PASSWORD"]);
   console.log("Required authenticated staging E2E setting names are present.");
