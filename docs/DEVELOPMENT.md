@@ -151,3 +151,28 @@ rule. Every UI string needs matching keys in all three `messages/*.json` files �
   (Pixel 7) projects, `fi-FI` locale by default.
 - Release-time-only checks (`tests/staging/*.sql`, `tests/migrations/*.sql`) back the deploy
   pipeline in `docs/release-runbook.md` — don't run them as general-purpose test iteration.
+
+## 12. Agent guardrails
+
+Two repository-local Claude Code `PreToolUse` hooks (`.claude/hooks/block-no-verify.mjs`,
+`.claude/hooks/config-protection.mjs`, wired in `.claude/settings.json`) give CLAUDE.md §9's
+policy a technical backstop:
+
+- **`block-no-verify`** unconditionally blocks any agent command that bypasses git verification
+  hooks (`--no-verify`, `commit -n`, `-c core.hooksPath=`). There is no override — a genuinely
+  approved bypass must be run by a human directly, not the agent.
+- **`config-protection`** blocks agent `Edit`/`Write` access to security/quality-critical shared
+  config (ESLint/Prettier/tsconfig, CI workflows, `.claude/settings.json` and hooks, `CLAUDE.md`,
+  the CI verification scripts, and `package.json`'s required validation script entries).
+
+To make an intentional, reviewed change to one of these protected files, a human starts the
+session with:
+
+```
+SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT=1
+```
+
+set in their own shell environment before launching Claude Code. The agent cannot set this
+itself. Only use it for a specific change you've already decided to make — it is not a general
+opt-out, and it has no effect on `block-no-verify`: git verification-hook bypasses remain
+unavailable to agents regardless of this variable.
