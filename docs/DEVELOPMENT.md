@@ -176,3 +176,26 @@ set in their own shell environment before launching Claude Code. The agent canno
 itself. Only use it for a specific change you've already decided to make — it is not a general
 opt-out, and it has no effect on `block-no-verify`: git verification-hook bypasses remain
 unavailable to agents regardless of this variable.
+
+## 13. DATABASE_URL-gated E2E specs
+
+A handful of `tests/e2e/*.spec.ts` files (`rbac-boundary.spec.ts`, `tenant-isolation.spec.ts`,
+one test in `booking.spec.ts`) need direct database access that a real browser session can't
+provide — seeding a disposable second organization, or temporarily flipping the shared E2E
+fixture user's role to observe a permission boundary. They import `tests/e2e/helpers/db.ts` and
+call `hasDbAccess()` (true only when `DATABASE_URL` is set in the Playwright process's
+environment) to `test.skip(...)` cleanly with a concrete reason when it's absent, rather than
+failing.
+
+**This is not wired into any CI/staging workflow today** — neither `ci.yml` (which runs no
+Playwright at all) nor `staging-release.yml`'s "Run essential staging smoke tests" step (which
+only passes `E2E_BASE_URL`/`E2E_USER_EMAIL`/`E2E_USER_PASSWORD`) provides `DATABASE_URL` to
+Playwright, so these specs currently skip in every automated run and only exercise locally
+against a database a developer has configured. Wiring them in would mean adding
+`STAGING_DIRECT_URL` (already an existing secret, used by `scripts/ensure-e2e-org-fixture.ts`) to
+that workflow step — a change to a guardrail-protected file (§12), requiring a human to make the
+edit directly or explicitly authorize it.
+
+The same specs restore/delete everything they create in a `finally` block — the role-restore in
+`rbac-boundary.spec.ts` re-throws on failure (a stuck role change corrupts the shared fixture for
+every later run) rather than swallowing the error.

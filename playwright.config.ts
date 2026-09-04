@@ -66,7 +66,7 @@ export default defineConfig({
     },
     {
       name: "desktop",
-      testIgnore: /auth\.setup\.ts/,
+      testIgnore: /auth\.setup\.ts|rbac-boundary\.spec\.ts/,
       dependencies: ["auth-setup"],
       use: {
         ...devices["Desktop Chrome"],
@@ -75,9 +75,25 @@ export default defineConfig({
     },
     {
       name: "mobile",
-      testIgnore: /auth\.setup\.ts/,
+      testIgnore: /auth\.setup\.ts|rbac-boundary\.spec\.ts/,
       dependencies: ["auth-setup"],
       use: { ...devices["Pixel 7"], storageState: "test-results/.auth/e2e-user.json" },
     }, // §9 mobile-critical surfaces
+    {
+      // rbac-boundary.spec.ts temporarily changes the shared E2E user's role
+      // on the shared fixture org. MEMBER lacks business-dna:write and
+      // billing:view (see src/server/auth/permissions.ts), so if this ran
+      // concurrently with business-dna.spec.ts or billing.spec.ts in
+      // desktop/mobile, either could spuriously fail mid-run. Depending on
+      // both projects guarantees every other authenticated test has finished
+      // before this one starts, so the role change never overlaps anything.
+      name: "rbac-mutations",
+      testMatch: /rbac-boundary\.spec\.ts/,
+      dependencies: ["desktop", "mobile"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "test-results/.auth/e2e-user.json",
+      },
+    },
   ],
 });
