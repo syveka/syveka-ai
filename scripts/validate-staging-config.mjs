@@ -14,6 +14,20 @@ function requireProjectRef(projectRef) {
   }
 }
 
+// `new URL()` throws a native TypeError whose `input` property (and
+// stack-trace-adjacent output) contains the raw value it failed to parse.
+// For these settings that raw value is a connection string or Supabase URL,
+// so an unwrapped `new URL()` call risks printing it straight into the CI
+// log. Always go through this helper instead, which reports only the field
+// name that failed.
+function parseUrl(name) {
+  try {
+    return new URL(process.env[name]);
+  } catch {
+    throw new Error(`${name} is not a valid URL.`);
+  }
+}
+
 if (mode === "identity") {
   requireSettings([
     "STAGING_SUPABASE_PROJECT_REF",
@@ -29,13 +43,13 @@ if (mode === "identity") {
     throw new Error("Staging validation refused the configured production Supabase project ref.");
   }
 
-  const supabaseUrl = new URL(process.env.STAGING_SUPABASE_URL);
+  const supabaseUrl = parseUrl("STAGING_SUPABASE_URL");
   if (supabaseUrl.hostname !== `${projectRef}.supabase.co`) {
     throw new Error("STAGING_SUPABASE_URL does not match STAGING_SUPABASE_PROJECT_REF.");
   }
 
   for (const name of ["STAGING_DATABASE_URL", "STAGING_DIRECT_URL"]) {
-    const databaseUrl = new URL(process.env[name]);
+    const databaseUrl = parseUrl(name);
     const identifiesProject =
       databaseUrl.hostname.includes(projectRef) || databaseUrl.username.includes(projectRef);
     if (!identifiesProject) {
@@ -56,7 +70,7 @@ if (mode === "identity") {
   ]);
   const projectRef = process.env.STAGING_SUPABASE_PROJECT_REF;
   requireProjectRef(projectRef);
-  const supabaseUrl = new URL(process.env.STAGING_SUPABASE_URL);
+  const supabaseUrl = parseUrl("STAGING_SUPABASE_URL");
   if (supabaseUrl.hostname !== `${projectRef}.supabase.co`) {
     throw new Error("STAGING_SUPABASE_URL does not match STAGING_SUPABASE_PROJECT_REF.");
   }
@@ -102,7 +116,7 @@ if (mode === "identity") {
   // producing a login failure with no other visible symptom.
   const projectRef = process.env.STAGING_SUPABASE_PROJECT_REF;
   requireProjectRef(projectRef);
-  const supabaseUrl = new URL(process.env.NEXT_PUBLIC_SUPABASE_URL);
+  const supabaseUrl = parseUrl("NEXT_PUBLIC_SUPABASE_URL");
   if (supabaseUrl.hostname !== `${projectRef}.supabase.co`) {
     throw new Error(
       "NEXT_PUBLIC_SUPABASE_URL (from Vercel's pulled Preview environment) does not match " +
@@ -110,7 +124,7 @@ if (mode === "identity") {
         "different Supabase project than the one migrations and the E2E fixture just ran against.",
     );
   }
-  const databaseUrl = new URL(process.env.DATABASE_URL);
+  const databaseUrl = parseUrl("DATABASE_URL");
   const identifiesProject =
     databaseUrl.hostname.includes(projectRef) || databaseUrl.username.includes(projectRef);
   if (!identifiesProject) {

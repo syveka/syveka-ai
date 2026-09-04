@@ -123,4 +123,112 @@ describe("staging runtime configuration gate", () => {
       expect(result.output).toContain("does not identify the staging Supabase project ref");
     });
   });
+
+  /**
+   * Reproduces a real staging-release failure: the Vercel-pulled DATABASE_URL
+   * was not a parseable URL at all. The unwrapped `new URL()` call previously
+   * used here throws a native TypeError whose `input` property (and adjacent
+   * stack trace) is the raw value it failed to parse -- so the malformed
+   * setting itself ended up printed into the CI log instead of a clean,
+   * actionable error. These tests prove every URL-shaped setting in this
+   * script now fails with only its field name, never its value.
+   */
+  describe("malformed URL settings never leak their raw value", () => {
+    it("reports DATABASE_URL by name only when it is not a valid URL", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+        DATABASE_URL: "[SENSITIVE]",
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("DATABASE_URL is not a valid URL.");
+      expect(result.output).not.toContain("[SENSITIVE]");
+      expect(result.output).not.toContain("ERR_INVALID_URL");
+    });
+
+    it("reports NEXT_PUBLIC_SUPABASE_URL by name only when it is not a valid URL", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: "not-a-url",
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("NEXT_PUBLIC_SUPABASE_URL is not a valid URL.");
+      expect(result.output).not.toContain("not-a-url");
+      expect(result.output).not.toContain("ERR_INVALID_URL");
+    });
+
+    it("reports STAGING_SUPABASE_URL by name only in identity mode when it is not a valid URL", () => {
+      const result = runValidateStagingConfig({
+        STAGING_CONFIG_MODE: "identity",
+        STAGING_SUPABASE_PROJECT_REF: "abcdefghijklmnopqrst",
+        PRODUCTION_SUPABASE_PROJECT_REF: "zzzzzzzzzzzzzzzzzzzz",
+        STAGING_SUPABASE_URL: "[SENSITIVE]",
+        STAGING_DATABASE_URL:
+          "postgresql://postgres.abcdefghijklmnopqrst:pw@aws-0.pooler.supabase.com:6543/postgres",
+        STAGING_DIRECT_URL:
+          "postgresql://postgres.abcdefghijklmnopqrst:pw@db.example.com:5432/postgres",
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("STAGING_SUPABASE_URL is not a valid URL.");
+      expect(result.output).not.toContain("[SENSITIVE]");
+      expect(result.output).not.toContain("ERR_INVALID_URL");
+    });
+
+    it("rejects a value wrapped in literal quote characters without leaking it", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+        DATABASE_URL:
+          '"postgresql://postgres.abcdefghijklmnopqrst:pw@aws-0.pooler.supabase.com:6543/postgres"',
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("DATABASE_URL is not a valid URL.");
+      expect(result.output).not.toContain("aws-0.pooler.supabase.com");
+      expect(result.output).not.toContain("ERR_INVALID_URL");
+    });
+
+    it("rejects a bare hostname with no scheme without leaking it", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: "abcdefghijklmnopqrst.supabase.co",
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("NEXT_PUBLIC_SUPABASE_URL is not a valid URL.");
+      expect(result.output).not.toContain("abcdefghijklmnopqrst.supabase.co");
+      expect(result.output).not.toContain("ERR_INVALID_URL");
+    });
+
+    /**
+     * The WHATWG URL parser strips leading/trailing spaces and all internal
+     * ASCII tab/newline characters before parsing, so these do NOT trip the
+     * malformed-URL guard -- documenting that behavior explicitly here so it
+     * isn't mistaken for a gap. (Whitespace corruption of the Next.js app's
+     * OWN Supabase client env vars is a separate, already-fixed concern --
+     * see the `.trim()` calls in src/env.ts.)
+     */
+    it("tolerates leading/trailing whitespace and embedded newlines (WHATWG URL behavior)", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: " https://abcdefghijklmnopqrst.supabase.co\n",
+      });
+      expect(result.status).toBe(0);
+    });
+
+    /**
+     * A duplicated-protocol value ("https://https://...") is syntactically a
+     * valid URL to `new URL()` -- it just parses to the wrong hostname
+     * ("https"). It never reaches parseUrl's catch block, but is still
+     * caught safely by the existing hostname cross-check, whose error
+     * message never includes the raw value either.
+     */
+    it("rejects a duplicated-protocol value via the hostname check, not by leaking it", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: "https://https://abcdefghijklmnopqrst.supabase.co",
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("does not match STAGING_SUPABASE_PROJECT_REF");
+      expect(result.output).not.toContain("abcdefghijklmnopqrst.supabase.co");
+    });
+  });
 });
