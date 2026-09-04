@@ -759,7 +759,7 @@ jobs:
       - name: Install dependencies
         run: npm ci
       - name: Blocking production dependency audit
-        run: npm audit --omit=dev --audit-level=high
+        run: npx tsx scripts/run-npm-audit.ts --omit=dev --audit-level=high
 
   full-dependency-audit-report:
     name: Full dependency audit report

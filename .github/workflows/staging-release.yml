@@ -111,7 +111,7 @@ jobs:
           DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
 
       - name: Production dependency audit
-        run: npm audit --omit=dev --audit-level=high
+        run: npx tsx scripts/run-npm-audit.ts --omit=dev --audit-level=high
 
       - name: Production build
         run: npm run build
