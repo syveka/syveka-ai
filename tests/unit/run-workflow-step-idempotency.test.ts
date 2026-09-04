@@ -685,3 +685,40 @@ describe("step-level idempotency: fencing against a stale-but-still-alive worker
     expect(fakeDb.stepExecs.get(workerAClaim.id)!.status).toBe("SUCCEEDED");
   });
 });
+
+describe("step-level idempotency: duplicate step ids within one workflow definition", () => {
+  it("a second step sharing an already-succeeded step's id is silently skipped, not executed", async () => {
+    // Simulates a workflow definition that already has a duplicate step id
+    // (e.g. persisted before server-side uniqueness validation existed).
+    // WorkflowStepExecution's uniqueness is [workflowRunId, stepId], so the
+    // second occurrence collides with the first's now-SUCCEEDED claim and
+    // is treated as "already done" - it never runs its own side effect.
+    fakeDb.workflow.findFirst.mockResolvedValue(
+      twoStepWorkflow({
+        steps: [
+          {
+            id: "dup",
+            type: "crm.create_activity",
+            contactIdVar: "trigger.contactId",
+            activityType: "NOTE",
+            subject: "First occurrence",
+          },
+          { id: "dup", type: "notify.member", title: "Second occurrence" },
+        ],
+      }),
+    );
+
+    const res = await post(freshTriggerPayload());
+
+    expect(res.status).toBe(200);
+    // Only the FIRST occurrence's side effect ever ran.
+    expect(fakeDb.activity.create).toHaveBeenCalledTimes(1);
+    // The second occurrence (notify.member) never ran its own side effect -
+    // this is the silent-skip bug, not a false negative in this test.
+    expect(fakeDb.notification.create).not.toHaveBeenCalled();
+    // Exactly one WorkflowStepExecution row exists for "dup", not two -
+    // confirming the second occurrence's create() collided (P2002) with the
+    // first's and was reinterpreted as "succeeded" rather than claimed.
+    expect(fakeDb.stepExecs.size).toBe(1);
+  });
+});
