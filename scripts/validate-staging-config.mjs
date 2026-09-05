@@ -1,6 +1,48 @@
+import { createHash } from "node:crypto";
 import { sanitizeConnectionString } from "./lib/sanitize-connection-string.mjs";
 
 const mode = process.env.STAGING_CONFIG_MODE;
+
+function sha256(value) {
+  return createHash("sha256").update(value, "utf8").digest("hex");
+}
+
+// Staging run 33997427716: DATABASE_URL failed with `length=11; missing
+// "://" scheme separator` -- clean-shaped (no whitespace/quote corruption
+// detected), so a literal, complete, wrong string, not formatting noise.
+// Confirmed by direct, redacted local inspection (never printed): the value
+// is exactly the 11-character literal "[SENSITIVE]" -- Vercel's own
+// placeholder for a variable marked as a "Sensitive Environment Variable".
+// Sensitive variables ARE injected into the deployed app at runtime, but
+// their value can never be read back afterward by `vercel pull`/the CLI/the
+// API/the dashboard, by design -- no code fix can make an intentionally
+// unreadable value readable. DATABASE_URL, DIRECT_URL, and (confirmed
+// separately) SUPABASE_SERVICE_ROLE_KEY are all marked Sensitive in this
+// project's Preview environment; a human must un-mark that flag in the
+// Vercel dashboard (Project → Settings → Environment Variables) for this
+// runtime cross-check to ever see a real value again.
+//
+// Never print or log the raw value to find out what it is -- compare its
+// hash against known literal placeholders instead. A hash match proves
+// exactly which one without ever revealing the value; no match at least
+// rules all of them out for the next round of investigation.
+const KNOWN_PLACEHOLDER_HASHES = new Map(
+  [
+    "[SENSITIVE]",
+    "postgresql:",
+    "placeholder",
+    "example.com",
+    "DATABASE_URL",
+    "your-database",
+    "REPLACE_ME",
+    "changeme",
+    "TODO",
+    "",
+  ].map((candidate) => [
+    sha256(candidate),
+    candidate.length === 0 ? "(empty string)" : `"${candidate}"`,
+  ]),
+);
 
 function requireSettings(names) {
   for (const name of names) {
@@ -47,6 +89,19 @@ function parseUrl(name) {
       facts.push("still has an unmatched leading or trailing quote character");
     if (/[\x00-\x1f]/.test(sanitized))
       facts.push("still contains a control character after sanitization");
+    const knownPlaceholder = KNOWN_PLACEHOLDER_HASHES.get(sha256(raw));
+    if (knownPlaceholder) {
+      facts.push(`value is exactly the known literal placeholder ${knownPlaceholder}`);
+      if (knownPlaceholder === '"[SENSITIVE]"') {
+        facts.push(
+          "this is Vercel's own placeholder for a variable marked as a Sensitive Environment " +
+            "Variable -- it is injected into the deployed app at runtime but can never be read " +
+            "back by vercel pull/CLI/API/dashboard afterward; a human must un-mark the " +
+            '"Sensitive" flag on this variable in Vercel (Project -> Settings -> Environment ' +
+            "Variables) before this check can see a real value",
+        );
+      }
+    }
     throw new Error(`${name} is not a valid URL. (${facts.join("; ")}.)`);
   }
 }
