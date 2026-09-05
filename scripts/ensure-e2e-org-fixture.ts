@@ -14,6 +14,7 @@
 import { PrismaClient } from "@prisma/client";
 import { createClient } from "@supabase/supabase-js";
 import { DEFAULT_PIPELINE_STAGES } from "../src/lib/constants";
+import { sanitizeConnectionString } from "../src/server/db/connection-string-sanitizer";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -32,10 +33,17 @@ function requireEnv(name: string): string {
  * transaction-pooler credentials were rejected outright by Postgres) --
  * this check turns any future drift back into that same mistake into an
  * immediate, clear failure instead of a confusing raw Prisma auth error.
+ *
+ * Both are sanitized (see connection-string-sanitizer.ts) before this
+ * comparison and before use -- staging run 33961238272 failed with
+ * `FATAL: database "postgres\n" does not exist`, a trailing newline in the
+ * raw secret value that this script's own `new PrismaClient()` call (with no
+ * explicit datasourceUrl) never went through the app's own sanitizer to
+ * catch, unlike src/server/db/prisma.ts's deployed runtime client.
  */
-function requireDirectConnection(): void {
-  const databaseUrl = requireEnv("DATABASE_URL");
-  const directUrl = requireEnv("DIRECT_URL");
+function requireDirectConnection(): string {
+  const databaseUrl = sanitizeConnectionString(requireEnv("DATABASE_URL"));
+  const directUrl = sanitizeConnectionString(requireEnv("DIRECT_URL"));
   if (databaseUrl !== directUrl) {
     throw new Error(
       "ensure-e2e-org-fixture: DATABASE_URL and DIRECT_URL must be the same direct/session " +
@@ -44,15 +52,16 @@ function requireDirectConnection(): void {
         "DIRECT_URL/`directUrl`. Point both at the direct connection secret in the workflow.",
     );
   }
+  return databaseUrl;
 }
 
 async function main(): Promise<void> {
-  requireDirectConnection();
+  const datasourceUrl = requireDirectConnection();
   const email = requireEnv("E2E_USER_EMAIL");
   const supabaseUrl = requireEnv("SUPABASE_URL");
   const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 
-  const prisma = new PrismaClient();
+  const prisma = new PrismaClient({ datasourceUrl });
   try {
     const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
     if (!user) {
@@ -64,12 +73,30 @@ async function main(): Promise<void> {
 
     const existingMembership = await prisma.organizationMember.findFirst({
       where: { userId: user.id },
-      select: { organizationId: true },
+      select: { id: true, organizationId: true, role: true },
     });
     if (existingMembership) {
-      console.log(
-        `ensure-e2e-org-fixture: ${email} already has an organization (${existingMembership.organizationId}) -- no-op.`,
-      );
+      // rbac-boundary.spec.ts temporarily sets this membership's role to
+      // MEMBER and restores OWNER in a `finally` block -- but a killed
+      // process, a runner cancellation, or a crash between those two points
+      // would leave the shared fixture stuck as MEMBER, silently breaking
+      // every other authenticated E2E test's write-permission checks on the
+      // next run with no obvious cause. This repairs exactly that one field
+      // rather than only reporting the org id and returning.
+      if (existingMembership.role !== "OWNER") {
+        await prisma.organizationMember.update({
+          where: { id: existingMembership.id },
+          data: { role: "OWNER" },
+        });
+        console.log(
+          `ensure-e2e-org-fixture: ${email}'s membership role was "${existingMembership.role}", not OWNER ` +
+            "-- likely a prior interrupted RBAC test run. Restored to OWNER.",
+        );
+      } else {
+        console.log(
+          `ensure-e2e-org-fixture: ${email} already has an organization (${existingMembership.organizationId}) -- no-op.`,
+        );
+      }
       return;
     }
 

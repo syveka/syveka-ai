@@ -217,7 +217,40 @@ every later run) rather than swallowing the error.
   deliberate (job-level `if` plus an in-script re-check) and was not weakened.
 
 A real per-branch Tier-B run (deploying an unmerged branch to shared staging, or relaxing the
-main-only gate) was evaluated and rejected: `staging-release.yml`'s deploy+migrate step is a
-genuine deployment action against shared infrastructure, and CLAUDE.md §9 reserves "Deployment or
-workflow dispatch" as needing its own separate authorization beyond workflow-file edits — a
-workflow-file-edit authorization is not a deployment authorization.
+main-only gate) was evaluated and rejected as something to do unilaterally: `staging-release.yml`'s
+deploy+migrate step is a genuine deployment action against shared infrastructure, and CLAUDE.md §9
+reserves "Deployment or workflow dispatch" as needing its own separate authorization beyond
+workflow-file edits. Given an explicit, narrowly-scoped human authorization for one specific
+verification run, a **`TEMPORARY-STAGING-EXCEPTION`** (grep for that marker) was added to both the
+job-level `if` and the in-script re-check in `staging-release.yml`, allow-listing the exact branch
+name `feat/e2e-production-readiness` alongside `main` — no patterns, no PR-controlled input, and
+every other check (project-ref confirmation, staging≠production cross-checks, the `environment:
+staging` required-reviewer gate) stays fully intact. **This must be removed once that verification
+run succeeds** — see the PR #115 thread for status.
+
+## 15. Connection-string sanitization gaps (staging run 33961238272)
+
+That run failed at "Read-only legacy compatibility preflight" with
+`FATAL: database "postgres\n" does not exist` — a trailing newline embedded in the
+`STAGING_DIRECT_URL` secret's stored value, reaching `psql` unsanitized. This is the same
+corruption class `src/server/db/connection-string-sanitizer.ts` was built to fix after a prior,
+identical incident (2026-08-28) — but that fix only ever covered the deployed app's own Prisma
+client (`src/server/db/prisma.ts`). Two other consumers of the same secret went through this
+release, unnoticed until now, without it: `scripts/ensure-e2e-org-fixture.ts` and
+`tests/e2e/helpers/db.ts` (both now call `sanitizeConnectionString()` before constructing their
+`PrismaClient`). `staging-release.yml`'s raw `psql "$STAGING_DIRECT_URL"` invocations remain
+unsanitized — psql/libpq has no equivalent hook to apply the same fix to, so:
+
+- `scripts/validate-database-url-shape.mjs` was added: a dependency-free, redaction-safe shape
+  validator (host/port/database/user/project-ref shape, pooler-vs-direct semantics, trailing
+  whitespace detection) that would have caught this exact defect immediately, before any of the 17
+  expensive steps that ran before the actual failure. It is a standalone script, not yet wired into
+  any workflow — see the PR #115 thread for the exact recommended integration point (an early step
+  in `staging-release.yml`, which is guardrail-protected and wasn't edited here beyond the
+  explicitly authorized temporary branch exception above).
+- `scripts/ensure-e2e-org-fixture.ts` also now repairs the shared E2E user's role back to `OWNER`
+  if it's ever found to be anything else on a run's own no-op check — recovery for an
+  `rbac-boundary.spec.ts` run interrupted between its role-flip and its `finally` restore.
+- `tests/e2e/helpers/db.ts`'s `findE2EFixtureMembership()` now refuses to return a membership
+  whose organization name isn't exactly `"Syveka E2E Fixture"` — a mutating E2E test can never act
+  on a real organization even if `DATABASE_URL`/`E2E_USER_EMAIL` were ever misconfigured.

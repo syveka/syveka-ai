@@ -1,4 +1,5 @@
 import { PrismaClient, type Role } from "@prisma/client";
+import { sanitizeConnectionString } from "../../../src/server/db/connection-string-sanitizer";
 
 /**
  * A real browser session can't seed a second tenant or flip a role — that
@@ -21,9 +22,20 @@ export function getDbClient(): PrismaClient {
       "getDbClient() called without DATABASE_URL set — guard with hasDbAccess() first.",
     );
   }
-  if (!client) client = new PrismaClient();
+  // Staging run 33961238272 failed because a raw, unsanitized DATABASE_URL
+  // carried a trailing newline (see connection-string-sanitizer.ts) — this
+  // helper is a second, independent consumer of the same secret, alongside
+  // src/server/db/prisma.ts (the deployed app) and
+  // scripts/ensure-e2e-org-fixture.ts, so it needs the same sanitization.
+  if (!client) {
+    client = new PrismaClient({
+      datasourceUrl: sanitizeConnectionString(process.env.DATABASE_URL!),
+    });
+  }
   return client;
 }
+
+const EXPECTED_E2E_FIXTURE_ORG_NAME = "Syveka E2E Fixture";
 
 export type E2EFixtureMembership = {
   userId: string;
@@ -32,7 +44,15 @@ export type E2EFixtureMembership = {
   role: Role;
 };
 
-/** Resolves the shared E2E fixture user's current org membership row. */
+/**
+ * Resolves the shared E2E fixture user's current org membership row.
+ * Refuses to return a membership whose organization name doesn't exactly
+ * match the fixture name scripts/ensure-e2e-org-fixture.ts creates — a
+ * refuse-to-run guard so that rbac-boundary.spec.ts's role mutation (and any
+ * other DB-gated mutation built on this helper) can never act on a real
+ * customer organization even if DATABASE_URL/E2E_USER_EMAIL were ever
+ * accidentally pointed at a non-fixture environment.
+ */
 export async function findE2EFixtureMembership(
   prisma: PrismaClient,
 ): Promise<E2EFixtureMembership> {
@@ -45,8 +65,17 @@ export async function findE2EFixtureMembership(
   const membership = await prisma.organizationMember.findFirst({
     where: { userId: user.id },
     orderBy: { joinedAt: "asc" },
+    include: { organization: { select: { name: true } } },
   });
   if (!membership) throw new Error(`${email} has no organization membership.`);
+  if (membership.organization.name !== EXPECTED_E2E_FIXTURE_ORG_NAME) {
+    throw new Error(
+      `Refusing to proceed: ${email}'s organization is named "${membership.organization.name}", ` +
+        `not the expected E2E fixture name "${EXPECTED_E2E_FIXTURE_ORG_NAME}". This guard exists so ` +
+        "a misconfigured DATABASE_URL/E2E_USER_EMAIL can never let a mutating E2E test act on a " +
+        "real organization.",
+    );
+  }
 
   return {
     userId: user.id,
