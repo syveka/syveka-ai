@@ -174,15 +174,35 @@ describe("staging runtime configuration gate", () => {
       expect(result.output).not.toContain("ERR_INVALID_URL");
     });
 
-    it("rejects a value wrapped in literal quote characters without leaking it", () => {
+    /**
+     * Staging run 33990035456: Vercel Preview's pulled DATABASE_URL failed
+     * this exact "DATABASE_URL is not a valid URL." check -- `new URL()`
+     * throws outright on a value wrapped in matching quote characters
+     * (unlike whitespace/newlines, which it silently tolerates). parseUrl()
+     * now sanitizes before parsing (sanitizeConnectionString now also strips
+     * one matching pair of wrapping quotes), so this case must now pass.
+     */
+    it("strips matching quote-wrapping and parses successfully (staging run 33990035456)", () => {
       const result = runValidateStagingConfig({
         ...baseRuntimeEnv,
         NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
         DATABASE_URL:
           '"postgresql://postgres.abcdefghijklmnopqrst:pw@aws-0.pooler.supabase.com:6543/postgres"',
       });
+      expect(result.status).toBe(0);
+      expect(result.output).toContain("the deployed Supabase project matches staging");
+    });
+
+    it("rejects a value with only an unmatched leading quote without leaking it", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+        DATABASE_URL:
+          '"postgresql://postgres.abcdefghijklmnopqrst:pw@aws-0.pooler.supabase.com:6543/postgres',
+      });
       expect(result.status).not.toBe(0);
-      expect(result.output).toContain("DATABASE_URL is not a valid URL.");
+      expect(result.output).toContain("DATABASE_URL is not a valid URL");
+      expect(result.output).toContain("unmatched leading or trailing quote");
       expect(result.output).not.toContain("aws-0.pooler.supabase.com");
       expect(result.output).not.toContain("ERR_INVALID_URL");
     });

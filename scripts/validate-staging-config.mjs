@@ -1,3 +1,5 @@
+import { sanitizeConnectionString } from "./lib/sanitize-connection-string.mjs";
+
 const mode = process.env.STAGING_CONFIG_MODE;
 
 function requireSettings(names) {
@@ -20,11 +22,32 @@ function requireProjectRef(projectRef) {
 // so an unwrapped `new URL()` call risks printing it straight into the CI
 // log. Always go through this helper instead, which reports only the field
 // name that failed.
+//
+// Sanitizes before parsing (staging run 33961238272: trailing newline in
+// STAGING_DIRECT_URL, invisible to Prisma's stricter parser but reaching
+// psql unsanitized here too; staging run 33990035456: Vercel Preview's
+// pulled DATABASE_URL failed even this lenient WHATWG parse outright,
+// consistent with quote-wrapping -- see connection-string-sanitizer.ts). If
+// sanitizing doesn't fix it, the diagnostic below reports safe, derived
+// structural facts only (never a substring of the raw value) so a future
+// failure of this kind doesn't need another blind round-trip to diagnose.
 function parseUrl(name) {
+  const raw = process.env[name] ?? "";
+  const sanitized = sanitizeConnectionString(raw);
   try {
-    return new URL(process.env[name]);
+    return new URL(sanitized);
   } catch {
-    throw new Error(`${name} is not a valid URL.`);
+    const facts = [`length=${raw.length}`];
+    if (raw !== sanitized)
+      facts.push(
+        "whitespace/newline/quote-wrapping was present and stripped, but parsing still failed",
+      );
+    if (!/:\/\//.test(sanitized)) facts.push('missing "://" scheme separator');
+    if (/^['"]/.test(sanitized) || /['"]$/.test(sanitized))
+      facts.push("still has an unmatched leading or trailing quote character");
+    if (/[\x00-\x1f]/.test(sanitized))
+      facts.push("still contains a control character after sanitization");
+    throw new Error(`${name} is not a valid URL. (${facts.join("; ")}.)`);
   }
 }
 

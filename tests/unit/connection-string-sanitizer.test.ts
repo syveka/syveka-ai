@@ -34,4 +34,21 @@ describe("sanitizeConnectionString", () => {
     const withSecret = `postgresql://postgres.abc:${secret}@aws-0-eu-north-1.pooler.supabase.com:6543/postgres`;
     expect(sanitizeConnectionString(withSecret)).toBe(withSecret);
   });
+
+  it("strips matching double-quote wrapping — staging run 33990035456's DATABASE_URL is not a valid URL", () => {
+    expect(sanitizeConnectionString(`"${clean}"`)).toBe(clean);
+  });
+
+  it("strips matching single-quote wrapping", () => {
+    expect(sanitizeConnectionString(`'${clean}'`)).toBe(clean);
+  });
+
+  it("does not strip a single unmatched leading or trailing quote", () => {
+    expect(sanitizeConnectionString(`"${clean}`)).toBe(`"${clean}`);
+    expect(sanitizeConnectionString(`${clean}"`)).toBe(`${clean}"`);
+  });
+
+  it("handles quote-wrapping combined with a trailing newline and stray '?'", () => {
+    expect(sanitizeConnectionString(`"${clean}"\n?`)).toBe(clean);
+  });
 });
