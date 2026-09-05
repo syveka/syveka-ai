@@ -53,6 +53,28 @@ export default defineConfig({
   },
   projects: [
     {
+      // Tier A (ci.yml's "PR browser smoke" job): fast, deterministic,
+      // unauthenticated-only checks that need no staging/database secrets --
+      // just an ephemeral empty Postgres and a locally-served build. Scoped
+      // to smoke.spec.ts + booking.spec.ts, with the "authenticated"
+      // describe block's 5 tests (need E2E_USER_EMAIL) and 2 Redis-dependent
+      // public tests ("health endpoint is green" needs a reachable
+      // Upstash-compatible Redis, no local service-container equivalent
+      // exists for it here; "AI and document APIs" hits the same
+      // Redis-backed rate limiter) excluded by their own leaf titles --
+      // verified empirically against `--list`: Playwright's grep/grepInvert
+      // matches "<describe> <title>" joined by a bare space with no visible
+      // separator, so anchoring on the word "authenticated" alone also
+      // matches the *test* named "unauthenticated dashboard access redirects
+      // to login". The booking.spec.ts DB-gated full-flow test self-skips
+      // here too, via its own `project.name !== "desktop"` check.
+      name: "pr-smoke",
+      testMatch: /smoke\.spec\.ts|booking\.spec\.ts/,
+      grepInvert:
+        /dashboard shows KPI cards|chat streams a reply|CRM contact create|deals kanban renders default pipeline|companies, Calendar and Booking, and Knowledge Base start|health endpoint is green|AI and document APIs/,
+      use: { ...devices["Desktop Chrome"] },
+    },
+    {
       name: "auth-setup",
       testMatch: /auth\.setup\.ts/,
       // Never trace this project: it types the real E2E password into a
@@ -66,7 +88,7 @@ export default defineConfig({
     },
     {
       name: "desktop",
-      testIgnore: /auth\.setup\.ts/,
+      testIgnore: /auth\.setup\.ts|rbac-boundary\.spec\.ts/,
       dependencies: ["auth-setup"],
       use: {
         ...devices["Desktop Chrome"],
@@ -75,9 +97,25 @@ export default defineConfig({
     },
     {
       name: "mobile",
-      testIgnore: /auth\.setup\.ts/,
+      testIgnore: /auth\.setup\.ts|rbac-boundary\.spec\.ts/,
       dependencies: ["auth-setup"],
       use: { ...devices["Pixel 7"], storageState: "test-results/.auth/e2e-user.json" },
     }, // §9 mobile-critical surfaces
+    {
+      // rbac-boundary.spec.ts temporarily changes the shared E2E user's role
+      // on the shared fixture org. MEMBER lacks business-dna:write and
+      // billing:view (see src/server/auth/permissions.ts), so if this ran
+      // concurrently with business-dna.spec.ts or billing.spec.ts in
+      // desktop/mobile, either could spuriously fail mid-run. Depending on
+      // both projects guarantees every other authenticated test has finished
+      // before this one starts, so the role change never overlaps anything.
+      name: "rbac-mutations",
+      testMatch: /rbac-boundary\.spec\.ts/,
+      dependencies: ["desktop", "mobile"],
+      use: {
+        ...devices["Desktop Chrome"],
+        storageState: "test-results/.auth/e2e-user.json",
+      },
+    },
   ],
 });

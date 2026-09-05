@@ -176,3 +176,81 @@ set in their own shell environment before launching Claude Code. The agent canno
 itself. Only use it for a specific change you've already decided to make — it is not a general
 opt-out, and it has no effect on `block-no-verify`: git verification-hook bypasses remain
 unavailable to agents regardless of this variable.
+
+## 13. DATABASE_URL-gated E2E specs
+
+A handful of `tests/e2e/*.spec.ts` files (`rbac-boundary.spec.ts`, `tenant-isolation.spec.ts`,
+one test in `booking.spec.ts`) need direct database access that a real browser session can't
+provide — seeding a disposable second organization, or temporarily flipping the shared E2E
+fixture user's role to observe a permission boundary. They import `tests/e2e/helpers/db.ts` and
+call `hasDbAccess()` (true only when `DATABASE_URL` is set in the Playwright process's
+environment) to `test.skip(...)` cleanly with a concrete reason when it's absent, rather than
+failing.
+
+**Wired into `staging-release.yml`** as of the explicitly human-authorized change adding
+`DATABASE_URL: ${{ secrets.STAGING_DIRECT_URL }}` to its "Run essential staging smoke tests" step
+— reusing the same existing secret `scripts/ensure-e2e-org-fixture.ts` already uses, not a new
+one. `ci.yml` still never provides `DATABASE_URL`/`E2E_USER_EMAIL` to Playwright at all (it has no
+staging/database secrets to give it — see §14), so these specs continue to skip cleanly there.
+
+The same specs restore/delete everything they create in a `finally` block — the role-restore in
+`rbac-boundary.spec.ts` re-throws on failure (a stuck role change corrupts the shared fixture for
+every later run) rather than swallowing the error.
+
+## 14. Two-tier Playwright execution
+
+- **Tier A — `ci.yml`'s `e2e-smoke` job** (`pr-smoke` Playwright project): runs on every PR, no
+  secrets, no staging. Spins up an ephemeral empty Postgres (the same `pgvector/pgvector:pg15`
+  service container pattern the `rls` job uses), deploys migrations, builds and serves the app
+  locally with placeholder `NEXT_PUBLIC_*`/`SKIP_ENV_VALIDATION=1` config, then runs the
+  unauthenticated subset of `smoke.spec.ts` + `booking.spec.ts`'s 404 test. Deliberately excludes
+  `smoke.spec.ts`'s "health endpoint is green" and the AI-API-auth-enforcement test: `/api/health`
+  also checks Redis (`@upstash/redis`, an HTTP-protocol client with no local Postgres-style
+  service-container equivalent already in use here), and the AI route goes through the same
+  Redis-backed rate limiter — neither is safely reproducible without introducing a new,
+  unvetted third-party dependency, so they're left to Tier B. **Not yet in `ci-required`'s
+  `needs` list** — genuinely new infrastructure, kept in observe-only mode until proven reliable
+  across several real runs, then promote it.
+- **Tier B — `staging-release.yml`'s existing Playwright step**: authenticated, real-staging-deployment
+  execution (`desktop`/`mobile`/`rbac-mutations` projects), unchanged in scope, now additionally
+  `DATABASE_URL`-enabled (§13). Only runs from `main`, via manual `workflow_dispatch` — this gate is
+  deliberate (job-level `if` plus an in-script re-check) and was not weakened.
+
+A real per-branch Tier-B run (deploying an unmerged branch to shared staging, or relaxing the
+main-only gate) was evaluated and rejected as something to do unilaterally: `staging-release.yml`'s
+deploy+migrate step is a genuine deployment action against shared infrastructure, and CLAUDE.md §9
+reserves "Deployment or workflow dispatch" as needing its own separate authorization beyond
+workflow-file edits. Given an explicit, narrowly-scoped human authorization for one specific
+verification run, a **`TEMPORARY-STAGING-EXCEPTION`** (grep for that marker) was added to both the
+job-level `if` and the in-script re-check in `staging-release.yml`, allow-listing the exact branch
+name `feat/e2e-production-readiness` alongside `main` — no patterns, no PR-controlled input, and
+every other check (project-ref confirmation, staging≠production cross-checks, the `environment:
+staging` required-reviewer gate) stays fully intact. **This must be removed once that verification
+run succeeds** — see the PR #115 thread for status.
+
+## 15. Connection-string sanitization gaps (staging run 33961238272)
+
+That run failed at "Read-only legacy compatibility preflight" with
+`FATAL: database "postgres\n" does not exist` — a trailing newline embedded in the
+`STAGING_DIRECT_URL` secret's stored value, reaching `psql` unsanitized. This is the same
+corruption class `src/server/db/connection-string-sanitizer.ts` was built to fix after a prior,
+identical incident (2026-08-28) — but that fix only ever covered the deployed app's own Prisma
+client (`src/server/db/prisma.ts`). Two other consumers of the same secret went through this
+release, unnoticed until now, without it: `scripts/ensure-e2e-org-fixture.ts` and
+`tests/e2e/helpers/db.ts` (both now call `sanitizeConnectionString()` before constructing their
+`PrismaClient`). `staging-release.yml`'s raw `psql "$STAGING_DIRECT_URL"` invocations remain
+unsanitized — psql/libpq has no equivalent hook to apply the same fix to, so:
+
+- `scripts/validate-database-url-shape.mjs` was added: a dependency-free, redaction-safe shape
+  validator (host/port/database/user/project-ref shape, pooler-vs-direct semantics, trailing
+  whitespace detection) that would have caught this exact defect immediately, before any of the 17
+  expensive steps that ran before the actual failure. It is a standalone script, not yet wired into
+  any workflow — see the PR #115 thread for the exact recommended integration point (an early step
+  in `staging-release.yml`, which is guardrail-protected and wasn't edited here beyond the
+  explicitly authorized temporary branch exception above).
+- `scripts/ensure-e2e-org-fixture.ts` also now repairs the shared E2E user's role back to `OWNER`
+  if it's ever found to be anything else on a run's own no-op check — recovery for an
+  `rbac-boundary.spec.ts` run interrupted between its role-flip and its `finally` restore.
+- `tests/e2e/helpers/db.ts`'s `findE2EFixtureMembership()` now refuses to return a membership
+  whose organization name isn't exactly `"Syveka E2E Fixture"` — a mutating E2E test can never act
+  on a real organization even if `DATABASE_URL`/`E2E_USER_EMAIL` were ever misconfigured.

@@ -22,7 +22,12 @@ env:
 jobs:
   validate-migrate-deploy:
     name: Validate, migrate, and deploy staging
-    if: github.ref == 'refs/heads/main'
+    # TEMPORARY-STAGING-EXCEPTION: exact-branch-name allowlist entry for a
+    # single, explicitly human-authorized one-time verification run of
+    # feat/e2e-production-readiness (PR #115) before merge. Must be removed
+    # (reverting to `if: github.ref == 'refs/heads/main'` alone) once that
+    # run is done -- see docs/DEVELOPMENT.md §14 and the PR #115 thread.
+    if: github.ref == 'refs/heads/main' || github.ref == 'refs/heads/feat/e2e-production-readiness'
     runs-on: ubuntu-latest
     environment: staging
     timeout-minutes: 45
@@ -35,8 +40,9 @@ jobs:
             echo "The staging confirmation must be a 20-character lowercase Supabase project ref."
             exit 1
           fi
-          if [ "$RUN_REF" != "refs/heads/main" ]; then
-            echo "Staging release validation is only allowed from main."
+          # TEMPORARY-STAGING-EXCEPTION: see the job-level `if` comment above.
+          if [ "$RUN_REF" != "refs/heads/main" ] && [ "$RUN_REF" != "refs/heads/feat/e2e-production-readiness" ]; then
+            echo "Staging release validation is only allowed from main (or the explicitly authorized feat/e2e-production-readiness verification run)."
             exit 1
           fi
           if [ "$CONFIRM_STAGING_PROJECT_REF" != "$STAGING_SUPABASE_PROJECT_REF" ]; then
@@ -370,12 +376,18 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run essential staging smoke tests
-        run: npm run test:e2e
+        # --project excludes "pr-smoke" (ci.yml's unauthenticated PR-tier
+        # project, added alongside this DATABASE_URL wiring) -- it would
+        # otherwise also match here since it has no unmet dependencies, and
+        # would just redundantly re-run the same unauthenticated checks
+        # desktop/mobile's own "public" describe block already covers here.
+        run: npm run test:e2e -- --project=desktop --project=mobile --project=rbac-mutations
         env:
           E2E_BASE_URL: ${{ steps.staging-url.outputs.url }}
           E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          DATABASE_URL: ${{ secrets.STAGING_DIRECT_URL }}
 
       - name: Upload Playwright traces on failure
         # Without this, a failed staging E2E run's trace.zip/error-context.md

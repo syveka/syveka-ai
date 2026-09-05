@@ -42,6 +42,7 @@ export function ContactsTable({
   canDelete: boolean;
 }) {
   const t = useTranslations("crm");
+  const tc = useTranslations("common");
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
@@ -137,7 +138,13 @@ export function ContactsTable({
                 </span>
                 {canDelete ? (
                   <form action={deleteContactAction.bind(null, c.id)}>
-                    <Button variant="ghost" size="icon" type="submit" className="text-destructive">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      type="submit"
+                      aria-label={tc("delete")}
+                      className="text-destructive"
+                    >
                       <Trash2 className="size-4" />
                     </Button>
                   </form>
