@@ -370,12 +370,18 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run essential staging smoke tests
-        run: npm run test:e2e
+        # --project excludes "pr-smoke" (ci.yml's unauthenticated PR-tier
+        # project, added alongside this DATABASE_URL wiring) -- it would
+        # otherwise also match here since it has no unmet dependencies, and
+        # would just redundantly re-run the same unauthenticated checks
+        # desktop/mobile's own "public" describe block already covers here.
+        run: npm run test:e2e -- --project=desktop --project=mobile --project=rbac-mutations
         env:
           E2E_BASE_URL: ${{ steps.staging-url.outputs.url }}
           E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+          DATABASE_URL: ${{ secrets.STAGING_DIRECT_URL }}
 
       - name: Upload Playwright traces on failure
         # Without this, a failed staging E2E run's trace.zip/error-context.md

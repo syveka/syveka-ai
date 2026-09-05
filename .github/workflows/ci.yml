@@ -744,6 +744,100 @@ jobs:
           DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
           DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
 
+  e2e-smoke:
+    name: PR browser smoke (Tier A)
+    runs-on: ubuntu-latest
+    needs: [prisma-generate]
+    # Not yet in ci-required's `needs` list: this is genuinely new
+    # infrastructure (first real-browser execution PR CI has ever had), kept
+    # in observe-only mode until it's proven reliable across several real
+    # runs. Promote it to a required check once it has been green
+    # consistently -- see docs/DEVELOPMENT.md §14.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Deploy migrations to an empty PostgreSQL
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/migrations/supabase-compatibility.sql
+          npx prisma migrate deploy
+      - name: Build with placeholder runtime env
+        # Only the unauthenticated, DB-only (no Redis/Stripe/AI) routes in
+        # scope here (see playwright.config.ts's "pr-smoke" project comment),
+        # so placeholder third-party config is safe -- nothing in this tier
+        # ever calls out to a real Supabase/Stripe endpoint.
+        run: npm run build
+        env:
+          SKIP_ENV_VALIDATION: "1"
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+          NEXT_PUBLIC_SUPABASE_URL: https://ci.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_ci
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Start the app
+        # `nohup ... & disown` (not a bare `&`): each GitHub Actions `run:`
+        # step is its own shell invocation, and a plain backgrounded child
+        # can be killed when that shell exits at the end of this step --
+        # nohup+disown detaches it so it survives into the later steps that
+        # actually need it running.
+        run: |
+          set -euo pipefail
+          nohup npm run start > server.log 2>&1 &
+          disown
+          echo $! > server.pid
+        env:
+          SKIP_ENV_VALIDATION: "1"
+          NEXT_PUBLIC_APP_URL: http://localhost:3000
+          NEXT_PUBLIC_SUPABASE_URL: https://ci.supabase.co
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ci
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_ci
+      - name: Wait for the app to become reachable
+        run: |
+          set -euo pipefail
+          for attempt in $(seq 1 30); do
+            if curl --silent --fail --max-time 5 http://localhost:3000/ > /dev/null; then
+              echo "App reachable on attempt $attempt/30."
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "App did not become reachable after 30 attempts (~60s)."
+          cat server.log || true
+          exit 1
+      - name: Run Tier-A browser smoke
+        run: npx playwright test --project=pr-smoke
+        env:
+          E2E_BASE_URL: http://localhost:3000
+      - name: Upload Playwright traces on failure
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pr-smoke-test-results
+          path: test-results/
+          retention-days: 7
+      - name: Stop the app
+        if: always()
+        run: kill "$(cat server.pid)" 2>/dev/null || true
+
   production-dependency-audit:
     name: Production dependency security audit
     runs-on: ubuntu-latest
