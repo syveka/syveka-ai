@@ -4,7 +4,7 @@ import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { createSupabaseServer } from "@/server/supabase/server";
 import { rateLimiters } from "@/server/integrations/redis";
-import { loginSchema, registerSchema } from "@/lib/validators/auth";
+import { loginSchema, registerSchema, resetPasswordSchema } from "@/lib/validators/auth";
 import { getAppUrlEnv } from "@/env";
 import { localizedPath, normalizeLocale } from "@/lib/auth-redirect";
 
@@ -113,11 +113,14 @@ export async function resetPasswordAction(
   _prev: AuthActionState,
   formData: FormData,
 ): Promise<AuthActionState> {
-  const password = String(formData.get("password") ?? "");
-  if (password.length < 12) return { error: "invalid_input" };
+  const parsed = resetPasswordSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "invalid_input" };
 
   const supabase = await createSupabaseServer();
-  const { error } = await supabase.auth.updateUser({ password });
+  // Requires an active session established by the Supabase recovery-link
+  // exchange (see /api/auth/callback) -- middleware refuses unauthenticated
+  // visitors before this action can ever be reached (§ middleware.ts).
+  const { error } = await supabase.auth.updateUser({ password: parsed.data.password });
   if (error) return { error: "reset_failed" };
 
   redirect(localizedPath(normalizeLocale(formData.get("locale")), "/dashboard"));

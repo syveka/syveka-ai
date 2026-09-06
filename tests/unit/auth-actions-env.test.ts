@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   rateLimit: vi.fn(async () => ({ success: true })),
   signInWithPassword: vi.fn(async () => ({ error: null })),
   signUp: vi.fn(async () => ({ error: null })),
+  resetPasswordForEmail: vi.fn(async () => ({ error: null })),
+  updateUser: vi.fn(async () => ({ error: null })),
   redirect: vi.fn((path: string) => {
     throw new Error(`NEXT_REDIRECT:${path}`);
   }),
@@ -22,12 +24,21 @@ vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 vi.mock("@/server/supabase/server", () => ({
   createSupabaseServer: async () => ({
-    auth: { signInWithPassword: mocks.signInWithPassword, signUp: mocks.signUp },
+    auth: {
+      signInWithPassword: mocks.signInWithPassword,
+      signUp: mocks.signUp,
+      resetPasswordForEmail: mocks.resetPasswordForEmail,
+      updateUser: mocks.updateUser,
+    },
   }),
 }));
 
-import { loginAction } from "@/actions/auth";
-import { registerAction } from "@/actions/auth";
+import {
+  loginAction,
+  registerAction,
+  forgotPasswordAction,
+  resetPasswordAction,
+} from "@/actions/auth";
 
 const ENV_NAMES = [
   "SKIP_ENV_VALIDATION",
@@ -110,5 +121,64 @@ describe("login environment isolation", () => {
         }),
       }),
     );
+  });
+
+  it("sends a recovery link that lands on reset-password, not the app default", async () => {
+    const form = new FormData();
+    form.set("email", "user@example.com");
+    form.set("locale", "fi");
+
+    await expect(forgotPasswordAction({}, form)).resolves.toEqual({
+      message: "verify_email_sent",
+    });
+    expect(mocks.resetPasswordForEmail).toHaveBeenCalledWith(
+      "user@example.com",
+      expect.objectContaining({
+        redirectTo: "https://staging.example.test/api/auth/callback?next=%2Ffi%2Freset-password",
+      }),
+    );
+  });
+
+  it("always reports success from forgot-password, even for an unknown address", async () => {
+    // §13: never leak account existence through a different response shape.
+    mocks.resetPasswordForEmail.mockResolvedValueOnce({
+      error: { message: "not found" } as never,
+    });
+    const form = new FormData();
+    form.set("email", "unknown@example.com");
+    form.set("locale", "en");
+
+    await expect(forgotPasswordAction({}, form)).resolves.toEqual({
+      message: "verify_email_sent",
+    });
+  });
+
+  it("updates the password on an active (recovery) session and redirects to dashboard", async () => {
+    const form = new FormData();
+    form.set("password", "a-new-secure-password");
+    form.set("locale", "en");
+
+    await expect(resetPasswordAction({}, form)).rejects.toThrow("NEXT_REDIRECT:/en/dashboard");
+    expect(mocks.updateUser).toHaveBeenCalledWith({ password: "a-new-secure-password" });
+  });
+
+  it("rejects a reset password shorter than the registration floor without calling Supabase", async () => {
+    const form = new FormData();
+    form.set("password", "short");
+    form.set("locale", "en");
+
+    await expect(resetPasswordAction({}, form)).resolves.toEqual({ error: "invalid_input" });
+    expect(mocks.updateUser).not.toHaveBeenCalled();
+  });
+
+  it("reports reset_failed when there is no session to update (expired/reused link)", async () => {
+    mocks.updateUser.mockResolvedValueOnce({
+      error: { message: "Auth session missing" } as never,
+    });
+    const form = new FormData();
+    form.set("password", "a-new-secure-password");
+    form.set("locale", "en");
+
+    await expect(resetPasswordAction({}, form)).resolves.toEqual({ error: "reset_failed" });
   });
 });

@@ -21,7 +21,20 @@ const PROTECTED_PREFIXES = [
   "/admin",
 ];
 
-const AUTH_PAGES = ["/login", "/register", "/forgot-password", "/reset-password"];
+// Pages meaningless for an already-authenticated visitor -- bounce to
+// dashboard instead of showing them.
+const AUTH_ONLY_PAGES = ["/login", "/register", "/forgot-password"];
+
+// Password recovery is the one "auth" page an authenticated user is SUPPOSED
+// to reach: exchanging a Supabase recovery link's code (see
+// /api/auth/callback) establishes a real session by design, so treating it
+// like AUTH_ONLY_PAGES bounced every recovering user straight to /dashboard
+// before they ever saw the update-password form -- confirmed against a real
+// staging recovery attempt. It still needs *some* session to act on, so an
+// unauthenticated visit (a stale/reused link, or a direct navigation) is
+// redirected to /forgot-password instead of rendering a form with nothing to
+// submit against.
+const RECOVERY_PAGE = "/reset-password";
 
 function stripLocale(pathname: string): string {
   const seg = pathname.split("/")[1];
@@ -159,7 +172,8 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
   const response = intlMiddleware(request);
   const path = stripLocale(request.nextUrl.pathname);
   const isProtected = PROTECTED_PREFIXES.some((p) => path === p || path.startsWith(`${p}/`));
-  const isAuthPage = AUTH_PAGES.some((p) => path === p || path.startsWith(`${p}/`));
+  const isAuthOnlyPage = AUTH_ONLY_PAGES.some((p) => path === p || path.startsWith(`${p}/`));
+  const isRecoveryPage = path === RECOVERY_PAGE || path.startsWith(`${RECOVERY_PAGE}/`);
 
   if (isProtected && !user) {
     const url = request.nextUrl.clone();
@@ -171,9 +185,19 @@ export async function middleware(request: NextRequest): Promise<NextResponse> {
     return redirect;
   }
 
-  if (isAuthPage && user) {
+  if (isAuthOnlyPage && user) {
     const url = request.nextUrl.clone();
     url.pathname = "/dashboard";
+    url.search = "";
+    const redirect = NextResponse.redirect(url);
+    copySupabaseCookies(supabaseResponse.current, redirect);
+    redirect.headers.set("Content-Security-Policy", csp);
+    return redirect;
+  }
+
+  if (isRecoveryPage && !user) {
+    const url = request.nextUrl.clone();
+    url.pathname = "/forgot-password";
     url.search = "";
     const redirect = NextResponse.redirect(url);
     copySupabaseCookies(supabaseResponse.current, redirect);

@@ -223,6 +223,41 @@ describe("middleware CSP", () => {
       expect(response.status).not.toBe(307);
     });
 
+    describe("password recovery landing page", () => {
+      // A staging recovery attempt proved this exact bug: exchanging a
+      // Supabase recovery link's code establishes a real session by design,
+      // so treating /reset-password like login/register (bounce any
+      // authenticated visitor to /dashboard) meant no one could ever reach
+      // the update-password form after clicking a real recovery link.
+      it("does NOT redirect an authenticated (recovery) session away from reset-password", async () => {
+        mocks.getUser.mockResolvedValue({ data: { user: VALID_USER }, error: null });
+        const response = await middleware(
+          requestFor("/en/reset-password", { "sb-project-auth-token": "recovery-session" }),
+        );
+
+        expect(response.status).not.toBe(307);
+      });
+
+      it("still redirects an authenticated user away from login/register/forgot-password", async () => {
+        mocks.getUser.mockResolvedValue({ data: { user: VALID_USER }, error: null });
+        for (const page of ["/en/login", "/en/register", "/en/forgot-password"]) {
+          const response = await middleware(
+            requestFor(page, { "sb-project-auth-token": "a-real-session" }),
+          );
+          expect(response.status).toBe(307);
+          expect(response.headers.get("location")).toContain("/dashboard");
+        }
+      });
+
+      it("redirects an unauthenticated visitor away from reset-password to forgot-password", async () => {
+        mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+        const response = await middleware(requestFor("/en/reset-password"));
+
+        expect(response.status).toBe(307);
+        expect(response.headers.get("location")).toContain("/forgot-password");
+      });
+    });
+
     it("still applies the CSP header to an auth redirect for a protected route", async () => {
       mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
       const response = await middleware(requestFor("/en/dashboard"));

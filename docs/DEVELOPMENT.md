@@ -254,3 +254,45 @@ unsanitized — psql/libpq has no equivalent hook to apply the same fix to, so:
 - `tests/e2e/helpers/db.ts`'s `findE2EFixtureMembership()` now refuses to return a membership
   whose organization name isn't exactly `"Syveka E2E Fixture"` — a mutating E2E test can never act
   on a real organization even if `DATABASE_URL`/`E2E_USER_EMAIL` were ever misconfigured.
+- A separately discovered, unrelated naming drift: the E2E fixture user's real organization is
+  currently named `"Syveka E2E Test"`, not `"Syveka E2E Fixture"` — the guard above and
+  `scripts/ensure-e2e-org-fixture.ts` both expect the latter exactly. Since the fixture-repair
+  script only checks that _a_ membership exists (not its org name), this went unnoticed. Any
+  mutating spec built on `findE2EFixtureMembership()` will refuse to run (fail-closed, not
+  silently wrong) until either the org is renamed or the constant is updated — a decision left to
+  a human, not applied here.
+
+## 16. Password recovery: middleware bounced every recovering user before the form (staging)
+
+A manually-triggered Supabase password recovery for the staging E2E user reached
+`/en/onboarding` instead of an update-password screen. The app already had a complete recovery
+flow (`/forgot-password` → `resetPasswordForEmail({ redirectTo: .../reset-password })` →
+`/api/auth/callback` → `exchangeCodeForSession` → `/reset-password` →
+`updateUser({ password })`) — the bug was in `src/middleware.ts`: `/reset-password` was listed in
+`AUTH_PAGES` alongside `/login`/`/register`/`/forgot-password`, so _any_ authenticated visitor was
+bounced straight to `/dashboard`. Exchanging a recovery link's code establishes a real session by
+design, so this fired on every single recovery attempt, before the form ever rendered.
+
+Fixed by splitting `AUTH_PAGES` into `AUTH_ONLY_PAGES` (login/register/forgot-password — still
+redirect an authenticated visitor to `/dashboard`) and a separate `RECOVERY_PAGE` rule for
+`/reset-password`: an authenticated visitor is now let through, and an unauthenticated one (a
+stale/reused link, or a direct navigation) is redirected to `/forgot-password` instead of
+rendering a form with no session to act on. `resetPasswordAction` also now validates through a
+`resetPasswordSchema` (matching registration's 12-character floor) instead of an inline length
+check, for consistency with `loginAction`/`registerAction`.
+
+Separately: Supabase's own dashboard "Send password recovery" button bypasses the app's
+`redirectTo` wiring entirely (it uses the project's default Site URL, not our
+`authCallbackUrl(locale, "/reset-password")`) — this is Supabase/GoTrue admin behavior, not
+something fixable in application code. Use the app's own `/forgot-password` page for recovery
+whenever possible; a dashboard-triggered reset may land elsewhere depending on the project's Site
+URL configuration.
+
+`tests/e2e/password-recovery.spec.ts` (new `password-recovery` Playwright project, no
+`storageState`, staging-only) exercises the real flow end to end without ever sending an email:
+Supabase Admin API's `generateLink({ type: "recovery" })` returns the exact link a real email
+would contain but never triggers delivery. It runs against a disposable throwaway account created
+and deleted entirely within the test — never the shared E2E fixture user. Gated on
+`SUPABASE_SERVICE_ROLE_KEY`/`SUPABASE_URL` being present (wired into `staging-release.yml`'s
+existing smoke-test step, reusing the same secret `scripts/ensure-e2e-org-fixture.ts` already
+uses) — always skips in Tier-A CI, which has no real Supabase project.

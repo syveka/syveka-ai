@@ -88,7 +88,7 @@ export default defineConfig({
     },
     {
       name: "desktop",
-      testIgnore: /auth\.setup\.ts|rbac-boundary\.spec\.ts/,
+      testIgnore: /auth\.setup\.ts|rbac-boundary\.spec\.ts|password-recovery\.spec\.ts/,
       dependencies: ["auth-setup"],
       use: {
         ...devices["Desktop Chrome"],
@@ -97,7 +97,7 @@ export default defineConfig({
     },
     {
       name: "mobile",
-      testIgnore: /auth\.setup\.ts|rbac-boundary\.spec\.ts/,
+      testIgnore: /auth\.setup\.ts|rbac-boundary\.spec\.ts|password-recovery\.spec\.ts/,
       dependencies: ["auth-setup"],
       use: { ...devices["Pixel 7"], storageState: "test-results/.auth/e2e-user.json" },
     }, // §9 mobile-critical surfaces
@@ -116,6 +116,16 @@ export default defineConfig({
         ...devices["Desktop Chrome"],
         storageState: "test-results/.auth/e2e-user.json",
       },
+    },
+    {
+      // Deliberately no storageState and no dependency on auth-setup: this
+      // spec must start unauthenticated (it drives its own disposable
+      // account through forgot-password -> reset-password from scratch) and
+      // self-skips wherever SUPABASE_SERVICE_ROLE_KEY isn't available --
+      // never runs in Tier-A CI.
+      name: "password-recovery",
+      testMatch: /password-recovery\.spec\.ts/,
+      use: { ...devices["Desktop Chrome"] },
     },
   ],
 });
