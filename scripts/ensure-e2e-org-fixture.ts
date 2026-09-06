@@ -15,6 +15,7 @@ import { PrismaClient } from "@prisma/client";
 import { createClient } from "@supabase/supabase-js";
 import { DEFAULT_PIPELINE_STAGES } from "../src/lib/constants";
 import { sanitizeConnectionString } from "../src/server/db/connection-string-sanitizer";
+import { E2E_FIXTURE_ORG_NAME } from "./e2e-fixture-identity";
 
 function requireEnv(name: string): string {
   const value = process.env[name];
@@ -73,9 +74,32 @@ async function main(): Promise<void> {
 
     const existingMembership = await prisma.organizationMember.findFirst({
       where: { userId: user.id },
-      select: { id: true, organizationId: true, role: true },
+      select: {
+        id: true,
+        organizationId: true,
+        role: true,
+        organization: { select: { name: true } },
+      },
     });
     if (existingMembership) {
+      // Fail closed rather than silently no-op: this script's own no-op path
+      // previously only checked "does *a* membership exist," never its
+      // organization's name, which is exactly how the shared E2E user ended
+      // up owning an org named "Syveka E2E Test" (created by hand, once,
+      // before this script ever ran for that user) while every mutating
+      // test's refuse-to-run guard (tests/e2e/helpers/db.ts) has always
+      // required exactly E2E_FIXTURE_ORG_NAME. A silent no-op here meant that
+      // drift went undetected for every staging run since.
+      if (existingMembership.organization.name !== E2E_FIXTURE_ORG_NAME) {
+        throw new Error(
+          `ensure-e2e-org-fixture: ${email}'s organization is named ` +
+            `"${existingMembership.organization.name}", not the expected fixture name ` +
+            `"${E2E_FIXTURE_ORG_NAME}". Refusing to proceed -- this must be resolved by a human ` +
+            "(rename the organization to the expected name, or confirm this is a new, " +
+            "deliberately-different fixture identity) rather than silently adopted, since a " +
+            "mutating RBAC/tenant-isolation E2E test could otherwise act on the wrong organization.",
+        );
+      }
       // rbac-boundary.spec.ts temporarily sets this membership's role to
       // MEMBER and restores OWNER in a `finally` block -- but a killed
       // process, a runner cancellation, or a crash between those two points
@@ -103,7 +127,7 @@ async function main(): Promise<void> {
     const org = await prisma.$transaction(async (tx) => {
       const created = await tx.organization.create({
         data: {
-          name: "Syveka E2E Fixture",
+          name: E2E_FIXTURE_ORG_NAME,
           slug: `syveka-e2e-fixture-${Date.now()}`,
           defaultLocale: "FI",
         },

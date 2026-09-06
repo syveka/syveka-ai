@@ -1,5 +1,6 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { findE2EFixtureMembership } from "../e2e/helpers/db";
+import { E2E_FIXTURE_ORG_NAME } from "../../scripts/e2e-fixture-identity";
 
 /**
  * findE2EFixtureMembership()'s refuse-to-run guard is the last line of
@@ -49,7 +50,7 @@ describe("findE2EFixtureMembership", () => {
         id: "membership-1",
         organizationId: "org-1",
         role: "OWNER",
-        organizationName: "Syveka E2E Fixture",
+        organizationName: E2E_FIXTURE_ORG_NAME,
       },
     });
 
@@ -70,6 +71,26 @@ describe("findE2EFixtureMembership", () => {
         organizationId: "org-1",
         role: "OWNER",
         organizationName: "A Real Customer Organization",
+      },
+    });
+
+    await expect(findE2EFixtureMembership(prisma)).rejects.toThrow(/Refusing to proceed/);
+  });
+
+  // Real staging drift, not a hypothetical: the shared E2E user's org was
+  // named "Syveka E2E Test" (created by hand, once, before
+  // ensure-e2e-org-fixture.ts ever ran for that user) while this guard has
+  // always required E2E_FIXTURE_ORG_NAME exactly. Both this guard and the
+  // fixture creator now read the same shared constant (e2e-fixture-identity.ts)
+  // so the two can never silently diverge again.
+  it("refuses a near-miss fixture name like the real staging drift", async () => {
+    const prisma = fakePrisma({
+      user: { id: "user-1" },
+      membership: {
+        id: "membership-1",
+        organizationId: "org-1",
+        role: "OWNER",
+        organizationName: "Syveka E2E Test",
       },
     });
 

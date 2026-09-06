@@ -1,5 +1,6 @@
 import { PrismaClient, type Role } from "@prisma/client";
 import { sanitizeConnectionString } from "../../../src/server/db/connection-string-sanitizer";
+import { E2E_FIXTURE_ORG_NAME } from "../../../scripts/e2e-fixture-identity";
 
 /**
  * A real browser session can't seed a second tenant or flip a role — that
@@ -35,8 +36,6 @@ export function getDbClient(): PrismaClient {
   return client;
 }
 
-const EXPECTED_E2E_FIXTURE_ORG_NAME = "Syveka E2E Fixture";
-
 export type E2EFixtureMembership = {
   userId: string;
   organizationId: string;
@@ -68,10 +67,10 @@ export async function findE2EFixtureMembership(
     include: { organization: { select: { name: true } } },
   });
   if (!membership) throw new Error(`${email} has no organization membership.`);
-  if (membership.organization.name !== EXPECTED_E2E_FIXTURE_ORG_NAME) {
+  if (membership.organization.name !== E2E_FIXTURE_ORG_NAME) {
     throw new Error(
       `Refusing to proceed: ${email}'s organization is named "${membership.organization.name}", ` +
-        `not the expected E2E fixture name "${EXPECTED_E2E_FIXTURE_ORG_NAME}". This guard exists so ` +
+        `not the expected E2E fixture name "${E2E_FIXTURE_ORG_NAME}". This guard exists so ` +
         "a misconfigured DATABASE_URL/E2E_USER_EMAIL can never let a mutating E2E test act on a " +
         "real organization.",
     );
