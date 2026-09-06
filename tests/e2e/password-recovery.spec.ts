@@ -141,7 +141,18 @@ test.describe("password recovery", () => {
       // Definitive proof the new password took effect: end this session and
       // sign back in with it through the real login form, reusing the same
       // helper (and its form-scoped alert detection) every other spec trusts.
-      await page.getByRole("button", { name: "logout" }).click();
+      //
+      // This throwaway account has no organization, so a successful reset
+      // lands it on /onboarding, not /dashboard (exactly like a real user in
+      // the same state -- confirmed against staging run 34066652557).
+      // /onboarding has no logout button at all (a completely different
+      // layout from the authenticated dashboard shell), so clicking one by
+      // role hung for the full test timeout waiting for an element that
+      // would never appear. Clearing cookies directly ends the session the
+      // same way regardless of which authenticated layout happens to be
+      // showing.
+      await page.context().clearCookies();
+      await page.goto("/login");
       await expect(page).toHaveURL(/\/login/);
 
       const savedEmail = process.env.E2E_USER_EMAIL;
