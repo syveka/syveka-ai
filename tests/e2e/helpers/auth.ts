@@ -40,10 +40,27 @@ async function clearPasswordField(page: Page): Promise<void> {
     .catch(() => {});
 }
 
+/**
+ * Scoped to the login form specifically, not `page.getByRole("alert")` --
+ * the first real staging run (34022381914) proved that a bare page-wide
+ * alert-role query false-positives on Next.js App Router's own built-in
+ * accessibility route announcer (a permanent, visually-hidden live region
+ * present on every page, unrelated to this form). The error-context.md ARIA
+ * snapshot at the failure showed the submit button still mid-request
+ * ("Ladataan…"/disabled) and no error paragraph anywhere inside the form --
+ * proving src/app/[locale]/(auth)/login/login-form.tsx's own
+ * `{state.error ? <p role="alert">...` never rendered, i.e. there was no
+ * real authentication error at all. That component's error paragraph is
+ * always a direct child of its `<form>`; the route announcer is not.
+ */
+function loginFormAlert(page: Page) {
+  return page.locator("form").getByRole("alert");
+}
+
 async function loginDiagnostic(page: Page, reason: string): Promise<Error> {
   await clearPasswordField(page);
   const url = new URL(page.url());
-  const alert = page.getByRole("alert");
+  const alert = loginFormAlert(page);
   const alertText = (await alert.isVisible().catch(() => false))
     ? ((await alert.textContent().catch(() => null))?.trim() ?? "visible (no text)")
     : "not visible";
@@ -105,8 +122,7 @@ export async function loginAsE2EUser(
   while (Date.now() <= deadline) {
     const url = new URL(page.url());
     const route = classifyE2ELoginPathname(url.pathname);
-    const alertVisible = await page
-      .getByRole("alert")
+    const alertVisible = await loginFormAlert(page)
       .isVisible()
       .catch(() => false);
 
