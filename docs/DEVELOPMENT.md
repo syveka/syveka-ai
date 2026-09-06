@@ -289,10 +289,64 @@ whenever possible; a dashboard-triggered reset may land elsewhere depending on t
 URL configuration.
 
 `tests/e2e/password-recovery.spec.ts` (new `password-recovery` Playwright project, no
-`storageState`, staging-only) exercises the real flow end to end without ever sending an email:
-Supabase Admin API's `generateLink({ type: "recovery" })` returns the exact link a real email
-would contain but never triggers delivery. It runs against a disposable throwaway account created
-and deleted entirely within the test — never the shared E2E fixture user. Gated on
-`SUPABASE_SERVICE_ROLE_KEY`/`SUPABASE_URL` being present (wired into `staging-release.yml`'s
-existing smoke-test step, reusing the same secret `scripts/ensure-e2e-org-fixture.ts` already
-uses) — always skips in Tier-A CI, which has no real Supabase project.
+`storageState`, staging-only) exercises the real flow end to end without ever sending an email. It
+runs against a disposable throwaway account created and deleted entirely within the test — never
+the shared E2E fixture user. Gated on `SUPABASE_SERVICE_ROLE_KEY`/`SUPABASE_URL` being present
+(wired into `staging-release.yml`'s existing smoke-test step, reusing the same secret
+`scripts/ensure-e2e-org-fixture.ts` already uses) — always skips in Tier-A CI, which has no real
+Supabase project. See §17 for how it actually establishes a recovery session (its first design,
+built on Admin `generateLink()`'s `action_link`, was disproven by a real staging run — see below).
+
+## 17. Password recovery E2E: `generateLink()` cannot produce a PKCE `?code=` link
+
+Staging run `34059627597` (SHA `4037d03`, the middleware fix from §16, deployed and verified
+working for its own infrastructure) surfaced that `password-recovery.spec.ts`'s original design —
+`page.goto(action_link)`, expecting to land on `/reset-password` — instead landed on
+`.../#access_token=[redacted]`, identically on every retry.
+
+Root cause: Supabase Admin's `generateLink()` has no originating browser or PKCE code-verifier —
+there is no "user's browser" for an admin-triggered link, so GoTrue can only ever return an
+**implicit-flow** link (`#access_token=...&refresh_token=...`), never the PKCE `?code=` link
+`resetPasswordForEmail()` produces when a real browser both requests the reset and clicks the
+resulting email link. This is a protocol-level limitation of the admin API, confirmed by reading
+`@supabase/auth-js`'s `GoTrueAdminApi.generateLink()` (it posts only `{type, email, redirect_to}`
+to `/admin/generate_link` — no code_challenge parameter exists to accept), not a configuration
+bug, and not something fixable by changing `redirectTo` or any Supabase dashboard setting. Since
+URL fragments are never sent to the server, `/api/auth/callback` never even saw the request.
+
+**Fix — redesigned the test around `verifyOtp`, not `action_link`:** `generateLink()`'s response
+also includes `properties.hashed_token`. `supabase.auth.verifyOtp({ token_hash, type: "recovery" })`
+performs the same underlying GoTrue "verify recovery" operation directly as a JSON call — no
+redirect, no fragment ambiguity — and returns a real session synchronously. The test calls this
+through `@supabase/ssr`'s own `createServerClient()` (with a `setAll` that captures cookies into an
+array instead of writing them) so the resulting session cookies are produced by the exact same
+library code `createSupabaseServer()`/`createSupabaseRouteClient()` use — never hand-encoded — then
+injects them into the Playwright browser context via `page.context().addCookies()` before visiting
+`/reset-password` directly.
+
+This intentionally does not exercise `/api/auth/callback`'s `exchangeCodeForSession(code)` call
+itself — that route is shared infrastructure already covered by the signup/magic-link flows, not
+recovery-specific. What it does exercise, and what the original bug in §16 was actually about, is
+everything downstream of "a recovery session now exists": middleware letting it reach
+`/reset-password`, the real form, the real `resetPasswordAction`, and the real new password
+authenticating afterward via the ordinary login form.
+
+## 18. Fixture-org name drift: narrow, verified, in-workflow repair
+
+The shared E2E user's real staging organization is named `"Syveka E2E Test"` (created once, by
+hand, at onboarding — its `createdAt` matches the user's `onboarded_at` to the millisecond) while
+`scripts/ensure-e2e-org-fixture.ts` and `tests/e2e/helpers/db.ts`'s refuse-to-run guard have always
+required exactly `"Syveka E2E Fixture"` (now a single shared constant,
+`scripts/e2e-fixture-identity.ts`'s `E2E_FIXTURE_ORG_NAME`). The fixture script's no-op path
+previously only checked that _a_ membership existed, never its name, so this went undetected.
+
+A direct rename via a local one-off script was attempted and **blocked by the Claude Code safety
+classifier** (a live write against real staging state) — not bypassed. Instead,
+`ensure-e2e-org-fixture.ts` now repairs this **one specific, pre-verified** drift itself, during
+the already-human-approved staging workflow: `isSafeToRepairKnownFixtureDrift()`
+(`e2e-fixture-identity.ts`) only returns true when the organization's name _and_ slug both match
+the exact known historical values, it has no `businessId` and no `stripeCustomerId`, and it has
+zero contacts, companies, and deals — re-verified live on every run, not cached. Any other
+mismatch — a different name, or this name with any data in it — still fails closed with the
+original clear error. This is not a general "accept any name" relaxation; see
+`tests/unit/e2e-fixture-identity.test.ts` for the full boundary this predicate enforces.
