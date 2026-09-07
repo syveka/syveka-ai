@@ -376,3 +376,66 @@ Nothing about the two previously-proven boundaries (OAuth scope, tool-execution 
 affected by this — they remain independently re-verified PASS above. No OAuth was initiated, no
 Google account was touched, no connected account was created by this attempt (the 403 occurred
 before Composio created anything).
+
+## Phase 7 (continued): `connected_accounts` permission granted; link created; OAuth completed live
+
+Between sessions the `COMPOSIO_API_KEY` was granted `connected_accounts` read+write in the
+Composio dashboard (a human action outside this repo, not performed by this session). Re-running
+the same, unmodified `create-oauth-link.ts`:
+
+- Pre-check found exactly one PRIOR connected account for the TEST identity
+  (`ca_q0GN7TbsCWZB`), status `EXPIRED` (from an earlier dashboard-generated link that expired
+  unused) — not an active/conflicting duplicate, so creating a new session was safe.
+- Created exactly one new connection: `connected_account_id = ca_1K8XM43hx7CM`,
+  `redirect_url = https://connect.composio.dev/link/lk__rVb5IFKztzI`,
+  `expires_at = 2026-09-07T22:34:34.315Z`. `requested_scopes` on the new connection: exactly
+  `["https://www.googleapis.com/auth/calendar.events"]`.
+- A human opened that link with a disposable TEST Google account and completed Google's consent
+  screen; Composio reported "Successfully connected Composio to Google Calendar."
+
+## Phase 4 live result: post-OAuth connection verification — PASS
+
+`scripts/poc/composio-calendar/post-oauth-verify-and-list.ts` was added: reads back the exact
+connected account by id (never re-discovered), cross-checks its reported `user_id` against the
+expected TEST binding via `tenant-binding.ts`'s real `verifyConnectionOwnership()` (the same
+enforcement code, not a parallel check), re-verifies the auth config's scope and execution
+allowlist are unchanged, then builds the tool-execute request via `buildToolExecuteRequest()` -
+deliberately passing a bogus `connected_account_id`/`user_id` in the "agent-supplied" arguments to
+prove at runtime, not just in the unit test, that they are discarded in favor of the
+server-resolved TEST connection.
+
+Live result against `ca_1K8XM43hx7CM`:
+
+- `status`: `ACTIVE` (not `INITIALIZING`/`EXPIRED`)
+- `user_id`: exactly `syveka:org-test-poc:user-test-poc` — matches the expected TEST binding
+- `auth_config.id`: `ac_KIeGPcIy9Yo9` — matches the approved config
+- `requested_scopes`: exactly `["https://www.googleapis.com/auth/calendar.events"]`
+- Auth config re-read fresh: scopes and `tools_available_for_execution` both still exactly as
+  established in Phases 2 and 6 - 0 missing, 0 extra
+- `buildToolExecuteRequest()` resolved `connected_account_id = ca_1K8XM43hx7CM` from the
+  server-verified TEST tenant context only; the bogus agent-supplied
+  `connected_account_id`/`user_id` were discarded, never reaching the executed request
+
+**POST-OAUTH CONNECTION VERIFICATION: PASS.**
+
+## Phase 5 live result: read-only smoke test — BLOCKED on a second, separate API key permission gap
+
+The same script's Step 5 called `POST /api/v3.1/tools/execute/GOOGLECALENDAR_EVENTS_LIST` (the
+only tool invoked - no CREATE/UPDATE/DELETE tool referenced anywhere in this script) using the
+tenant-resolved `connected_account_id`. **Live result: `HTTP 403
+APIKey_InsufficientPermissions`** — "This route requires \"tool_execution\" write access, but the
+key has no access for \"tool_execution\"." This is a third, independent permission scope on the
+same API key (distinct from `auth_configs` and `connected_accounts`, both already granted) - not
+yet granted.
+
+Per the same rule as Phase 7's `connected_accounts` gap, this session will not attempt to widen
+the key's own permissions (CLAUDE.md §9). Unblocking requires a human to grant this
+`COMPOSIO_API_KEY` `tool_execution` permission (read is sufficient for `GOOGLECALENDAR_EVENTS_LIST`;
+write is required for the later CREATE/DELETE roundtrip) in the Composio dashboard, after which
+`post-oauth-verify-and-list.ts ca_1K8XM43hx7CM` can be re-run unmodified to complete the read-only
+smoke test.
+
+**Everything provable without that permission has passed**: the connected account is active and
+correctly tenant-bound, OAuth scope and execution allowlist remain exact and unwidened, and the
+tenant-binding enforcement code resolves the connection correctly under a simulated
+cross-tenant-payload attack. Only the actual Google Calendar API round-trip is pending.
