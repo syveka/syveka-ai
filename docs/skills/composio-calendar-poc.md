@@ -265,14 +265,72 @@ depth, not a substitute for either of the above, matching this repo's existing "
 protections are defense in depth, not a substitute" principle (CLAUDE.md §4) applied to a
 third-party API instead of a database.
 
+## Phase 2 live result: OAuth-scope boundary — PASS (user-reported)
+
+`test-scopes-only-auth-config.ts` was run live (outside this sandbox, which has no
+`COMPOSIO_API_KEY`) against a third, separate auth config
+(`syveka-poc-googlecalendar-events-scope-only`), created with `credentials.scopes` only and no
+`tool_access_config` at all. Reported result: the auth config was created successfully and the
+returned OAuth scope was **exactly** `https://www.googleapis.com/auth/calendar.events` — no
+broader `calendar` scope present. **OAUTH LEAST PRIVILEGE: PASS.** This confirms the Phase 5
+hypothesis that omitting `tool_access_config` entirely (rather than pairing it with
+`credentials.scopes`, which 400s) lets the explicit scope request through unwidened.
+
+This does **not** by itself prove tool-execution least privilege — that is a second, independent
+Composio mechanism (Phase 5 above), tested separately in Phase 6 below.
+
+## Phase 6: tool-execution allowlist boundary — update-only test on the existing scopes-only config
+
+Per explicit task instruction, this phase does **not** create another auth config. It targets the
+same `syveka-poc-googlecalendar-events-scope-only` config that just passed the OAuth-scope gate,
+and tests **only** the second boundary identified in Phase 5:
+`tool_access_config.tools_available_for_execution`, set via `authConfigs.update()` (`PATCH
+/api/v3.1/auth_configs/{id}`), never at creation.
+
+`scripts/poc/composio-calendar/test-tool-execution-allowlist.ts`:
+
+1. **Discovers** the target auth config by exact name via `GET /api/v3.1/auth_configs?
+toolkit_slug=googlecalendar&search=syveka-poc-googlecalendar-events-scope-only` — never a
+   hardcoded id. Fails closed (exits 1, touches nothing) unless exactly one exact-name match is
+   found, so it can never accidentally target the broad config
+   (`syveka-poc-googlecalendar-test-only`) or the mutually-exclusive scopes+tools config
+   (`syveka-poc-googlecalendar-scoped-test`).
+2. **Reads the config BEFORE any change** and fails closed unless its current scopes are already
+   exactly `[https://www.googleapis.com/auth/calendar.events]` — i.e. it refuses to proceed unless
+   this really is the config Phase 2 just proved, not a same-named lookalike.
+3. **Issues exactly one `PATCH`** with a body containing only `type` (echoed back unchanged from
+   the pre-update read, so the auth type itself is never altered) and
+   `tool_access_config.tools_available_for_execution` set to the 4 approved tool slugs
+   (`GOOGLECALENDAR_EVENTS_LIST`, `GOOGLECALENDAR_CREATE_EVENT`, `GOOGLECALENDAR_EVENTS_GET`,
+   `GOOGLECALENDAR_DELETE_EVENT`). No `credentials`, `scopes`, or `user_scopes` field is included in
+   the request body — per the SDK's own JSDoc on `update()`, "Only specified fields will be
+   updated," so an omitted field must not change.
+4. **Re-reads the config independently AFTER the update** (a fresh `GET`, not the `PATCH`
+   response body) and fails closed (`TOOL EXECUTION LEAST PRIVILEGE: BLOCKED`, non-zero exit)
+   unless **both**:
+   - the returned `tools_available_for_execution` is exactly the 4 approved slugs, no more and no
+     fewer, and
+   - the OAuth scopes after the update are byte-for-byte identical to the scopes before it.
+
+No connected account, `link.create()`, or any other OAuth-initiating call is referenced anywhere
+in the script. Confirmed locally in this sandbox (no `COMPOSIO_API_KEY` present): fail-closed path
+exits 1 with zero network calls; `npm run typecheck`, `npm run lint`, `npm run format:check` all
+PASS; `tenant-binding.negative-test.ts` re-run unaffected (8/8 PASS). **Live execution of this
+script has not yet occurred** — same pattern as prior phases, it must be run in an environment
+holding the real key, with results reported back before the gate below can be marked PASS/BLOCKED
+for real.
+
+**Status at end of this phase:** script written and validated; live run **pending**. Once run,
+the operator should record here: the resolved auth-config id, scopes before/after, the requested
+vs. returned execution allowlist, and the final `TOOL EXECUTION LEAST PRIVILEGE: PASS/BLOCKED`
+verdict — mirroring the Phase 2 live-result entry above.
+
 ## What remains before the human OAuth gate can be answered concretely
 
-1. Run `discover.ts` with a real `COMPOSIO_API_KEY` (in an environment that has one) to get the
-   real Google Calendar tool slugs and check for an existing auth config.
-2. Create the auth config per the Phase 4 spec above (or confirm an existing one already matches
-   it) and read back the exact Google OAuth scopes Composio computed - this is the fact the human
-   OAuth gate needs to state precisely, and this session cannot produce it without the key.
-
-Only after both of those does `link.create()` produce a real `redirect_url` a human could
-meaningfully be asked to open - which is exactly why this session stops here rather than
-presenting a guessed scope list as if it were confirmed.
+1. Run `test-tool-execution-allowlist.ts` with a real `COMPOSIO_API_KEY` (in an environment that
+   has one) and report back the id, before/after scopes, and returned execution allowlist, so
+   Phase 6's `PASS`/`BLOCKED` verdict can be recorded for real rather than left pending.
+2. Only once **both** independent boundaries (OAuth scope — PASS per Phase 2 above; tool
+   execution — pending Phase 6's live run) are confirmed does `link.create()` produce a real
+   `redirect_url` a human could meaningfully be asked to open — which is exactly why this session
+   stops here rather than presenting an unproven verdict as if it were confirmed.
