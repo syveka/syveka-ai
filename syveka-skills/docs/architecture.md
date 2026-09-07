@@ -19,6 +19,9 @@ syveka-skills/
 │   ├── local-test-runner/     REAL - runs a command via execFile
 │   ├── git-diff/               REAL - captures a real git diff
 │   ├── skill-registry-lookup/  REAL - searches the actual registry
+│   ├── call-summary/           REAL - deterministic transcript analysis (voice-pilot/call-summary,
+│   │                            see docs/call-summary-skill.md); also ships a second, mock
+│   │                            implementation for the provider-portability proof
 │   ├── shadcn-mcp/             STUB - not connected in this environment
 │   ├── twentyfirst-dev/        STUB - not connected in this environment
 │   ├── scrapling/              STUB - reviewed, not installed (see docs/skills/SECURITY_REVIEW.md)

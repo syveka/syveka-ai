@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit",
     "demo:bug-fix": "tsx examples/demo-bug-fix/run.ts",
     "demo:ui-improvement": "tsx examples/demo-ui-improvement/run.ts",
-    "demo:skill-discovery": "tsx examples/demo-skill-discovery/run.ts"
+    "demo:skill-discovery": "tsx examples/demo-skill-discovery/run.ts",
+    "demo:call-summary": "tsx examples/demo-call-summary/run.ts"
   },
   "engines": {
     "node": ">=20"

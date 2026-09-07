@@ -34,6 +34,12 @@ export const MEDIUM_RISK_ACTIONS = [
   // explicit approval - matching the same pattern "web.research.public"
   // uses above for Scrapling.
   "video.render.local",
+  // First-party, local, no-network analysis of a phone call transcript
+  // (providers/call-summary/index.ts) - MEDIUM, not LOW, because the input
+  // is real customer conversation content that may include PII, even
+  // though the provider itself never leaves the process. See
+  // docs/call-summary-skill.md "Policy".
+  "voice.call_summary.execute",
 ] as const;
 
 export const LOW_RISK_ACTIONS = [
