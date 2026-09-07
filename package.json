@@ -22,7 +22,8 @@
     "db:studio": "prisma studio",
     "test": "vitest run",
     "test:e2e": "playwright test",
-    "email:dev": "email dev --dir emails"
+    "email:dev": "email dev --dir emails",
+    "verify-key": "tsx scripts/verify-composio-key.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
