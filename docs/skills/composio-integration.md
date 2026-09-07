@@ -88,7 +88,7 @@ honest stub (`createUnavailableStubProvider`) is written:
 7. **Safe token lifecycle.** A documented and tested issuance/rotation/revocation path for every
    OAuth token Composio holds on Syveka's behalf, including what happens to a tenant's connected
    accounts if that tenant is deleted or a user disconnects.
-8. **GDPR/privacy review.** Composio is a US-based third party sitting between Syveka and a
+8. **GDPR and privacy review.** Composio is a US-based third party sitting between Syveka and a
    tenant's connected accounts (Gmail, Calendar, Drive, Slack, etc.) — a data-processing/privacy
    review (what data transits Composio, where it's stored, for how long, under what agreement)
    must complete before any EU tenant's data can reach it, consistent with Syveka's

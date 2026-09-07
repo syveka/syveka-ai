@@ -359,7 +359,7 @@ export const REGISTRY: RegistryEntry[] = [
     // REVIEW, not APPROVED/EXPERIMENTAL: not routable (core/registry/index.ts
     // eligibleForRouting) until the conditions in docs/skills/composio-integration.md are
     // independently reviewed and signed off - least-privilege OAuth scoping, explicit
-    // tenant/user identity binding, no cross-tenant credential reuse, a GDPR/privacy review,
+    // tenant/user identity binding, no cross-tenant credential reuse, a GDPR and privacy review,
     // and a completed PoC (Phase 7) demonstrating audited, revocable, tenant-isolated access.
     status: "REVIEW",
     // REFERENCE: studied and documented only. providers/composio/index.ts exists but is an
@@ -390,7 +390,7 @@ export const REGISTRY: RegistryEntry[] = [
       "credential reuse, secret/token handling proven to never reach prompts/logs/source " +
       "control, human confirmation before any destructive/high-impact external action, an " +
       "audit trail for every external action taken, a safe token lifecycle (issuance, " +
-      "rotation, revocation), a GDPR/privacy review (Composio is a US-based third party " +
+      "rotation, revocation), a GDPR and privacy review (Composio is a US-based third party " +
       "sitting between Syveka and tenant-connected accounts), explicit vendor-lock-in " +
       "awareness, and a native Syveka fallback path for any integration this would replace " +
       "that Syveka already implements natively (e.g. Google/Microsoft Calendar - see " +
