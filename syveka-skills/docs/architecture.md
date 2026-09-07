@@ -22,7 +22,9 @@ syveka-skills/
 │   ├── shadcn-mcp/             STUB - not connected in this environment
 │   ├── twentyfirst-dev/        STUB - not connected in this environment
 │   ├── scrapling/              STUB - reviewed, not installed (see docs/skills/SECURITY_REVIEW.md)
-│   └── claude-video/           STUB - not yet reviewed
+│   ├── claude-video/           STUB - not yet reviewed
+│   ├── composio/               STUB - P1, REVIEW (see docs/skills/composio-integration.md)
+│   └── perplexity/             STUB - P2, REVIEW (see docs/skills/perplexity-research-integration.md)
 ├── adapters/            translate the shared capability list into a target agent's format
 │   ├── claude-code/     REAL - generates an actual SKILL.md
 │   ├── codex/            format-only, UNVERIFIED against a live Codex CLI
