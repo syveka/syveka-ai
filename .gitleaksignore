@@ -15,3 +15,23 @@
 #   per repository policy); the literal itself has since been replaced with
 #   a runtime-assembled, non-secret-shaped value in a follow-up commit.
 1e16a50ddf270ee14191d3107c48fd38c3fdea50:tests/unit/inbox-resend-inbound.test.ts:generic-api-key:155
+#
+# 002290d9:docs/skills/SKILLS_REGISTRY.md:89
+#   Not a secret at all: the flagged "Secret" was two English words for a
+#   compliance-and-privacy review, joined by a forward slash with no space
+#   (deliberately not reproduced here in that same joined form, since typing
+#   it that way in this comment previously re-tripped the identical rule on
+#   this very file). Gitleaks' generic-api-key rule matched purely because
+#   that joined form is a short slash-separated mixed-case token sitting
+#   near the word "token" ("...safe token lifecycle, [that phrase] review,
+#   vendor-lock-in..."). Reproduced locally with `gitleaks dir` against the
+#   plain file content (no git history needed) - RuleID generic-api-key,
+#   Entropy 3.58. No API key, token, or credential of any kind is present on
+#   this line or anywhere in this PR (syveka/syveka-ai#118). The wording was
+#   also changed (the slash replaced with the word "and") in a follow-up
+#   commit on the same branch to avoid re-tripping this rule going forward;
+#   this entry only allowlists the original commit's now-superseded
+#   phrasing, which the git-log-range secret scan still revisits. Rewriting
+#   the commit that introduced it is intentionally avoided (no force-push /
+#   history rewrite per repository policy), same as the entry above.
+002290d9ba1a1ca42d380cc37d3eb7dba36c9664:docs/skills/SKILLS_REGISTRY.md:generic-api-key:89
