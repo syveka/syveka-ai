@@ -325,12 +325,54 @@ the operator should record here: the resolved auth-config id, scopes before/afte
 vs. returned execution allowlist, and the final `TOOL EXECUTION LEAST PRIVILEGE: PASS/BLOCKED`
 verdict — mirroring the Phase 2 live-result entry above.
 
-## What remains before the human OAuth gate can be answered concretely
+## Phase 6 live result: tool-execution allowlist boundary — PASS (re-confirmed live, this session)
 
-1. Run `test-tool-execution-allowlist.ts` with a real `COMPOSIO_API_KEY` (in an environment that
-   has one) and report back the id, before/after scopes, and returned execution allowlist, so
-   Phase 6's `PASS`/`BLOCKED` verdict can be recorded for real rather than left pending.
-2. Only once **both** independent boundaries (OAuth scope — PASS per Phase 2 above; tool
-   execution — pending Phase 6's live run) are confirmed does `link.create()` produce a real
-   `redirect_url` a human could meaningfully be asked to open — which is exactly why this session
-   stops here rather than presenting an unproven verdict as if it were confirmed.
+Read-only re-verification against `ac_KIeGPcIy9Yo9`
+(`syveka-poc-googlecalendar-events-scope-only`) via `GET /api/v3.1/auth_configs` (exact-name
+search) and `GET /api/v3.1/auth_configs/{id}`, run fresh in this session:
+
+- `status`: `ENABLED`
+- `is_composio_managed`: `true`
+- `credentials.scopes`: exactly `["https://www.googleapis.com/auth/calendar.events"]` — unchanged
+  from the Phase 2 result
+- `tool_access_config.tools_available_for_execution`: exactly
+  `["GOOGLECALENDAR_EVENTS_LIST", "GOOGLECALENDAR_CREATE_EVENT", "GOOGLECALENDAR_EVENTS_GET", "GOOGLECALENDAR_DELETE_EVENT"]`
+  — 0 missing, 0 extra
+
+**TOOL EXECUTION LEAST PRIVILEGE: PASS** (both boundaries independently re-verified live, not just
+carried forward from a prior session's report). `tenant-binding.negative-test.ts` re-run fresh in
+this session: 8/8 PASS.
+
+## Phase 7: OAuth link generation — BLOCKED on API key permissions (not an authorization decision)
+
+`scripts/poc/composio-calendar/create-oauth-link.ts` was added: it re-discovers the approved auth
+config by exact name, re-verifies both boundaries above immediately before acting (fail-closed if
+either has drifted), then calls `POST /api/v3.1/connected_accounts/link` with the auth config id
+and a fixed, clearly-labeled TEST `user_id` (`syveka:org-test-poc:user-test-poc` — never a real
+Syveka org/user).
+
+**Live result: `HTTP 403 APIKey_InsufficientPermissions`** — "This API key does not have the
+permissions required for POST /api/v3/connected_accounts/link. This route requires
+\"connected_accounts\" write access, but the key has no access for \"connected_accounts\"." A
+follow-up read-only check (`GET /api/v3.1/connected_accounts`) also returned the same 403 — the
+key has **zero** `connected_accounts` scope, neither read nor write. It only has `auth_configs`
+read/write (confirmed working throughout Phases 1-6) and, separately, tool-execution access (not
+yet exercised).
+
+This is an environment/credential-scoping fact, not a decision about whether OAuth should proceed.
+Per CLAUDE.md §9 (credential/secret modification is a protected action requiring explicit
+authorization) this session will not attempt to widen the key's own permissions. Two paths forward,
+both requiring a human action outside this session:
+
+1. Grant the existing `COMPOSIO_API_KEY` `connected_accounts` read+write permission in the
+   Composio dashboard, then re-run `create-oauth-link.ts` to get a real `redirect_url`; or
+2. Generate the connection link directly from the Composio dashboard's UI against the
+   `syveka-poc-googlecalendar-events-scope-only` auth config (id `ac_KIeGPcIy9Yo9`) using the same
+   TEST `user_id` (`syveka:org-test-poc:user-test-poc`), and share the resulting `redirect_url`
+   and `connected_account_id` back into this session before Phase 4 (post-OAuth verification) can
+   run.
+
+Nothing about the two previously-proven boundaries (OAuth scope, tool-execution allowlist) is
+affected by this — they remain independently re-verified PASS above. No OAuth was initiated, no
+Google account was touched, no connected account was created by this attempt (the 403 occurred
+before Composio created anything).
