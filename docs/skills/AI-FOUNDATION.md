@@ -98,6 +98,8 @@ additive change existed):
 | Market/Competitor Research                     | `docs/skills/market-research-skill.md`                                          |
 | AI Sales/DM Agent architecture                 | `docs/skills/ai-sales-dm-agent-architecture.md`                                 |
 | Chrome DevTools MCP evaluation                 | `docs/skills/chrome-devtools-mcp-evaluation.md`                                 |
+| Composio evaluation (P1, integration gateway)  | `docs/skills/composio-integration.md`                                           |
+| Perplexity evaluation (P2, research provider)  | `docs/skills/perplexity-research-integration.md`                                |
 | Dev-tooling Skills Registry (machine-readable) | `syveka-skills/core/registry/data.ts` + `syveka-skills/docs/skills-registry.md` |
 | Dev-tooling Skills Registry (human-readable)   | `docs/skills/SKILLS_REGISTRY.md`                                                |
 | Dev-tooling architecture                       | `syveka-skills/docs/architecture.md`                                            |
