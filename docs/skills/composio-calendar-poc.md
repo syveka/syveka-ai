@@ -205,6 +205,66 @@ unset) was verified to exit 1 with a clear message and make zero network calls. 
 (actual toolkit/tool/auth-config discovery) has **not** been run - no key available in this
 session.
 
+## Phase 5 (security follow-up): OAuth scope vs. tool-execution are two independent boundaries
+
+Live testing found the first auth config (`create-auth-config.ts`, using only
+`tool_access_config.tools_for_connected_account_creation`) produced a Google OAuth scope of BOTH
+`https://www.googleapis.com/auth/calendar` (broad - calendar/ACL management) and
+`https://www.googleapis.com/auth/calendar.events` (narrow - events only), not `calendar.events`
+alone. Attempting to force the narrow scope by additionally passing `credentials.scopes` alongside
+`tool_access_config.tools_for_connected_account_creation` (`test-scoped-auth-config.ts`) failed
+live with `HTTP 400`: _"You cannot provide both scopes (or user_scopes) and
+tool_access_config.tools_for_connected_account_creation for the same auth config."_ No auth config
+was created by that failed request.
+
+**Root cause, confirmed directly from the `@composio/client` SDK's `AuthConfigCreateParams` /
+`AuthConfigUpdateParams` types (`resources/auth-configs.d.ts`), not guessed:**
+`tool_access_config` has **two independent fields**, only one of which is create-time and
+scope-related:
+
+- `tools_for_connected_account_creation` — "Tools used to generate the **minimum required
+  scopes**... only valid for OAuth" - this is what conflicts with an explicit `credentials.scopes`
+  at auth-config **creation** time (confirmed by the live 400 above).
+- `tools_available_for_execution` — "The actions the user can perform on the auth config" - a
+  **separate, execution-time allowlist**, present in `AuthConfigCreateResponse`/
+  `AuthConfigRetrieveResponse`/`AuthConfigUpdateParams`, but **absent from `AuthConfigCreateParams`
+  entirely** (grep-confirmed: it appears in the retrieve/list/update type shapes, never in the
+  create-request shape). It is only ever set via `authConfigs.update(id, { tool_access_config: {
+tools_available_for_execution: [...] } })`, **after** creation - and `AuthConfigUpdateParams`'s
+  own type shows `scopes` and `tool_access_config.tools_available_for_execution` coexisting in the
+  same update body with no documented conflict, unlike the create-time pairing that just failed
+  live.
+
+This means the create-time 400 is specific to `tools_for_connected_account_creation` (which
+computes scope) conflicting with an explicit scope - it does **not** mean tool-execution
+restriction and scope restriction are mutually exclusive in general. They are two genuinely
+separate Composio mechanisms:
+
+1. **OAuth scope** (what Google's consent screen shows, what the access token is capable of at the
+   Google API level) - set via `credentials.scopes` at creation, alone, with no
+   `tool_access_config`.
+2. **Tool execution allowlist** (which of Composio's own tool slugs a connection using this auth
+   config may call - enforced by Composio server-side, independent of what the underlying Google
+   token could technically do) - set via `authConfigs.update()`'s
+   `tool_access_config.tools_available_for_execution`, a separate call, after creation.
+
+`scripts/poc/composio-calendar/test-scopes-only-auth-config.ts` tests boundary (1) in isolation
+(create with `credentials.scopes` only, no `tool_access_config` at all) - live execution pending,
+same pattern as prior scripts. Boundary (2) (the `authConfigs.update()` call) has **not yet been
+attempted live** - identified from SDK types only, so it is honestly `NOT YET PROVEN`, not `PASS`.
+
+**Additional supporting evidence for tool-level allowlisting as a first-class Composio concept**
+(not required for this PoC, but corroborating): `resources/mcp/mcp.d.ts`'s MCP-server session
+create/update params carry their own independent `allowed_tools: Array<string>` field - a second,
+separate surface where Composio enforces a tool allowlist, reinforcing that this is deliberate
+platform architecture, not a one-off.
+
+**Syveka's own independent enforcement layer** (`scripts/poc/composio-calendar/tenant-binding.ts`)
+remains a third, additive boundary regardless of what Composio enforces server-side: defense in
+depth, not a substitute for either of the above, matching this repo's existing "database-level
+protections are defense in depth, not a substitute" principle (CLAUDE.md §4) applied to a
+third-party API instead of a database.
+
 ## What remains before the human OAuth gate can be answered concretely
 
 1. Run `discover.ts` with a real `COMPOSIO_API_KEY` (in an environment that has one) to get the
