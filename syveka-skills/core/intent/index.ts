@@ -24,6 +24,7 @@ export type TaskType =
   | "skill_discovery"
   | "web_research"
   | "video_analysis"
+  | "call_summary"
   | "documentation"
   | "skill_development"
   | "clarification_needed";
@@ -71,6 +72,15 @@ const RULES: Rule[] = [
     taskType: "web_research",
     capabilities: ["web.research"],
     keywords: /\b(research|competitor|website analysis|scrape|extract data from)\b/i,
+  },
+  {
+    taskType: "call_summary",
+    capabilities: ["voice.call_summary"],
+    // Deliberately specific (not bare "transcript" or "call") so this
+    // doesn't steal generic phrasing from video_analysis below - see that
+    // rule's own keyword list, which already claims "transcript" for a
+    // different task type.
+    keywords: /\b(summarize (this |the )?call|call summary|summarize the transcript)\b/i,
   },
   {
     taskType: "video_analysis",

@@ -457,6 +457,51 @@ export const REGISTRY: RegistryEntry[] = [
       "full evaluation, the USE/DO-NOT-USE rules, and the benchmark PoC design.",
   },
   {
+    id: "voice-pilot-call-summary",
+    name: "Voice Pilot: call summary",
+    capability: "voice.call_summary",
+    provider: "voice-pilot-call-summary",
+    version: "1.0.0",
+    source: "syveka-skills/providers/call-summary (first-party)",
+    license: "N/A (Syveka-owned)",
+    trust_level: "TRUSTED",
+    // MEDIUM, not LOW, despite being first-party/local/no-network: the
+    // input is real phone-call transcript content, which may carry
+    // customer PII - see policies/risk-classification.ts
+    // "voice.call_summary.execute" and docs/call-summary-skill.md
+    // "Policy". Contrast local-engineering-test/local-git-diff above,
+    // which operate on the repo itself, not third-party personal data.
+    risk_level: "MEDIUM",
+    status: "APPROVED",
+    // VERIFIED: evals/call-summary.test.ts, evals/call-summary-tenant-isolation.test.ts, and
+    // evals/call-summary-provider-portability.test.ts actually run this provider (deterministic,
+    // offline, no mocking of its own logic) against normal and adversarial transcripts and assert
+    // real, schema-validated output - not asserted on the strength of a code review alone. See
+    // docs/skills-registry.md "Integration state vs. review status".
+    integration_state: "VERIFIED",
+    supported_agents: ["claude-code", "codex", "gemini-cli"],
+    permissions: ["fs:read"],
+    network_access: false,
+    filesystem_access: false,
+    scripts: false,
+    hooks: false,
+    dependencies: [],
+    credential_requirements: [],
+    approval_required: true,
+    installation_scope: "local",
+    last_reviewed: "2026-09-07",
+    last_updated: "2026-09-07",
+    security_notes:
+      "First-party, deterministic, offline transcript analysis - no network access, no external " +
+      "API, no credentials. Tenant scoping is enforced from the caller-supplied, server-verified " +
+      "`tenant_id` input field only; the transcript body is never inspected for a tenant/org " +
+      "identifier, so a spoofed one inside transcript content has no effect (see " +
+      "evals/call-summary-tenant-isolation.test.ts). Malformed/oversized/empty input is rejected " +
+      "(fails closed), and produced output is validated against callSummaryOutputSchema before " +
+      "being returned as SUCCESS. Evidence/audit-visible fields never contain raw transcript " +
+      "text or caller-identifying content - see docs/call-summary-skill.md 'Security'.",
+  },
+  {
     id: "firecrawl",
     name: "Firecrawl",
     capability: "web.research",

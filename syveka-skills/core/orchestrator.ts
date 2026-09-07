@@ -29,6 +29,15 @@ export interface OrchestratorDeps {
    * "tool.generate.external" (MEDIUM) when not specified by the capability.
    */
   actionForCapability?: (capability: string) => string;
+  /**
+   * Structured payload for capabilities that need more than the free-text
+   * `request` string classifyIntent() reads (e.g. voice.call_summary's
+   * transcript + tenant_id - see schemas/call-summary.ts). Passed through
+   * verbatim to `provider.execute()` as `context` - the orchestrator itself
+   * never reads or validates its shape, exactly like `request`; each
+   * capability's own provider owns validating its own contract.
+   */
+  context?: Record<string, unknown>;
 }
 
 export async function runTask(
@@ -100,7 +109,11 @@ export async function runTask(
       audit.record("permission_granted", { action, decision });
     }
 
-    const result = await route.provider.execute({ capability: step.capability, request });
+    const result = await route.provider.execute({
+      capability: step.capability,
+      request,
+      context: deps.context,
+    });
     audit.record("tool_executed", { capability: step.capability, status: result.status });
     // The provider's own message is always recorded as (weak) log evidence,
     // even on success - a "no matches found" or "0 rows" result is real

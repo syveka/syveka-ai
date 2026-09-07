@@ -81,10 +81,28 @@ scripted happy paths would have been.
 - No sandboxing beyond individual providers' own safe command execution (see
   `docs/security-model.md` "Explicit non-goals").
 
+## Milestone 3 - the first production-shaped Skill (`voice-pilot/call-summary`)
+
+Milestones 1-2 proved the architecture with engineering-agent-shaped capabilities (bug fix, UI
+search, skill discovery, web research). Milestone 3 proves it for a structured, tenant-scoped,
+product-facing capability instead: `voice.call_summary`, a real first-party provider that takes a
+call transcript and returns a strictly-validated structured summary (`summary`, `caller_intent`,
+`key_points`, `action_items`, `follow_up_required`, `risk_flags`, `language`, `confidence`). See
+`docs/call-summary-skill.md` for the full `Skill -> Contract -> Policy -> Runtime ->
+Provider/Adapter -> Evaluation -> Audit` walkthrough.
+
+This milestone required exactly one additive, backward-compatible runtime change
+(`OrchestratorDeps.context`, see `core/orchestrator.ts`) to carry a structured payload alongside
+the free-text `request` string every other capability already used - nothing else in `core/` or
+any existing capability's behavior changed. `evals/call-summary*.test.ts` (23+ cases: normal,
+adversarial, tenant-isolation, provider-portability) exercise it end to end, including through the
+real orchestrator path, the same way `evals/scrapling-live.test.ts` and `evals/remotion-live.test.ts`
+did for Milestone 2's providers.
+
 ## Recommended next milestone
 
-Wire one real external provider end-to-end (Scrapling is the best candidate - it already has a
-passed security review) behind its own isolated container, per the design already written in
-`docs/skills/scrapling-integration.md`, and add the eval coverage that provider needs (a real
-"provider goes from available to unavailable mid-task" test, not just a stub). That would prove
-the architecture against a genuine external dependency, not just first-party local providers.
+Wire a second, LLM-backed `voice.call_summary` provider (see `docs/call-summary-skill.md` "How to
+add a second provider") behind the same contract the deterministic reference provider already
+proves, OR continue Milestone 2's original recommendation of wiring a second real external
+provider end-to-end behind its own isolated container. Either would prove the architecture against
+a genuine external/model dependency for a second time, on top of Scrapling.
