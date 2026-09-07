@@ -51,6 +51,13 @@ export const LOW_RISK_ACTIONS = [
   // without a separate security review and explicit owner sign-off, per
   // the Milestone 2 task brief.
   "web.research.public",
+  // Read-only `npm audit` inspection of package metadata already public in
+  // this repo's own lockfile - see providers/dependency-audit/index.ts.
+  // Distinct from "dependency.install" above (which writes new packages
+  // into the project and stays MEDIUM): this only reads and reports,
+  // exactly like "test.run.local"/"web.research.public" above it. Never
+  // modifies package.json/package-lock.json.
+  "security.dependency_audit.execute",
 ] as const;
 
 /**

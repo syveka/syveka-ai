@@ -81,6 +81,17 @@ scripted happy paths would have been.
 - No sandboxing beyond individual providers' own safe command execution (see
   `docs/security-model.md` "Explicit non-goals").
 
+## Milestone 3 - SecureShip MVP slice (`security.dependency_audit`)
+
+The first SecureShip capability, proving this architecture generalizes beyond the original three
+engineering-agent demos to a governed security-engineering workflow: real, deterministic
+detection (`npm audit`, the same tool this repo's own CI gate already trusts) → prioritization →
+explanation → structured report, run through the exact same `intent -> plan -> route -> permission
+-> execute -> evidence -> verify -> report` loop, with zero changes to `core/orchestrator.ts`. See
+`docs/secureship.md` for the full contract, trust model, gap map, and security test coverage.
+Fix/Test/Verify (the rest of SecureShip's intended `Inspect -> Detect -> Prioritize -> Explain ->
+Fix -> Test -> Verify -> Report` workflow) are deliberately not implemented in this slice.
+
 ## Recommended next milestone
 
 Wire one real external provider end-to-end (Scrapling is the best candidate - it already has a
@@ -88,3 +99,7 @@ passed security review) behind its own isolated container, per the design alread
 `docs/skills/scrapling-integration.md`, and add the eval coverage that provider needs (a real
 "provider goes from available to unavailable mid-task" test, not just a stub). That would prove
 the architecture against a genuine external dependency, not just first-party local providers.
+
+For SecureShip specifically, see `docs/secureship.md`'s "What remains intentionally
+unimplemented" for the next capability to build (a second, complementary detection provider, e.g.
+SAST, or Fix/Test/Verify for the dependency-audit findings this slice already produces).

@@ -19,6 +19,8 @@ syveka-skills/
 │   ├── local-test-runner/     REAL - runs a command via execFile
 │   ├── git-diff/               REAL - captures a real git diff
 │   ├── skill-registry-lookup/  REAL - searches the actual registry
+│   ├── dependency-audit/       REAL - runs `npm audit`, normalizes findings (SecureShip's first
+│   │                            capability, see docs/secureship.md)
 │   ├── shadcn-mcp/             STUB - not connected in this environment
 │   ├── twentyfirst-dev/        STUB - not connected in this environment
 │   ├── scrapling/              STUB - reviewed, not installed (see docs/skills/SECURITY_REVIEW.md)

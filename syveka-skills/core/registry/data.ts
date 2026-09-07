@@ -457,6 +457,56 @@ export const REGISTRY: RegistryEntry[] = [
       "full evaluation, the USE/DO-NOT-USE rules, and the benchmark PoC design.",
   },
   {
+    id: "security-dependency-audit-npm",
+    name: "SecureShip: npm dependency audit",
+    capability: "security.dependency_audit",
+    provider: "security-dependency-audit-npm",
+    version: "1.0.0",
+    source: "syveka-skills/providers/dependency-audit (first-party, wraps `npm audit`)",
+    license: "N/A (Syveka-owned; underlying tool is npm CLI, bundled with Node.js)",
+    trust_level: "TRUSTED",
+    // LOW, matching engineering.test/web.research.public's precedent: a
+    // read-only inspection of package metadata already public in this
+    // repo's own lockfile. `npm audit` does call registry.npmjs.org's
+    // public advisory endpoint (network_access: true below), but - like
+    // Scrapling's plain-HTTP research tier - that is a read-only query
+    // carrying no tenant/customer data, not an exfiltration risk. See
+    // docs/secureship.md "Policy".
+    risk_level: "LOW",
+    status: "APPROVED",
+    // VERIFIED: evals/dependency-audit*.test.ts actually run this provider
+    // (real npm audit spawn by default; fixture-injected raw JSON for the
+    // adversarial/malformed/unavailable cases) and assert real,
+    // schema-validated, prioritized findings - not asserted on the
+    // strength of a code review alone. One eval also runs it against this
+    // real repository's own package-lock.json (not a toy fixture only).
+    // See docs/skills-registry.md "Integration state vs. review status".
+    integration_state: "VERIFIED",
+    supported_agents: ["claude-code", "codex", "gemini-cli"],
+    permissions: ["fs:read", "process:spawn:local", "network:egress"],
+    network_access: true,
+    filesystem_access: true,
+    scripts: true,
+    hooks: false,
+    dependencies: ["npm"],
+    credential_requirements: [],
+    approval_required: false,
+    installation_scope: "local",
+    last_reviewed: "2026-09-07",
+    last_updated: "2026-09-07",
+    security_notes:
+      "First-party wrapper around `npm audit --json` (the same tool this repo's own CI gate " +
+      "uses - see scripts/run-npm-audit.ts), cross-referenced against package-lock.json for " +
+      "installed versions. Detection is 100% deterministic tool output; an LLM is never the " +
+      "source of vulnerability truth (see docs/secureship.md 'Trust model'). Workspace/cwd is " +
+      "fixed at provider-construction time (same pattern as local-test-runner/git-diff above) - " +
+      "the caller-supplied workspace_ref input field is an evidence/audit label only and never " +
+      "selects or overrides what gets scanned. Malformed scanner output or a missing npm binary " +
+      "always returns FAILURE, never a fabricated clean result. Fix/Test/Verify are explicitly " +
+      "out of scope for this slice - it never modifies package.json/package-lock.json. See " +
+      "docs/secureship.md for the full contract, trust model, and security test coverage.",
+  },
+  {
     id: "firecrawl",
     name: "Firecrawl",
     capability: "web.research",

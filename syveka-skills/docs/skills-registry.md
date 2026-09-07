@@ -69,17 +69,18 @@ entrypoint, and an external test service that stopped behaving as documented).
 
 ## Current seed entries (as of this milestone)
 
-| id                       | capability                 | status                 | integration_state | notes                                                                              |
-| ------------------------ | -------------------------- | ---------------------- | ----------------- | ---------------------------------------------------------------------------------- |
-| `local-engineering-test` | `engineering.test`         | APPROVED               | VERIFIED          | First-party, local, no network                                                     |
-| `local-git-diff`         | `engineering.diff_capture` | APPROVED               | VERIFIED          | First-party, local, no network                                                     |
-| `local-skill-registry`   | `skill.discovery`          | APPROVED               | VERIFIED          | First-party, searches this registry only                                           |
-| `scrapling`              | `web.research`             | APPROVED (conditional) | VERIFIED          | Real Docker-isolated provider, live-tested - see Milestone 2 section               |
-| `shadcn-mcp`             | `ui.component.provide`     | REVIEW                 | REFERENCE         | Not independently reviewed yet                                                     |
-| `twentyfirst-dev`        | `ui.component.discover`    | REVIEW                 | REFERENCE         | Metered service, needs owner approval before any use                               |
-| `claude-video`           | `video.analyze`            | REVIEW                 | REFERENCE         | Not independently reviewed yet                                                     |
-| `composio`               | `integration.gateway`      | REVIEW                 | REFERENCE         | P1, HIGH risk gateway - see docs/skills/composio-integration.md                    |
-| `perplexity`             | `research.cited`           | REVIEW                 | REFERENCE         | P2 optional research provider - see docs/skills/perplexity-research-integration.md |
+| id                              | capability                  | status                 | integration_state | notes                                                                              |
+| ------------------------------- | --------------------------- | ---------------------- | ----------------- | ---------------------------------------------------------------------------------- |
+| `local-engineering-test`        | `engineering.test`          | APPROVED               | VERIFIED          | First-party, local, no network                                                     |
+| `local-git-diff`                | `engineering.diff_capture`  | APPROVED               | VERIFIED          | First-party, local, no network                                                     |
+| `local-skill-registry`          | `skill.discovery`           | APPROVED               | VERIFIED          | First-party, searches this registry only                                           |
+| `security-dependency-audit-npm` | `security.dependency_audit` | APPROVED               | VERIFIED          | First-party wrapper around `npm audit` - see Milestone 3 / docs/secureship.md      |
+| `scrapling`                     | `web.research`              | APPROVED (conditional) | VERIFIED          | Real Docker-isolated provider, live-tested - see Milestone 2 section               |
+| `shadcn-mcp`                    | `ui.component.provide`      | REVIEW                 | REFERENCE         | Not independently reviewed yet                                                     |
+| `twentyfirst-dev`               | `ui.component.discover`     | REVIEW                 | REFERENCE         | Metered service, needs owner approval before any use                               |
+| `claude-video`                  | `video.analyze`             | REVIEW                 | REFERENCE         | Not independently reviewed yet                                                     |
+| `composio`                      | `integration.gateway`       | REVIEW                 | REFERENCE         | P1, HIGH risk gateway - see docs/skills/composio-integration.md                    |
+| `perplexity`                    | `research.cited`            | REVIEW                 | REFERENCE         | P2 optional research provider - see docs/skills/perplexity-research-integration.md |
 
 Scrapling is the first (and so far only) externally-sourced entry to reach `VERIFIED` - everything
 else either stayed first-party/local or is still honestly `REFERENCE`. This is intentional, not a

@@ -13,6 +13,8 @@ const DESCRIPTIONS: Record<string, string> = {
   "skill.security_review": "Run provenance/license/security review on candidates",
   "web.research": "Fetch and extract content from the target page(s)",
   "video.analyze": "Extract frames/transcript and analyze the video",
+  "security.dependency_audit":
+    "Inspect the dependency tree, detect known vulnerabilities, prioritize, and explain findings",
   "docs.write": "Write or update documentation",
   "docs.organize": "Organize documentation structure",
   "skill.create": "Create a new skill from requirements",

@@ -24,6 +24,7 @@ export type TaskType =
   | "skill_discovery"
   | "web_research"
   | "video_analysis"
+  | "dependency_audit"
   | "documentation"
   | "skill_development"
   | "clarification_needed";
@@ -41,6 +42,18 @@ interface Rule {
 }
 
 const RULES: Rule[] = [
+  {
+    taskType: "dependency_audit",
+    capabilities: ["security.dependency_audit"],
+    // Placed before bug_fix on purpose: a phrase like "audit dependencies
+    // and fix vulnerabilities" contains "fix", which bug_fix's own keyword
+    // list below would otherwise claim first (first rule wins) - see that
+    // rule's ordering note about the same "steal a generic word" failure
+    // mode. Specific enough not to false-positive on generic "fix"/"error"
+    // requests.
+    keywords:
+      /\b(dependency audit|audit (the )?dependencies|vulnerable dependencies|dependency vulnerabilities|npm audit|scan (the )?dependencies|security audit)\b/i,
+  },
   {
     taskType: "bug_fix",
     // Deliberately does NOT include a "write the fix" capability: this
