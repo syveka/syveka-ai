@@ -19,12 +19,18 @@ export default async function AppLayout({ children }: { children: React.ReactNod
     }),
     unreadCount(ctx),
   ]);
+  const permissions = permissionsFor(ctx.role);
 
   return (
     <div className="flex min-h-screen">
-      <AppSidebar role={ctx.role} permissions={permissionsFor(ctx.role)} />
+      <AppSidebar role={ctx.role} permissions={permissions} />
       <div className="flex min-w-0 flex-1 flex-col">
-        <Topbar userId={ctx.userId} orgName={org.name} initialUnread={unread} />
+        <Topbar
+          userId={ctx.userId}
+          orgName={org.name}
+          initialUnread={unread}
+          permissions={permissions}
+        />
         <main className="flex-1 p-4 md:p-6">{children}</main>
       </div>
     </div>

@@ -8,15 +8,19 @@ import { Button } from "@/components/ui/button";
 import { logoutAction } from "@/actions/auth";
 import { useUnreadBadge } from "@/hooks/use-notifications";
 import { routing } from "@/i18n/routing";
+import type { Permission } from "@/server/auth/permissions";
+import { MobileNav } from "./mobile-nav";
 
 export function Topbar({
   userId,
   orgName,
   initialUnread,
+  permissions,
 }: {
   userId: string;
   orgName: string;
   initialUnread: number;
+  permissions: Permission[];
 }) {
   const { resolvedTheme, setTheme } = useTheme();
   const unread = useUnreadBadge(initialUnread, userId);
@@ -29,7 +33,10 @@ export function Topbar({
 
   return (
     <header className="flex h-14 items-center justify-between border-b px-4">
-      <span className="truncate text-sm font-medium text-muted-foreground">{orgName}</span>
+      <div className="flex min-w-0 items-center gap-1">
+        <MobileNav permissions={permissions} />
+        <span className="truncate text-sm font-medium text-muted-foreground">{orgName}</span>
+      </div>
       <div className="flex items-center gap-1">
         <Button
           variant="ghost"
