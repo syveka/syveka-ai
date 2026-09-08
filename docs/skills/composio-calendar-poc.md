@@ -531,3 +531,56 @@ PoC's mutation phases requires a Google account created specifically for testing
 real calendar data on it - not merely an account the human considers "for testing" while it still
 holds real personal or business events. No personal or business data (attendee names, emails, or
 message content) is reproduced in this document.
+
+## Third attempt: genuinely empty TEST calendar confirmed; LIST/CREATE roundtrip attempted
+
+A third connected account, `ca_IUyc1cphBOF4`, was created the same way (one `create-oauth-link.ts`
+run, same TEST identity, same auth config, neither prior connection touched) and OAuth was
+completed against a Google account created specifically for this PoC. Post-OAuth verification
+passed in full (`ACTIVE`, exact tenant binding, exact scope, exact allowlist), and
+`GOOGLECALENDAR_EVENTS_LIST` returned **`items: []`** - a genuinely empty calendar, confirming this
+is in fact a disposable TEST account with no personal or business data.
+
+`scripts/poc/composio-calendar/event-roundtrip.ts` was added to attempt the remaining CREATE ->
+GET -> DELETE -> cleanup steps. Before creating anything it independently re-verifies the
+connection, tenant binding, scope/allowlist, and re-confirms the calendar is empty via its own
+LIST call (fail-closed if any event already exists - not trusting the earlier confirmation alone).
+All of that passed.
+
+**`GOOGLECALENDAR_CREATE_EVENT` itself then failed - not from a permission, scope-drift, or
+tenant-binding problem, but from a genuine Google API scope limitation surfaced live:**
+
+```
+HTTP 200 (Composio call succeeded) / successful: false
+Google's own response: 403 PERMISSION_DENIED
+reason: ACCESS_TOKEN_SCOPE_INSUFFICIENT
+message: "Request had insufficient authentication scopes."
+metadata.method: "calendar.v3.Calendars.Get"
+url: https://www.googleapis.com/calendar/v3/calendars/primary
+```
+
+Composio's `GOOGLECALENDAR_CREATE_EVENT` action internally calls Google's `calendars.get`
+endpoint (observable from the failing URL/method in the error, not something documented in the
+tool's own input schema) - most likely to resolve calendar metadata such as the default timezone
+before inserting the event. Google's `calendars.get` requires a broader Calendar OAuth scope
+(`calendar` or `calendar.readonly`) than `calendar.events` provides; `calendar.events` covers
+`events.*` operations only, not calendar-resource reads. This was re-tested with an explicit
+`timezone: "UTC"` argument (ruling out "the tool falls back to a calendars.get call only when
+timezone is omitted") - the identical 403 occurred either way, so the internal `calendars.get`
+call appears unconditional in this action's implementation, not something any documented input
+parameter can avoid.
+
+**This is a real, load-bearing limitation of the `calendar.events`-only least-privilege scope this
+PoC has used throughout, not a bug in this session's scripts or a caller-side error.**
+`GOOGLECALENDAR_EVENTS_LIST` has now succeeded live three times under this exact scope;
+`GOOGLECALENDAR_CREATE_EVENT` cannot succeed under it at all, regardless of arguments supplied,
+because of a scope requirement inside Composio's own action implementation that sits outside the
+four-tool allowlist's stated boundary. `GOOGLECALENDAR_EVENTS_GET` and `GOOGLECALENDAR_DELETE_EVENT`
+remain **untested** (no event exists to GET/DELETE, and this session will not create one through
+a different, unapproved path or widen scope to force CREATE through) - so whether they share this
+same limitation is unknown, not assumed either way.
+
+Per this task's explicit instruction not to widen OAuth scopes, this session did not attempt to
+work around the 403 by requesting a broader scope. The calendar was left exactly as found (empty,
+0 events) - the CREATE call failed before Google ever wrote anything, so no cleanup was needed. No
+personal data is involved, since this account was confirmed empty before any attempt.
