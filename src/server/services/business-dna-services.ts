@@ -2,6 +2,7 @@ import "server-only";
 
 import { tenantDb } from "@/server/db/tenant";
 import { audit } from "./audit";
+import { resyncActiveAssistants } from "./voice";
 import type { TenantContext } from "@/server/auth/session";
 import type { BusinessDnaServiceInput } from "@/lib/validators/business-dna";
 
@@ -46,6 +47,10 @@ export async function createBusinessDnaService(ctx: TenantContext, input: Busine
     resourceId: service.id,
   });
 
+  // See resyncActiveAssistants' doc comment (voice.ts) - a live assistant
+  // must not keep omitting/misquoting a service after this change.
+  await resyncActiveAssistants(ctx.orgId);
+
   return service;
 }
 
@@ -88,6 +93,11 @@ export async function updateBusinessDnaService(
     resourceId: service.id,
   });
 
+  // See resyncActiveAssistants' doc comment (voice.ts) - a live assistant
+  // must not keep quoting a stale price/description/duration for this
+  // service after this change.
+  await resyncActiveAssistants(ctx.orgId);
+
   return service;
 }
 
@@ -117,6 +127,10 @@ export async function deactivateBusinessDnaService(ctx: TenantContext, id: strin
     resourceId: service.id,
   });
 
+  // See resyncActiveAssistants' doc comment (voice.ts) - a live assistant
+  // must stop offering this service once it's deactivated.
+  await resyncActiveAssistants(ctx.orgId);
+
   return service;
 }
 
@@ -138,6 +152,10 @@ export async function reactivateBusinessDnaService(ctx: TenantContext, id: strin
     resourceType: "business_dna_service",
     resourceId: service.id,
   });
+
+  // See resyncActiveAssistants' doc comment (voice.ts) - a live assistant
+  // must be able to offer this service again once it's reactivated.
+  await resyncActiveAssistants(ctx.orgId);
 
   return service;
 }

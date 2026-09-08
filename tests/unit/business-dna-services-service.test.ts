@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@/server/auth/session";
 import type { BusinessDnaServiceInput } from "@/lib/validators/business-dna";
 
-const { tenantDbMock, auditMock } = vi.hoisted(() => ({
+const { tenantDbMock, auditMock, resyncActiveAssistantsMock } = vi.hoisted(() => ({
   tenantDbMock: vi.fn(),
   auditMock: vi.fn(async () => undefined),
+  resyncActiveAssistantsMock: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/server/db/tenant", () => ({
@@ -14,6 +15,10 @@ vi.mock("@/server/db/tenant", () => ({
 
 vi.mock("@/server/services/audit", () => ({
   audit: auditMock,
+}));
+
+vi.mock("@/server/services/voice", () => ({
+  resyncActiveAssistants: resyncActiveAssistantsMock,
 }));
 
 import {
@@ -154,6 +159,11 @@ describe("business-dna-services service", () => {
       expect(storeB.services).toHaveLength(1);
       expect(storeB.services[0]!.organizationId).toBe("org-b");
     });
+
+    it("triggers a voice-assistant resync so a live assistant can offer the new service (Business DNA staleness fix)", async () => {
+      await createBusinessDnaService(ctx("org-a"), minimalInput({ name: "Cut" }));
+      expect(resyncActiveAssistantsMock).toHaveBeenCalledWith("org-a");
+    });
   });
 
   describe("updateBusinessDnaService — cross-tenant ID guessing", () => {
@@ -198,6 +208,18 @@ describe("business-dna-services service", () => {
       expect(storeA.services[0]!.priceCents).toBe(5000);
       expect(storeA.services[0]!.name).toBe("Org A's secret pricing");
     });
+
+    it("triggers a voice-assistant resync after a successful update so a live assistant stops quoting a stale price (Business DNA staleness fix)", async () => {
+      await updateBusinessDnaService(ctx("org-a"), "shared-guessable-id", { priceCents: 5000 });
+      expect(resyncActiveAssistantsMock).toHaveBeenCalledWith("org-a");
+    });
+
+    it("does NOT trigger a resync when the update is rejected (cross-tenant guess)", async () => {
+      await expect(
+        updateBusinessDnaService(ctx("org-b"), "shared-guessable-id", { name: "Hijacked" }),
+      ).rejects.toThrow();
+      expect(resyncActiveAssistantsMock).not.toHaveBeenCalled();
+    });
   });
 
   describe("deactivateBusinessDnaService / reactivateBusinessDnaService", () => {
@@ -241,6 +263,18 @@ describe("business-dna-services service", () => {
         "Service not found",
       );
       expect(storeA.services[0]!.isActive).toBe(true);
+    });
+
+    it("triggers a voice-assistant resync on deactivate so a live assistant stops offering the service (Business DNA staleness fix)", async () => {
+      await deactivateBusinessDnaService(ctx("org-a"), "svc-toggle");
+      expect(resyncActiveAssistantsMock).toHaveBeenCalledWith("org-a");
+    });
+
+    it("triggers a voice-assistant resync on reactivate so a live assistant can offer the service again", async () => {
+      await deactivateBusinessDnaService(ctx("org-a"), "svc-toggle");
+      resyncActiveAssistantsMock.mockClear();
+      await reactivateBusinessDnaService(ctx("org-a"), "svc-toggle");
+      expect(resyncActiveAssistantsMock).toHaveBeenCalledWith("org-a");
     });
   });
 });
