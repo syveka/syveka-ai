@@ -584,3 +584,51 @@ Per this task's explicit instruction not to widen OAuth scopes, this session did
 work around the 403 by requesting a broader scope. The calendar was left exactly as found (empty,
 0 events) - the CREATE call failed before Google ever wrote anything, so no cleanup was needed. No
 personal data is involved, since this account was confirmed empty before any attempt.
+
+## Explicit, authorized least-privilege scope expansion: `calendar.events` + `calendar.calendars.readonly`
+
+A follow-up task authorized determining and implementing the **minimum** additional OAuth scope
+needed to fix the `calendars.get` gap above, explicitly forbidding the broad `calendar` scope
+unless no narrower option could satisfy it.
+
+**Verification against Google's own live API discovery document** (`GET
+https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest`, fetched fresh - not memory, not
+Composio's docs):
+
+| Method                                                           | Accepted scopes (per Google, authoritative)                                                                  |
+| ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| `calendars.get`                                                  | `calendar`, `calendar.app.created`, `calendar.calendars`, `calendar.calendars.readonly`, `calendar.readonly` |
+| `events.list` / `events.insert` / `events.get` / `events.delete` | each includes `calendar.events`                                                                              |
+
+`calendar.events` is confirmed absent from `calendars.get`'s accepted list (explaining the live
+403), and remains present for all four approved tools' own operations - no change needed there.
+Of `calendars.get`'s accepted scopes, `calendar.app.created` only covers app-created resources (not
+the pre-existing "primary" calendar, so it would not actually work) and `calendar.calendars` is
+read+write (broader than a read-only `calendars.get` call needs). **`calendar.calendars.readonly`
+is therefore the narrowest scope that both appears in `calendars.get`'s accepted list and would
+actually function against the primary calendar** - confirming the task's proposed candidate scope
+with fresh authoritative evidence, per its own Phase 1 requirement.
+
+**Implementation**: `scripts/poc/composio-calendar/update-auth-config-scope.ts` (new) fails closed
+unless the auth config's pre-update state is exactly the old single-scope baseline with the exact
+4-tool execution allowlist (refusing to "expand" a config not in the exact state this evidence was
+gathered against), then issues one `PATCH /api/v3.1/auth_configs/{id}` with `{ type: "default",
+scopes: [calendar.events, calendar.calendars.readonly] }` - confirmed from the unpacked
+`@composio/client` 0.1.0-alpha.76 SDK source that `scopes` is a **top-level** field on update for
+`type: "default"` configs, not nested under `credentials` as at creation time. No
+`tool_access_config` field was included, so the execution allowlist was left untouched per the
+update endpoint's "only specified fields are updated" contract.
+
+**Live result**: `HTTP 200`, re-read independently after the update shows scopes exactly
+`[calendar.events, calendar.calendars.readonly]` and the execution allowlist unchanged (still
+exactly the 4 approved tools, 0 missing/0 extra). `auth_config_id` (`ac_KIeGPcIy9Yo9`), tenant
+binding, API key permissions, and registry status were not touched.
+
+**A new OAuth grant is required for this scope change to take effect** - existing connected
+accounts keep whatever scope they were originally granted under. `create-oauth-link.ts` was
+updated to check for the new 2-scope set instead of the old single scope (its own pre-link
+verification would otherwise now correctly, but no-longer-accurately, fail-close on every run).
+One new link was created for the same TEST identity against the same auth config: a fourth
+connected account, pending human OAuth completion with the confirmed-empty disposable Google test
+account. Live consent-screen review and completion is a required human step before any further
+CREATE attempt.

@@ -10,9 +10,12 @@
  * Targets ONLY the already-proven auth config
  * ("syveka-poc-googlecalendar-events-scope-only"), discovered by exact name
  * (never a hardcoded id), and re-verifies BOTH previously-proven boundaries
- * (OAuth scope == exactly calendar.events; execution allowlist == exactly the
- * 4 approved tool slugs) before calling link.create() - so this script can
- * never accidentally initiate OAuth against a broader/wrong auth config.
+ * (OAuth scope == exactly the approved 2-scope set - calendar.events plus
+ * calendar.calendars.readonly, added via update-auth-config-scope.ts to
+ * satisfy GOOGLECALENDAR_CREATE_EVENT's internal calendars.get dependency;
+ * execution allowlist == exactly the 4 approved tool slugs) before calling
+ * link.create() - so this script can never accidentally initiate OAuth
+ * against a broader/wrong auth config.
  *
  * The `user_id` sent to Composio is a fixed, clearly-labeled TEST identity
  * string (never a real Syveka org/user), matching the shape
@@ -29,7 +32,14 @@ export {};
 const BASE_URL = process.env.COMPOSIO_BASE_URL || "https://backend.composio.dev";
 const TOOLKIT_SLUG = "googlecalendar";
 const TARGET_AUTH_CONFIG_NAME = "syveka-poc-googlecalendar-events-scope-only";
-const EXPECTED_SCOPE = "https://www.googleapis.com/auth/calendar.events";
+// Expanded from calendar.events alone (see update-auth-config-scope.ts):
+// GOOGLECALENDAR_CREATE_EVENT's internal calendars.get call requires a scope
+// calendar.events does not cover; calendar.calendars.readonly is the
+// narrowest scope Google's own discovery document lists that satisfies it.
+const EXPECTED_SCOPES = [
+  "https://www.googleapis.com/auth/calendar.events",
+  "https://www.googleapis.com/auth/calendar.calendars.readonly",
+] as const;
 const APPROVED_TOOL_SLUGS = [
   "GOOGLECALENDAR_EVENTS_LIST",
   "GOOGLECALENDAR_CREATE_EVENT",
@@ -153,7 +163,12 @@ async function main(): Promise<void> {
   console.log(`scopes=${JSON.stringify(scopes)}`);
   console.log(`execution allowlist=${JSON.stringify(execution)}`);
 
-  const scopeOk = scopes.length === 1 && scopes[0] === EXPECTED_SCOPE;
+  const expectedScopeSet = new Set<string>(EXPECTED_SCOPES);
+  const scopeSet = new Set(scopes);
+  const scopeOk =
+    scopes.length === EXPECTED_SCOPES.length &&
+    scopes.every((s) => expectedScopeSet.has(s)) &&
+    [...expectedScopeSet].every((s) => scopeSet.has(s));
   const approvedSet = new Set<string>(APPROVED_TOOL_SLUGS);
   const executionSet = new Set(execution);
   const missing = [...approvedSet].filter((s) => !executionSet.has(s));
