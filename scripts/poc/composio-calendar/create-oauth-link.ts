@@ -7,15 +7,21 @@
  * follows, or approves the returned redirect_url; it only prints it for a
  * human to review and decide.
  *
- * Targets ONLY the already-proven auth config
- * ("syveka-poc-googlecalendar-events-scope-only"), discovered by exact name
+ * Targets ONLY the Syveka-owned CUSTOM auth config
+ * ("syveka-poc-googlecalendar-custom-oauth"), discovered by exact name
  * (never a hardcoded id), and re-verifies BOTH previously-proven boundaries
  * (OAuth scope == exactly the approved 2-scope set - calendar.events plus
- * calendar.calendars.readonly, added via update-auth-config-scope.ts to
- * satisfy GOOGLECALENDAR_CREATE_EVENT's internal calendars.get dependency;
- * execution allowlist == exactly the 4 approved tool slugs) before calling
- * link.create() - so this script can never accidentally initiate OAuth
- * against a broader/wrong auth config.
+ * calendar.calendars.readonly; execution allowlist == exactly the 4 approved
+ * tool slugs) before calling link.create() - so this script can never
+ * accidentally initiate OAuth against a broader/wrong auth config.
+ *
+ * Switched from the earlier Composio-managed config
+ * ("syveka-poc-googlecalendar-events-scope-only", ac_KIeGPcIy9Yo9) to this
+ * custom (bring-your-own-credentials) config because Composio's shared
+ * managed OAuth client is not verified/configured to request
+ * calendar.calendars.readonly - see docs/skills/composio-calendar-poc.md's
+ * "customer-owned OAuth" sections. The old managed config and its
+ * connections are untouched and preserved.
  *
  * The `user_id` sent to Composio is a fixed, clearly-labeled TEST identity
  * string (never a real Syveka org/user), matching the shape
@@ -31,7 +37,7 @@ export {};
 
 const BASE_URL = process.env.COMPOSIO_BASE_URL || "https://backend.composio.dev";
 const TOOLKIT_SLUG = "googlecalendar";
-const TARGET_AUTH_CONFIG_NAME = "syveka-poc-googlecalendar-events-scope-only";
+const TARGET_AUTH_CONFIG_NAME = "syveka-poc-googlecalendar-custom-oauth";
 // Expanded from calendar.events alone (see update-auth-config-scope.ts):
 // GOOGLECALENDAR_CREATE_EVENT's internal calendars.get call requires a scope
 // calendar.events does not cover; calendar.calendars.readonly is the

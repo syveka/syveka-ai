@@ -167,5 +167,74 @@ check(
   },
 );
 
+// --- Additional cases added for the custom-OAuth PoC hardening pass ---
+// (See also scripts/poc/composio-calendar/lib/security-contract.test.ts for
+// the tool-allowlist side of adversarial coverage - unauthorized tool
+// identifiers are that module's concern, not tenant-binding's.)
+
+check(
+  "CRITICAL: a Composio dashboard-generated pg-test-* placeholder identity is never accepted as a tenant match",
+  () => {
+    // Live-observed shape (this PoC's own custom auth config once had a
+    // dashboard "test connection" bound to exactly this kind of id instead
+    // of the real TEST identity) - verifyConnectionOwnership must reject it
+    // like any other mismatched user_id, with no special-casing.
+    assertThrows(
+      () => verifyConnectionOwnership("pg-test-9c297f51-091a-41b7-8a62-0775e62ba6d8", tenantA),
+      TenantBindingError,
+      "dashboard placeholder identity must be rejected",
+    );
+  },
+);
+
+check(
+  "missing tenant context (empty org/user strings) fails closed, never resolves by accident",
+  () => {
+    assertThrows(
+      () => resolveConnectedAccountId(registry, { orgId: "", userId: "" }),
+      TenantBindingError,
+      "empty org/user context",
+    );
+  },
+);
+
+check(
+  "multi-tenant ambiguity: a third tenant's registration cannot leak into A or B's resolution",
+  () => {
+    const registryC = new TenantComposioConnectionRegistry();
+    const tenantC: TenantComposioConnection = {
+      organizationId: "org-tenant-c",
+      userId: "user-c-1",
+      provider: "composio",
+      toolkitSlug: "googlecalendar",
+      composioConnectedAccountId: "ca_tenant_c_real_id",
+      composioUserId: "syveka:org-tenant-c:user-c-1",
+      status: "ACTIVE",
+    };
+    registryC.register(tenantA);
+    registryC.register(tenantB);
+    registryC.register(tenantC);
+
+    const idA = resolveConnectedAccountId(registryC, { orgId: "org-tenant-a", userId: "user-a-1" });
+    const idB = resolveConnectedAccountId(registryC, { orgId: "org-tenant-b", userId: "user-b-1" });
+    const idC = resolveConnectedAccountId(registryC, { orgId: "org-tenant-c", userId: "user-c-1" });
+    assertEqual(
+      idA,
+      "ca_tenant_a_real_id",
+      "tenant A resolves to its own id with 3 tenants registered",
+    );
+    assertEqual(
+      idB,
+      "ca_tenant_b_real_id",
+      "tenant B resolves to its own id with 3 tenants registered",
+    );
+    assertEqual(
+      idC,
+      "ca_tenant_c_real_id",
+      "tenant C resolves to its own id with 3 tenants registered",
+    );
+  },
+);
+
 console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
 process.exitCode = failures === 0 ? 0 : 1;

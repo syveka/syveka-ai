@@ -632,3 +632,224 @@ One new link was created for the same TEST identity against the same auth config
 connected account, pending human OAuth completion with the confirmed-empty disposable Google test
 account. Live consent-screen review and completion is a required human step before any further
 CREATE attempt.
+
+## Custom OAuth: Google blocked the managed client's request for the new scope
+
+Opening the new link, Google returned a hard block - "This app is blocked. This app tried to
+access sensitive info in your Google Account." - not the normal softer "unverified app" warning.
+Research against current Google/Composio documentation confirmed why: Composio's shared managed
+OAuth client is pre-configured (and Google-verified) for a **fixed** scope set per toolkit: "you
+cannot request additional permissions" beyond what Composio itself has arranged. Requesting
+`calendar.calendars.readonly` - outside that fixed set - was rejected by Google outright, not
+because the scope itself universally requires full verification (Google's own docs confirm an app
+in **Testing** publishing status with an explicit test user is exempt from verification for
+sensitive scopes), but specifically because it's outside what Composio's own shared client is
+authorized to ask for. Composio's own docs name this exact scenario ("you need custom scopes...
+beyond the defaults") as the documented reason to switch to a customer-owned (bring-your-own
+OAuth-app) auth config.
+
+A Syveka-owned Google Cloud project, OAuth consent screen (External audience, **Testing** status,
+the disposable Google test account added as a test user), and OAuth client were created by a
+human outside this session (Google Cloud Console access isn't available to this session). A new
+custom auth config (`ac_xJH5GAyq03KJ`, `syveka-poc-googlecalendar-custom-oauth`,
+`is_composio_managed: false`) was created via Composio's dashboard using those credentials -
+client_id/client_secret were entered directly into Composio's dashboard, never through this
+session, never printed or committed.
+
+**Two live-discovered setup defects, found by verification before any OAuth was attempted, both
+fixed by the human (not by this session touching credentials):**
+
+1. The new auth config's scopes were initially `["calendar", "calendar.events"]` - the full,
+   forbidden `calendar` scope, apparently a dashboard default/leftover, and missing
+   `calendar.calendars.readonly` entirely.
+2. After a first dashboard edit, the scopes array became malformed: one element was
+   `"calendar.events calendar.calendars.readonly"` (both scope URLs joined by a literal space
+   inside one array entry - a paste artifact) plus a stray duplicate `"calendar.events"` entry.
+
+This session declined to PATCH the fix itself once it determined that, unlike the earlier
+`type: "default"` config, this `type: "custom"` config nests `scopes` inside `credentials`
+alongside `client_id`/`client_secret` - a partial update risked replacing the whole `credentials`
+object and wiping the working OAuth client secret, which this session can never read or resupply.
+The human fixed both defects directly in the dashboard; each was re-verified read-only before
+proceeding.
+
+**Final live result** (connected account `ca_ZKv0PWsGs8J4`, TEST identity
+`syveka:org-test-poc:user-test-poc`): `status: ACTIVE`, scopes exactly `[calendar.events,
+calendar.calendars.readonly]` (cross-checked against both Composio's `requested_scopes` and
+Google's own returned `scope` string), execution allowlist exactly the 4 approved tools.
+
+- **LIST**: `HTTP 200`, calendar empty (0 events) - confirmed the connected Google account is a
+  genuine disposable test account before any mutation was attempted.
+- **CREATE** (`SYVEKA POC CALENDAR TEST`, 30 min, no attendees/recurrence/conferencing): succeeded
+  live (`HTTP 200`, real event id, correct title/start/end) - **the first successful CREATE in
+  this entire PoC**, proving the `calendar.calendars.readonly` scope fix actually resolves the
+  `calendars.get` 403 that blocked every earlier attempt.
+- **GET**: fetched the exact created event id; title and timestamps matched exactly.
+- **DELETE**: succeeded (`response_data.status: "success"`); the calendar was left with 0 events.
+
+One response-shape inconsistency was discovered along the way and is now handled generically (see
+the hardening section below): `GOOGLECALENDAR_CREATE_EVENT` nests its result under
+`data.response_data`, while `GOOGLECALENDAR_EVENTS_GET` returns the event flat under `data`, and
+`GOOGLECALENDAR_DELETE_EVENT` returns `{ response_data: { status } }`.
+
+## Production-oriented hardening: architecture overview
+
+This section is the current, authoritative reference. Everything above is the evidence trail for
+how these conclusions were reached; this section is what a new reader or a future integration
+should start from.
+
+### 1. Architecture
+
+```
+scripts/poc/composio-calendar/
+  lib/
+    security-contract.ts     - approved scopes/tools + fail-closed validators
+    response-normalizer.ts   - CREATE/GET/LIST/DELETE -> one consistent shape
+    calendar-service.ts      - CalendarService: listEvents/createEvent/getEvent/deleteEvent
+    audit.ts                 - CalendarAuditLog: safe, secret-scrubbed operation records
+    *.test.ts                - standalone tests for each module (no vitest, no network)
+  tenant-binding.ts          - the real enforcement: connected_account_id resolved ONLY
+                                from a server-verified (orgId, userId), never caller input
+  tenant-binding.negative-test.ts - adversarial suite (11 cases, see Phase 4 below)
+  create-oauth-link.ts, update-auth-config-scope.ts, ... - evidentiary/setup scripts (see README.md)
+scripts/live-smoke/
+  composio-calendar-smoke.ts - opt-in live roundtrip harness built on CalendarService
+```
+
+`CalendarService`'s public contract (`listEvents`/`createEvent`/`getEvent`/`deleteEvent`,
+`TenantContext`, `NormalizedResult`) is not Composio-specific - a future provider swap needs a new
+`ToolExecutor` implementation, not a caller-facing rewrite. `createComposioToolExecutor` is the
+only place any of this code talks to the network.
+
+### 2. Exact approved scopes
+
+```
+https://www.googleapis.com/auth/calendar.events
+https://www.googleapis.com/auth/calendar.calendars.readonly
+```
+
+Enforced by `security-contract.ts`'s `checkScopes()`/`assertAuthConfigContract()`: fails closed on
+the full `calendar` scope, any Gmail/Drive/Contacts scope, a missing scope, a duplicated scope, or
+a malformed space-joined scope entry (all four defect shapes this PoC actually hit live).
+
+### 3. Exact approved execution tools
+
+```
+GOOGLECALENDAR_CREATE_EVENT
+GOOGLECALENDAR_DELETE_EVENT
+GOOGLECALENDAR_EVENTS_GET
+GOOGLECALENDAR_EVENTS_LIST
+```
+
+Enforced by `checkExecutionAllowlist()`/`assertToolApproved()`: fails closed on an empty
+allowlist, a missing tool, or any extra/unapproved tool identifier (including tools from other
+toolkits entirely).
+
+### 4. Tenant-binding requirement
+
+Every operation resolves its `connected_account_id` and Composio `entity_id` solely from a
+server-verified `{ orgId, userId }` context, via `tenant-binding.ts`'s
+`TenantComposioConnectionRegistry.findForTenant()` - the registry's only lookup path. Caller
+input can never select a connection: `CalendarService`'s methods take a `TenantContext` and typed,
+narrow operation inputs (`eventId`, `summary`, ...) that have no `connected_account_id` field to
+smuggle a value through in the first place.
+
+### 5. Custom OAuth requirement
+
+A Google OAuth _application_ (Google Cloud project + consent screen + OAuth client), owned by
+Syveka, is required for any Calendar scope beyond what Composio's shared managed client already
+supports. Composio's managed auth remains viable for toolkits/scopes that fit its defaults; it
+never becomes usable for this PoC's scope set no matter how the auth config is configured, because
+the fixed scope ceiling lives on Composio's client registration in Google Cloud, not in anything
+this repo controls.
+
+### 6. Why Composio-managed OAuth was not sufficient
+
+Composio's shared OAuth client is verified by Google for a fixed scope set per toolkit and cannot
+request scopes outside it - confirmed by a hard "This app is blocked" response (not the softer
+unverified-app warning) the moment `calendar.calendars.readonly` was requested through it. See
+"Custom OAuth: Google blocked the managed client's request for the new scope" above.
+
+### 7. Testing vs. Production distinction
+
+The Syveka-owned OAuth app is in Google's **Testing** publishing status with the disposable test
+Google account explicitly added as a test user - this exempts it from Google's full app
+verification process entirely (confirmed via Google's own documentation), which is why the PoC
+could proceed without that verification. **Before any real customer's Google account could use
+this integration**, the OAuth app must move to a verified "In production" status: branding review,
+domain ownership verification, a justification + demo video for the sensitive scope(s), and
+ongoing compliance with Google's policies. Nothing in this repo does that automatically, and the
+registry entry (`syveka-skills/core/registry/data.ts`, `status: "REVIEW"`) and the
+`composioProvider` stub (`syveka-skills/providers/composio/index.ts`, always-unavailable) both
+remain untouched by this hardening pass - Composio is still not production-routable.
+
+### 8. Safe live smoke procedure
+
+`scripts/live-smoke/composio-calendar-smoke.ts` runs LIST → CREATE → GET → DELETE against a real
+connection, but:
+
+- never runs automatically (not part of `npm test`, lint, typecheck, or CI)
+- requires `LIVE_SMOKE_ENABLED=true` plus four more env vars naming the exact auth config,
+  connected account, and TEST tenant identity - absent `LIVE_SMOKE_ENABLED=true` it prints a
+  SKIPPED report and exits 0
+- independently re-verifies the security contract and tenant binding, live, before any mutation
+- aborts before CREATE if the calendar isn't already empty
+- creates exactly one clearly-labeled disposable event (`SYVEKA LIVE SMOKE TEST — SAFE TO
+DELETE`), no attendees/recurrence/conferencing (impossible to pass via `CreateEventInput`'s
+  type, not just by convention)
+
+### 9. Cleanup behavior
+
+The harness's DELETE runs in a `finally` block: if CREATE succeeds but GET or anything after it
+fails, cleanup of the exact created event id is still attempted before the process exits. It never
+deletes any event id other than the one its own CREATE call returned - there is no discovery/lookup
+path from title or time window back to an id.
+
+### 10. Troubleshooting
+
+| Symptom                                                                                | Cause                                                                                                                                                                                                                      | Fix                                                                                                                                                                                                                                        |
+| -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `HTTP 403 ACCESS_TOKEN_SCOPE_INSUFFICIENT` on CREATE, mentioning `calendars.get`       | `calendar.events` alone doesn't cover Google's `calendars.get` call that `GOOGLECALENDAR_CREATE_EVENT` makes internally                                                                                                    | Ensure the auth config's scopes include `calendar.calendars.readonly` (never the full `calendar` scope)                                                                                                                                    |
+| `HTTP 403 APIKey_InsufficientPermissions`                                              | The `COMPOSIO_API_KEY` itself lacks a required permission (`auth_configs`/`connected_accounts`/`tool_execution`)                                                                                                           | Grant the specific missing permission to the key in Composio's dashboard - never widen further than that one gap                                                                                                                           |
+| `HTTP 400 ActionExecute_ConnectedAccountEntityIdRequired`                              | Tool-execute calls require `entity_id` alongside `connected_account_id` (undocumented in the SDK types used to design this PoC)                                                                                            | Always send `entity_id` set to the connection's `composioUserId` (`CalendarService` does this automatically)                                                                                                                               |
+| Google shows "This app is blocked" (not the softer unverified warning)                 | Requesting a scope outside what the Composio-managed shared OAuth client is itself verified/configured for                                                                                                                 | Switch to a customer-owned (custom) auth config with your own Google OAuth app - see sections 5-6 above                                                                                                                                    |
+| Auth config's `scopes` array contains a value with a space in it, or a duplicate entry | A dashboard paste artifact - one field's value got joined instead of split into separate array entries                                                                                                                     | `security-contract.ts`'s `checkScopes()` will fail closed and name the exact malformed entry; fix it in the dashboard (do not PATCH a `type: "custom"` config's `credentials.scopes` via API - it risks wiping `client_secret`, see below) |
+| A connection exists and is `ACTIVE`, but `assertTenantBindingContract` rejects it      | The connection's `user_id` is a Composio dashboard-generated placeholder (`pg-test-*`) or otherwise doesn't exactly match the expected `syveka:{orgId}:{userId}` string - "ACTIVE" alone is never sufficient               | Create a new OAuth link via `create-oauth-link.ts` (or `CalendarService`'s intended production equivalent) so the connection is created with the correct `user_id` from the start                                                          |
+| `GOOGLECALENDAR_CREATE_EVENT`'s response looks different from `_GET`'s                 | Composio's per-tool response wrappers are inconsistent (CREATE nests under `data.response_data`, GET is flat under `data`, DELETE returns `{ response_data: { status } }`) - confirmed live, not documented anywhere       | Use `response-normalizer.ts` / `CalendarService` rather than parsing `data` directly in new code                                                                                                                                           |
+| Editing a `type: "custom"` auth config's scope via the API seems risky                 | `scopes` lives nested inside `credentials` alongside `client_id`/`client_secret` for custom configs (unlike `type: "default"`, where `scopes` is top-level); a partial update might replace the whole `credentials` object | Edit custom auth config scopes via Composio's dashboard, not the API, unless you can verify the update endpoint deep-merges `credentials` without ever needing to resupply the secret                                                      |
+
+### Phase 4 (this pass): tenant isolation + adversarial testing
+
+`tenant-binding.negative-test.ts` re-run fresh: **11/11 PASS** (the original 8 plus 3 new cases
+added this pass: a Composio dashboard `pg-test-*` placeholder identity is never accepted as a
+tenant match; empty/missing org-or-user context fails closed; a third tenant's registration
+cannot leak into two existing tenants' resolution). `security-contract.test.ts` separately covers
+the tool-allowlist side of adversarial coverage (an unauthorized/unapproved tool identifier is
+always rejected via `assertToolApproved`, regardless of what a caller requests).
+
+### Response normalization + service layer + audit: test results (this pass)
+
+All standalone, dependency-free, no network calls:
+
+- `lib/security-contract.test.ts`: 22/22 PASS
+- `lib/response-normalizer.test.ts`: 12/12 PASS (fixtures shaped after the actual live response
+  bodies captured earlier in this document, not invented shapes)
+- `lib/calendar-service.test.ts`: 10/10 PASS (mock `ToolExecutor`, including cross-tenant-leak and
+  caller-cannot-smuggle-a-connection-id cases)
+- `lib/audit.test.ts`: 8/8 PASS (redaction of both declared and undeclared secret-shaped fields,
+  and `withAudit`'s success/failure/exception recording)
+
+### Known limitations / remaining technical debt
+
+- The live smoke harness (`scripts/live-smoke/composio-calendar-smoke.ts`) is implemented and
+  validated (typecheck/lint/its own SKIPPED-path run) but was **not executed live** in this pass -
+  a full manual roundtrip against `ca_ZKv0PWsGs8J4` was already completed earlier in this session;
+  running the new harness immediately after would have created a second live event with no
+  additional evidentiary value. It is ready to run on request.
+- `GOOGLECALENDAR_EVENTS_GET`/`GOOGLECALENDAR_DELETE_EVENT`'s behavior against the
+  Composio-managed auth config's scope-insufficiency case was never directly observed (only
+  CREATE was), since no event could ever be created under that config to GET/DELETE.
+- Production readiness still requires: moving the Syveka OAuth app out of Testing status (full
+  Google verification), a GDPR/privacy review of Composio as a subprocessor, and a deliberate
+  decision to change the registry's `status`/`integration_state` - none of which this pass
+  touches.
