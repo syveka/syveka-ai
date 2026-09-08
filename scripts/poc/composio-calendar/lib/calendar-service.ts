@@ -64,6 +64,11 @@ const DEFAULT_CALENDAR_ID = "primary";
 const DEFAULT_LIST_LOOKBACK_MS = 24 * 60 * 60 * 1000; // 1 day
 const DEFAULT_LIST_LOOKAHEAD_MS = 30 * 24 * 60 * 60 * 1000; // 30 days
 const MAX_LIST_WINDOW_MS = 366 * 24 * 60 * 60 * 1000; // ~1 year hard cap
+const DEFAULT_LIST_MAX_RESULTS = 100;
+// GOOGLECALENDAR_EVENTS_LIST's own maxResults ceiling, confirmed live
+// against its tool schema (maximum: 2500) - never pass more than this,
+// Google itself would reject it.
+const HARD_LIST_MAX_RESULTS = 2500;
 
 export class CalendarServiceError extends Error {
   constructor(
@@ -81,6 +86,8 @@ export interface ListEventsInput {
   timeMin?: string;
   /** RFC3339 timestamp. Defaults to now+30days if omitted. */
   timeMax?: string;
+  /** Defaults to 100. Never allowed above Google's own 2500 ceiling. */
+  maxResults?: number;
 }
 
 export interface CreateEventInput {
@@ -155,12 +162,25 @@ export class CalendarService {
         "INCONSISTENT_BINDING",
       );
     }
-    return this.executor({
-      toolSlug,
-      connectedAccountId: req.connected_account_id,
-      entityId: conn.composioUserId,
-      arguments: req.arguments,
-    });
+    try {
+      return await this.executor({
+        toolSlug,
+        connectedAccountId: req.connected_account_id,
+        entityId: conn.composioUserId,
+        arguments: req.arguments,
+      });
+    } catch (err) {
+      // A transport-level failure (network error, timeout, DNS) is a
+      // realistic provider-response condition, not a programmer error - it
+      // must resolve to the same { success: false } shape as any other
+      // failure, not an uncaught rejection a caller didn't expect from a
+      // "safe" result type.
+      return {
+        status: 0,
+        successful: false,
+        error: err instanceof Error ? err.message : "unknown transport error",
+      };
+    }
   }
 
   async listEvents(ctx: TenantContext, input: ListEventsInput = {}): Promise<NormalizedResult> {
@@ -179,10 +199,23 @@ export class CalendarService {
       );
     }
 
+    const maxResults = input.maxResults ?? DEFAULT_LIST_MAX_RESULTS;
+    if (!Number.isInteger(maxResults) || maxResults < 1) {
+      throw new CalendarServiceError("maxResults must be a positive integer.", "INVALID_INPUT");
+    }
+    if (maxResults > HARD_LIST_MAX_RESULTS) {
+      throw new CalendarServiceError(
+        `maxResults (${maxResults}) exceeds the provider's own ceiling (${HARD_LIST_MAX_RESULTS}) - ` +
+          "no unbounded result count.",
+        "RESULT_COUNT_TOO_LARGE",
+      );
+    }
+
     const res = await this.execute(ctx, "GOOGLECALENDAR_EVENTS_LIST", {
       calendarId: input.calendarId ?? DEFAULT_CALENDAR_ID,
       timeMin,
       timeMax,
+      maxResults,
     });
     return normalizeListEventsResponse(res);
   }

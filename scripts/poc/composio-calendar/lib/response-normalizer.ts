@@ -40,6 +40,12 @@ interface RawToolResponse {
 }
 
 function classifyError(status: number, error: unknown): string {
+  // status 0 is this codebase's own sentinel for a transport-level failure
+  // (network error, timeout, DNS) that never reached the provider at all -
+  // see calendar-service.ts's execute(), which catches a thrown fetch error
+  // and reshapes it into this same { status: 0 } response shape rather than
+  // letting it become an uncaught rejection.
+  if (status === 0) return "TRANSPORT_ERROR";
   if (status === 403) return "PERMISSION_OR_SCOPE_ERROR";
   if (status === 404) return "NOT_FOUND";
   if (status >= 500) return "PROVIDER_ERROR";

@@ -387,7 +387,8 @@ the same, unmodified `create-oauth-link.ts`:
   (`ca_q0GN7TbsCWZB`), status `EXPIRED` (from an earlier dashboard-generated link that expired
   unused) — not an active/conflicting duplicate, so creating a new session was safe.
 - Created exactly one new connection: `connected_account_id = ca_1K8XM43hx7CM`,
-  `redirect_url = https://connect.composio.dev/link/lk__rVb5IFKztzI`,
+  `redirect_url = https://connect.composio.dev/link/lk_[REDACTED - single-use, already expired and
+consumed, but link tokens are not committed to tracked docs]`,
   `expires_at = 2026-09-07T22:34:34.315Z`. `requested_scopes` on the new connection: exactly
   `["https://www.googleapis.com/auth/calendar.events"]`.
 - A human opened that link with a disposable TEST Google account and completed Google's consent
@@ -853,3 +854,70 @@ All standalone, dependency-free, no network calls:
   Google verification), a GDPR/privacy review of Composio as a subprocessor, and a deliberate
   decision to change the registry's `status`/`integration_state` - none of which this pass
   touches.
+
+## Post-rotation hardening pass
+
+Both the `COMPOSIO_API_KEY` and the Google OAuth Client Secret were rotated by a human outside
+this session (old key revoked; new client secret updated in Composio). Neither value - old or new
+
+- was ever printed, logged, or committed. The new key was independently verified via a read-only
+  Composio API call (not a Calendar tool) before this pass began.
+
+**Secret-safety audit (this pass)**: full branch diff scanned for API keys, client secrets, access/
+refresh tokens, Authorization/Bearer values, and OAuth link tokens. One real finding: an earlier
+commit had recorded a live OAuth connection link (`https://connect.composio.dev/link/lk_...`) in
+this document's own Phase-2-live-result narrative. The link itself was single-use and had already
+been consumed (the same paragraph describes a human completing OAuth with it) and its `expires_at`
+had long since passed, so it carried no live exposure risk - but committing any link-token value to
+tracked docs is against this project's own secret-hygiene standard, so it has been redacted here.
+No other instance was found anywhere in the branch. `.env.local` remains untracked/gitignored;
+`.env.example` carries no real value.
+
+**Security-contract hardening**: two real gaps closed, each backed by a new test.
+
+- `assertAuthConfigContract` gained an optional `expectedAuthConfigId` check: an auth config whose
+  scopes/allowlist look perfectly compliant is still rejected if it isn't literally the specific
+  config the caller expected - closing a "right-shaped but wrong identity" gap that the original
+  version didn't check for.
+- `checkScopes` was already correct but under-tested for a _generic_ unapproved extra scope (e.g.
+  `calendar.settings.readonly` - a real, valid Google Calendar scope that simply isn't one of the
+  two approved ones, distinct from the Gmail/Drive/Contacts/full-calendar cases already covered).
+
+**CalendarService hardening**: `listEvents` previously bounded the _time window_ but not the
+_result count_ - `GOOGLECALENDAR_EVENTS_LIST`'s own schema was checked live (read-only) and
+confirmed a `maxResults` parameter (Google's own ceiling: 2500, default 250 if unspecified).
+`ListEventsInput` now accepts an optional `maxResults` (service default: 100) and rejects any value
+above Google's own ceiling before ever calling the tool - "no accidental unbounded historical
+fetch" now covers result count, not only the date range.
+
+Separately, `execute()` previously let a thrown transport-level error (network failure, timeout,
+DNS) propagate as an uncaught rejection, inconsistent with every other failure mode already
+resolving to a safe `{ success: false }` result. It's now caught and reshaped into the same
+`ToolExecutorResponse` failure shape (`status: 0`), which `response-normalizer.ts` classifies as
+`TRANSPORT_ERROR` - callers can rely on `result.success` alone to branch safely in every case, not
+just HTTP-level failures.
+
+**Test counts after this pass** (all standalone, dependency-free, zero network calls):
+
+| Suite                             | PASS      |
+| --------------------------------- | --------- |
+| `tenant-binding.negative-test.ts` | 11/11     |
+| `lib/security-contract.test.ts`   | 25/25     |
+| `lib/response-normalizer.test.ts` | 13/13     |
+| `lib/calendar-service.test.ts`    | 14/14     |
+| `lib/audit.test.ts`               | 8/8       |
+| **Total**                         | **71/71** |
+
+**Live smoke decision: not executed.** The rotated `COMPOSIO_API_KEY` was already verified via a
+read-only call; the Google Calendar OAuth connection (`ca_ZKv0PWsGs8J4`) was already proven live
+end-to-end (LIST/CREATE/GET/DELETE, PASS) before rotation. Rotating a Google OAuth client's secret
+does not invalidate previously-issued refresh tokens under standard OAuth 2.0 semantics - Google's
+token endpoint validates whatever secret is presented against its own currently-registered value
+for that client_id, not the secret in effect when the token was originally issued - so the existing
+connection should remain functional without any new live check. A full CREATE/GET/DELETE roundtrip
+would add no new evidence over what's already proven, so none was run; the harness remains in its
+default SKIPPED state. One narrower, genuinely open (but low-probability) question remains: whether
+Composio's _stored_ copy of the new secret actually enables a successful token refresh against
+Google - this could be resolved with a single read-only LIST call if a human wants that specific
+confirmation, but this session did not run one unprompted, per this task's explicit instruction not
+to execute Calendar operations automatically.

@@ -162,6 +162,15 @@ export function assertToolApproved(toolSlug: string): asserts toolSlug is Approv
 
 export interface AuthConfigContractCheck {
   authConfigId: string;
+  /**
+   * The exact auth config id this operation is supposed to be using. When
+   * provided, a config whose content otherwise looks compliant (right
+   * scopes, right allowlist) is still rejected if its id doesn't match -
+   * closing the "an unauthorized-but-otherwise-correctly-configured auth
+   * config" gap. Omit only for a standalone content check with no specific
+   * expected identity to compare against.
+   */
+  expectedAuthConfigId?: string;
   status: unknown;
   isComposioManaged: unknown;
   scopes: unknown;
@@ -183,6 +192,17 @@ export interface ContractCheckResult {
  */
 export function assertAuthConfigContract(check: AuthConfigContractCheck): void {
   const violations: string[] = [];
+
+  if (
+    check.expectedAuthConfigId !== undefined &&
+    check.authConfigId !== check.expectedAuthConfigId
+  ) {
+    violations.push(
+      `auth config id "${check.authConfigId}" does not match the expected id ` +
+        `"${check.expectedAuthConfigId}" - refusing to trust an unexpected auth config even if its ` +
+        "content otherwise looks compliant",
+    );
+  }
 
   if (check.status !== "ENABLED") {
     violations.push(`auth config status is "${String(check.status)}", expected "ENABLED"`);

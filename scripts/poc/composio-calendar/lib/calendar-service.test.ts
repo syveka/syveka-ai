@@ -212,6 +212,39 @@ async function main(): Promise<void> {
     );
   });
 
+  await check(
+    "listEvents: defaults to a bounded maxResults and sends it to the executor",
+    async () => {
+      const calls: ToolExecutorRequest[] = [];
+      const svc = new CalendarService(buildRegistry(), mockExecutor(calls));
+      await svc.listEvents(TENANT_A);
+      assertEqual(calls[0]?.arguments.maxResults, 100, "default maxResults sent to the provider");
+    },
+  );
+
+  await check(
+    "listEvents: CRITICAL - rejects a maxResults above the provider's own ceiling, no unbounded result count",
+    async () => {
+      const calls: ToolExecutorRequest[] = [];
+      const svc = new CalendarService(buildRegistry(), mockExecutor(calls));
+      await assertRejects(
+        svc.listEvents(TENANT_A, { maxResults: 999_999 }),
+        CalendarServiceError,
+        "absurd maxResults must be rejected before any tool call",
+      );
+      assertEqual(calls.length, 0, "no tool call for an out-of-bounds maxResults");
+    },
+  );
+
+  await check("listEvents: rejects a non-positive maxResults", async () => {
+    const svc = new CalendarService(buildRegistry(), mockExecutor([]));
+    await assertRejects(
+      svc.listEvents(TENANT_A, { maxResults: 0 }),
+      CalendarServiceError,
+      "zero maxResults must be rejected",
+    );
+  });
+
   await check("listEvents: rejects an inverted time window", async () => {
     const svc = new CalendarService(buildRegistry(), mockExecutor([]));
     await assertRejects(
@@ -265,6 +298,20 @@ async function main(): Promise<void> {
     assertEqual(result.success, true, "delete should succeed");
     assertEqual(result.kind, "deleted", "kind should be deleted");
   });
+
+  await check(
+    "listEvents: a throwing executor (network failure) resolves to a safe failed result, not an uncaught rejection",
+    async () => {
+      const throwingExecutor: ToolExecutor = async () => {
+        throw new Error("fetch failed: ECONNRESET");
+      };
+      const svc = new CalendarService(buildRegistry(), throwingExecutor);
+      const result = await svc.listEvents(TENANT_A); // must not throw
+      assertEqual(result.success, false, "transport failure must resolve to success:false");
+      if (!result.success)
+        assertEqual(result.errorClass, "TRANSPORT_ERROR", "transport error class");
+    },
+  );
 
   console.log(`\n${failures === 0 ? "ALL PASS" : `${failures} FAILURE(S)`}`);
   process.exitCode = failures === 0 ? 0 : 1;

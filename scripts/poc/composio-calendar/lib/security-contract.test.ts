@@ -98,6 +98,25 @@ check("checkScopes: FAIL when Drive scope appears", () => {
   assertFalse(result.ok, "drive scope must fail");
 });
 
+check(
+  "checkScopes: FAIL when a generic unapproved-but-otherwise-valid Calendar scope appears",
+  () => {
+    // Distinct from the full/gmail/drive/contacts cases above: a real, valid
+    // Google Calendar scope that just isn't one of our two approved ones -
+    // must still be rejected as an extra scope, not silently tolerated
+    // because it "looks like" a Calendar scope.
+    const result = checkScopes([
+      ...APPROVED_SCOPES,
+      "https://www.googleapis.com/auth/calendar.settings.readonly",
+    ]);
+    assertFalse(result.ok, "unapproved extra Calendar scope must fail");
+    assertTrue(
+      result.violations.some((v) => v.includes("unapproved extra scope present")),
+      "expected an unapproved-extra-scope violation",
+    );
+  },
+);
+
 check("checkScopes: FAIL when Contacts scope appears", () => {
   const result = checkScopes([...APPROVED_SCOPES, "https://www.googleapis.com/auth/contacts"]);
   assertFalse(result.ok, "contacts scope must fail");
@@ -229,6 +248,40 @@ check("assertAuthConfigContract: rejects a disabled auth config", () => {
       }),
     SecurityContractViolation,
     "disabled config must be rejected",
+  );
+});
+
+check(
+  "assertAuthConfigContract: CRITICAL - rejects the wrong auth config even if its content otherwise looks compliant",
+  () => {
+    assertThrows(
+      () =>
+        assertAuthConfigContract({
+          authConfigId: "ac_unexpected_but_otherwise_valid",
+          expectedAuthConfigId: "ac_the_one_we_actually_approved",
+          status: "ENABLED",
+          isComposioManaged: false,
+          scopes: [...APPROVED_SCOPES],
+          executionAllowlist: [...APPROVED_TOOL_SLUGS],
+        }),
+      SecurityContractViolation,
+      "an auth config id mismatch must be rejected regardless of otherwise-valid content",
+    );
+  },
+);
+
+check("assertAuthConfigContract: does not throw when expectedAuthConfigId matches exactly", () => {
+  assertNoThrow(
+    () =>
+      assertAuthConfigContract({
+        authConfigId: "ac_test",
+        expectedAuthConfigId: "ac_test",
+        status: "ENABLED",
+        isComposioManaged: false,
+        scopes: [...APPROVED_SCOPES],
+        executionAllowlist: [...APPROVED_TOOL_SLUGS],
+      }),
+    "matching expected id must pass",
   );
 });
 

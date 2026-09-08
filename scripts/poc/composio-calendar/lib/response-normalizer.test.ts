@@ -152,6 +152,23 @@ check("DELETE: HTTP 403 normalizes to a permission error, not a false success", 
     assertEqual(result.errorClass, "PERMISSION_OR_SCOPE_ERROR", "403 error class");
 });
 
+check(
+  "status: 0 (this codebase's transport-failure sentinel) normalizes to TRANSPORT_ERROR",
+  () => {
+    // calendar-service.ts's execute() catches a thrown fetch error (network
+    // failure, timeout, DNS) and reshapes it into { status: 0, successful:
+    // false, error: message } - every normalizer must classify that
+    // distinctly from an HTTP-level failure, not silently misreport it.
+    const result = normalizeListEventsResponse({
+      status: 0,
+      successful: false,
+      error: "fetch failed: ECONNRESET",
+    });
+    assertTrue(!result.success, "transport failure must not report success");
+    if (!result.success) assertEqual(result.errorClass, "TRANSPORT_ERROR", "status 0 error class");
+  },
+);
+
 check("Malformed CREATE response (success but no id) fails safely, does not throw", () => {
   const result = normalizeCreateEventResponse({ status: 200, successful: true, data: {} });
   assertTrue(!result.success, "malformed CREATE must not report success");
