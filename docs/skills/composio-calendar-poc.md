@@ -439,3 +439,30 @@ smoke test.
 correctly tenant-bound, OAuth scope and execution allowlist remain exact and unwidened, and the
 tenant-binding enforcement code resolves the connection correctly under a simulated
 cross-tenant-payload attack. Only the actual Google Calendar API round-trip is pending.
+
+## New session re-verification: `tool_execution` permission still not granted (as of this check)
+
+A later session's task brief stated the key "should now have" `tool_execution: Read + Write`.
+Re-running the identical, unmodified `post-oauth-verify-and-list.ts ca_1K8XM43hx7CM` live in this
+session reproduced the exact same outcome as Phase 5 above, with no changes:
+
+- Connected account `ca_1K8XM43hx7CM`: still `status: ACTIVE`, still bound to exactly
+  `syveka:org-test-poc:user-test-poc`, still `auth_config.id: ac_KIeGPcIy9Yo9`.
+- Auth config `ac_KIeGPcIy9Yo9`: OAuth scope still exactly
+  `["https://www.googleapis.com/auth/calendar.events"]`; execution allowlist still exactly the 4
+  approved `GOOGLECALENDAR_*` slugs, 0 missing / 0 extra.
+- `tenant-binding.negative-test.ts` re-run fresh: 8/8 PASS.
+- `GOOGLECALENDAR_EVENTS_LIST` call: still `HTTP 403 APIKey_InsufficientPermissions` — _"This
+  route requires 'tool_execution' write access, but the key has no access for
+  'tool_execution'."_ Byte-for-byte the same error as before.
+
+**Conclusion: the `tool_execution` permission has not actually been granted on this key yet**,
+regardless of what the task brief assumed. Per that same brief's own instruction ("Do not request
+broader Composio permissions unless a current live API call proves they are strictly required" -
+this call just did) and its Phase 3 instruction ("If LIST fails: diagnose honestly and STOP before
+mutations"), this session stopped here. **Phases 4-7 (CREATE/GET/DELETE/cleanup) were not
+attempted** - none of the four approved tools were ever called against a live Google Calendar in
+this session. Unblocking requires a human to grant `tool_execution` (read+write, to cover the full
+LIST -> CREATE -> GET -> DELETE roundtrip) to this `COMPOSIO_API_KEY` in the Composio dashboard, after
+which `post-oauth-verify-and-list.ts ca_1K8XM43hx7CM` should be re-run first to confirm LIST
+succeeds before any mutating call is attempted.
