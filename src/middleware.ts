@@ -21,7 +21,17 @@ const PROTECTED_PREFIXES = [
   "/admin",
 ];
 
-const AUTH_PAGES = ["/login", "/register", "/forgot-password", "/reset-password"];
+// /reset-password is deliberately excluded: unlike the other auth pages, it
+// requires an authenticated session to function at all (resetPasswordAction
+// calls supabase.auth.updateUser(), which needs a valid session — including
+// the temporary recovery session established by the password-reset email
+// link's callback exchange). Treating it as an "auth page" here would bounce
+// that just-established recovery session straight to /dashboard before the
+// user ever saw the reset form, making the entire forgot-password flow
+// unreachable. It is also not in PROTECTED_PREFIXES, so an unauthenticated
+// visitor can still load the page - updateUser() simply fails server-side
+// without a valid session, matching an ordinary public page's behavior.
+const AUTH_PAGES = ["/login", "/register", "/forgot-password"];
 
 function stripLocale(pathname: string): string {
   const seg = pathname.split("/")[1];
