@@ -457,6 +457,79 @@ export const REGISTRY: RegistryEntry[] = [
       "full evaluation, the USE/DO-NOT-USE rules, and the benchmark PoC design.",
   },
   {
+    id: "voice-summary",
+    name: "Voice Call Summary",
+    capability: "voice.summarize",
+    provider: "voice-summary",
+    source: "docs/skills/voice-call-summary.md",
+    // First-party Skill definition, not a third-party project - no OSI license to cite. A real
+    // implementation would depend on an external AI vendor (see risk_level below), but the
+    // Skill contract itself (schema, provider interface, registry entry) is Syveka's own.
+    license:
+      "N/A (first-party Skill; a real provider implementation would depend on a licensed AI vendor)",
+    // CONDITIONAL: a real provider would send call-transcript text (potential PII) to an
+    // external AI vendor for summarization - same trust category as perplexity/composio above,
+    // not TRUSTED (unlike local-test-runner/git-diff, which never leave this machine).
+    trust_level: "CONDITIONAL",
+    // MEDIUM: read-only summarization (no destructive action, no OAuth, no write access to any
+    // tenant/production system from within this Skill), but transcript text can carry
+    // personally identifiable caller information - see
+    // policies/risk-classification.ts's "voice.summarize.external" MEDIUM entry, added
+    // alongside this registry row.
+    risk_level: "MEDIUM",
+    // REVIEW: not routable. No live provider connection exists yet - see integration_state.
+    // The root app's own production call-summary pipeline
+    // (src/app/api/v1/jobs/post-call/route.ts) already calls Anthropic directly today and is
+    // NOT routed through this Skill; wiring that connection here is future work, tracked in
+    // docs/skills/voice-call-summary.md, not this milestone.
+    status: "REVIEW",
+    // REFERENCE: providers/voice-summary/index.ts exists but is an honest always-unavailable
+    // stub, same shape as composio/perplexity/shadcn-mcp above - no LLM call wired up, no API
+    // key provisioned. providers/voice-summary/deterministic-test-provider.ts is a separate,
+    // test-only, never-registered provider used solely by
+    // evals/voice-call-summary.test.ts to prove the Skill's own contract (schema validation,
+    // permission evaluation, evidence, verification, audit) end-to-end without a live/paid call.
+    integration_state: "REFERENCE",
+    supported_agents: ["claude-code", "codex", "gemini-cli"],
+    permissions: ["network:egress"],
+    network_access: true,
+    filesystem_access: false,
+    scripts: false,
+    hooks: false,
+    dependencies: [],
+    credential_requirements: ["api_key"],
+    approval_required: true,
+    installation_scope: "none",
+    last_reviewed: "2026-09-08",
+    last_updated: "2026-09-08",
+    security_notes:
+      "First real Syveka Skill built end-to-end against this repo's Skill architecture " +
+      "(registry/routing, schema validation, permission/risk evaluation, provider execution " +
+      "boundary, evidence/verification, audit) - the milestone this entry documents is proving " +
+      "that architecture works, not shipping a live call-summarization connection. Input " +
+      "(providers/voice-summary/schema.ts) is a caller-supplied transcript + safe correlation " +
+      "id + optional language/duration metadata, .strict()-validated with no field capable of " +
+      "carrying provider credentials/configuration. Output distinguishes observed transcript " +
+      "facts (keyFacts) from a derived summary (summary/callerIntent/actionItems) from " +
+      "explicitly-flagged uncertain information (uncertain) - never merged. Transcript content " +
+      "is treated as data, never as instructions (evals/voice-call-summary.test.ts includes an " +
+      "injection-payload adversarial case, mirroring evals/untrusted-web-content.test.ts's " +
+      "existing pattern); audit records and error messages never include raw transcript text, " +
+      "only safe identifiers (callId, urgency, confidence, followUpRequired). verify() " +
+      "correctly resolves a successful run to UNVERIFIED, not COMPLETE - a summary's factual " +
+      "accuracy cannot be independently confirmed by this system from the evidence types " +
+      "currently defined (core/evidence/index.ts's STRONG_EVIDENCE_TYPES has no category for " +
+      "AI-generated interpretive output), matching this product's own anti-sycophancy " +
+      "principle (docs/security-model.md) rather than being treated as a gap to paper over. " +
+      "What remains before promotion past REVIEW/REFERENCE: a real provider implementation " +
+      "(an actual AI vendor call), a data-minimization review of exactly what transcript " +
+      "content is sent externally, and a decision on whether/how this Skill should relate to " +
+      "the root app's existing, independent, already-in-production call-summary pipeline " +
+      "(src/app/api/v1/jobs/post-call/route.ts) rather than duplicating it. See " +
+      "docs/skills/voice-call-summary.md for the full Skill contract and this milestone's " +
+      "evidence trail.",
+  },
+  {
     id: "firecrawl",
     name: "Firecrawl",
     capability: "web.research",

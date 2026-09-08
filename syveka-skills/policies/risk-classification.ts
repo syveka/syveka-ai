@@ -34,6 +34,15 @@ export const MEDIUM_RISK_ACTIONS = [
   // explicit approval - matching the same pattern "web.research.public"
   // uses above for Scrapling.
   "video.render.local",
+  // Sends call-transcript text (potentially containing personally
+  // identifiable caller information) to an external AI vendor for
+  // summarization - see providers/voice-summary/index.ts. Deliberately
+  // narrow and explicit, same pattern as "video.render.local" above:
+  // "voice.summarize.external" is classified, but a bare "voice.summarize"
+  // prefix is NOT listed here, so any other future voice.* action falls
+  // through to DEFAULT_RISK (HIGH) and requires explicit approval rather
+  // than silently inheriting this one's MEDIUM classification.
+  "voice.summarize.external",
 ] as const;
 
 export const LOW_RISK_ACTIONS = [
