@@ -282,6 +282,12 @@ async function main(): Promise<void> {
     {
       body: {
         connected_account_id: executeRequest.connected_account_id,
+        // The live API requires entity_id alongside connected_account_id
+        // (confirmed by a fresh 400 ActionExecute_ConnectedAccountEntityIdRequired
+        // probe) - this is the same TEST_COMPOSIO_USER_ID already verified in
+        // Step 1/2 as this connected account's owning identity, never a
+        // caller-supplied value.
+        entity_id: TEST_COMPOSIO_USER_ID,
         arguments: executeRequest.arguments,
       },
     },

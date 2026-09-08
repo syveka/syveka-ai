@@ -466,3 +466,41 @@ this session. Unblocking requires a human to grant `tool_execution` (read+write,
 LIST -> CREATE -> GET -> DELETE roundtrip) to this `COMPOSIO_API_KEY` in the Composio dashboard, after
 which `post-oauth-verify-and-list.ts ca_1K8XM43hx7CM` should be re-run first to confirm LIST
 succeeds before any mutating call is attempted.
+
+## `tool_execution` permission granted; LIST succeeded; PoC halted - connected account is NOT a disposable TEST account
+
+A subsequent session's `COMPOSIO_API_KEY` was updated to a key with `tool_execution` granted. A
+fresh side-effect-free permission probe (`POST /tools/execute/GOOGLECALENDAR_EVENTS_LIST` with a
+deliberately invalid `connected_account_id`) got past `APIKey_InsufficientPermissions` entirely,
+returning a different, unrelated `400 ActionExecute_ConnectedAccountEntityIdRequired` validation
+error instead - confirming the permission gate now passes.
+
+Re-running `post-oauth-verify-and-list.ts ca_1K8XM43hx7CM` reproduced Steps 1-4 exactly as before
+(connected account `ACTIVE`, tenant binding exact, OAuth scope and execution allowlist both exact,
+0 missing/0 extra), then Step 5 failed with the same `ActionExecute_ConnectedAccountEntityIdRequired`
+error the probe surfaced: the live `/tools/execute/{slug}` endpoint requires an explicit
+`entity_id` field alongside `connected_account_id`, which the script did not send. This is a
+narrow, live-proven API contract gap, not a security or scope issue - fixed by adding
+`entity_id: TEST_COMPOSIO_USER_ID` (the same TEST identity already verified in Steps 1-2, never a
+new or caller-supplied value) to the execute request body.
+
+**With that fix, `GOOGLECALENDAR_EVENTS_LIST` executed successfully (`HTTP 200`)** through the
+tenant-resolved connected account, with the bogus agent-supplied `connected_account_id`/`user_id`
+proven discarded at runtime (Step 4's existing check).
+
+**However, the LIST response itself revealed the connected Google account is not a disposable TEST
+account.** The returned calendar's owner/creator email and its event contents (a real birthday
+entry, personal event titles, recurring personal appointments) identify it as a real personal
+Google account, not a sandbox/throwaway one. This directly contradicts the requirement stated in
+every phase of this PoC's task briefs ("disposable TEST Google account only," "no
+personal/business Google account") and matches an explicit stop condition ("a non-test Google
+account is targeted" -> STOP immediately).
+
+**This session therefore stopped after Step 4 (LIST) and did not attempt Phase 5 (CREATE) or any
+later phase.** No event was created, read, or deleted against this account. Continuing the
+roundtrip (CREATE/GET/DELETE) requires either reconnecting `ac_KIeGPcIy9Yo9` to an actual
+disposable/sandbox Google test account, or explicit human confirmation that this specific Google
+account is intentionally being used as the PoC's TEST account (which would be a deliberate change
+to this PoC's own safety boundary, not something this session will assume on its own).
+
+No personal calendar content is reproduced in this document.
