@@ -504,3 +504,30 @@ account is intentionally being used as the PoC's TEST account (which would be a 
 to this PoC's own safety boundary, not something this session will assume on its own).
 
 No personal calendar content is reproduced in this document.
+
+## Second attempt: fresh OAuth link, second connected account - also NOT a disposable TEST account
+
+A fresh, single `create-oauth-link.ts` run (re-verifying scope and allowlist immediately before
+acting, per its existing design) created one new, independent connected account,
+`ca_VVelgy-yeV_C`, for the same TEST identity (`syveka:org-test-poc:user-test-poc`) and the same
+approved auth config (`ac_KIeGPcIy9Yo9`) - without modifying or deleting the earlier personal
+connected account (`ca_1K8XM43hx7CM`), which remains untouched and `ACTIVE`. A human completed
+Google's OAuth consent screen against this new link with what was intended to be a disposable TEST
+Google account.
+
+Re-running `post-oauth-verify-and-list.ts ca_VVelgy-yeV_C` (unmodified): connected account
+`ACTIVE`, tenant binding exact, OAuth scope and execution allowlist both exact (0 missing/0
+extra), and `GOOGLECALENDAR_EVENTS_LIST` executed successfully (`HTTP 200`).
+
+**The LIST response again revealed a real, non-disposable Google account** - this time a
+different real account than the first attempt, containing a genuine external meeting invite (a
+real named external attendee at an outside organization, with business content embedded in the
+event description). This is not sandbox/placeholder data.
+
+**This session stopped immediately after LIST and did not attempt CREATE/GET/DELETE against this
+account either**, per the same explicit stop condition. Two consecutive OAuth completions have now
+each connected a real Google account rather than an empty, disposable test one. Continuing this
+PoC's mutation phases requires a Google account created specifically for testing, with **zero**
+real calendar data on it - not merely an account the human considers "for testing" while it still
+holds real personal or business events. No personal or business data (attendee names, emails, or
+message content) is reproduced in this document.
