@@ -18,8 +18,20 @@ export type RouteResult =
 export async function routeCapability(
   capability: string,
   providerMap: Record<string, Provider>,
+  /**
+   * Defaults to the real, committed registry (findByCapability(capability))
+   * - every existing caller gets identical behavior to before this
+   * parameter existed. The only legitimate reason to pass something else is
+   * a deterministic test proving the routing/permission/evidence pipeline
+   * itself works correctly, without needing a REVIEW/REFERENCE capability
+   * to actually become routable in the real, committed registry data - see
+   * evals/voice-call-summary.test.ts's "explicit deterministic test-provider
+   * injection" case. This is the same trust boundary `providerMap` itself
+   * already has: both are supplied by first-party calling code, never by an
+   * external Skill/provider/agent.
+   */
+  candidates: RegistryEntry[] = findByCapability(capability),
 ): Promise<RouteResult> {
-  const candidates = findByCapability(capability);
   const eligible = eligibleForRouting(candidates);
 
   if (eligible.length === 0) {
