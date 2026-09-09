@@ -154,6 +154,61 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
   return id;
 }
 
+/**
+ * Re-syncs Business DNA (and any other assistant-config-affecting data) to
+ * every already-Vapi-linked assistant for an org. `upsertAssistant` already
+ * re-syncs on every save of the assistant record itself (line ~68 above),
+ * but a Business DNA edit alone previously never reached a live assistant at
+ * all - it could keep quoting stale pricing/policy/hours indefinitely. This
+ * is the trigger business-dna.ts calls after a successful save so that
+ * config change reaches Vapi too, not just an assistant-record save.
+ *
+ * Best-effort per assistant: one assistant's Vapi call failing (e.g. a
+ * transient Vapi outage) must not prevent the others from syncing, and must
+ * never throw back into the caller - by the time this runs, the caller's own
+ * write has already committed. Matches the existing best-effort pattern used
+ * for non-critical follow-up work elsewhere (e.g. post-call/route.ts's
+ * AI-summary step). Failures are logged (never containing assistant config
+ * content, only ids) so a stuck sync is diagnosable, not silent.
+ */
+export async function resyncActiveAssistants(orgId: string): Promise<void> {
+  try {
+    const db = tenantDb(orgId);
+    const assistants = await db.voiceAssistant.findMany({
+      where: { vapiAssistantId: { not: null } },
+      select: { id: true },
+    });
+
+    await Promise.all(
+      assistants.map(async ({ id }) => {
+        try {
+          await syncToVapi(id, orgId);
+        } catch (error) {
+          console.error(
+            JSON.stringify({
+              event: "voice_assistant_resync_failed",
+              organizationId: orgId,
+              assistantId: id,
+              message: error instanceof Error ? error.message : "unknown error",
+            }),
+          );
+        }
+      }),
+    );
+  } catch (error) {
+    // Belt-and-suspenders around the lookup itself (e.g. a transient DB
+    // error) - the per-assistant try/catch above only covers syncToVapi.
+    // This function must never throw, full stop; see the doc comment above.
+    console.error(
+      JSON.stringify({
+        event: "voice_assistant_resync_lookup_failed",
+        organizationId: orgId,
+        message: error instanceof Error ? error.message : "unknown error",
+      }),
+    );
+  }
+}
+
 export async function listCalls(ctx: TenantContext, params?: { assistantId?: string }) {
   const db = tenantDb(ctx.orgId);
   return db.voiceCall.findMany({

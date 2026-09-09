@@ -3,6 +3,7 @@ import "server-only";
 import { Prisma } from "@prisma/client";
 import { tenantDb } from "@/server/db/tenant";
 import { audit } from "./audit";
+import { resyncActiveAssistants } from "./voice";
 import type { TenantContext } from "@/server/auth/session";
 import type { BusinessDNAInput } from "@/lib/validators/business-dna";
 
@@ -54,6 +55,12 @@ export async function upsertBusinessDNA(ctx: TenantContext, input: BusinessDNAIn
     resourceType: "business_dna",
     resourceId: record.id,
   });
+
+  // A live voice assistant must not keep quoting stale pricing/policy/hours
+  // after this save - see resyncActiveAssistants' doc comment. Best-effort:
+  // this save has already committed by this point, so a Vapi-side failure
+  // here is logged, never surfaced as a failure of the Business DNA save.
+  await resyncActiveAssistants(ctx.orgId);
 
   return record;
 }

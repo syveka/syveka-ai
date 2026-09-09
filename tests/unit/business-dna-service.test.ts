@@ -2,9 +2,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@/server/auth/session";
 import type { BusinessDNAInput } from "@/lib/validators/business-dna";
 
-const { tenantDbMock, auditMock } = vi.hoisted(() => ({
+const { tenantDbMock, auditMock, resyncActiveAssistantsMock } = vi.hoisted(() => ({
   tenantDbMock: vi.fn(),
   auditMock: vi.fn(async () => undefined),
+  resyncActiveAssistantsMock: vi.fn(async () => undefined),
 }));
 
 vi.mock("@/server/db/tenant", () => ({
@@ -14,6 +15,10 @@ vi.mock("@/server/db/tenant", () => ({
 
 vi.mock("@/server/services/audit", () => ({
   audit: auditMock,
+}));
+
+vi.mock("@/server/services/voice", () => ({
+  resyncActiveAssistants: resyncActiveAssistantsMock,
 }));
 
 import { getBusinessDNA, upsertBusinessDNA } from "@/server/services/business-dna";
@@ -158,6 +163,26 @@ describe("business-dna service", () => {
       expect(tenantDbMock).toHaveBeenLastCalledWith("org-b");
       expect(dbB.businessDNA.create).toHaveBeenCalledTimes(1);
       expect(db.businessDNA.create).not.toHaveBeenCalled();
+    });
+
+    it("re-syncs any already-live voice assistant after a successful save (a saved profile must not silently leave the assistant stale)", async () => {
+      await upsertBusinessDNA(ctx("org-a"), minimalInput({ displayName: "Acme" }));
+
+      expect(resyncActiveAssistantsMock).toHaveBeenCalledTimes(1);
+      expect(resyncActiveAssistantsMock).toHaveBeenCalledWith("org-a");
+    });
+
+    it("still returns the saved record after triggering the resync (resync is a fire-and-await follow-up, not a precondition of success)", async () => {
+      const record = await upsertBusinessDNA(ctx("org-a"), minimalInput({ displayName: "Acme" }));
+
+      expect(record.id).toBe("bd-new");
+      // resyncActiveAssistants (voice.ts) is independently proven to never
+      // throw, even on internal failure - see
+      // tests/unit/voice-business-dna.test.ts's "resyncActiveAssistants"
+      // describe block. This test only proves upsertBusinessDNA calls it
+      // and returns normally, not that upsertBusinessDNA adds its own
+      // redundant error handling around it.
+      expect(resyncActiveAssistantsMock).toHaveBeenCalledTimes(1);
     });
   });
 });
