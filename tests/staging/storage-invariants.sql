@@ -30,7 +30,7 @@ begin
     where schemaname = 'storage' and tablename = 'objects' and policyname = policy_name;
 
     if policy_name = 'storage_org_read' then
-      expected_qual := 'bucket_id=anyarray[''documents'',''voice-recordings'',''exports'']andstorage.foldernamename[1]=auth.jwt->>''org_id''';
+      expected_qual := 'bucket_id=anyarray[''documents'',''voice-recordings'',''exports'',''creator-reference-assets'',''creator-generated-media'']andstorage.foldernamename[1]=auth.jwt->>''org_id''';
       expected_check := '';
       if policy_command is distinct from 'SELECT'
         or policy_roles is distinct from array['authenticated']::name[] then
@@ -38,7 +38,7 @@ begin
       end if;
     elsif policy_name = 'storage_org_write' then
       expected_qual := '';
-      expected_check := 'bucket_id=anyarray[''documents'',''exports'']andstorage.foldernamename[1]=auth.jwt->>''org_id''';
+      expected_check := 'bucket_id=anyarray[''documents'',''exports'',''creator-reference-assets'',''creator-generated-media'']andstorage.foldernamename[1]=auth.jwt->>''org_id''';
       if policy_command is distinct from 'INSERT'
         or policy_roles is distinct from array['authenticated']::name[] then
         raise exception 'STORAGE FAIL: policy % has an unexpected command or role', policy_name;
