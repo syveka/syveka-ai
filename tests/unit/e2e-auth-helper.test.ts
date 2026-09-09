@@ -2,15 +2,25 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Page } from "@playwright/test";
 import { classifyE2ELoginPathname, loginAsE2EUser } from "../e2e/helpers/auth";
 
-type LoginDestination = { url: string; alert?: string };
+type LoginDestination = { url: string; alert?: string; strayPageAlert?: boolean };
 
 function pageFor(
   destination: LoginDestination,
 ): Page & { passwordFieldFill: ReturnType<typeof vi.fn> } {
   let currentUrl = "https://staging.example.test/login";
-  const alert = {
+  const formAlert = {
     isVisible: vi.fn(async () => Boolean(destination.alert)),
     textContent: vi.fn(async () => destination.alert ?? null),
+  };
+  // Simulates Next.js App Router's own built-in accessibility route
+  // announcer: a permanent, visually-hidden role="alert" live region on
+  // every page, outside any <form> -- proven live in staging run
+  // 34022381914 to make a bare `page.getByRole("alert")` false-positive
+  // even when the login form itself has no error. The fixed code (scoped to
+  // `page.locator("form").getByRole("alert")`) must never reach this one.
+  const strayPageWideAlert = {
+    isVisible: vi.fn(async () => Boolean(destination.strayPageAlert)),
+    textContent: vi.fn(async () => null),
   };
   const passwordFieldFill = vi.fn(async () => {});
 
@@ -21,11 +31,15 @@ function pageFor(
     }),
     fill: vi.fn(async () => {}),
     getByRole: vi.fn((role: string) =>
-      role === "button" ? { click: vi.fn(async () => void (currentUrl = destination.url)) } : alert,
+      role === "button"
+        ? { click: vi.fn(async () => void (currentUrl = destination.url)) }
+        : strayPageWideAlert,
     ),
-    locator: vi.fn((selector: string) =>
-      selector === "#password" ? { fill: passwordFieldFill } : { fill: vi.fn(async () => {}) },
-    ),
+    locator: vi.fn((selector: string) => {
+      if (selector === "#password") return { fill: passwordFieldFill };
+      if (selector === "form") return { getByRole: vi.fn(() => formAlert) };
+      return { fill: vi.fn(async () => {}) };
+    }),
     passwordFieldFill,
     url: vi.fn(() => currentUrl),
     waitForLoadState: vi.fn(async () => {}),
@@ -75,6 +89,25 @@ describe("loginAsE2EUser", () => {
     await expect(
       loginAsE2EUser(pageFor({ url: "https://staging.example.test/en/settings/profile" })),
     ).rejects.toThrow(/unexpected route.*pathname="\/en\/settings\/profile"/);
+  });
+
+  /**
+   * Staging run 34022381914: the first-ever real execution of this login
+   * flow against a real deployed app immediately failed with "the login
+   * form reported an authentication error" -- but the error-context.md ARIA
+   * snapshot showed the submit button still mid-request ("Ladataan…",
+   * disabled) and no error paragraph anywhere inside the form. A bare
+   * `page.getByRole("alert")` was matching Next.js App Router's own
+   * always-present route announcer instead of the form's real error
+   * message, so this check false-positived on every login attempt,
+   * regardless of whether the credentials were actually correct.
+   */
+  it("does not false-positive on a stray page-wide alert outside the form", async () => {
+    await expect(
+      loginAsE2EUser(
+        pageFor({ url: "https://staging.example.test/dashboard", strayPageAlert: true }),
+      ),
+    ).resolves.toBeUndefined();
   });
 
   /**

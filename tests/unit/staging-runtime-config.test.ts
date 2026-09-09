@@ -134,15 +134,22 @@ describe("staging runtime configuration gate", () => {
    * script now fails with only its field name, never its value.
    */
   describe("malformed URL settings never leak their raw value", () => {
+    // Note: "[SENSITIVE]" specifically is *not* used as the example value
+    // here (it was originally, before this exact string turned out to be a
+    // real, later-discovered Vercel platform placeholder -- see the
+    // "names the Vercel Sensitive-variable placeholder precisely" test
+    // above, which deliberately asserts the opposite for that one specific,
+    // non-secret, publicly-fixed value). This test is about arbitrary
+    // unknown garbage, which must still never be echoed.
     it("reports DATABASE_URL by name only when it is not a valid URL", () => {
       const result = runValidateStagingConfig({
         ...baseRuntimeEnv,
         NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
-        DATABASE_URL: "[SENSITIVE]",
+        DATABASE_URL: "clearly-not-a-real-url-just-garbage-xj29",
       });
       expect(result.status).not.toBe(0);
       expect(result.output).toContain("DATABASE_URL is not a valid URL.");
-      expect(result.output).not.toContain("[SENSITIVE]");
+      expect(result.output).not.toContain("clearly-not-a-real-url-just-garbage-xj29");
       expect(result.output).not.toContain("ERR_INVALID_URL");
     });
 
@@ -162,7 +169,7 @@ describe("staging runtime configuration gate", () => {
         STAGING_CONFIG_MODE: "identity",
         STAGING_SUPABASE_PROJECT_REF: "abcdefghijklmnopqrst",
         PRODUCTION_SUPABASE_PROJECT_REF: "zzzzzzzzzzzzzzzzzzzz",
-        STAGING_SUPABASE_URL: "[SENSITIVE]",
+        STAGING_SUPABASE_URL: "clearly-not-a-real-url-just-garbage-xj29",
         STAGING_DATABASE_URL:
           "postgresql://postgres.abcdefghijklmnopqrst:pw@aws-0.pooler.supabase.com:6543/postgres",
         STAGING_DIRECT_URL:
@@ -170,19 +177,63 @@ describe("staging runtime configuration gate", () => {
       });
       expect(result.status).not.toBe(0);
       expect(result.output).toContain("STAGING_SUPABASE_URL is not a valid URL.");
-      expect(result.output).not.toContain("[SENSITIVE]");
+      expect(result.output).not.toContain("clearly-not-a-real-url-just-garbage-xj29");
       expect(result.output).not.toContain("ERR_INVALID_URL");
     });
 
-    it("rejects a value wrapped in literal quote characters without leaking it", () => {
+    /**
+     * Staging run 33990035456: Vercel Preview's pulled DATABASE_URL failed
+     * this exact "DATABASE_URL is not a valid URL." check -- `new URL()`
+     * throws outright on a value wrapped in matching quote characters
+     * (unlike whitespace/newlines, which it silently tolerates). parseUrl()
+     * now sanitizes before parsing (sanitizeConnectionString now also strips
+     * one matching pair of wrapping quotes), so this case must now pass.
+     */
+    it("strips matching quote-wrapping and parses successfully (staging run 33990035456)", () => {
       const result = runValidateStagingConfig({
         ...baseRuntimeEnv,
         NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
         DATABASE_URL:
           '"postgresql://postgres.abcdefghijklmnopqrst:pw@aws-0.pooler.supabase.com:6543/postgres"',
       });
+      expect(result.status).toBe(0);
+      expect(result.output).toContain("the deployed Supabase project matches staging");
+    });
+
+    /**
+     * Staging run 33997427716: DATABASE_URL failed with `length=11; missing
+     * "://" scheme separator`. Confirmed by direct, redacted local
+     * inspection (via `vercel env pull` + a hash comparison, never printing
+     * the value) that the actual stored value is exactly the literal
+     * "[SENSITIVE]" -- Vercel's own placeholder for a variable marked as a
+     * Sensitive Environment Variable, permanently unreadable via
+     * pull/CLI/API/dashboard after being set. No code fix can make this
+     * readable; this test only proves the diagnostic names the real cause
+     * precisely instead of a generic "not a valid URL".
+     */
+    it("names the Vercel Sensitive-variable placeholder precisely when DATABASE_URL is exactly '[SENSITIVE]'", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+        DATABASE_URL: "[SENSITIVE]",
+      });
       expect(result.status).not.toBe(0);
-      expect(result.output).toContain("DATABASE_URL is not a valid URL.");
+      expect(result.output).toContain("DATABASE_URL is not a valid URL");
+      expect(result.output).toContain("known literal placeholder");
+      expect(result.output).toContain("Sensitive Environment Variable");
+      expect(result.output).not.toContain("ERR_INVALID_URL");
+    });
+
+    it("rejects a value with only an unmatched leading quote without leaking it", () => {
+      const result = runValidateStagingConfig({
+        ...baseRuntimeEnv,
+        NEXT_PUBLIC_SUPABASE_URL: "https://abcdefghijklmnopqrst.supabase.co",
+        DATABASE_URL:
+          '"postgresql://postgres.abcdefghijklmnopqrst:pw@aws-0.pooler.supabase.com:6543/postgres',
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.output).toContain("DATABASE_URL is not a valid URL");
+      expect(result.output).toContain("unmatched leading or trailing quote");
       expect(result.output).not.toContain("aws-0.pooler.supabase.com");
       expect(result.output).not.toContain("ERR_INVALID_URL");
     });

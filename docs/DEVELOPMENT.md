@@ -176,3 +176,177 @@ set in their own shell environment before launching Claude Code. The agent canno
 itself. Only use it for a specific change you've already decided to make — it is not a general
 opt-out, and it has no effect on `block-no-verify`: git verification-hook bypasses remain
 unavailable to agents regardless of this variable.
+
+## 13. DATABASE_URL-gated E2E specs
+
+A handful of `tests/e2e/*.spec.ts` files (`rbac-boundary.spec.ts`, `tenant-isolation.spec.ts`,
+one test in `booking.spec.ts`) need direct database access that a real browser session can't
+provide — seeding a disposable second organization, or temporarily flipping the shared E2E
+fixture user's role to observe a permission boundary. They import `tests/e2e/helpers/db.ts` and
+call `hasDbAccess()` (true only when `DATABASE_URL` is set in the Playwright process's
+environment) to `test.skip(...)` cleanly with a concrete reason when it's absent, rather than
+failing.
+
+**Wired into `staging-release.yml`** as of the explicitly human-authorized change adding
+`DATABASE_URL: ${{ secrets.STAGING_DIRECT_URL }}` to its "Run essential staging smoke tests" step
+— reusing the same existing secret `scripts/ensure-e2e-org-fixture.ts` already uses, not a new
+one. `ci.yml` still never provides `DATABASE_URL`/`E2E_USER_EMAIL` to Playwright at all (it has no
+staging/database secrets to give it — see §14), so these specs continue to skip cleanly there.
+
+The same specs restore/delete everything they create in a `finally` block — the role-restore in
+`rbac-boundary.spec.ts` re-throws on failure (a stuck role change corrupts the shared fixture for
+every later run) rather than swallowing the error.
+
+## 14. Two-tier Playwright execution
+
+- **Tier A — `ci.yml`'s `e2e-smoke` job** (`pr-smoke` Playwright project): runs on every PR, no
+  secrets, no staging. Spins up an ephemeral empty Postgres (the same `pgvector/pgvector:pg15`
+  service container pattern the `rls` job uses), deploys migrations, builds and serves the app
+  locally with placeholder `NEXT_PUBLIC_*`/`SKIP_ENV_VALIDATION=1` config, then runs the
+  unauthenticated subset of `smoke.spec.ts` + `booking.spec.ts`'s 404 test. Deliberately excludes
+  `smoke.spec.ts`'s "health endpoint is green" and the AI-API-auth-enforcement test: `/api/health`
+  also checks Redis (`@upstash/redis`, an HTTP-protocol client with no local Postgres-style
+  service-container equivalent already in use here), and the AI route goes through the same
+  Redis-backed rate limiter — neither is safely reproducible without introducing a new,
+  unvetted third-party dependency, so they're left to Tier B. **Not yet in `ci-required`'s
+  `needs` list** — genuinely new infrastructure, kept in observe-only mode until proven reliable
+  across several real runs, then promote it.
+- **Tier B — `staging-release.yml`'s existing Playwright step**: authenticated, real-staging-deployment
+  execution (`desktop`/`mobile`/`rbac-mutations` projects), unchanged in scope, now additionally
+  `DATABASE_URL`-enabled (§13). Only runs from `main`, via manual `workflow_dispatch` — this gate is
+  deliberate (job-level `if` plus an in-script re-check) and was not weakened.
+
+A real per-branch Tier-B run (deploying an unmerged branch to shared staging, or relaxing the
+main-only gate) was evaluated and rejected as something to do unilaterally: `staging-release.yml`'s
+deploy+migrate step is a genuine deployment action against shared infrastructure, and CLAUDE.md §9
+reserves "Deployment or workflow dispatch" as needing its own separate authorization beyond
+workflow-file edits. Given an explicit, narrowly-scoped human authorization for one specific
+verification run, a **`TEMPORARY-STAGING-EXCEPTION`** (grep for that marker) was added to both the
+job-level `if` and the in-script re-check in `staging-release.yml`, allow-listing the exact branch
+name `feat/e2e-production-readiness` alongside `main` — no patterns, no PR-controlled input, and
+every other check (project-ref confirmation, staging≠production cross-checks, the `environment:
+staging` required-reviewer gate) stays fully intact. **This must be removed once that verification
+run succeeds** — see the PR #115 thread for status.
+
+## 15. Connection-string sanitization gaps (staging run 33961238272)
+
+That run failed at "Read-only legacy compatibility preflight" with
+`FATAL: database "postgres\n" does not exist` — a trailing newline embedded in the
+`STAGING_DIRECT_URL` secret's stored value, reaching `psql` unsanitized. This is the same
+corruption class `src/server/db/connection-string-sanitizer.ts` was built to fix after a prior,
+identical incident (2026-08-28) — but that fix only ever covered the deployed app's own Prisma
+client (`src/server/db/prisma.ts`). Two other consumers of the same secret went through this
+release, unnoticed until now, without it: `scripts/ensure-e2e-org-fixture.ts` and
+`tests/e2e/helpers/db.ts` (both now call `sanitizeConnectionString()` before constructing their
+`PrismaClient`). `staging-release.yml`'s raw `psql "$STAGING_DIRECT_URL"` invocations remain
+unsanitized — psql/libpq has no equivalent hook to apply the same fix to, so:
+
+- `scripts/validate-database-url-shape.mjs` was added: a dependency-free, redaction-safe shape
+  validator (host/port/database/user/project-ref shape, pooler-vs-direct semantics, trailing
+  whitespace detection) that would have caught this exact defect immediately, before any of the 17
+  expensive steps that ran before the actual failure. It is a standalone script, not yet wired into
+  any workflow — see the PR #115 thread for the exact recommended integration point (an early step
+  in `staging-release.yml`, which is guardrail-protected and wasn't edited here beyond the
+  explicitly authorized temporary branch exception above).
+- `scripts/ensure-e2e-org-fixture.ts` also now repairs the shared E2E user's role back to `OWNER`
+  if it's ever found to be anything else on a run's own no-op check — recovery for an
+  `rbac-boundary.spec.ts` run interrupted between its role-flip and its `finally` restore.
+- `tests/e2e/helpers/db.ts`'s `findE2EFixtureMembership()` now refuses to return a membership
+  whose organization name isn't exactly `"Syveka E2E Fixture"` — a mutating E2E test can never act
+  on a real organization even if `DATABASE_URL`/`E2E_USER_EMAIL` were ever misconfigured.
+- A separately discovered, unrelated naming drift: the E2E fixture user's real organization is
+  currently named `"Syveka E2E Test"`, not `"Syveka E2E Fixture"` — the guard above and
+  `scripts/ensure-e2e-org-fixture.ts` both expect the latter exactly. Since the fixture-repair
+  script only checks that _a_ membership exists (not its org name), this went unnoticed. Any
+  mutating spec built on `findE2EFixtureMembership()` will refuse to run (fail-closed, not
+  silently wrong) until either the org is renamed or the constant is updated — a decision left to
+  a human, not applied here.
+
+## 16. Password recovery: middleware bounced every recovering user before the form (staging)
+
+A manually-triggered Supabase password recovery for the staging E2E user reached
+`/en/onboarding` instead of an update-password screen. The app already had a complete recovery
+flow (`/forgot-password` → `resetPasswordForEmail({ redirectTo: .../reset-password })` →
+`/api/auth/callback` → `exchangeCodeForSession` → `/reset-password` →
+`updateUser({ password })`) — the bug was in `src/middleware.ts`: `/reset-password` was listed in
+`AUTH_PAGES` alongside `/login`/`/register`/`/forgot-password`, so _any_ authenticated visitor was
+bounced straight to `/dashboard`. Exchanging a recovery link's code establishes a real session by
+design, so this fired on every single recovery attempt, before the form ever rendered.
+
+Fixed by splitting `AUTH_PAGES` into `AUTH_ONLY_PAGES` (login/register/forgot-password — still
+redirect an authenticated visitor to `/dashboard`) and a separate `RECOVERY_PAGE` rule for
+`/reset-password`: an authenticated visitor is now let through, and an unauthenticated one (a
+stale/reused link, or a direct navigation) is redirected to `/forgot-password` instead of
+rendering a form with no session to act on. `resetPasswordAction` also now validates through a
+`resetPasswordSchema` (matching registration's 12-character floor) instead of an inline length
+check, for consistency with `loginAction`/`registerAction`.
+
+Separately: Supabase's own dashboard "Send password recovery" button bypasses the app's
+`redirectTo` wiring entirely (it uses the project's default Site URL, not our
+`authCallbackUrl(locale, "/reset-password")`) — this is Supabase/GoTrue admin behavior, not
+something fixable in application code. Use the app's own `/forgot-password` page for recovery
+whenever possible; a dashboard-triggered reset may land elsewhere depending on the project's Site
+URL configuration.
+
+`tests/e2e/password-recovery.spec.ts` (new `password-recovery` Playwright project, no
+`storageState`, staging-only) exercises the real flow end to end without ever sending an email. It
+runs against a disposable throwaway account created and deleted entirely within the test — never
+the shared E2E fixture user. Gated on `SUPABASE_SERVICE_ROLE_KEY`/`SUPABASE_URL` being present
+(wired into `staging-release.yml`'s existing smoke-test step, reusing the same secret
+`scripts/ensure-e2e-org-fixture.ts` already uses) — always skips in Tier-A CI, which has no real
+Supabase project. See §17 for how it actually establishes a recovery session (its first design,
+built on Admin `generateLink()`'s `action_link`, was disproven by a real staging run — see below).
+
+## 17. Password recovery E2E: `generateLink()` cannot produce a PKCE `?code=` link
+
+Staging run `34059627597` (SHA `4037d03`, the middleware fix from §16, deployed and verified
+working for its own infrastructure) surfaced that `password-recovery.spec.ts`'s original design —
+`page.goto(action_link)`, expecting to land on `/reset-password` — instead landed on
+`.../#access_token=[redacted]`, identically on every retry.
+
+Root cause: Supabase Admin's `generateLink()` has no originating browser or PKCE code-verifier —
+there is no "user's browser" for an admin-triggered link, so GoTrue can only ever return an
+**implicit-flow** link (`#access_token=...&refresh_token=...`), never the PKCE `?code=` link
+`resetPasswordForEmail()` produces when a real browser both requests the reset and clicks the
+resulting email link. This is a protocol-level limitation of the admin API, confirmed by reading
+`@supabase/auth-js`'s `GoTrueAdminApi.generateLink()` (it posts only `{type, email, redirect_to}`
+to `/admin/generate_link` — no code_challenge parameter exists to accept), not a configuration
+bug, and not something fixable by changing `redirectTo` or any Supabase dashboard setting. Since
+URL fragments are never sent to the server, `/api/auth/callback` never even saw the request.
+
+**Fix — redesigned the test around `verifyOtp`, not `action_link`:** `generateLink()`'s response
+also includes `properties.hashed_token`. `supabase.auth.verifyOtp({ token_hash, type: "recovery" })`
+performs the same underlying GoTrue "verify recovery" operation directly as a JSON call — no
+redirect, no fragment ambiguity — and returns a real session synchronously. The test calls this
+through `@supabase/ssr`'s own `createServerClient()` (with a `setAll` that captures cookies into an
+array instead of writing them) so the resulting session cookies are produced by the exact same
+library code `createSupabaseServer()`/`createSupabaseRouteClient()` use — never hand-encoded — then
+injects them into the Playwright browser context via `page.context().addCookies()` before visiting
+`/reset-password` directly.
+
+This intentionally does not exercise `/api/auth/callback`'s `exchangeCodeForSession(code)` call
+itself — that route is shared infrastructure already covered by the signup/magic-link flows, not
+recovery-specific. What it does exercise, and what the original bug in §16 was actually about, is
+everything downstream of "a recovery session now exists": middleware letting it reach
+`/reset-password`, the real form, the real `resetPasswordAction`, and the real new password
+authenticating afterward via the ordinary login form.
+
+## 18. Fixture-org name drift: narrow, verified, in-workflow repair
+
+The shared E2E user's real staging organization is named `"Syveka E2E Test"` (created once, by
+hand, at onboarding — its `createdAt` matches the user's `onboarded_at` to the millisecond) while
+`scripts/ensure-e2e-org-fixture.ts` and `tests/e2e/helpers/db.ts`'s refuse-to-run guard have always
+required exactly `"Syveka E2E Fixture"` (now a single shared constant,
+`scripts/e2e-fixture-identity.ts`'s `E2E_FIXTURE_ORG_NAME`). The fixture script's no-op path
+previously only checked that _a_ membership existed, never its name, so this went undetected.
+
+A direct rename via a local one-off script was attempted and **blocked by the Claude Code safety
+classifier** (a live write against real staging state) — not bypassed. Instead,
+`ensure-e2e-org-fixture.ts` now repairs this **one specific, pre-verified** drift itself, during
+the already-human-approved staging workflow: `isSafeToRepairKnownFixtureDrift()`
+(`e2e-fixture-identity.ts`) only returns true when the organization's name _and_ slug both match
+the exact known historical values, it has no `businessId` and no `stripeCustomerId`, and it has
+zero contacts, companies, and deals — re-verified live on every run, not cached. Any other
+mismatch — a different name, or this name with any data in it — still fails closed with the
+original clear error. This is not a general "accept any name" relaxation; see
+`tests/unit/e2e-fixture-identity.test.ts` for the full boundary this predicate enforces.
