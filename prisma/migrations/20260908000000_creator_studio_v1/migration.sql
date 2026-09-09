@@ -299,13 +299,22 @@ ALTER TABLE "creator_credit_grants" ENABLE ROW LEVEL SECURITY;
 -- same rationale as calendar_connections/document_upload_intents: token
 -- material and balance mutation must only ever go through the audited,
 -- rate-limited service layer, never a direct Supabase client query.
+--
+-- Both UPDATE policies below carry an explicit WITH CHECK identical to their
+-- USING clause — matching 20260817000000_tenant_update_rls_with_check_
+-- hardening's fix for the same gap on 16 other tables (see
+-- docs/RLS-UPDATE-WITH-CHECK-HARDENING.md): without it, an authenticated
+-- member of org A, authorized to update a row they own, could reassign
+-- organization_id to org B in the same statement — USING alone only checks
+-- the row's state *before* the write, not after.
 
 CREATE POLICY "creator_profiles_select" ON "creator_profiles" FOR SELECT TO authenticated
   USING (organization_id = auth_org_id());
 CREATE POLICY "creator_profiles_insert" ON "creator_profiles" FOR INSERT TO authenticated
   WITH CHECK (organization_id = auth_org_id());
 CREATE POLICY "creator_profiles_update" ON "creator_profiles" FOR UPDATE TO authenticated
-  USING (organization_id = auth_org_id());
+  USING (organization_id = auth_org_id())
+  WITH CHECK (organization_id = auth_org_id());
 CREATE POLICY "creator_profiles_delete" ON "creator_profiles" FOR DELETE TO authenticated
   USING (organization_id = auth_org_id() AND auth_role() IN ('OWNER', 'ADMIN', 'MANAGER'));
 
@@ -320,7 +329,8 @@ CREATE POLICY "creator_campaigns_select" ON "creator_campaigns" FOR SELECT TO au
 CREATE POLICY "creator_campaigns_insert" ON "creator_campaigns" FOR INSERT TO authenticated
   WITH CHECK (organization_id = auth_org_id());
 CREATE POLICY "creator_campaigns_update" ON "creator_campaigns" FOR UPDATE TO authenticated
-  USING (organization_id = auth_org_id());
+  USING (organization_id = auth_org_id())
+  WITH CHECK (organization_id = auth_org_id());
 CREATE POLICY "creator_campaigns_delete" ON "creator_campaigns" FOR DELETE TO authenticated
   USING (organization_id = auth_org_id() AND auth_role() IN ('OWNER', 'ADMIN', 'MANAGER'));
 

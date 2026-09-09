@@ -200,12 +200,13 @@ describe("staging release migration contract", () => {
       expect(releaseInvariantRows.has(row)).toBe(true);
     }
     expect(securityRows).toHaveLength(86);
-    expect(releaseInvariantRows.size).toBe(95);
+    expect(releaseInvariantRows.size).toBe(106);
     // The only rows release-invariants carries beyond the still-current
     // (non-superseded) security-baseline rows are business_dna's,
-    // business_dna_services', and the 16 superseded UPDATE policies' current
-    // (WITH CHECK-hardened) text — anything else diverging would be real,
-    // unexplained drift.
+    // business_dna_services', the 16 superseded UPDATE policies' current
+    // (WITH CHECK-hardened) text, and Creator Studio's 11 policy rows
+    // (20260908000000_creator_studio_v1, added after security-baseline) —
+    // anything else diverging would be real, unexplained drift.
     const extraRows = [...releaseInvariantRows].filter((row) => !currentSecurityRows.includes(row));
     expect(extraRows.sort()).toEqual(
       [
@@ -234,6 +235,17 @@ describe("staging release migration contract", () => {
         "      ('public', 'webhook_endpoints', 'webhook_endpoints_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
         "      ('public', 'workflows', 'workflows_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id')",
         "      ('public', 'workflow_step_executions', 'workflow_step_executions_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),",
+        "      ('public', 'creator_campaigns', 'creator_campaigns_delete', 'PERMISSIVE', 'DELETE', '{authenticated}', 'organization_id=auth_org_idandauth_role=anyarray[''owner'',''admin'',''manager'']', ''),",
+        "      ('public', 'creator_campaigns', 'creator_campaigns_insert', 'PERMISSIVE', 'INSERT', '{authenticated}', '', 'organization_id=auth_org_id'),",
+        "      ('public', 'creator_campaigns', 'creator_campaigns_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),",
+        "      ('public', 'creator_campaigns', 'creator_campaigns_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'creator_generations', 'creator_generations_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),",
+        "      ('public', 'creator_posts', 'creator_posts_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),",
+        "      ('public', 'creator_profiles', 'creator_profiles_delete', 'PERMISSIVE', 'DELETE', '{authenticated}', 'organization_id=auth_org_idandauth_role=anyarray[''owner'',''admin'',''manager'']', ''),",
+        "      ('public', 'creator_profiles', 'creator_profiles_insert', 'PERMISSIVE', 'INSERT', '{authenticated}', '', 'organization_id=auth_org_id'),",
+        "      ('public', 'creator_profiles', 'creator_profiles_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_id=auth_org_id', ''),",
+        "      ('public', 'creator_profiles', 'creator_profiles_update', 'PERMISSIVE', 'UPDATE', '{authenticated}', 'organization_id=auth_org_id', 'organization_id=auth_org_id'),",
+        "      ('public', 'creator_templates', 'creator_templates_select', 'PERMISSIVE', 'SELECT', '{authenticated}', 'organization_idisnullororganization_id=auth_org_id', ''),",
       ].sort(),
     );
     expect(rlsPolicyContract(security)).toContain("messages_select");
