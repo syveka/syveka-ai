@@ -52,12 +52,14 @@ describe("(app) layout shell renders for a brand-new-org OWNER", () => {
       useTheme: () => ({ resolvedTheme: "light", setTheme: vi.fn() }),
     }));
     const { Topbar } = await import("../../src/components/layout/topbar");
+    const { permissionsFor } = await import("../../src/server/auth/permissions");
     render(
       <NextIntlClientProvider locale="en" messages={messages}>
         <Topbar
           userId="00000000-0000-0000-0000-000000000000"
           orgName="Fruppi Toys"
           initialUnread={0}
+          permissions={permissionsFor("OWNER")}
         />
       </NextIntlClientProvider>,
     );
