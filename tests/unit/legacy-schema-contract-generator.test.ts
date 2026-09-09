@@ -395,6 +395,16 @@ describe("legacy schema contract generator", () => {
     '  ["stripe_webhook_events", "20260815000000_stripe_webhook_event_ledger"],\n' +
     '  ["business_dna_services", "20260815020000_business_dna_mvp"],\n' +
     '  ["workflow_step_executions", "20260818010000_workflow_step_execution"],\n' +
+    '  ["creator_generations", "20260908000000_creator_studio_v1"],\n' +
+    '  ["creator_campaigns", "20260908000000_creator_studio_v1"],\n' +
+    '  ["creator_posts", "20260908000000_creator_studio_v1"],\n' +
+    '  ["creator_profiles", "20260908000000_creator_studio_v1"],\n' +
+    '  ["creator_reference_assets", "20260908000000_creator_studio_v1"],\n' +
+    '  ["creator_templates", "20260908000000_creator_studio_v1"],\n' +
+    '  ["social_accounts", "20260908000000_creator_studio_v1"],\n' +
+    '  ["creator_credit_balances", "20260908000000_creator_studio_v1"],\n' +
+    '  ["creator_credit_grants", "20260908000000_creator_studio_v1"],\n' +
+    '  ["creator_credit_transactions", "20260908000000_creator_studio_v1"],\n' +
     "];";
 
   it("fails closed when a legacy-missing table references a nonexistent migration directory", () => {
@@ -475,7 +485,17 @@ describe("legacy schema contract generator", () => {
         "    'inbox_mailboxes',\n" +
         "    'stripe_webhook_events',\n" +
         "    'business_dna_services',\n" +
-        "    'workflow_step_executions'\n" +
+        "    'workflow_step_executions',\n" +
+        "    'creator_generations',\n" +
+        "    'creator_campaigns',\n" +
+        "    'creator_posts',\n" +
+        "    'creator_profiles',\n" +
+        "    'creator_reference_assets',\n" +
+        "    'creator_templates',\n" +
+        "    'social_accounts',\n" +
+        "    'creator_credit_balances',\n" +
+        "    'creator_credit_grants',\n" +
+        "    'creator_credit_transactions'\n" +
         "  ];",
     );
     expect(legacyMissingTablesDeclarationOf(stdout)).toBe(

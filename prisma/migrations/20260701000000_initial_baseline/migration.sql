@@ -91,7 +91,17 @@ DECLARE
     'inbox_mailboxes',
     'stripe_webhook_events',
     'business_dna_services',
-    'workflow_step_executions'
+    'workflow_step_executions',
+    'creator_generations',
+    'creator_campaigns',
+    'creator_posts',
+    'creator_profiles',
+    'creator_reference_assets',
+    'creator_templates',
+    'social_accounts',
+    'creator_credit_balances',
+    'creator_credit_grants',
+    'creator_credit_transactions'
   ];
 -- END LEGACY MISSING TABLES
   -- Foreign keys whose ON UPDATE action may still show a specific, verified

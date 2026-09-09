@@ -64,7 +64,17 @@ describe("staging release migration contract", () => {
         "    'inbox_mailboxes',\n" +
         "    'stripe_webhook_events',\n" +
         "    'business_dna_services',\n" +
-        "    'workflow_step_executions'\n" +
+        "    'workflow_step_executions',\n" +
+        "    'creator_generations',\n" +
+        "    'creator_campaigns',\n" +
+        "    'creator_posts',\n" +
+        "    'creator_profiles',\n" +
+        "    'creator_reference_assets',\n" +
+        "    'creator_templates',\n" +
+        "    'social_accounts',\n" +
+        "    'creator_credit_balances',\n" +
+        "    'creator_credit_grants',\n" +
+        "    'creator_credit_transactions'\n" +
         "  ];\n-- END LEGACY MISSING TABLES",
     );
     expect(contract).not.toContain("ARRAY[]");

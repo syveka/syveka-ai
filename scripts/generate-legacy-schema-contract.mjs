@@ -25,6 +25,11 @@ const tableName = (model) => model.dbName ?? model.name;
 //     20260815020000_business_dna_mvp.
 //   - workflow_step_executions: same situation, created for the first time by
 //     20260818010000_workflow_step_execution.
+//   - creator_generations, creator_campaigns, creator_posts, creator_profiles,
+//     creator_reference_assets, creator_templates, social_accounts,
+//     creator_credit_balances, creator_credit_grants,
+//     creator_credit_transactions: same situation, created for the first time
+//     by 20260908000000_creator_studio_v1.
 const LEGACY_MISSING_TABLE_ENTRIES = [
   ["business_dna", "20260811000000_business_dna_v1"],
   ["inbox_threads", "20260811010000_inbox_mvp_foundation"],
@@ -33,6 +38,16 @@ const LEGACY_MISSING_TABLE_ENTRIES = [
   ["stripe_webhook_events", "20260815000000_stripe_webhook_event_ledger"],
   ["business_dna_services", "20260815020000_business_dna_mvp"],
   ["workflow_step_executions", "20260818010000_workflow_step_execution"],
+  ["creator_generations", "20260908000000_creator_studio_v1"],
+  ["creator_campaigns", "20260908000000_creator_studio_v1"],
+  ["creator_posts", "20260908000000_creator_studio_v1"],
+  ["creator_profiles", "20260908000000_creator_studio_v1"],
+  ["creator_reference_assets", "20260908000000_creator_studio_v1"],
+  ["creator_templates", "20260908000000_creator_studio_v1"],
+  ["social_accounts", "20260908000000_creator_studio_v1"],
+  ["creator_credit_balances", "20260908000000_creator_studio_v1"],
+  ["creator_credit_grants", "20260908000000_creator_studio_v1"],
+  ["creator_credit_transactions", "20260908000000_creator_studio_v1"],
 ];
 
 const actualTableNames = new Set(models.map(tableName));
