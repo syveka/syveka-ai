@@ -335,6 +335,201 @@ export const REGISTRY: RegistryEntry[] = [
       "writeup and the reasoning against jumping straight to APPROVED.",
   },
   {
+    id: "composio",
+    name: "Composio",
+    capability: "integration.gateway",
+    provider: "composio",
+    source: "https://github.com/ComposioHQ/composio",
+    // Verified directly against the ComposioHQ/composio GitHub repo during this review
+    // (2026-09-07): MIT.
+    license: "MIT",
+    // CONDITIONAL, not TRUSTED: well-governed, permissively licensed, official MCP endpoint -
+    // but its entire purpose is holding OAuth grants and executing authenticated actions
+    // against third-party apps (Gmail, Calendar, Drive, Slack, GitHub, CRMs, "1000+
+    // toolkits") on a tenant's behalf, which is a fundamentally higher-trust-requirement
+    // shape than a read-only fetch or a local render.
+    trust_level: "CONDITIONAL",
+    // HIGH: this is a candidate integration GATEWAY, not one reviewed action. It would hold
+    // per-tenant OAuth credentials and execute real external actions (send email, create
+    // calendar events, write to a CRM, etc.) - squarely in HIGH_RISK_ACTIONS territory
+    // (credentials.access, message.send.external) per policies/risk-classification.ts. No
+    // milestone here narrows that to one low-risk action the way Scrapling's Milestone 2
+    // narrowed to plain-HTTP-only - see docs/skills/composio-integration.md.
+    risk_level: "HIGH",
+    // REVIEW, not APPROVED/EXPERIMENTAL: not routable (core/registry/index.ts
+    // eligibleForRouting) until the conditions in docs/skills/composio-integration.md are
+    // independently reviewed and signed off - least-privilege OAuth scoping, explicit
+    // tenant/user identity binding, no cross-tenant credential reuse, a GDPR and privacy review,
+    // and a completed PoC (Phase 7) demonstrating audited, revocable, tenant-isolated access.
+    status: "REVIEW",
+    // REFERENCE: studied and documented only. providers/composio/index.ts exists but is an
+    // honest always-unavailable stub (createUnavailableStubProvider), same shape as
+    // shadcn-mcp/twentyfirst-dev/claude-video above - no OAuth app registered, no live
+    // connection, no PoC executed against a real account.
+    integration_state: "REFERENCE",
+    supported_agents: ["claude-code", "codex", "gemini-cli"],
+    permissions: ["network:egress", "credentials:oauth:third_party", "action:execute:external"],
+    network_access: true,
+    filesystem_access: false,
+    scripts: false,
+    hooks: false,
+    dependencies: [],
+    credential_requirements: ["api_key", "oauth_per_connected_app"],
+    approval_required: true,
+    installation_scope: "none",
+    last_reviewed: "2026-09-07",
+    last_updated: "2026-09-07",
+    security_notes:
+      "P1/EXPERIMENTAL candidate integration gateway, not a standing dependency. Official " +
+      "repo re-confirmed MIT-licensed and offers a hosted MCP endpoint (works with Claude, " +
+      "Cursor, and other MCP clients) plus per-session OAuth handling for connected " +
+      "third-party apps - real capability, not vaporware. Held at REVIEW because none of the " +
+      "following exist yet, all required before any production use: least-privilege OAuth " +
+      "scope review per connected app, explicit tenant/user identity binding (never a " +
+      "client-supplied org id - see CLAUDE.md Sec.4), a guarantee against cross-tenant " +
+      "credential reuse, secret/token handling proven to never reach prompts/logs/source " +
+      "control, human confirmation before any destructive/high-impact external action, an " +
+      "audit trail for every external action taken, a safe token lifecycle (issuance, " +
+      "rotation, revocation), a GDPR and privacy review (Composio is a US-based third party " +
+      "sitting between Syveka and tenant-connected accounts), explicit vendor-lock-in " +
+      "awareness, and a native Syveka fallback path for any integration this would replace " +
+      "that Syveka already implements natively (e.g. Google/Microsoft Calendar - see " +
+      "src/server/integrations/calendar/). See docs/skills/composio-integration.md for the " +
+      "full evaluation, the USE/DO-NOT-USE rules, and the PoC design.",
+  },
+  {
+    id: "perplexity",
+    name: "Perplexity API (Agent/Search/Router/Embeddings)",
+    capability: "research.cited",
+    provider: "perplexity",
+    source: "https://docs.perplexity.ai",
+    // Hosted commercial API, not an open-source project - there is no OSI license to cite.
+    // Verified directly against docs.perplexity.ai during this review (2026-09-07).
+    license: "Proprietary (hosted API - Perplexity AI, Inc. commercial terms, not open-source)",
+    // CONDITIONAL: official, well-documented, key-authenticated API from a known vendor, but
+    // every query sent to it leaves Syveka's infrastructure to a third-party AI provider.
+    trust_level: "CONDITIONAL",
+    // MEDIUM, not HIGH: read-only research (no OAuth, no write access to any tenant or
+    // third-party system, no destructive capability) - but query text can carry business-
+    // context wording, so it falls under policies/risk-classification.ts's
+    // "tool.generate.external" MEDIUM category, not LOW, until a data-minimization review
+    // confirms exactly what leaves Syveka in a query.
+    risk_level: "MEDIUM",
+    // REVIEW: not routable yet. Held pending a provisioned API key, a data-minimization
+    // review of what query text is allowed to leave Syveka, and the benchmark PoC (Phase 8)
+    // comparing it against the existing web.research (Scrapling) pipeline before any product
+    // surface (e.g. Business DNA enrichment) is allowed to call it.
+    status: "REVIEW",
+    // REFERENCE: studied and documented only. providers/perplexity/index.ts exists but is an
+    // honest always-unavailable stub, same shape as shadcn-mcp/twentyfirst-dev/claude-video -
+    // no API key provisioned, no live call made.
+    integration_state: "REFERENCE",
+    supported_agents: ["claude-code", "codex", "gemini-cli"],
+    permissions: ["network:egress"],
+    network_access: true,
+    filesystem_access: false,
+    scripts: false,
+    hooks: false,
+    dependencies: [],
+    credential_requirements: ["api_key"],
+    approval_required: true,
+    installation_scope: "none",
+    last_reviewed: "2026-09-07",
+    last_updated: "2026-09-07",
+    security_notes:
+      "P2/optional research provider - never the default model, never a standing dependency. " +
+      "Re-confirmed against docs.perplexity.ai (2026-09-07): the Agent/Search APIs return " +
+      "web-grounded answers with built-in citations, authenticated via a Bearer API key " +
+      "(PERPLEXITY_API_KEY, not provisioned in this repo/.env.example - see " +
+      "docs/skills/perplexity-research-integration.md); no first-party MCP server offering " +
+      "was found as of this review, so a real integration would be a direct HTTP client, not " +
+      "an MCP session (contrast Composio/Scrapling above). Pricing combines per-request " +
+      "search fees with token costs (cost-aware call budgeting required before production " +
+      "use - see docs/skills/perplexity-research-integration.md 'Cost awareness'). Distinct " +
+      "capability from `web.research` (Scrapling): this returns an AI-synthesized, cited " +
+      "answer to a research question, not raw fetched/extracted page content - complementary, " +
+      "not a duplicate (same reasoning pattern as chrome-devtools-mcp vs. Playwright above), " +
+      "so this is not a repeat of the Firecrawl REJECTED-for-duplication finding. Sensitive or " +
+      "private tenant data must never be included in a query sent to this third-party " +
+      "provider; citations/sources must be preserved end-to-end wherever a result is surfaced; " +
+      "outputs must be visibly separated from Syveka's own authoritative Business DNA data, " +
+      "never merged in silently. See docs/skills/perplexity-research-integration.md for the " +
+      "full evaluation, the USE/DO-NOT-USE rules, and the benchmark PoC design.",
+  },
+  {
+    id: "voice-summary",
+    name: "Voice Call Summary",
+    capability: "voice.summarize",
+    provider: "voice-summary",
+    source: "docs/skills/voice-call-summary.md",
+    // First-party Skill definition, not a third-party project - no OSI license to cite. A real
+    // implementation would depend on an external AI vendor (see risk_level below), but the
+    // Skill contract itself (schema, provider interface, registry entry) is Syveka's own.
+    license:
+      "N/A (first-party Skill; a real provider implementation would depend on a licensed AI vendor)",
+    // CONDITIONAL: a real provider would send call-transcript text (potential PII) to an
+    // external AI vendor for summarization - same trust category as perplexity/composio above,
+    // not TRUSTED (unlike local-test-runner/git-diff, which never leave this machine).
+    trust_level: "CONDITIONAL",
+    // MEDIUM: read-only summarization (no destructive action, no OAuth, no write access to any
+    // tenant/production system from within this Skill), but transcript text can carry
+    // personally identifiable caller information - see
+    // policies/risk-classification.ts's "voice.summarize.external" MEDIUM entry, added
+    // alongside this registry row.
+    risk_level: "MEDIUM",
+    // REVIEW: not routable. No live provider connection exists yet - see integration_state.
+    // The root app's own production call-summary pipeline
+    // (src/app/api/v1/jobs/post-call/route.ts) already calls Anthropic directly today and is
+    // NOT routed through this Skill; wiring that connection here is future work, tracked in
+    // docs/skills/voice-call-summary.md, not this milestone.
+    status: "REVIEW",
+    // REFERENCE: providers/voice-summary/index.ts exists but is an honest always-unavailable
+    // stub, same shape as composio/perplexity/shadcn-mcp above - no LLM call wired up, no API
+    // key provisioned. providers/voice-summary/deterministic-test-provider.ts is a separate,
+    // test-only, never-registered provider used solely by
+    // evals/voice-call-summary.test.ts to prove the Skill's own contract (schema validation,
+    // permission evaluation, evidence, verification, audit) end-to-end without a live/paid call.
+    integration_state: "REFERENCE",
+    supported_agents: ["claude-code", "codex", "gemini-cli"],
+    permissions: ["network:egress"],
+    network_access: true,
+    filesystem_access: false,
+    scripts: false,
+    hooks: false,
+    dependencies: [],
+    credential_requirements: ["api_key"],
+    approval_required: true,
+    installation_scope: "none",
+    last_reviewed: "2026-09-08",
+    last_updated: "2026-09-08",
+    security_notes:
+      "First real Syveka Skill built end-to-end against this repo's Skill architecture " +
+      "(registry/routing, schema validation, permission/risk evaluation, provider execution " +
+      "boundary, evidence/verification, audit) - the milestone this entry documents is proving " +
+      "that architecture works, not shipping a live call-summarization connection. Input " +
+      "(providers/voice-summary/schema.ts) is a caller-supplied transcript + safe correlation " +
+      "id + optional language/duration metadata, .strict()-validated with no field capable of " +
+      "carrying provider credentials/configuration. Output distinguishes observed transcript " +
+      "facts (keyFacts) from a derived summary (summary/callerIntent/actionItems) from " +
+      "explicitly-flagged uncertain information (uncertain) - never merged. Transcript content " +
+      "is treated as data, never as instructions (evals/voice-call-summary.test.ts includes an " +
+      "injection-payload adversarial case, mirroring evals/untrusted-web-content.test.ts's " +
+      "existing pattern); audit records and error messages never include raw transcript text, " +
+      "only safe identifiers (callId, urgency, confidence, followUpRequired). verify() " +
+      "correctly resolves a successful run to UNVERIFIED, not COMPLETE - a summary's factual " +
+      "accuracy cannot be independently confirmed by this system from the evidence types " +
+      "currently defined (core/evidence/index.ts's STRONG_EVIDENCE_TYPES has no category for " +
+      "AI-generated interpretive output), matching this product's own anti-sycophancy " +
+      "principle (docs/security-model.md) rather than being treated as a gap to paper over. " +
+      "What remains before promotion past REVIEW/REFERENCE: a real provider implementation " +
+      "(an actual AI vendor call), a data-minimization review of exactly what transcript " +
+      "content is sent externally, and a decision on whether/how this Skill should relate to " +
+      "the root app's existing, independent, already-in-production call-summary pipeline " +
+      "(src/app/api/v1/jobs/post-call/route.ts) rather than duplicating it. See " +
+      "docs/skills/voice-call-summary.md for the full Skill contract and this milestone's " +
+      "evidence trail.",
+  },
+  {
     id: "firecrawl",
     name: "Firecrawl",
     capability: "web.research",

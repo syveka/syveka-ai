@@ -233,6 +233,39 @@ describe("middleware CSP", () => {
     });
   });
 
+  describe("password-recovery flow reaches /reset-password (BLOCKER: recovery session must not be bounced)", () => {
+    it("does NOT redirect an authenticated (recovery) session away from /reset-password", async () => {
+      // Mirrors the real flow: exchangeCodeForSession() in the auth callback
+      // route establishes a valid session from the recovery link before
+      // redirecting here, so getUser() legitimately returns a user.
+      mocks.getUser.mockResolvedValue({ data: { user: VALID_USER }, error: null });
+      const response = await middleware(
+        requestFor("/en/reset-password", { "sb-project-auth-token": "recovery-session" }),
+      );
+
+      expect(response.status).not.toBe(307);
+      expect(response.headers.get("Content-Security-Policy")).toMatch(/nonce-/);
+    });
+
+    it("still does not redirect an unauthenticated visitor away from /reset-password (page renders; the form action itself fails without a session)", async () => {
+      mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+      const response = await middleware(requestFor("/en/reset-password"));
+
+      expect(response.status).not.toBe(307);
+    });
+
+    it("other auth pages (login/register/forgot-password) still redirect an authenticated user away, unaffected by the reset-password exception", async () => {
+      mocks.getUser.mockResolvedValue({ data: { user: VALID_USER }, error: null });
+      for (const page of ["/en/login", "/en/register", "/en/forgot-password"]) {
+        const response = await middleware(
+          requestFor(page, { "sb-project-auth-token": "a-real-session" }),
+        );
+        expect(response.status).toBe(307);
+        expect(response.headers.get("location")).toContain("/dashboard");
+      }
+    });
+  });
+
   describe("locale routing remains intact", () => {
     it("still applies the CSP and forwarded headers on the default-locale root", async () => {
       mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });

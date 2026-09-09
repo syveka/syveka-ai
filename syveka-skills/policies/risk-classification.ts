@@ -34,6 +34,15 @@ export const MEDIUM_RISK_ACTIONS = [
   // explicit approval - matching the same pattern "web.research.public"
   // uses above for Scrapling.
   "video.render.local",
+  // Sends call-transcript text (potentially containing personally
+  // identifiable caller information) to an external AI vendor for
+  // summarization - see providers/voice-summary/index.ts. Deliberately
+  // narrow and explicit, same pattern as "video.render.local" above:
+  // "voice.summarize.external" is classified, but a bare "voice.summarize"
+  // prefix is NOT listed here, so any other future voice.* action falls
+  // through to DEFAULT_RISK (HIGH) and requires explicit approval rather
+  // than silently inheriting this one's MEDIUM classification.
+  "voice.summarize.external",
 ] as const;
 
 export const LOW_RISK_ACTIONS = [
@@ -61,9 +70,28 @@ export const LOW_RISK_ACTIONS = [
  */
 const DEFAULT_RISK: RiskLevel = "HIGH";
 
+/**
+ * True prefix match on "."-delimited segments, not a plain substring
+ * startsWith: "fs.read" must match "fs.read" or "fs.read.config", but must
+ * NOT match "fs.readSecretDump" - a same-string-prefix action with no
+ * segment boundary that a naive startsWith() would have silently classified
+ * at the shorter, safer prefix's risk level instead of falling through to
+ * DEFAULT_RISK. Currently dormant (no action id anywhere in this codebase
+ * exercises the gap - `action` only ever comes from first-party
+ * actionForCapability glue, never from a provider or Skill), but cheap and
+ * safe to close outright rather than leave as a latent footgun for the next
+ * action id someone adds.
+ */
+function matchesActionPrefix(action: string, prefix: string): boolean {
+  return action === prefix || action.startsWith(`${prefix}.`);
+}
+
 export function classifyRisk(action: string): RiskLevel {
-  if ((HIGH_RISK_ACTIONS as readonly string[]).some((a) => action.startsWith(a))) return "HIGH";
-  if ((MEDIUM_RISK_ACTIONS as readonly string[]).some((a) => action.startsWith(a))) return "MEDIUM";
-  if ((LOW_RISK_ACTIONS as readonly string[]).some((a) => action.startsWith(a))) return "LOW";
+  if ((HIGH_RISK_ACTIONS as readonly string[]).some((a) => matchesActionPrefix(action, a)))
+    return "HIGH";
+  if ((MEDIUM_RISK_ACTIONS as readonly string[]).some((a) => matchesActionPrefix(action, a)))
+    return "MEDIUM";
+  if ((LOW_RISK_ACTIONS as readonly string[]).some((a) => matchesActionPrefix(action, a)))
+    return "LOW";
   return DEFAULT_RISK;
 }

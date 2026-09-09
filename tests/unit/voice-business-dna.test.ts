@@ -39,7 +39,7 @@ vi.mock("@/env", () => ({
   }),
 }));
 
-import { activateAssistant } from "@/server/services/voice";
+import { activateAssistant, resyncActiveAssistants } from "@/server/services/voice";
 
 function ctx(orgId = "org-a"): TenantContext {
   return { userId: "user-1", email: "u@example.com", orgId, role: "OWNER", locale: "en" };
@@ -64,7 +64,11 @@ function assistantRow(orgId: string, overrides: Record<string, unknown> = {}) {
   };
 }
 
-function businessDnaMock(orgId: string, row: Record<string, unknown> | null) {
+function businessDnaMock(
+  orgId: string,
+  row: Record<string, unknown> | null,
+  activeAssistantIds: string[] = [],
+) {
   return {
     voiceAssistant: {
       findFirstOrThrow: vi.fn(async () => assistantRow(orgId)),
@@ -72,6 +76,7 @@ function businessDnaMock(orgId: string, row: Record<string, unknown> | null) {
         ...assistantRow(orgId),
         ...data,
       })),
+      findMany: vi.fn(async () => activeAssistantIds.map((id) => ({ id }))),
     },
     businessDNA: { findFirst: vi.fn(async () => row) },
     businessDnaService: { findMany: vi.fn(async () => []) },
@@ -177,5 +182,57 @@ describe("voice assistant sync — Business DNA context", () => {
     expect(config.systemPrompt.indexOf("AI assistant")).toBeLessThan(
       config.systemPrompt.indexOf("business_profile"),
     );
+  });
+});
+
+describe("resyncActiveAssistants — Business DNA staleness fix", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("only queries for assistants that already have a vapiAssistantId (never touches a not-yet-activated assistant)", async () => {
+    const dnaDb = businessDnaMock("org-a", null, ["assistant-1"]);
+    mocks.tenantDb.mockReturnValue(dnaDb);
+    mocks.voiceAssistantFindFirstOrThrow.mockResolvedValue(assistantRow("org-a"));
+
+    await resyncActiveAssistants("org-a");
+
+    expect(dnaDb.voiceAssistant.findMany).toHaveBeenCalledWith({
+      where: { vapiAssistantId: { not: null } },
+      select: { id: true },
+    });
+    expect(mocks.upsertVapiAssistant).toHaveBeenCalledTimes(1);
+  });
+
+  it("syncs every already-live assistant for the org independently — one failing does not stop another", async () => {
+    const dnaDb = businessDnaMock("org-a", null, ["assistant-1", "assistant-2"]);
+    mocks.tenantDb.mockReturnValue(dnaDb);
+    mocks.voiceAssistantFindFirstOrThrow.mockResolvedValue(assistantRow("org-a"));
+    mocks.upsertVapiAssistant
+      .mockRejectedValueOnce(new Error("vapi outage"))
+      .mockResolvedValueOnce({ id: "vapi-assistant-1" });
+
+    await expect(resyncActiveAssistants("org-a")).resolves.toBeUndefined();
+
+    expect(mocks.upsertVapiAssistant).toHaveBeenCalledTimes(2);
+  });
+
+  it("never throws even when the initial assistant lookup itself fails", async () => {
+    const dnaDb = businessDnaMock("org-a", null, []);
+    dnaDb.voiceAssistant.findMany = vi.fn(async () => {
+      throw new Error("transient db error");
+    });
+    mocks.tenantDb.mockReturnValue(dnaDb);
+
+    await expect(resyncActiveAssistants("org-a")).resolves.toBeUndefined();
+  });
+
+  it("does nothing (no Vapi call) when the org has no already-live assistant", async () => {
+    const dnaDb = businessDnaMock("org-a", null, []);
+    mocks.tenantDb.mockReturnValue(dnaDb);
+
+    await resyncActiveAssistants("org-a");
+
+    expect(mocks.upsertVapiAssistant).not.toHaveBeenCalled();
   });
 });

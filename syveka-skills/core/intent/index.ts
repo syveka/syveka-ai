@@ -24,6 +24,7 @@ export type TaskType =
   | "skill_discovery"
   | "web_research"
   | "video_analysis"
+  | "call_summary"
   | "documentation"
   | "skill_development"
   | "clarification_needed";
@@ -71,6 +72,16 @@ const RULES: Rule[] = [
     taskType: "web_research",
     capabilities: ["web.research"],
     keywords: /\b(research|competitor|website analysis|scrape|extract data from)\b/i,
+  },
+  {
+    taskType: "call_summary",
+    capabilities: ["voice.summarize"],
+    // Placed BEFORE video_analysis: video_analysis's own keyword list
+    // includes the bare word "transcript", which a call-summary request
+    // would also often contain ("summarize this call transcript"). Order
+    // matters here (first rule wins) - a call/voice-specific phrase must be
+    // checked first so it doesn't fall through to the wrong task type.
+    keywords: /\b(call summary|summarize (this |the )?call|voice call|phone call transcript)\b/i,
   },
   {
     taskType: "video_analysis",

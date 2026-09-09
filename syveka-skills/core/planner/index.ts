@@ -13,12 +13,18 @@ const DESCRIPTIONS: Record<string, string> = {
   "skill.security_review": "Run provenance/license/security review on candidates",
   "web.research": "Fetch and extract content from the target page(s)",
   "video.analyze": "Extract frames/transcript and analyze the video",
+  "voice.summarize": "Summarize the call transcript into structured facts and action items",
   "docs.write": "Write or update documentation",
   "docs.organize": "Organize documentation structure",
   "skill.create": "Create a new skill from requirements",
   "skill.eval": "Generate and run evals for the new skill",
   "skill.package": "Package and version the skill for the registry",
 };
+
+/** Shared lookup used by both buildPlan (free-text path) and a structured single-capability plan. */
+export function describeCapability(capability: string): string {
+  return DESCRIPTIONS[capability] ?? `Execute capability: ${capability}`;
+}
 
 /**
  * Template-based planning: turns an intent's capability list into an
@@ -41,7 +47,7 @@ export function buildPlan(intent: IntentResult): Plan {
   return {
     steps: intent.capabilities.map((capability) => ({
       capability,
-      description: DESCRIPTIONS[capability] ?? `Execute capability: ${capability}`,
+      description: describeCapability(capability),
     })),
   };
 }

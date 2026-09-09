@@ -20,6 +20,22 @@ describe("permission enforcement: risk classification", () => {
     expect(classifyRisk("some.brand.new.action.nobody.classified.yet")).toBe("HIGH");
   });
 
+  it("CRITICAL: fails closed on a same-string-prefix action with no segment boundary", () => {
+    // "fs.readSecretDump" shares fs.read's literal string prefix but is not
+    // a "."-delimited child of it - must NOT inherit LOW risk from fs.read;
+    // must fall through to DEFAULT_RISK (HIGH) like any other unclassified
+    // action.
+    expect(classifyRisk("fs.readSecretDump")).toBe("HIGH");
+    expect(classifyRisk("deploy.productionOverride")).toBe("HIGH");
+    expect(classifyRisk("test.run.localhost.attack")).toBe("HIGH");
+  });
+
+  it("exact-match action ids (no trailing segment) still classify correctly", () => {
+    expect(classifyRisk("fs.read")).toBe("LOW");
+    expect(classifyRisk("deploy.production")).toBe("HIGH");
+    expect(classifyRisk("dependency.install")).toBe("MEDIUM");
+  });
+
   it("requires approval for HIGH and MEDIUM risk, not for LOW", () => {
     expect(checkPermission("deploy.production").approvalRequired).toBe(true);
     expect(checkPermission("dependency.install.new").approvalRequired).toBe(true);
