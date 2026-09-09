@@ -12,6 +12,8 @@ export type PlanLimits = {
   maxContacts: number;
   apiAccess: boolean;
   auditRetentionDays: number;
+  /** Monthly Creator Studio credit grant (§ creator-credits). */
+  creatorCreditsPerMonth: number;
 };
 
 /** Plan matrix (§14.1). Single source of truth for entitlements. */
@@ -26,6 +28,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     maxContacts: 200,
     apiAccess: false,
     auditRetentionDays: 0,
+    creatorCreditsPerMonth: 0,
   },
   STARTER: {
     maxSeats: 10,
@@ -37,6 +40,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     maxContacts: 5_000,
     apiAccess: false,
     auditRetentionDays: 30,
+    creatorCreditsPerMonth: 200,
   },
   PRO: {
     maxSeats: 50,
@@ -48,6 +52,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     maxContacts: 50_000,
     apiAccess: true,
     auditRetentionDays: 730,
+    creatorCreditsPerMonth: 1_000,
   },
   ENTERPRISE: {
     maxSeats: Number.MAX_SAFE_INTEGER,
@@ -59,5 +64,6 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     maxContacts: Number.MAX_SAFE_INTEGER,
     apiAccess: true,
     auditRetentionDays: 730,
+    creatorCreditsPerMonth: 5_000,
   },
 };

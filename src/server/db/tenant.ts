@@ -58,6 +58,16 @@ const TENANT_MODELS = new Set<Prisma.ModelName>([
   "BusinessDnaService",
   "InboxThread",
   "InboxMailbox",
+  "CreatorProfile",
+  "CreatorReferenceAsset",
+  "CreatorTemplate",
+  "CreatorGeneration",
+  "CreatorCampaign",
+  "CreatorPost",
+  "SocialAccount",
+  "CreatorCreditBalance",
+  "CreatorCreditTransaction",
+  "CreatorCreditGrant",
 ]);
 
 export function tenantDb(orgId: string) {

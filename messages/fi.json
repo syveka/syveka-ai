@@ -31,7 +31,8 @@
     "inbox": "Saapuneet",
     "notifications": "Ilmoitukset",
     "settings": "Asetukset",
-    "businessDna": "Yrityksen DNA"
+    "businessDna": "Yrityksen DNA",
+    "creatorStudio": "Creator Studio"
   },
   "auth": {
     "login": "Kirjaudu sisään",
@@ -818,6 +819,206 @@
       "not_configured": "Ei määritetty",
       "blocked": "Estynyt",
       "verification_required": "Vaatii vahvistuksen"
+    }
+  },
+  "creatorStudio": {
+    "title": "Creator Studio",
+    "subtitle": "Tekoälyhahmot, sisällöntuotanto, hyväksynnät ja julkaisu.",
+    "featureDisabled": "Creator Studio ei ole vielä käytössä tässä organisaatiossa.",
+    "nav": {
+      "overview": "Yleiskatsaus",
+      "characters": "Hahmot",
+      "create": "Luo",
+      "campaigns": "Kampanjat",
+      "approvals": "Hyväksynnät",
+      "calendar": "Kalenteri",
+      "library": "Kirjasto",
+      "socialAccounts": "Some-tilit",
+      "analytics": "Analytiikka"
+    },
+    "overview": {
+      "characters": "Hahmot",
+      "creditsAvailable": "Käytettävissä olevat krediitit",
+      "pendingApprovals": "Odottaa hyväksyntää",
+      "emptyState": "Luo ensimmäinen tekoälyhahmosi aloittaaksesi sisällöntuotannon.",
+      "createCharacterCta": "Luo hahmo"
+    },
+    "characters": {
+      "nameLabel": "Hahmon nimi",
+      "namePlaceholder": "esim. Aino, brändilähettiläs",
+      "creating": "Luodaan…",
+      "createCta": "Luo hahmo",
+      "empty": "Ei vielä hahmoja.",
+      "status": {
+        "DRAFT": "Luonnos",
+        "ACTIVE": "Aktiivinen",
+        "ARCHIVED": "Arkistoitu"
+      },
+      "referenceCount": "{count} referenssikuvaa",
+      "referenceImages": "Referenssikuvat",
+      "referenceProgress": "{count}/{min} vaadittua referenssikuvaa hyväksytty",
+      "uploadDropzone": "Pudota kuvat tai klikkaa ladataksesi",
+      "uploadHint": "JPEG, PNG tai WEBP — enintään 15 Mt, vähintään 3, suositus 5–10",
+      "uploading": "Ladataan…",
+      "errors": {
+        "unsupported_type": "Tiedostotyyppiä ei tueta.",
+        "too_large": "Tiedosto on liian suuri.",
+        "upload_failed": "Lataus epäonnistui. Yritä uudelleen."
+      },
+      "validation": {
+        "PENDING": "Odottaa",
+        "APPROVED": "Hyväksytty",
+        "REJECTED": "Hylätty"
+      },
+      "consentText": "Vahvista, että omistat nämä kuvat tai sinulla on lupa käyttää niitä tekoälyn kouluttamiseen.",
+      "confirming": "Vahvistetaan…",
+      "confirmConsentCta": "Vahvista suostumus",
+      "consentConfirmed": "Suostumus vahvistettu",
+      "generateCta": "Luo sisältöä"
+    },
+    "create": {
+      "mode": {
+        "IMAGE": "Kuva",
+        "IMAGE_TO_VIDEO": "Kuva → video",
+        "CAPTION": "Kuvateksti"
+      },
+      "creatorLabel": "Hahmo",
+      "noCreator": "Ei hahmoa (yleinen)",
+      "templateLabel": "Malli",
+      "noTemplate": "Ei mallia — oma kehote",
+      "promptLabel": "Kehote",
+      "promptPlaceholder": "Kuvaile kohtaus, ympäristö ja tyyli…",
+      "sourceImageLabel": "Lähdekuva",
+      "selectImage": "Valitse kuva",
+      "aspectRatioLabel": "Kuvasuhde",
+      "platformLabel": "Alusta",
+      "languageLabel": "Kieli",
+      "estimatedCost": "Arvioitu hinta: {cost} krediittiä",
+      "insufficientCredits": "Krediitit eivät riitä",
+      "generateCta": "Luo",
+      "generating": "Luodaan…",
+      "generationQueued": "Luonti käynnistetty — tarkista tulokset Kirjastosta."
+    },
+    "campaigns": {
+      "nameLabel": "Kampanjan nimi",
+      "namePlaceholder": "esim. Syksyn tuotelanseeraus",
+      "creating": "Luodaan…",
+      "createCta": "Luo kampanja",
+      "empty": "Ei vielä kampanjoita.",
+      "approvalMode": {
+        "MANUAL": "Manuaalinen",
+        "APPROVAL": "Vaatii hyväksynnän",
+        "AUTOPILOT": "Autopilotti"
+      },
+      "postsCount": "julkaisua",
+      "status": {
+        "DRAFT": "Luonnos",
+        "ACTIVE": "Aktiivinen",
+        "PAUSED": "Keskeytetty",
+        "COMPLETED": "Valmis",
+        "ARCHIVED": "Arkistoitu"
+      },
+      "noPosts": "Ei vielä julkaisuja tässä kampanjassa.",
+      "noCaption": "Ei kuvatekstiä",
+      "approvalStatus": {
+        "DRAFT": "Luonnos",
+        "PENDING_APPROVAL": "Odottaa hyväksyntää",
+        "APPROVED": "Hyväksytty",
+        "REJECTED": "Hylätty",
+        "CHANGES_REQUESTED": "Muutoksia pyydetty"
+      },
+      "publishStatus": {
+        "NOT_SCHEDULED": "Ei ajastettu",
+        "SCHEDULED": "Ajastettu",
+        "PUBLISHING": "Julkaistaan",
+        "PUBLISHED": "Julkaistu",
+        "FAILED": "Epäonnistui",
+        "CANCELED": "Peruttu"
+      },
+      "autopilot": {
+        "title": "Autopilotti",
+        "description": "Anna Syvekan julkaista hyväksyttyjen kategorioiden sisältöä automaattisesti sääntöjesi mukaisesti.",
+        "enable": "Ota autopilotti käyttöön",
+        "disable": "Poista autopilotti käytöstä",
+        "defaultRules": "Oletussäännöt: enintään 3 julkaisua/vko, klo 8–20, vain englanti. Muokkaa tuen kautta."
+      }
+    },
+    "approvals": {
+      "empty": "Ei mitään odottamassa hyväksyntää.",
+      "noCaption": "Ei kuvatekstiä",
+      "approve": "Hyväksy",
+      "requestChanges": "Pyydä muutoksia",
+      "reject": "Hylkää"
+    },
+    "calendar": {
+      "empty": "Ei vielä julkaisuja.",
+      "noCaption": "Ei kuvatekstiä",
+      "status": {
+        "NOT_SCHEDULED": "Ei ajastettu",
+        "SCHEDULED": "Ajastettu",
+        "PUBLISHING": "Julkaistaan",
+        "PUBLISHED": "Julkaistu",
+        "FAILED": "Epäonnistui",
+        "CANCELED": "Peruttu"
+      },
+      "noSocialAccounts": "Yhdistä some-tili julkaisujen ajastamiseksi.",
+      "scheduledForLabel": "Julkaise",
+      "socialAccountLabel": "Tili",
+      "scheduling": "Ajastetaan…",
+      "scheduleCta": "Ajasta",
+      "cancelCta": "Peru"
+    },
+    "library": {
+      "generationsTitle": "Luonnit",
+      "noGenerations": "Ei vielä luontia.",
+      "type": {
+        "IMAGE": "Kuva",
+        "IMAGE_TO_VIDEO": "Video",
+        "CAPTION": "Kuvateksti",
+        "VOICE": "Ääni",
+        "CAMPAIGN_ASSET": "Kampanja-aineisto"
+      },
+      "status": {
+        "QUEUED": "Jonossa",
+        "GENERATING": "Luodaan",
+        "COMPLETED": "Valmis",
+        "FAILED": "Epäonnistui"
+      },
+      "creditsUsed": "{count} krediittiä",
+      "adding": "Lisätään…",
+      "createPostCta": "Lisää kampanjaan",
+      "addedToCampaign": "Lisätty luonnosjulkaisuna",
+      "draftPostsTitle": "Luonnosjulkaisut",
+      "noDrafts": "Ei luonnosjulkaisuja.",
+      "noCaption": "Ei kuvatekstiä",
+      "requestApprovalCta": "Pyydä hyväksyntää"
+    },
+    "socialAccounts": {
+      "platformLabel": "Alusta",
+      "connecting": "Yhdistetään…",
+      "connectCta": "Yhdistä tili",
+      "mockNotice": "Todellinen Instagram/Facebook/TikTok/YouTube-julkaisu vaatii alustan sovellushyväksynnän — tämä yhdistää testitilin.",
+      "disconnectCta": "Katkaise yhteys",
+      "platformStatusTitle": "Alustatuki",
+      "capabilityFull": "Yhdistetty ja julkaisukelpoinen",
+      "capabilityBlocked": "Todellinen julkaisu ei vielä saatavilla",
+      "empty": "Ei yhdistettyjä some-tilejä.",
+      "status": {
+        "CONNECTED": "Yhdistetty",
+        "NEEDS_REAUTH": "Vaatii uudelleenkirjautumisen",
+        "ERROR": "Virhe",
+        "DISCONNECTED": "Ei yhdistetty"
+      }
+    },
+    "analytics": {
+      "creditsAvailable": "Käytettävissä olevat krediitit",
+      "creditsConsumed": "Käytetyt krediitit",
+      "avgLatency": "Keskim. luontiviive",
+      "generationsByType": "Luonnit tyypeittäin",
+      "noData": "Ei vielä dataa.",
+      "postsByPlatform": "Julkaisut alustoittain",
+      "autopilotPublished": "{count} julkaisua autopilotin kautta",
+      "avgApprovalTurnaround": "~{hours} h keskimääräinen hyväksyntäaika"
     }
   }
 }

@@ -31,7 +31,8 @@
     "inbox": "Inbox",
     "notifications": "Notifications",
     "settings": "Settings",
-    "businessDna": "Business DNA"
+    "businessDna": "Business DNA",
+    "creatorStudio": "Creator Studio"
   },
   "auth": {
     "login": "Log in",
@@ -818,6 +819,206 @@
       "not_configured": "Not configured",
       "blocked": "Blocked",
       "verification_required": "Verification required"
+    }
+  },
+  "creatorStudio": {
+    "title": "Creator Studio",
+    "subtitle": "AI characters, content generation, approvals and publishing.",
+    "featureDisabled": "Creator Studio is not enabled for this organization yet.",
+    "nav": {
+      "overview": "Overview",
+      "characters": "Characters",
+      "create": "Create",
+      "campaigns": "Campaigns",
+      "approvals": "Approvals",
+      "calendar": "Calendar",
+      "library": "Library",
+      "socialAccounts": "Social accounts",
+      "analytics": "Analytics"
+    },
+    "overview": {
+      "characters": "Characters",
+      "creditsAvailable": "Credits available",
+      "pendingApprovals": "Pending approvals",
+      "emptyState": "Create your first AI character to start generating content.",
+      "createCharacterCta": "Create a character"
+    },
+    "characters": {
+      "nameLabel": "Character name",
+      "namePlaceholder": "e.g. Aino, brand ambassador",
+      "creating": "Creating…",
+      "createCta": "Create character",
+      "empty": "No characters yet.",
+      "status": {
+        "DRAFT": "Draft",
+        "ACTIVE": "Active",
+        "ARCHIVED": "Archived"
+      },
+      "referenceCount": "{count} reference images",
+      "referenceImages": "Reference images",
+      "referenceProgress": "{count} of {min} minimum approved reference images",
+      "uploadDropzone": "Drop images or click to upload",
+      "uploadHint": "JPEG, PNG or WEBP — max 15 MB, 3 minimum, 5–10 recommended",
+      "uploading": "Uploading…",
+      "errors": {
+        "unsupported_type": "Unsupported file type.",
+        "too_large": "File is too large.",
+        "upload_failed": "Upload failed. Please try again."
+      },
+      "validation": {
+        "PENDING": "Pending",
+        "APPROVED": "Approved",
+        "REJECTED": "Rejected"
+      },
+      "consentText": "Confirm you own these images or have permission to use them for AI generation.",
+      "confirming": "Confirming…",
+      "confirmConsentCta": "Confirm consent",
+      "consentConfirmed": "Consent confirmed",
+      "generateCta": "Generate content"
+    },
+    "create": {
+      "mode": {
+        "IMAGE": "Image",
+        "IMAGE_TO_VIDEO": "Image → Video",
+        "CAPTION": "Caption"
+      },
+      "creatorLabel": "Character",
+      "noCreator": "No character (generic)",
+      "templateLabel": "Template",
+      "noTemplate": "No template — custom prompt",
+      "promptLabel": "Prompt",
+      "promptPlaceholder": "Describe the scene, setting, and style…",
+      "sourceImageLabel": "Source image",
+      "selectImage": "Select an image",
+      "aspectRatioLabel": "Aspect ratio",
+      "platformLabel": "Platform",
+      "languageLabel": "Language",
+      "estimatedCost": "Estimated cost: {cost} credits",
+      "insufficientCredits": "Insufficient credits",
+      "generateCta": "Generate",
+      "generating": "Generating…",
+      "generationQueued": "Generation started — check the Library for results."
+    },
+    "campaigns": {
+      "nameLabel": "Campaign name",
+      "namePlaceholder": "e.g. Autumn product launch",
+      "creating": "Creating…",
+      "createCta": "Create campaign",
+      "empty": "No campaigns yet.",
+      "approvalMode": {
+        "MANUAL": "Manual",
+        "APPROVAL": "Approval required",
+        "AUTOPILOT": "Autopilot"
+      },
+      "postsCount": "posts",
+      "status": {
+        "DRAFT": "Draft",
+        "ACTIVE": "Active",
+        "PAUSED": "Paused",
+        "COMPLETED": "Completed",
+        "ARCHIVED": "Archived"
+      },
+      "noPosts": "No posts in this campaign yet.",
+      "noCaption": "No caption",
+      "approvalStatus": {
+        "DRAFT": "Draft",
+        "PENDING_APPROVAL": "Pending approval",
+        "APPROVED": "Approved",
+        "REJECTED": "Rejected",
+        "CHANGES_REQUESTED": "Changes requested"
+      },
+      "publishStatus": {
+        "NOT_SCHEDULED": "Not scheduled",
+        "SCHEDULED": "Scheduled",
+        "PUBLISHING": "Publishing",
+        "PUBLISHED": "Published",
+        "FAILED": "Failed",
+        "CANCELED": "Canceled"
+      },
+      "autopilot": {
+        "title": "Autopilot",
+        "description": "Let Syveka publish approved-category content automatically within your rules.",
+        "enable": "Enable autopilot",
+        "disable": "Disable autopilot",
+        "defaultRules": "Default rules: max 3 posts/week, 8:00–20:00, English only. Adjust via support."
+      }
+    },
+    "approvals": {
+      "empty": "Nothing awaiting approval.",
+      "noCaption": "No caption",
+      "approve": "Approve",
+      "requestChanges": "Request changes",
+      "reject": "Reject"
+    },
+    "calendar": {
+      "empty": "No posts yet.",
+      "noCaption": "No caption",
+      "status": {
+        "NOT_SCHEDULED": "Not scheduled",
+        "SCHEDULED": "Scheduled",
+        "PUBLISHING": "Publishing",
+        "PUBLISHED": "Published",
+        "FAILED": "Failed",
+        "CANCELED": "Canceled"
+      },
+      "noSocialAccounts": "Connect a social account to schedule posts.",
+      "scheduledForLabel": "Publish at",
+      "socialAccountLabel": "Account",
+      "scheduling": "Scheduling…",
+      "scheduleCta": "Schedule",
+      "cancelCta": "Cancel"
+    },
+    "library": {
+      "generationsTitle": "Generations",
+      "noGenerations": "No generations yet.",
+      "type": {
+        "IMAGE": "Image",
+        "IMAGE_TO_VIDEO": "Video",
+        "CAPTION": "Caption",
+        "VOICE": "Voice",
+        "CAMPAIGN_ASSET": "Campaign asset"
+      },
+      "status": {
+        "QUEUED": "Queued",
+        "GENERATING": "Generating",
+        "COMPLETED": "Completed",
+        "FAILED": "Failed"
+      },
+      "creditsUsed": "{count} credits",
+      "adding": "Adding…",
+      "createPostCta": "Add to campaign",
+      "addedToCampaign": "Added as a draft post",
+      "draftPostsTitle": "Draft posts",
+      "noDrafts": "No draft posts.",
+      "noCaption": "No caption",
+      "requestApprovalCta": "Request approval"
+    },
+    "socialAccounts": {
+      "platformLabel": "Platform",
+      "connecting": "Connecting…",
+      "connectCta": "Connect account",
+      "mockNotice": "Real Instagram/Facebook/TikTok/YouTube publishing requires platform app approval — this connects a test account.",
+      "disconnectCta": "Disconnect",
+      "platformStatusTitle": "Platform support",
+      "capabilityFull": "Connected & publishable",
+      "capabilityBlocked": "Real publishing not yet available",
+      "empty": "No social accounts connected.",
+      "status": {
+        "CONNECTED": "Connected",
+        "NEEDS_REAUTH": "Needs reconnect",
+        "ERROR": "Error",
+        "DISCONNECTED": "Disconnected"
+      }
+    },
+    "analytics": {
+      "creditsAvailable": "Credits available",
+      "creditsConsumed": "Credits consumed",
+      "avgLatency": "Avg. generation latency",
+      "generationsByType": "Generations by type",
+      "noData": "No data yet.",
+      "postsByPlatform": "Posts by platform",
+      "autopilotPublished": "{count} posts published via autopilot",
+      "avgApprovalTurnaround": "~{hours}h average approval turnaround"
     }
   }
 }

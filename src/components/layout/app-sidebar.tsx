@@ -17,6 +17,7 @@ import {
   Bell,
   Settings,
   Dna,
+  Wand2,
 } from "lucide-react";
 import { Link, usePathname } from "@/i18n/routing";
 import { cn } from "@/lib/utils";
@@ -32,6 +33,7 @@ type NavItem = {
 const NAV: NavItem[] = [
   { href: "/dashboard", key: "dashboard", icon: LayoutDashboard },
   { href: "/inbox", key: "inbox", icon: Inbox, permission: "inbox:read" },
+  { href: "/creator-studio", key: "creatorStudio", icon: Wand2, permission: "creator:read" },
   { href: "/chat", key: "chat", icon: MessageSquare, permission: "chat:use" },
   { href: "/voice", key: "voice", icon: Phone, permission: "voice:view-calls" },
   { href: "/crm/contacts", key: "contacts", icon: Users, permission: "crm:read" },

@@ -30,6 +30,7 @@ type RateLimiters = {
   anonDemo: Ratelimit;
   businessDnaExtract: Ratelimit;
   inboxEmailWebhook: Ratelimit;
+  creatorGenerate: Ratelimit;
 };
 
 let rateLimitersClient: RateLimiters | null = null;
@@ -75,6 +76,14 @@ function getRateLimiters(): RateLimiters {
       limiter: Ratelimit.slidingWindow(60, "1 m"),
       prefix: "rl:inbox-email-webhook",
     }),
+    // Cost-amplifying (consumes credits + calls an AI provider) — a tighter
+    // limit than the generic "api" limiter (§4: rate-limit every
+    // state-changing, cost-amplifying endpoint).
+    creatorGenerate: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(20, "1 m"),
+      prefix: "rl:creator-generate",
+    }),
   };
   return rateLimitersClient;
 }
@@ -100,6 +109,9 @@ export const rateLimiters = {
   },
   get inboxEmailWebhook() {
     return getRateLimiters().inboxEmailWebhook;
+  },
+  get creatorGenerate() {
+    return getRateLimiters().creatorGenerate;
   },
 } satisfies RateLimiters;
 

@@ -82,6 +82,107 @@ const globalPrompts: Array<{
   },
 ];
 
+/** Global Creator Studio templates (Phase 8) — organizationId null, same convention as globalPrompts. */
+const globalCreatorTemplates: Array<{
+  name: string;
+  slug: string;
+  category: string;
+  generationType: "IMAGE" | "IMAGE_TO_VIDEO" | "CAPTION" | "VOICE" | "CAMPAIGN_ASSET";
+  aspectRatio: string;
+  promptTemplate: string;
+}> = [
+  {
+    name: "Luxury portrait",
+    slug: "luxury-portrait",
+    category: "Business",
+    generationType: "IMAGE",
+    aspectRatio: "4:5",
+    promptTemplate:
+      "A polished, high-end editorial portrait of {{character}}, soft studio lighting, luxury aesthetic, shallow depth of field.",
+  },
+  {
+    name: "Business professional",
+    slug: "business-professional",
+    category: "Business",
+    generationType: "IMAGE",
+    aspectRatio: "4:5",
+    promptTemplate:
+      "A confident professional headshot of {{character}} in business attire, clean neutral background, natural light.",
+  },
+  {
+    name: "Restaurant promotion",
+    slug: "restaurant-promotion",
+    category: "Restaurant",
+    generationType: "IMAGE",
+    aspectRatio: "1:1",
+    promptTemplate:
+      "{{character}} presenting {{dish}} at a warm, inviting restaurant table, appetizing food styling, natural light.",
+  },
+  {
+    name: "Product showcase",
+    slug: "product-showcase",
+    category: "Product",
+    generationType: "IMAGE",
+    aspectRatio: "1:1",
+    promptTemplate:
+      "{{character}} showcasing {{product}} against a clean minimal background, product-photography lighting.",
+  },
+  {
+    name: "Travel creator",
+    slug: "travel-creator",
+    category: "Travel",
+    generationType: "IMAGE",
+    aspectRatio: "9:16",
+    promptTemplate:
+      "{{character}} exploring {{destination}}, candid travel-influencer style, golden-hour light, vertical framing.",
+  },
+  {
+    name: "Fashion creator",
+    slug: "fashion-creator",
+    category: "Fashion",
+    generationType: "IMAGE",
+    aspectRatio: "4:5",
+    promptTemplate:
+      "{{character}} wearing {{outfit}}, editorial fashion photography, dynamic pose, urban backdrop.",
+  },
+  {
+    name: "UGC testimonial",
+    slug: "ugc-testimonial",
+    category: "UGC",
+    generationType: "IMAGE_TO_VIDEO",
+    aspectRatio: "9:16",
+    promptTemplate:
+      "{{character}} speaking directly to camera about {{product}}, authentic handheld UGC style, casual setting.",
+  },
+  {
+    name: "TikTok hook",
+    slug: "tiktok-hook",
+    category: "TikTok",
+    generationType: "IMAGE_TO_VIDEO",
+    aspectRatio: "9:16",
+    promptTemplate:
+      "{{character}} delivering a punchy opening hook about {{topic}} directly to camera, high-energy TikTok style.",
+  },
+  {
+    name: "Instagram Reel promo",
+    slug: "instagram-reel-promo",
+    category: "Reels",
+    generationType: "IMAGE_TO_VIDEO",
+    aspectRatio: "9:16",
+    promptTemplate:
+      "{{character}} promoting {{offer}} in a fast-paced Instagram Reel style with quick motion.",
+  },
+  {
+    name: "YouTube Short intro",
+    slug: "youtube-short-intro",
+    category: "Shorts",
+    generationType: "IMAGE_TO_VIDEO",
+    aspectRatio: "9:16",
+    promptTemplate:
+      "{{character}} introducing a YouTube Short about {{topic}}, energetic intro framing, direct eye contact.",
+  },
+];
+
 async function main() {
   for (const p of globalPrompts) {
     const existing = await prisma.prompt.findFirst({
@@ -94,6 +195,16 @@ async function main() {
     }
   }
   console.log(`Seeded ${globalPrompts.length} global prompts.`);
+
+  for (const t of globalCreatorTemplates) {
+    const existing = await prisma.creatorTemplate.findFirst({
+      where: { organizationId: null, slug: t.slug },
+    });
+    if (!existing) {
+      await prisma.creatorTemplate.create({ data: { ...t, organizationId: null } });
+    }
+  }
+  console.log(`Seeded ${globalCreatorTemplates.length} global Creator Studio templates.`);
 }
 
 main()

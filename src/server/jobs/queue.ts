@@ -19,7 +19,8 @@ export type JobName =
   | "post-call"
   | "usage-rollup"
   | "send-reminder"
-  | "calendar-sync";
+  | "calendar-sync"
+  | "publish-creator-post";
 
 /** Enqueue an async job (§2.2). Delivered to /api/v1/jobs/{name} with QStash signature. */
 export async function enqueue(

@@ -71,6 +71,11 @@ const serverSchema = z.object({
   // dashboard's Webhooks page for the endpoint below — distinct from
   // INBOX_EMAIL_WEBHOOK_SECRET, which gates the provider-agnostic endpoint.
   RESEND_INBOUND_WEBHOOK_SECRET: z.string().optional(),
+
+  // Creator Studio social account token encryption (optional — the mock
+  // publishing provider used in dev/test/CI never touches this; real OAuth
+  // adapters fail closed via getSocialEnv() if it is unset).
+  SOCIAL_TOKEN_ENCRYPTION_KEY: z.string().min(32).optional(),
 });
 
 function providerEnvError(label: string, invalidFields: string[]): Error {

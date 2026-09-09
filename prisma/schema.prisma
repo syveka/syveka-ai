@@ -95,6 +95,16 @@ model Organization {
   businessDnaServices    BusinessDnaService[]
   inboxThreads           InboxThread[]
   inboxMailboxes         InboxMailbox[]
+  creatorProfiles        CreatorProfile[]
+  creatorReferenceAssets CreatorReferenceAsset[]
+  creatorTemplates       CreatorTemplate[]
+  creatorGenerations     CreatorGeneration[]
+  creatorCampaigns       CreatorCampaign[]
+  creatorPosts           CreatorPost[]
+  socialAccounts         SocialAccount[]
+  creatorCreditBalance   CreatorCreditBalance?
+  creatorCreditTxns      CreatorCreditTransaction[]
+  creatorCreditGrants    CreatorCreditGrant[]
 
   @@map("organizations")
 }
@@ -1472,4 +1482,357 @@ model AuditLog {
   @@index([organizationId, createdAt])
   @@index([organizationId, resourceType, resourceId])
   @@map("audit_logs")
+}
+
+// ───────────────────────── CREATOR STUDIO ─────────────────────────
+//
+// Business DNA → Content Idea → AI Character → Image → Video → Caption →
+// Client Approval → Schedule → Auto-Publish → Analytics. Reuses the platform's
+// existing tenant/RBAC/credits-adjacent (UsageRecord), audit, notification,
+// job-queue (QStash), and storage (Supabase) infrastructure rather than
+// standing up parallel systems — see docs/creator-studio.md. Feature-gated
+// behind Organization.settings["creator_studio_v1"] (no dedicated flag table
+// exists yet in this codebase; see docs/creator-studio.md §Feature flags for
+// why this repurposes the existing generic settings bag rather than adding
+// one for a single feature).
+
+enum CreatorProfileStatus {
+  DRAFT
+  ACTIVE
+  ARCHIVED
+}
+
+model CreatorProfile {
+  id                 String               @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String               @map("organization_id") @db.Uuid
+  ownerUserId        String?              @map("owner_user_id") @db.Uuid
+  displayName        String               @map("display_name")
+  slug               String
+  status             CreatorProfileStatus @default(DRAFT)
+  description        String?
+  avatarAssetId      String?              @map("avatar_asset_id") @db.Uuid
+  consentConfirmedAt DateTime?            @map("consent_confirmed_at")
+  createdAt          DateTime             @default(now()) @map("created_at")
+  updatedAt          DateTime             @updatedAt @map("updated_at")
+
+  organization    Organization            @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  referenceAssets CreatorReferenceAsset[]
+  generations     CreatorGeneration[]
+  posts           CreatorPost[]
+
+  @@unique([organizationId, slug])
+  @@index([organizationId, status])
+  @@map("creator_profiles")
+}
+
+enum CreatorAssetSource {
+  UPLOAD
+  GENERATED
+}
+
+enum CreatorAssetValidationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+/// Approved reference/training images a creator profile was built from
+/// (consent-gated — see CreatorProfile.consentConfirmedAt). Never used for
+/// silent face-recognition/surveillance purposes (§ Phase 18); only for the
+/// generation the org explicitly requests.
+model CreatorReferenceAsset {
+  id               String                        @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  creatorProfileId String                        @map("creator_profile_id") @db.Uuid
+  organizationId   String                        @map("organization_id") @db.Uuid
+  storagePath      String                        @map("storage_path")
+  assetType        String                        @map("asset_type")
+  mimeType         String                        @map("mime_type")
+  sizeBytes        Int                           @map("size_bytes")
+  source           CreatorAssetSource            @default(UPLOAD)
+  validationStatus CreatorAssetValidationStatus  @default(PENDING) @map("validation_status")
+  createdAt        DateTime                      @default(now()) @map("created_at")
+
+  organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creatorProfile CreatorProfile @relation(fields: [creatorProfileId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, creatorProfileId])
+  @@map("creator_reference_assets")
+}
+
+enum CreatorGenerationType {
+  IMAGE
+  IMAGE_TO_VIDEO
+  CAPTION
+  VOICE
+  CAMPAIGN_ASSET
+}
+
+/// Reusable prompt/visual templates (Phase 8). organizationId is null for
+/// global, platform-curated templates — same pattern as Prompt (§15.7):
+/// reads merge org + global via unscopedPrisma, writes are always org-scoped
+/// via tenantDb.
+model CreatorTemplate {
+  id              String                @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String?               @map("organization_id") @db.Uuid
+  name            String
+  slug            String
+  category        String
+  promptTemplate  String                @map("prompt_template")
+  generationType  CreatorGenerationType @map("generation_type")
+  aspectRatio     String                @map("aspect_ratio")
+  active          Boolean               @default(true)
+  metadata        Json                  @default("{}")
+  createdAt       DateTime              @default(now()) @map("created_at")
+  updatedAt       DateTime              @updatedAt @map("updated_at")
+
+  organization Organization?        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  generations  CreatorGeneration[]
+
+  @@index([organizationId, category, active])
+  @@map("creator_templates")
+}
+
+enum CreatorGenerationStatus {
+  QUEUED
+  GENERATING
+  COMPLETED
+  FAILED
+}
+
+/// Every AI generation request (image, image-to-video, caption, ...) — the
+/// audit trail for credits spent and provider calls made (Phase 2 + 23).
+model CreatorGeneration {
+  id                 String                   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String                   @map("organization_id") @db.Uuid
+  creatorProfileId   String?                  @map("creator_profile_id") @db.Uuid
+  generationType     CreatorGenerationType    @map("generation_type")
+  provider           String
+  model              String
+  prompt             String
+  negativePrompt     String?                  @map("negative_prompt")
+  templateId         String?                  @map("template_id") @db.Uuid
+  inputAssetIds      String[]                 @default([]) @map("input_asset_ids")
+  outputAssetIds     String[]                 @default([]) @map("output_asset_ids")
+  /// Structured non-asset output (currently: CAPTION's {primary, short, cta,
+  /// hashtags}). IMAGE/IMAGE_TO_VIDEO/CAMPAIGN_ASSET results live in
+  /// outputAssetIds + CreatorReferenceAsset rows instead; this stays null.
+  output             Json?
+  status             CreatorGenerationStatus  @default(QUEUED)
+  creditsReserved    Int                      @default(0) @map("credits_reserved")
+  creditsConsumed    Int                      @default(0) @map("credits_consumed")
+  latencyMs          Int?                     @map("latency_ms")
+  providerRequestId  String?                  @map("provider_request_id")
+  errorCode          String?                  @map("error_code")
+  errorMessageSafe   String?                  @map("error_message_safe")
+  createdById        String                   @map("created_by_id") @db.Uuid
+  createdAt          DateTime                 @default(now()) @map("created_at")
+  completedAt        DateTime?                @map("completed_at")
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  creatorProfile CreatorProfile?  @relation(fields: [creatorProfileId], references: [id], onDelete: SetNull)
+  template       CreatorTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
+  creditTxns     CreatorCreditTransaction[]
+
+  @@index([organizationId, creatorProfileId, createdAt])
+  @@index([organizationId, status])
+  @@map("creator_generations")
+}
+
+enum CreatorCampaignStatus {
+  DRAFT
+  ACTIVE
+  PAUSED
+  COMPLETED
+  ARCHIVED
+}
+
+enum CreatorCampaignApprovalMode {
+  MANUAL
+  APPROVAL
+  AUTOPILOT
+}
+
+enum SocialPlatform {
+  INSTAGRAM
+  FACEBOOK
+  TIKTOK
+  YOUTUBE
+}
+
+/// Autopilot must be opt-in (§ Phase 10): autopilotEnabled defaults false,
+/// and autopilotRules (max posts/week, allowed platforms/templates/hours,
+/// monthly cap, allowed languages) is only read/enforced when it is true —
+/// see evaluateAutopilotRules in src/server/services/creator-publishing.ts.
+model CreatorCampaign {
+  id                 String                      @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId     String                      @map("organization_id") @db.Uuid
+  name               String
+  objective          String?
+  status             CreatorCampaignStatus       @default(DRAFT)
+  targetPlatforms    SocialPlatform[]            @default([]) @map("target_platforms")
+  targetLanguages    Locale[]                    @default([]) @map("target_languages")
+  targetPostsPerWeek Int?                        @map("target_posts_per_week")
+  startsAt           DateTime?                   @map("starts_at")
+  endsAt             DateTime?                   @map("ends_at")
+  approvalMode       CreatorCampaignApprovalMode @default(APPROVAL) @map("approval_mode")
+  autopilotEnabled   Boolean                     @default(false) @map("autopilot_enabled")
+  autopilotRules     Json?                       @map("autopilot_rules")
+  createdById        String                      @map("created_by_id") @db.Uuid
+  createdAt          DateTime                    @default(now()) @map("created_at")
+  updatedAt          DateTime                    @updatedAt @map("updated_at")
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  posts        CreatorPost[]
+
+  @@index([organizationId, status])
+  @@map("creator_campaigns")
+}
+
+enum CreatorPostApprovalStatus {
+  DRAFT
+  PENDING_APPROVAL
+  APPROVED
+  REJECTED
+  CHANGES_REQUESTED
+}
+
+enum CreatorPostPublishStatus {
+  NOT_SCHEDULED
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  FAILED
+  CANCELED
+}
+
+/// A material content edit after approval bumps contentVersion and resets
+/// approvalStatus to PENDING_APPROVAL (approvedContentVersion records which
+/// version was actually approved) — see requestPostApproval/updatePostContent
+/// in src/server/services/creator-posts.ts. A scheduled job must never
+/// publish a post whose approvedContentVersion != contentVersion.
+model CreatorPost {
+  id                     String                     @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId         String                     @map("organization_id") @db.Uuid
+  campaignId             String?                    @map("campaign_id") @db.Uuid
+  creatorProfileId       String?                    @map("creator_profile_id") @db.Uuid
+  assetIds               String[]                   @default([]) @map("asset_ids")
+  caption                String?
+  hashtags               String[]                   @default([])
+  platform               SocialPlatform
+  socialAccountId        String?                    @map("social_account_id") @db.Uuid
+  approvalStatus         CreatorPostApprovalStatus  @default(DRAFT) @map("approval_status")
+  contentVersion         Int                        @default(1) @map("content_version")
+  approvedContentVersion Int?                       @map("approved_content_version")
+  approvedById           String?                    @map("approved_by_id") @db.Uuid
+  approvedAt             DateTime?                  @map("approved_at")
+  scheduledFor           DateTime?                  @map("scheduled_for")
+  publishStatus          CreatorPostPublishStatus   @default(NOT_SCHEDULED) @map("publish_status")
+  externalPostId         String?                    @map("external_post_id")
+  publishAttemptCount    Int                        @default(0) @map("publish_attempt_count")
+  publishedAt            DateTime?                  @map("published_at")
+  lastErrorCode          String?                    @map("last_error_code")
+  lastErrorSafe          String?                    @map("last_error_safe")
+  createdById            String                     @map("created_by_id") @db.Uuid
+  createdAt              DateTime                   @default(now()) @map("created_at")
+  updatedAt              DateTime                   @updatedAt @map("updated_at")
+
+  organization   Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  campaign       CreatorCampaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  creatorProfile CreatorProfile?  @relation(fields: [creatorProfileId], references: [id], onDelete: SetNull)
+  socialAccount  SocialAccount?   @relation(fields: [socialAccountId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, publishStatus, scheduledFor])
+  @@index([organizationId, campaignId])
+  @@index([organizationId, approvalStatus])
+  @@map("creator_posts")
+}
+
+/// Connected publishing destinations. Token material is app-layer encrypted
+/// (accessTokenEnc/refreshTokenEnc — same envelope convention as
+/// CalendarConnection) and is never sent to the browser; only status/
+/// metadata are exposed to the client (§ Phase 11, §17).
+model SocialAccount {
+  id               String           @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId   String           @map("organization_id") @db.Uuid
+  platform         SocialPlatform
+  externalAccountId String          @map("external_account_id")
+  displayName      String           @map("display_name")
+  accessTokenEnc   String?          @map("access_token_enc")
+  refreshTokenEnc  String?          @map("refresh_token_enc")
+  scopes           String[]         @default([])
+  status           ConnectionStatus @default(CONNECTED)
+  tokenExpiresAt   DateTime?        @map("token_expires_at")
+  lastError        String?          @map("last_error")
+  lastCheckedAt    DateTime?        @map("last_checked_at")
+  createdAt        DateTime         @default(now()) @map("created_at")
+  updatedAt        DateTime         @updatedAt @map("updated_at")
+
+  organization Organization  @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  posts        CreatorPost[]
+
+  @@unique([organizationId, platform, externalAccountId])
+  @@index([organizationId, status])
+  @@map("social_accounts")
+}
+
+// ───────────────────────── CREATOR STUDIO: CREDITS ─────────────────────────
+//
+// Server-side-only reserve → commit/release ledger (Phase 2). Balances are
+// mutated exclusively through atomic conditional UPDATEs (see
+// src/server/services/creator-credits.ts) so concurrent reservations can
+// never overspend; the client never supplies or influences a balance value.
+
+model CreatorCreditBalance {
+  organizationId   String   @id @map("organization_id") @db.Uuid
+  availableCredits Int      @default(0) @map("available_credits")
+  reservedCredits  Int      @default(0) @map("reserved_credits")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("creator_credit_balances")
+}
+
+enum CreditTransactionType {
+  GRANT
+  RESERVE
+  COMMIT
+  RELEASE
+  ADJUSTMENT
+}
+
+/// Append-only ledger — every reservation/debit/release/grant is recorded
+/// (Phase 2 requirement: "Log every reservation/debit/release").
+model CreatorCreditTransaction {
+  id             String                 @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String                 @map("organization_id") @db.Uuid
+  generationId   String?                @map("generation_id") @db.Uuid
+  type           CreditTransactionType
+  amount         Int
+  reason         String?
+  createdById    String?                @map("created_by_id") @db.Uuid
+  createdAt      DateTime               @default(now()) @map("created_at")
+
+  organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  generation   CreatorGeneration? @relation(fields: [generationId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+  @@index([generationId])
+  @@map("creator_credit_transactions")
+}
+
+/// Idempotent monthly plan-based credit grant ledger — one row per
+/// (organization, calendar-month period). See ensureMonthlyCreditGrant in
+/// src/server/services/creator-credits.ts.
+model CreatorCreditGrant {
+  id             String   @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId String   @map("organization_id") @db.Uuid
+  periodStart    DateTime @map("period_start")
+  amount         Int
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, periodStart])
+  @@map("creator_credit_grants")
 }
