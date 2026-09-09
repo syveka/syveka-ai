@@ -76,6 +76,18 @@ const serverSchema = z.object({
   // publishing provider used in dev/test/CI never touches this; real OAuth
   // adapters fail closed via getSocialEnv() if it is unset).
   SOCIAL_TOKEN_ENCRYPTION_KEY: z.string().min(32).optional(),
+
+  // Creator Studio real media generation (optional — falls back to the mock
+  // provider when unset, in dev/test/CI and any environment without a key).
+  FAL_API_KEY: z.string().optional(),
+  FAL_IMAGE_MODEL: z.string().optional(),
+  FAL_IMAGE_TO_VIDEO_MODEL: z.string().optional(),
+
+  // Creator Studio real Instagram/Facebook publishing via the Meta Graph
+  // API (optional — falls back to the mock social provider when unset).
+  META_APP_ID: z.string().optional(),
+  META_APP_SECRET: z.string().optional(),
+  META_GRAPH_API_VERSION: z.string().optional(),
 });
 
 function providerEnvError(label: string, invalidFields: string[]): Error {

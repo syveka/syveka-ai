@@ -34,9 +34,16 @@ const BASE_CREDIT_COST: Record<CreatorGenerationType, number> = {
   CAMPAIGN_ASSET: 15,
 };
 
-/** Per-provider cost multiplier — the only place a new real provider's pricing is registered. */
+/**
+ * Per-provider cost multiplier — the only place a new real provider's
+ * pricing is registered. fal.ai's real per-generation cost is materially
+ * higher than the free mock provider (Kling video in particular), so its
+ * multiplier is set above 1 to keep an org's credit grant roughly tracking
+ * real spend; adjust here if fal.ai's own pricing changes, never per-call.
+ */
 const PROVIDER_COST_MULTIPLIER: Record<string, number> = {
   mock: 1,
+  fal: 2,
 };
 
 /**

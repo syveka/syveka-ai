@@ -1,10 +1,9 @@
 import "server-only";
 
-import { MockCreatorMediaProvider } from "./mock-provider";
 import { ClaudeCaptionProvider } from "./caption-provider";
+import { getRoutedCreatorMediaProvider } from "./router";
 import type { CreatorMediaProvider, CreatorCaptionProvider } from "./types";
 
-const mediaProvider: CreatorMediaProvider = new MockCreatorMediaProvider();
 const captionProvider: CreatorCaptionProvider = new ClaudeCaptionProvider();
 
 /**
@@ -12,9 +11,11 @@ const captionProvider: CreatorCaptionProvider = new ClaudeCaptionProvider();
  * its own provider independently — a real image/video vendor can be added
  * later (by cost/quality/latency/region/plan) without touching caption
  * routing, and vice versa. Callers never import a provider SDK directly.
+ * Media provider resolution (mock vs. fal.ai vs. a future premium provider)
+ * lives in ./router.ts.
  */
 export function getCreatorMediaProvider(): CreatorMediaProvider {
-  return mediaProvider;
+  return getRoutedCreatorMediaProvider();
 }
 
 export function getCreatorCaptionProvider(): CreatorCaptionProvider {
@@ -22,3 +23,4 @@ export function getCreatorCaptionProvider(): CreatorCaptionProvider {
 }
 
 export * from "./types";
+export type { CreatorMediaProviderName } from "./router";
