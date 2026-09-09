@@ -85,6 +85,13 @@ for (const [expectedTable, migrationDir] of LEGACY_MISSING_TABLE_ENTRIES) {
 //   - calendar_connections.scopes     -> NOT NULL  (prisma/migrations/20260713000000_calendar_booking_v1/migration.sql:104)
 //   - business_dna.supported_locales  -> NOT NULL  (prisma/migrations/20260811000000_business_dna_v1/migration.sql:10)
 //   - business_dna.key_facts          -> NOT NULL  (prisma/migrations/20260811000000_business_dna_v1/migration.sql:17)
+//   - creator_generations.input_asset_ids  -> NOT NULL  (prisma/migrations/20260908000000_creator_studio_v1/migration.sql:124)
+//   - creator_generations.output_asset_ids -> NOT NULL  (prisma/migrations/20260908000000_creator_studio_v1/migration.sql:125)
+//   - creator_campaigns.target_platforms   -> NOT NULL  (prisma/migrations/20260908000000_creator_studio_v1/migration.sql:156)
+//   - creator_campaigns.target_languages    -> NOT NULL  (prisma/migrations/20260908000000_creator_studio_v1/migration.sql:157)
+//   - social_accounts.scopes               -> NOT NULL  (prisma/migrations/20260908000000_creator_studio_v1/migration.sql:182)
+//   - creator_posts.asset_ids              -> NOT NULL  (prisma/migrations/20260908000000_creator_studio_v1/migration.sql:203)
+//   - creator_posts.hashtags               -> NOT NULL  (prisma/migrations/20260908000000_creator_studio_v1/migration.sql:205)
 const LIST_COLUMN_NOT_NULL_ENTRIES = [
   ["api_keys.scopes", false],
   ["webhook_endpoints.events", false],
@@ -92,6 +99,13 @@ const LIST_COLUMN_NOT_NULL_ENTRIES = [
   ["calendar_connections.scopes", true],
   ["business_dna.supported_locales", true],
   ["business_dna.key_facts", true],
+  ["creator_generations.input_asset_ids", true],
+  ["creator_generations.output_asset_ids", true],
+  ["creator_campaigns.target_platforms", true],
+  ["creator_campaigns.target_languages", true],
+  ["social_accounts.scopes", true],
+  ["creator_posts.asset_ids", true],
+  ["creator_posts.hashtags", true],
 ];
 
 const seenListColumnKeys = new Set();

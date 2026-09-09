@@ -141,6 +141,32 @@ if (mode === "identity") {
 } else if (mode === "e2e") {
   requireSettings(["E2E_USER_EMAIL", "E2E_USER_PASSWORD"]);
   console.log("Required authenticated staging E2E setting names are present.");
+} else if (mode === "creator-studio") {
+  requireSettings([
+    "STAGING_FAL_API_KEY",
+    "STAGING_META_APP_ID",
+    "STAGING_META_APP_SECRET",
+    "STAGING_SOCIAL_TOKEN_ENCRYPTION_KEY",
+  ]);
+
+  // Meta App IDs are always numeric (see the Meta App dashboard) -- this is a shape
+  // check only, independent of STAGING_META_APP_SECRET (checked for presence only
+  // above, never for shape or content, since there is no public secret format to
+  // validate against without risking echoing it).
+  if (!/^\d+$/.test(process.env.STAGING_META_APP_ID)) {
+    throw new Error("STAGING_META_APP_ID must be a numeric Meta App ID.");
+  }
+
+  // Same runtime requirement as src/server/integrations/social/crypto.ts's
+  // getKey(): AES-256-GCM needs exactly a 32-byte key, base64-encoded.
+  const socialTokenKey = Buffer.from(process.env.STAGING_SOCIAL_TOKEN_ENCRYPTION_KEY, "base64");
+  if (socialTokenKey.length !== 32) {
+    throw new Error("STAGING_SOCIAL_TOKEN_ENCRYPTION_KEY must be 32 bytes, base64-encoded.");
+  }
+
+  console.log("Creator Studio provider configuration is present and correctly shaped.");
 } else {
-  throw new Error("STAGING_CONFIG_MODE must be identity, storage, embedding, runtime, or e2e.");
+  throw new Error(
+    "STAGING_CONFIG_MODE must be identity, storage, embedding, runtime, e2e, or creator-studio.",
+  );
 }

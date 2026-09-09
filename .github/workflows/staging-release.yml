@@ -187,6 +187,15 @@ jobs:
           STAGING_CONFIG_MODE: embedding
           STAGING_OPENAI_API_KEY: ${{ secrets.STAGING_OPENAI_API_KEY }}
 
+      - name: Verify Creator Studio provider configuration
+        run: node scripts/validate-staging-config.mjs
+        env:
+          STAGING_CONFIG_MODE: creator-studio
+          STAGING_FAL_API_KEY: ${{ secrets.STAGING_FAL_API_KEY }}
+          STAGING_META_APP_ID: ${{ secrets.STAGING_META_APP_ID }}
+          STAGING_META_APP_SECRET: ${{ secrets.STAGING_META_APP_SECRET }}
+          STAGING_SOCIAL_TOKEN_ENCRYPTION_KEY: ${{ secrets.STAGING_SOCIAL_TOKEN_ENCRYPTION_KEY }}
+
       - name: Build staging deployment with pinned Vercel CLI
         run: |
           npx --yes "vercel@$VERCEL_CLI_VERSION" pull --yes --environment=preview --token="$STAGING_VERCEL_TOKEN"
