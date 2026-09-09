@@ -24,7 +24,7 @@ export default async function CreatorSocialAccountsPage() {
       {canManage ? (
         <Card>
           <CardContent className="py-4">
-            <ConnectSocialAccountForm />
+            <ConnectSocialAccountForm capabilities={capabilities} />
           </CardContent>
         </Card>
       ) : null}

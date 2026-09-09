@@ -1,6 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
+import { redirect } from "next/navigation";
 import { requirePermission } from "@/server/auth/guard";
 import {
   createCreatorProfile,
@@ -26,6 +27,8 @@ import {
 import {
   connectSocialAccount,
   disconnectSocialAccount,
+  startMetaOAuthUrl,
+  SocialConnectError,
 } from "@/server/services/creator-social-accounts";
 import {
   createCreatorProfileSchema,
@@ -259,4 +262,18 @@ export async function disconnectSocialAccountAction(
   await disconnectSocialAccount(ctx, accountId);
   revalidatePath("/creator-studio/social-accounts");
   return {};
+}
+
+/** Redirects the browser to Meta's OAuth dialog for real Instagram/Facebook publishing. */
+export async function startMetaOAuthAction(
+  platform: "INSTAGRAM" | "FACEBOOK",
+): Promise<CreatorActionState> {
+  const ctx = await requirePermission("creator:manage-social-accounts");
+  let url: string;
+  try {
+    url = startMetaOAuthUrl(ctx, platform);
+  } catch (e) {
+    return { error: e instanceof SocialConnectError ? e.code : "connect_failed" };
+  }
+  redirect(url);
 }

@@ -3,10 +3,38 @@ import "server-only";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { getSocialPublishingProvider } from "@/server/social";
 import { decryptSocialToken } from "@/server/integrations/social/crypto";
+import { createSupabaseAdmin } from "@/server/supabase/server";
 import { audit } from "./audit";
 import { notifyUser } from "./creator-notifications";
 import { evaluateAutopilotRules } from "./creator-posts";
 import type { AutopilotRules } from "@/lib/validators/creator-studio";
+
+const REFERENCE_ASSETS_BUCKET = "creator-reference-assets";
+const GENERATED_MEDIA_BUCKET = "creator-generated-media";
+// Long enough to cover a real provider's full publish flow (e.g. Instagram's
+// media-container processing, which can take up to ~2 minutes — see
+// src/server/integrations/meta/client.ts), not just the initial upload.
+const ASSET_SIGNED_URL_TTL_SECONDS = 3600;
+
+/**
+ * Signs a fetchable URL for a post's asset so a real SocialPublishingProvider
+ * can hand it to the platform's API server-to-server (Meta and every other
+ * real platform fetch media by URL rather than accepting an upload body).
+ * Only this publishing engine knows which bucket an asset lives in
+ * (UPLOAD → reference bucket, GENERATED → generated-media bucket) — a
+ * provider never signs storage URLs itself.
+ */
+async function signAssetUrl(asset: { storagePath: string; source: string }): Promise<string> {
+  const bucket = asset.source === "GENERATED" ? GENERATED_MEDIA_BUCKET : REFERENCE_ASSETS_BUCKET;
+  const admin = createSupabaseAdmin();
+  const { data, error } = await admin.storage
+    .from(bucket)
+    .createSignedUrl(asset.storagePath, ASSET_SIGNED_URL_TTL_SECONDS);
+  if (error || !data) {
+    throw new PublishGuardError("asset_sign_failed", "Failed to prepare media for publishing.");
+  }
+  return data.signedUrl;
+}
 
 export class PublishGuardError extends Error {
   constructor(
@@ -141,6 +169,7 @@ export async function publishCreatorPost(orgId: string, postId: string): Promise
     // 8-9. Publish + persist external id.
     const provider = getSocialPublishingProvider(post.platform);
     const mediaType = assets[0]!.assetType.includes("video") ? "video" : "image";
+    const assetUrls = await Promise.all(assets.map(signAssetUrl));
     const result = await provider.publishPost(
       {
         accessToken: decryptSocialToken(post.socialAccount.accessTokenEnc),
@@ -150,6 +179,7 @@ export async function publishCreatorPost(orgId: string, postId: string): Promise
         caption: post.caption ?? "",
         hashtags: post.hashtags,
         assetStoragePaths: assets.map((a) => a.storagePath),
+        assetUrls,
         mediaType,
       },
     );

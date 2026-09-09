@@ -51,6 +51,18 @@ vi.mock("@/server/integrations/social/crypto", () => ({
   decryptSocialToken: decryptSocialTokenMock,
   encryptSocialToken: vi.fn((v: string) => `enc:${v}`),
 }));
+vi.mock("@/server/supabase/server", () => ({
+  createSupabaseAdmin: () => ({
+    storage: {
+      from: () => ({
+        createSignedUrl: async () => ({
+          data: { signedUrl: "https://storage.example/signed/asset.png" },
+          error: null,
+        }),
+      }),
+    },
+  }),
+}));
 
 import { reviewCreatorPost, schedulePost } from "@/server/services/creator-posts";
 import { publishCreatorPost } from "@/server/services/creator-publishing";

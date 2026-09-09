@@ -20,6 +20,16 @@ export interface SocialPublishRequest {
   caption: string;
   hashtags: string[];
   assetStoragePaths: string[];
+  /**
+   * Fetchable (signed, time-limited) URL for each entry in
+   * assetStoragePaths, same order/length — real platform APIs (Meta's
+   * included) fetch media by URL server-to-server rather than accepting an
+   * upload body, and never get direct access to private storage buckets.
+   * Populated by the publishing engine (src/server/services/creator-publishing.ts),
+   * which alone knows which bucket each asset lives in; providers never sign
+   * storage URLs themselves. The mock provider ignores this field.
+   */
+  assetUrls: string[];
   mediaType: SocialMediaType;
 }
 

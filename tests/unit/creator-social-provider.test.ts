@@ -20,7 +20,13 @@ describe("mock social publishing provider", () => {
 
     const result = await provider.publishPost(
       { accessToken: connection.accessToken, externalAccountId: connection.externalAccountId },
-      { caption: "hello", hashtags: ["#a"], assetStoragePaths: ["a.png"], mediaType: "image" },
+      {
+        caption: "hello",
+        hashtags: ["#a"],
+        assetStoragePaths: ["a.png"],
+        assetUrls: ["https://storage.example/a.png"],
+        mediaType: "image",
+      },
     );
     expect(result.externalPostId).toBeTruthy();
 
@@ -35,7 +41,7 @@ describe("mock social publishing provider", () => {
     await expect(
       provider.publishPost(
         { accessToken: "", externalAccountId: "x" },
-        { caption: "", hashtags: [], assetStoragePaths: [], mediaType: "image" },
+        { caption: "", hashtags: [], assetStoragePaths: [], assetUrls: [], mediaType: "image" },
       ),
     ).rejects.toThrow();
   });
@@ -64,7 +70,7 @@ describe("blocked real-platform adapters (Phase 11)", () => {
       await expect(
         adapter.publishPost(
           { accessToken: "x", externalAccountId: "y" },
-          { caption: "", hashtags: [], assetStoragePaths: [], mediaType: "image" },
+          { caption: "", hashtags: [], assetStoragePaths: [], assetUrls: [], mediaType: "image" },
         ),
       ).rejects.toBeInstanceOf(SocialProviderNotImplementedError);
     }

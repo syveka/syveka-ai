@@ -7,8 +7,23 @@ import { assertFeatureEnabled } from "./feature-flags";
 import { CREATOR_STUDIO_FLAG } from "./creator-profiles";
 import { audit } from "./audit";
 import { getSocialPublishingProvider } from "@/server/social";
+import { metaAuthorizeUrl } from "@/server/social/meta-provider";
+import { isMetaConfigured } from "@/server/integrations/meta/client";
+import { buildSocialOAuthState, verifySocialOAuthState } from "@/server/social/oauth-state";
 import { encryptSocialToken, decryptSocialToken } from "@/server/integrations/social/crypto";
 import type { SocialAccount } from "@prisma/client";
+
+export class SocialConnectError extends Error {
+  constructor(
+    message: string,
+    public readonly code: "not_configured" | "bad_state",
+  ) {
+    super(message);
+    this.name = "SocialConnectError";
+  }
+}
+
+const META_PLATFORMS = new Set<SocialPlatform>(["INSTAGRAM", "FACEBOOK"]);
 
 /** Never return token material to the caller (§17: tokens never reach the browser). */
 function omitTokens(account: SocialAccount) {
@@ -28,9 +43,17 @@ function omitTokens(account: SocialAccount) {
   };
 }
 
-/** Phase 11: OAuth connect. `authCode` is whatever the provider's callback hands back (mock: any string). */
+/**
+ * Phase 11: OAuth connect. `authCode` is whatever the provider's callback
+ * hands back — for the mock provider, any string; for the real Meta
+ * adapter, the `code` query param from Meta's OAuth redirect.
+ * `ctx` is intentionally the minimal Pick, not the full TenantContext: the
+ * Meta OAuth callback route (no browser session — see
+ * completeMetaOAuthCallback below) only has org/user id from the signed
+ * state param, not a full session.
+ */
 export async function connectSocialAccount(
-  ctx: TenantContext,
+  ctx: Pick<TenantContext, "orgId" | "userId">,
   params: { platform: SocialPlatform; authCode: string },
 ) {
   await assertFeatureEnabled(ctx.orgId, CREATOR_STUDIO_FLAG);
@@ -78,6 +101,45 @@ export async function connectSocialAccount(
   });
 
   return omitTokens(account);
+}
+
+/**
+ * Builds the Meta OAuth authorize URL for INSTAGRAM/FACEBOOK, binding the
+ * flow to (org, user, platform) via signed state — mirrors
+ * startConnectionUrl() in calendar-connections.ts. The caller (a server
+ * action) redirects the browser to this URL; Meta redirects back to
+ * completeMetaOAuthCallback below.
+ */
+export function startMetaOAuthUrl(ctx: TenantContext, platform: SocialPlatform): string {
+  if (!META_PLATFORMS.has(platform)) {
+    throw new SocialConnectError(`${platform} has no OAuth flow`, "not_configured");
+  }
+  if (!isMetaConfigured()) {
+    throw new SocialConnectError("Meta Graph API is not configured", "not_configured");
+  }
+  const state = buildSocialOAuthState(ctx.orgId, ctx.userId, platform);
+  return metaAuthorizeUrl(state);
+}
+
+/**
+ * Meta OAuth callback completion: verifies the signed state (no session
+ * cookie is trusted here — this is a top-level redirect from Meta, exactly
+ * like completeConnection() in calendar-connections.ts), then connects the
+ * account under the org/user/platform the state was signed for. Meta's
+ * redirect only ever echoes back `code`/`state`/`error` — the platform
+ * comes solely from the cryptographically-bound state, never from a
+ * caller-supplied value.
+ */
+export async function completeMetaOAuthCallback(params: {
+  code: string;
+  state: string;
+}): Promise<{ orgId: string; accountId: string }> {
+  const { orgId, userId, platform } = verifySocialOAuthState(params.state);
+  const account = await connectSocialAccount(
+    { orgId, userId },
+    { platform, authCode: params.code },
+  );
+  return { orgId, accountId: account.id };
 }
 
 export async function listSocialAccounts(ctx: TenantContext) {

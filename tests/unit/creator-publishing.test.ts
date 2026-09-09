@@ -6,6 +6,7 @@ const {
   decryptSocialTokenMock,
   auditMock,
   notifyUserMock,
+  createSignedUrlMock,
 } = vi.hoisted(() => ({
   unscopedPrismaMock: {
     creatorPost: {
@@ -20,6 +21,10 @@ const {
   decryptSocialTokenMock: vi.fn(() => "plain-token"),
   auditMock: vi.fn(async () => undefined),
   notifyUserMock: vi.fn(async () => undefined),
+  createSignedUrlMock: vi.fn(async () => ({
+    data: { signedUrl: "https://storage.example/signed/asset.png" },
+    error: null,
+  })),
 }));
 
 vi.mock("@/server/db/tenant", () => ({ unscopedPrisma: unscopedPrismaMock, tenantDb: vi.fn() }));
@@ -29,6 +34,11 @@ vi.mock("@/server/social", () => ({
 vi.mock("@/server/integrations/social/crypto", () => ({
   decryptSocialToken: decryptSocialTokenMock,
   encryptSocialToken: vi.fn((v: string) => `enc:${v}`),
+}));
+vi.mock("@/server/supabase/server", () => ({
+  createSupabaseAdmin: () => ({
+    storage: { from: () => ({ createSignedUrl: createSignedUrlMock }) },
+  }),
 }));
 vi.mock("@/server/services/audit", () => ({ audit: auditMock }));
 vi.mock("@/server/services/creator-notifications", () => ({ notifyUser: notifyUserMock }));

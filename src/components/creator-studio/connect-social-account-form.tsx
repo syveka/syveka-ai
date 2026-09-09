@@ -6,17 +6,31 @@ import { useRouter } from "@/i18n/routing";
 import {
   connectSocialAccountAction,
   disconnectSocialAccountAction,
+  startMetaOAuthAction,
 } from "@/actions/creator-studio";
 import { Button } from "@/components/ui/button";
 
 const PLATFORMS = ["INSTAGRAM", "FACEBOOK", "TIKTOK", "YOUTUBE"] as const;
+const META_PLATFORMS = new Set(["INSTAGRAM", "FACEBOOK"]);
 
-export function ConnectSocialAccountForm() {
+type PlatformCapability = { platform: string; capability: "full" | "blocked"; configured: boolean };
+
+export function ConnectSocialAccountForm({
+  capabilities,
+}: {
+  /** From listSocialPlatformCapabilities() — tells us whether INSTAGRAM/FACEBOOK
+   * are backed by the real Meta adapter (configured) or still fall back to mock. */
+  capabilities: PlatformCapability[];
+}) {
   const t = useTranslations("creatorStudio.socialAccounts");
   const router = useRouter();
   const [platform, setPlatform] = useState<(typeof PLATFORMS)[number]>("INSTAGRAM");
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+
+  const usesRealMeta =
+    META_PLATFORMS.has(platform) &&
+    capabilities.some((c) => c.platform === platform && c.configured);
 
   return (
     <div className="flex flex-wrap items-end gap-2">
@@ -39,6 +53,11 @@ export function ConnectSocialAccountForm() {
         onClick={() =>
           startTransition(async () => {
             setError(null);
+            if (usesRealMeta) {
+              const res = await startMetaOAuthAction(platform as "INSTAGRAM" | "FACEBOOK");
+              if (res.error) setError(res.error);
+              return;
+            }
             const res = await connectSocialAccountAction({
               platform,
               authCode: crypto.randomUUID(),
@@ -51,7 +70,9 @@ export function ConnectSocialAccountForm() {
         {pending ? t("connecting") : t("connectCta")}
       </Button>
       {error ? <p className="w-full text-sm text-destructive">{error}</p> : null}
-      <p className="w-full text-xs text-muted-foreground">{t("mockNotice")}</p>
+      {!usesRealMeta ? (
+        <p className="w-full text-xs text-muted-foreground">{t("mockNotice")}</p>
+      ) : null}
     </div>
   );
 }

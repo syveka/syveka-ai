@@ -88,6 +88,9 @@ const serverSchema = z.object({
   META_APP_ID: z.string().optional(),
   META_APP_SECRET: z.string().optional(),
   META_GRAPH_API_VERSION: z.string().optional(),
+  // HMAC secret for the Meta OAuth callback's state param (falls back to
+  // QSTASH_CURRENT_SIGNING_KEY, same pattern as CALENDAR_OAUTH_STATE_SECRET).
+  META_OAUTH_STATE_SECRET: z.string().min(16).optional(),
 });
 
 function providerEnvError(label: string, invalidFields: string[]): Error {
