@@ -6,21 +6,27 @@ document is the technical reference for the feature; it does not set policy — 
 
 ## 1. Status (read this first)
 
-Creator Studio v1 is a **real, working foundation with mocked media generation and mocked social
-publishing**. Concretely:
+Creator Studio v1 is a **real, working foundation with real image/video generation, real Instagram/
+Facebook publishing, and TikTok/YouTube still mocked/blocked pending a separate mission**. Concretely:
 
-- **Real**: tenant-scoped schema + RLS, RBAC, the credit reserve/commit/release ledger, the approval
-  state machine, autopilot rule evaluation, the scheduling/publishing engine (idempotent claim,
-  retry-safe), caption generation (calls the real Anthropic integration), audit logging, notifications,
-  FI/EN/AR i18n (RTL-correct), and the full UI flow.
-- **Mocked**: image and video generation (`MockCreatorMediaProvider` — no image/video vendor is wired in;
-  see §7). Social publishing (`MockSocialPublishingProvider`, used automatically outside production, or
-  when `CREATOR_STUDIO_SOCIAL_MOCK_PROVIDER=1`) — the four real adapters (Instagram, Facebook, TikTok,
-  YouTube) exist and implement the `SocialPublishingProvider` interface, but every method throws
-  `SocialProviderNotImplementedError`; none has OAuth app credentials configured (see §8).
+- **Real**: tenant-scoped schema + RLS (including live RLS tenant-isolation verification — §13), RBAC,
+  the credit reserve/commit/release ledger, the approval state machine, autopilot rule evaluation, the
+  scheduling/publishing engine (idempotent claim, retry-safe), caption generation (calls the real
+  Anthropic integration), audit logging, notifications, FI/EN/AR i18n (RTL-correct), the full UI flow —
+  **and now**: image/video generation via fal.ai (FLUX + Kling — §7), and Instagram/Facebook publishing
+  via the real Meta Graph API, including OAuth, token refresh, idempotent scheduled publish, retries, and
+  audit logs (§8).
+- **Config-gated, not code-gated**: both real providers above fall back to their mock implementation
+  automatically whenever their credentials (`FAL_API_KEY`; `META_APP_ID`/`META_APP_SECRET`) are unset —
+  the same code path runs in dev/CI (mocked, free, deterministic) and production (real, once configured),
+  with no separate code branch to keep in sync.
+- **Still mocked/blocked**: TikTok and YouTube publishing (`blocked-adapter.ts`) — out of scope for this
+  pass by explicit product direction; only their `SocialPublishingProvider` interfaces are preserved so a
+  future mission can implement them the same way Instagram/Facebook were.
 
-Both mocked layers are deliberately **interface-complete**: swapping in a real provider means writing one
-new adapter class, not touching any calling code.
+Every provider layer is deliberately **interface-complete**: swapping in a further provider (e.g. a
+premium video vendor, or TikTok/YouTube) means writing one new adapter class and registering it in a
+router, not touching any calling code — see §12.
 
 Behind the `creator_studio_v1` feature flag (§9) — disabled by default for every organization.
 
@@ -139,14 +145,30 @@ called. On every invocation, in order:
 `getCreatorCaptionProvider()` (`src/server/ai/creator/index.ts`) so a capability's provider can change
 without touching the other.
 
-- **Media**: `MockCreatorMediaProvider` (`mock-provider.ts`) — deterministic, no network call, returns a
-  synthetic storage path. It is the only registered media provider; no real image/video vendor SDK is
-  wired into this codebase (adding one is a scoped follow-up, not attempted here — see §12).
+- **Media, real**: `FalCreatorMediaProvider` (`fal-provider.ts`) — fal.ai's queue API
+  (`src/server/integrations/fal.ts`), chosen for cost-efficient, production-capable image/video generation
+  without a dedicated enterprise contract. FLUX (`fal-ai/flux/schnell` text-to-image,
+  `fal-ai/flux/dev/image-to-image` for reference-guided generation) for images; Kling
+  (`fal-ai/kling-video/v1.5/standard/image-to-video`) for video. Reference assets are read via a
+  short-lived signed Supabase Storage URL; fal.ai's output is downloaded and re-uploaded into the org's
+  own `creator-generated-media` bucket rather than keeping a third-party CDN link. Model names are
+  overridable per-deployment via `FAL_IMAGE_MODEL`/`FAL_IMAGE_TO_VIDEO_MODEL`.
+  **Known, disclosed limitation**: this does not perform identity-locking / LoRA-style
+  character-consistency conditioning — `generateImageFromCharacter` uses one reference image only as an
+  image-to-image style/composition guide, not a face-identity lock. A per-character LoRA or IP-Adapter
+  pipeline would be needed for true consistent-character generation; out of scope for this pass.
+- **Media, routing**: `src/server/ai/creator/router.ts` resolves `mock` vs `fal` (future: a premium
+  provider, e.g. Veo) per-capability, auto-detecting `fal` once `FAL_API_KEY` is set, or pinned explicitly
+  via `CREATOR_MEDIA_PROVIDER=mock|fal`. Adding a further provider is registering it in this router's
+  `PROVIDERS` map — see §12.
 - **Caption**: `ClaudeCaptionProvider` (`caption-provider.ts`) — a real call through the platform's
   existing `streamClaude()` (`src/server/integrations/anthropic.ts`), `routeModel("draft")`. Prompts the
   model for strict JSON (`{primary, short, cta, hashtags}`), reuses `getBusinessDnaContext` +
   `buildBusinessDnaPromptBlock` for brand-voice grounding (with the existing prompt-injection wrapping).
   Tests mock `streamClaude` — this must never make a live call in CI.
+- **Credit cost**: `PROVIDER_COST_MULTIPLIER` in `creator-credits.ts` gives `fal` a higher multiplier than
+  `mock` so an org's credit grant roughly tracks real fal.ai spend — the only place a new real provider's
+  pricing is registered.
 
 ## 8. Social publishing providers
 
@@ -154,14 +176,40 @@ without touching the other.
 `getPublishStatus`, `revokeConnection`), one instance per `SocialPlatform` via
 `getSocialPublishingProvider(platform)`.
 
-- `MockSocialPublishingProvider` (`mock.ts`) — used whenever a real adapter reports `isConfigured() ===
-false` and either `NODE_ENV !== "production"` or `CREATOR_STUDIO_SOCIAL_MOCK_PROVIDER=1` is set;
-  otherwise the function throws rather than silently no-op-publishing in production.
-- Real adapters (`blocked-adapter.ts`): `InstagramPublishingProvider`, `FacebookPublishingProvider`,
-  `TikTokPublishingProvider`, `YouTubePublishingProvider` all implement the full interface and all
-  currently throw `SocialProviderNotImplementedError` for every method, with a `blockedReason` string
-  naming exactly what's missing (app registration, API review, OAuth credentials) — see §12 for what
-  each needs.
+- **Instagram + Facebook, real**: `InstagramPublishingProvider` / `FacebookPublishingProvider`
+  (`meta-provider.ts`) — the real Meta Graph API (`src/server/integrations/meta/client.ts`), gated on
+  `META_APP_ID`/`META_APP_SECRET`. One Meta app covers both platforms: a user authorizes once via the
+  standard OAuth code flow (`src/app/api/v1/creator-studio/social-accounts/oauth/meta/callback`,
+  `src/server/social/oauth-state.ts` for the HMAC-signed, expiring, tenant-bound `state` — the same
+  pattern as the existing calendar OAuth callback, no session cookie trusted), and the adapter discovers
+  the user's Facebook Pages (and, for Instagram, the linked professional account) to connect the first
+  eligible one per platform.
+  - **OAuth/token handling**: authorization-code exchange → long-lived (~60 day) token exchange → Page
+    discovery. `refreshConnection()` re-derives a fresh Page token from the stored long-lived user token,
+    since Meta has no separate `refresh_token` grant.
+  - **Publishing**: Facebook photos publish synchronously (`/​{page-id}/photos`); Instagram media use the
+    two-step container-create → poll-until-`FINISHED` → publish flow, bounded to ~2 minutes. Both fetch
+    media by a signed URL the publishing engine prepares (see below) rather than accepting an upload body.
+  - **Known, disclosed limitation**: `connectAccount()` always connects the first eligible Page/Instagram
+    account — there is no in-flow picker for an org managing several Pages (the
+    `SocialPublishingProvider.connectAccount(authCode)` interface returns exactly one connection). Such an
+    org must disconnect/reconnect to switch which Page publishes.
+- **Approval checks, scheduling, idempotency, retries, audit logs, safe failures**: all already enforced
+  by the provider-agnostic publishing engine (§6) — real providers plug into the same guard chain with no
+  changes needed there.
+- **Asset delivery**: `SocialPublishRequest.assetUrls` — the publishing engine
+  (`creator-publishing.ts`) signs each asset's URL from the correct bucket (`UPLOAD` → reference bucket,
+  `GENERATED` → generated-media bucket) before calling `publishPost`; a provider never signs storage URLs
+  itself.
+- `MockSocialPublishingProvider` (`mock.ts`) — used for TikTok/YouTube (still blocked, see below) and for
+  Instagram/Facebook whenever the real adapter reports `isConfigured() === false`, as long as either
+  `NODE_ENV !== "production"` or `CREATOR_STUDIO_SOCIAL_MOCK_PROVIDER=1` is set; otherwise
+  `getSocialPublishingProvider` throws rather than silently no-op-publishing in production.
+- **TikTok + YouTube, still blocked** (`blocked-adapter.ts`): `TikTokPublishingProvider` /
+  `YouTubePublishingProvider` implement the full interface and every method throws
+  `SocialProviderNotImplementedError`, with a `blockedReason` string naming exactly what's missing (app
+  registration, API review, OAuth credentials) — deliberately not implemented in this pass; see §12 for
+  what each needs when that mission is picked up.
 - Tokens: `src/server/integrations/social/crypto.ts`, AES-256-GCM, its own `SOCIAL_TOKEN_ENCRYPTION_KEY`
   (separate from the calendar integration's key — §4 of the charter: validate each integration's config
   independently). Ciphertext only ever lives in `SocialAccount.accessTokenEnc`/`refreshTokenEnc`;
@@ -215,15 +263,20 @@ every real social adapter is blocked, so there is no live metrics source to aggr
 
 ## 12. Adding a real provider
 
-**Image/video vendor**: implement `CreatorMediaProvider` (`src/server/ai/creator/types.ts`) as a new
-class, register it in `getCreatorMediaProvider()` (`src/server/ai/creator/index.ts`) — behind its own
+**A further/premium image or video vendor** (e.g. Veo): implement `CreatorMediaProvider`
+(`src/server/ai/creator/types.ts`) as a new class, add it to `PROVIDERS` and
+`CreatorMediaProviderName` in `src/server/ai/creator/router.ts`, and extend `resolveMediaProviderName()`'s
+auto-detection (or rely on the existing `CREATOR_MEDIA_PROVIDER` env pin) — behind its own
 `getXxxEnv()`-style env validation (§4 of the charter: don't couple to unrelated integrations' config).
-No calling code changes.
+No calling code changes; `fal-provider.ts` is the reference implementation.
 
-**Social platform**: replace the relevant `Blocked*PublishingProvider` in
-`src/server/social/blocked-adapter.ts` with a real adapter (OAuth app must be registered/approved first —
-see each adapter's `blockedReason` for exactly what that vendor requires), and make `isConfigured()`
-reflect real credential presence so `getSocialPublishingProvider()` picks it automatically.
+**TikTok or YouTube** (the two platforms deliberately left blocked in this pass): replace the relevant
+`Blocked*PublishingProvider` in `src/server/social/blocked-adapter.ts` with a real adapter (OAuth app must
+be registered/approved first — see each adapter's `blockedReason` for exactly what that vendor requires),
+register it in `REAL_ADAPTERS` in `src/server/social/index.ts`, and make `isConfigured()` reflect real
+credential presence so `getSocialPublishingProvider()` picks it automatically. `meta-provider.ts` (for
+Instagram/Facebook) is the reference implementation for wiring a real OAuth flow through the existing
+callback-route + signed-state pattern.
 
 **Template**: add an entry to `globalCreatorTemplates` in `prisma/seed.ts` (or create an org-scoped one
 via a future admin UI — not built in v1) and re-run `npm run db:seed`.
@@ -246,14 +299,35 @@ this migration is applied to a real Supabase-backed environment):
   publish, edited-after-approval-blocks-publish.
 - `creator-rbac.test.ts`, `creator-tenant-isolation.test.ts`, `creator-social-provider.test.ts`,
   `creator-caption-provider.test.ts` (mocks `streamClaude` — no live Anthropic call).
+- `fal-integration.test.ts`, `fal-provider.test.ts`, `creator-media-router.test.ts` — the fal.ai queue
+  client, `FalCreatorMediaProvider`, and provider routing/auto-detection, all against a mocked `fetch` and
+  mocked Supabase Storage (no live fal.ai account or credentials used).
+- `meta-integration.test.ts`, `meta-provider.test.ts`, `social-oauth-state.test.ts` — the Meta Graph API
+  client (authorize URL, token exchange, Page listing, Facebook/Instagram publish, container polling),
+  `InstagramPublishingProvider`/`FacebookPublishingProvider`, and the OAuth callback's signed-state
+  build/verify/tamper/expiry handling, all against a mocked `fetch` (no live Meta app or credentials
+  used).
 
-**Not written in this pass**: Playwright E2E. The existing `tests/e2e` suite requires a live
-`E2E_BASE_URL` running app plus a real Supabase-backed test user provisioned via `auth.setup.ts` — neither
-was available in the environment this feature was built in. Writing an E2E spec without being able to run
-it against the real app/DOM would be unverified and is more likely to mislead than help; the golden path
-it should cover (login → open Creator Studio → create creator → generate mock image → generate caption →
-create campaign → add post → request approval → approve → schedule → mock publish → verify Published +
-audit + analytics + credit ledger) is fully exercised at the service layer by the tests above instead.
+**Live RLS tenant-isolation verification**: this migration's RLS policies (`creator_profiles`,
+`creator_campaigns`, `creator_generations`, `creator_posts`, `creator_templates`) were verified against a
+real local Postgres instance running the repo's own CI-grade harness (`scripts/ci/run-rls-check.sh`,
+`tests/rls/creator-studio-*.sql`) — both as a superuser and as a non-superuser role restricted to exactly
+the `authenticated`/`anon` grant set, matching the two `rls`/`rls-non-superuser` CI jobs. This is what
+caught and fixed a real gap: `creator_profiles_update`/`creator_campaigns_update` originally had `USING`
+but no `WITH CHECK`, which would have allowed an authenticated user to reassign a row's
+`organization_id` to a different tenant via `UPDATE` — the exact vulnerability class
+`docs/RLS-UPDATE-WITH-CHECK-HARDENING.md` already documents as fixed for 16 other tables. Both policies
+now carry `WITH CHECK (organization_id = auth_org_id())`.
+
+**Opt-in live E2E**: `tests/e2e/creator-studio-live.spec.ts` exercises the full golden path (creator →
+reference assets → consent → image → video if available → caption → campaign → post → approval →
+schedule → publish → analytics → credit ledger) through the real HTTP API against a live deployed
+environment, with real fal.ai/Meta calls when those are configured there. Gated behind
+`CREATOR_STUDIO_LIVE_E2E=1` and never runs under `npm test` or any automated CI path — see the file's own
+header comment for exactly what it needs, what it publishes, and how each provider-dependent stage
+degrades explicitly (never silently) when this environment isn't configured for it. The same golden path
+with every provider mocked remains fully exercised at the service layer by the tests above, which do run
+in every CI build.
 
 ## 14. Rollout plan
 
@@ -265,10 +339,25 @@ audit + analytics + credit ledger) is fully exercised at the service layer by th
    enabling any org.
 4. Flip `creator_studio_v1` on for a pilot organization via `setFeatureEnabled` (no admin UI yet — a
    direct call or a small internal script).
-5. Verify the mock end-to-end flow manually in that org before wider rollout.
-6. Autopilot stays off (`creator_studio_autopilot` unset) until a real social adapter exists — autopilot
-   with only mock publishing has no real-world effect but should still not be exposed to customers as if
-   it does something.
-7. Real image/video + real social publishing are separate, scoped follow-up missions (§12) — do not
-   represent this release as capable of real customer-facing publishing until at least one real social
-   adapter is implemented and its OAuth app is approved by the platform.
+5. Verify the mocked end-to-end flow manually in that org before enabling any real provider.
+6. Autopilot stays off (`creator_studio_autopilot` unset) until real publishing is verified working for
+   that org — autopilot with only mock publishing has no real-world effect but should still not be
+   exposed to customers as if it does something.
+7. **To enable real image/video generation**: set `FAL_API_KEY` (and optionally
+   `FAL_IMAGE_MODEL`/`FAL_IMAGE_TO_VIDEO_MODEL` to override the defaults) — `FalCreatorMediaProvider`
+   activates automatically for every org with the feature flag on (§7); no per-org opt-in exists yet.
+8. **To enable real Instagram/Facebook publishing**: register one Meta app (Facebook Login for Business,
+   Instagram Graph API + Pages API products, App Review for `pages_manage_posts` /
+   `instagram_content_publish` and the other scopes in `meta-provider.ts`), set `META_APP_ID` /
+   `META_APP_SECRET` (and optionally `META_GRAPH_API_VERSION`, `META_OAUTH_STATE_SECRET`), and register
+   the app's OAuth redirect URI as
+   `{NEXT_PUBLIC_APP_URL}/api/v1/creator-studio/social-accounts/oauth/meta/callback`. Each org then
+   connects its own Facebook Page/Instagram account from Creator Studio → Social accounts, which redirects
+   to Meta's real OAuth dialog (§8).
+9. TikTok and YouTube publishing remain out of scope for this release (§1, §8, §12) — do not represent
+   Creator Studio as capable of publishing to either until a dedicated follow-up mission implements their
+   adapters and their respective app reviews are approved.
+10. Before wider rollout beyond the pilot org, run `tests/e2e/creator-studio-live.spec.ts`
+    (`CREATOR_STUDIO_LIVE_E2E=1`, §13) against the target environment once real credentials are configured,
+    to prove the real fal.ai/Meta round trip end-to-end — on a dedicated test Page/account, never the
+    pilot org's real production social account, since it publishes a real post.
