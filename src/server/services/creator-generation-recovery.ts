@@ -19,6 +19,7 @@ import {
   persistFalOutput,
   interpretFalImageOutput,
   interpretFalVideoOutput,
+  cleanupFalGeneratedOutput,
   type FalImageOutput,
   type FalVideoOutput,
 } from "@/server/ai/creator/fal-provider";
@@ -322,6 +323,44 @@ async function reconcileStaleGenerating(
   }
 }
 
+/**
+ * Same compensating-cleanup contract as
+ * creator-generations.ts's persistGeneratedAssetWithCleanup — reused here
+ * directly against fal-provider.ts's cleanup function rather than through
+ * the CreatorMediaProvider interface, since this recovery path already
+ * talks to fal.ai's queue API directly (getFalJobStatus/fetchFalJobResult)
+ * without going through that abstraction.
+ */
+async function persistRecoveredAssetWithCleanup(
+  ctx: TenantContext,
+  creatorProfileId: string,
+  storagePath: string,
+  mimeType: string,
+  sizeBytes: number,
+  assetType: string,
+): Promise<string> {
+  try {
+    return await persistGeneratedAsset(
+      ctx,
+      creatorProfileId,
+      storagePath,
+      mimeType,
+      sizeBytes,
+      assetType,
+    );
+  } catch (dbError) {
+    try {
+      await cleanupFalGeneratedOutput(storagePath);
+    } catch (cleanupError) {
+      console.error(
+        "failed to clean up an orphaned generated Storage object after recovered-asset persistence failed",
+        { storagePath, orgId: ctx.orgId, cleanupError },
+      );
+    }
+    throw dbError;
+  }
+}
+
 async function finalizeRecoveredCompletion(
   ctx: TenantContext,
   generation: RecoverableGeneration,
@@ -341,7 +380,7 @@ async function finalizeRecoveredCompletion(
         "recovered IMAGE generation has no creatorProfileId to attach the output asset to",
       );
     }
-    const assetId = await persistGeneratedAsset(
+    const assetId = await persistRecoveredAssetWithCleanup(
       ctx,
       generation.creatorProfileId,
       storagePath,
@@ -375,7 +414,7 @@ async function finalizeRecoveredCompletion(
         "recovered IMAGE_TO_VIDEO generation has no creatorProfileId to attach the output asset to",
       );
     }
-    const assetId = await persistGeneratedAsset(
+    const assetId = await persistRecoveredAssetWithCleanup(
       ctx,
       generation.creatorProfileId,
       storagePath,

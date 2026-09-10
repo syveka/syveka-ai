@@ -10,6 +10,10 @@ import { CampaignError } from "@/server/services/creator-campaigns";
 import { FeatureDisabledError } from "@/server/services/feature-flags";
 import { DocumentIngestionError } from "@/server/security/document-ingestion";
 import { SocialProviderNotImplementedError } from "@/server/social";
+import {
+  IdempotencyConflictError,
+  IdempotencyKeyTooLongError,
+} from "@/server/services/creator-studio-idempotency";
 
 /**
  * Shared error → HTTP response mapping for every /api/v1/creator-studio/**
@@ -30,6 +34,12 @@ export function handleCreatorStudioError(e: unknown): NextResponse {
   }
   if (e instanceof InsufficientCreditsError) {
     return NextResponse.json({ error: { code: e.code } }, { status: 402 });
+  }
+  if (e instanceof IdempotencyConflictError) {
+    return NextResponse.json({ error: { code: e.code } }, { status: 409 });
+  }
+  if (e instanceof IdempotencyKeyTooLongError) {
+    return NextResponse.json({ error: { code: e.code } }, { status: 400 });
   }
   if (e instanceof SocialProviderNotImplementedError) {
     return NextResponse.json(

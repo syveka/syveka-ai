@@ -53,4 +53,9 @@ export class MockCreatorMediaProvider implements CreatorMediaProvider {
       latencyMs,
     };
   }
+
+  async cleanupGeneratedOutput(): Promise<void> {
+    // No real bytes are ever written for the mock provider, so there is
+    // never anything real to clean up — see the class doc comment above.
+  }
 }

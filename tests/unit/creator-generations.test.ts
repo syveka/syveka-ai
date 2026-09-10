@@ -26,6 +26,7 @@ const { tenantDbMock, auditMock, reserveMock, commitMock, releaseMock, providerM
       generateCharacterImage: vi.fn(),
       generateImageFromCharacter: vi.fn(),
       generateVideoFromImage: vi.fn(),
+      cleanupGeneratedOutput: vi.fn(async (_storagePath: string) => undefined),
     },
   }),
 );
@@ -134,7 +135,7 @@ describe("runGeneration (via requestCharacterImageGeneration)", () => {
       aspectRatio: "1:1",
     });
 
-    expect(result.status).toBe("COMPLETED");
+    expect(result.generation.status).toBe("COMPLETED");
     expect(reserveMock).toHaveBeenCalledTimes(1);
     expect(commitMock).toHaveBeenCalledTimes(1);
     expect(releaseMock).not.toHaveBeenCalled();
@@ -192,7 +193,7 @@ describe("runGeneration (via requestCharacterImageGeneration)", () => {
       aspectRatio: "1:1",
     });
 
-    expect(result.status).toBe("COMPLETED");
+    expect(result.generation.status).toBe("COMPLETED");
     expect(commitMock).not.toHaveBeenCalled();
     expect(releaseMock).not.toHaveBeenCalled();
     expect(auditMock).not.toHaveBeenCalledWith(
@@ -246,7 +247,7 @@ describe("runGeneration (via requestCharacterImageGeneration)", () => {
       aspectRatio: "1:1",
     });
 
-    expect(result.status).toBe("COMPLETED");
+    expect(result.generation.status).toBe("COMPLETED");
     expect(commitMock).toHaveBeenCalledTimes(1);
     expect(releaseMock).not.toHaveBeenCalled();
     expect(auditMock).not.toHaveBeenCalledWith(
@@ -281,7 +282,7 @@ describe("runGeneration (via requestCharacterImageGeneration)", () => {
       aspectRatio: "1:1",
     });
 
-    expect(result.status).toBe("COMPLETED");
+    expect(result.generation.status).toBe("COMPLETED");
     expect(commitMock).toHaveBeenCalledTimes(1);
     expect(releaseMock).not.toHaveBeenCalled();
     expect(db.creatorGeneration.updateMany).toHaveBeenCalledTimes(1);
@@ -356,5 +357,118 @@ describe("runGeneration (via requestCharacterImageGeneration)", () => {
     expect(releaseMock).toHaveBeenCalledTimes(1);
     expect(commitMock).not.toHaveBeenCalled();
     expect(providerMock.generateCharacterImage).toHaveBeenCalledTimes(1); // never retried
+  });
+
+  describe("Storage orphan compensation (persistGeneratedAssetWithCleanup)", () => {
+    function mockProviderResult() {
+      providerMock.generateCharacterImage.mockResolvedValueOnce({
+        outputStoragePath: "fal/generated-output.png",
+        mimeType: "image/png",
+        sizeBytes: 1234,
+        providerRequestId: "https://fal.media/out.png",
+        latencyMs: 500,
+      });
+    }
+
+    it("TEST A — DB asset create succeeds: cleanup is never called", async () => {
+      const db = makeDb();
+      tenantDbMock.mockReturnValue(db);
+      mockProviderResult();
+
+      const result = await requestCharacterImageGeneration(ctx(), {
+        creatorProfileId: "profile-1",
+        prompt: "a portrait",
+        aspectRatio: "1:1",
+      });
+
+      expect(result.generation.status).toBe("COMPLETED");
+      expect(providerMock.cleanupGeneratedOutput).not.toHaveBeenCalled();
+    });
+
+    it("TEST B — DB asset create fails: cleanup is called exactly once with the exact generated storagePath, and the original error propagates", async () => {
+      const db = makeDb();
+      tenantDbMock.mockReturnValue(db);
+      mockProviderResult();
+      const dbError = new Error("unique constraint violation");
+      db.creatorReferenceAsset.create.mockRejectedValueOnce(dbError);
+
+      await expect(
+        requestCharacterImageGeneration(ctx(), {
+          creatorProfileId: "profile-1",
+          prompt: "a portrait",
+          aspectRatio: "1:1",
+        }),
+      ).rejects.toThrow("unique constraint violation");
+
+      expect(providerMock.cleanupGeneratedOutput).toHaveBeenCalledTimes(1);
+      expect(providerMock.cleanupGeneratedOutput).toHaveBeenCalledWith("fal/generated-output.png");
+      // The generation still fails and releases normally — the compensation
+      // is purely a side effect, not a change to the failure/credit path.
+      expect(db.generation.status).toBe("FAILED");
+      expect(releaseMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("TEST C — DB asset create fails AND cleanup also fails: the original DB error still propagates, cleanup error is only logged, and cleanup is never retried", async () => {
+      const db = makeDb();
+      tenantDbMock.mockReturnValue(db);
+      mockProviderResult();
+      const dbError = new Error("unique constraint violation");
+      db.creatorReferenceAsset.create.mockRejectedValueOnce(dbError);
+      providerMock.cleanupGeneratedOutput.mockRejectedValueOnce(new Error("storage delete failed"));
+      const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+      await expect(
+        requestCharacterImageGeneration(ctx(), {
+          creatorProfileId: "profile-1",
+          prompt: "a portrait",
+          aspectRatio: "1:1",
+        }),
+      ).rejects.toThrow("unique constraint violation"); // the DB error, not the cleanup error
+
+      expect(providerMock.cleanupGeneratedOutput).toHaveBeenCalledTimes(1); // never retried
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "failed to clean up an orphaned generated Storage object after DB asset persistence failed",
+        expect.objectContaining({ storagePath: "fal/generated-output.png" }),
+      );
+      consoleErrorSpy.mockRestore();
+    });
+
+    it("TEST D — cleanup is never invoked with an uploaded/customer reference asset's path", async () => {
+      const db = makeDb();
+      tenantDbMock.mockReturnValue(db);
+      mockProviderResult();
+      db.creatorReferenceAsset.create.mockRejectedValueOnce(new Error("db error"));
+
+      await expect(
+        requestCharacterImageGeneration(ctx(), {
+          creatorProfileId: "profile-1",
+          prompt: "a portrait",
+          aspectRatio: "1:1",
+        }),
+      ).rejects.toThrow();
+
+      // Only ever called with the freshly-generated output path from this
+      // exact provider result — never any of the profile's real reference
+      // asset paths (org-a/profile/ref*.png from makeDb's fixture).
+      for (const call of providerMock.cleanupGeneratedOutput.mock.calls) {
+        expect(call[0]).not.toMatch(/^org-a\/profile\/ref/);
+      }
+      expect(providerMock.cleanupGeneratedOutput).toHaveBeenCalledWith("fal/generated-output.png");
+    });
+
+    it("TEST E — no cleanup occurs once an output asset has already been successfully linked", async () => {
+      const db = makeDb();
+      tenantDbMock.mockReturnValue(db);
+      mockProviderResult();
+
+      await requestCharacterImageGeneration(ctx(), {
+        creatorProfileId: "profile-1",
+        prompt: "a portrait",
+        aspectRatio: "1:1",
+      });
+
+      expect(db.creatorReferenceAsset.create).toHaveBeenCalledTimes(1);
+      expect(providerMock.cleanupGeneratedOutput).not.toHaveBeenCalled();
+    });
   });
 });

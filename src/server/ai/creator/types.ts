@@ -87,6 +87,19 @@ export interface CreatorMediaProvider {
   generateCharacterImage(req: CharacterImageRequest): Promise<MediaGenerationResult>;
   generateImageFromCharacter(req: ImageFromCharacterRequest): Promise<MediaGenerationResult>;
   generateVideoFromImage(req: VideoFromImageRequest): Promise<VideoGenerationResult>;
+  /**
+   * Removes a just-generated output this same provider call uploaded
+   * (identified by the exact `outputStoragePath` a
+   * MediaGenerationResult/VideoGenerationResult just returned) — used only
+   * to compensate when persisting the DB asset row for that output fails
+   * (P1 orphan-cleanup hardening). Never accepts an arbitrary bucket; each
+   * implementation scopes this to its own fixed generated-output bucket.
+   * Throws on a genuine deletion failure so the caller can log it
+   * separately — never on "already gone" (a missing object is a no-op,
+   * not an error), since the caller only ever calls this once, right after
+   * an upload it just performed itself.
+   */
+  cleanupGeneratedOutput(storagePath: string): Promise<void>;
 }
 
 export type CaptionLanguage = "EN" | "FI" | "AR";

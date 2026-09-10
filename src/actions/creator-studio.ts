@@ -98,7 +98,7 @@ export async function generateCharacterImageAction(payload: unknown): Promise<Cr
   const parsed = generateCharacterImageSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
   try {
-    const generation = await requestCharacterImageGeneration(ctx, parsed.data);
+    const { generation } = await requestCharacterImageGeneration(ctx, parsed.data);
     revalidatePath("/creator-studio/library");
     return { id: generation.id };
   } catch (e) {
@@ -113,7 +113,7 @@ export async function generateImageFromCharacterAction(
   const parsed = generateImageFromCharacterSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
   try {
-    const generation = await requestImageFromCharacterGeneration(ctx, parsed.data);
+    const { generation } = await requestImageFromCharacterGeneration(ctx, parsed.data);
     revalidatePath("/creator-studio/library");
     return { id: generation.id };
   } catch (e) {
@@ -126,7 +126,7 @@ export async function generateVideoFromImageAction(payload: unknown): Promise<Cr
   const parsed = generateVideoFromImageSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
   try {
-    const generation = await requestVideoFromImageGeneration(ctx, parsed.data);
+    const { generation } = await requestVideoFromImageGeneration(ctx, parsed.data);
     revalidatePath("/creator-studio/library");
     return { id: generation.id };
   } catch (e) {
@@ -139,7 +139,7 @@ export async function generateCaptionAction(payload: unknown): Promise<CreatorAc
   const parsed = generateCaptionSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
   try {
-    const generation = await requestCaptionGeneration(ctx, parsed.data);
+    const { generation } = await requestCaptionGeneration(ctx, parsed.data);
     revalidatePath("/creator-studio/library");
     return { id: generation.id };
   } catch (e) {

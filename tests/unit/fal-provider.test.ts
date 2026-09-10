@@ -14,9 +14,13 @@ const createSignedUrlMock = vi.fn(async () => ({
   error: null,
 }));
 const uploadMock = vi.fn(async () => ({ error: null }));
+const removeMock = vi.fn(async (): Promise<{ error: { message: string } | null }> => ({
+  error: null,
+}));
 const storageFromMock = vi.fn(() => ({
   createSignedUrl: createSignedUrlMock,
   upload: uploadMock,
+  remove: removeMock,
 }));
 
 vi.mock("@/server/supabase/server", () => ({
@@ -246,6 +250,26 @@ describe("FalCreatorMediaProvider", () => {
     const submitUrl = fetchMock.mock.calls[0]![0];
     expect(submitUrl).toBe("https://queue.fal.run/fal-ai/kling-video/v9.9/custom/image-to-video");
     delete process.env.FAL_IMAGE_TO_VIDEO_MODEL;
+  });
+
+  it("cleanupGeneratedOutput removes exactly the given path from the generated-media bucket only", async () => {
+    const { FalCreatorMediaProvider } = await import("@/server/ai/creator/fal-provider");
+    const provider = new FalCreatorMediaProvider();
+
+    await provider.cleanupGeneratedOutput("fal/orphaned-output.png");
+
+    expect(storageFromMock).toHaveBeenCalledWith("creator-generated-media");
+    expect(removeMock).toHaveBeenCalledWith(["fal/orphaned-output.png"]);
+  });
+
+  it("cleanupGeneratedOutput throws (rather than silently swallowing) on a genuine Storage error", async () => {
+    removeMock.mockResolvedValueOnce({ error: { message: "permission denied" } });
+    const { FalCreatorMediaProvider } = await import("@/server/ai/creator/fal-provider");
+    const provider = new FalCreatorMediaProvider();
+
+    await expect(provider.cleanupGeneratedOutput("fal/orphaned-output.png")).rejects.toThrow(
+      "permission denied",
+    );
   });
 
   it("propagates a fal.ai job error rather than silently returning a placeholder", async () => {

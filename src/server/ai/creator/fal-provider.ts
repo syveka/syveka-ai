@@ -78,6 +78,24 @@ async function signAsset(asset: CreatorAssetRef): Promise<string> {
 }
 
 /**
+ * Compensating delete for a just-uploaded generated output whose DB asset
+ * row failed to persist (P1 orphan-cleanup hardening). Always scoped to
+ * OUTPUT_BUCKET — never accepts or infers a different bucket, so this can
+ * never be pointed at a reference/uploaded asset. Throws on a genuine
+ * Storage error (never on "already gone" — Supabase's `remove()` treats a
+ * missing object as a successful no-op, not an error) so the caller can
+ * distinguish and log a real cleanup failure separately, without letting
+ * it mask the original DB error that triggered this call.
+ */
+export async function cleanupFalGeneratedOutput(storagePath: string): Promise<void> {
+  const admin = createSupabaseAdmin();
+  const { error } = await admin.storage.from(OUTPUT_BUCKET).remove([storagePath]);
+  if (error) {
+    throw new Error(`Failed to remove orphaned generated output from storage: ${error.message}`);
+  }
+}
+
+/**
  * Downloads a fal.ai output URL and re-uploads it into our own storage, so
  * the org owns the asset (not a third-party CDN link that can
  * expire/rotate). Exported so the crash-recovery reconciler can reuse the
@@ -254,6 +272,10 @@ export class FalCreatorMediaProvider implements CreatorMediaProvider {
       providerRequestId: url,
       latencyMs: Date.now() - start,
     };
+  }
+
+  async cleanupGeneratedOutput(storagePath: string): Promise<void> {
+    await cleanupFalGeneratedOutput(storagePath);
   }
 }
 

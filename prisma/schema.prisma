@@ -1624,6 +1624,16 @@ model CreatorGeneration {
   providerRequestId  String?                  @map("provider_request_id")
   errorCode          String?                  @map("error_code")
   errorMessageSafe   String?                  @map("error_message_safe")
+  /// Client-supplied Idempotency-Key (opaque, tenant+operation-scoped) — see
+  /// requestCharacterImageGeneration/etc. in creator-generations.ts. NULL
+  /// for a request that didn't send one (backward compatible: NULL never
+  /// participates in the uniqueness constraint below, so unlimited
+  /// no-key generations remain unrestricted).
+  idempotencyKey     String?                  @map("idempotency_key")
+  /// Deterministic hash of the provider-impacting request fields (never the
+  /// raw prompt) — lets a same-key retry be distinguished from a same-key
+  /// request with a materially different payload (§ idempotency conflict).
+  requestFingerprint String?                  @map("request_fingerprint")
   createdById        String                   @map("created_by_id") @db.Uuid
   createdAt          DateTime                 @default(now()) @map("created_at")
   completedAt        DateTime?                @map("completed_at")
@@ -1633,6 +1643,7 @@ model CreatorGeneration {
   template       CreatorTemplate? @relation(fields: [templateId], references: [id], onDelete: SetNull)
   creditTxns     CreatorCreditTransaction[]
 
+  @@unique([organizationId, generationType, idempotencyKey])
   @@index([organizationId, creatorProfileId, createdAt])
   @@index([organizationId, status])
   @@map("creator_generations")

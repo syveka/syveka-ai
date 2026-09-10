@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { CreatorGenerationType, Prisma } from "@prisma/client";
+import { Prisma, type CreatorGenerationType } from "@prisma/client";
 import { tenantDb } from "@/server/db/tenant";
 import type { TenantContext } from "@/server/auth/session";
 import { assertFeatureEnabled } from "./feature-flags";
@@ -19,9 +19,11 @@ import type {
   GenerationQuality,
   CaptionLanguage,
   ProviderSubmissionInfo,
+  CreatorMediaProvider,
 } from "@/server/ai/creator";
 import { getBusinessDnaContext, buildBusinessDnaPromptBlock } from "@/server/business-dna/context";
 import { MIN_REFERENCE_ASSETS } from "@/lib/validators/creator-studio";
+import { IdempotencyConflictError, computeRequestFingerprint } from "./creator-studio-idempotency";
 
 type GenerationExecution = {
   outputAssetIds: string[];
@@ -63,9 +65,45 @@ export async function persistProviderRequestIdentity(
 }
 
 /**
- * Shared reserve → execute → commit/release orchestration (Phase 2 + 13).
+ * Looks up an existing logical request for an idempotency key, scoped to
+ * (organizationId, generationType) — the exact same scope the DB unique
+ * constraint enforces, so this always finds the row the constraint would
+ * conflict with.
+ */
+async function findExistingIdempotentGeneration(
+  db: ReturnType<typeof tenantDb>,
+  generationType: CreatorGenerationType,
+  idempotencyKey: string,
+) {
+  return db.creatorGeneration.findFirst({ where: { generationType, idempotencyKey } });
+}
+
+/** Same key, different normalized request → conflict, never a silent reuse. */
+function assertFingerprintMatches(
+  existing: { requestFingerprint: string | null },
+  requestFingerprint: string,
+): void {
+  if (existing.requestFingerprint !== requestFingerprint) {
+    throw new IdempotencyConflictError();
+  }
+}
+
+/**
+ * Shared reserve → execute → commit/release orchestration (Phase 2 + 13),
+ * now also the sole place request-level idempotency (P1) is enforced.
  * Every capability below goes through this so credit accounting, audit
- * logging, and error handling never drift between generation types.
+ * logging, error handling, and idempotency semantics never drift between
+ * generation types.
+ *
+ * Idempotency design: the `creatorGeneration.create()` insert below is
+ * itself the concurrency authority (never a separate check-then-create) —
+ * a unique (organizationId, generationType, idempotencyKey) DB constraint
+ * means two concurrent requests for the same key can never both create a
+ * row; the loser's insert fails with Prisma's P2002, and it fetches and
+ * returns the winner's row instead of creating (and reserving credits
+ * for) its own. No key sent → idempotencyKey is null → the constraint
+ * never applies (Postgres treats every NULL as distinct) → current
+ * behavior is preserved exactly.
  */
 async function runGeneration(
   ctx: TenantContext,
@@ -79,27 +117,65 @@ async function runGeneration(
     templateId?: string;
     inputAssetIds: string[];
     creditCost: number;
+    idempotencyKey?: string;
+    /** Only meaningful (and only ever compared) when idempotencyKey is set. */
+    requestFingerprint?: string;
     execute: (generationId: string) => Promise<GenerationExecution>;
   },
 ) {
   const db = tenantDb(ctx.orgId);
 
-  const generation = await db.creatorGeneration.create({
-    data: {
-      organizationId: ctx.orgId,
-      creatorProfileId: params.creatorProfileId,
-      generationType: params.generationType,
-      provider: params.provider,
-      model: params.model,
-      prompt: params.prompt,
-      negativePrompt: params.negativePrompt,
-      templateId: params.templateId,
-      inputAssetIds: params.inputAssetIds,
-      status: "QUEUED",
-      creditsReserved: params.creditCost,
-      createdById: ctx.userId,
-    },
-  });
+  if (params.idempotencyKey) {
+    const existing = await findExistingIdempotentGeneration(
+      db,
+      params.generationType,
+      params.idempotencyKey,
+    );
+    if (existing) {
+      assertFingerprintMatches(existing, params.requestFingerprint ?? "");
+      return { generation: existing, reused: true };
+    }
+  }
+
+  let generation;
+  try {
+    generation = await db.creatorGeneration.create({
+      data: {
+        organizationId: ctx.orgId,
+        creatorProfileId: params.creatorProfileId,
+        generationType: params.generationType,
+        provider: params.provider,
+        model: params.model,
+        prompt: params.prompt,
+        negativePrompt: params.negativePrompt,
+        templateId: params.templateId,
+        inputAssetIds: params.inputAssetIds,
+        status: "QUEUED",
+        creditsReserved: params.creditCost,
+        createdById: ctx.userId,
+        idempotencyKey: params.idempotencyKey,
+        requestFingerprint: params.idempotencyKey ? params.requestFingerprint : undefined,
+      },
+    });
+  } catch (error) {
+    if (
+      params.idempotencyKey &&
+      error instanceof Prisma.PrismaClientKnownRequestError &&
+      error.code === "P2002"
+    ) {
+      // Lost the race for this idempotency key — fetch and return the
+      // winner's row instead of ours. Zero credits reserved on this path.
+      const winner = await findExistingIdempotentGeneration(
+        db,
+        params.generationType,
+        params.idempotencyKey,
+      );
+      if (!winner) throw error; // the constraint just fired, so a row must exist — defensive only
+      assertFingerprintMatches(winner, params.requestFingerprint ?? "");
+      return { generation: winner, reused: true };
+    }
+    throw error;
+  }
 
   try {
     await reserveCreatorCredits(ctx, { generationId: generation.id, amount: params.creditCost });
@@ -138,7 +214,8 @@ async function runGeneration(
         orgId: ctx.orgId,
       });
     }
-    return db.creatorGeneration.findUniqueOrThrow({ where: { id: generation.id } });
+    const final = await db.creatorGeneration.findUniqueOrThrow({ where: { id: generation.id } });
+    return { generation: final, reused: false };
   } catch (error) {
     // Never persist raw provider error text (§4: sanitize before surfacing) —
     // full detail goes to server logs only, never to a client-reachable field.
@@ -350,6 +427,52 @@ export async function persistGeneratedAsset(
   return asset.id;
 }
 
+/**
+ * Wraps persistGeneratedAsset with compensating Storage cleanup (P1
+ * orphan-cleanup hardening): by the time this runs, the provider has
+ * already uploaded real bytes to `storagePath` — if the DB row create then
+ * fails, that upload is otherwise permanently orphaned (nothing else ever
+ * points at it, and it will never appear in any listing a user sees). On
+ * failure, this attempts exactly one best-effort delete of that exact path
+ * via the SAME provider that just uploaded it (never an arbitrary
+ * bucket/path — provider.cleanupGeneratedOutput is always scoped to its
+ * own fixed generated-output bucket).
+ *
+ * The original DB error is always what propagates to the caller,
+ * regardless of whether cleanup succeeds — a cleanup failure is logged
+ * separately (never thrown, never masks the real failure, never retried).
+ */
+export async function persistGeneratedAssetWithCleanup(
+  ctx: TenantContext,
+  provider: CreatorMediaProvider,
+  creatorProfileId: string,
+  storagePath: string,
+  mimeType: string,
+  sizeBytes: number,
+  assetType: string,
+): Promise<string> {
+  try {
+    return await persistGeneratedAsset(
+      ctx,
+      creatorProfileId,
+      storagePath,
+      mimeType,
+      sizeBytes,
+      assetType,
+    );
+  } catch (dbError) {
+    try {
+      await provider.cleanupGeneratedOutput(storagePath);
+    } catch (cleanupError) {
+      console.error(
+        "failed to clean up an orphaned generated Storage object after DB asset persistence failed",
+        { storagePath, orgId: ctx.orgId, provider: provider.name, cleanupError },
+      );
+    }
+    throw dbError;
+  }
+}
+
 async function requireActiveProfileWithReferences(ctx: TenantContext, creatorProfileId: string) {
   const db = tenantDb(ctx.orgId);
   const profile = await db.creatorProfile.findFirstOrThrow({
@@ -379,12 +502,21 @@ export async function requestCharacterImageGeneration(
     prompt: string;
     aspectRatio: AspectRatio;
     quality?: GenerationQuality;
+    idempotencyKey?: string;
   },
 ) {
   await assertFeatureEnabled(ctx.orgId, CREATOR_STUDIO_FLAG);
   const profile = await requireActiveProfileWithReferences(ctx, input.creatorProfileId);
   const provider = getCreatorMediaProvider();
   const creditCost = getCreatorGenerationCreditCost("IMAGE", provider.name, "default", {
+    quality: input.quality,
+  });
+  const requestFingerprint = computeRequestFingerprint({
+    op: "character-image",
+    creatorProfileId: input.creatorProfileId,
+    templateId: input.templateId,
+    prompt: input.prompt,
+    aspectRatio: input.aspectRatio,
     quality: input.quality,
   });
 
@@ -397,6 +529,8 @@ export async function requestCharacterImageGeneration(
     templateId: input.templateId,
     inputAssetIds: profile.referenceAssets.map((a) => a.id),
     creditCost,
+    idempotencyKey: input.idempotencyKey,
+    requestFingerprint,
     execute: async (generationId) => {
       const result = await provider.generateCharacterImage({
         prompt: input.prompt,
@@ -408,8 +542,9 @@ export async function requestCharacterImageGeneration(
         quality: input.quality,
         onProviderSubmitted: (info) => persistProviderRequestIdentity(ctx, generationId, info),
       });
-      const assetId = await persistGeneratedAsset(
+      const assetId = await persistGeneratedAssetWithCleanup(
         ctx,
+        provider,
         input.creatorProfileId,
         result.outputStoragePath,
         result.mimeType,
@@ -434,12 +569,22 @@ export async function requestImageFromCharacterGeneration(
     negativePrompt?: string;
     aspectRatio: AspectRatio;
     quality?: GenerationQuality;
+    idempotencyKey?: string;
   },
 ) {
   await assertFeatureEnabled(ctx.orgId, CREATOR_STUDIO_FLAG);
   const profile = await requireActiveProfileWithReferences(ctx, input.creatorProfileId);
   const provider = getCreatorMediaProvider();
   const creditCost = getCreatorGenerationCreditCost("IMAGE", provider.name, "default", {
+    quality: input.quality,
+  });
+  const requestFingerprint = computeRequestFingerprint({
+    op: "image-from-character",
+    creatorProfileId: input.creatorProfileId,
+    templateId: input.templateId,
+    prompt: input.prompt,
+    negativePrompt: input.negativePrompt,
+    aspectRatio: input.aspectRatio,
     quality: input.quality,
   });
 
@@ -453,6 +598,8 @@ export async function requestImageFromCharacterGeneration(
     templateId: input.templateId,
     inputAssetIds: profile.referenceAssets.map((a) => a.id),
     creditCost,
+    idempotencyKey: input.idempotencyKey,
+    requestFingerprint,
     execute: async (generationId) => {
       const result = await provider.generateImageFromCharacter({
         prompt: input.prompt,
@@ -465,8 +612,9 @@ export async function requestImageFromCharacterGeneration(
         quality: input.quality,
         onProviderSubmitted: (info) => persistProviderRequestIdentity(ctx, generationId, info),
       });
-      const assetId = await persistGeneratedAsset(
+      const assetId = await persistGeneratedAssetWithCleanup(
         ctx,
+        provider,
         input.creatorProfileId,
         result.outputStoragePath,
         result.mimeType,
@@ -491,6 +639,7 @@ export async function requestVideoFromImageGeneration(
     durationSeconds?: number;
     aspectRatio: AspectRatio;
     quality?: GenerationQuality;
+    idempotencyKey?: string;
   },
 ) {
   await assertFeatureEnabled(ctx.orgId, CREATOR_STUDIO_FLAG);
@@ -504,6 +653,15 @@ export async function requestVideoFromImageGeneration(
     durationSeconds: input.durationSeconds,
   });
   const prompt = input.motionPrompt ?? "Animate this image with subtle natural motion.";
+  const requestFingerprint = computeRequestFingerprint({
+    op: "video-from-image",
+    sourceAssetId: input.sourceAssetId,
+    creatorProfileId: input.creatorProfileId ?? sourceAsset.creatorProfileId,
+    motionPrompt: input.motionPrompt,
+    durationSeconds: input.durationSeconds,
+    aspectRatio: input.aspectRatio,
+    quality: input.quality,
+  });
 
   return runGeneration(ctx, {
     generationType: "IMAGE_TO_VIDEO",
@@ -513,6 +671,8 @@ export async function requestVideoFromImageGeneration(
     creatorProfileId: input.creatorProfileId ?? sourceAsset.creatorProfileId,
     inputAssetIds: [sourceAsset.id],
     creditCost,
+    idempotencyKey: input.idempotencyKey,
+    requestFingerprint,
     execute: async (generationId) => {
       const result = await provider.generateVideoFromImage({
         sourceAsset: { storagePath: sourceAsset.storagePath, source: sourceAsset.source },
@@ -522,8 +682,9 @@ export async function requestVideoFromImageGeneration(
         quality: input.quality,
         onProviderSubmitted: (info) => persistProviderRequestIdentity(ctx, generationId, info),
       });
-      const assetId = await persistGeneratedAsset(
+      const assetId = await persistGeneratedAssetWithCleanup(
         ctx,
+        provider,
         input.creatorProfileId ?? sourceAsset.creatorProfileId,
         result.outputStoragePath,
         result.mimeType,

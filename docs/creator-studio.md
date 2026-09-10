@@ -488,3 +488,72 @@ The crash window between fal.ai accepting a job and `persistProviderRequestIdent
 landing is real, however narrow — a `GENERATING` row with `providerRequestId = NULL` cannot be proven to
 have no paid job behind it, so it is deliberately never auto-released, only flagged for manual review.
 This is the one unavoidable residual gap; everything else in this section closes automatically.
+
+## 17. P1 hardening — storage orphan cleanup & request idempotency
+
+Resolves two P1 correctness gaps: a Storage upload that succeeds but whose DB asset row then fails to
+persist, and a duplicate/retried generation POST that could create a second independent
+`CreatorGeneration`, reserve credits twice, and potentially submit a second paid provider job.
+
+### Storage orphan compensation
+
+`CreatorMediaProvider` (`src/server/ai/creator/types.ts`) gained a narrow
+`cleanupGeneratedOutput(storagePath): Promise<void>` method — each implementation scopes it to its own
+fixed generated-output bucket (`FalCreatorMediaProvider` deletes from `creator-generated-media` via
+Supabase Storage; `MockCreatorMediaProvider` is a no-op, since it never writes real bytes). It never
+accepts an arbitrary bucket/path — only the exact path the same provider call just uploaded.
+
+`persistGeneratedAssetWithCleanup` (`creator-generations.ts`) wraps `persistGeneratedAsset`: if the DB
+insert fails after the provider already uploaded the output, it calls `provider.cleanupGeneratedOutput`
+on that exact path once, best-effort. The original DB error always propagates unchanged — a cleanup
+failure is logged separately (`console.error`, never thrown, never masks the real error, never retried).
+This can never touch an existing customer asset or an already-linked asset: it only ever runs once, on
+the path a single provider call just returned, immediately after that call, before any DB row referencing
+it could exist. `creator-generation-recovery.ts` (§16) has an equivalent local helper
+(`persistRecoveredAssetWithCleanup`) using `fal-provider.ts`'s exported `cleanupFalGeneratedOutput`
+directly, since that recovery path already talks to fal.ai without going through the
+`CreatorMediaProvider` abstraction.
+
+### Request-level idempotency
+
+A client MAY send an `Idempotency-Key` header (max 255 chars, same order of magnitude as Stripe's own
+limit — `parseIdempotencyKeyHeader`, `src/server/services/creator-studio-idempotency.ts`) on
+`POST /api/v1/creator-studio/generations/{character-image,image-from-character,video-from-image}`. No
+key sent → current behavior is preserved exactly (the underlying `idempotencyKey` column is nullable, and
+Postgres treats every NULL as distinct — the unique constraint below never applies).
+
+**Uniqueness** is enforced by a DB unique constraint: `(organizationId, generationType, idempotencyKey)`
+on `CreatorGeneration` (migration `20260910233000_creator_generation_idempotency_key`, two new nullable
+columns: `idempotencyKey`, `requestFingerprint`). The `creatorGeneration.create()` insert inside
+`runGeneration` is itself the concurrency authority — never a separate check-then-create. Two concurrent
+requests for the same key race the insert directly; the loser's insert fails with Prisma's `P2002`
+(the same idiom `ensureMonthlyCreditGrant` already used for `CreatorCreditGrant`), and the loser fetches
+and returns the winner's row instead of creating (and reserving credits for) its own. This makes "at most
+one RESERVE per idempotent key" true by construction, not by a best-effort check.
+
+**Fingerprinting**: each `request*Generation` function computes a `requestFingerprint` — a SHA-256 digest
+(`computeRequestFingerprint`) of a deterministic, sorted-key canonical serialization of only the
+provider-impacting fields (prompt, aspect ratio, quality, template/source-asset ids, etc.). The raw prompt
+itself is never stored or logged — only this opaque digest. Same key + same fingerprint → the existing row
+is returned (reused, whatever its status — QUEUED/GENERATING/COMPLETED/FAILED). Same key + a different
+fingerprint → `IdempotencyConflictError` → HTTP 409, never a silent reuse.
+
+**Semantics for a FAILED prior attempt**: "same key = same logical request forever" is the safer choice —
+a FAILED idempotent request stays FAILED on replay with that key; a genuinely fresh paid retry must use a
+**new** key. This avoids any new intermediate status and composes with §16 unchanged.
+
+**HTTP response codes**: 201 for a newly created generation, 200 for a reused one (`{ generation, reused }`
+is `runGeneration`'s return shape; every route destructures it into `status: reused ? 200 : 201`), 409 for
+a fingerprint conflict, 400 for an oversized key (`IdempotencyKeyTooLongError`) — mapped centrally in
+`handleCreatorStudioError`. No internals or secrets are exposed in any of these error bodies.
+
+**Recovery compatibility (§16)**: since the DB constraint guarantees at most one `CreatorGeneration` row
+per `(organizationId, generationType, idempotencyKey)`, the reconciliation job can never encounter two
+logical jobs for one key — idempotency and crash recovery compose by construction, no extra code needed.
+
+**Why not the existing Redis `seenIdempotencyKey` pattern** (`src/server/integrations/redis.ts`, used by
+`booking-notifications.ts`): a `SET NX` + TTL claim can tell you "seen before," but can't cleanly hand back
+a rich existing-generation object to reuse on retry, and introduces a second coordination point (Redis +
+DB) with its own race window between the claim and the DB write. A DB unique constraint gives a single
+source of truth for both "was this seen" and "here is the row to reuse," using the same idiom the codebase
+already trusts for `CreatorCreditGrant`.

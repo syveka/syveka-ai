@@ -24,7 +24,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     const body = generateCaptionSchema.safeParse(await request.json().catch(() => null));
     if (!body.success)
       return NextResponse.json({ error: { code: "invalid_input" } }, { status: 400 });
-    const generation = await requestCaptionGeneration(ctx, body.data);
+    const { generation } = await requestCaptionGeneration(ctx, body.data);
     return NextResponse.json({ data: generation }, { status: 201 });
   } catch (e) {
     return handleCreatorStudioError(e);
