@@ -14,6 +14,24 @@ on conflict (id) do nothing;
 
 -- Path convention: {bucket}/{org_id}/...; the first path segment must match
 -- the authenticated tenant claim.
+--
+-- Each policy below is CREATEd the first time this file ever runs against a
+-- database, and ALTERed (never dropped/recreated) on every later rerun --
+-- ALTER POLICY replaces a policy's USING/WITH CHECK expression atomically,
+-- in place, with no window where the policy is absent, so RLS coverage is
+-- never briefly weakened or gapped by this upgrade. This closes a real gap
+-- the original "create if not exists" form had: when a bucket list (e.g.
+-- storage_org_read/write's) grows in a later change, "if not exists" is
+-- true only the very first time the policy is ever created -- every later
+-- run silently no-ops and leaves the live predicate on whatever it was when
+-- first created, even though the file's own expected-predicate check further
+-- below has since moved on. That is exactly what happened on this project's
+-- staging database: storage_org_read/storage_org_write were created before
+-- the Creator Studio buckets existed, so the "if not exists" guard silently
+-- skipped updating them once those buckets were added here, and the
+-- (correctly fail-closed) verification block below then refused to proceed
+-- rather than silently leaving stale RLS coverage in place. ALTER POLICY
+-- keeps every rerun self-healing instead of requiring a manual repair.
 do $$
 begin
   if not exists (
@@ -22,6 +40,12 @@ begin
       and policyname = 'storage_org_read'
   ) then
     create policy storage_org_read on storage.objects for select to authenticated
+      using (
+        bucket_id in ('documents','voice-recordings','exports','creator-reference-assets','creator-generated-media')
+        and (storage.foldername(name))[1] = (auth.jwt() ->> 'org_id')
+      );
+  else
+    alter policy storage_org_read on storage.objects
       using (
         bucket_id in ('documents','voice-recordings','exports','creator-reference-assets','creator-generated-media')
         and (storage.foldername(name))[1] = (auth.jwt() ->> 'org_id')
@@ -38,6 +62,12 @@ begin
         bucket_id in ('documents','exports','creator-reference-assets','creator-generated-media')
         and (storage.foldername(name))[1] = (auth.jwt() ->> 'org_id')
       );
+  else
+    alter policy storage_org_write on storage.objects
+      with check (
+        bucket_id in ('documents','exports','creator-reference-assets','creator-generated-media')
+        and (storage.foldername(name))[1] = (auth.jwt() ->> 'org_id')
+      );
   end if;
 
   if not exists (
@@ -50,6 +80,12 @@ begin
         bucket_id = 'avatars'
         and (storage.foldername(name))[1] = auth.uid()::text
       );
+  else
+    alter policy storage_avatar_write on storage.objects
+      with check (
+        bucket_id = 'avatars'
+        and (storage.foldername(name))[1] = auth.uid()::text
+      );
   end if;
 
   if not exists (
@@ -58,6 +94,9 @@ begin
       and policyname = 'storage_public_read'
   ) then
     create policy storage_public_read on storage.objects for select to public
+      using (bucket_id in ('avatars', 'org-logos'));
+  else
+    alter policy storage_public_read on storage.objects
       using (bucket_id in ('avatars', 'org-logos'));
   end if;
 end $$;
