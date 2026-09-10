@@ -9,9 +9,20 @@
 export type AspectRatio = "1:1" | "4:5" | "9:16" | "16:9";
 export type GenerationQuality = "standard" | "high";
 
+/**
+ * A storage-backed asset, identified along with its CreatorAssetSource
+ * (UPLOAD vs GENERATED) so a provider can resolve the correct storage
+ * bucket — see fal-provider.ts's signAsset, mirroring
+ * creator-publishing.ts's signAssetUrl.
+ */
+export interface CreatorAssetRef {
+  storagePath: string;
+  source: string;
+}
+
 export interface CharacterImageRequest {
   prompt: string;
-  referenceAssetPaths: string[];
+  referenceAssets: CreatorAssetRef[];
   aspectRatio: AspectRatio;
   quality?: GenerationQuality;
 }
@@ -19,13 +30,13 @@ export interface CharacterImageRequest {
 export interface ImageFromCharacterRequest {
   prompt: string;
   negativePrompt?: string;
-  referenceAssetPaths: string[];
+  referenceAssets: CreatorAssetRef[];
   aspectRatio: AspectRatio;
   quality?: GenerationQuality;
 }
 
 export interface VideoFromImageRequest {
-  sourceAssetPath: string;
+  sourceAsset: CreatorAssetRef;
   motionPrompt?: string;
   durationSeconds?: number;
   aspectRatio: AspectRatio;

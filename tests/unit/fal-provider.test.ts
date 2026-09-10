@@ -66,7 +66,7 @@ describe("FalCreatorMediaProvider", () => {
     const provider = new FalCreatorMediaProvider();
     const resultPromise = provider.generateCharacterImage({
       prompt: "a business portrait",
-      referenceAssetPaths: [],
+      referenceAssets: [],
       aspectRatio: "1:1",
     });
     await vi.runAllTimersAsync();
@@ -80,19 +80,20 @@ describe("FalCreatorMediaProvider", () => {
     expect(submitBody.prompt).toBe("a business portrait");
   });
 
-  it("generateImageFromCharacter signs the reference asset and calls the image-to-image model", async () => {
+  it("generateImageFromCharacter signs an UPLOAD asset from the reference-assets bucket", async () => {
     queueResponses({ images: [{ url: "https://fal.media/out2.png", content_type: "image/png" }] });
 
     const { FalCreatorMediaProvider } = await import("@/server/ai/creator/fal-provider");
     const provider = new FalCreatorMediaProvider();
     const resultPromise = provider.generateImageFromCharacter({
       prompt: "same character, new outfit",
-      referenceAssetPaths: ["org-a/profile/ref.png"],
+      referenceAssets: [{ storagePath: "org-a/profile/ref.png", source: "UPLOAD" }],
       aspectRatio: "4:5",
     });
     await vi.runAllTimersAsync();
     await resultPromise;
 
+    expect(storageFromMock).toHaveBeenCalledWith("creator-reference-assets");
     expect(createSignedUrlMock).toHaveBeenCalledWith("org-a/profile/ref.png", 600);
     const submitUrl = fetchMock.mock.calls[0]![0];
     expect(submitUrl).toBe("https://queue.fal.run/fal-ai/flux/dev/image-to-image");
@@ -100,23 +101,58 @@ describe("FalCreatorMediaProvider", () => {
     expect(submitBody.image_url).toBe("https://storage.example/signed/ref.png");
   });
 
-  it("generateVideoFromImage calls the Kling image-to-video model and returns a duration", async () => {
+  it("generateImageFromCharacter signs a GENERATED asset from the generated-media bucket", async () => {
+    queueResponses({ images: [{ url: "https://fal.media/out3.png", content_type: "image/png" }] });
+
+    const { FalCreatorMediaProvider } = await import("@/server/ai/creator/fal-provider");
+    const provider = new FalCreatorMediaProvider();
+    const resultPromise = provider.generateImageFromCharacter({
+      prompt: "same character, new outfit",
+      referenceAssets: [{ storagePath: "org-a/fal/out.png", source: "GENERATED" }],
+      aspectRatio: "4:5",
+    });
+    await vi.runAllTimersAsync();
+    await resultPromise;
+
+    expect(storageFromMock).toHaveBeenCalledWith("creator-generated-media");
+    expect(createSignedUrlMock).toHaveBeenCalledWith("org-a/fal/out.png", 600);
+  });
+
+  it("generateVideoFromImage signs an UPLOAD source asset from the reference-assets bucket", async () => {
     queueResponses({ video: { url: "https://fal.media/out.mp4", content_type: "video/mp4" } });
 
     const { FalCreatorMediaProvider } = await import("@/server/ai/creator/fal-provider");
     const provider = new FalCreatorMediaProvider();
     const resultPromise = provider.generateVideoFromImage({
-      sourceAssetPath: "org-a/generated/img.png",
+      sourceAsset: { storagePath: "org-a/profile/ref.png", source: "UPLOAD" },
       aspectRatio: "9:16",
       durationSeconds: 10,
     });
     await vi.runAllTimersAsync();
     const result = await resultPromise;
 
+    expect(storageFromMock).toHaveBeenCalledWith("creator-reference-assets");
     expect(result.durationSeconds).toBe(10);
     expect(result.mimeType).toBe("video/mp4");
     const submitUrl = fetchMock.mock.calls[0]![0];
     expect(submitUrl).toContain("kling-video");
+  });
+
+  it("generateVideoFromImage signs a GENERATED source asset from the generated-media bucket", async () => {
+    queueResponses({ video: { url: "https://fal.media/out2.mp4", content_type: "video/mp4" } });
+
+    const { FalCreatorMediaProvider } = await import("@/server/ai/creator/fal-provider");
+    const provider = new FalCreatorMediaProvider();
+    const resultPromise = provider.generateVideoFromImage({
+      sourceAsset: { storagePath: "org-a/generated/img.png", source: "GENERATED" },
+      aspectRatio: "9:16",
+      durationSeconds: 5,
+    });
+    await vi.runAllTimersAsync();
+    await resultPromise;
+
+    expect(storageFromMock).toHaveBeenCalledWith("creator-generated-media");
+    expect(createSignedUrlMock).toHaveBeenCalledWith("org-a/generated/img.png", 600);
   });
 
   it("propagates a fal.ai job error rather than silently returning a placeholder", async () => {
@@ -141,7 +177,7 @@ describe("FalCreatorMediaProvider", () => {
     const provider = new FalCreatorMediaProvider();
     const resultPromise = provider.generateCharacterImage({
       prompt: "x",
-      referenceAssetPaths: [],
+      referenceAssets: [],
       aspectRatio: "1:1",
     });
     const assertion = expect(resultPromise).rejects.toThrow();

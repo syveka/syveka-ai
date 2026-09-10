@@ -218,7 +218,10 @@ export async function requestCharacterImageGeneration(
     execute: async () => {
       const result = await provider.generateCharacterImage({
         prompt: input.prompt,
-        referenceAssetPaths: profile.referenceAssets.map((a) => a.storagePath),
+        referenceAssets: profile.referenceAssets.map((a) => ({
+          storagePath: a.storagePath,
+          source: a.source,
+        })),
         aspectRatio: input.aspectRatio,
         quality: input.quality,
       });
@@ -270,7 +273,10 @@ export async function requestImageFromCharacterGeneration(
       const result = await provider.generateImageFromCharacter({
         prompt: input.prompt,
         negativePrompt: input.negativePrompt,
-        referenceAssetPaths: profile.referenceAssets.map((a) => a.storagePath),
+        referenceAssets: profile.referenceAssets.map((a) => ({
+          storagePath: a.storagePath,
+          source: a.source,
+        })),
         aspectRatio: input.aspectRatio,
         quality: input.quality,
       });
@@ -323,7 +329,7 @@ export async function requestVideoFromImageGeneration(
     creditCost,
     execute: async () => {
       const result = await provider.generateVideoFromImage({
-        sourceAssetPath: sourceAsset.storagePath,
+        sourceAsset: { storagePath: sourceAsset.storagePath, source: sourceAsset.source },
         motionPrompt: input.motionPrompt,
         durationSeconds: input.durationSeconds,
         aspectRatio: input.aspectRatio,

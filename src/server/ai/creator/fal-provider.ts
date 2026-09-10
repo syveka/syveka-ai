@@ -10,6 +10,7 @@ import type {
   VideoFromImageRequest,
   MediaGenerationResult,
   VideoGenerationResult,
+  CreatorAssetRef,
 } from "./types";
 
 const REFERENCE_BUCKET = "creator-reference-assets";
@@ -42,13 +43,21 @@ function falImageSize(aspectRatio: string): { width: number; height: number } {
   }
 }
 
-async function signReferenceAsset(storagePath: string): Promise<string> {
+/**
+ * Signs a creator asset for fal.ai to fetch as input. An asset's storage
+ * bucket depends on its source (UPLOAD → reference bucket, GENERATED →
+ * generated-media bucket) — same rule as creator-publishing.ts's
+ * signAssetUrl, which every other asset-signing call site in Creator Studio
+ * already follows.
+ */
+async function signAsset(asset: CreatorAssetRef): Promise<string> {
+  const bucket = asset.source === "GENERATED" ? OUTPUT_BUCKET : REFERENCE_BUCKET;
   const admin = createSupabaseAdmin();
   const { data, error } = await admin.storage
-    .from(REFERENCE_BUCKET)
-    .createSignedUrl(storagePath, SIGNED_URL_TTL_SECONDS);
+    .from(bucket)
+    .createSignedUrl(asset.storagePath, SIGNED_URL_TTL_SECONDS);
   if (error || !data) {
-    throw new Error(`Failed to sign reference asset for fal.ai input: ${error?.message}`);
+    throw new Error(`Failed to sign asset for fal.ai input: ${error?.message}`);
   }
   return data.signedUrl;
 }
@@ -115,7 +124,7 @@ export class FalCreatorMediaProvider implements CreatorMediaProvider {
   async generateImageFromCharacter(req: ImageFromCharacterRequest): Promise<MediaGenerationResult> {
     const start = Date.now();
     const size = falImageSize(req.aspectRatio);
-    if (req.referenceAssetPaths.length === 0) {
+    if (req.referenceAssets.length === 0) {
       const output = await runFalModel<FalImageOutput>(imageModel(), {
         prompt: req.prompt,
         negative_prompt: req.negativePrompt,
@@ -125,7 +134,7 @@ export class FalCreatorMediaProvider implements CreatorMediaProvider {
       return this.persistFirstImage(output, start);
     }
 
-    const referenceUrl = await signReferenceAsset(req.referenceAssetPaths[0]!);
+    const referenceUrl = await signAsset(req.referenceAssets[0]!);
     const output = await runFalModel<FalImageOutput>(DEFAULT_IMAGE_TO_IMAGE_MODEL, {
       prompt: req.prompt,
       image_url: referenceUrl,
@@ -137,7 +146,7 @@ export class FalCreatorMediaProvider implements CreatorMediaProvider {
 
   async generateVideoFromImage(req: VideoFromImageRequest): Promise<VideoGenerationResult> {
     const start = Date.now();
-    const sourceUrl = await signReferenceAsset(req.sourceAssetPath);
+    const sourceUrl = await signAsset(req.sourceAsset);
     const duration = req.durationSeconds && req.durationSeconds >= 8 ? "10" : "5";
     const output = await runFalModel<FalVideoOutput>(imageToVideoModel(), {
       prompt: req.motionPrompt ?? "Animate this image with subtle natural motion.",
