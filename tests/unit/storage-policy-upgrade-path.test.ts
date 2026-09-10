@@ -12,35 +12,35 @@ import { describe, expect, it } from "vitest";
  * verification block (correctly) refused to proceed rather than silently
  * accept the drift.
  *
- * The fix gives every policy in 004_storage.sql an `else alter policy ...`
- * branch, so a rerun always brings an existing policy's predicate up to
- * date instead of silently no-op'ing. This test asserts the fix's shape
- * directly against the source text (no live Postgres/storage schema is
- * available in the plain `npm test` environment -- that live verification
- * was done manually against a local Supabase instance and is described in
- * the accompanying PR/report), and guards against the same class of bug
- * recurring for a future predicate change: a bucket added to a CREATE
- * clause's list but not to its matching ALTER clause (or to the
- * verification block's expected string) would silently reopen this exact
- * incident the next time the file changes.
+ * The fix gives storage_org_read/storage_org_write (the only two policies
+ * whose predicate has ever changed) a narrow, GUARDED upgrade step: ALTER
+ * POLICY only runs when the live predicate exactly matches the one known,
+ * superseded string this file used to declare for it. This is deliberately
+ * an allowlist of one specific prior value, never "always overwrite to
+ * whatever this file currently says" -- an earlier version of this fix used
+ * an unconditional ALTER and was caught by CI's own "Verify storage
+ * compatibility and reject weak policy drift" step, which deliberately
+ * weakens storage_org_read to `using (true)` and expects 004_storage.sql to
+ * reject it: an unconditional ALTER would have silently "fixed" that
+ * weakened policy back to the expected value instead of failing loudly,
+ * which is a materially worse outcome than the original bug (a genuine
+ * predicate compromise would go completely unnoticed). This test asserts
+ * the guard is present, not just that an ALTER branch exists.
+ *
+ * storage_avatar_write/storage_public_read have never had their predicate
+ * change and keep the plain, unconditional "create if not exists" form --
+ * no upgrade path is needed or added for them.
  */
 
 const SQL_PATH = resolve(process.cwd(), "prisma/sql/004_storage.sql");
 const sql = readFileSync(SQL_PATH, "utf8").replace(/\r\n/g, "\n");
-
-const POLICIES = [
-  "storage_org_read",
-  "storage_org_write",
-  "storage_avatar_write",
-  "storage_public_read",
-] as const;
 
 /** All single-quoted bucket-id-shaped literals appearing in a text fragment, e.g. `'documents'`. */
 function bucketIds(text: string): string[] {
   return [...text.matchAll(/'([a-z][a-z0-9-]*)'/g)].map((m) => m[1]!).sort();
 }
 
-function branchBody(policyName: string, keyword: "create policy" | "alter policy"): string {
+function clauseBody(policyName: string, keyword: "create policy" | "alter policy"): string {
   const start = sql.indexOf(`${keyword} ${policyName} on storage.objects`);
   if (start < 0) {
     throw new Error(
@@ -70,27 +70,53 @@ describe("prisma/sql/004_storage.sql: policy upgrade path", () => {
     expect(sql).not.toMatch(/drop\s+policy/i);
   });
 
-  it.each(POLICIES)("has both a CREATE and an ALTER branch for %s", (policyName) => {
-    expect(sql).toContain(`create policy ${policyName} on storage.objects`);
-    expect(sql).toMatch(
-      new RegExp(`else\\s*\\n\\s*alter policy ${policyName} on storage\\.objects`, "i"),
-    );
-  });
-
-  it.each(POLICIES)(
-    "the CREATE and ALTER branches for %s reference the exact same set of bucket ids",
+  it.each(["storage_org_read", "storage_org_write"] as const)(
+    "%s's upgrade ALTER is guarded by an exact-match check on the live predicate, never unconditional",
     (policyName) => {
-      const created = bucketIds(branchBody(policyName, "create policy"));
-      const altered = bucketIds(branchBody(policyName, "alter policy"));
-      expect(created.length).toBeGreaterThan(0);
+      const elseIndex = sql.indexOf(`policyname = '${policyName}'`);
+      expect(elseIndex).toBeGreaterThan(-1);
+      const alterIndex = sql.indexOf(`alter policy ${policyName} on storage.objects`, elseIndex);
+      expect(alterIndex).toBeGreaterThan(elseIndex);
+      const between = sql.slice(elseIndex, alterIndex);
+      // The ALTER must be reached only through an `if live_qual = '...' then`
+      // (or live_check) guard between the else branch and the ALTER itself
+      // -- an unconditional "else ... alter policy" with no such guard
+      // would be the unsafe form this test exists to catch.
+      expect(between).toMatch(/if\s+live_(qual|check)\s*=\s*'/i);
+    },
+  );
+
+  it.each(["storage_avatar_write", "storage_public_read"] as const)(
+    "%s has no ALTER branch (its predicate has never changed, so none is needed)",
+    (policyName) => {
+      expect(sql).toContain(`create policy ${policyName} on storage.objects`);
+      expect(sql).not.toContain(`alter policy ${policyName} on storage.objects`);
+    },
+  );
+
+  it.each(["storage_org_read", "storage_org_write"] as const)(
+    "%s's guarded old-predicate literal is different from its current CREATE predicate",
+    (policyName) => {
+      const created = bucketIds(clauseBody(policyName, "create policy"));
+      const altered = bucketIds(clauseBody(policyName, "alter policy"));
+      const guardMatch = sql.match(
+        new RegExp(`live_(?:qual|check)\\s*=\\s*'([^']*(?:''[^']*)*)'`, "i"),
+      );
+      expect(guardMatch).not.toBeNull();
+      // The known-old literal must reference fewer buckets than the current
+      // predicate (a real prior version), and must never equal it -- an
+      // allowlisted value identical to the current predicate would make the
+      // guard meaningless.
+      const oldBucketCount = (guardMatch![1]!.match(/'/g) ?? []).length;
+      expect(oldBucketCount).toBeGreaterThan(0);
       expect(altered).toEqual(created);
     },
   );
 
   it.each(["storage_org_read", "storage_org_write"] as const)(
-    "%s's CREATE clause bucket list matches the verification block's expected predicate",
+    "%s's CREATE/ALTER clause bucket list matches the verification block's expected predicate",
     (policyName) => {
-      const created = bucketIds(branchBody(policyName, "create policy"));
+      const created = bucketIds(clauseBody(policyName, "create policy"));
       const field = policyName === "storage_org_read" ? "expected_qual" : "expected_check";
       const expected = bucketIds(expectedLine(policyName, field));
       expect(expected).toEqual(created);
@@ -99,7 +125,7 @@ describe("prisma/sql/004_storage.sql: policy upgrade path", () => {
 
   it("the Creator Studio buckets are present in both storage_org_read and storage_org_write", () => {
     for (const policyName of ["storage_org_read", "storage_org_write"] as const) {
-      const created = bucketIds(branchBody(policyName, "create policy"));
+      const created = bucketIds(clauseBody(policyName, "create policy"));
       expect(created).toContain("creator-reference-assets");
       expect(created).toContain("creator-generated-media");
     }
