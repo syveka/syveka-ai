@@ -8,6 +8,12 @@
     "src/app/api/v1/jobs/run-workflow/route.ts": { "maxDuration": 300 },
     "src/app/api/v1/jobs/post-call/route.ts": { "maxDuration": 120 },
     "src/app/api/v1/jobs/usage-rollup/route.ts": { "maxDuration": 300 },
-    "src/app/api/v1/jobs/calendar-sync/route.ts": { "maxDuration": 120 }
+    "src/app/api/v1/jobs/calendar-sync/route.ts": { "maxDuration": 120 },
+    "src/app/api/v1/creator-studio/generations/character-image/route.ts": { "maxDuration": 300 },
+    "src/app/api/v1/creator-studio/generations/image-from-character/route.ts": {
+      "maxDuration": 300
+    },
+    "src/app/api/v1/creator-studio/generations/video-from-image/route.ts": { "maxDuration": 300 },
+    "src/app/api/v1/jobs/reconcile-creator-generations/route.ts": { "maxDuration": 120 }
   }
 }

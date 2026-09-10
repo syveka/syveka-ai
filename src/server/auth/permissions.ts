@@ -42,6 +42,13 @@ export const PERMISSIONS = [
   "api-keys:manage",
   "webhooks:manage",
   "audit:view",
+  "creator:read",
+  "creator:write",
+  "creator:generate",
+  "creator:approve",
+  "creator:publish",
+  "creator:manage-social-accounts",
+  "creator:manage-autopilot",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -74,6 +81,13 @@ const MANAGER_PERMS = new Set<Permission>([
   "analytics:view-own",
   "prompts:read",
   "prompts:write",
+  "creator:read",
+  "creator:write",
+  "creator:generate",
+  "creator:approve",
+  "creator:publish",
+  "creator:manage-social-accounts",
+  "creator:manage-autopilot",
 ]);
 
 const MEMBER_PERMS = new Set<Permission>([
@@ -92,6 +106,9 @@ const MEMBER_PERMS = new Set<Permission>([
   "analytics:view-own",
   "prompts:read",
   "prompts:write",
+  "creator:read",
+  "creator:write",
+  "creator:generate",
 ]);
 
 const VIEWER_PERMS = new Set<Permission>([
@@ -102,6 +119,7 @@ const VIEWER_PERMS = new Set<Permission>([
   "voice:view-calls",
   "calendar:read",
   "prompts:read",
+  "creator:read",
 ]);
 
 const ADMIN_PERMS = new Set<Permission>(

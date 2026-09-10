@@ -31,7 +31,8 @@
     "inbox": "الوارد",
     "notifications": "الإشعارات",
     "settings": "الإعدادات",
-    "businessDna": "الهوية التجارية"
+    "businessDna": "الهوية التجارية",
+    "creatorStudio": "استوديو المبدع"
   },
   "auth": {
     "login": "تسجيل الدخول",
@@ -818,6 +819,206 @@
       "not_configured": "غير مُعد",
       "blocked": "محظور",
       "verification_required": "يتطلب التحقق"
+    }
+  },
+  "creatorStudio": {
+    "title": "استوديو المبدع",
+    "subtitle": "شخصيات الذكاء الاصطناعي، إنشاء المحتوى، الموافقات والنشر.",
+    "featureDisabled": "استوديو المبدع غير مفعّل بعد لهذه المؤسسة.",
+    "nav": {
+      "overview": "نظرة عامة",
+      "characters": "الشخصيات",
+      "create": "إنشاء",
+      "campaigns": "الحملات",
+      "approvals": "الموافقات",
+      "calendar": "التقويم",
+      "library": "المكتبة",
+      "socialAccounts": "الحسابات الاجتماعية",
+      "analytics": "التحليلات"
+    },
+    "overview": {
+      "characters": "الشخصيات",
+      "creditsAvailable": "الأرصدة المتاحة",
+      "pendingApprovals": "بانتظار الموافقة",
+      "emptyState": "أنشئ أول شخصية ذكاء اصطناعي لبدء إنشاء المحتوى.",
+      "createCharacterCta": "إنشاء شخصية"
+    },
+    "characters": {
+      "nameLabel": "اسم الشخصية",
+      "namePlaceholder": "مثال: سارة، سفيرة العلامة",
+      "creating": "جارٍ الإنشاء…",
+      "createCta": "إنشاء شخصية",
+      "empty": "لا توجد شخصيات بعد.",
+      "status": {
+        "DRAFT": "مسودة",
+        "ACTIVE": "نشط",
+        "ARCHIVED": "مؤرشف"
+      },
+      "referenceCount": "{count} صور مرجعية",
+      "referenceImages": "الصور المرجعية",
+      "referenceProgress": "{count} من {min} صورة مرجعية موافق عليها كحد أدنى",
+      "uploadDropzone": "أفلت الصور أو انقر للتحميل",
+      "uploadHint": "JPEG أو PNG أو WEBP — بحد أقصى 15 ميغابايت، 3 كحد أدنى، يُنصح بـ 5–10",
+      "uploading": "جارٍ الرفع…",
+      "errors": {
+        "unsupported_type": "نوع الملف غير مدعوم.",
+        "too_large": "الملف كبير جدًا.",
+        "upload_failed": "فشل الرفع. حاول مرة أخرى."
+      },
+      "validation": {
+        "PENDING": "بانتظار المراجعة",
+        "APPROVED": "موافق عليه",
+        "REJECTED": "مرفوض"
+      },
+      "consentText": "أكّد أنك تملك هذه الصور أو أن لديك إذنًا لاستخدامها في التوليد بالذكاء الاصطناعي.",
+      "confirming": "جارٍ التأكيد…",
+      "confirmConsentCta": "تأكيد الموافقة",
+      "consentConfirmed": "تم تأكيد الموافقة",
+      "generateCta": "إنشاء محتوى"
+    },
+    "create": {
+      "mode": {
+        "IMAGE": "صورة",
+        "IMAGE_TO_VIDEO": "صورة ← فيديو",
+        "CAPTION": "تعليق"
+      },
+      "creatorLabel": "الشخصية",
+      "noCreator": "بدون شخصية (عام)",
+      "templateLabel": "القالب",
+      "noTemplate": "بدون قالب — موجّه مخصص",
+      "promptLabel": "الموجّه",
+      "promptPlaceholder": "صف المشهد والبيئة والأسلوب…",
+      "sourceImageLabel": "الصورة المصدر",
+      "selectImage": "اختر صورة",
+      "aspectRatioLabel": "نسبة الأبعاد",
+      "platformLabel": "المنصة",
+      "languageLabel": "اللغة",
+      "estimatedCost": "التكلفة التقديرية: {cost} رصيد",
+      "insufficientCredits": "الرصيد غير كافٍ",
+      "generateCta": "إنشاء",
+      "generating": "جارٍ الإنشاء…",
+      "generationQueued": "بدأ الإنشاء — تحقق من النتائج في المكتبة."
+    },
+    "campaigns": {
+      "nameLabel": "اسم الحملة",
+      "namePlaceholder": "مثال: إطلاق منتج الخريف",
+      "creating": "جارٍ الإنشاء…",
+      "createCta": "إنشاء حملة",
+      "empty": "لا توجد حملات بعد.",
+      "approvalMode": {
+        "MANUAL": "يدوي",
+        "APPROVAL": "يتطلب موافقة",
+        "AUTOPILOT": "الطيار الآلي"
+      },
+      "postsCount": "منشورات",
+      "status": {
+        "DRAFT": "مسودة",
+        "ACTIVE": "نشطة",
+        "PAUSED": "متوقفة مؤقتًا",
+        "COMPLETED": "مكتملة",
+        "ARCHIVED": "مؤرشفة"
+      },
+      "noPosts": "لا توجد منشورات في هذه الحملة بعد.",
+      "noCaption": "بدون تعليق",
+      "approvalStatus": {
+        "DRAFT": "مسودة",
+        "PENDING_APPROVAL": "بانتظار الموافقة",
+        "APPROVED": "موافق عليه",
+        "REJECTED": "مرفوض",
+        "CHANGES_REQUESTED": "طُلب إجراء تغييرات"
+      },
+      "publishStatus": {
+        "NOT_SCHEDULED": "غير مجدول",
+        "SCHEDULED": "مجدول",
+        "PUBLISHING": "قيد النشر",
+        "PUBLISHED": "منشور",
+        "FAILED": "فشل",
+        "CANCELED": "أُلغي"
+      },
+      "autopilot": {
+        "title": "الطيار الآلي",
+        "description": "اسمح لـ Syveka بنشر محتوى الفئات المعتمدة تلقائيًا ضمن قواعدك.",
+        "enable": "تفعيل الطيار الآلي",
+        "disable": "إيقاف الطيار الآلي",
+        "defaultRules": "القواعد الافتراضية: 3 منشورات أسبوعيًا كحد أقصى، 8:00–20:00، بالإنجليزية فقط. عدّل عبر الدعم."
+      }
+    },
+    "approvals": {
+      "empty": "لا يوجد ما ينتظر الموافقة.",
+      "noCaption": "بدون تعليق",
+      "approve": "موافقة",
+      "requestChanges": "طلب تغييرات",
+      "reject": "رفض"
+    },
+    "calendar": {
+      "empty": "لا توجد منشورات بعد.",
+      "noCaption": "بدون تعليق",
+      "status": {
+        "NOT_SCHEDULED": "غير مجدول",
+        "SCHEDULED": "مجدول",
+        "PUBLISHING": "قيد النشر",
+        "PUBLISHED": "منشور",
+        "FAILED": "فشل",
+        "CANCELED": "أُلغي"
+      },
+      "noSocialAccounts": "قم بربط حساب اجتماعي لجدولة المنشورات.",
+      "scheduledForLabel": "ينشر في",
+      "socialAccountLabel": "الحساب",
+      "scheduling": "جارٍ الجدولة…",
+      "scheduleCta": "جدولة",
+      "cancelCta": "إلغاء"
+    },
+    "library": {
+      "generationsTitle": "الإنشاءات",
+      "noGenerations": "لا توجد عمليات إنشاء بعد.",
+      "type": {
+        "IMAGE": "صورة",
+        "IMAGE_TO_VIDEO": "فيديو",
+        "CAPTION": "تعليق",
+        "VOICE": "صوت",
+        "CAMPAIGN_ASSET": "أصل حملة"
+      },
+      "status": {
+        "QUEUED": "قيد الانتظار",
+        "GENERATING": "قيد الإنشاء",
+        "COMPLETED": "مكتمل",
+        "FAILED": "فشل"
+      },
+      "creditsUsed": "{count} رصيد",
+      "adding": "جارٍ الإضافة…",
+      "createPostCta": "إضافة إلى الحملة",
+      "addedToCampaign": "أُضيف كمنشور مسودة",
+      "draftPostsTitle": "منشورات المسودة",
+      "noDrafts": "لا توجد منشورات مسودة.",
+      "noCaption": "بدون تعليق",
+      "requestApprovalCta": "طلب الموافقة"
+    },
+    "socialAccounts": {
+      "platformLabel": "المنصة",
+      "connecting": "جارٍ الاتصال…",
+      "connectCta": "ربط الحساب",
+      "mockNotice": "يتطلب النشر الحقيقي على Instagram/Facebook/TikTok/YouTube موافقة تطبيق المنصة — هذا يربط حسابًا تجريبيًا.",
+      "disconnectCta": "قطع الاتصال",
+      "platformStatusTitle": "دعم المنصات",
+      "capabilityFull": "متصل وقابل للنشر",
+      "capabilityBlocked": "النشر الحقيقي غير متاح بعد",
+      "empty": "لا توجد حسابات اجتماعية متصلة.",
+      "status": {
+        "CONNECTED": "متصل",
+        "NEEDS_REAUTH": "يحتاج إلى إعادة الاتصال",
+        "ERROR": "خطأ",
+        "DISCONNECTED": "غير متصل"
+      }
+    },
+    "analytics": {
+      "creditsAvailable": "الأرصدة المتاحة",
+      "creditsConsumed": "الأرصدة المستهلكة",
+      "avgLatency": "متوسط زمن الإنشاء",
+      "generationsByType": "الإنشاءات حسب النوع",
+      "noData": "لا توجد بيانات بعد.",
+      "postsByPlatform": "المنشورات حسب المنصة",
+      "autopilotPublished": "{count} منشور تم نشره عبر الطيار الآلي",
+      "avgApprovalTurnaround": "~{hours} ساعة متوسط زمن الموافقة"
     }
   }
 }
