@@ -142,20 +142,7 @@ if (mode === "identity") {
   requireSettings(["E2E_USER_EMAIL", "E2E_USER_PASSWORD"]);
   console.log("Required authenticated staging E2E setting names are present.");
 } else if (mode === "creator-studio") {
-  requireSettings([
-    "STAGING_FAL_API_KEY",
-    "STAGING_META_APP_ID",
-    "STAGING_META_APP_SECRET",
-    "STAGING_SOCIAL_TOKEN_ENCRYPTION_KEY",
-  ]);
-
-  // Meta App IDs are always numeric (see the Meta App dashboard) -- this is a shape
-  // check only, independent of STAGING_META_APP_SECRET (checked for presence only
-  // above, never for shape or content, since there is no public secret format to
-  // validate against without risking echoing it).
-  if (!/^\d+$/.test(process.env.STAGING_META_APP_ID)) {
-    throw new Error("STAGING_META_APP_ID must be a numeric Meta App ID.");
-  }
+  requireSettings(["STAGING_FAL_API_KEY", "STAGING_SOCIAL_TOKEN_ENCRYPTION_KEY"]);
 
   // Same runtime requirement as src/server/integrations/social/crypto.ts's
   // getKey(): AES-256-GCM needs exactly a 32-byte key, base64-encoded.
@@ -164,7 +151,45 @@ if (mode === "identity") {
     throw new Error("STAGING_SOCIAL_TOKEN_ENCRYPTION_KEY must be 32 bytes, base64-encoded.");
   }
 
-  console.log("Creator Studio provider configuration is present and correctly shaped.");
+  // Meta (Instagram/Facebook publishing) is validated as an optional pair,
+  // deliberately never bundled into requireSettings above: Creator Studio
+  // image/video/caption generation depends only on FAL_API_KEY, and
+  // src/server/social/index.ts's getSocialPublishingProvider() already
+  // fails closed at runtime -- it throws, never silently substitutes the
+  // mock provider, whenever NODE_ENV === "production" (true for every
+  // Vercel build, staging Preview included) and isMetaConfigured() is
+  // false. Hard-requiring Meta here would only block staging from ever
+  // validating Creator Studio generation while Meta app review/onboarding
+  // is still pending, without adding any safety the runtime check doesn't
+  // already provide on its own. A half-configured pair (exactly one of the
+  // two set) is still rejected below -- that shape is always a
+  // misconfiguration, never a deliberate "Meta not ready yet" state.
+  const metaAppId = process.env.STAGING_META_APP_ID?.trim();
+  const metaAppSecret = process.env.STAGING_META_APP_SECRET?.trim();
+  if (Boolean(metaAppId) !== Boolean(metaAppSecret)) {
+    throw new Error(
+      "STAGING_META_APP_ID and STAGING_META_APP_SECRET must be configured together -- only one is currently set.",
+    );
+  }
+
+  if (metaAppId && metaAppSecret) {
+    // Meta App IDs are always numeric (see the Meta App dashboard) -- this is a shape
+    // check only, independent of STAGING_META_APP_SECRET (checked for presence only
+    // above, never for shape or content, since there is no public secret format to
+    // validate against without risking echoing it).
+    if (!/^\d+$/.test(metaAppId)) {
+      throw new Error("STAGING_META_APP_ID must be a numeric Meta App ID.");
+    }
+    console.log(
+      "Creator Studio provider configuration is present and correctly shaped (Meta configured).",
+    );
+  } else {
+    console.log(
+      "Creator Studio provider configuration is present and correctly shaped. " +
+        "STAGING_META_APP_ID/STAGING_META_APP_SECRET are not configured -- Instagram/Facebook " +
+        "publishing will fail closed at runtime; image/video/caption generation is unaffected.",
+    );
+  }
 } else {
   throw new Error(
     "STAGING_CONFIG_MODE must be identity, storage, embedding, runtime, e2e, or creator-studio.",
