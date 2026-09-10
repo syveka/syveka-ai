@@ -2,6 +2,10 @@ import { NextResponse } from "next/server";
 import { generateImageFromCharacterSchema } from "@/lib/validators/creator-studio";
 
 export const dynamic = "force-dynamic";
+// fal.ai's own queue poll ceiling (src/server/integrations/fal.ts:
+// MAX_POLL_ATTEMPTS * POLL_INTERVAL_MS) is 300s — see docs/creator-studio.md §15
+// for the full timeout/recovery audit.
+export const maxDuration = 300;
 
 export async function POST(request: Request): Promise<NextResponse> {
   const [

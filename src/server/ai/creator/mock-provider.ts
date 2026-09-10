@@ -46,6 +46,9 @@ export class MockCreatorMediaProvider implements CreatorMediaProvider {
     return {
       outputStoragePath: `mock/${kind}/${randomUUID()}.${ext}`,
       mimeType: kind === "video" ? "video/mp4" : "image/png",
+      // No real bytes are written for the mock provider, so there is no real
+      // size to report — see the class doc comment above.
+      sizeBytes: 0,
       providerRequestId: `mock_${randomUUID()}`,
       latencyMs,
     };

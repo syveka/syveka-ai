@@ -88,8 +88,13 @@ async function runGeneration(
 
   try {
     const result = await params.execute();
-    const completed = await db.creatorGeneration.update({
-      where: { id: generation.id },
+    // Conditional claim on the current status (same atomic-UPDATE pattern
+    // publishCreatorPost's `claim` uses in creator-publishing.ts) — if some
+    // other path already moved this generation out of GENERATING (e.g. a
+    // future stale-job reconciler), count is 0 and we must not commit or
+    // audit a second time.
+    const claim = await db.creatorGeneration.updateMany({
+      where: { id: generation.id, status: "GENERATING" },
       data: {
         status: "COMPLETED",
         outputAssetIds: result.outputAssetIds,
@@ -100,6 +105,13 @@ async function runGeneration(
         completedAt: new Date(),
       },
     });
+    if (claim.count !== 1) {
+      console.warn("creator generation already finalized elsewhere; skipping duplicate commit", {
+        generationId: generation.id,
+        orgId: ctx.orgId,
+      });
+      return db.creatorGeneration.findUniqueOrThrow({ where: { id: generation.id } });
+    }
     await commitCreatorCredits(ctx, {
       generationId: generation.id,
       reservedAmount: params.creditCost,
@@ -111,7 +123,7 @@ async function runGeneration(
       resourceId: generation.id,
       after: { generationType: params.generationType, creditsConsumed: params.creditCost },
     });
-    return completed;
+    return db.creatorGeneration.findUniqueOrThrow({ where: { id: generation.id } });
   } catch (error) {
     // Never persist raw provider error text (§4: sanitize before surfacing) —
     // full detail goes to server logs only, never to a client-reachable field.
@@ -120,8 +132,8 @@ async function runGeneration(
       orgId: ctx.orgId,
       error,
     });
-    await db.creatorGeneration.update({
-      where: { id: generation.id },
+    const claim = await db.creatorGeneration.updateMany({
+      where: { id: generation.id, status: "GENERATING" },
       data: {
         status: "FAILED",
         errorCode: "provider_error",
@@ -129,27 +141,34 @@ async function runGeneration(
         completedAt: new Date(),
       },
     });
-    await releaseCreatorCredits(ctx, {
-      generationId: generation.id,
-      amount: params.creditCost,
-      reason: "generation_failed",
-    });
-    await audit(ctx, {
-      action: "creator.generation.failed",
-      resourceType: "creator_generation",
-      resourceId: generation.id,
-      after: { errorCode: "provider_error" },
-    });
+    if (claim.count === 1) {
+      await releaseCreatorCredits(ctx, {
+        generationId: generation.id,
+        amount: params.creditCost,
+        reason: "generation_failed",
+      });
+      await audit(ctx, {
+        action: "creator.generation.failed",
+        resourceType: "creator_generation",
+        resourceId: generation.id,
+        after: { errorCode: "provider_error" },
+      });
+    } else {
+      console.warn("creator generation already finalized elsewhere; skipping duplicate release", {
+        generationId: generation.id,
+        orgId: ctx.orgId,
+      });
+    }
     throw error;
   }
 }
 
-/** No real bytes are written for the mock provider (sizeBytes: 0, documented) — a real provider adapter must populate it. */
 async function persistGeneratedAsset(
   ctx: TenantContext,
   creatorProfileId: string,
   storagePath: string,
   mimeType: string,
+  sizeBytes: number,
   assetType: string,
 ) {
   const db = tenantDb(ctx.orgId);
@@ -160,7 +179,7 @@ async function persistGeneratedAsset(
       storagePath,
       assetType,
       mimeType,
-      sizeBytes: 0,
+      sizeBytes,
       source: "GENERATED",
       validationStatus: "APPROVED",
     },
@@ -230,6 +249,7 @@ export async function requestCharacterImageGeneration(
         input.creatorProfileId,
         result.outputStoragePath,
         result.mimeType,
+        result.sizeBytes,
         "generated_character_image",
       );
       return {
@@ -285,6 +305,7 @@ export async function requestImageFromCharacterGeneration(
         input.creatorProfileId,
         result.outputStoragePath,
         result.mimeType,
+        result.sizeBytes,
         "generated_image",
       );
       return {
@@ -340,6 +361,7 @@ export async function requestVideoFromImageGeneration(
         input.creatorProfileId ?? sourceAsset.creatorProfileId,
         result.outputStoragePath,
         result.mimeType,
+        result.sizeBytes,
         "generated_video",
       );
       return {

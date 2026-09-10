@@ -19,7 +19,10 @@ const SIGNED_URL_TTL_SECONDS = 600;
 
 const DEFAULT_IMAGE_MODEL = "fal-ai/flux/schnell";
 const DEFAULT_IMAGE_TO_IMAGE_MODEL = "fal-ai/flux/dev/image-to-image";
-const DEFAULT_IMAGE_TO_VIDEO_MODEL = "fal-ai/kling-video/v1.5/standard/image-to-video";
+// v1.5 Standard is no longer present in fal.ai's current model catalog (confirmed
+// during live E2E testing); v2.1 Standard uses the same request shape and has been
+// proven live against the real fal.ai queue API.
+const DEFAULT_IMAGE_TO_VIDEO_MODEL = "fal-ai/kling-video/v2.1/standard/image-to-video";
 
 function imageModel(): string {
   return process.env.FAL_IMAGE_MODEL || DEFAULT_IMAGE_MODEL;
@@ -67,7 +70,7 @@ async function persistFalOutput(
   url: string,
   contentType: string,
   extension: string,
-): Promise<{ storagePath: string; mimeType: string }> {
+): Promise<{ storagePath: string; mimeType: string; sizeBytes: number }> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to download fal.ai output (${res.status})`);
   const bytes = new Uint8Array(await res.arrayBuffer());
@@ -80,7 +83,9 @@ async function persistFalOutput(
   });
   if (error) throw new Error(`Failed to persist fal.ai output to storage: ${error.message}`);
 
-  return { storagePath, mimeType: contentType };
+  // Derived from the exact bytes just uploaded, not a provider-declared or
+  // separately-fetched size — always matches the real Storage object length.
+  return { storagePath, mimeType: contentType, sizeBytes: bytes.length };
 }
 
 type FalImageOutput = {
@@ -154,10 +159,15 @@ export class FalCreatorMediaProvider implements CreatorMediaProvider {
       duration,
     });
     const contentType = output.video.content_type ?? "video/mp4";
-    const { storagePath, mimeType } = await persistFalOutput(output.video.url, contentType, "mp4");
+    const { storagePath, mimeType, sizeBytes } = await persistFalOutput(
+      output.video.url,
+      contentType,
+      "mp4",
+    );
     return {
       outputStoragePath: storagePath,
       mimeType,
+      sizeBytes,
       providerRequestId: output.video.url,
       latencyMs: Date.now() - start,
       durationSeconds: Number(duration),
@@ -176,10 +186,15 @@ export class FalCreatorMediaProvider implements CreatorMediaProvider {
       : contentType.includes("webp")
         ? "webp"
         : "png";
-    const { storagePath, mimeType } = await persistFalOutput(image.url, contentType, ext);
+    const { storagePath, mimeType, sizeBytes } = await persistFalOutput(
+      image.url,
+      contentType,
+      ext,
+    );
     return {
       outputStoragePath: storagePath,
       mimeType,
+      sizeBytes,
       providerRequestId: image.url,
       latencyMs: Date.now() - start,
     };

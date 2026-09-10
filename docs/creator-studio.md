@@ -361,3 +361,54 @@ in every CI build.
     (`CREATOR_STUDIO_LIVE_E2E=1`, §13) against the target environment once real credentials are configured,
     to prove the real fal.ai/Meta round trip end-to-end — on a dedicated test Page/account, never the
     pilot org's real production social account, since it publishes a real post.
+
+## 15. Generation lifecycle safety — known gaps (production-readiness audit)
+
+A real live Kling video generation (`fal-ai/kling-video/v2.1/standard/image-to-video`, 5s) took ~71
+seconds end-to-end. `runGeneration` (`creator-generations.ts`) now guards its COMPLETED/FAILED
+transitions with a conditional `updateMany` (`where: { status: "GENERATING" }`, count-checked) before
+committing or releasing credits — the same claim pattern `publishCreatorPost` already uses — so a
+generation can never be double-committed or double-released even if some future code path re-processes
+the same row. `video-from-image`'s route now sets `maxDuration = 300`, matching `runFalModel`'s own poll
+ceiling (`MAX_POLL_ATTEMPTS * POLL_INTERVAL_MS`), so the platform's default function timeout doesn't kill
+a real generation while fal.ai keeps processing.
+
+What remains **not** solved, and requires deliberate follow-up work rather than a quiet patch:
+
+- **No reconciliation for abandoned `GENERATING` rows.** If the Node process running a generation is
+  killed (OOM, deploy, host failure) between `reserveCreatorCredits` and the completion/failure
+  transition, the row stays `GENERATING` forever and its reserved credits are never released back to the
+  org's available balance — there is currently no scheduled job that scans for and resolves stale
+  `GENERATING` rows. Building one safely requires deciding a staleness threshold and, more importantly,
+  how to avoid crediting back a reservation whose provider call actually _succeeded_ after Syveka lost
+  track of it (see below) — a real design decision, not a one-line fix. **HUMAN REVIEW / FOLLOW-UP
+  ARCHITECTURE.**
+- **fal.ai's queue `request_id`/`status_url` is never persisted until the whole generation finishes.**
+  `runFalModel` (`src/server/integrations/fal.ts`) holds these only in a local variable through its
+  poll loop; if the process dies mid-poll, there is no way to look the job back up on fal.ai's side —
+  the provider may still complete and even bill for a generation Syveka can no longer identify. Preserving
+  this earlier is possible in principle (`CreatorGeneration.providerRequestId` is already a nullable
+  column), but doing so correctly requires threading a submission callback through the
+  `CreatorMediaProvider` interface, `runFalModel`, and `runGeneration` — a real interface change, not
+  wired up on spec elsewhere yet, and not implemented in this pass since nothing currently reads it back.
+  Implementing this without also building the reconciliation job above would add write cost without a
+  consumer. **HUMAN REVIEW / FOLLOW-UP ARCHITECTURE.**
+- **A client-level duplicate request (e.g. a retried POST after a network glitch) creates a second,
+  independent `CreatorGeneration` row** with its own fresh credit reservation — `runGeneration` always
+  `create`s a new row, so the idempotency guard above (keyed on one row's `id`) does not prevent a
+  double-charge from two separate HTTP requests for "the same" logical generation. No client-supplied
+  idempotency key exists on these routes today. Out of scope for this pass; flagged for awareness.
+- **A `commitCreatorCredits`/`audit` failure _after_ a successful claim is still reported to the caller
+  as a generation failure, without releasing credits.** Both calls sit inside the same `try` block as
+  `execute()`, so if either throws after the COMPLETED claim already succeeded, control reaches the
+  `catch` block — which correctly does _not_ re-transition the row or release credits (its own claim
+  finds `status` is already `COMPLETED`, not `GENERATING`) but still unconditionally re-throws. Net
+  effect: the row is genuinely `COMPLETED` with a real output asset, but (a) if `commitCreatorCredits`
+  itself was what threw, `reservedCredits` stays stuck reserved (never committed — a real, if narrow,
+  stuck-credit case distinct from the abandoned-`GENERATING` one above), and (b) either way the client
+  receives an error for a generation that actually succeeded, risking a client-side retry that pays for
+  a second, redundant generation. The fix is to move `commitCreatorCredits` and `audit` out of the
+  `execute()`-guarding `try`/`catch` so a failure there can be logged and reconciled without relabeling
+  a real success as a failure — a contained, testable change, but not implemented in this pass since it
+  changes the success-path control flow further than this pass's other, more narrowly-scoped fixes.
+  **P1 — should be fixed before high production volume.**

@@ -75,6 +75,10 @@ describe("FalCreatorMediaProvider", () => {
     expect(result.mimeType).toBe("image/png");
     expect(result.outputStoragePath).toMatch(/^fal\/.+\.png$/);
     expect(result.providerRequestId).toBe("https://fal.media/out.png");
+    // The mocked download body is exactly 3 bytes (new Uint8Array([1, 2, 3])
+    // in queueResponses) — sizeBytes must reflect the real uploaded payload,
+    // not a hardcoded placeholder.
+    expect(result.sizeBytes).toBe(3);
     expect(uploadMock).toHaveBeenCalledTimes(1);
     const submitBody = JSON.parse(fetchMock.mock.calls[0]![1]!.body as string);
     expect(submitBody.prompt).toBe("a business portrait");
@@ -134,6 +138,7 @@ describe("FalCreatorMediaProvider", () => {
     expect(storageFromMock).toHaveBeenCalledWith("creator-reference-assets");
     expect(result.durationSeconds).toBe(10);
     expect(result.mimeType).toBe("video/mp4");
+    expect(result.sizeBytes).toBe(3);
     const submitUrl = fetchMock.mock.calls[0]![0];
     expect(submitUrl).toContain("kling-video");
   });
@@ -153,6 +158,45 @@ describe("FalCreatorMediaProvider", () => {
 
     expect(storageFromMock).toHaveBeenCalledWith("creator-generated-media");
     expect(createSignedUrlMock).toHaveBeenCalledWith("org-a/generated/img.png", 600);
+  });
+
+  it("falls back to the Kling v2.1 Standard model when FAL_IMAGE_TO_VIDEO_MODEL is unset", async () => {
+    delete process.env.FAL_IMAGE_TO_VIDEO_MODEL;
+    queueResponses({ video: { url: "https://fal.media/out3.mp4", content_type: "video/mp4" } });
+
+    const { FalCreatorMediaProvider } = await import("@/server/ai/creator/fal-provider");
+    const provider = new FalCreatorMediaProvider();
+    const resultPromise = provider.generateVideoFromImage({
+      sourceAsset: { storagePath: "org-a/profile/ref.png", source: "UPLOAD" },
+      aspectRatio: "1:1",
+      durationSeconds: 5,
+    });
+    await vi.runAllTimersAsync();
+    await resultPromise;
+
+    const submitUrl = fetchMock.mock.calls[0]![0];
+    // v1.5 Standard no longer exists in fal.ai's catalog (confirmed live) —
+    // the fallback must be v2.1 Standard, proven live end-to-end.
+    expect(submitUrl).toBe("https://queue.fal.run/fal-ai/kling-video/v2.1/standard/image-to-video");
+  });
+
+  it("prefers FAL_IMAGE_TO_VIDEO_MODEL over the fallback when set", async () => {
+    process.env.FAL_IMAGE_TO_VIDEO_MODEL = "fal-ai/kling-video/v9.9/custom/image-to-video";
+    queueResponses({ video: { url: "https://fal.media/out4.mp4", content_type: "video/mp4" } });
+
+    const { FalCreatorMediaProvider } = await import("@/server/ai/creator/fal-provider");
+    const provider = new FalCreatorMediaProvider();
+    const resultPromise = provider.generateVideoFromImage({
+      sourceAsset: { storagePath: "org-a/profile/ref.png", source: "UPLOAD" },
+      aspectRatio: "1:1",
+      durationSeconds: 5,
+    });
+    await vi.runAllTimersAsync();
+    await resultPromise;
+
+    const submitUrl = fetchMock.mock.calls[0]![0];
+    expect(submitUrl).toBe("https://queue.fal.run/fal-ai/kling-video/v9.9/custom/image-to-video");
+    delete process.env.FAL_IMAGE_TO_VIDEO_MODEL;
   });
 
   it("propagates a fal.ai job error rather than silently returning a placeholder", async () => {

@@ -46,6 +46,8 @@ export interface VideoFromImageRequest {
 export interface MediaGenerationResult {
   outputStoragePath: string;
   mimeType: string;
+  /** Exact byte length of the object actually uploaded to Storage — never a provider-declared or separately-fetched size. */
+  sizeBytes: number;
   providerRequestId: string;
   latencyMs: number;
 }
