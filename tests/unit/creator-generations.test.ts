@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@/server/auth/session";
 import type * as CreatorCreditsModule from "@/server/services/creator-credits";
+import type { CharacterImageRequest } from "@/server/ai/creator/types";
 
 /**
  * runGeneration (creator-generations.ts) — the shared reserve -> execute ->
@@ -18,8 +19,8 @@ const { tenantDbMock, auditMock, reserveMock, commitMock, releaseMock, providerM
     tenantDbMock: vi.fn(),
     auditMock: vi.fn(async () => undefined),
     reserveMock: vi.fn(async () => undefined),
-    commitMock: vi.fn(async () => undefined),
-    releaseMock: vi.fn(async () => undefined),
+    commitMock: vi.fn(async () => ({ applied: true })),
+    releaseMock: vi.fn(async () => ({ applied: true })),
     providerMock: {
       name: "mock",
       generateCharacterImage: vi.fn(),
@@ -89,10 +90,13 @@ function makeDb() {
           where,
           data,
         }: {
-          where: { id: string; status?: string };
+          where: { id: string; status?: string; providerRequestId?: null };
           data: Record<string, unknown>;
         }) => {
           if (where.status && generation.status !== where.status) return { count: 0 };
+          if (where.providerRequestId === null && generation.providerRequestId != null) {
+            return { count: 0 };
+          }
           Object.assign(generation, data);
           return { count: 1 };
         },
@@ -281,5 +285,76 @@ describe("runGeneration (via requestCharacterImageGeneration)", () => {
     expect(commitMock).toHaveBeenCalledTimes(1);
     expect(releaseMock).not.toHaveBeenCalled();
     expect(db.creatorGeneration.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("persists the provider's request identity, keyed to this generation's own id, before the provider call resolves", async () => {
+    const db = makeDb();
+    tenantDbMock.mockReturnValue(db);
+    providerMock.generateCharacterImage.mockImplementationOnce(
+      async (req: CharacterImageRequest) => {
+        // Simulate what fal-provider.ts really does: invoke the callback with
+        // the real submission info before the (mocked) provider work "finishes".
+        await req.onProviderSubmitted!({
+          requestId: "req-1",
+          statusUrl: "https://queue.fal.run/x/status",
+          responseUrl: "https://queue.fal.run/x",
+          model: "fal-ai/flux/schnell",
+        });
+        return {
+          outputStoragePath: "fal/out.png",
+          mimeType: "image/png",
+          sizeBytes: 1234,
+          providerRequestId: "https://fal.media/out.png",
+          latencyMs: 500,
+        };
+      },
+    );
+
+    await requestCharacterImageGeneration(ctx(), {
+      creatorProfileId: "profile-1",
+      prompt: "a portrait",
+      aspectRatio: "1:1",
+    });
+
+    // The early write used the real generation id created by this same call
+    // (not a hardcoded stand-in).
+    expect(db.generation.id).toBe("gen-1");
+    // The COMPLETED claim's own providerRequestId (the final output url)
+    // overwrote the early JSON — the row ends up COMPLETED, not stuck with
+    // the mid-flight value.
+    expect(db.generation.providerRequestId).toBe("https://fal.media/out.png");
+  });
+
+  it("aborts the generation (FAILED + RELEASE) without submitting a second provider call if persisting the request identity fails", async () => {
+    const db = makeDb();
+    tenantDbMock.mockReturnValue(db);
+    // Simulate providerRequestId already having a value when the callback
+    // runs (the conditional write refuses to overwrite silently), which
+    // persistProviderRequestIdentity turns into a thrown error.
+    providerMock.generateCharacterImage.mockImplementationOnce(
+      async (req: CharacterImageRequest) => {
+        db.generation.providerRequestId = "some-earlier-value";
+        await req.onProviderSubmitted!({
+          requestId: "req-1",
+          statusUrl: "https://queue.fal.run/x/status",
+          responseUrl: "https://queue.fal.run/x",
+          model: "fal-ai/flux/schnell",
+        });
+        throw new Error("unreachable — onProviderSubmitted should have thrown first");
+      },
+    );
+
+    await expect(
+      requestCharacterImageGeneration(ctx(), {
+        creatorProfileId: "profile-1",
+        prompt: "a portrait",
+        aspectRatio: "1:1",
+      }),
+    ).rejects.toThrow("Failed to durably record the provider job's identity");
+
+    expect(db.generation.status).toBe("FAILED");
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+    expect(commitMock).not.toHaveBeenCalled();
+    expect(providerMock.generateCharacterImage).toHaveBeenCalledTimes(1); // never retried
   });
 });

@@ -84,6 +84,55 @@ describe("FalCreatorMediaProvider", () => {
     expect(submitBody.prompt).toBe("a business portrait");
   });
 
+  it("invokes onProviderSubmitted with the real request identity before polling starts (P0 crash-recovery)", async () => {
+    queueResponses({ images: [{ url: "https://fal.media/out.png", content_type: "image/png" }] });
+    const onProviderSubmitted = vi.fn(async () => undefined);
+
+    const { FalCreatorMediaProvider } = await import("@/server/ai/creator/fal-provider");
+    const provider = new FalCreatorMediaProvider();
+    const resultPromise = provider.generateCharacterImage({
+      prompt: "a business portrait",
+      referenceAssets: [],
+      aspectRatio: "1:1",
+      onProviderSubmitted,
+    });
+    await vi.runAllTimersAsync();
+    await resultPromise;
+
+    expect(onProviderSubmitted).toHaveBeenCalledTimes(1);
+    expect(onProviderSubmitted).toHaveBeenCalledWith({
+      requestId: "req-1",
+      statusUrl: "https://queue.fal.run/x/status",
+      responseUrl: "https://queue.fal.run/x",
+      model: "fal-ai/flux/schnell",
+    });
+  });
+
+  it("aborts before polling if onProviderSubmitted fails to persist the request identity", async () => {
+    queueResponses({ images: [{ url: "https://fal.media/out.png", content_type: "image/png" }] });
+    const onProviderSubmitted = vi.fn(async () => {
+      throw new Error("failed to durably record provider request identity before polling");
+    });
+
+    const { FalCreatorMediaProvider } = await import("@/server/ai/creator/fal-provider");
+    const provider = new FalCreatorMediaProvider();
+    const resultPromise = provider.generateCharacterImage({
+      prompt: "a business portrait",
+      referenceAssets: [],
+      aspectRatio: "1:1",
+      onProviderSubmitted,
+    });
+    const assertion = expect(resultPromise).rejects.toThrow(
+      "failed to durably record provider request identity",
+    );
+    await vi.runAllTimersAsync();
+    await assertion;
+
+    // Only the submit call happened — no status poll, no download, no upload.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(uploadMock).not.toHaveBeenCalled();
+  });
+
   it("generateImageFromCharacter signs an UPLOAD asset from the reference-assets bucket", async () => {
     queueResponses({ images: [{ url: "https://fal.media/out2.png", content_type: "image/png" }] });
 

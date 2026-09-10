@@ -375,24 +375,6 @@ a real generation while fal.ai keeps processing.
 
 What remains **not** solved, and requires deliberate follow-up work rather than a quiet patch:
 
-- **No reconciliation for abandoned `GENERATING` rows.** If the Node process running a generation is
-  killed (OOM, deploy, host failure) between `reserveCreatorCredits` and the completion/failure
-  transition, the row stays `GENERATING` forever and its reserved credits are never released back to the
-  org's available balance — there is currently no scheduled job that scans for and resolves stale
-  `GENERATING` rows. Building one safely requires deciding a staleness threshold and, more importantly,
-  how to avoid crediting back a reservation whose provider call actually _succeeded_ after Syveka lost
-  track of it (see below) — a real design decision, not a one-line fix. **HUMAN REVIEW / FOLLOW-UP
-  ARCHITECTURE.**
-- **fal.ai's queue `request_id`/`status_url` is never persisted until the whole generation finishes.**
-  `runFalModel` (`src/server/integrations/fal.ts`) holds these only in a local variable through its
-  poll loop; if the process dies mid-poll, there is no way to look the job back up on fal.ai's side —
-  the provider may still complete and even bill for a generation Syveka can no longer identify. Preserving
-  this earlier is possible in principle (`CreatorGeneration.providerRequestId` is already a nullable
-  column), but doing so correctly requires threading a submission callback through the
-  `CreatorMediaProvider` interface, `runFalModel`, and `runGeneration` — a real interface change, not
-  wired up on spec elsewhere yet, and not implemented in this pass since nothing currently reads it back.
-  Implementing this without also building the reconciliation job above would add write cost without a
-  consumer. **HUMAN REVIEW / FOLLOW-UP ARCHITECTURE.**
 - **A client-level duplicate request (e.g. a retried POST after a network glitch) creates a second,
   independent `CreatorGeneration` row** with its own fresh credit reservation — `runGeneration` always
   `create`s a new row, so the idempotency guard above (keyed on one row's `id`) does not prevent a
@@ -403,10 +385,106 @@ What remains **not** solved, and requires deliberate follow-up work rather than 
   the commit and audit steps in their own isolated try/catch, outside the `execute()`-guarding
   `try`/`catch` — a failure in either is logged (`console.error`, no secrets) but never rethrown, never
   attempts a FAILED transition on an already-COMPLETED row, and never releases credits for a generation
-  that has already succeeded. `commitCreatorCredits` is deliberately not retried on failure: it is not
-  provably idempotent (its balance `updateMany` and its `CreatorCreditTransaction` insert are two
-  separate statements, not one transaction), so credits can still remain stuck `RESERVED` in that one
-  sub-case — that residual stuck-credit risk is the same class as the abandoned-`GENERATING` gap above
-  and is resolved by the same future reconciliation work, not by this fix. Proven by 6 focused tests in
-  `tests/unit/creator-generations.test.ts`, including COMMIT-throws-after-COMPLETED and
-  audit-throws-after-COMMIT cases.
+  that has already succeeded. Since the P0 recovery work in §16 below, `commitCreatorCredits` is
+  transactionally idempotent (a unique `(generationId, type)` index makes a second COMMIT for the same
+  generation a safe no-op), so the residual stuck-`RESERVED` sub-case this could leave behind is now
+  automatically repaired by the reconciliation job rather than requiring a human. Proven by 8 focused
+  tests across `tests/unit/creator-generations.test.ts` and `tests/unit/creator-credits.test.ts`.
+
+## 16. P0 crash recovery / provider job reconciliation
+
+Resolves the two P0 production blockers §15 originally flagged: abandoned `GENERATING` rows with
+credits stuck `RESERVED`, and fal.ai's queue identity not being persisted early enough to reconnect to
+an already-accepted (possibly already-billed) job after a process interruption.
+
+### Provider request identity
+
+`runFalModel` (`src/server/integrations/fal.ts`) now accepts an optional `onSubmitted` callback, invoked
+immediately after fal.ai accepts a job — **before** the poll loop starts. `FalCreatorMediaProvider`
+(`fal-provider.ts`) wires this through `CharacterImageRequest`/`ImageFromCharacterRequest`/
+`VideoFromImageRequest`'s new optional `onProviderSubmitted` field, and `creator-generations.ts`'s
+`persistProviderRequestIdentity` durably writes `{ requestId, statusUrl, responseUrl, model,
+durationSeconds? }` (JSON-encoded) into the existing nullable `CreatorGeneration.providerRequestId`
+column — no schema change, since that column already means "how to identify this generation's
+provider-side work," and it gets unconditionally overwritten with the real final output URL once the
+generation completes. The write is conditional (`where: { providerRequestId: null }`) so it can never
+silently clobber an existing identity. **If this write fails, the generation aborts immediately** — no
+polling starts, and no second provider submission is attempted; continuing to poll a job whose identity
+failed to persist would mean the only record of it lives in a local variable, gone the moment the
+process exits.
+
+### Recovery state machine
+
+Normal paths (unchanged from §15, now provably idempotent — see below):
+
+```
+RESERVED → GENERATING → (provider work) → COMPLETED claim → COMMIT
+RESERVED → GENERATING → (provider work fails) → FAILED claim → RELEASE
+```
+
+Crash recovery, run by the `reconcile-creator-generations` job
+(`src/server/services/creator-generation-recovery.ts`), on a stale `GENERATING` row
+(`createdAt` older than `GENERATING_STALE_MS` = 10 minutes — 2x fal.ai's own 300s poll ceiling, so an
+in-flight request still legitimately polling near the ceiling is never mistaken for abandoned):
+
+```
+GENERATING, providerRequestId = NULL
+  → cannot prove no paid job exists (the crash window between provider-accept and persisting its
+    identity is real, if narrow) → MANUAL REVIEW REQUIRED (audited, idempotently — never re-flagged
+    on a later pass), never auto-released
+
+GENERATING, providerRequestId = <recorded identity>
+  → query the SAME provider job via its statusUrl (never resubmit)
+      QUEUED / IN_PROGRESS  → still legitimately running → KEEP, leave for the next pass
+      COMPLETED             → fetch the EXISTING output → download → Storage → asset →
+                              claimGenerationCompleted → COMMIT (exact same finalize path a live
+                              request uses)
+      FAILED                → claimGenerationFailed → RELEASE (exact same path a live request uses)
+      UNKNOWN / status check itself throws
+                            → never release blindly → MANUAL REVIEW REQUIRED
+  → if the recovered COMPLETED output can't be finalized (e.g. a transient download failure), the row
+    is left GENERATING for the next pass to retry — credits are never released, since the provider
+    really did complete the job
+
+COMPLETED or FAILED, but creatorGenerationCreditsSettled() finds no COMMIT/RELEASE in the ledger
+  (checked only within a bounded 48h recent window, not unbounded history — see below)
+  → COMPLETED → repair via commitCreatorCredits (idempotent — a no-op if another path already settled it)
+  → FAILED    → repair via releaseCreatorCredits (idempotent, same reasoning)
+```
+
+Every transition above reuses `claimGenerationCompleted`/`claimGenerationFailed`/`commitCreatorCredits`/
+`releaseCreatorCredits` — the exact same functions a live request uses — so a recovered generation can
+never diverge from a live one's finalization logic, and two reconciliation passes (or a reconciler
+racing a still-finishing live request) can never both apply the same repair: `claimGenerationCompleted`/
+`claimGenerationFailed`'s conditional `updateMany` (`where: { status: "GENERATING" }`) and
+`commitCreatorCredits`/`releaseCreatorCredits`'s unique-constraint-backed ledger insert both make a
+second attempt a safe, audited no-op rather than a double-apply.
+
+### Staleness thresholds
+
+- **`GENERATING_STALE_MS` = 10 minutes.** fal.ai's own poll ceiling is 300s; the real observed Kling
+  baseline was ~71s. 10 minutes is roughly 2x the poll ceiling, leaving generous headroom for
+  network/download/Storage/DB overhead after a legitimately-completing job, so this never reconciles a
+  request that's still genuinely in flight.
+- **`SETTLEMENT_CHECK_WINDOW_MS` = 48 hours.** The COMPLETED/FAILED-with-stuck-credits case is a rare
+  edge case (only reachable if `commitCreatorCredits`/`releaseCreatorCredits` themselves threw); checking
+  "all history forever" would be an unbounded, ever-growing scan. 48h is comfortably longer than any
+  plausible reconciliation-job outage. **Known limitation**: a stuck reservation older than 48h that was
+  somehow never caught by an earlier pass needs a one-off manual query — disclosed, not hidden.
+
+### Job wiring
+
+`src/app/api/v1/jobs/reconcile-creator-generations/route.ts` follows the exact same convention as
+`calendar-sync`'s sweep: QStash-signature-verified (`verifyJobRequest`), one bounded
+`BATCH_SIZE`-per-scan page per invocation (both the stale-`GENERATING` scan and the settlement-repair
+scan), self-repaginating via `enqueue()` with a deterministic `deduplicationId` when either scan filled
+its page. Never submits a new provider job under any circumstance. **The code alone does not create its
+own trigger** — see `docs/release-runbook.md` for the required QStash recurring-schedule registration,
+exactly like `calendar-sync`'s.
+
+### Remaining, disclosed limitation
+
+The crash window between fal.ai accepting a job and `persistProviderRequestIdentity`'s write actually
+landing is real, however narrow — a `GENERATING` row with `providerRequestId = NULL` cannot be proven to
+have no paid job behind it, so it is deliberately never auto-released, only flagged for manual review.
+This is the one unavoidable residual gap; everything else in this section closes automatically.

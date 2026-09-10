@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@prisma/client";
 import type { TenantContext } from "@/server/auth/session";
 
 const { tenantDbMock, unscopedPrismaMock, getEntitlementsMock } = vi.hoisted(() => ({
@@ -6,8 +7,19 @@ const { tenantDbMock, unscopedPrismaMock, getEntitlementsMock } = vi.hoisted(() 
   unscopedPrismaMock: {
     $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(unscopedPrismaMock)),
     creatorCreditGrant: { create: vi.fn(async () => ({})) },
-    creatorCreditBalance: { upsert: vi.fn(async () => ({})), findUnique: vi.fn(async () => null) },
-    creatorCreditTransaction: { create: vi.fn(async () => ({})) },
+    creatorCreditBalance: {
+      upsert: vi.fn(async () => ({})),
+      findUnique: vi.fn(async () => null),
+      updateMany: vi.fn(
+        async (_args: { where: Record<string, unknown>; data: Record<string, unknown> }) => ({
+          count: 1,
+        }),
+      ),
+    },
+    creatorCreditTransaction: {
+      create: vi.fn(async () => ({})),
+      findFirst: vi.fn(async (): Promise<{ id: string } | null> => null),
+    },
   },
   getEntitlementsMock: vi.fn(async () => ({ creatorCreditsPerMonth: 200 })),
 }));
@@ -26,6 +38,7 @@ import {
   reserveCreatorCredits,
   commitCreatorCredits,
   releaseCreatorCredits,
+  creatorGenerationCreditsSettled,
   InsufficientCreditsError,
 } from "@/server/services/creator-credits";
 
@@ -110,15 +123,21 @@ describe("credit reservation ledger", () => {
   });
 
   it("commit: refunds the unused portion of an over-reserved amount", async () => {
-    await commitCreatorCredits(ctx(), {
+    const result = await commitCreatorCredits(ctx(), {
       generationId: "gen-1",
       reservedAmount: 10,
       actualAmount: 6,
     });
 
-    const args = db.creatorCreditBalance.updateMany.mock.calls[0]![0];
+    expect(result).toEqual({ applied: true });
+    const args = unscopedPrismaMock.creatorCreditBalance.updateMany.mock.calls[0]![0];
     expect(args.data.reservedCredits).toEqual({ decrement: 10 });
     expect(args.data.availableCredits).toEqual({ increment: 4 });
+    // Ledger insert and balance mutation happen inside the same transaction.
+    expect(unscopedPrismaMock.$transaction).toHaveBeenCalledTimes(1);
+    expect(unscopedPrismaMock.creatorCreditTransaction.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ type: "COMMIT" }) }),
+    );
   });
 
   it("commit: does not touch availableCredits when the full reservation was consumed", async () => {
@@ -128,22 +147,67 @@ describe("credit reservation ledger", () => {
       actualAmount: 10,
     });
 
-    const args = db.creatorCreditBalance.updateMany.mock.calls[0]![0];
+    const args = unscopedPrismaMock.creatorCreditBalance.updateMany.mock.calls[0]![0];
     expect(args.data.availableCredits).toBeUndefined();
   });
 
+  it("commit: is idempotent — a duplicate COMMIT for the same generation is a no-op, not a double-apply", async () => {
+    const p2002 = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+    Object.setPrototypeOf(p2002, Prisma.PrismaClientKnownRequestError.prototype);
+    unscopedPrismaMock.$transaction.mockRejectedValueOnce(p2002);
+
+    const result = await commitCreatorCredits(ctx(), {
+      generationId: "gen-1",
+      reservedAmount: 10,
+      actualAmount: 10,
+    });
+
+    expect(result).toEqual({ applied: false });
+  });
+
+  it("commit: a genuine DB error (not a unique-constraint no-op) still propagates", async () => {
+    unscopedPrismaMock.$transaction.mockRejectedValueOnce(new Error("connection reset"));
+
+    await expect(
+      commitCreatorCredits(ctx(), { generationId: "gen-1", reservedAmount: 10, actualAmount: 10 }),
+    ).rejects.toThrow("connection reset");
+  });
+
   it("release: fully refunds the reservation back to available on failure", async () => {
-    await releaseCreatorCredits(ctx(), {
+    const result = await releaseCreatorCredits(ctx(), {
       generationId: "gen-1",
       amount: 10,
       reason: "generation_failed",
     });
 
-    const args = db.creatorCreditBalance.updateMany.mock.calls[0]![0];
+    expect(result).toEqual({ applied: true });
+    const args = unscopedPrismaMock.creatorCreditBalance.updateMany.mock.calls[0]![0];
     expect(args.data).toMatchObject({
       reservedCredits: { decrement: 10 },
       availableCredits: { increment: 10 },
     });
+  });
+
+  it("release: is idempotent — a duplicate RELEASE for the same generation is a no-op", async () => {
+    const p2002 = Object.assign(new Error("Unique constraint failed"), { code: "P2002" });
+    Object.setPrototypeOf(p2002, Prisma.PrismaClientKnownRequestError.prototype);
+    unscopedPrismaMock.$transaction.mockRejectedValueOnce(p2002);
+
+    const result = await releaseCreatorCredits(ctx(), {
+      generationId: "gen-1",
+      amount: 10,
+      reason: "generation_failed",
+    });
+
+    expect(result).toEqual({ applied: false });
+  });
+
+  it("creatorGenerationCreditsSettled: reflects whether a COMMIT or RELEASE already exists for a generation", async () => {
+    unscopedPrismaMock.creatorCreditTransaction.findFirst.mockResolvedValueOnce(null);
+    expect(await creatorGenerationCreditsSettled("gen-1")).toBe(false);
+
+    unscopedPrismaMock.creatorCreditTransaction.findFirst.mockResolvedValueOnce({ id: "txn-1" });
+    expect(await creatorGenerationCreditsSettled("gen-1")).toBe(true);
   });
 
   it("scopes every ledger mutation to the caller's organization (tenant isolation)", async () => {

@@ -32,6 +32,7 @@ const expectedOrder = [
   "20260830000000_voice_call_post_call_processed_at",
   "20260902000000_handle_new_user_email_reconciliation",
   "20260908000000_creator_studio_v1",
+  "20260910230000_creator_credit_transaction_generation_type_unique",
 ];
 
 // These eight migrations were published before the staging-release branch.

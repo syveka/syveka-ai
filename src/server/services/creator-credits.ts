@@ -152,52 +152,100 @@ export async function reserveCreatorCredits(
   });
 }
 
-/** Finalize the actual debit after a successful generation; refunds any unused reservation. */
+/**
+ * Finalize the actual debit after a successful generation; refunds any
+ * unused reservation. Transactionally idempotent (P0 crash-recovery
+ * hardening): the ledger insert and the balance mutation happen inside one
+ * `$transaction`, so a crash between them can never leave partial financial
+ * state, and a unique (generationId, type) index on CreatorCreditTransaction
+ * makes a second COMMIT attempt for the same generation fail with Prisma's
+ * P2002 rather than double-applying — caught here and treated as an
+ * idempotent no-op, the same pattern ensureMonthlyCreditGrant already uses
+ * for CreatorCreditGrant. Safe to call more than once for the same
+ * generation (e.g. from a reconciliation repair) as long as the arguments
+ * are the same generation's real values.
+ */
 export async function commitCreatorCredits(
   ctx: TenantContext,
   params: { generationId: string; reservedAmount: number; actualAmount: number },
-): Promise<void> {
+): Promise<{ applied: boolean }> {
   const refund = Math.max(0, params.reservedAmount - params.actualAmount);
-  const db = tenantDb(ctx.orgId);
-  await db.creatorCreditBalance.updateMany({
-    where: { organizationId: ctx.orgId },
-    data: {
-      reservedCredits: { decrement: params.reservedAmount },
-      ...(refund > 0 ? { availableCredits: { increment: refund } } : {}),
-    },
-  });
-  await unscopedPrisma.creatorCreditTransaction.create({
-    data: {
-      organizationId: ctx.orgId,
-      generationId: params.generationId,
-      type: "COMMIT",
-      amount: params.actualAmount,
-      createdById: ctx.userId,
-    },
-  });
+  try {
+    await unscopedPrisma.$transaction(async (tx) => {
+      await tx.creatorCreditTransaction.create({
+        data: {
+          organizationId: ctx.orgId,
+          generationId: params.generationId,
+          type: "COMMIT",
+          amount: params.actualAmount,
+          createdById: ctx.userId,
+        },
+      });
+      await tx.creatorCreditBalance.updateMany({
+        where: { organizationId: ctx.orgId },
+        data: {
+          reservedCredits: { decrement: params.reservedAmount },
+          ...(refund > 0 ? { availableCredits: { increment: refund } } : {}),
+        },
+      });
+    });
+    return { applied: true };
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return { applied: false }; // already committed (or released) — no-op
+    }
+    throw error;
+  }
 }
 
-/** Release a reservation in full on generation failure — never leaves credits stuck as "reserved". */
+/**
+ * Release a reservation in full on generation failure — never leaves
+ * credits stuck as "reserved". Transactionally idempotent for the same
+ * reasons as commitCreatorCredits above.
+ */
 export async function releaseCreatorCredits(
   ctx: TenantContext,
   params: { generationId: string; amount: number; reason: string },
-): Promise<void> {
-  const db = tenantDb(ctx.orgId);
-  await db.creatorCreditBalance.updateMany({
-    where: { organizationId: ctx.orgId },
-    data: {
-      reservedCredits: { decrement: params.amount },
-      availableCredits: { increment: params.amount },
-    },
+): Promise<{ applied: boolean }> {
+  try {
+    await unscopedPrisma.$transaction(async (tx) => {
+      await tx.creatorCreditTransaction.create({
+        data: {
+          organizationId: ctx.orgId,
+          generationId: params.generationId,
+          type: "RELEASE",
+          amount: params.amount,
+          reason: params.reason,
+          createdById: ctx.userId,
+        },
+      });
+      await tx.creatorCreditBalance.updateMany({
+        where: { organizationId: ctx.orgId },
+        data: {
+          reservedCredits: { decrement: params.amount },
+          availableCredits: { increment: params.amount },
+        },
+      });
+    });
+    return { applied: true };
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return { applied: false }; // already released (or committed) — no-op
+    }
+    throw error;
+  }
+}
+
+/**
+ * Ledger-based check for whether a generation's reservation has already
+ * been settled (COMMIT or RELEASE), independent of the CreatorGeneration
+ * row's own status — used by the recovery/reconciliation path to decide
+ * whether a repair is needed without re-deriving it from the generation
+ * row alone.
+ */
+export async function creatorGenerationCreditsSettled(generationId: string): Promise<boolean> {
+  const existing = await unscopedPrisma.creatorCreditTransaction.findFirst({
+    where: { generationId, type: { in: ["COMMIT", "RELEASE"] } },
   });
-  await unscopedPrisma.creatorCreditTransaction.create({
-    data: {
-      organizationId: ctx.orgId,
-      generationId: params.generationId,
-      type: "RELEASE",
-      amount: params.amount,
-      reason: params.reason,
-      createdById: ctx.userId,
-    },
-  });
+  return existing !== null;
 }

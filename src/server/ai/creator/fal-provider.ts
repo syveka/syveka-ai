@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { createSupabaseAdmin } from "@/server/supabase/server";
 import { runFalModel, isFalConfigured } from "@/server/integrations/fal";
+import type { FalSubmissionInfo } from "@/server/integrations/fal";
 import type {
   CreatorMediaProvider,
   CharacterImageRequest,
@@ -11,6 +12,7 @@ import type {
   MediaGenerationResult,
   VideoGenerationResult,
   CreatorAssetRef,
+  OnProviderSubmitted,
 } from "./types";
 
 const REFERENCE_BUCKET = "creator-reference-assets";
@@ -29,6 +31,16 @@ function imageModel(): string {
 }
 function imageToVideoModel(): string {
   return process.env.FAL_IMAGE_TO_VIDEO_MODEL || DEFAULT_IMAGE_TO_VIDEO_MODEL;
+}
+
+/** Wraps a caller's onProviderSubmitted with the model (and, for video, the
+ * requested duration) that isn't otherwise visible to runFalModel's callback. */
+function withSubmissionMeta(
+  extra: { model: string; durationSeconds?: number },
+  cb?: OnProviderSubmitted,
+): ((info: FalSubmissionInfo) => Promise<void>) | undefined {
+  if (!cb) return undefined;
+  return async (info: FalSubmissionInfo) => cb({ ...info, ...extra });
 }
 
 function falImageSize(aspectRatio: string): { width: number; height: number } {
@@ -65,8 +77,14 @@ async function signAsset(asset: CreatorAssetRef): Promise<string> {
   return data.signedUrl;
 }
 
-/** Downloads a fal.ai output URL and re-uploads it into our own storage, so the org owns the asset (not a third-party CDN link that can expire/rotate). */
-async function persistFalOutput(
+/**
+ * Downloads a fal.ai output URL and re-uploads it into our own storage, so
+ * the org owns the asset (not a third-party CDN link that can
+ * expire/rotate). Exported so the crash-recovery reconciler can reuse the
+ * exact same download/persist path for a job it recovers rather than
+ * reimplementing it.
+ */
+export async function persistFalOutput(
   url: string,
   contentType: string,
   extension: string,
@@ -88,13 +106,43 @@ async function persistFalOutput(
   return { storagePath, mimeType: contentType, sizeBytes: bytes.length };
 }
 
-type FalImageOutput = {
+export type FalImageOutput = {
   images: Array<{ url: string; content_type?: string }>;
 };
 
-type FalVideoOutput = {
+export type FalVideoOutput = {
   video: { url: string; content_type?: string };
 };
+
+/** Interprets a fal.ai image-model response into a downloadable url/contentType/extension — exported so a recovered job's response can be finalized through the exact same logic as a live one. */
+export function interpretFalImageOutput(output: FalImageOutput): {
+  url: string;
+  contentType: string;
+  extension: string;
+} {
+  const image = output.images[0];
+  if (!image) throw new Error("fal.ai returned no images");
+  const contentType = image.content_type ?? "image/png";
+  const extension = contentType.includes("jpeg")
+    ? "jpg"
+    : contentType.includes("webp")
+      ? "webp"
+      : "png";
+  return { url: image.url, contentType, extension };
+}
+
+/** Interprets a fal.ai video-model response — same purpose as interpretFalImageOutput. */
+export function interpretFalVideoOutput(output: FalVideoOutput): {
+  url: string;
+  contentType: string;
+  extension: string;
+} {
+  return {
+    url: output.video.url,
+    contentType: output.video.content_type ?? "video/mp4",
+    extension: "mp4",
+  };
+}
 
 /**
  * Real image/video generation via fal.ai (Kling for video, FLUX for image —
@@ -118,11 +166,13 @@ export class FalCreatorMediaProvider implements CreatorMediaProvider {
   async generateCharacterImage(req: CharacterImageRequest): Promise<MediaGenerationResult> {
     const start = Date.now();
     const size = falImageSize(req.aspectRatio);
-    const output = await runFalModel<FalImageOutput>(imageModel(), {
-      prompt: req.prompt,
-      image_size: size,
-      num_images: 1,
-    });
+    const model = imageModel();
+    const output = await runFalModel<FalImageOutput>(
+      model,
+      { prompt: req.prompt, image_size: size, num_images: 1 },
+      undefined,
+      withSubmissionMeta({ model }, req.onProviderSubmitted),
+    );
     return this.persistFirstImage(output, start);
   }
 
@@ -130,22 +180,29 @@ export class FalCreatorMediaProvider implements CreatorMediaProvider {
     const start = Date.now();
     const size = falImageSize(req.aspectRatio);
     if (req.referenceAssets.length === 0) {
-      const output = await runFalModel<FalImageOutput>(imageModel(), {
-        prompt: req.prompt,
-        negative_prompt: req.negativePrompt,
-        image_size: size,
-        num_images: 1,
-      });
+      const model = imageModel();
+      const output = await runFalModel<FalImageOutput>(
+        model,
+        {
+          prompt: req.prompt,
+          negative_prompt: req.negativePrompt,
+          image_size: size,
+          num_images: 1,
+        },
+        undefined,
+        withSubmissionMeta({ model }, req.onProviderSubmitted),
+      );
       return this.persistFirstImage(output, start);
     }
 
     const referenceUrl = await signAsset(req.referenceAssets[0]!);
-    const output = await runFalModel<FalImageOutput>(DEFAULT_IMAGE_TO_IMAGE_MODEL, {
-      prompt: req.prompt,
-      image_url: referenceUrl,
-      strength: 0.75,
-      image_size: size,
-    });
+    const model = DEFAULT_IMAGE_TO_IMAGE_MODEL;
+    const output = await runFalModel<FalImageOutput>(
+      model,
+      { prompt: req.prompt, image_url: referenceUrl, strength: 0.75, image_size: size },
+      undefined,
+      withSubmissionMeta({ model }, req.onProviderSubmitted),
+    );
     return this.persistFirstImage(output, start);
   }
 
@@ -153,22 +210,28 @@ export class FalCreatorMediaProvider implements CreatorMediaProvider {
     const start = Date.now();
     const sourceUrl = await signAsset(req.sourceAsset);
     const duration = req.durationSeconds && req.durationSeconds >= 8 ? "10" : "5";
-    const output = await runFalModel<FalVideoOutput>(imageToVideoModel(), {
-      prompt: req.motionPrompt ?? "Animate this image with subtle natural motion.",
-      image_url: sourceUrl,
-      duration,
-    });
-    const contentType = output.video.content_type ?? "video/mp4";
+    const model = imageToVideoModel();
+    const output = await runFalModel<FalVideoOutput>(
+      model,
+      {
+        prompt: req.motionPrompt ?? "Animate this image with subtle natural motion.",
+        image_url: sourceUrl,
+        duration,
+      },
+      undefined,
+      withSubmissionMeta({ model, durationSeconds: Number(duration) }, req.onProviderSubmitted),
+    );
+    const { url, contentType, extension } = interpretFalVideoOutput(output);
     const { storagePath, mimeType, sizeBytes } = await persistFalOutput(
-      output.video.url,
+      url,
       contentType,
-      "mp4",
+      extension,
     );
     return {
       outputStoragePath: storagePath,
       mimeType,
       sizeBytes,
-      providerRequestId: output.video.url,
+      providerRequestId: url,
       latencyMs: Date.now() - start,
       durationSeconds: Number(duration),
     };
@@ -178,24 +241,17 @@ export class FalCreatorMediaProvider implements CreatorMediaProvider {
     output: FalImageOutput,
     start: number,
   ): Promise<MediaGenerationResult> {
-    const image = output.images[0];
-    if (!image) throw new Error("fal.ai returned no images");
-    const contentType = image.content_type ?? "image/png";
-    const ext = contentType.includes("jpeg")
-      ? "jpg"
-      : contentType.includes("webp")
-        ? "webp"
-        : "png";
+    const { url, contentType, extension } = interpretFalImageOutput(output);
     const { storagePath, mimeType, sizeBytes } = await persistFalOutput(
-      image.url,
+      url,
       contentType,
-      ext,
+      extension,
     );
     return {
       outputStoragePath: storagePath,
       mimeType,
       sizeBytes,
-      providerRequestId: image.url,
+      providerRequestId: url,
       latencyMs: Date.now() - start,
     };
   }

@@ -20,11 +20,35 @@ export interface CreatorAssetRef {
   source: string;
 }
 
+/**
+ * The exact identifiers needed to reconnect to an already-accepted provider
+ * job from a different process — P0 crash-recovery hardening. `model` is
+ * included because a bare provider request id is only useful together with
+ * the model it was submitted against (fal.ai's queue URLs are per-model).
+ */
+export interface ProviderSubmissionInfo {
+  requestId: string;
+  statusUrl: string;
+  responseUrl: string;
+  model: string;
+  /** Set only for video submissions — the reconciler needs this to finish building a VideoGenerationResult from a recovered job, since it isn't derivable from the provider's response alone. */
+  durationSeconds?: number;
+}
+
+/**
+ * Invoked immediately after the provider accepts a job, before any
+ * polling/waiting begins, so the caller can durably persist the job's
+ * identity. If this throws, the provider method must abort rather than
+ * continue polling a job whose identity failed to persist.
+ */
+export type OnProviderSubmitted = (info: ProviderSubmissionInfo) => Promise<void>;
+
 export interface CharacterImageRequest {
   prompt: string;
   referenceAssets: CreatorAssetRef[];
   aspectRatio: AspectRatio;
   quality?: GenerationQuality;
+  onProviderSubmitted?: OnProviderSubmitted;
 }
 
 export interface ImageFromCharacterRequest {
@@ -33,6 +57,7 @@ export interface ImageFromCharacterRequest {
   referenceAssets: CreatorAssetRef[];
   aspectRatio: AspectRatio;
   quality?: GenerationQuality;
+  onProviderSubmitted?: OnProviderSubmitted;
 }
 
 export interface VideoFromImageRequest {
@@ -41,6 +66,7 @@ export interface VideoFromImageRequest {
   durationSeconds?: number;
   aspectRatio: AspectRatio;
   quality?: GenerationQuality;
+  onProviderSubmitted?: OnProviderSubmitted;
 }
 
 export interface MediaGenerationResult {

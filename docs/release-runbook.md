@@ -260,6 +260,26 @@ actually been registered against it** — until then, any calendar's webhook
 subscription still silently lapses days after a user enables sync, exactly as before
 this fix, because nothing will be calling this route on a recurring basis.
 
+## Creator Studio crash-recovery reconciliation schedule (QStash)
+
+`src/app/api/v1/jobs/reconcile-creator-generations/route.ts` (docs/creator-studio.md §16) recovers
+stale/abandoned Creator Studio generations after a process crash and repairs the rare
+COMPLETED/FAILED-with-stuck-credits edge case — but, like `calendar-sync` above, **the code alone does
+not create its own trigger**. A QStash recurring schedule must be registered manually, once per
+environment, before this is operationally complete:
+
+- POST destination: `/api/v1/jobs/reconcile-creator-generations`
+- Cron: `*/5 * * * *` (every 5 minutes — comfortably more frequent than the 10-minute
+  `GENERATING_STALE_MS` threshold, so an abandoned generation is caught soon after it becomes stale)
+- Initial JSON body: `{}`
+- The request must be delivered and signed by QStash (verified via `verifyJobRequest`, the same
+  signature check every other `jobs/*` route uses) — do not point any other caller at this route.
+
+**Do not consider the P0 crash-recovery work in docs/creator-studio.md §16 operationally complete for an
+environment until this schedule has actually been registered against it** — until then, a generation
+whose process crashes mid-flight stays stuck `GENERATING` with credits `RESERVED` indefinitely, exactly
+as before that work, because nothing will be calling this route on a recurring basis.
+
 ## Production smoke checklist
 
 - `/api/health` returns HTTP 200 with database and Redis checks `ok`.

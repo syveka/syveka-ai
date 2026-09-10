@@ -1816,6 +1816,7 @@ model CreatorCreditTransaction {
   organization Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   generation   CreatorGeneration? @relation(fields: [generationId], references: [id], onDelete: SetNull)
 
+  @@unique([generationId, type])
   @@index([organizationId, createdAt])
   @@index([generationId])
   @@map("creator_credit_transactions")
