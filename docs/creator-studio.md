@@ -398,17 +398,15 @@ What remains **not** solved, and requires deliberate follow-up work rather than 
   `create`s a new row, so the idempotency guard above (keyed on one row's `id`) does not prevent a
   double-charge from two separate HTTP requests for "the same" logical generation. No client-supplied
   idempotency key exists on these routes today. Out of scope for this pass; flagged for awareness.
-- **A `commitCreatorCredits`/`audit` failure _after_ a successful claim is still reported to the caller
-  as a generation failure, without releasing credits.** Both calls sit inside the same `try` block as
-  `execute()`, so if either throws after the COMPLETED claim already succeeded, control reaches the
-  `catch` block — which correctly does _not_ re-transition the row or release credits (its own claim
-  finds `status` is already `COMPLETED`, not `GENERATING`) but still unconditionally re-throws. Net
-  effect: the row is genuinely `COMPLETED` with a real output asset, but (a) if `commitCreatorCredits`
-  itself was what threw, `reservedCredits` stays stuck reserved (never committed — a real, if narrow,
-  stuck-credit case distinct from the abandoned-`GENERATING` one above), and (b) either way the client
-  receives an error for a generation that actually succeeded, risking a client-side retry that pays for
-  a second, redundant generation. The fix is to move `commitCreatorCredits` and `audit` out of the
-  `execute()`-guarding `try`/`catch` so a failure there can be logged and reconciled without relabeling
-  a real success as a failure — a contained, testable change, but not implemented in this pass since it
-  changes the success-path control flow further than this pass's other, more narrowly-scoped fixes.
-  **P1 — should be fixed before high production volume.**
+- **FIXED**: a `commitCreatorCredits`/`audit` failure _after_ a successful COMPLETED claim used to still
+  be reported to the caller as a generation failure. `finalizeCompletedGenerationBookkeeping` now runs
+  the commit and audit steps in their own isolated try/catch, outside the `execute()`-guarding
+  `try`/`catch` — a failure in either is logged (`console.error`, no secrets) but never rethrown, never
+  attempts a FAILED transition on an already-COMPLETED row, and never releases credits for a generation
+  that has already succeeded. `commitCreatorCredits` is deliberately not retried on failure: it is not
+  provably idempotent (its balance `updateMany` and its `CreatorCreditTransaction` insert are two
+  separate statements, not one transaction), so credits can still remain stuck `RESERVED` in that one
+  sub-case — that residual stuck-credit risk is the same class as the abandoned-`GENERATING` gap above
+  and is resolved by the same future reconciliation work, not by this fix. Proven by 6 focused tests in
+  `tests/unit/creator-generations.test.ts`, including COMMIT-throws-after-COMPLETED and
+  audit-throws-after-COMMIT cases.

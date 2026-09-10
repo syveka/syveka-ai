@@ -112,17 +112,19 @@ async function runGeneration(
       });
       return db.creatorGeneration.findUniqueOrThrow({ where: { id: generation.id } });
     }
-    await commitCreatorCredits(ctx, {
-      generationId: generation.id,
-      reservedAmount: params.creditCost,
-      actualAmount: params.creditCost,
-    });
-    await audit(ctx, {
-      action: "creator.generation.complete",
-      resourceType: "creator_generation",
-      resourceId: generation.id,
-      after: { generationType: params.generationType, creditsConsumed: params.creditCost },
-    });
+    // COMPLETED is now claimed and terminal — the real provider output,
+    // asset, and Storage object all genuinely exist. Everything past this
+    // point is bookkeeping only (credit commit + audit), isolated in its
+    // own try/catch: a failure here must never be reported to the caller as
+    // a generation failure, must never attempt a FAILED transition on an
+    // already-COMPLETED row, and must never release credits for a
+    // generation that has already succeeded.
+    await finalizeCompletedGenerationBookkeeping(
+      ctx,
+      generation.id,
+      params.creditCost,
+      params.generationType,
+    );
     return db.creatorGeneration.findUniqueOrThrow({ where: { id: generation.id } });
   } catch (error) {
     // Never persist raw provider error text (§4: sanitize before surfacing) —
@@ -160,6 +162,60 @@ async function runGeneration(
       });
     }
     throw error;
+  }
+}
+
+/**
+ * Runs only after a generation has already been successfully claimed
+ * COMPLETED — the real provider output, asset, and Storage object all
+ * genuinely exist at this point. Both steps below are pure bookkeeping
+ * (crediting and audit logging); a failure in either must never be
+ * reported as a generation failure, must never attempt to move an
+ * already-COMPLETED row to FAILED, and must never release credits for a
+ * generation that has already succeeded — so each has its own isolated
+ * try/catch that only logs, never rethrows.
+ *
+ * commitCreatorCredits is deliberately not retried here: it is not
+ * provably idempotent (its balance updateMany and its
+ * CreatorCreditTransaction insert are two separate statements, not one
+ * transaction — a retry after a partial failure could double-decrement
+ * reservedCredits). If it throws, credits may remain stuck RESERVED until
+ * a human or a future reconciliation job resolves it — see
+ * docs/creator-studio.md §15.
+ */
+async function finalizeCompletedGenerationBookkeeping(
+  ctx: TenantContext,
+  generationId: string,
+  creditCost: number,
+  generationType: CreatorGenerationType,
+): Promise<void> {
+  try {
+    await commitCreatorCredits(ctx, {
+      generationId,
+      reservedAmount: creditCost,
+      actualAmount: creditCost,
+    });
+  } catch (error) {
+    console.error(
+      "creator generation completed but credit commit failed; credits remain reserved",
+      { generationId, orgId: ctx.orgId, error },
+    );
+    return;
+  }
+
+  try {
+    await audit(ctx, {
+      action: "creator.generation.complete",
+      resourceType: "creator_generation",
+      resourceId: generationId,
+      after: { generationType, creditsConsumed: creditCost },
+    });
+  } catch (error) {
+    console.error("creator generation completed and committed but audit logging failed", {
+      generationId,
+      orgId: ctx.orgId,
+      error,
+    });
   }
 }
 

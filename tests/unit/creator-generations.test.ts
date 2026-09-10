@@ -221,4 +221,65 @@ describe("runGeneration (via requestCharacterImageGeneration)", () => {
       expect.objectContaining({ action: "creator.generation.failed" }),
     );
   });
+
+  it("keeps the generation COMPLETED, never releases, and never double-commits when credit COMMIT throws after the COMPLETED claim succeeds", async () => {
+    const db = makeDb();
+    tenantDbMock.mockReturnValue(db);
+    providerMock.generateCharacterImage.mockResolvedValueOnce({
+      outputStoragePath: "fal/out.png",
+      mimeType: "image/png",
+      sizeBytes: 1234,
+      providerRequestId: "https://fal.media/out.png",
+      latencyMs: 500,
+    });
+    commitMock.mockRejectedValueOnce(new Error("transient DB error during commit"));
+
+    // The real output already exists at this point — a post-success
+    // bookkeeping failure must never surface as a thrown generation error.
+    const result = await requestCharacterImageGeneration(ctx(), {
+      creatorProfileId: "profile-1",
+      prompt: "a portrait",
+      aspectRatio: "1:1",
+    });
+
+    expect(result.status).toBe("COMPLETED");
+    expect(commitMock).toHaveBeenCalledTimes(1);
+    expect(releaseMock).not.toHaveBeenCalled();
+    expect(auditMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "creator.generation.complete" }),
+    );
+    expect(auditMock).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "creator.generation.failed" }),
+    );
+    // Exactly one updateMany call (the COMPLETED claim) — the FAILED-claim
+    // branch must never even be attempted for a post-success bookkeeping
+    // failure.
+    expect(db.creatorGeneration.updateMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the generation COMPLETED with credits already committed exactly once when audit logging throws after a successful COMMIT", async () => {
+    const db = makeDb();
+    tenantDbMock.mockReturnValue(db);
+    providerMock.generateCharacterImage.mockResolvedValueOnce({
+      outputStoragePath: "fal/out.png",
+      mimeType: "image/png",
+      sizeBytes: 1234,
+      providerRequestId: "https://fal.media/out.png",
+      latencyMs: 500,
+    });
+    auditMock.mockRejectedValueOnce(new Error("audit sink unavailable"));
+
+    const result = await requestCharacterImageGeneration(ctx(), {
+      creatorProfileId: "profile-1",
+      prompt: "a portrait",
+      aspectRatio: "1:1",
+    });
+
+    expect(result.status).toBe("COMPLETED");
+    expect(commitMock).toHaveBeenCalledTimes(1);
+    expect(releaseMock).not.toHaveBeenCalled();
+    expect(db.creatorGeneration.updateMany).toHaveBeenCalledTimes(1);
+  });
 });
