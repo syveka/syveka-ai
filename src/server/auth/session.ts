@@ -50,6 +50,30 @@ export const getTenantContext = cache(async (): Promise<TenantContext> => {
   });
 
   if (!membership || membership.organization.deletedAt) {
+    // Diagnostic only -- never changes the outcome. A user reaching this
+    // branch is shown /onboarding ("Create your organization") by every
+    // caller (see (app)/layout.tsx), which is indistinguishable in the UI
+    // from a genuinely new user, even when this is actually a live claim/
+    // membership mismatch (e.g. last_active_org pointing at a membership
+    // the userId->organizationId filter above can't find, or a matched
+    // membership whose organization has since been soft-deleted). A cheap
+    // unfiltered recount (ignoring claimOrg) tells us, from the very next
+    // occurrence's logs, whether this userId has zero memberships at all
+    // or has one that simply didn't match the claim/isn't deleted -- never
+    // logs the claim value or any PII, only counts and booleans.
+    const totalMemberships = await prisma.organizationMember.count({
+      where: { userId: user.id },
+    });
+    console.error(
+      JSON.stringify({
+        event: "tenant_context_no_usable_membership",
+        userId: user.id,
+        hadClaimOrg: claimOrg !== null,
+        matchedMembership: Boolean(membership),
+        matchedMembershipOrgDeleted: Boolean(membership?.organization.deletedAt),
+        totalMembershipsIgnoringClaim: totalMemberships,
+      }),
+    );
     throw new AuthError("No organization membership", 403);
   }
 
