@@ -40,10 +40,30 @@ async function clearPasswordField(page: Page): Promise<void> {
     .catch(() => {});
 }
 
+/**
+ * Scoped to the login <form> deliberately: Next.js's own AppRouterAnnouncer
+ * (node_modules/next/dist/client/components/app-router-announcer.js) injects
+ * a permanently-mounted, screen-reader-only `role="alert"` div directly into
+ * document.body on every App Router page, completely unrelated to this
+ * form. Its sr-only CSS (1x1px, clipped, not display:none) still counts as
+ * "visible" to Playwright, and its text starts and mostly stays empty (only
+ * ever set to the new page title on a client-side route change, and
+ * explicitly never on first load). An unscoped page.getByRole("alert") can
+ * match that announcer instead of (or in an ambiguous multi-match with) the
+ * login form's own error paragraph, causing loginAsE2EUser to report a false
+ * "authentication error" the moment the announcer mounts -- observed
+ * against real staging: the diagnostic fired while the submit button still
+ * read the loading state, before the login Server Action had even resolved,
+ * so it could not have reflected any real credential outcome.
+ */
+function loginFormAlert(page: Page) {
+  return page.locator("form").getByRole("alert");
+}
+
 async function loginDiagnostic(page: Page, reason: string): Promise<Error> {
   await clearPasswordField(page);
   const url = new URL(page.url());
-  const alert = page.getByRole("alert");
+  const alert = loginFormAlert(page);
   const alertText = (await alert.isVisible().catch(() => false))
     ? ((await alert.textContent().catch(() => null))?.trim() ?? "visible (no text)")
     : "not visible";
@@ -105,8 +125,7 @@ export async function loginAsE2EUser(
   while (Date.now() <= deadline) {
     const url = new URL(page.url());
     const route = classifyE2ELoginPathname(url.pathname);
-    const alertVisible = await page
-      .getByRole("alert")
+    const alertVisible = await loginFormAlert(page)
       .isVisible()
       .catch(() => false);
 
