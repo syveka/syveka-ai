@@ -181,3 +181,100 @@ describe("getTenantContext", () => {
     expect(loggedText).not.toContain(ORG_ID);
   });
 });
+
+/**
+ * Live staging evidence (run 34647471902, decoded straight from the failing
+ * Playwright trace's session cookie): the JWT's app_metadata.last_active_org
+ * claim exactly matched a real, non-deleted membership -- the textbook
+ * success case above -- yet the same request still got redirected to
+ * /onboarding. That rules out a claim/membership mismatch entirely and
+ * leaves only two candidates: supabase.auth.getUser() returned an error that
+ * getSessionUser() silently discarded (treating it identically to "no
+ * session"), or getTenantContext() threw something other than AuthError that
+ * getTenantContextOrNull()'s bare `catch {}` silently discarded too. Both
+ * were previously indistinguishable, in the UI and in the logs, from a
+ * genuinely logged-out or brand-new user. These tests lock in the fix: both
+ * paths now log a sanitized diagnostic (name/status only, no PII, no error
+ * message that could echo a connection string) without changing the actual
+ * return value in any case.
+ */
+describe("getSessionUser", () => {
+  it("returns the user and logs nothing when getUser() succeeds cleanly", async () => {
+    mocks.getUser.mockResolvedValue({
+      data: { user: { id: AUTH_USER_ID, email: "e2e-user@example.test", app_metadata: {} } },
+      error: null,
+    });
+
+    const { getSessionUser } = await import("@/server/auth/session");
+    const user = await getSessionUser();
+
+    expect(user?.id).toBe(AUTH_USER_ID);
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it("logs a sanitized diagnostic (name/status only) instead of silently discarding a getUser() error", async () => {
+    mocks.getUser.mockResolvedValue({
+      data: { user: null },
+      error: {
+        name: "AuthApiError",
+        status: 429,
+        message: "rate limited: sk_live_should_never_log",
+      },
+    });
+
+    const { getSessionUser } = await import("@/server/auth/session");
+    const user = await getSessionUser();
+
+    expect(user).toBeNull();
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+    const loggedText = consoleErrorSpy.mock.calls[0]![0] as string;
+    expect(JSON.parse(loggedText)).toEqual({
+      event: "get_session_user_error",
+      name: "AuthApiError",
+      status: 429,
+    });
+    expect(loggedText).not.toContain("sk_live_should_never_log");
+  });
+});
+
+describe("getTenantContextOrNull", () => {
+  it("returns null silently (no extra log) for the expected AuthError cases", async () => {
+    mocks.getUser.mockResolvedValue({ data: { user: null }, error: null });
+
+    const { getTenantContextOrNull } = await import("@/server/auth/session");
+    const ctx = await getTenantContextOrNull();
+
+    expect(ctx).toBeNull();
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  it("returns null AND logs a sanitized diagnostic when the failure is not an AuthError (e.g. a DB error), instead of discarding it identically to a real new user", async () => {
+    mocks.getUser.mockResolvedValue({
+      data: {
+        user: {
+          id: AUTH_USER_ID,
+          email: "e2e-user@example.test",
+          app_metadata: { last_active_org: ORG_ID },
+        },
+      },
+      error: null,
+    });
+    mocks.findFirst.mockRejectedValue(
+      Object.assign(new Error("Can't reach database server at db.example:5432"), {
+        name: "PrismaClientInitializationError",
+      }),
+    );
+
+    const { getTenantContextOrNull } = await import("@/server/auth/session");
+    const ctx = await getTenantContextOrNull();
+
+    expect(ctx).toBeNull();
+    expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
+    const loggedText = consoleErrorSpy.mock.calls[0]![0] as string;
+    expect(JSON.parse(loggedText)).toEqual({
+      event: "get_tenant_context_or_null_unexpected_error",
+      name: "PrismaClientInitializationError",
+    });
+    expect(loggedText).not.toContain("db.example");
+  });
+});
