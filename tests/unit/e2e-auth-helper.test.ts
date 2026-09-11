@@ -2,15 +2,39 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { Page } from "@playwright/test";
 import { classifyE2ELoginPathname, loginAsE2EUser } from "../e2e/helpers/auth";
 
-type LoginDestination = { url: string; alert?: string };
+type LoginDestination = {
+  url: string;
+  alert?: string;
+  /**
+   * Simulates Next.js's AppRouterAnnouncer: a permanently-mounted,
+   * page-level (never form-scoped) role="alert" element that is visible by
+   * Playwright's definition (sr-only CSS, not display:none) but carries no
+   * meaningful text on first load. Defaults to true because the real
+   * announcer is present on every App Router page regardless of the login
+   * form's own state -- a fix that accidentally falls back to an unscoped
+   * page.getByRole("alert") must fail every test below, not just the one
+   * that exercises it explicitly.
+   */
+  pageLevelAnnouncerPresent?: boolean;
+};
 
 function pageFor(
   destination: LoginDestination,
 ): Page & { passwordFieldFill: ReturnType<typeof vi.fn> } {
   let currentUrl = "https://staging.example.test/login";
-  const alert = {
+  const announcerPresent = destination.pageLevelAnnouncerPresent ?? true;
+  // The real, form-scoped login error alert -- reachable only via
+  // page.locator("form").getByRole("alert"), never via an unscoped
+  // page.getByRole("alert").
+  const formAlert = {
     isVisible: vi.fn(async () => Boolean(destination.alert)),
     textContent: vi.fn(async () => destination.alert ?? null),
+  };
+  // The page-level Next.js route announcer -- always visible-per-Playwright,
+  // never carries the real error text, and lives outside any <form>.
+  const pageLevelAnnouncer = {
+    isVisible: vi.fn(async () => announcerPresent),
+    textContent: vi.fn(async () => ""),
   };
   const passwordFieldFill = vi.fn(async () => {});
 
@@ -21,11 +45,15 @@ function pageFor(
     }),
     fill: vi.fn(async () => {}),
     getByRole: vi.fn((role: string) =>
-      role === "button" ? { click: vi.fn(async () => void (currentUrl = destination.url)) } : alert,
+      role === "button"
+        ? { click: vi.fn(async () => void (currentUrl = destination.url)) }
+        : pageLevelAnnouncer,
     ),
-    locator: vi.fn((selector: string) =>
-      selector === "#password" ? { fill: passwordFieldFill } : { fill: vi.fn(async () => {}) },
-    ),
+    locator: vi.fn((selector: string) => {
+      if (selector === "#password") return { fill: passwordFieldFill };
+      if (selector === "form") return { getByRole: vi.fn(() => formAlert) };
+      return { fill: vi.fn(async () => {}) };
+    }),
     passwordFieldFill,
     url: vi.fn(() => currentUrl),
     waitForLoadState: vi.fn(async () => {}),
@@ -63,6 +91,48 @@ describe("loginAsE2EUser", () => {
     ).rejects.toThrow(
       /login form reported an authentication error.*pathname="\/login".*alert="Something went wrong"/,
     );
+  });
+
+  /**
+   * Regression test for a real staging incident: Next.js's AppRouterAnnouncer
+   * mounts a permanent, page-level role="alert" element on every App Router
+   * page (see loginFormAlert()'s doc comment in helpers/auth.ts). Every case
+   * above already runs with the announcer present by default -- this test
+   * makes the scenario explicit and asserts the successful path specifically,
+   * since a regression back to an unscoped page.getByRole("alert") would make
+   * even a genuinely successful login report a false authentication failure.
+   */
+  it("reaching the dashboard succeeds even though the page-level announcer is present and visible", async () => {
+    await expect(
+      loginAsE2EUser(
+        pageFor({
+          url: "https://staging.example.test/dashboard",
+          pageLevelAnnouncerPresent: true,
+        }),
+      ),
+    ).resolves.toBeUndefined();
+  });
+
+  /**
+   * The most direct regression case: no real form error, login still
+   * pending (url unchanged), and the page-level announcer visible the whole
+   * time. Before the fix, an unscoped page.getByRole("alert") matched the
+   * announcer and threw "the login form reported an authentication error"
+   * on the very first poll -- observed against real staging while the
+   * submit button still read its loading state, before the login Server
+   * Action had even resolved. The fix must instead wait out the full
+   * timeout and report a timeout, never a false authentication error.
+   */
+  it("never reports a false authentication error from the page-level announcer alone", async () => {
+    await expect(
+      loginAsE2EUser(
+        pageFor({
+          url: "https://staging.example.test/login",
+          pageLevelAnnouncerPresent: true,
+        }),
+        { timeoutMs: 50 },
+      ),
+    ).rejects.toThrow(/no post-login outcome appeared within 50ms/);
   });
 
   it("rejects a redirect back to login with its query state", async () => {
