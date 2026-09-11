@@ -28,7 +28,22 @@ export const getSessionUser = cache(async () => {
   const supabase = await createSupabaseServer();
   const {
     data: { user },
+    error,
   } = await supabase.auth.getUser();
+  // Non-sensitive: never logs tokens, cookies, or user data. A transient
+  // Supabase Auth error here (network blip, rate limit, timeout) previously
+  // looked identical to "genuinely no session" -- both silently returned
+  // null -- making it indistinguishable downstream from a real logged-out
+  // user. Same signal/rationale as middleware.ts's own getUser() logging.
+  if (error) {
+    console.error(
+      JSON.stringify({
+        event: "get_session_user_error",
+        name: error.name,
+        status: error.status ?? null,
+      }),
+    );
+  }
   return user;
 });
 
@@ -90,7 +105,23 @@ export const getTenantContext = cache(async (): Promise<TenantContext> => {
 export async function getTenantContextOrNull(): Promise<TenantContext | null> {
   try {
     return await getTenantContext();
-  } catch {
+  } catch (error) {
+    // AuthError is the expected shape (not authenticated, or no usable
+    // membership -- both already diagnosed at their own throw sites above)
+    // and every caller already shows /onboarding for it, same as before.
+    // Anything else (e.g. a Prisma connection/timeout error) previously
+    // vanished into this same silent null, making a genuine infrastructure
+    // failure indistinguishable from a real new user in both the UI and the
+    // logs. Never logs the error message itself -- it could echo a raw
+    // connection string on some Prisma error shapes -- only its name.
+    if (!(error instanceof AuthError)) {
+      console.error(
+        JSON.stringify({
+          event: "get_tenant_context_or_null_unexpected_error",
+          name: error instanceof Error ? error.name : "unknown",
+        }),
+      );
+    }
     return null;
   }
 }
