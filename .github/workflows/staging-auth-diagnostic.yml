@@ -1,0 +1,92 @@
+name: "[TEMP] Staging E2E auth diagnostic"
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm_project_ref:
+        description: "Type the 20-character staging Supabase project ref to confirm the target"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-auth-diagnostic
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  REQUIRED_PROJECT_REF: "badkselmhtqglbnszsbz"
+
+jobs:
+  diagnose:
+    name: Diagnose staging E2E auth failure
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 15
+
+    steps:
+      - name: Refuse unless environment and project ref match
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          if [ "$CONFIRM_PROJECT_REF" != "$REQUIRED_PROJECT_REF" ]; then
+            echo "::error::Typed confirmation does not match the required staging project ref."
+            exit 1
+          fi
+
+          if [ -z "${STAGING_SUPABASE_PROJECT_REF:-}" ] || [ "$STAGING_SUPABASE_PROJECT_REF" != "$REQUIRED_PROJECT_REF" ]; then
+            echo "::error::vars.STAGING_SUPABASE_PROJECT_REF does not match the required project ref."
+            exit 1
+          fi
+
+          if [ -z "${STAGING_SUPABASE_URL:-}" ]; then
+            echo "::error::vars.STAGING_SUPABASE_URL is not configured."
+            exit 1
+          fi
+
+          expected_host="${REQUIRED_PROJECT_REF}.supabase.co"
+          actual_host="$(node -e "console.log(new URL(process.env.STAGING_SUPABASE_URL).hostname)")"
+
+          if [ "$actual_host" != "$expected_host" ]; then
+            echo "::error::vars.STAGING_SUPABASE_URL host ($actual_host) does not match $expected_host."
+            exit 1
+          fi
+
+          echo "Environment and Supabase project ref confirmed for staging."
+        env:
+          CONFIRM_PROJECT_REF: ${{ inputs.confirm_project_ref }}
+          STAGING_SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+          STAGING_SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+          REQUIRED_PROJECT_REF: ${{ env.REQUIRED_PROJECT_REF }}
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+        env:
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
+
+      - name: Run the auth diagnostic
+        run: node scripts/diagnose-staging-e2e-auth.mjs
+        env:
+          REQUIRED_PROJECT_REF: ${{ env.REQUIRED_PROJECT_REF }}
+          STAGING_SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+          STAGING_SUPABASE_ANON_KEY: ${{ secrets.STAGING_SUPABASE_ANON_KEY }}
+          STAGING_SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
