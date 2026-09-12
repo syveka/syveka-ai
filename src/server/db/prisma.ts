@@ -1,7 +1,10 @@
 import "server-only";
 
 import { PrismaClient } from "@prisma/client";
-import { sanitizeConnectionString } from "./connection-string-sanitizer";
+import {
+  ensurePgbouncerCompatibility,
+  sanitizeConnectionString,
+} from "./connection-string-sanitizer";
 
 /**
  * Raw Prisma client on the SERVICE-ROLE connection (bypasses RLS).
@@ -15,15 +18,20 @@ import { sanitizeConnectionString } from "./connection-string-sanitizer";
  * make DB connectivity checks fail for the wrong reason. `sanitizeConnectionString`
  * strips whitespace/CR-LF/a trailing bare `?` that a dashboard paste can
  * introduce and that Prisma's stricter parser (unlike a lenient WHATWG URL
- * parse) rejects outright — see connection-string-sanitizer.ts.
+ * parse) rejects outright, and `ensurePgbouncerCompatibility` appends the
+ * query params Prisma requires when the datasource is Supabase's
+ * transaction-mode pooler — see connection-string-sanitizer.ts for both.
  */
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
+function resolveDatasourceUrl(): string | undefined {
+  if (!process.env.DATABASE_URL) return undefined;
+  return ensurePgbouncerCompatibility(sanitizeConnectionString(process.env.DATABASE_URL));
+}
+
 function getPrisma(): PrismaClient {
   globalForPrisma.prisma ??= new PrismaClient({
-    datasourceUrl: process.env.DATABASE_URL
-      ? sanitizeConnectionString(process.env.DATABASE_URL)
-      : undefined,
+    datasourceUrl: resolveDatasourceUrl(),
     log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
   });
 
