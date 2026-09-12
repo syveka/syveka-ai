@@ -1,8 +1,9 @@
 "use client";
 
 import { useActionState, useEffect, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { updateBusinessDnaAction, type BusinessDnaActionState } from "@/actions/business-dna";
+import { formatDate } from "@/lib/utils";
 import { BUSINESS_DNA_LOCALES, type ExtractedBusinessDNA } from "@/lib/validators/business-dna";
 import { DAY_KEYS, type DayKey, type WeekHours } from "@/lib/business-dna/opening-hours";
 import {
@@ -118,6 +119,7 @@ export function BusinessDnaForm({
 }) {
   const t = useTranslations("businessDna");
   const tc = useTranslations("common");
+  const locale = useLocale();
   const [state, action, pending] = useActionState<BusinessDnaActionState, FormData>(
     updateBusinessDnaAction,
     {},
@@ -236,7 +238,16 @@ export function BusinessDnaForm({
         </div>
       ) : !justSaved && updatedAt ? (
         <p className="text-xs text-muted-foreground">
-          {t("updated", { date: new Date(updatedAt).toLocaleDateString() })}
+          {/* Explicit locale, not the bare `.toLocaleDateString()` default:
+              that reads the runtime's own locale, which differs between the
+              server (Node.js's default ICU locale) and the client (the
+              browser's locale) whenever they don't happen to match --
+              exactly the "text" hydration mismatch (React error #418)
+              confirmed live on staging (2026-09-12) the moment this field
+              was first populated by a real save. formatDate() with an
+              explicit locale is what every other page in this app already
+              uses for the same reason (see src/lib/utils.ts). */}
+          {t("updated", { date: formatDate(updatedAt, locale) })}
         </p>
       ) : null}
 
