@@ -60,7 +60,14 @@ test.describe("authenticated", () => {
   });
 
   test("dashboard shows KPI cards", async ({ page }) => {
-    await expect(page.getByText(/avoimet kaupat|open deals/i)).toBeVisible();
+    // messages/{fi,en}.json's dashboard.activeDeals -- "Aktiiviset
+    // myyntimahdollisuudet" / "Active deals". The old locator
+    // (/avoimet kaupat|open deals/i) targeted dashboard.openDeals, a
+    // translation key that exists in every locale file but is not used by
+    // any component -- the dashboard KPI card has always rendered
+    // activeDeals instead, confirmed directly against a real staging
+    // Playwright artifact's full page snapshot (2026-09-12).
+    await expect(page.getByText(/aktiiviset myyntimahdollisuudet|active deals/i)).toBeVisible();
   });
 
   test("chat streams a reply", async ({ page }) => {
