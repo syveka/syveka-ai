@@ -38,7 +38,23 @@ export async function updateBusinessDnaAction(
       .filter(Boolean),
     openingHours,
   });
-  if (!parsed.success) return { error: "invalid_input" };
+  if (!parsed.success) {
+    // Non-sensitive: field names only, never the submitted values -- this
+    // schema is .strict(), so a re-submit of a page that's drifted from the
+    // form's expected shape (stale client state after a save + revalidation,
+    // an extra/renamed field) fails here with zero visibility into which
+    // field caused it, indistinguishable from a genuine user typo. Same
+    // rationale as session.ts's get_session_user_error/
+    // get_tenant_context_or_null_unexpected_error diagnostics.
+    console.error(
+      JSON.stringify({
+        event: "business_dna_update_invalid_input",
+        orgId: ctx.orgId,
+        fieldErrors: Object.keys(parsed.error.flatten().fieldErrors),
+      }),
+    );
+    return { error: "invalid_input" };
+  }
 
   try {
     await upsertBusinessDNA(ctx, parsed.data);
