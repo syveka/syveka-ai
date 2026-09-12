@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { openAuthenticatedE2EDashboard, requireE2EUserCredentials } from "./helpers/auth";
+import type { ChatStreamEvent } from "../../src/lib/validators/chat";
 
 /**
  * Critical-journey smoke suite (§23). Runs against preview/staging.
@@ -64,12 +65,34 @@ test.describe("authenticated", () => {
   });
 
   test("chat streams a reply", async ({ page }) => {
+    // streamClaude() (src/server/integrations/anthropic.ts) is a real,
+    // billed Anthropic call -- this test only proves the SSE plumbing (the
+    // request fires, the client parses `data: {...}` frames, the assistant
+    // bubble renders and grows), not model output, so it doesn't need a real
+    // completion to be meaningful. Intercepting at the browser boundary means
+    // the real server route and provider integration are never touched at
+    // all: zero production code change, so nothing here can affect a real
+    // user's session or leak a test-mode branch into production.
+    await page.route("**/api/v1/ai/chat", async (route) => {
+      const events: ChatStreamEvent[] = [
+        { type: "meta", conversationId: crypto.randomUUID(), messageId: crypto.randomUUID() },
+        { type: "text", delta: "Voin auttaa CRM:n, kalenterin ja tekoälypuheluiden kanssa." },
+        { type: "done", tokensIn: 0, tokensOut: 0, estimatedCostUsd: 0 },
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+      });
+    });
+
     await page.goto("/chat");
     await page.getByPlaceholder(/viesti|message/i).fill("Hei! Mitä osaat tehdä?");
     await page.keyboard.press("Enter");
     // assistant bubble appears and grows (streaming)
     const bubble = page.locator("[class*=bg-muted]").last();
     await expect(bubble).toBeVisible({ timeout: 30_000 });
+    await expect(bubble).toContainText("CRM:n");
   });
 
   test("CRM contact create → visible in list", async ({ page }) => {
