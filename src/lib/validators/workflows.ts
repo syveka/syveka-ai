@@ -62,7 +62,32 @@ export const workflowSchema = z.object({
   name: z.string().min(1).max(120),
   description: z.string().max(500).optional(),
   trigger: triggerSchema,
-  steps: z.array(stepSchema).min(1).max(20),
+  // step.id is a client-generated convenience value that becomes a durable
+  // server-side execution identity: WorkflowStepExecution's uniqueness is
+  // [workflowRunId, stepId] (see src/app/api/v1/jobs/run-workflow/route.ts),
+  // so two steps sharing an id in one workflow definition would make the
+  // second occurrence's claim collide with the first's and be silently
+  // skipped as "already succeeded" rather than actually running. Case-
+  // sensitive, matching the plain string equality the engine itself uses -
+  // no normalization is applied anywhere at execution time.
+  steps: z
+    .array(stepSchema)
+    .min(1)
+    .max(20)
+    .superRefine((steps, ctx) => {
+      const seen = new Set<string>();
+      steps.forEach((step, index) => {
+        if (seen.has(step.id)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: `duplicate step id "${step.id}"`,
+            path: [index, "id"],
+          });
+        } else {
+          seen.add(step.id);
+        }
+      });
+    }),
 });
 
 export type WorkflowTrigger = z.infer<typeof triggerSchema>;
