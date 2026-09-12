@@ -28,8 +28,39 @@ export async function updateBusinessDnaAction(
     }
   }
 
+  // Deliberately picked field-by-field rather than `{ ...raw, ... }`. Proven
+  // live (staging run 34697153294): a second submission of this
+  // useActionState-bound form can arrive as React's own progressive-
+  // enhancement fallback fields -- $ACTION_REF_2, $ACTION_2:0, $ACTION_2:1,
+  // $ACTION_KEY -- landing inside the same FormData this action receives
+  // (confirmed via the business_dna_update_invalid_input diagnostic's
+  // unrecognized_keys issue naming exactly those four). Spreading `raw`
+  // then passes them straight into businessDnaSchema, which is `.strict()`
+  // by design (mass-assignment protection) and rightly rejects them --
+  // but this means ANY incidental extra key in `raw`, from this or any
+  // other source, fails the whole save. Naming every field explicitly
+  // means only genuine form fields ever reach the schema, regardless of
+  // what else `raw` happens to contain -- `.strict()` stays exactly as
+  // strict as it was, it just never sees framework bookkeeping fields.
   const parsed = businessDnaSchema.safeParse({
-    ...raw,
+    displayName: raw.displayName,
+    industry: raw.industry,
+    description: raw.description,
+    productsServices: raw.productsServices,
+    timezone: raw.timezone,
+    brandTone: raw.brandTone,
+    communicationStyle: raw.communicationStyle,
+    responseInstructions: raw.responseInstructions,
+    cancellationPolicy: raw.cancellationPolicy,
+    bookingPolicy: raw.bookingPolicy,
+    refundPolicy: raw.refundPolicy,
+    paymentPolicy: raw.paymentPolicy,
+    otherPolicies: raw.otherPolicies,
+    currency: raw.currency,
+    quoteInstructions: raw.quoteInstructions,
+    pricingNotes: raw.pricingNotes,
+    targetCustomer: raw.targetCustomer,
+    sourceUrl: raw.sourceUrl,
     supportedLocales: formData.getAll("supportedLocales"),
     keyFacts: formData
       .getAll("keyFacts")
