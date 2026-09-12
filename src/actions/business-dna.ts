@@ -39,18 +39,32 @@ export async function updateBusinessDnaAction(
     openingHours,
   });
   if (!parsed.success) {
-    // Non-sensitive: field names only, never the submitted values -- this
-    // schema is .strict(), so a re-submit of a page that's drifted from the
-    // form's expected shape (stale client state after a save + revalidation,
-    // an extra/renamed field) fails here with zero visibility into which
-    // field caused it, indistinguishable from a genuine user typo. Same
-    // rationale as session.ts's get_session_user_error/
-    // get_tenant_context_or_null_unexpected_error diagnostics.
+    // Non-sensitive: field names/paths and zod issue codes only, never the
+    // submitted values or zod's own `.message` text (some built-in zod
+    // messages, e.g. enum mismatches, echo the rejected value verbatim --
+    // `code`/`path` never do). This schema is .strict(), so a re-submit
+    // whose shape has drifted (stale client state after a save +
+    // revalidation, an extra/renamed field) fails as a root-level
+    // "unrecognized_keys" issue with an EMPTY path -- proven live
+    // (2026-09-12, staging run 34694851185): logging only
+    // `Object.keys(flatten().fieldErrors)` reports `[]` for exactly this
+    // case, because zod's flatten() buckets any issue with an empty path
+    // into `formErrors`, not `fieldErrors`, hiding the one detail
+    // (`unrecognized_keys`'s `keys` list) that would name the actual field.
+    // Logging every issue's code/path (and, only for unrecognized_keys, the
+    // offending key names -- safe, since those are field *names* the client
+    // sent, never their values) closes that gap. Same rationale as
+    // session.ts's get_session_user_error/get_tenant_context_or_null_unexpected_error
+    // diagnostics.
     console.error(
       JSON.stringify({
         event: "business_dna_update_invalid_input",
         orgId: ctx.orgId,
-        fieldErrors: Object.keys(parsed.error.flatten().fieldErrors),
+        issues: parsed.error.issues.map((issue) => ({
+          code: issue.code,
+          path: issue.path,
+          ...(issue.code === "unrecognized_keys" ? { keys: issue.keys } : {}),
+        })),
       }),
     );
     return { error: "invalid_input" };
