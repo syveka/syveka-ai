@@ -117,5 +117,8 @@ export async function verifyReleaseCandidate(
 }
 
 if (process.argv[1]?.endsWith("verify-release-chain.ts")) {
-  await verifyReleaseCandidate(process.env as ReleaseEnvironment);
+  verifyReleaseCandidate(process.env as ReleaseEnvironment).catch((error: unknown) => {
+    console.error(error);
+    process.exitCode = 1;
+  });
 }
