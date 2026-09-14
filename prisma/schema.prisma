@@ -24,14 +24,16 @@ model User {
   createdAt   DateTime  @default(now()) @map("created_at")
   updatedAt   DateTime  @updatedAt @map("updated_at")
 
-  memberships           OrganizationMember[]
-  notifications         Notification[]
-  auditLogs             AuditLog[]
-  messages              Message[]
-  activities            Activity[]
-  documentUploadIntents DocumentUploadIntent[]
-  assignedInboxThreads  InboxThread[]
-  approvedInboxMessages InboxMessage[]
+  memberships              OrganizationMember[]
+  notifications            Notification[]
+  auditLogs                AuditLog[]
+  messages                 Message[]
+  activities               Activity[]
+  documentUploadIntents    DocumentUploadIntent[]
+  assignedInboxThreads     InboxThread[]
+  approvedInboxMessages    InboxMessage[]
+  entitlementGrantsIssued  EntitlementGrant[] @relation("EntitlementGrantIssuer")
+  entitlementGrantsRevoked EntitlementGrant[] @relation("EntitlementGrantRevoker")
 
   @@map("users")
 }
@@ -105,6 +107,7 @@ model Organization {
   creatorCreditBalance   CreatorCreditBalance?
   creatorCreditTxns      CreatorCreditTransaction[]
   creatorCreditGrants    CreatorCreditGrant[]
+  entitlementGrants      EntitlementGrant[]
 
   @@map("organizations")
 }
@@ -1847,4 +1850,45 @@ model CreatorCreditGrant {
 
   @@unique([organizationId, periodStart])
   @@map("creator_credit_grants")
+}
+
+/// Internal/pilot entitlement overrides (never a Stripe subscription or a
+/// change to Subscription.plan): a superadmin-issued, per-org, per-metric,
+/// strictly additive bonus on top of whatever the org's real plan already
+/// grants -- e.g. letting a specific pilot org create one Voice assistant
+/// and use a handful of voice minutes without a real Stripe charge and
+/// without pretending they're on a paid plan. getEntitlements() sums every
+/// active (not expired, not revoked) grant's amount into the corresponding
+/// PlanLimits field; it can only ever increase an effective limit, never
+/// decrease one below what the plan itself already grants.
+enum EntitlementMetric {
+  MAX_SEATS
+  AI_MESSAGES_PER_USER_MONTH
+  VOICE_ASSISTANTS
+  VOICE_MINUTES_MONTH
+  KB_STORAGE_MB
+  ACTIVE_WORKFLOWS
+  MAX_CONTACTS
+  AUDIT_RETENTION_DAYS
+  CREATOR_CREDITS_PER_MONTH
+}
+
+model EntitlementGrant {
+  id              String            @id @default(dbgenerated("gen_random_uuid()")) @db.Uuid
+  organizationId  String            @map("organization_id") @db.Uuid
+  metric          EntitlementMetric
+  amount          Int
+  reason          String
+  grantedByUserId String?           @map("granted_by_user_id") @db.Uuid
+  createdAt       DateTime          @default(now()) @map("created_at")
+  expiresAt       DateTime?         @map("expires_at")
+  revokedAt       DateTime?         @map("revoked_at")
+  revokedByUserId String?           @map("revoked_by_user_id") @db.Uuid
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  grantedBy    User?        @relation("EntitlementGrantIssuer", fields: [grantedByUserId], references: [id], onDelete: SetNull)
+  revokedBy    User?        @relation("EntitlementGrantRevoker", fields: [revokedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, metric])
+  @@map("entitlement_grants")
 }

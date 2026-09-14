@@ -4,6 +4,7 @@ import { requireSuperadmin } from "@/server/auth/superadmin";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatCard } from "@/components/analytics/charts";
+import { Link } from "@/i18n/routing";
 
 export default async function AdminOrganizationsPage({
   searchParams,
@@ -68,7 +69,12 @@ export default async function AdminOrganizationsPage({
           {orgs.map((org) => (
             <div key={org.id} className="flex items-center gap-4 p-4 text-sm">
               <div className="min-w-0 flex-1">
-                <p className="font-medium">{org.name}</p>
+                <Link
+                  href={`/admin/organizations/${org.id}`}
+                  className="font-medium hover:underline"
+                >
+                  {org.name}
+                </Link>
                 <p className="text-xs text-muted-foreground">
                   {org.slug} · {org.businessId ?? "no Y-tunnus"} · created{" "}
                   {org.createdAt.toISOString().slice(0, 10)}
