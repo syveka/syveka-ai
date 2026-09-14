@@ -62,18 +62,18 @@ describe("staging release migration contract", () => {
     // LEGACY_MISSING_TABLE_ENTRIES in scripts/generate-legacy-schema-contract.mjs) can no
     // longer be required to stay byte-identical -- only that the preflight tool remains at
     // least as strict as baseline's frozen snapshot (a superset of its lines), never less.
-    const baselineLines = new Set(
-      compatibilityContract(baseline)
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean),
-    );
-    const preflightLines = new Set(
-      compatibilityContract(preflight)
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean),
-    );
+    // A trailing comma is stripped before comparing: a VALUES row that used to be the last
+    // entry in baseline (no comma) legitimately gains one in preflight once later entries are
+    // appended after it there -- that alone must never register as a "dropped" line.
+    const normalize = (contract: string) =>
+      new Set(
+        contract
+          .split("\n")
+          .map((line) => line.trim().replace(/,$/, ""))
+          .filter(Boolean),
+      );
+    const baselineLines = normalize(compatibilityContract(baseline));
+    const preflightLines = normalize(compatibilityContract(preflight));
     const droppedFromPreflight = [...baselineLines].filter((line) => !preflightLines.has(line));
     expect(droppedFromPreflight).toEqual([]);
   });
@@ -98,7 +98,8 @@ describe("staging release migration contract", () => {
         "    'social_accounts',\n" +
         "    'creator_credit_balances',\n" +
         "    'creator_credit_grants',\n" +
-        "    'creator_credit_transactions'\n" +
+        "    'creator_credit_transactions',\n" +
+        "    'entitlement_grants'\n" +
         "  ];\n-- END LEGACY MISSING TABLES",
     );
     expect(contract).not.toContain("ARRAY[]");
@@ -146,13 +147,14 @@ describe("staging release migration contract", () => {
     ).match(/^      \('public', '[^']+', '[^']+_fkey',/gm);
     // Grew from 566 to 692 with the 10 new Creator Studio tables (126 columns), then to 694
     // with the idempotency_key/request_fingerprint columns on creator_generations, then to
-    // 704 with the entitlement_grants table (10 columns). Foreign-key count is unchanged at
-    // 82: like every Creator Studio table before it, entitlement_grants is a legacy-missing
-    // table (prisma/migrations/20260914000000_entitlement_grants), so its FKs -- which
-    // reference a table that doesn't exist yet at legacy-baseline-check time either -- are
-    // omitted from this section entirely, matching the existing Creator Studio precedent.
+    // 704 columns / 85 foreign keys with the entitlement_grants table (10 columns, 3 FKs) and
+    // its registration in LEGACY_MISSING_TABLE_ENTRIES (scripts/generate-legacy-schema-
+    // contract.mjs) -- a legacy-missing table's FKs are still part of this static contract
+    // (the runtime check's own `expected.source_table = ANY(legacy_missing_tables)` guard,
+    // asserted below, is what actually tolerates them not existing yet, not an omission from
+    // the contract itself).
     expect(columnRows).toHaveLength(704);
-    expect(foreignKeyRows).toHaveLength(82);
+    expect(foreignKeyRows).toHaveLength(85);
     expect(contract).toContain("expected.table_name = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.source_table = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.target_table = ANY(legacy_missing_tables)");

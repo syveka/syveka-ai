@@ -95,7 +95,8 @@ DECLARE
     'social_accounts',
     'creator_credit_balances',
     'creator_credit_grants',
-    'creator_credit_transactions'
+    'creator_credit_transactions',
+    'entitlement_grants'
   ];
 -- END LEGACY MISSING TABLES
   -- Foreign keys whose ON UPDATE action may still show a specific, verified
@@ -1247,7 +1248,10 @@ BEGIN
       ('public', 'api_keys', 'api_keys_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'webhook_endpoints', 'webhook_endpoints_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'audit_logs', 'audit_logs_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
-      ('public', 'audit_logs', 'audit_logs_actor_id_fkey', '{actor_id}', 'public', 'users', '{id}', 'SetNull', 'Cascade', 'false', 'false', 'true')
+      ('public', 'audit_logs', 'audit_logs_actor_id_fkey', '{actor_id}', 'public', 'users', '{id}', 'SetNull', 'Cascade', 'false', 'false', 'true'),
+      ('public', 'entitlement_grants', 'entitlement_grants_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
+      ('public', 'entitlement_grants', 'entitlement_grants_granted_by_user_id_fkey', '{granted_by_user_id}', 'public', 'users', '{id}', 'SetNull', 'Cascade', 'false', 'false', 'true'),
+      ('public', 'entitlement_grants', 'entitlement_grants_revoked_by_user_id_fkey', '{revoked_by_user_id}', 'public', 'users', '{id}', 'SetNull', 'Cascade', 'false', 'false', 'true')
     ) AS contract(
       source_schema, source_table, constraint_name, source_columns,
       target_schema, target_table, target_columns, delete_action,
