@@ -16,11 +16,13 @@ export function Topbar({
   orgName,
   initialUnread,
   permissions,
+  enabledFeatures,
 }: {
   userId: string;
   orgName: string;
   initialUnread: number;
   permissions: Permission[];
+  enabledFeatures?: ReadonlySet<string>;
 }) {
   const { resolvedTheme, setTheme } = useTheme();
   const unread = useUnreadBadge(initialUnread, userId);
@@ -34,7 +36,7 @@ export function Topbar({
   return (
     <header className="flex h-14 items-center justify-between border-b px-4">
       <div className="flex min-w-0 items-center gap-1">
-        <MobileNav permissions={permissions} />
+        <MobileNav permissions={permissions} enabledFeatures={enabledFeatures} />
         <span className="truncate text-sm font-medium text-muted-foreground">{orgName}</span>
       </div>
       <div className="flex items-center gap-1">

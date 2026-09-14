@@ -9,9 +9,11 @@ import { visibleNavItems } from "./nav-items";
 export function AppSidebar({
   role: _role,
   permissions,
+  enabledFeatures,
 }: {
   role: string;
   permissions: Permission[];
+  enabledFeatures?: ReadonlySet<string>;
 }) {
   const t = useTranslations("nav");
   const pathname = usePathname();
@@ -20,7 +22,7 @@ export function AppSidebar({
     <aside className="hidden w-56 shrink-0 border-e bg-card md:block">
       <div className="flex h-14 items-center border-b px-4 font-semibold">Syveka AI</div>
       <nav className="space-y-1 p-2">
-        {visibleNavItems(permissions).map((item) => {
+        {visibleNavItems(permissions, enabledFeatures).map((item) => {
           const active = pathname.startsWith(item.href);
           return (
             <Link

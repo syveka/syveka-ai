@@ -19,7 +19,13 @@ import { visibleNavItems } from "./nav-items";
  * same NAV data, same Link targets, same permission gating as the desktop
  * sidebar (shared via nav-items.ts so the two can't drift apart).
  */
-export function MobileNav({ permissions }: { permissions: Permission[] }) {
+export function MobileNav({
+  permissions,
+  enabledFeatures,
+}: {
+  permissions: Permission[];
+  enabledFeatures?: ReadonlySet<string>;
+}) {
   const t = useTranslations("nav");
   const pathname = usePathname();
 
@@ -36,7 +42,7 @@ export function MobileNav({ permissions }: { permissions: Permission[] }) {
           sideOffset={4}
           className="z-50 w-56 rounded-md border bg-card p-1 shadow-md"
         >
-          {visibleNavItems(permissions).map((item) => {
+          {visibleNavItems(permissions, enabledFeatures).map((item) => {
             const active = pathname.startsWith(item.href);
             return (
               <DropdownMenu.Item key={item.href} asChild>

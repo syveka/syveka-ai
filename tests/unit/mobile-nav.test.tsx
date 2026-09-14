@@ -57,6 +57,30 @@ describe("MobileNav", () => {
     // AppSidebar/NAV gates this route on) -- must stay hidden here too, or
     // the two navs would grant different access to the same role.
     expect(screen.queryByRole("menuitem", { name: "Analytics" })).toBeNull();
+    // Creator Studio has no self-service activation path yet -- must stay
+    // hidden when no feature flag is passed, even though MEMBER holds
+    // creator:read (see tests/unit/nav-items.test.ts for the isolated case).
+    expect(screen.queryByRole("menuitem", { name: "Creator Studio" })).toBeNull();
+  });
+
+  it("reveals Creator Studio once the org's creator_studio_v1 flag is enabled", async () => {
+    const { MobileNav } = await import("../../src/components/layout/mobile-nav");
+    const { permissionsFor } = await import("../../src/server/auth/permissions");
+
+    render(
+      <NextIntlClientProvider locale="en" messages={messages}>
+        <MobileNav
+          permissions={permissionsFor("MEMBER")}
+          enabledFeatures={new Set(["creator_studio_v1"])}
+        />
+      </NextIntlClientProvider>,
+    );
+
+    const trigger = screen.getByRole("button", { name: "menu" });
+    fireEvent.pointerDown(trigger, { button: 0, pointerId: 1 });
+    fireEvent.click(trigger);
+
+    expect(await screen.findByRole("menuitem", { name: "Creator Studio" })).toBeTruthy();
   });
 
   it("is only rendered for mobile viewports (md:hidden), never a second nav on desktop", async () => {

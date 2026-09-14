@@ -23,6 +23,15 @@ export type NavItem = {
   key: string;
   icon: React.ComponentType<{ className?: string }>;
   permission?: Permission;
+  /**
+   * Org-level feature-flag key (see src/server/services/feature-flags.ts)
+   * required to show this destination, in addition to `permission`. Kept as
+   * a plain string literal rather than importing the real constant (e.g.
+   * CREATOR_STUDIO_FLAG from @/server/services/creator-profiles) because
+   * that module is `server-only` and this file is imported by client
+   * components (AppSidebar, MobileNav) -- must stay in sync by hand.
+   */
+  featureFlag?: string;
 };
 
 /**
@@ -33,7 +42,13 @@ export type NavItem = {
 export const NAV: NavItem[] = [
   { href: "/dashboard", key: "dashboard", icon: LayoutDashboard },
   { href: "/inbox", key: "inbox", icon: Inbox, permission: "inbox:read" },
-  { href: "/creator-studio", key: "creatorStudio", icon: Wand2, permission: "creator:read" },
+  {
+    href: "/creator-studio",
+    key: "creatorStudio",
+    icon: Wand2,
+    permission: "creator:read",
+    featureFlag: "creator_studio_v1",
+  },
   { href: "/chat", key: "chat", icon: MessageSquare, permission: "chat:use" },
   { href: "/voice", key: "voice", icon: Phone, permission: "voice:view-calls" },
   { href: "/crm/contacts", key: "contacts", icon: Users, permission: "crm:read" },
@@ -54,7 +69,14 @@ export const NAV: NavItem[] = [
   { href: "/settings/profile", key: "settings", icon: Settings },
 ];
 
-export function visibleNavItems(permissions: Permission[]): NavItem[] {
+export function visibleNavItems(
+  permissions: Permission[],
+  enabledFeatures: ReadonlySet<string> = new Set(),
+): NavItem[] {
   const allowed = new Set(permissions);
-  return NAV.filter((item) => !item.permission || allowed.has(item.permission));
+  return NAV.filter(
+    (item) =>
+      (!item.permission || allowed.has(item.permission)) &&
+      (!item.featureFlag || enabledFeatures.has(item.featureFlag)),
+  );
 }
