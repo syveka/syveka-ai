@@ -34,6 +34,7 @@ const expectedOrder = [
   "20260908000000_creator_studio_v1",
   "20260910230000_creator_credit_transaction_generation_type_unique",
   "20260910233000_creator_generation_idempotency_key",
+  "20260914000000_entitlement_grants",
 ];
 
 // These eight migrations were published before the staging-release branch.

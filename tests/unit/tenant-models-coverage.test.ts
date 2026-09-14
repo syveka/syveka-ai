@@ -43,6 +43,12 @@ function extractTenantModels(source: string): string[] {
  * StripeWebhookEvent: keyed and queried exclusively by Stripe's own globally-unique
  * `stripeEventId`, never by organization - see the model's own doc comment in
  * prisma/schema.prisma and docs/stripe-webhook-reliability.md.
+ *
+ * EntitlementGrant: superadmin-only internal/pilot entitlement overrides. The
+ * acting superadmin issuing/revoking a grant is not necessarily a member of the
+ * target org, so there is no natural per-request TenantContext to scope through
+ * tenantDb() - every read/write goes through unscopedPrisma from src/server/
+ * services/billing/entitlement-grants.ts (itself gated on requireSuperadmin()).
  */
 const DOCUMENTED_EXCLUSIONS = new Set([
   "Message",
@@ -57,6 +63,7 @@ const DOCUMENTED_EXCLUSIONS = new Set([
   "User",
   "Organization",
   "StripeWebhookEvent",
+  "EntitlementGrant",
 ]);
 
 describe("TENANT_MODELS coverage (src/server/db/tenant.ts)", () => {

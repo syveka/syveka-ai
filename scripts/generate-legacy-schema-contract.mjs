@@ -48,6 +48,7 @@ const LEGACY_MISSING_TABLE_ENTRIES = [
   ["creator_credit_balances", "20260908000000_creator_studio_v1"],
   ["creator_credit_grants", "20260908000000_creator_studio_v1"],
   ["creator_credit_transactions", "20260908000000_creator_studio_v1"],
+  ["entitlement_grants", "20260914000000_entitlement_grants"],
 ];
 
 const actualTableNames = new Set(models.map(tableName));

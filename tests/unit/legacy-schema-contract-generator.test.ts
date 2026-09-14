@@ -405,6 +405,7 @@ describe("legacy schema contract generator", () => {
     '  ["creator_credit_balances", "20260908000000_creator_studio_v1"],\n' +
     '  ["creator_credit_grants", "20260908000000_creator_studio_v1"],\n' +
     '  ["creator_credit_transactions", "20260908000000_creator_studio_v1"],\n' +
+    '  ["entitlement_grants", "20260914000000_entitlement_grants"],\n' +
     "];";
 
   it("fails closed when a legacy-missing table references a nonexistent migration directory", () => {
@@ -495,7 +496,8 @@ describe("legacy schema contract generator", () => {
         "    'social_accounts',\n" +
         "    'creator_credit_balances',\n" +
         "    'creator_credit_grants',\n" +
-        "    'creator_credit_transactions'\n" +
+        "    'creator_credit_transactions',\n" +
+        "    'entitlement_grants'\n" +
         "  ];",
     );
     expect(legacyMissingTablesDeclarationOf(stdout)).toBe(

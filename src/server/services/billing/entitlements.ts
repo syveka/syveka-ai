@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Plan, Prisma, UsageMetric } from "@prisma/client";
+import type { EntitlementMetric, Plan, Prisma, UsageMetric } from "@prisma/client";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { redis } from "@/server/integrations/redis";
 import { PLAN_LIMITS, type PlanLimits } from "./plans";
@@ -11,6 +11,67 @@ export type Entitlements = PlanLimits & {
   status: string;
   readOnly: boolean; // PAST_DUE ≥ 14d or CANCELED over-limit lockout (§14.4)
 };
+
+/**
+ * Internal/pilot entitlement overrides -- never a Stripe subscription,
+ * never a change to Subscription.plan. See prisma/schema.prisma's
+ * EntitlementGrant doc comment. Only PlanLimits' numeric fields are
+ * grantable -- apiAccess is a boolean, not an additive amount, and is
+ * deliberately excluded from both the Prisma enum and this map.
+ */
+export const METRIC_TO_PLAN_LIMIT_KEY: Record<
+  EntitlementMetric,
+  Exclude<keyof PlanLimits, "apiAccess">
+> = {
+  MAX_SEATS: "maxSeats",
+  AI_MESSAGES_PER_USER_MONTH: "aiMessagesPerUserMonth",
+  VOICE_ASSISTANTS: "voiceAssistants",
+  VOICE_MINUTES_MONTH: "voiceMinutesMonth",
+  KB_STORAGE_MB: "kbStorageMb",
+  ACTIVE_WORKFLOWS: "activeWorkflows",
+  MAX_CONTACTS: "maxContacts",
+  AUDIT_RETENTION_DAYS: "auditRetentionDays",
+  CREATOR_CREDITS_PER_MONTH: "creatorCreditsPerMonth",
+};
+
+export type ActiveGrant = {
+  id: string;
+  metric: EntitlementMetric;
+  amount: number;
+  reason: string;
+  grantedByUserId: string | null;
+  createdAt: Date;
+  expiresAt: Date | null;
+};
+
+/** Active = not revoked and not expired. Used by getEntitlements()'s merge and the admin list view. */
+export async function listActiveGrants(orgId: string): Promise<ActiveGrant[]> {
+  return unscopedPrisma.entitlementGrant.findMany({
+    where: {
+      organizationId: orgId,
+      revokedAt: null,
+      OR: [{ expiresAt: null }, { expiresAt: { gt: new Date() } }],
+    },
+    select: {
+      id: true,
+      metric: true,
+      amount: true,
+      reason: true,
+      grantedByUserId: true,
+      createdAt: true,
+      expiresAt: true,
+    },
+    orderBy: { createdAt: "desc" },
+  });
+}
+
+/** All grants for an org (active, expired, and revoked) -- admin history view only. */
+export async function listAllGrants(orgId: string) {
+  return unscopedPrisma.entitlementGrant.findMany({
+    where: { organizationId: orgId },
+    orderBy: { createdAt: "desc" },
+  });
+}
 
 export class EntitlementError extends Error {
   readonly code = "entitlement_exceeded";
@@ -24,15 +85,27 @@ export class EntitlementError extends Error {
 
 const CACHE_TTL_SECONDS = 60;
 
-/** Plan → limits, Redis-cached 60s (§14.2). Invalidated by the Stripe webhook. */
+/**
+ * Plan → limits, Redis-cached 60s (§14.2). Invalidated by the Stripe
+ * webhook, and by grantEntitlementOverride()/revokeEntitlementOverride()
+ * (./entitlement-grants.ts). Effective entitlement = plan entitlement +
+ * sum(active internal grants) per metric -- additive only, so a grant can
+ * never reduce what the plan itself already grants, and ENTERPRISE's
+ * Number.MAX_SAFE_INTEGER "unlimited" fields are capped rather than summed
+ * past that value (adding a finite grant on top of "unlimited" must still
+ * read as unlimited, not as a slightly-larger-but-still-finite number).
+ * Subscription.plan/status/seats are never touched by a grant -- billing
+ * truth stays exactly what Stripe (or the FREE default) says it is.
+ */
 export async function getEntitlements(orgId: string): Promise<Entitlements> {
   const cacheKey = `ent:${orgId}`;
   const cached = await redis.get<Entitlements>(cacheKey);
   if (cached) return cached;
 
-  const sub = await unscopedPrisma.subscription.findUnique({
-    where: { organizationId: orgId },
-  });
+  const [sub, activeGrants] = await Promise.all([
+    unscopedPrisma.subscription.findUnique({ where: { organizationId: orgId } }),
+    listActiveGrants(orgId),
+  ]);
 
   const plan: Plan = sub?.plan ?? "FREE";
   const status = sub?.status ?? "ACTIVE";
@@ -42,8 +115,14 @@ export async function getEntitlements(orgId: string): Promise<Entitlements> {
     sub?.updatedAt !== undefined &&
     Date.now() - sub.updatedAt.getTime() > 14 * 24 * 60 * 60 * 1000;
 
+  const limits: PlanLimits = { ...PLAN_LIMITS[plan] };
+  for (const grant of activeGrants) {
+    const key = METRIC_TO_PLAN_LIMIT_KEY[grant.metric];
+    limits[key] = Math.min(Number.MAX_SAFE_INTEGER, limits[key] + grant.amount);
+  }
+
   const ent: Entitlements = {
-    ...PLAN_LIMITS[plan],
+    ...limits,
     plan,
     seats: sub?.seats ?? 1,
     status,

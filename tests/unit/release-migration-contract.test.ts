@@ -53,9 +53,33 @@ function policyRows(contract: string): string[] {
 }
 
 describe("staging release migration contract", () => {
-  it("uses the identical read-only preflight contract inside the atomic baseline", () => {
+  it("the standalone preflight contract never drops or weakens a check the (now-immutable) baseline already established", () => {
+    // Production has applied 20260701000000_initial_baseline (2026-09-14) -- it is
+    // permanently frozen from this point forward, exactly like every other already-applied
+    // migration.sql. Its embedded compatibility-contract copy can never be edited again, so
+    // it and the standalone preflight tool (prisma/sql/006_legacy_baseline_preflight.sql,
+    // which keeps evolving as later migrations register new legacy-missing tables, e.g. via
+    // LEGACY_MISSING_TABLE_ENTRIES in scripts/generate-legacy-schema-contract.mjs) can no
+    // longer be required to stay byte-identical -- only that the preflight tool remains at
+    // least as strict as baseline's frozen snapshot (a superset of its lines), never less.
+    // A trailing comma is stripped before comparing: a VALUES row that used to be the last
+    // entry in baseline (no comma) legitimately gains one in preflight once later entries are
+    // appended after it there -- that alone must never register as a "dropped" line.
+    const normalize = (contract: string) =>
+      new Set(
+        contract
+          .split("\n")
+          .map((line) => line.trim().replace(/,$/, ""))
+          .filter(Boolean),
+      );
+    const baselineLines = normalize(compatibilityContract(baseline));
+    const preflightLines = normalize(compatibilityContract(preflight));
+    const droppedFromPreflight = [...baselineLines].filter((line) => !preflightLines.has(line));
+    expect(droppedFromPreflight).toEqual([]);
+  });
+
+  it("uses the current standalone preflight contract for the remaining structural checks", () => {
     const contract = compatibilityContract(preflight);
-    expect(contract).toBe(compatibilityContract(baseline));
     expect(contract).toContain(
       "-- BEGIN LEGACY MISSING TABLES\n  legacy_missing_tables TEXT[] := ARRAY[\n" +
         "    'business_dna',\n" +
@@ -74,7 +98,8 @@ describe("staging release migration contract", () => {
         "    'social_accounts',\n" +
         "    'creator_credit_balances',\n" +
         "    'creator_credit_grants',\n" +
-        "    'creator_credit_transactions'\n" +
+        "    'creator_credit_transactions',\n" +
+        "    'entitlement_grants'\n" +
         "  ];\n-- END LEGACY MISSING TABLES",
     );
     expect(contract).not.toContain("ARRAY[]");
@@ -121,9 +146,15 @@ describe("staging release migration contract", () => {
       "complete foreign-key contract",
     ).match(/^      \('public', '[^']+', '[^']+_fkey',/gm);
     // Grew from 566 to 692 with the 10 new Creator Studio tables (126 columns), then to 694
-    // with the idempotency_key/request_fingerprint columns on creator_generations.
-    expect(columnRows).toHaveLength(694);
-    expect(foreignKeyRows).toHaveLength(82);
+    // with the idempotency_key/request_fingerprint columns on creator_generations, then to
+    // 704 columns / 85 foreign keys with the entitlement_grants table (10 columns, 3 FKs) and
+    // its registration in LEGACY_MISSING_TABLE_ENTRIES (scripts/generate-legacy-schema-
+    // contract.mjs) -- a legacy-missing table's FKs are still part of this static contract
+    // (the runtime check's own `expected.source_table = ANY(legacy_missing_tables)` guard,
+    // asserted below, is what actually tolerates them not existing yet, not an omission from
+    // the contract itself).
+    expect(columnRows).toHaveLength(704);
+    expect(foreignKeyRows).toHaveLength(85);
     expect(contract).toContain("expected.table_name = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.source_table = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.target_table = ANY(legacy_missing_tables)");
