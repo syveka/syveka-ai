@@ -3,8 +3,14 @@ import { createHmac, randomBytes } from "node:crypto";
 
 const { unscopedMock } = vi.hoisted(() => ({
   unscopedMock: {
-    calendarConnection: { findFirst: vi.fn(), update: vi.fn() },
+    calendarConnection: { findFirst: vi.fn(), update: vi.fn(), upsert: vi.fn() },
+    externalCalendar: { upsert: vi.fn() },
+    organizationMember: { findFirst: vi.fn() },
   },
+}));
+
+const { adapterMock } = vi.hoisted(() => ({
+  adapterMock: { exchangeCode: vi.fn(), listCalendars: vi.fn() },
 }));
 
 vi.mock("@/server/db/tenant", () => ({
@@ -12,10 +18,17 @@ vi.mock("@/server/db/tenant", () => ({
   tenantDb: vi.fn(),
 }));
 
+vi.mock("@/server/integrations/calendar", () => ({
+  getProviderAdapter: () => adapterMock,
+}));
+
+vi.mock("@/server/services/audit", () => ({ audit: vi.fn().mockResolvedValue(undefined) }));
+
 import {
   getFreshTokens,
   buildOAuthState,
   verifyOAuthState,
+  completeConnection,
   ConnectionError,
 } from "@/server/services/calendar-connections";
 import { encryptToken } from "@/server/integrations/calendar/crypto";
@@ -131,5 +144,85 @@ describe("OAuth state signing (fail-closed)", () => {
 
     expect(() => verifyOAuthState(forgedState)).toThrow(ConnectionError);
     expect(() => verifyOAuthState(forgedState)).toThrow(/not configured/i);
+  });
+});
+
+describe("completeConnection membership revalidation", () => {
+  const ctx: TenantContext = {
+    userId: "user-a",
+    email: "user@example.com",
+    orgId: "org-a",
+    role: "OWNER",
+    locale: "en",
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    process.env.CALENDAR_TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+    process.env.CALENDAR_OAUTH_STATE_SECRET = "dedicated-state-secret-at-least-16-chars";
+    adapterMock.exchangeCode.mockResolvedValue({
+      accessToken: "access-token",
+      refreshToken: "refresh-token",
+      scopes: ["calendar.readonly"],
+    });
+    adapterMock.listCalendars.mockResolvedValue([]);
+    unscopedMock.calendarConnection.upsert.mockResolvedValue({ id: "conn-1" });
+  });
+
+  afterEach(() => {
+    delete process.env.CALENDAR_OAUTH_STATE_SECRET;
+  });
+
+  /**
+   * verifyOAuthState only proves the flow was legitimately started up to 10
+   * minutes ago -- it says nothing about whether the user is still an
+   * authorized member of that org *now*, at the moment the callback
+   * actually lands and tokens would be persisted. Regression test for the
+   * P1 finding in PR #73 (auth/tenant-isolation hardening): a user removed
+   * from the org, or downgraded below integrations:manage, within that
+   * window must not still get their calendar tokens attached to it.
+   */
+  it("rejects completing the connection when the user is no longer a member of the org", async () => {
+    unscopedMock.organizationMember.findFirst.mockResolvedValue(null);
+    const state = buildOAuthState(ctx, "GOOGLE");
+
+    await expect(
+      completeConnection({ provider: "GOOGLE", code: "auth-code", state }),
+    ).rejects.toMatchObject({ code: "membership_revoked" });
+    expect(adapterMock.exchangeCode).not.toHaveBeenCalled();
+    expect(unscopedMock.calendarConnection.upsert).not.toHaveBeenCalled();
+  });
+
+  it("rejects completing the connection when the member no longer holds integrations:manage", async () => {
+    unscopedMock.organizationMember.findFirst.mockResolvedValue({ role: "VIEWER" });
+    const state = buildOAuthState(ctx, "GOOGLE");
+
+    await expect(
+      completeConnection({ provider: "GOOGLE", code: "auth-code", state }),
+    ).rejects.toMatchObject({ code: "membership_revoked" });
+    expect(adapterMock.exchangeCode).not.toHaveBeenCalled();
+  });
+
+  it("succeeds and persists tokens when the user is still an authorized member", async () => {
+    unscopedMock.organizationMember.findFirst.mockResolvedValue({ role: "OWNER" });
+    const state = buildOAuthState(ctx, "GOOGLE");
+
+    const result = await completeConnection({ provider: "GOOGLE", code: "auth-code", state });
+
+    expect(result).toEqual({ orgId: "org-a", connectionId: "conn-1" });
+    expect(adapterMock.exchangeCode).toHaveBeenCalledTimes(1);
+    expect(unscopedMock.calendarConnection.upsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks membership scoped to the exact org from the signed state, not just the user id", async () => {
+    unscopedMock.organizationMember.findFirst.mockResolvedValue({ role: "OWNER" });
+    const state = buildOAuthState(ctx, "GOOGLE");
+
+    await completeConnection({ provider: "GOOGLE", code: "auth-code", state });
+
+    expect(unscopedMock.organizationMember.findFirst).toHaveBeenCalledWith({
+      where: { organizationId: "org-a", userId: "user-a" },
+      select: { role: true },
+    });
   });
 });
