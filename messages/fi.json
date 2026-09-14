@@ -308,6 +308,16 @@
       "logActivity": "Kirjaa puhelumuistiinpanot CRM:ään",
       "getCalendarAvailability": "Tarkista kalenterin saatavuus",
       "bookMeeting": "Varaa tapaamisia"
+    },
+    "entitlementBlocked": {
+      "title": "Puhe-AI vaatii Starter-tason tai korkeamman",
+      "description": "Organisaatiollasi on {plan}-taso, joka ei sisällä puhe-AI:ta.",
+      "currentPlan": "Nykyinen taso",
+      "upgradeButton": "Päivitä taso"
+    },
+    "errors": {
+      "entitlement_exceeded": "Puhe-AI vaatii Starter-tason tai korkeamman — päivitä tasoa jatkaaksesi.",
+      "generic": "Jokin meni pieleen. Yritä uudelleen."
     }
   },
   "calendar": {

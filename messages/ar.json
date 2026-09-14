@@ -308,6 +308,16 @@
       "logActivity": "تسجيل ملاحظات المكالمة في CRM",
       "getCalendarAvailability": "التحقق من توفر التقويم",
       "bookMeeting": "حجز الاجتماعات"
+    },
+    "entitlementBlocked": {
+      "title": "يتطلب المساعد الصوتي بالذكاء الاصطناعي خطة Starter أو أعلى",
+      "description": "مؤسستك على خطة {plan}، والتي لا تشمل المساعد الصوتي بالذكاء الاصطناعي.",
+      "currentPlan": "الخطة الحالية",
+      "upgradeButton": "ترقية الخطة"
+    },
+    "errors": {
+      "entitlement_exceeded": "يتطلب المساعد الصوتي بالذكاء الاصطناعي خطة Starter أو أعلى — قم بترقية خطتك للمتابعة.",
+      "generic": "حدث خطأ ما. حاول مرة أخرى."
     }
   },
   "calendar": {

@@ -308,6 +308,16 @@
       "logActivity": "Log call notes to CRM",
       "getCalendarAvailability": "Check calendar availability",
       "bookMeeting": "Book meetings"
+    },
+    "entitlementBlocked": {
+      "title": "Voice AI requires Starter or higher",
+      "description": "Your organization is on the {plan} plan, which doesn't include Voice AI.",
+      "currentPlan": "Current plan",
+      "upgradeButton": "Upgrade plan"
+    },
+    "errors": {
+      "entitlement_exceeded": "Voice AI requires Starter or higher — upgrade your plan to continue.",
+      "generic": "Something went wrong. Please try again."
     }
   },
   "calendar": {

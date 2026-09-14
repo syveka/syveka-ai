@@ -9,7 +9,7 @@ import {
 import { TOOL_REGISTRY, zodToJsonSchema } from "@/server/ai/tools";
 import { buildVoiceSystemPrompt } from "@/server/ai/prompts/voice";
 import { getBusinessDnaContext } from "@/server/business-dna/context";
-import { getEntitlements } from "./billing/entitlements";
+import { getEntitlements, EntitlementError } from "./billing/entitlements";
 import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
 import type { VoiceAssistantInput } from "@/lib/validators/voice";
@@ -43,7 +43,7 @@ export async function upsertAssistant(
     const ent = await getEntitlements(ctx.orgId);
     const count = await db.voiceAssistant.count();
     if (count >= ent.voiceAssistants) {
-      throw new Error("Voice assistant limit reached for your plan");
+      throw new EntitlementError("voiceAssistants", "Voice assistant limit reached for your plan");
     }
   }
 
