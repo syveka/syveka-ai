@@ -17,6 +17,28 @@ function baseConfig(overrides: Partial<VapiAssistantConfig> = {}): VapiAssistant
   };
 }
 
+describe("toVapiPayload — Vapi-accepted model ID", () => {
+  // Regression for the 2026-09-15 production incident: Vapi's POST /assistant
+  // rejected model.model with a 400 because vapi.ts hardcoded a model string
+  // ("claude-sonnet-4-5") that isn't in Vapi's own accepted-model allowlist.
+  // Vapi's error response explicitly confirmed "claude-haiku-4-5-20251001" as
+  // accepted -- the exact string the voice route already used elsewhere in
+  // src/server/ai/router.ts. The fix sources vapi.ts's model from that same
+  // canonical router instead of a second, independently-drifting literal.
+  it("sends the canonical voice-route model id, not a stale duplicate literal", () => {
+    const payload = toVapiPayload(baseConfig());
+    expect((payload.model as { model: string }).model).toBe("claude-haiku-4-5-20251001");
+    expect((payload.model as { provider: string }).provider).toBe("anthropic");
+  });
+
+  it("is unaffected by language or voice provider (model id is language/voice-independent)", () => {
+    for (const language of ["fi", "en", "ar"] as const) {
+      const payload = toVapiPayload(baseConfig({ language, voiceProvider: "elevenlabs" }));
+      expect((payload.model as { model: string }).model).toBe("claude-haiku-4-5-20251001");
+    }
+  });
+});
+
 describe("toVapiPayload — per-language transcriber/voice selection", () => {
   it("Finnish: nova-2 transcriber, Selma voice (unchanged default)", () => {
     const payload = toVapiPayload(baseConfig({ language: "fi" }));

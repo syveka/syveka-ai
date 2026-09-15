@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { getVapiEnv } from "@/env";
+import { routeModel } from "@/server/ai/router";
 
 const VAPI_BASE = "https://api.vapi.ai";
 
@@ -68,7 +69,10 @@ export function toVapiPayload(cfg: VapiAssistantConfig) {
     firstMessage: cfg.firstMessage,
     model: {
       provider: "anthropic",
-      model: "claude-sonnet-4-5",
+      // Sourced from the canonical model router, not a second hardcoded
+      // literal -- a stale duplicate here is exactly what caused Vapi to
+      // reject POST /assistant in production on 2026-09-15 (§ incident).
+      model: routeModel("voice").model,
       messages: [{ role: "system", content: cfg.systemPrompt }],
       tools: cfg.tools.map((t) => ({
         type: "function",
