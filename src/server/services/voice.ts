@@ -1,5 +1,6 @@
 import "server-only";
 
+import type { VoiceAssistant } from "@prisma/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import {
   upsertVapiAssistant,
@@ -78,31 +79,66 @@ export async function upsertAssistant(
   return assistant;
 }
 
-/** Activate: upsert on Vapi + provision a Finnish number (§16.2). */
-export async function activateAssistant(ctx: TenantContext, assistantId: string) {
+export type ActivateAssistantResult = {
+  assistant: VoiceAssistant;
+  /** Set when the Vapi assistant synced successfully but no phone number
+   * could be provisioned -- never a reason to fail the whole activation. */
+  phoneNumberError: string | null;
+};
+
+/**
+ * Activate: upsert on Vapi, then attempt to provision a number (§16.2).
+ *
+ * These two steps are deliberately NOT all-or-nothing. `syncToVapi` already
+ * persists `vapiAssistantId` to the DB the moment Vapi confirms the assistant
+ * exists (see below) -- so a failure here never loses that work, and a retry
+ * calls `upsertVapiAssistant` with the now-persisted id, which PATCHes the
+ * existing Vapi assistant instead of creating a duplicate.
+ *
+ * Vapi's native ("vapi" provider) number pool is US-only -- there is no
+ * account/architecture support today for a real +358 number (Vapi also
+ * supports importing a number already held with Twilio/Vonage/a BYO SIP
+ * trunk, but Syveka has no such integration yet). If provisioning fails for
+ * any reason, that is treated as an expected, non-fatal outcome: the
+ * assistant stays fully synced and re-activatable, `isActive` stays false
+ * (setup-readiness and the dashboard already key off isActive + a real
+ * phoneNumber, so this correctly keeps reading as "not yet call-ready"), and
+ * the caller decides how to surface `phoneNumberError` -- never by silently
+ * assigning a US number to a Finnish customer.
+ */
+export async function activateAssistant(
+  ctx: TenantContext,
+  assistantId: string,
+): Promise<ActivateAssistantResult> {
   const db = tenantDb(ctx.orgId);
   const assistant = await db.voiceAssistant.findFirstOrThrow({ where: { id: assistantId } });
 
   const vapiId = await syncToVapi(assistantId, ctx.orgId);
 
   let phoneNumber = assistant.phoneNumber;
+  let phoneNumberError: string | null = null;
   if (!phoneNumber) {
-    const number = await buyPhoneNumber(vapiId);
-    phoneNumber = number.number;
+    try {
+      const number = await buyPhoneNumber(vapiId);
+      phoneNumber = number.number;
+    } catch (error) {
+      phoneNumberError =
+        error instanceof Error ? error.message : "Phone number provisioning failed";
+    }
   }
 
   const updated = await db.voiceAssistant.update({
     where: { id: assistantId },
-    data: { isActive: true, phoneNumber, vapiAssistantId: vapiId },
+    data: { isActive: Boolean(phoneNumber), phoneNumber, vapiAssistantId: vapiId },
   });
 
   await audit(ctx, {
-    action: "voice_assistant.activate",
+    action: phoneNumber ? "voice_assistant.activate" : "voice_assistant.sync_pending_number",
     resourceType: "voice_assistant",
     resourceId: assistantId,
-    after: { phoneNumber },
+    after: { phoneNumber, phoneNumberError },
   });
-  return updated;
+  return { assistant: updated, phoneNumberError };
 }
 
 async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
