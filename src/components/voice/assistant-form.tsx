@@ -27,6 +27,10 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
     saveAssistantAction.bind(null, initial?.id),
     {},
   );
+  const [activateState, activateAction, activatePending] = useActionState<
+    VoiceActionState,
+    FormData
+  >(initial?.id ? activateAssistantAction.bind(null, initial.id) : async () => ({}), {});
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -37,9 +41,9 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
         <div className="mt-1 flex items-center justify-between">
           <h1 className="text-2xl font-semibold">{initial?.name ?? t("newAssistant")}</h1>
           {initial?.id && !initial.isActive ? (
-            <form action={activateAssistantAction.bind(null, initial.id)}>
-              <Button type="submit" variant="default">
-                {t("activate")}
+            <form action={activateAction}>
+              <Button type="submit" variant="default" disabled={activatePending}>
+                {activatePending ? tc("loading") : t("activate")}
               </Button>
             </form>
           ) : null}
@@ -47,6 +51,16 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
         {initial?.phoneNumber ? (
           <p className="text-sm text-muted-foreground">
             {t("phoneNumber")}: <strong>{initial.phoneNumber}</strong>
+          </p>
+        ) : null}
+        {activateState.phoneNumberPending ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            {t("activatePhoneNumberPending")}
+          </p>
+        ) : null}
+        {activateState.error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {activateState.error}
           </p>
         ) : null}
       </div>

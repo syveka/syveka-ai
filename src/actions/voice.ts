@@ -6,7 +6,13 @@ import { requirePermission } from "@/server/auth/guard";
 import { upsertAssistant, activateAssistant } from "@/server/services/voice";
 import { voiceAssistantSchema } from "@/lib/validators/voice";
 
-export type VoiceActionState = { error?: string; message?: string };
+export type VoiceActionState = {
+  error?: string;
+  message?: string;
+  /** Vapi assistant synced successfully but no phone number could be
+   * provisioned -- a controlled, retryable state, never a crash. */
+  phoneNumberPending?: boolean;
+};
 
 export async function saveAssistantAction(
   assistantId: string | undefined,
@@ -36,9 +42,22 @@ export async function saveAssistantAction(
   return { message: "saved" };
 }
 
-export async function activateAssistantAction(assistantId: string): Promise<void> {
+export async function activateAssistantAction(
+  assistantId: string,
+  _prev: VoiceActionState,
+): Promise<VoiceActionState> {
   const ctx = await requirePermission("voice:configure");
-  await activateAssistant(ctx, assistantId);
+
+  let result: Awaited<ReturnType<typeof activateAssistant>>;
+  try {
+    result = await activateAssistant(ctx, assistantId);
+  } catch (e) {
+    return { error: e instanceof Error ? e.message : "failed" };
+  }
+
   revalidatePath(`/voice/${assistantId}`);
   revalidatePath("/voice");
+
+  if (result.phoneNumberError) return { phoneNumberPending: true };
+  return { message: "activated" };
 }

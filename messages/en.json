@@ -277,6 +277,7 @@
     "noNumber": "No number yet",
     "calls": "calls",
     "activate": "Activate & get number",
+    "activatePhoneNumberPending": "Assistant created. Phone number setup requires manual provisioning — contact support to add a Finnish number.",
     "phoneNumber": "Phone number",
     "persona": "Persona",
     "tools": "Capabilities",
