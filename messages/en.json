@@ -309,6 +309,25 @@
       "logActivity": "Log call notes to CRM",
       "getCalendarAvailability": "Check calendar availability",
       "bookMeeting": "Book meetings"
+    },
+    "attachPhoneNumber": {
+      "title": "Attach an existing number",
+      "description": "Vapi's automatic number provisioning only covers US/Canada. To use a Finnish +358 number, import one you already hold with Twilio (or another SIP-compatible carrier).",
+      "provider": "Carrier",
+      "providerTwilio": "Twilio",
+      "providerByo": "Bring your own (SIP)",
+      "phoneNumber": "Phone number (E.164, e.g. +358401234567)",
+      "twilioAccountSid": "Twilio Account SID",
+      "twilioAuthToken": "Twilio Auth Token",
+      "sipUri": "SIP URI / credential",
+      "submit": "Attach number",
+      "success": "Phone number attached.",
+      "errors": {
+        "phoneNumberInUse": "This phone number is already attached to another assistant.",
+        "assistantNotSynced": "Save and activate the assistant before attaching a phone number.",
+        "invalidInput": "Check the phone number format (E.164, e.g. +358401234567) and required fields.",
+        "generic": "Something went wrong. Please try again."
+      }
     }
   },
   "calendar": {

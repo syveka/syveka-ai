@@ -5,7 +5,9 @@ import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import {
   upsertVapiAssistant,
   buyPhoneNumber,
+  importPhoneNumber,
   type VapiAssistantConfig,
+  type PhoneImportParams,
 } from "@/server/integrations/vapi";
 import { TOOL_REGISTRY, zodToJsonSchema } from "@/server/ai/tools";
 import { buildVoiceSystemPrompt } from "@/server/ai/prompts/voice";
@@ -13,8 +15,11 @@ import { getBusinessDnaContext } from "@/server/business-dna/context";
 import { getEntitlements } from "./billing/entitlements";
 import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
-import type { VoiceAssistantInput } from "@/lib/validators/voice";
+import type { VoiceAssistantInput, AttachPhoneNumberInput } from "@/lib/validators/voice";
 import { getVapiEnv } from "@/env";
+
+export class DuplicatePhoneNumberError extends Error {}
+export class AssistantNotSyncedError extends Error {}
 
 /** Zod tool schemas → OpenAI-function JSON for Vapi (§16.2). */
 function vapiToolsFor(enabledNames: string[]) {
@@ -139,6 +144,84 @@ export async function activateAssistant(
     after: { phoneNumber, phoneNumberError },
   });
   return { assistant: updated, phoneNumberError };
+}
+
+/**
+ * Attach a number the org already holds with an external carrier (Twilio, or
+ * a generic BYO SIP trunk) to an assistant already synced to Vapi -- the
+ * only route to a real +358 (or any other non-US/CA) number today, since
+ * Vapi's own native pool (buyPhoneNumber, above) is US/Canada-only.
+ *
+ * - Requires the assistant to already have a vapiAssistantId (call
+ *   activateAssistant()/syncToVapi() first) -- there is no Vapi assistant to
+ *   attach a number to otherwise.
+ * - Duplicate-number protection is checked across ALL organizations
+ *   (unscopedPrisma), not just this one -- two different Syveka orgs can
+ *   never legitimately hold the same real external number, and a per-org
+ *   check alone would miss a cross-tenant collision.
+ * - Idempotent: re-attaching the exact number already on this assistant is a
+ *   no-op success, not an error or a second Vapi import call.
+ * - Twilio Account SID/Auth Token are used only for the single Vapi import
+ *   request below and are never written to the database -- only the
+ *   resulting phone number (already public/known) is persisted, exactly
+ *   like buyPhoneNumber's own number-only persistence.
+ */
+export async function attachPhoneNumber(
+  ctx: TenantContext,
+  assistantId: string,
+  input: AttachPhoneNumberInput,
+): Promise<VoiceAssistant> {
+  const db = tenantDb(ctx.orgId);
+  const assistant = await db.voiceAssistant.findFirstOrThrow({ where: { id: assistantId } });
+
+  if (!assistant.vapiAssistantId) {
+    throw new AssistantNotSyncedError(
+      "Save and sync the assistant before attaching a phone number.",
+    );
+  }
+
+  if (assistant.phoneNumber === input.phoneNumber) {
+    return assistant; // already attached -- idempotent no-op
+  }
+
+  const existingOwner = await unscopedPrisma.voiceAssistant.findFirst({
+    where: { phoneNumber: input.phoneNumber, id: { not: assistantId } },
+    select: { id: true },
+  });
+  if (existingOwner) {
+    throw new DuplicatePhoneNumberError(
+      "This phone number is already attached to another assistant.",
+    );
+  }
+
+  const importParams: PhoneImportParams =
+    input.provider === "twilio"
+      ? {
+          provider: "twilio",
+          phoneNumber: input.phoneNumber,
+          twilioAccountSid: input.twilioAccountSid ?? "",
+          twilioAuthToken: input.twilioAuthToken ?? "",
+        }
+      : {
+          provider: "byo-phone-number",
+          phoneNumber: input.phoneNumber,
+          sipUri: input.sipUri ?? "",
+        };
+
+  const number = await importPhoneNumber(assistant.vapiAssistantId, importParams);
+
+  const updated = await db.voiceAssistant.update({
+    where: { id: assistantId },
+    data: { isActive: true, phoneNumber: number.number },
+  });
+
+  await audit(ctx, {
+    action: "voice_assistant.attach_phone_number",
+    resourceType: "voice_assistant",
+    resourceId: assistantId,
+    after: { provider: input.provider, phoneNumber: number.number },
+  });
+  return updated;
 }
 
 async function syncToVapi(assistantId: string, orgId: string): Promise<string> {

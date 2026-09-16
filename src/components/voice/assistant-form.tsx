@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "@/i18n/routing";
+import { AttachPhoneNumberForm } from "./attach-phone-number-form";
 
 type Initial = VoiceAssistantInput & {
   id?: string;
@@ -64,6 +65,10 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
           </p>
         ) : null}
       </div>
+
+      {initial?.id && !initial.phoneNumber ? (
+        <AttachPhoneNumberForm assistantId={initial.id} />
+      ) : null}
 
       <form action={action} className="space-y-4">
         <Card>

@@ -3,8 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requirePermission } from "@/server/auth/guard";
-import { upsertAssistant, activateAssistant } from "@/server/services/voice";
-import { voiceAssistantSchema } from "@/lib/validators/voice";
+import {
+  upsertAssistant,
+  activateAssistant,
+  attachPhoneNumber,
+  DuplicatePhoneNumberError,
+  AssistantNotSyncedError,
+} from "@/server/services/voice";
+import { voiceAssistantSchema, attachPhoneNumberSchema } from "@/lib/validators/voice";
 
 export type VoiceActionState = {
   error?: string;
@@ -60,4 +66,27 @@ export async function activateAssistantAction(
 
   if (result.phoneNumberError) return { phoneNumberPending: true };
   return { message: "activated" };
+}
+
+export async function attachPhoneNumberAction(
+  assistantId: string,
+  _prev: VoiceActionState,
+  formData: FormData,
+): Promise<VoiceActionState> {
+  const ctx = await requirePermission("voice:configure");
+
+  const parsed = attachPhoneNumberSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "invalid_input" };
+
+  try {
+    await attachPhoneNumber(ctx, assistantId, parsed.data);
+  } catch (e) {
+    if (e instanceof DuplicatePhoneNumberError) return { error: "phone_number_in_use" };
+    if (e instanceof AssistantNotSyncedError) return { error: "assistant_not_synced" };
+    return { error: e instanceof Error ? e.message : "failed" };
+  }
+
+  revalidatePath(`/voice/${assistantId}`);
+  revalidatePath("/voice");
+  return { message: "phone_number_attached" };
 }
