@@ -51,8 +51,15 @@ export async function activateAssistantAction(
   let result: Awaited<ReturnType<typeof activateAssistant>>;
   try {
     result = await activateAssistant(ctx, assistantId);
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : "failed" };
+  } catch {
+    // Never surface a raw Error.message here -- activateAssistant() can
+    // throw a raw Vapi provider error (see vapiFetch's error construction,
+    // up to 500 chars of the provider's own response text), and unlike
+    // attachPhoneNumberAction's equivalent fallback, assistant-form.tsx
+    // renders this value verbatim in the UI. A generic, translated message
+    // is the fix; the specific phoneNumberError case above is unaffected --
+    // that path already returns a controlled, non-error state.
+    return { error: "generic" };
   }
 
   revalidatePath(`/voice/${assistantId}`);

@@ -60,7 +60,7 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
         ) : null}
         {activateState.error ? (
           <p role="alert" className="text-sm text-destructive">
-            {activateState.error}
+            {t("activateFailed")}
           </p>
         ) : null}
       </div>
