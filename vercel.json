@@ -2,6 +2,11 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "regions": ["fra1"],
   "framework": "nextjs",
+  "git": {
+    "deploymentEnabled": {
+      "main": false
+    }
+  },
   "functions": {
     "src/app/api/v1/ai/chat/route.ts": { "maxDuration": 120 },
     "src/app/api/v1/jobs/embed-document/route.ts": { "maxDuration": 300 },
