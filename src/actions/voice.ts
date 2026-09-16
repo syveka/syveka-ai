@@ -83,7 +83,11 @@ export async function attachPhoneNumberAction(
   } catch (e) {
     if (e instanceof DuplicatePhoneNumberError) return { error: "phone_number_in_use" };
     if (e instanceof AssistantNotSyncedError) return { error: "assistant_not_synced" };
-    return { error: e instanceof Error ? e.message : "failed" };
+    // Never surface a raw Error.message here -- for this action that could
+    // include up to 500 chars of a raw Vapi/Twilio provider error response
+    // (see vapiFetch's error construction), which must not reach the client
+    // even if today's UI component doesn't happen to render it verbatim.
+    return { error: "generic" };
   }
 
   revalidatePath(`/voice/${assistantId}`);

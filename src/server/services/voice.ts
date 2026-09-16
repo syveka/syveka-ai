@@ -12,6 +12,7 @@ import {
 import { TOOL_REGISTRY, zodToJsonSchema } from "@/server/ai/tools";
 import { buildVoiceSystemPrompt } from "@/server/ai/prompts/voice";
 import { getBusinessDnaContext } from "@/server/business-dna/context";
+import { lockPhoneNumber } from "@/server/calendar/locks";
 import { getEntitlements } from "./billing/entitlements";
 import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
@@ -184,6 +185,9 @@ export async function attachPhoneNumber(
     return assistant; // already attached -- idempotent no-op
   }
 
+  // Fast-path check before the external call -- avoids wasting a Vapi import
+  // request in the common (non-racing) case. Not itself sufficient to close
+  // the race between two concurrent attach attempts; the lock below is.
   const existingOwner = await unscopedPrisma.voiceAssistant.findFirst({
     where: { phoneNumber: input.phoneNumber, id: { not: assistantId } },
     select: { id: true },
@@ -210,9 +214,29 @@ export async function attachPhoneNumber(
 
   const number = await importPhoneNumber(assistant.vapiAssistantId, importParams);
 
-  const updated = await db.voiceAssistant.update({
-    where: { id: assistantId },
-    data: { isActive: true, phoneNumber: number.number },
+  // Authoritative check-then-write, lock-protected (adversarial review
+  // finding): READ COMMITTED lets two concurrent attach attempts each pass
+  // the fast-path check above before either commits its update, so without
+  // this the fast-path check alone cannot actually prevent two assistants
+  // (in different orgs, racing) from both persisting the same phone number.
+  // pg_advisory_xact_lock, transaction-scoped -- no schema change, no leak
+  // path, same established pattern as lockOrgCalendar/lockContactEmail
+  // (src/server/calendar/locks.ts).
+  const updated = await unscopedPrisma.$transaction(async (tx) => {
+    await lockPhoneNumber(tx, number.number);
+    const raceOwner = await tx.voiceAssistant.findFirst({
+      where: { phoneNumber: number.number, id: { not: assistantId } },
+      select: { id: true },
+    });
+    if (raceOwner) {
+      throw new DuplicatePhoneNumberError(
+        "This phone number was attached to another assistant while this request was in progress.",
+      );
+    }
+    return tx.voiceAssistant.update({
+      where: { id: assistantId },
+      data: { isActive: true, phoneNumber: number.number },
+    });
   });
 
   await audit(ctx, {

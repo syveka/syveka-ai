@@ -13,13 +13,23 @@ import type { AttachPhoneNumberInput } from "@/lib/validators/voice";
 const mocks = vi.hoisted(() => ({
   tenantDb: vi.fn(),
   unscopedFindFirst: vi.fn(),
+  txFindFirst: vi.fn(),
+  txUpdate: vi.fn(),
+  txExecuteRaw: vi.fn(),
   importPhoneNumber: vi.fn(),
   auditMock: vi.fn(async (_ctx: unknown, _input: { after: Record<string, unknown> }) => undefined),
 }));
 
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: mocks.tenantDb,
-  unscopedPrisma: { voiceAssistant: { findFirst: mocks.unscopedFindFirst } },
+  unscopedPrisma: {
+    voiceAssistant: { findFirst: mocks.unscopedFindFirst },
+    $transaction: async (fn: (tx: unknown) => unknown) =>
+      fn({
+        voiceAssistant: { findFirst: mocks.txFindFirst, update: mocks.txUpdate },
+        $executeRaw: mocks.txExecuteRaw,
+      }),
+  },
 }));
 vi.mock("@/server/integrations/vapi", () => ({
   upsertVapiAssistant: vi.fn(),
@@ -57,26 +67,19 @@ const twilioInput: AttachPhoneNumberInput = {
 };
 
 describe("attachPhoneNumber", () => {
-  let db: {
-    voiceAssistant: {
-      findFirstOrThrow: ReturnType<typeof vi.fn>;
-      update: ReturnType<typeof vi.fn>;
-    };
-  };
+  let db: { voiceAssistant: { findFirstOrThrow: ReturnType<typeof vi.fn> } };
 
   beforeEach(() => {
     vi.clearAllMocks();
-    db = {
-      voiceAssistant: {
-        findFirstOrThrow: vi.fn(async () => assistantRow()),
-        update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
-          ...assistantRow(),
-          ...data,
-        })),
-      },
-    };
+    db = { voiceAssistant: { findFirstOrThrow: vi.fn(async () => assistantRow()) } };
     mocks.tenantDb.mockReturnValue(db);
-    mocks.unscopedFindFirst.mockResolvedValue(null); // no other owner by default
+    mocks.unscopedFindFirst.mockResolvedValue(null); // no other owner by default (fast path)
+    mocks.txFindFirst.mockResolvedValue(null); // no other owner by default (lock-protected re-check)
+    mocks.txUpdate.mockImplementation(async ({ data }: { data: Record<string, unknown> }) => ({
+      ...assistantRow(),
+      ...data,
+    }));
+    mocks.txExecuteRaw.mockResolvedValue(undefined);
     mocks.importPhoneNumber.mockResolvedValue({ id: "vapi-number-1", number: "+358401234567" });
   });
 
@@ -113,7 +116,7 @@ describe("attachPhoneNumber", () => {
     const result = await attachPhoneNumber(ctx(), "assistant-1", twilioInput);
 
     expect(mocks.importPhoneNumber).not.toHaveBeenCalled();
-    expect(db.voiceAssistant.update).not.toHaveBeenCalled();
+    expect(mocks.txUpdate).not.toHaveBeenCalled();
     expect(result.phoneNumber).toBe("+358401234567");
   });
 
@@ -126,6 +129,26 @@ describe("attachPhoneNumber", () => {
     );
     expect(result.phoneNumber).toBe("+358401234567");
     expect(result.isActive).toBe(true);
+  });
+
+  it("locks on the phone number before the authoritative write (adversarial-review hardening)", async () => {
+    await attachPhoneNumber(ctx(), "assistant-1", twilioInput);
+
+    expect(mocks.txExecuteRaw).toHaveBeenCalledTimes(1);
+    const lockArgs = mocks.txExecuteRaw.mock.calls[0] as unknown[];
+    // pg_advisory_xact_lock(hashtext(<phone number>), 2) -- see
+    // src/server/calendar/locks.ts's lockPhoneNumber for the fixed key `2`.
+    expect(JSON.stringify(lockArgs)).toContain("+358401234567");
+  });
+
+  it("rejects the write when a race is caught under the lock, even though the fast-path check already passed", async () => {
+    mocks.unscopedFindFirst.mockResolvedValue(null); // fast path: clear
+    mocks.txFindFirst.mockResolvedValue({ id: "raced-in-between-assistant" }); // lock-protected re-check: taken
+
+    await expect(attachPhoneNumber(ctx(), "assistant-1", twilioInput)).rejects.toBeInstanceOf(
+      DuplicatePhoneNumberError,
+    );
+    expect(mocks.txUpdate).not.toHaveBeenCalled();
   });
 
   it("attaches a BYO/SIP-imported number", async () => {
@@ -146,9 +169,7 @@ describe("attachPhoneNumber", () => {
   it("never persists Twilio credentials to the database", async () => {
     await attachPhoneNumber(ctx(), "assistant-1", twilioInput);
 
-    const updateCall = db.voiceAssistant.update.mock.calls[0]![0] as {
-      data: Record<string, unknown>;
-    };
+    const updateCall = mocks.txUpdate.mock.calls[0]![0] as { data: Record<string, unknown> };
     expect(updateCall.data).not.toHaveProperty("twilioAccountSid");
     expect(updateCall.data).not.toHaveProperty("twilioAuthToken");
     expect(JSON.stringify(updateCall.data)).not.toContain("super-secret-token");

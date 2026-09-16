@@ -104,4 +104,29 @@ describe("attachPhoneNumberAction — controlled results, never a crash", () => 
 
     expect(state).toEqual({ message: "phone_number_attached" });
   });
+
+  it("never leaks a raw provider error message on an unexpected failure (adversarial finding, fixed)", async () => {
+    // e.g. a raw Vapi/Twilio 400 body (see vapiFetch's error construction,
+    // which can carry up to 500 chars of the provider's own response text).
+    mocks.attachPhoneNumber.mockRejectedValue(
+      new Error(
+        'Vapi POST /phone-number → 400: {"message":"Invalid Twilio Account SID or Auth Token"}',
+      ),
+    );
+
+    const state = await attachPhoneNumberAction(
+      "assistant-1",
+      {},
+      formData({
+        provider: "twilio",
+        phoneNumber: "+358401234567",
+        twilioAccountSid: "AC1",
+        twilioAuthToken: "secret",
+      }),
+    );
+
+    expect(state).toEqual({ error: "generic" });
+    expect(state.error).not.toContain("Twilio");
+    expect(state.error).not.toContain("Vapi");
+  });
 });
