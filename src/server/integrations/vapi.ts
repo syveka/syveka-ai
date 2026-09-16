@@ -6,16 +6,44 @@ import { routeModel } from "@/server/ai/router";
 
 const VAPI_BASE = "https://api.vapi.ai";
 
+/**
+ * Conservative, single-attempt timeout for every Vapi API call -- matches
+ * the established pattern in src/server/security/url-ingestion.ts
+ * (URL_FETCH_TIMEOUT_MS). Without this, a hung Vapi request blocked the
+ * calling server action/webhook handler until the platform's own function
+ * timeout, with no distinguishable error. This never retries -- a timeout
+ * surfaces as a single, immediate, descriptive failure through the exact
+ * same catch paths (activateAssistantAction, attachPhoneNumberAction) that
+ * already turn any vapiFetch error into a controlled, non-leaking state; it
+ * does not change idempotency or duplicate-provisioning behavior, since
+ * vapiFetch itself never retried and callers already handle "did the write
+ * actually happen" via their own idempotent-retry design (syncToVapi's
+ * persist-immediately-on-success, attachPhoneNumber's lock-protected
+ * re-check) rather than by trusting this call to resolve quickly.
+ */
+export const VAPI_FETCH_TIMEOUT_MS = 20_000;
+
 async function vapiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const { VAPI_API_KEY } = getVapiEnv();
-  const res = await fetch(`${VAPI_BASE}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${VAPI_API_KEY}`,
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
-  });
+  let res: Response;
+  try {
+    res = await fetch(`${VAPI_BASE}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${VAPI_API_KEY}`,
+        "Content-Type": "application/json",
+        ...init?.headers,
+      },
+      signal: AbortSignal.timeout(VAPI_FETCH_TIMEOUT_MS),
+    });
+  } catch (error) {
+    if (error instanceof Error && error.name === "TimeoutError") {
+      throw new Error(
+        `Vapi ${init?.method ?? "GET"} ${path} timed out after ${VAPI_FETCH_TIMEOUT_MS}ms`,
+      );
+    }
+    throw error;
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
     throw new Error(`Vapi ${init?.method ?? "GET"} ${path} → ${res.status}: ${body.slice(0, 500)}`);
