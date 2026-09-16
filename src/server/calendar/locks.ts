@@ -75,3 +75,19 @@ export async function lockContactEmail(
 ): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId} || ':' || ${email}), 1)`;
 }
+
+/**
+ * Serializes the phone-number check-then-write critical section in
+ * attachPhoneNumber() (src/server/services/voice.ts) for one specific real
+ * phone number -- deliberately NOT org-scoped, unlike the locks above: a
+ * real external phone number can never legitimately belong to two different
+ * Syveka organizations at once, so the lock (and the duplicate-owner check
+ * it protects) is keyed on the number alone. Fixed second key `2`, distinct
+ * from lockOrgCalendar's `0` and lockContactEmail's `1`.
+ */
+export async function lockPhoneNumber(
+  tx: Prisma.TransactionClient,
+  phoneNumber: string,
+): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${phoneNumber}), 2)`;
+}
