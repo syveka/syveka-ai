@@ -5,6 +5,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { loginAction, type AuthActionState } from "@/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PasswordInput } from "@/components/ui/password-input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "@/i18n/routing";
@@ -34,12 +35,12 @@ export function LoginForm() {
                 {t("forgotPassword")}
               </Link>
             </div>
-            <Input
+            <PasswordInput
               id="password"
               name="password"
-              type="password"
               autoComplete="current-password"
               required
+              toggleLabels={{ show: t("showPassword"), hide: t("hidePassword") }}
             />
           </div>
           {state.error ? (

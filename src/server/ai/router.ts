@@ -5,7 +5,15 @@ import "server-only";
  * Pinned versions reviewed monthly (arch §25 "Continuous").
  */
 export type AiTask =
-  "chat" | "deep" | "utility" | "title" | "sentiment" | "summary" | "draft" | "voice";
+  | "chat"
+  | "deep"
+  | "utility"
+  | "title"
+  | "sentiment"
+  | "summary"
+  | "draft"
+  | "voice"
+  | "publicAssistant";
 
 export type ModelChoice = {
   provider: "anthropic" | "openai";
@@ -27,6 +35,10 @@ const ROUTES: Record<AiTask, ModelChoice> = {
   // model string this route previously duplicated). maxTokens is unused by the
   // Vapi path today; kept for type consistency with every other route.
   voice: { provider: "anthropic", model: "claude-haiku-4-5-20251001", maxTokens: 1024 },
+  // Public marketing-site assistant (src/app/api/v1/public/assistant) --
+  // unauthenticated, so kept on the cheapest model with a small output cap
+  // regardless of the requester's plan (there is no plan; there's no login).
+  publicAssistant: { provider: "anthropic", model: "claude-haiku-4-5-20251001", maxTokens: 512 },
 };
 
 const FALLBACK: ModelChoice = { provider: "openai", model: "gpt-4o", maxTokens: 4096 };

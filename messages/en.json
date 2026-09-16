@@ -44,7 +44,9 @@
     "continueWithGoogle": "Continue with Google",
     "noAccount": "No account yet?",
     "hasAccount": "Already have an account?",
-    "verifyEmailSent": "Check your inbox — we sent you a verification link."
+    "verifyEmailSent": "Check your inbox — we sent you a verification link.",
+    "showPassword": "Show password",
+    "hidePassword": "Hide password"
   },
   "dashboard": {
     "title": "Dashboard",
@@ -134,6 +136,27 @@
       "unsupported_file": "Use a PDF, DOCX or TXT file.",
       "file_too_large": "The file must be 25 MB or smaller.",
       "invalid_document": "One of the attached files is unavailable."
+    }
+  },
+  "publicAssistant": {
+    "launcherLabel": "Chat with Syveka",
+    "title": "Syveka Assistant",
+    "close": "Close chat",
+    "greeting": "Hi! How can I help you today?",
+    "placeholder": "Ask a question…",
+    "send": "Send",
+    "thinking": "Thinking…",
+    "suggestions": {
+      "whatCanSyvekaDo": "What can Syveka do?",
+      "aiVoice": "Tell me about AI Voice",
+      "howSyvekaHelps": "How does Syveka help my business?",
+      "pricing": "Pricing",
+      "createAccount": "Create an account",
+      "contact": "Contact Syveka"
+    },
+    "errors": {
+      "rateLimited": "You've sent a few messages — please try again in a bit, or contact sales@syveka.ai.",
+      "generic": "Something went wrong. Please try again."
     }
   },
   "knowledge": {
