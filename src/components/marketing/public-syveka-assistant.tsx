@@ -30,6 +30,13 @@ export function PublicSyvekaAssistant({ locale }: { locale: string }) {
   const [status, setStatus] = React.useState<RequestState>("idle");
   const scrollRef = React.useRef<HTMLDivElement>(null);
   const abortRef = React.useRef<AbortController | null>(null);
+  // Separate from `messages` (the full UI transcript, which can include a
+  // turn that never got a reply after an error) -- the API requires
+  // strictly alternating user/assistant turns starting with "user", so this
+  // only ever grows by a complete, successful (user, assistant) pair,
+  // atomically. A failed or rate-limited attempt leaves it untouched, so a
+  // retry after an error can never send a malformed sequence.
+  const historyRef = React.useRef<ChatMessage[]>([]);
 
   React.useEffect(() => {
     const el = scrollRef.current;
@@ -43,8 +50,7 @@ export function PublicSyvekaAssistant({ locale }: { locale: string }) {
       const trimmed = text.trim().slice(0, MAX_MESSAGE_LENGTH);
       if (!trimmed || status === "pending") return;
 
-      const nextMessages: ChatMessage[] = [...messages, { role: "user", content: trimmed }];
-      setMessages(nextMessages);
+      setMessages((prev) => [...prev, { role: "user", content: trimmed }]);
       setDraft("");
       setStatus("pending");
 
@@ -59,7 +65,7 @@ export function PublicSyvekaAssistant({ locale }: { locale: string }) {
           body: JSON.stringify({
             message: trimmed,
             locale,
-            history: nextMessages.slice(-1 - MAX_HISTORY_TURNS * 2, -1),
+            history: historyRef.current,
           }),
           signal: controller.signal,
         });
@@ -78,13 +84,18 @@ export function PublicSyvekaAssistant({ locale }: { locale: string }) {
           return;
         }
         setMessages((prev) => [...prev, { role: "assistant", content: data.reply! }]);
+        historyRef.current = [
+          ...historyRef.current,
+          { role: "user" as const, content: trimmed },
+          { role: "assistant" as const, content: data.reply },
+        ].slice(-MAX_HISTORY_TURNS * 2);
         setStatus("idle");
       } catch (err) {
         if (err instanceof DOMException && err.name === "AbortError") return;
         setStatus("error");
       }
     },
-    [messages, status, locale],
+    [status, locale],
   );
 
   const suggestions = [

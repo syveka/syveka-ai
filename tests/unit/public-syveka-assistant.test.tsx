@@ -118,6 +118,41 @@ describe("PublicSyvekaAssistant", () => {
     expect(screen.getByRole("alert").textContent).toContain("sales@syveka.ai");
   });
 
+  it("never sends a malformed (non-alternating) history after a failed attempt is retried -- the failed user turn is not folded into history", async () => {
+    const fetchSpy = vi
+      .fn()
+      // First two sends fail (e.g. transient network/server error) -- the
+      // widget still shows both attempts in the transcript, but must not
+      // treat either as a completed (user, assistant) exchange.
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: false, status: 500, json: async () => ({}) })
+      .mockResolvedValueOnce({ ok: true, status: 200, json: async () => ({ reply: "Sure!" }) });
+    vi.stubGlobal("fetch", fetchSpy);
+    renderWidget();
+    fireEvent.click(screen.getByRole("button", { name: "Chat with Syveka" }));
+    const input = () => screen.getByPlaceholderText("Ask a question…") as HTMLInputElement;
+    const submit = () => screen.getByRole("button", { name: "Send" });
+
+    fireEvent.change(input(), { target: { value: "first attempt" } });
+    fireEvent.click(submit());
+    await waitFor(() => expect(screen.getByRole("alert")).toBeTruthy());
+
+    fireEvent.change(input(), { target: { value: "second attempt" } });
+    fireEvent.click(submit());
+    await waitFor(() => expect(fetchSpy).toHaveBeenCalledTimes(2));
+
+    fireEvent.change(input(), { target: { value: "third attempt" } });
+    fireEvent.click(submit());
+    await waitFor(() => expect(screen.getByText("Sure!")).toBeTruthy());
+
+    // The third call's `history` must be empty -- neither of the two
+    // failed attempts ever completed, so nothing is a valid prior turn.
+    const thirdCallBody = JSON.parse(
+      (fetchSpy.mock.calls[2] as [string, RequestInit])[1].body as string,
+    );
+    expect(thirdCallBody.history).toEqual([]);
+  });
+
   it("sends the free-text input via the form and clears the draft afterward", async () => {
     const fetchSpy = vi
       .fn()
