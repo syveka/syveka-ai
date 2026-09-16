@@ -11,6 +11,7 @@ import {
   DuplicatePhoneNumberError,
   AssistantNotSyncedError,
 } from "@/server/services/voice";
+import { EntitlementError } from "@/server/services/billing/entitlements";
 import { voiceAssistantSchema, attachPhoneNumberSchema } from "@/lib/validators/voice";
 
 export type VoiceActionState = {
@@ -41,7 +42,12 @@ export async function saveAssistantAction(
     const assistant = await upsertAssistant(ctx, parsed.data, assistantId);
     id = assistant.id;
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "failed" };
+    // EntitlementError's `code` (e.g. "entitlement_exceeded") maps to a
+    // translated message client-side (voice.errors.<code>), matching the
+    // chat action's convention -- never surface a raw Error.message here,
+    // that path exists only as a fallback for a truly unexpected failure.
+    if (e instanceof EntitlementError) return { error: e.code };
+    return { error: "generic" };
   }
 
   revalidatePath("/voice");

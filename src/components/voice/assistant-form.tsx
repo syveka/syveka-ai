@@ -185,9 +185,16 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
         </Card>
 
         {state.error ? (
-          <p role="alert" className="text-sm text-destructive">
-            {state.error}
-          </p>
+          <div role="alert" className="space-y-2">
+            <p className="text-sm text-destructive">
+              {t(`errors.${state.error}` as never) ?? t("errors.generic")}
+            </p>
+            {state.error === "entitlement_exceeded" ? (
+              <Button asChild variant="outline" size="sm">
+                <Link href="/settings/billing">{t("entitlementBlocked.upgradeButton")}</Link>
+              </Button>
+            ) : null}
+          </div>
         ) : null}
         <Button type="submit" disabled={pending}>
           {pending ? tc("loading") : tc("save")}

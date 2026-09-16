@@ -314,6 +314,16 @@
       "getCalendarAvailability": "Tarkista kalenterin saatavuus",
       "bookMeeting": "Varaa tapaamisia"
     },
+    "entitlementBlocked": {
+      "title": "Puhe-AI vaatii Starter-tason tai korkeamman",
+      "description": "Organisaatiollasi on {plan}-taso, joka ei sisällä puhe-AI:ta.",
+      "currentPlan": "Nykyinen taso",
+      "upgradeButton": "Päivitä taso"
+    },
+    "errors": {
+      "entitlement_exceeded": "Puhe-AI vaatii Starter-tason tai korkeamman — päivitä tasoa jatkaaksesi.",
+      "generic": "Jokin meni pieleen. Yritä uudelleen."
+    },
     "attachPhoneNumber": {
       "title": "Liitä olemassa oleva numero",
       "description": "Vapin automaattinen numeron hankinta kattaa vain Yhdysvallat/Kanadan. Suomalaisen +358-numeron käyttöön tuo numero, joka on jo käytössä Twiliolla (tai muulla SIP-yhteensopivalla operaattorilla).",
