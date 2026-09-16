@@ -5,6 +5,7 @@ import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import {
   upsertVapiAssistant,
   buyPhoneNumber,
+  deleteVapiAssistant,
   importPhoneNumber,
   type VapiAssistantConfig,
   type PhoneImportParams,
@@ -145,6 +146,66 @@ export async function activateAssistant(
     after: { phoneNumber, phoneNumberError },
   });
   return { assistant: updated, phoneNumberError };
+}
+
+/**
+ * Deactivate: the only operator-facing way to stop a Voice assistant today
+ * (found missing entirely during an adversarial rollback-safety review --
+ * there was previously no deactivate path anywhere in the product, and the
+ * webhook never checked `isActive`, so even manually flipping the DB flag
+ * would have been cosmetic).
+ *
+ * Two layers, in order of certainty:
+ * 1. Syveka's own write-gating closes immediately and unconditionally --
+ *    `isActive: false` is set first, before anything that could fail. The
+ *    webhook (src/app/api/v1/voice/webhook/route.ts) now refuses tool-calls
+ *    for an inactive assistant, so even a call already in progress at the
+ *    moment of deactivation cannot execute a CRM/calendar/booking write
+ *    afterward.
+ * 2. Best-effort: the Vapi assistant itself is deleted, so Vapi stops
+ *    answering the number at all -- only Vapi's own assistant resource (not
+ *    Syveka's DB flag) controls whether it picks up the call in the first
+ *    place. A failure here must never block the guaranteed step 1 above.
+ *
+ * `vapiAssistantId` and `phoneNumber` are cleared rather than left pointing
+ * at now-deleted/orphaned Vapi resources -- re-activating a previously
+ * deactivated assistant is a clean restart (re-sync, then re-attach a
+ * number), not a resume from stale state.
+ */
+export async function deactivateAssistant(
+  ctx: TenantContext,
+  assistantId: string,
+): Promise<VoiceAssistant> {
+  const db = tenantDb(ctx.orgId);
+  const assistant = await db.voiceAssistant.findFirstOrThrow({ where: { id: assistantId } });
+
+  const updated = await db.voiceAssistant.update({
+    where: { id: assistantId },
+    data: { isActive: false, vapiAssistantId: null, phoneNumber: null },
+  });
+
+  if (assistant.vapiAssistantId) {
+    try {
+      await deleteVapiAssistant(assistant.vapiAssistantId);
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: "voice_assistant_deactivate_vapi_delete_failed",
+          organizationId: ctx.orgId,
+          assistantId,
+          message: error instanceof Error ? error.message : "unknown error",
+        }),
+      );
+    }
+  }
+
+  await audit(ctx, {
+    action: "voice_assistant.deactivate",
+    resourceType: "voice_assistant",
+    resourceId: assistantId,
+    before: { phoneNumber: assistant.phoneNumber, vapiAssistantId: assistant.vapiAssistantId },
+  });
+  return updated;
 }
 
 /**

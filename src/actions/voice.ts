@@ -6,6 +6,7 @@ import { requirePermission } from "@/server/auth/guard";
 import {
   upsertAssistant,
   activateAssistant,
+  deactivateAssistant,
   attachPhoneNumber,
   DuplicatePhoneNumberError,
   AssistantNotSyncedError,
@@ -73,6 +74,23 @@ export async function activateAssistantAction(
 
   if (result.phoneNumberError) return { phoneNumberPending: true };
   return { message: "activated" };
+}
+
+export async function deactivateAssistantAction(
+  assistantId: string,
+  _prev: VoiceActionState,
+): Promise<VoiceActionState> {
+  const ctx = await requirePermission("voice:configure");
+
+  try {
+    await deactivateAssistant(ctx, assistantId);
+  } catch {
+    return { error: "generic" };
+  }
+
+  revalidatePath(`/voice/${assistantId}`);
+  revalidatePath("/voice");
+  return { message: "deactivated" };
 }
 
 export async function attachPhoneNumberAction(
