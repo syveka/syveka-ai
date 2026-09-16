@@ -312,6 +312,25 @@
       "logActivity": "تسجيل ملاحظات المكالمة في CRM",
       "getCalendarAvailability": "التحقق من توفر التقويم",
       "bookMeeting": "حجز الاجتماعات"
+    },
+    "attachPhoneNumber": {
+      "title": "إرفاق رقم موجود",
+      "description": "التوفير التلقائي للأرقام من Vapi يغطي فقط الولايات المتحدة/كندا. لاستخدام رقم فنلندي +358، قم باستيراد رقم تملكه بالفعل عبر Twilio (أو مزود آخر متوافق مع SIP).",
+      "provider": "المزود",
+      "providerTwilio": "Twilio",
+      "providerByo": "رقم خاص بك (SIP)",
+      "phoneNumber": "رقم الهاتف (E.164، مثال: ‎+358401234567)",
+      "twilioAccountSid": "معرّف حساب Twilio (SID)",
+      "twilioAuthToken": "رمز مصادقة Twilio",
+      "sipUri": "عنوان SIP / بيانات الاعتماد",
+      "submit": "إرفاق الرقم",
+      "success": "تم إرفاق رقم الهاتف.",
+      "errors": {
+        "phoneNumberInUse": "رقم الهاتف هذا مرتبط بالفعل بمساعد آخر.",
+        "assistantNotSynced": "احفظ وفعّل المساعد قبل إرفاق رقم الهاتف.",
+        "invalidInput": "تحقق من صيغة رقم الهاتف (E.164، مثال: ‎+358401234567) والحقول المطلوبة.",
+        "generic": "حدث خطأ ما. حاول مرة أخرى."
+      }
     }
   },
   "calendar": {

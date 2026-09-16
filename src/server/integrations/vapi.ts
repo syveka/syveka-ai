@@ -120,6 +120,48 @@ export async function buyPhoneNumber(assistantId: string): Promise<{ id: string;
   });
 }
 
+/**
+ * Import a number the org already holds with an external carrier, instead of
+ * buying one from Vapi's own (US/Canada-only) pool -- the only route to a
+ * real +358 or other non-US/CA number today. Twilio credentials are used
+ * only for this one request and are never persisted by any caller of this
+ * function (see attachPhoneNumber() in server/services/voice.ts).
+ */
+export type PhoneImportParams =
+  | {
+      provider: "twilio";
+      phoneNumber: string;
+      twilioAccountSid: string;
+      twilioAuthToken: string;
+    }
+  | {
+      provider: "byo-phone-number";
+      phoneNumber: string;
+      sipUri: string;
+    };
+
+export async function importPhoneNumber(
+  assistantId: string,
+  params: PhoneImportParams,
+): Promise<{ id: string; number: string }> {
+  const body =
+    params.provider === "twilio"
+      ? {
+          provider: "twilio",
+          assistantId,
+          number: params.phoneNumber,
+          twilioAccountSid: params.twilioAccountSid,
+          twilioAuthToken: params.twilioAuthToken,
+        }
+      : {
+          provider: "byo-phone-number",
+          assistantId,
+          number: params.phoneNumber,
+          credentialId: params.sipUri,
+        };
+  return vapiFetch("/phone-number", { method: "POST", body: JSON.stringify(body) });
+}
+
 /** HMAC verification for inbound Vapi webhooks (§13.2). */
 export function verifyVapiSignature(rawBody: string, signature: string | null): boolean {
   if (!signature) return false;

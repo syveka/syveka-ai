@@ -3,8 +3,15 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requirePermission } from "@/server/auth/guard";
-import { upsertAssistant, activateAssistant, deactivateAssistant } from "@/server/services/voice";
-import { voiceAssistantSchema } from "@/lib/validators/voice";
+import {
+  upsertAssistant,
+  activateAssistant,
+  deactivateAssistant,
+  attachPhoneNumber,
+  DuplicatePhoneNumberError,
+  AssistantNotSyncedError,
+} from "@/server/services/voice";
+import { voiceAssistantSchema, attachPhoneNumberSchema } from "@/lib/validators/voice";
 
 export type VoiceActionState = {
   error?: string;
@@ -77,4 +84,31 @@ export async function deactivateAssistantAction(
   revalidatePath(`/voice/${assistantId}`);
   revalidatePath("/voice");
   return { message: "deactivated" };
+}
+
+export async function attachPhoneNumberAction(
+  assistantId: string,
+  _prev: VoiceActionState,
+  formData: FormData,
+): Promise<VoiceActionState> {
+  const ctx = await requirePermission("voice:configure");
+
+  const parsed = attachPhoneNumberSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "invalid_input" };
+
+  try {
+    await attachPhoneNumber(ctx, assistantId, parsed.data);
+  } catch (e) {
+    if (e instanceof DuplicatePhoneNumberError) return { error: "phone_number_in_use" };
+    if (e instanceof AssistantNotSyncedError) return { error: "assistant_not_synced" };
+    // Never surface a raw Error.message here -- for this action that could
+    // include up to 500 chars of a raw Vapi/Twilio provider error response
+    // (see vapiFetch's error construction), which must not reach the client
+    // even if today's UI component doesn't happen to render it verbatim.
+    return { error: "generic" };
+  }
+
+  revalidatePath(`/voice/${assistantId}`);
+  revalidatePath("/voice");
+  return { message: "phone_number_attached" };
 }
