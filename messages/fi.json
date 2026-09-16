@@ -278,6 +278,7 @@
     "calls": "puhelua",
     "activate": "Aktivoi ja hanki numero",
     "activatePhoneNumberPending": "Avustaja luotu. Puhelinnumero vaatii manuaalisen käyttöönoton — ota yhteyttä tukeen suomalaisen numeron lisäämiseksi.",
+    "activateFailed": "Avustajan aktivointi epäonnistui. Yritä uudelleen.",
     "phoneNumber": "Puhelinnumero",
     "persona": "Persoona",
     "tools": "Kyvyt",

@@ -278,6 +278,7 @@
     "calls": "calls",
     "activate": "Activate & get number",
     "activatePhoneNumberPending": "Assistant created. Phone number setup requires manual provisioning — contact support to add a Finnish number.",
+    "activateFailed": "Something went wrong activating the assistant. Please try again.",
     "phoneNumber": "Phone number",
     "persona": "Persona",
     "tools": "Capabilities",
