@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@/server/auth/session";
 import type { VoiceAssistantInput } from "@/lib/validators/voice";
+import type * as EntitlementsModule from "@/server/services/billing/entitlements";
 
 /**
  * Dedicated coverage for upsertAssistant()'s entitlement gate
@@ -22,7 +23,8 @@ vi.mock("@/server/db/tenant", () => ({
   tenantDb: mocks.tenantDb,
   unscopedPrisma: { voiceAssistant: { findFirstOrThrow: vi.fn(), update: vi.fn() } },
 }));
-vi.mock("@/server/services/billing/entitlements", () => ({
+vi.mock("@/server/services/billing/entitlements", async (importOriginal) => ({
+  ...(await importOriginal<typeof EntitlementsModule>()),
   getEntitlements: mocks.getEntitlements,
 }));
 vi.mock("@/server/integrations/vapi", () => ({
