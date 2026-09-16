@@ -95,7 +95,8 @@ DECLARE
     'social_accounts',
     'creator_credit_balances',
     'creator_credit_grants',
-    'creator_credit_transactions'
+    'creator_credit_transactions',
+    'entitlement_grants'
   ];
 -- END LEGACY MISSING TABLES
   -- Foreign keys whose ON UPDATE action may still show a specific, verified
@@ -804,6 +805,16 @@ BEGIN
       ('documents', 'title', 'text', 'true', '', '', ''),
       ('documents', 'updated_at', 'timestamp(3) without time zone', 'true', '', '', ''),
       ('documents', 'uploaded_by_id', 'uuid', 'true', '', '', ''),
+      ('entitlement_grants', 'amount', 'integer', 'true', '', '', ''),
+      ('entitlement_grants', 'created_at', 'timestamp(3) without time zone', 'true', '', '', 'current_timestamp'),
+      ('entitlement_grants', 'expires_at', 'timestamp(3) without time zone', 'false', '', '', ''),
+      ('entitlement_grants', 'granted_by_user_id', 'uuid', 'false', '', '', ''),
+      ('entitlement_grants', 'id', 'uuid', 'true', '', '', 'gen_random_uuid'),
+      ('entitlement_grants', 'metric', '"EntitlementMetric"', 'true', '', '', ''),
+      ('entitlement_grants', 'organization_id', 'uuid', 'true', '', '', ''),
+      ('entitlement_grants', 'reason', 'text', 'true', '', '', ''),
+      ('entitlement_grants', 'revoked_at', 'timestamp(3) without time zone', 'false', '', '', ''),
+      ('entitlement_grants', 'revoked_by_user_id', 'uuid', 'false', '', '', ''),
       ('event_attendees', 'contact_id', 'uuid', 'false', '', '', ''),
       ('event_attendees', 'created_at', 'timestamp(3) without time zone', 'true', '', '', 'current_timestamp'),
       ('event_attendees', 'email', 'text', 'false', '', '', ''),
@@ -1237,7 +1248,10 @@ BEGIN
       ('public', 'api_keys', 'api_keys_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'webhook_endpoints', 'webhook_endpoints_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
       ('public', 'audit_logs', 'audit_logs_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
-      ('public', 'audit_logs', 'audit_logs_actor_id_fkey', '{actor_id}', 'public', 'users', '{id}', 'SetNull', 'Cascade', 'false', 'false', 'true')
+      ('public', 'audit_logs', 'audit_logs_actor_id_fkey', '{actor_id}', 'public', 'users', '{id}', 'SetNull', 'Cascade', 'false', 'false', 'true'),
+      ('public', 'entitlement_grants', 'entitlement_grants_organization_id_fkey', '{organization_id}', 'public', 'organizations', '{id}', 'Cascade', 'Cascade', 'false', 'false', 'true'),
+      ('public', 'entitlement_grants', 'entitlement_grants_granted_by_user_id_fkey', '{granted_by_user_id}', 'public', 'users', '{id}', 'SetNull', 'Cascade', 'false', 'false', 'true'),
+      ('public', 'entitlement_grants', 'entitlement_grants_revoked_by_user_id_fkey', '{revoked_by_user_id}', 'public', 'users', '{id}', 'SetNull', 'Cascade', 'false', 'false', 'true')
     ) AS contract(
       source_schema, source_table, constraint_name, source_columns,
       target_schema, target_table, target_columns, delete_action,

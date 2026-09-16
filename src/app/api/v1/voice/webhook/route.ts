@@ -58,6 +58,7 @@ async function resolveAssistant(
       organizationId: true,
       enabledTools: true,
       useKnowledgeBase: true,
+      isActive: true,
       organization: {
         select: { members: { where: { role: "OWNER" }, select: { userId: true }, take: 1 } },
       },
@@ -100,6 +101,20 @@ export async function POST(request: Request): Promise<NextResponse> {
   switch (message.type) {
     // ── In-call tool execution (§16.3) ──
     case "tool-calls": {
+      // Defense in depth for deactivateAssistant() (src/server/services/
+      // voice.ts): the primary containment there deletes the Vapi assistant
+      // so it stops answering entirely, but that is a best-effort external
+      // call and cannot be guaranteed atomic with the DB-side isActive flag
+      // -- a call already in progress at the exact moment of deactivation
+      // must still be refused a write here, not just future calls.
+      if (!assistant.isActive) {
+        const results = (message.toolCallList ?? []).map((tc) => ({
+          toolCallId: tc.id,
+          result: JSON.stringify({ error: "assistant_disabled" }),
+        }));
+        return NextResponse.json({ results });
+      }
+
       // Voice acts as a restricted MANAGER-level service identity limited to
       // its enabledTools (§15.4).
       const identity: ToolIdentity = {

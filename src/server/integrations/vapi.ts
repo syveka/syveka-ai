@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { getVapiEnv } from "@/env";
+import { routeModel } from "@/server/ai/router";
 
 const VAPI_BASE = "https://api.vapi.ai";
 
@@ -68,7 +69,10 @@ export function toVapiPayload(cfg: VapiAssistantConfig) {
     firstMessage: cfg.firstMessage,
     model: {
       provider: "anthropic",
-      model: "claude-sonnet-4-5",
+      // Sourced from the canonical model router, not a second hardcoded
+      // literal -- a stale duplicate here is exactly what caused Vapi to
+      // reject POST /assistant in production on 2026-09-15 (§ incident).
+      model: routeModel("voice").model,
       messages: [{ role: "system", content: cfg.systemPrompt }],
       tools: cfg.tools.map((t) => ({
         type: "function",
@@ -114,6 +118,48 @@ export async function buyPhoneNumber(assistantId: string): Promise<{ id: string;
     method: "POST",
     body: JSON.stringify({ provider: "vapi", assistantId, numberDesiredAreaCode: "358" }),
   });
+}
+
+/**
+ * Import a number the org already holds with an external carrier, instead of
+ * buying one from Vapi's own (US/Canada-only) pool -- the only route to a
+ * real +358 or other non-US/CA number today. Twilio credentials are used
+ * only for this one request and are never persisted by any caller of this
+ * function (see attachPhoneNumber() in server/services/voice.ts).
+ */
+export type PhoneImportParams =
+  | {
+      provider: "twilio";
+      phoneNumber: string;
+      twilioAccountSid: string;
+      twilioAuthToken: string;
+    }
+  | {
+      provider: "byo-phone-number";
+      phoneNumber: string;
+      sipUri: string;
+    };
+
+export async function importPhoneNumber(
+  assistantId: string,
+  params: PhoneImportParams,
+): Promise<{ id: string; number: string }> {
+  const body =
+    params.provider === "twilio"
+      ? {
+          provider: "twilio",
+          assistantId,
+          number: params.phoneNumber,
+          twilioAccountSid: params.twilioAccountSid,
+          twilioAuthToken: params.twilioAuthToken,
+        }
+      : {
+          provider: "byo-phone-number",
+          assistantId,
+          number: params.phoneNumber,
+          credentialId: params.sipUri,
+        };
+  return vapiFetch("/phone-number", { method: "POST", body: JSON.stringify(body) });
 }
 
 /** HMAC verification for inbound Vapi webhooks (§13.2). */

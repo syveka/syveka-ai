@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import {
   saveAssistantAction,
   activateAssistantAction,
+  deactivateAssistantAction,
   type VoiceActionState,
 } from "@/actions/voice";
 import { VOICE_TOOL_NAMES, type VoiceAssistantInput } from "@/lib/validators/voice";
@@ -13,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "@/i18n/routing";
+import { AttachPhoneNumberForm } from "./attach-phone-number-form";
 
 type Initial = VoiceAssistantInput & {
   id?: string;
@@ -27,6 +29,14 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
     saveAssistantAction.bind(null, initial?.id),
     {},
   );
+  const [activateState, activateAction, activatePending] = useActionState<
+    VoiceActionState,
+    FormData
+  >(initial?.id ? activateAssistantAction.bind(null, initial.id) : async () => ({}), {});
+  const [deactivateState, deactivateAction, deactivatePending] = useActionState<
+    VoiceActionState,
+    FormData
+  >(initial?.id ? deactivateAssistantAction.bind(null, initial.id) : async () => ({}), {});
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -37,9 +47,16 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
         <div className="mt-1 flex items-center justify-between">
           <h1 className="text-2xl font-semibold">{initial?.name ?? t("newAssistant")}</h1>
           {initial?.id && !initial.isActive ? (
-            <form action={activateAssistantAction.bind(null, initial.id)}>
-              <Button type="submit" variant="default">
-                {t("activate")}
+            <form action={activateAction}>
+              <Button type="submit" variant="default" disabled={activatePending}>
+                {activatePending ? tc("loading") : t("activate")}
+              </Button>
+            </form>
+          ) : null}
+          {initial?.id && initial.isActive ? (
+            <form action={deactivateAction}>
+              <Button type="submit" variant="outline" disabled={deactivatePending}>
+                {deactivatePending ? tc("loading") : t("deactivate")}
               </Button>
             </form>
           ) : null}
@@ -49,7 +66,31 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
             {t("phoneNumber")}: <strong>{initial.phoneNumber}</strong>
           </p>
         ) : null}
+        {activateState.phoneNumberPending ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            {t("activatePhoneNumberPending")}
+          </p>
+        ) : null}
+        {activateState.error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t("activateFailed")}
+          </p>
+        ) : null}
+        {deactivateState.message === "deactivated" ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            {t("deactivateSuccess")}
+          </p>
+        ) : null}
+        {deactivateState.error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t("deactivateFailed")}
+          </p>
+        ) : null}
       </div>
+
+      {initial?.id && !initial.phoneNumber ? (
+        <AttachPhoneNumberForm assistantId={initial.id} />
+      ) : null}
 
       <form action={action} className="space-y-4">
         <Card>

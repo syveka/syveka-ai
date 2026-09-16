@@ -82,7 +82,8 @@ try {
       "    'social_accounts',\n" +
       "    'creator_credit_balances',\n" +
       "    'creator_credit_grants',\n" +
-      "    'creator_credit_transactions'\n" +
+      "    'creator_credit_transactions',\n" +
+      "    'entitlement_grants'\n" +
       "  ];",
     "  legacy_missing_tables TEXT[] := ARRAY[\n" +
       "    'business_dna',\n" +
@@ -102,6 +103,7 @@ try {
       "    'creator_credit_balances',\n" +
       "    'creator_credit_grants',\n" +
       "    'creator_credit_transactions',\n" +
+      "    'entitlement_grants',\n" +
       `    '${fixtureTable}'\n` +
       "  ];",
     "legacy-missing-table declaration",

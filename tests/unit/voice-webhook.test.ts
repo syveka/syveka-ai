@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => {
       organizationId: "org-a",
       enabledTools: [] as string[],
       useKnowledgeBase: false,
+      isActive: true,
       organization: { members: [{ userId: "owner-1" }] },
     })),
     voiceCallUpsert: vi.fn(async (..._args: unknown[]) => {
@@ -154,6 +155,7 @@ describe("Vapi voice webhook — unrelated message types are unchanged", () => {
       organizationId: "org-a",
       enabledTools: ["searchKnowledgeBase"],
       useKnowledgeBase: false,
+      isActive: true,
       organization: { members: [{ userId: "owner-1" }] },
     });
     mocks.executeTool.mockResolvedValueOnce(JSON.stringify({ ok: true }));
@@ -178,5 +180,50 @@ describe("Vapi voice webhook — unrelated message types are unchanged", () => {
     expect(mocks.enqueue).not.toHaveBeenCalled();
     expect(mocks.redisGet).not.toHaveBeenCalled();
     expect(mocks.redisSet).not.toHaveBeenCalled();
+  });
+});
+
+describe("Vapi voice webhook — deactivated assistant refuses tool-call writes (rollback safety)", () => {
+  it("refuses every tool call for a deactivated assistant, even an already-enabled one, without executing any of them", async () => {
+    // Regression for a proven gap: previously the webhook never checked
+    // isActive at all, so a deactivated assistant already mid-call could
+    // still execute CRM/calendar/booking writes -- "disabled" was cosmetic.
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce({
+      id: "assistant-1",
+      organizationId: "org-a",
+      enabledTools: ["searchKnowledgeBase", "bookMeeting"],
+      useKnowledgeBase: false,
+      isActive: false,
+      organization: { members: [{ userId: "owner-1" }] },
+    });
+
+    const response = await POST(
+      new Request("http://localhost/api/v1/voice/webhook", {
+        method: "POST",
+        headers: { "x-vapi-signature": "sig" },
+        body: JSON.stringify({
+          message: {
+            type: "tool-calls",
+            call: { id: "call-4", assistantId: "assistant-1" },
+            toolCallList: [
+              { id: "tc-1", name: "searchKnowledgeBase", arguments: {} },
+              {
+                id: "tc-2",
+                name: "bookMeeting",
+                arguments: { title: "x", startsAt: "2026-01-01T10:00:00Z" },
+              },
+            ],
+          },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.results).toEqual([
+      { toolCallId: "tc-1", result: JSON.stringify({ error: "assistant_disabled" }) },
+      { toolCallId: "tc-2", result: JSON.stringify({ error: "assistant_disabled" }) },
+    ]);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
   });
 });
