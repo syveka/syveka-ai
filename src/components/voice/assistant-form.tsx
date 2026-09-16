@@ -5,6 +5,7 @@ import { useTranslations } from "next-intl";
 import {
   saveAssistantAction,
   activateAssistantAction,
+  deactivateAssistantAction,
   type VoiceActionState,
 } from "@/actions/voice";
 import { VOICE_TOOL_NAMES, type VoiceAssistantInput } from "@/lib/validators/voice";
@@ -31,6 +32,10 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
     VoiceActionState,
     FormData
   >(initial?.id ? activateAssistantAction.bind(null, initial.id) : async () => ({}), {});
+  const [deactivateState, deactivateAction, deactivatePending] = useActionState<
+    VoiceActionState,
+    FormData
+  >(initial?.id ? deactivateAssistantAction.bind(null, initial.id) : async () => ({}), {});
 
   return (
     <div className="mx-auto max-w-2xl space-y-6">
@@ -44,6 +49,13 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
             <form action={activateAction}>
               <Button type="submit" variant="default" disabled={activatePending}>
                 {activatePending ? tc("loading") : t("activate")}
+              </Button>
+            </form>
+          ) : null}
+          {initial?.id && initial.isActive ? (
+            <form action={deactivateAction}>
+              <Button type="submit" variant="outline" disabled={deactivatePending}>
+                {deactivatePending ? tc("loading") : t("deactivate")}
               </Button>
             </form>
           ) : null}
@@ -61,6 +73,16 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
         {activateState.error ? (
           <p role="alert" className="text-sm text-destructive">
             {activateState.error}
+          </p>
+        ) : null}
+        {deactivateState.message === "deactivated" ? (
+          <p role="status" className="text-sm text-muted-foreground">
+            {t("deactivateSuccess")}
+          </p>
+        ) : null}
+        {deactivateState.error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t("deactivateFailed")}
           </p>
         ) : null}
       </div>

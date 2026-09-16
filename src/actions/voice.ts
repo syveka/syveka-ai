@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requirePermission } from "@/server/auth/guard";
-import { upsertAssistant, activateAssistant } from "@/server/services/voice";
+import { upsertAssistant, activateAssistant, deactivateAssistant } from "@/server/services/voice";
 import { voiceAssistantSchema } from "@/lib/validators/voice";
 
 export type VoiceActionState = {
@@ -60,4 +60,21 @@ export async function activateAssistantAction(
 
   if (result.phoneNumberError) return { phoneNumberPending: true };
   return { message: "activated" };
+}
+
+export async function deactivateAssistantAction(
+  assistantId: string,
+  _prev: VoiceActionState,
+): Promise<VoiceActionState> {
+  const ctx = await requirePermission("voice:configure");
+
+  try {
+    await deactivateAssistant(ctx, assistantId);
+  } catch {
+    return { error: "generic" };
+  }
+
+  revalidatePath(`/voice/${assistantId}`);
+  revalidatePath("/voice");
+  return { message: "deactivated" };
 }
