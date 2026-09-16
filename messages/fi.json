@@ -44,7 +44,9 @@
     "continueWithGoogle": "Jatka Googlella",
     "noAccount": "Ei vielä tiliä?",
     "hasAccount": "Onko sinulla jo tili?",
-    "verifyEmailSent": "Tarkista sähköpostisi — lähetimme vahvistuslinkin."
+    "verifyEmailSent": "Tarkista sähköpostisi — lähetimme vahvistuslinkin.",
+    "showPassword": "Näytä salasana",
+    "hidePassword": "Piilota salasana"
   },
   "dashboard": {
     "title": "Työpöytä",
@@ -134,6 +136,27 @@
       "unsupported_file": "Käytä PDF-, DOCX- tai TXT-tiedostoa.",
       "file_too_large": "Tiedoston enimmäiskoko on 25 Mt.",
       "invalid_document": "Yksi liitetyistä tiedostoista ei ole käytettävissä."
+    }
+  },
+  "publicAssistant": {
+    "launcherLabel": "Keskustele Syvekan kanssa",
+    "title": "Syveka-avustaja",
+    "close": "Sulje keskustelu",
+    "greeting": "Hei! Miten voin auttaa sinua tänään?",
+    "placeholder": "Kysy jotain…",
+    "send": "Lähetä",
+    "thinking": "Mietin…",
+    "suggestions": {
+      "whatCanSyvekaDo": "Mitä Syveka osaa tehdä?",
+      "aiVoice": "Kerro puheavustajasta",
+      "howSyvekaHelps": "Miten Syveka auttaa yritystäni?",
+      "pricing": "Hinnoittelu",
+      "createAccount": "Luo tili",
+      "contact": "Ota yhteyttä Syvekaan"
+    },
+    "errors": {
+      "rateLimited": "Olet lähettänyt useita viestejä — yritä hetken kuluttua uudelleen tai ota yhteyttä sales@syveka.ai.",
+      "generic": "Jokin meni pieleen. Yritä uudelleen."
     }
   },
   "knowledge": {

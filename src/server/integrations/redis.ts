@@ -31,6 +31,7 @@ type RateLimiters = {
   businessDnaExtract: Ratelimit;
   inboxEmailWebhook: Ratelimit;
   creatorGenerate: Ratelimit;
+  publicAssistant: Ratelimit;
 };
 
 let rateLimitersClient: RateLimiters | null = null;
@@ -84,6 +85,14 @@ function getRateLimiters(): RateLimiters {
       limiter: Ratelimit.slidingWindow(20, "1 m"),
       prefix: "rl:creator-generate",
     }),
+    // Public, unauthenticated, cost-amplifying (calls an AI provider) — keyed
+    // by IP in the route. Deliberately tighter than the authenticated
+    // aiChatUser limit: no login gate stands in front of this endpoint.
+    publicAssistant: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(10, "1 h"),
+      prefix: "rl:public-assistant",
+    }),
   };
   return rateLimitersClient;
 }
@@ -112,6 +121,9 @@ export const rateLimiters = {
   },
   get creatorGenerate() {
     return getRateLimiters().creatorGenerate;
+  },
+  get publicAssistant() {
+    return getRateLimiters().publicAssistant;
   },
 } satisfies RateLimiters;
 

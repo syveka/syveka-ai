@@ -44,7 +44,9 @@
     "continueWithGoogle": "المتابعة عبر Google",
     "noAccount": "ليس لديك حساب؟",
     "hasAccount": "لديك حساب بالفعل؟",
-    "verifyEmailSent": "تحقق من بريدك — أرسلنا لك رابط التفعيل."
+    "verifyEmailSent": "تحقق من بريدك — أرسلنا لك رابط التفعيل.",
+    "showPassword": "إظهار كلمة المرور",
+    "hidePassword": "إخفاء كلمة المرور"
   },
   "dashboard": {
     "title": "لوحة التحكم",
@@ -134,6 +136,27 @@
       "unsupported_file": "استخدم ملف PDF أو DOCX أو TXT.",
       "file_too_large": "يجب ألا يتجاوز حجم الملف 25 ميغابايت.",
       "invalid_document": "أحد الملفات المرفقة غير متاح."
+    }
+  },
+  "publicAssistant": {
+    "launcherLabel": "تحدث مع سيفيكا",
+    "title": "مساعد سيفيكا",
+    "close": "إغلاق المحادثة",
+    "greeting": "مرحبًا! كيف يمكنني مساعدتك اليوم؟",
+    "placeholder": "اطرح سؤالاً…",
+    "send": "إرسال",
+    "thinking": "أفكر…",
+    "suggestions": {
+      "whatCanSyvekaDo": "ماذا يمكن لسيفيكا أن تفعل؟",
+      "aiVoice": "أخبرني عن المساعد الصوتي بالذكاء الاصطناعي",
+      "howSyvekaHelps": "كيف تساعد سيفيكا شركتي؟",
+      "pricing": "التسعير",
+      "createAccount": "إنشاء حساب",
+      "contact": "تواصل مع سيفيكا"
+    },
+    "errors": {
+      "rateLimited": "لقد أرسلت عدة رسائل — يرجى المحاولة مرة أخرى بعد قليل أو التواصل عبر sales@syveka.ai.",
+      "generic": "حدث خطأ ما. حاول مرة أخرى."
     }
   },
   "knowledge": {

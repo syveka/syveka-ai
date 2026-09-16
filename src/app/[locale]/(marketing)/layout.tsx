@@ -1,8 +1,16 @@
 import { Link } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
 import { useTranslations } from "next-intl";
+import { PublicSyvekaAssistant } from "@/components/marketing/public-syveka-assistant";
 
-export default function MarketingLayout({ children }: { children: React.ReactNode }) {
+export default async function MarketingLayout({
+  children,
+  params,
+}: {
+  children: React.ReactNode;
+  params: Promise<{ locale: string }>;
+}) {
+  const { locale } = await params;
   return (
     <div className="flex min-h-screen flex-col">
       <MarketingNav />
@@ -11,6 +19,7 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
         © {new Date().getFullYear()} Syveka AI · <Link href="/legal/privacy">Privacy</Link> ·{" "}
         <Link href="/legal/terms">Terms</Link>
       </footer>
+      <PublicSyvekaAssistant locale={locale} />
     </div>
   );
 }
