@@ -4,6 +4,8 @@ const mocks = vi.hoisted(() => ({
   rateLimit: vi.fn(async () => ({ success: true })),
   signInWithPassword: vi.fn(async () => ({ error: null })),
   signUp: vi.fn(async () => ({ error: null })),
+  resetPasswordForEmail: vi.fn(async (): Promise<{ error: Error | null }> => ({ error: null })),
+  updateUser: vi.fn(async () => ({ error: null })),
   redirect: vi.fn((path: string) => {
     throw new Error(`NEXT_REDIRECT:${path}`);
   }),
@@ -22,11 +24,16 @@ vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 vi.mock("@/server/supabase/server", () => ({
   createSupabaseServer: async () => ({
-    auth: { signInWithPassword: mocks.signInWithPassword, signUp: mocks.signUp },
+    auth: {
+      signInWithPassword: mocks.signInWithPassword,
+      signUp: mocks.signUp,
+      resetPasswordForEmail: mocks.resetPasswordForEmail,
+      updateUser: mocks.updateUser,
+    },
   }),
 }));
 
-import { loginAction } from "@/actions/auth";
+import { loginAction, forgotPasswordAction, resetPasswordAction } from "@/actions/auth";
 import { registerAction } from "@/actions/auth";
 
 const ENV_NAMES = [
@@ -110,5 +117,50 @@ describe("login environment isolation", () => {
         }),
       }),
     );
+  });
+
+  it("sends the recovery email through the environment-aware callback with next=/reset-password", async () => {
+    const form = new FormData();
+    form.set("email", "user@example.com");
+    form.set("locale", "fi");
+
+    await expect(forgotPasswordAction({}, form)).resolves.toEqual({ message: "verify_email_sent" });
+    expect(mocks.resetPasswordForEmail).toHaveBeenCalledWith(
+      "user@example.com",
+      expect.objectContaining({
+        redirectTo: "https://staging.example.test/api/auth/callback?next=%2Ffi%2Freset-password",
+      }),
+    );
+  });
+
+  it("never reveals whether the account exists, even when Supabase reports an error", async () => {
+    mocks.resetPasswordForEmail.mockResolvedValueOnce({ error: new Error("user not found") });
+    const form = new FormData();
+    form.set("email", "unknown@example.com");
+    form.set("locale", "en");
+
+    // Same success response regardless of outcome -- account-enumeration
+    // resistance, matching forgotPasswordAction's own comment.
+    await expect(forgotPasswordAction({}, form)).resolves.toEqual({ message: "verify_email_sent" });
+  });
+
+  it("resetPasswordAction only updates the password -- no organization/membership call of any kind", async () => {
+    const form = new FormData();
+    form.set("password", "a-new-secure-password");
+    form.set("locale", "en");
+
+    await expect(resetPasswordAction({}, form)).rejects.toThrow("NEXT_REDIRECT:/en/dashboard");
+    expect(mocks.updateUser).toHaveBeenCalledWith({ password: "a-new-secure-password" });
+    expect(mocks.updateUser).toHaveBeenCalledTimes(1);
+    expect(mocks.signUp).not.toHaveBeenCalled();
+  });
+
+  it("resetPasswordAction rejects a too-short password before ever calling Supabase", async () => {
+    const form = new FormData();
+    form.set("password", "short");
+    form.set("locale", "en");
+
+    await expect(resetPasswordAction({}, form)).resolves.toEqual({ error: "invalid_input" });
+    expect(mocks.updateUser).not.toHaveBeenCalled();
   });
 });
