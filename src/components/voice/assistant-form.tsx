@@ -147,7 +147,7 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
                 name="transferNumber"
                 type="tel"
                 defaultValue={initial?.transferNumber}
-                placeholder="+358 40 123 4567"
+                placeholder="+358401234567"
               />
             </div>
           </CardContent>

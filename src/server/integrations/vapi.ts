@@ -63,6 +63,8 @@ export type VapiAssistantConfig = {
   /** ID of a Vapi Custom Credential (HMAC) — never the secret value itself (§13.2). */
   serverCredentialId: string;
   tools: Array<{ name: string; description: string; parameters: object }>;
+  /** Human-provided E.164 destination for Vapi's built-in transferCall tool. */
+  transferNumber: string | null;
   maxDurationSeconds: number;
 };
 
@@ -92,6 +94,27 @@ const DEEPGRAM_MODEL: Record<VapiAssistantConfig["language"], string> = {
 
 /** Exported for direct unit testing of the per-language voice/transcriber selection. */
 export function toVapiPayload(cfg: VapiAssistantConfig) {
+  const tools: Array<Record<string, unknown>> = cfg.tools.map((t) => ({
+    type: "function",
+    function: { name: t.name, description: t.description, parameters: t.parameters },
+  }));
+  // Existing rows predate strict validation and may use the UI's former
+  // human-friendly formatting. Normalize those safely at the provider boundary;
+  // an invalid legacy value must not make the entire assistant sync fail.
+  const transferNumber = cfg.transferNumber?.replace(/[\s().-]/g, "");
+  if (transferNumber && /^\+[1-9]\d{1,14}$/.test(transferNumber)) {
+    tools.push({
+      type: "transferCall",
+      destinations: [
+        {
+          type: "number",
+          number: transferNumber,
+          description: "Transfer to a human when the caller explicitly asks to speak with one.",
+        },
+      ],
+    });
+  }
+
   return {
     name: cfg.name,
     firstMessage: cfg.firstMessage,
@@ -102,10 +125,7 @@ export function toVapiPayload(cfg: VapiAssistantConfig) {
       // reject POST /assistant in production on 2026-09-15 (§ incident).
       model: routeModel("voice").model,
       messages: [{ role: "system", content: cfg.systemPrompt }],
-      tools: cfg.tools.map((t) => ({
-        type: "function",
-        function: { name: t.name, description: t.description, parameters: t.parameters },
-      })),
+      tools,
     },
     voice:
       cfg.voiceProvider === "elevenlabs"

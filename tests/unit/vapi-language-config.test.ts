@@ -12,6 +12,7 @@ function baseConfig(overrides: Partial<VapiAssistantConfig> = {}): VapiAssistant
     serverUrl: "https://staging.invalid/api/v1/voice/webhook",
     serverCredentialId: "cred-1",
     tools: [],
+    transferNumber: null,
     maxDurationSeconds: 900,
     ...overrides,
   };
@@ -36,6 +37,42 @@ describe("toVapiPayload — Vapi-accepted model ID", () => {
       const payload = toVapiPayload(baseConfig({ language, voiceProvider: "elevenlabs" }));
       expect((payload.model as { model: string }).model).toBe("claude-haiku-4-5-20251001");
     }
+  });
+});
+
+describe("toVapiPayload — human transfer", () => {
+  it("does not advertise transferCall when no destination is configured", () => {
+    const payload = toVapiPayload(baseConfig());
+    expect(payload.model.tools).toEqual([]);
+  });
+
+  it("adds Vapi's built-in transferCall tool for the configured E.164 destination", () => {
+    const payload = toVapiPayload(baseConfig({ transferNumber: "+358401234567" }));
+    expect(payload.model.tools).toContainEqual({
+      type: "transferCall",
+      destinations: [
+        {
+          type: "number",
+          number: "+358401234567",
+          description: "Transfer to a human when the caller explicitly asks to speak with one.",
+        },
+      ],
+    });
+  });
+
+  it("normalizes a legacy formatted destination without breaking an existing assistant", () => {
+    const payload = toVapiPayload(baseConfig({ transferNumber: "+358 (40) 123-4567" }));
+    expect(payload.model.tools).toContainEqual(
+      expect.objectContaining({
+        type: "transferCall",
+        destinations: [expect.objectContaining({ number: "+358401234567" })],
+      }),
+    );
+  });
+
+  it("omits an invalid legacy destination instead of failing the whole assistant sync", () => {
+    const payload = toVapiPayload(baseConfig({ transferNumber: "040 123 4567" }));
+    expect(payload.model.tools).toEqual([]);
   });
 });
 

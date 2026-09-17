@@ -143,7 +143,9 @@ export async function activateAssistant(
     action: phoneNumber ? "voice_assistant.activate" : "voice_assistant.sync_pending_number",
     resourceType: "voice_assistant",
     resourceId: assistantId,
-    after: { phoneNumber, phoneNumberError },
+    // Provider response bodies can contain credentials or customer data.
+    // Keep the operator-visible state without persisting the raw error.
+    after: { phoneNumber, phoneNumberProvisioned: Boolean(phoneNumber) },
   });
   return { assistant: updated, phoneNumberError };
 }
@@ -193,7 +195,7 @@ export async function deactivateAssistant(
           event: "voice_assistant_deactivate_vapi_delete_failed",
           organizationId: ctx.orgId,
           assistantId,
-          message: error instanceof Error ? error.message : "unknown error",
+          errorType: error instanceof Error ? error.name : "UnknownError",
         }),
       );
     }
@@ -345,6 +347,7 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
     serverUrl: `${NEXT_PUBLIC_APP_URL}/api/v1/voice/webhook`,
     serverCredentialId: VAPI_WEBHOOK_CREDENTIAL_ID,
     tools: vapiToolsFor(toolNames),
+    transferNumber: assistant.transferNumber,
     maxDurationSeconds: 15 * 60, // §16.5
   };
 
@@ -393,7 +396,7 @@ export async function resyncActiveAssistants(orgId: string): Promise<void> {
               event: "voice_assistant_resync_failed",
               organizationId: orgId,
               assistantId: id,
-              message: error instanceof Error ? error.message : "unknown error",
+              errorType: error instanceof Error ? error.name : "UnknownError",
             }),
           );
         }
@@ -407,7 +410,7 @@ export async function resyncActiveAssistants(orgId: string): Promise<void> {
       JSON.stringify({
         event: "voice_assistant_resync_lookup_failed",
         organizationId: orgId,
-        message: error instanceof Error ? error.message : "unknown error",
+        errorType: error instanceof Error ? error.name : "UnknownError",
       }),
     );
   }
