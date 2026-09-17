@@ -205,26 +205,34 @@ describe("resyncActiveAssistants — Business DNA staleness fix", () => {
   });
 
   it("syncs every already-live assistant for the org independently — one failing does not stop another", async () => {
+    const providerSecret = "provider-secret-must-not-be-logged";
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const dnaDb = businessDnaMock("org-a", null, ["assistant-1", "assistant-2"]);
     mocks.tenantDb.mockReturnValue(dnaDb);
     mocks.voiceAssistantFindFirstOrThrow.mockResolvedValue(assistantRow("org-a"));
     mocks.upsertVapiAssistant
-      .mockRejectedValueOnce(new Error("vapi outage"))
+      .mockRejectedValueOnce(new Error(`vapi outage: ${providerSecret}`))
       .mockResolvedValueOnce({ id: "vapi-assistant-1" });
 
     await expect(resyncActiveAssistants("org-a")).resolves.toBeUndefined();
 
     expect(mocks.upsertVapiAssistant).toHaveBeenCalledTimes(2);
+    expect(JSON.stringify(consoleSpy.mock.calls)).not.toContain(providerSecret);
+    consoleSpy.mockRestore();
   });
 
   it("never throws even when the initial assistant lookup itself fails", async () => {
+    const databaseSecret = "database-url-must-not-be-logged";
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
     const dnaDb = businessDnaMock("org-a", null, []);
     dnaDb.voiceAssistant.findMany = vi.fn(async () => {
-      throw new Error("transient db error");
+      throw new Error(`transient db error: ${databaseSecret}`);
     });
     mocks.tenantDb.mockReturnValue(dnaDb);
 
     await expect(resyncActiveAssistants("org-a")).resolves.toBeUndefined();
+    expect(JSON.stringify(consoleSpy.mock.calls)).not.toContain(databaseSecret);
+    consoleSpy.mockRestore();
   });
 
   it("does nothing (no Vapi call) when the org has no already-live assistant", async () => {

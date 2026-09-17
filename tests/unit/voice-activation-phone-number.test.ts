@@ -123,6 +123,21 @@ describe("activateAssistant — phone-number provisioning failure handling", () 
     expect(result.assistant.vapiAssistantId).toBe("vapi-assistant-1");
   });
 
+  it("does not persist the raw provider error in the audit trail", async () => {
+    const providerSecret = "provider-secret-must-not-be-audited";
+    mocks.buyPhoneNumber.mockRejectedValue(new Error(`Vapi 400: ${providerSecret}`));
+
+    await activateAssistant(ctx(), "assistant-1");
+
+    expect(JSON.stringify(mocks.auditMock.mock.calls)).not.toContain(providerSecret);
+    expect(mocks.auditMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({
+        after: expect.objectContaining({ phoneNumberProvisioned: false }),
+      }),
+    );
+  });
+
   it("never substitutes a US (or any other) number for the Finnish customer on failure", async () => {
     mocks.buyPhoneNumber.mockRejectedValue(VAPI_AREA_CODE_ERROR);
 

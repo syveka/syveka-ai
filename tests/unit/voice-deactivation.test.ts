@@ -81,12 +81,19 @@ describe("deactivateAssistant", () => {
   });
 
   it("still deactivates (DB-side) even when the Vapi deletion fails -- the guaranteed containment must not depend on the external call", async () => {
-    mocks.deleteVapiAssistant.mockRejectedValue(new Error("Vapi is unreachable"));
+    const providerSecret = "provider-secret-must-not-be-logged";
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.deleteVapiAssistant.mockRejectedValue(
+      new Error(`Vapi is unreachable: ${providerSecret}`),
+    );
 
     const result = await deactivateAssistant(ctx(), "assistant-1");
 
     expect(result.isActive).toBe(false);
     expect(db.voiceAssistant.update).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(consoleSpy.mock.calls)).not.toContain(providerSecret);
+    expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('"errorType":"Error"'));
+    consoleSpy.mockRestore();
   });
 
   it("skips the Vapi delete call entirely for an assistant that was never synced", async () => {

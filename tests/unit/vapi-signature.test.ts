@@ -124,6 +124,7 @@ describe("upsertVapiAssistant — outbound server config uses credentialId, neve
     serverUrl: "https://app.example.test/api/v1/voice/webhook",
     serverCredentialId: "cred_vapi_test",
     tools: [],
+    transferNumber: null,
     maxDurationSeconds: 900,
   };
 

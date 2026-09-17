@@ -9,6 +9,14 @@ export const VOICE_TOOL_NAMES = [
   "bookMeeting",
 ] as const;
 
+/** Strict E.164: + then 1-15 digits, first digit 1-9 (ITU-T E.164 §6.1). */
+const e164 = z.string().regex(/^\+[1-9]\d{1,14}$/, "invalid_e164");
+const optionalFormattedE164 = z
+  .string()
+  .max(30)
+  .transform((value) => value.replace(/[\s().-]/g, ""))
+  .refine((value) => value === "" || /^\+[1-9]\d{1,14}$/.test(value), "invalid_e164");
+
 export const voiceAssistantSchema = z.object({
   name: z.string().min(1).max(100),
   language: z.enum(["FI", "EN", "AR"]).default("FI"),
@@ -18,13 +26,12 @@ export const voiceAssistantSchema = z.object({
   systemPrompt: z.string().min(10).max(8000),
   enabledTools: z.array(z.enum(VOICE_TOOL_NAMES)).default(["searchKnowledgeBase"]),
   useKnowledgeBase: z.boolean().default(true),
-  transferNumber: z.string().max(20).optional().or(z.literal("")),
+  // Accept the human-friendly format the UI historically suggested, but
+  // persist and send only canonical E.164 to Vapi's transferCall tool.
+  transferNumber: optionalFormattedE164.optional(),
 });
 
 export type VoiceAssistantInput = z.infer<typeof voiceAssistantSchema>;
-
-/** Strict E.164: + then 1-15 digits, first digit 1-9 (ITU-T E.164 §6.1). */
-const e164 = z.string().regex(/^\+[1-9]\d{1,14}$/, "invalid_e164");
 
 /**
  * Attach an existing, externally-held number to an already-synced Vapi
