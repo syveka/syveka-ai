@@ -29,6 +29,13 @@ describe("Supabase PKCE callback", () => {
     expect(response.headers.get("location")).toBe("https://staging.example.test/ar/onboarding");
   });
 
+  it("a password-recovery callback (next=/reset-password) lands on the reset form, not onboarding", async () => {
+    const response = await GET(request("?code=recovery-code&next=%2Fen%2Freset-password"));
+
+    expect(mocks.exchangeCodeForSession).toHaveBeenCalledWith("recovery-code");
+    expect(response.headers.get("location")).toBe("https://staging.example.test/en/reset-password");
+  });
+
   it.each([
     "https://evil.example/onboarding",
     "//evil.example/onboarding",
@@ -37,7 +44,20 @@ describe("Supabase PKCE callback", () => {
     "/%2F%2Fevil.example/onboarding",
   ])("rejects external next target %s", async (next) => {
     const response = await GET(request(`?code=code&next=${encodeURIComponent(next)}`));
-    expect(response.headers.get("location")).toBe("https://staging.example.test/onboarding");
+    // /dashboard, not /onboarding -- this fallback fires for every callback
+    // flow (signup, magic link, password recovery), not only fresh signups,
+    // and must not misroute an existing account recovering its password into
+    // "Create your organization". See safeInternalNext's own doc comment.
+    expect(response.headers.get("location")).toBe("https://staging.example.test/dashboard");
+  });
+
+  it("falls back to /dashboard, not /onboarding, when next is missing entirely", async () => {
+    // Regression test for the exact Staging incident: a password-recovery
+    // callback that arrives with no `next` (e.g. because it wasn't
+    // preserved further upstream) must land an existing account on its own
+    // dashboard, never on the "Create your organization" screen.
+    const response = await GET(request("?code=code"));
+    expect(response.headers.get("location")).toBe("https://staging.example.test/dashboard");
   });
 
   it("fails safely when the code is missing", async () => {
