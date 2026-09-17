@@ -228,6 +228,31 @@ validate`/`generate`, migration history check) after the override, all passing. 
     response is lost before `completeStep()` runs, and that provider has no idempotency support (or
     the key's retention window has lapsed), the outcome is truly ambiguous — this is an inherent
     limit of distributed side effects, not something this fix papers over.
+- **Workflow step ids must be unique within one workflow definition; the server enforces this,
+  the client generator does not need to.** A 2026-08-18 follow-up to the PR #85 review found that
+  `step.id` is a client-generated convenience value (`workflow-builder.tsx` uses `s${Date.now()}`)
+  that becomes a durable server-side execution identity once PR #85 shipped:
+  `WorkflowStepExecution`'s uniqueness is `[workflowRunId, stepId]`, so two steps sharing an id
+  make the second occurrence's claim collide (P2002) with the first's and get silently
+  reinterpreted as `{claimed: false, reason: "succeeded"}` — the second step never actually runs.
+  Reproduced against the real validator (accepted duplicates) and against `run-workflow`'s actual
+  claim path (confirmed: only the first occurrence's side effect fires; the second's
+  `WorkflowStepExecution` row never gets created). This was already an implicit invariant, not a
+  new restriction — even before PR #85, `stepResults`/`ctx.vars` are correlated on `stepId`, so
+  duplicate ids already produced ambiguous/overwritten outputs on resume. Fixed with a
+  `.superRefine()` on `workflowSchema`'s `steps` array (`src/lib/validators/workflows.ts`),
+  flagging every occurrence after the first with `path: [index, "id"]` so the error identifies the
+  specific duplicate step, not just the workflow as a whole. `saveWorkflowAction`
+  (`src/actions/workflows.ts`) is the sole write path for `workflow.steps` (both create and
+  update go through `workflowSchema.safeParse()` before `upsertWorkflow()`), so this one schema
+  change closes the gap at the trust boundary with no other call site to patch. Case-sensitive
+  (matches the plain string equality the engine uses) and scoped to one workflow's own `steps`
+  array — the same id across different workflows, or across different runs of the same workflow,
+  remains legal and unaffected. The client generator (`s${Date.now()}`) was deliberately left
+  unchanged: a real collision requires two steps added within the same millisecond, not reachable
+  through normal UI interaction, and server validation is the actual trust boundary regardless of
+  how "safe" client generation looks. No migration, no schema change, no workflow-engine redesign
+  — validation-only.
 
 ## Standing engineering conventions (from `README.md`, verified still enforced)
 
