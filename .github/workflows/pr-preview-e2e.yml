@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       expected_sha:
-        description: Full 40-character PR head commit SHA to verify and check out
+        description: Full 40-character PR head commit SHA to verify and target
         required: true
         type: string
 
@@ -17,6 +17,10 @@ permissions:
   deployments: read
   pull-requests: read
 
+concurrency:
+  group: pr-preview-e2e-${{ inputs.pr_number }}-${{ inputs.expected_sha }}
+  cancel-in-progress: false
+
 env:
   PR_NUMBER: ${{ inputs.pr_number }}
   EXPECTED_SHA: ${{ inputs.expected_sha }}
@@ -24,7 +28,7 @@ env:
 
 jobs:
   verify-and-test:
-    name: Verify preview deployment and run E2E
+    name: Verify preview deployment and run trusted E2E harness
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: staging
@@ -59,8 +63,9 @@ jobs:
 
       # Treats GitHub's deployment/status metadata as untrusted input: only a
       # deployment whose sha exactly matches the verified PR head, whose
-      # environment is "Preview" (never production), and whose most recent
-      # status is "success" can produce a base URL. The resulting URL is
+      # environment is "Preview" (never production), and whose single most
+      # recent status (highest status id, not merely any status ever seen)
+      # is "success" can produce a base URL. The resulting URL is
       # re-validated as a bare HTTPS origin (no credentials/path/query/hash)
       # before use, so no floating alias, staging, production, or arbitrary
       # URL can be substituted.
@@ -135,9 +140,19 @@ jobs:
             const statuses = await ghApi(
               `/repos/${repo}/deployments/${deployment.id}/statuses?per_page=100`,
             );
-            const success = statuses.find((s) => s.state === "success");
-            if (!success) continue;
-            const origin = verifiedOrigin(success.environment_url || success.target_url);
+            if (statuses.length === 0) continue;
+
+            // Authoritative "current" status: GitHub status ids are a
+            // monotonically increasing sequence, so the highest id is the
+            // single most recent status -- never "any success ever posted".
+            const latest = statuses.reduce(
+              (newest, s) => (s.id > newest.id ? s : newest),
+              statuses[0],
+            );
+
+            if (latest.state !== "success") continue;
+
+            const origin = verifiedOrigin(latest.environment_url || latest.target_url);
             if (origin) {
               verifiedUrl = origin;
               break;
@@ -145,7 +160,7 @@ jobs:
           }
 
           if (!verifiedUrl) {
-            console.error("NO_SUCCESSFUL_PREVIEW_DEPLOYMENT_STATUS");
+            console.error("NO_CURRENT_SUCCESSFUL_PREVIEW_DEPLOYMENT_STATUS");
             process.exit(1);
           }
 
@@ -155,20 +170,43 @@ jobs:
           rm -f "$RUNNER_TEMP/resolve-preview.mjs"
           echo "url=$verified_url" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout verified commit
+      # The PR under test is never checked out and never executes with
+      # secrets available (see below): only its identity (expected_sha) and
+      # its verified Preview URL are used. The E2E harness itself (Playwright
+      # config, test specs, and everything they import) is sourced from the
+      # protected `main` branch, resolved to an exact commit SHA here rather
+      # than trusted as a floating ref, so a PR cannot smuggle in test code
+      # that runs alongside the credentials below.
+      - name: Resolve trusted main harness SHA
+        id: trusted-main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          trusted_sha="$(gh api "repos/${{ github.repository }}/commits/main" --jq '.sha')"
+          if [[ ! "$trusted_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "TRUSTED_MAIN_SHA_INVALID"
+            exit 1
+          fi
+          echo "sha=$trusted_sha" >> "$GITHUB_OUTPUT"
+          echo "Resolved trusted E2E harness commit (main): $trusted_sha"
+
+      - name: Checkout trusted E2E harness (pinned main)
         id: checkout
         continue-on-error: true
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          ref: ${{ env.EXPECTED_SHA }}
+          ref: ${{ steps.trusted-main.outputs.sha }}
           fetch-depth: 1
           persist-credentials: false
           submodules: false
           lfs: false
 
-      - name: Verify checked-out source
+      - name: Verify checked-out trusted harness
         env:
           CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          TRUSTED_MAIN_SHA: ${{ steps.trusted-main.outputs.sha }}
         shell: bash
         run: |
           set -euo pipefail
@@ -177,18 +215,18 @@ jobs:
             exit 1
           fi
           actual_head="$(git rev-parse HEAD 2>/dev/null || true)"
-          if [[ "${actual_head,,}" != "${EXPECTED_SHA,,}" ]]; then
+          if [[ "${actual_head,,}" != "${TRUSTED_MAIN_SHA,,}" ]]; then
             echo "CHECKOUT_HEAD_MISMATCH"
             exit 1
           fi
 
       - name: Setup Node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
 
-      - name: Install dependencies
+      - name: Install dependencies (trusted harness)
         run: npm ci
 
       - name: Require Vercel protection bypass secret
@@ -209,24 +247,19 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      - name: Run PR Preview E2E tests
-        run: npm run test:e2e
+      # trace/screenshot/video are forced off here (overriding
+      # playwright.config.ts's retain-on-failure trace) because the
+      # trusted config's extraHTTPHeaders sends
+      # x-vercel-protection-bypass on every request; a retained trace
+      # records full request headers, so tracing would otherwise write the
+      # live bypass secret to disk on any failing test. No artifact from
+      # this run is uploaded (see below), so there is nothing left that
+      # could carry cookies, auth headers, or the bypass secret out of the
+      # job.
+      - name: Run trusted E2E harness against verified PR Preview
+        run: npm run test:e2e -- --trace=off --screenshot=off --video=off
         env:
           E2E_BASE_URL: ${{ steps.resolve.outputs.url }}
           E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
-
-      - name: Upload Playwright traces on failure
-        # test-results/.auth/ is deliberately excluded: it holds the signed-in
-        # E2E user's storageState (cookies + localStorage, including live
-        # session tokens) written by auth.setup.ts on every successful sign-in.
-        # Uploading it would hand out a ready-to-replay session artifact.
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: pr-preview-e2e-test-results
-          path: |
-            test-results/
-            !test-results/.auth/
-          retention-days: 7
