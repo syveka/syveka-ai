@@ -15,6 +15,21 @@ test.describe("public", () => {
     await expect(page.locator("#password")).toBeVisible();
   });
 
+  test("password visibility is hidden by default and keyboard-toggleable", async ({ page }) => {
+    await page.goto("/login");
+    const password = page.locator("#password");
+    const toggle = page.getByRole("button", {
+      name: /näytä salasana|show password|إظهار كلمة المرور/i,
+    });
+
+    await expect(password).toHaveAttribute("type", "password");
+    await toggle.focus();
+    await page.keyboard.press("Enter");
+    await expect(password).toHaveAttribute("type", "text");
+    await page.keyboard.press("Enter");
+    await expect(password).toHaveAttribute("type", "password");
+  });
+
   test("landing renders in Finnish by default", async ({ page }) => {
     await page.goto("/");
     await expect(page.locator("h1")).toContainText(/tekoäly/i);
@@ -68,6 +83,33 @@ test.describe("authenticated", () => {
     // activeDeals instead, confirmed directly against a real staging
     // Playwright artifact's full page snapshot (2026-09-12).
     await expect(page.getByText(/aktiiviset myyntimahdollisuudet|active deals/i)).toBeVisible();
+  });
+
+  test("global assistant opens, fits the viewport, and closes", async ({ page }) => {
+    const launcher = page.getByRole("button", {
+      name: /avaa syveka-avustaja|open syveka assistant|فتح مساعد سيفيكا/i,
+    });
+    await launcher.click();
+
+    const dialog = page.getByRole("dialog", { name: /syveka/i });
+    await expect(dialog).toBeVisible();
+    await expect(
+      dialog.getByText(/hei! miten voin auttaa|hi! how can i help|مرحبًا/i),
+    ).toBeVisible();
+
+    const bounds = await dialog.boundingBox();
+    const viewport = page.viewportSize();
+    expect(bounds).not.toBeNull();
+    expect(viewport).not.toBeNull();
+    expect(bounds!.x).toBeGreaterThanOrEqual(0);
+    expect(bounds!.y).toBeGreaterThanOrEqual(0);
+    expect(bounds!.x + bounds!.width).toBeLessThanOrEqual(viewport!.width);
+    expect(bounds!.y + bounds!.height).toBeLessThanOrEqual(viewport!.height);
+
+    await page
+      .getByRole("button", { name: /sulje avustaja|close assistant|إغلاق المساعد/i })
+      .click();
+    await expect(dialog).toBeHidden();
   });
 
   test("chat streams a reply", async ({ page }) => {

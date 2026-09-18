@@ -13,6 +13,13 @@ const mocks = vi.hoisted(() => ({
   messageCreate: vi.fn(async () => ({})),
   conversationUpdate: vi.fn(async () => ({})),
   recordUsage: vi.fn(async () => undefined),
+  can: vi.fn(() => true),
+  conversationFindFirst: vi.fn(async (): Promise<{ id: string; model: null } | null> => ({
+    id: "33333333-3333-4333-8333-333333333333",
+    model: null,
+  })),
+  tenantDb: vi.fn(),
+  getBusinessDnaContext: vi.fn(async () => null),
 }));
 
 vi.mock("@/server/auth/session", () => ({
@@ -23,17 +30,12 @@ vi.mock("@/server/auth/session", () => ({
     locale: "EN",
   })),
 }));
-vi.mock("@/server/auth/permissions", () => ({ can: vi.fn(() => true) }));
+vi.mock("@/server/auth/permissions", () => ({ can: mocks.can }));
 vi.mock("@/server/integrations/redis", () => ({ limitAiChat: mocks.limitAiChat }));
 vi.mock("@/server/integrations/openai", () => ({ isFlaggedByModeration: mocks.moderation }));
 vi.mock("@/server/integrations/anthropic", () => ({ streamClaude: mocks.streamClaude }));
 vi.mock("@/server/db/tenant", () => ({
-  tenantDb: vi.fn(() => ({
-    conversation: {
-      findFirst: vi.fn(async () => ({ id: "33333333-3333-4333-8333-333333333333", model: null })),
-      create: vi.fn(),
-    },
-  })),
+  tenantDb: mocks.tenantDb,
   unscopedPrisma: {
     message: { findMany: mocks.messageFindMany, create: mocks.messageCreate },
     organization: { findUniqueOrThrow: vi.fn(async () => ({ name: "Acme", settings: {} })) },
@@ -45,7 +47,7 @@ vi.mock("@/server/ai/router", () => ({
 }));
 vi.mock("@/server/ai/prompts/system", () => ({ buildSystemPrompt: vi.fn(() => "system") }));
 vi.mock("@/server/business-dna/context", () => ({
-  getBusinessDnaContext: vi.fn(async () => null),
+  getBusinessDnaContext: mocks.getBusinessDnaContext,
 }));
 vi.mock("@/server/ai/rag", () => ({
   retrieveChunks: vi.fn(async () => []),
@@ -74,6 +76,18 @@ import { buildSystemPrompt } from "@/server/ai/prompts/system";
 describe("AI chat route integration", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.can.mockReturnValue(true);
+    mocks.conversationFindFirst.mockResolvedValue({
+      id: "33333333-3333-4333-8333-333333333333",
+      model: null,
+    });
+    mocks.tenantDb.mockReturnValue({
+      conversation: {
+        findFirst: mocks.conversationFindFirst,
+        create: vi.fn(),
+      },
+    });
+    mocks.getBusinessDnaContext.mockResolvedValue(null);
     mocks.moderation.mockResolvedValue(false);
     mocks.limitAiChat.mockResolvedValue({
       success: true,
@@ -135,6 +149,46 @@ describe("AI chat route integration", () => {
       }),
     );
     expect(response.status).toBe(422);
+    expect(mocks.streamClaude).not.toHaveBeenCalled();
+  });
+
+  it("rejects a role without chat:use before resolving tenant data", async () => {
+    mocks.can.mockReturnValue(false);
+
+    const response = await POST(
+      new Request("http://localhost/api/v1/ai/chat", {
+        method: "POST",
+        body: JSON.stringify({ message: "Hello" }),
+      }),
+    );
+
+    expect(response.status).toBe(403);
+    expect(mocks.tenantDb).not.toHaveBeenCalled();
+    expect(mocks.streamClaude).not.toHaveBeenCalled();
+  });
+
+  it("returns not found for a conversation outside the caller's tenant scope", async () => {
+    mocks.conversationFindFirst.mockResolvedValue(null);
+
+    const response = await POST(
+      new Request("http://localhost/api/v1/ai/chat", {
+        method: "POST",
+        body: JSON.stringify({
+          conversationId: "33333333-3333-4333-8333-333333333333",
+          message: "Hello",
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(mocks.tenantDb).toHaveBeenCalledWith("11111111-1111-4111-8111-111111111111");
+    expect(mocks.conversationFindFirst).toHaveBeenCalledWith({
+      where: {
+        id: "33333333-3333-4333-8333-333333333333",
+        userId: "22222222-2222-4222-8222-222222222222",
+        deletedAt: null,
+      },
+    });
     expect(mocks.streamClaude).not.toHaveBeenCalled();
   });
 
