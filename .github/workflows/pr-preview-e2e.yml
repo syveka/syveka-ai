@@ -1,0 +1,265 @@
+name: PR Preview E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number whose Preview deployment will be tested
+        required: true
+        type: string
+      expected_sha:
+        description: Full 40-character PR head commit SHA to verify and target
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  deployments: read
+  pull-requests: read
+
+concurrency:
+  group: pr-preview-e2e-${{ inputs.pr_number }}-${{ inputs.expected_sha }}
+  cancel-in-progress: false
+
+env:
+  PR_NUMBER: ${{ inputs.pr_number }}
+  EXPECTED_SHA: ${{ inputs.expected_sha }}
+  NODE_VERSION: "22"
+
+jobs:
+  verify-and-test:
+    name: Verify preview deployment and run trusted E2E harness
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging
+
+    steps:
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "PR_NUMBER_INVALID"
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "EXPECTED_SHA_INVALID"
+            exit 1
+          fi
+
+      - name: Verify PR head SHA matches expected SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_head="$(gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER" --jq '.head.sha')"
+          actual_head_lower="${actual_head,,}"
+          expected_lower="${EXPECTED_SHA,,}"
+          if [[ -z "$actual_head_lower" || "$actual_head_lower" != "$expected_lower" ]]; then
+            echo "PR_HEAD_SHA_MISMATCH"
+            exit 1
+          fi
+
+      # Treats GitHub's deployment/status metadata as untrusted input: only a
+      # deployment whose sha exactly matches the verified PR head, whose
+      # environment is "Preview" (never production), and whose single most
+      # recent status (highest status id, not merely any status ever seen)
+      # is "success" can produce a base URL. The resulting URL is
+      # re-validated as a bare HTTPS origin (no credentials/path/query/hash)
+      # before use, so no floating alias, staging, production, or arbitrary
+      # URL can be substituted.
+      - name: Resolve verified Preview deployment URL
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY_FULL: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/resolve-preview.mjs" <<'NODE_EOF'
+          const repo = process.env.GITHUB_REPOSITORY_FULL;
+          const token = process.env.GH_TOKEN;
+          const expectedSha = process.env.EXPECTED_SHA.toLowerCase();
+
+          async function ghApi(path) {
+            const res = await fetch(`https://api.github.com${path}`, {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+              },
+            });
+            if (!res.ok) {
+              throw new Error(`GitHub API request failed: ${res.status} ${path}`);
+            }
+            return res.json();
+          }
+
+          function verifiedOrigin(value) {
+            if (typeof value !== "string" || !value) return null;
+            let url;
+            try {
+              url = new URL(value);
+            } catch {
+              return null;
+            }
+            if (
+              url.protocol !== "https:" ||
+              !url.hostname ||
+              url.username ||
+              url.password ||
+              url.pathname !== "/" ||
+              url.search ||
+              url.hash
+            ) {
+              return null;
+            }
+            return url.origin;
+          }
+
+          const deployments = await ghApi(
+            `/repos/${repo}/deployments?sha=${expectedSha}&per_page=100`,
+          );
+
+          const candidates = deployments.filter(
+            (d) =>
+              typeof d.sha === "string" &&
+              d.sha.toLowerCase() === expectedSha &&
+              d.environment === "Preview" &&
+              d.production_environment === false,
+          );
+
+          if (candidates.length === 0) {
+            console.error("NO_MATCHING_PREVIEW_DEPLOYMENT");
+            process.exit(1);
+          }
+
+          let verifiedUrl = null;
+          for (const deployment of candidates) {
+            const statuses = await ghApi(
+              `/repos/${repo}/deployments/${deployment.id}/statuses?per_page=100`,
+            );
+            if (statuses.length === 0) continue;
+
+            // Authoritative "current" status: GitHub status ids are a
+            // monotonically increasing sequence, so the highest id is the
+            // single most recent status -- never "any success ever posted".
+            const latest = statuses.reduce(
+              (newest, s) => (s.id > newest.id ? s : newest),
+              statuses[0],
+            );
+
+            if (latest.state !== "success") continue;
+
+            const origin = verifiedOrigin(latest.environment_url || latest.target_url);
+            if (origin) {
+              verifiedUrl = origin;
+              break;
+            }
+          }
+
+          if (!verifiedUrl) {
+            console.error("NO_CURRENT_SUCCESSFUL_PREVIEW_DEPLOYMENT_STATUS");
+            process.exit(1);
+          }
+
+          process.stdout.write(verifiedUrl);
+          NODE_EOF
+          verified_url="$(node "$RUNNER_TEMP/resolve-preview.mjs")"
+          rm -f "$RUNNER_TEMP/resolve-preview.mjs"
+          echo "url=$verified_url" >> "$GITHUB_OUTPUT"
+
+      # The PR under test is never checked out and never executes with
+      # secrets available (see below): only its identity (expected_sha) and
+      # its verified Preview URL are used. The E2E harness itself (Playwright
+      # config, test specs, and everything they import) is sourced from the
+      # protected `main` branch, resolved to an exact commit SHA here rather
+      # than trusted as a floating ref, so a PR cannot smuggle in test code
+      # that runs alongside the credentials below.
+      - name: Resolve trusted main harness SHA
+        id: trusted-main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          trusted_sha="$(gh api "repos/${{ github.repository }}/commits/main" --jq '.sha')"
+          if [[ ! "$trusted_sha" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "TRUSTED_MAIN_SHA_INVALID"
+            exit 1
+          fi
+          echo "sha=$trusted_sha" >> "$GITHUB_OUTPUT"
+          echo "Resolved trusted E2E harness commit (main): $trusted_sha"
+
+      - name: Checkout trusted E2E harness (pinned main)
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ steps.trusted-main.outputs.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+          lfs: false
+
+      - name: Verify checked-out trusted harness
+        env:
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+          TRUSTED_MAIN_SHA: ${{ steps.trusted-main.outputs.sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CHECKOUT_OUTCOME" != "success" ]]; then
+            echo "CHECKOUT_FAILED"
+            exit 1
+          fi
+          actual_head="$(git rev-parse HEAD 2>/dev/null || true)"
+          if [[ "${actual_head,,}" != "${TRUSTED_MAIN_SHA,,}" ]]; then
+            echo "CHECKOUT_HEAD_MISMATCH"
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies (trusted harness)
+        run: npm ci
+
+      - name: Require Vercel protection bypass secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            echo "VERCEL_AUTOMATION_BYPASS_SECRET is not configured for the staging environment."
+            echo "Preview deployments sit behind Vercel Deployment Protection, so the E2E run" \
+                 "below cannot reach the verified Preview URL without this bypass secret (see" \
+                 "Vercel Project Settings > Deployment Protection > Protection Bypass for" \
+                 "Automation)."
+            exit 1
+          fi
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      # trace/screenshot/video are forced off here (overriding
+      # playwright.config.ts's retain-on-failure trace) because the
+      # trusted config's extraHTTPHeaders sends
+      # x-vercel-protection-bypass on every request; a retained trace
+      # records full request headers, so tracing would otherwise write the
+      # live bypass secret to disk on any failing test. No artifact from
+      # this run is uploaded (see below), so there is nothing left that
+      # could carry cookies, auth headers, or the bypass secret out of the
+      # job.
+      - name: Run trusted E2E harness against verified PR Preview
+        run: npm run test:e2e -- --trace=off
+        env:
+          E2E_BASE_URL: ${{ steps.resolve.outputs.url }}
+          E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
