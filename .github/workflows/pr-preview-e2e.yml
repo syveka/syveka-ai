@@ -257,7 +257,7 @@ jobs:
       # could carry cookies, auth headers, or the bypass secret out of the
       # job.
       - name: Run trusted E2E harness against verified PR Preview
-        run: npm run test:e2e -- --trace=off --screenshot=off --video=off
+        run: npm run test:e2e -- --trace=off
         env:
           E2E_BASE_URL: ${{ steps.resolve.outputs.url }}
           E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
