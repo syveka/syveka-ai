@@ -1,0 +1,232 @@
+name: PR Preview E2E
+
+on:
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: Pull request number whose Preview deployment will be tested
+        required: true
+        type: string
+      expected_sha:
+        description: Full 40-character PR head commit SHA to verify and check out
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  deployments: read
+  pull-requests: read
+
+env:
+  PR_NUMBER: ${{ inputs.pr_number }}
+  EXPECTED_SHA: ${{ inputs.expected_sha }}
+  NODE_VERSION: "22"
+
+jobs:
+  verify-and-test:
+    name: Verify preview deployment and run E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: staging
+
+    steps:
+      - name: Validate inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
+            echo "PR_NUMBER_INVALID"
+            exit 1
+          fi
+          if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-fA-F]{40}$ ]]; then
+            echo "EXPECTED_SHA_INVALID"
+            exit 1
+          fi
+
+      - name: Verify PR head SHA matches expected SHA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual_head="$(gh api "repos/${{ github.repository }}/pulls/$PR_NUMBER" --jq '.head.sha')"
+          actual_head_lower="${actual_head,,}"
+          expected_lower="${EXPECTED_SHA,,}"
+          if [[ -z "$actual_head_lower" || "$actual_head_lower" != "$expected_lower" ]]; then
+            echo "PR_HEAD_SHA_MISMATCH"
+            exit 1
+          fi
+
+      # Treats GitHub's deployment/status metadata as untrusted input: only a
+      # deployment whose sha exactly matches the verified PR head, whose
+      # environment is "Preview" (never production), and whose most recent
+      # status is "success" can produce a base URL. The resulting URL is
+      # re-validated as a bare HTTPS origin (no credentials/path/query/hash)
+      # before use, so no floating alias, staging, production, or arbitrary
+      # URL can be substituted.
+      - name: Resolve verified Preview deployment URL
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY_FULL: ${{ github.repository }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > "$RUNNER_TEMP/resolve-preview.mjs" <<'NODE_EOF'
+          const repo = process.env.GITHUB_REPOSITORY_FULL;
+          const token = process.env.GH_TOKEN;
+          const expectedSha = process.env.EXPECTED_SHA.toLowerCase();
+
+          async function ghApi(path) {
+            const res = await fetch(`https://api.github.com${path}`, {
+              headers: {
+                Authorization: `Bearer ${token}`,
+                Accept: "application/vnd.github+json",
+                "X-GitHub-Api-Version": "2022-11-28",
+              },
+            });
+            if (!res.ok) {
+              throw new Error(`GitHub API request failed: ${res.status} ${path}`);
+            }
+            return res.json();
+          }
+
+          function verifiedOrigin(value) {
+            if (typeof value !== "string" || !value) return null;
+            let url;
+            try {
+              url = new URL(value);
+            } catch {
+              return null;
+            }
+            if (
+              url.protocol !== "https:" ||
+              !url.hostname ||
+              url.username ||
+              url.password ||
+              url.pathname !== "/" ||
+              url.search ||
+              url.hash
+            ) {
+              return null;
+            }
+            return url.origin;
+          }
+
+          const deployments = await ghApi(
+            `/repos/${repo}/deployments?sha=${expectedSha}&per_page=100`,
+          );
+
+          const candidates = deployments.filter(
+            (d) =>
+              typeof d.sha === "string" &&
+              d.sha.toLowerCase() === expectedSha &&
+              d.environment === "Preview" &&
+              d.production_environment === false,
+          );
+
+          if (candidates.length === 0) {
+            console.error("NO_MATCHING_PREVIEW_DEPLOYMENT");
+            process.exit(1);
+          }
+
+          let verifiedUrl = null;
+          for (const deployment of candidates) {
+            const statuses = await ghApi(
+              `/repos/${repo}/deployments/${deployment.id}/statuses?per_page=100`,
+            );
+            const success = statuses.find((s) => s.state === "success");
+            if (!success) continue;
+            const origin = verifiedOrigin(success.environment_url || success.target_url);
+            if (origin) {
+              verifiedUrl = origin;
+              break;
+            }
+          }
+
+          if (!verifiedUrl) {
+            console.error("NO_SUCCESSFUL_PREVIEW_DEPLOYMENT_STATUS");
+            process.exit(1);
+          }
+
+          process.stdout.write(verifiedUrl);
+          NODE_EOF
+          verified_url="$(node "$RUNNER_TEMP/resolve-preview.mjs")"
+          rm -f "$RUNNER_TEMP/resolve-preview.mjs"
+          echo "url=$verified_url" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout verified commit
+        id: checkout
+        continue-on-error: true
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ env.EXPECTED_SHA }}
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+          lfs: false
+
+      - name: Verify checked-out source
+        env:
+          CHECKOUT_OUTCOME: ${{ steps.checkout.outcome }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$CHECKOUT_OUTCOME" != "success" ]]; then
+            echo "CHECKOUT_FAILED"
+            exit 1
+          fi
+          actual_head="$(git rev-parse HEAD 2>/dev/null || true)"
+          if [[ "${actual_head,,}" != "${EXPECTED_SHA,,}" ]]; then
+            echo "CHECKOUT_HEAD_MISMATCH"
+            exit 1
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Require Vercel protection bypass secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            echo "VERCEL_AUTOMATION_BYPASS_SECRET is not configured for the staging environment."
+            echo "Preview deployments sit behind Vercel Deployment Protection, so the E2E run" \
+                 "below cannot reach the verified Preview URL without this bypass secret (see" \
+                 "Vercel Project Settings > Deployment Protection > Protection Bypass for" \
+                 "Automation)."
+            exit 1
+          fi
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+
+      - name: Run PR Preview E2E tests
+        run: npm run test:e2e
+        env:
+          E2E_BASE_URL: ${{ steps.resolve.outputs.url }}
+          E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      - name: Upload Playwright traces on failure
+        # test-results/.auth/ is deliberately excluded: it holds the signed-in
+        # E2E user's storageState (cookies + localStorage, including live
+        # session tokens) written by auth.setup.ts on every successful sign-in.
+        # Uploading it would hand out a ready-to-replay session artifact.
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: pr-preview-e2e-test-results
+          path: |
+            test-results/
+            !test-results/.auth/
+          retention-days: 7
