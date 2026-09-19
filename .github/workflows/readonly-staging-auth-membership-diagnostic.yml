@@ -57,23 +57,49 @@ jobs:
       # explicitly a public, non-secret value by Next.js's own convention
       # (embedded in client bundles), so printing it is safe; every other
       # line the pulled file could contain is deliberately never printed.
-      - name: Read staging callback domain configuration (read-only)
+      #
+      # Reuses scripts/validate-staging-config.mjs's existing "runtime"
+      # mode verbatim -- the same check staging-release.yml already runs
+      # right after its own `vercel pull` -- rather than re-implementing
+      # the Supabase-project/DATABASE_URL identity comparison here. That
+      # mode never interpolates a raw secret value into any message it
+      # prints (see the script's own parseUrl() comment); it only ever
+      # throws a fixed, safe string, which this step echoes back verbatim
+      # on failure, or a fixed success string, so this step's exit code and
+      # its own MATCH/MISMATCH line are the only source of truth -- no
+      # connection string, token, or key is ever printed by this step.
+      - name: "Config-drift check: Vercel Preview vs. staging secrets (read-only)"
         shell: bash
         run: |
           set -euo pipefail
           npx --yes "vercel@$VERCEL_CLI_VERSION" pull --yes --environment=preview --token="$STAGING_VERCEL_TOKEN" >/dev/null
-          if [ -f .vercel/.env.preview.local ]; then
-            value="$(grep -m1 '^NEXT_PUBLIC_APP_URL=' .vercel/.env.preview.local || true)"
-            if [ -n "$value" ]; then
-              echo "CALLBACK DOMAIN CONFIG: $value"
-            else
-              echo "CALLBACK DOMAIN CONFIG: NEXT_PUBLIC_APP_URL not present in pulled staging (preview) config"
-            fi
-          else
-            echo "CALLBACK DOMAIN CONFIG: could not pull staging environment config"
+
+          if [ ! -f .vercel/.env.preview.local ]; then
+            echo "NEXT_PUBLIC_APP_URL: MISSING (could not pull staging Preview environment config)"
+            echo "SUPABASE/DATABASE IDENTITY: MISSING (could not pull staging Preview environment config)"
+            rm -rf .vercel
+            exit 0
           fi
+
+          expected_app_url_line='NEXT_PUBLIC_APP_URL="https://syveka-ai-staging.vercel.app"'
+          app_url_line="$(grep -m1 '^NEXT_PUBLIC_APP_URL=' .vercel/.env.preview.local || true)"
+          if [ -z "$app_url_line" ]; then
+            echo "NEXT_PUBLIC_APP_URL: MISSING"
+          elif [ "$app_url_line" = "$expected_app_url_line" ]; then
+            echo "NEXT_PUBLIC_APP_URL: MATCH ($app_url_line)"
+          else
+            echo "NEXT_PUBLIC_APP_URL: MISMATCH ($app_url_line)"
+          fi
+
+          if STAGING_CONFIG_MODE=runtime node --env-file=.vercel/.env.preview.local scripts/validate-staging-config.mjs; then
+            echo "SUPABASE/DATABASE IDENTITY: MATCH"
+          else
+            echo "SUPABASE/DATABASE IDENTITY: MISMATCH"
+          fi
+
           rm -rf .vercel
         env:
           STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+          STAGING_SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
