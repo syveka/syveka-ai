@@ -159,6 +159,16 @@
       "generic": "Something went wrong. Please try again."
     }
   },
+  "globalAssistant": {
+    "launcherLabel": "Open Syveka assistant",
+    "title": "Syveka Assistant",
+    "close": "Close assistant",
+    "greeting": "Hi! How can I help you?",
+    "placeholder": "Ask about your business…",
+    "send": "Send message",
+    "stop": "Stop generating",
+    "openFullChat": "Open full chat"
+  },
   "knowledge": {
     "title": "Knowledge Base",
     "subtitle": "Documents the AI assistant uses to answer questions about your business.",
