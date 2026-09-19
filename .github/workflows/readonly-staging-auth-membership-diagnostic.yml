@@ -97,6 +97,54 @@ jobs:
             echo "SUPABASE/DATABASE IDENTITY: MISMATCH"
           fi
 
+          # Structural-only DATABASE_URL check: reads the pooling-relevant
+          # shape of the value already pulled above (port, pgbouncer/
+          # connection_limit query params, and whether the hostname looks
+          # like a Supabase pooler endpoint) without ever printing the
+          # value itself, its hostname, or any credential -- mirrors the
+          # exact safety convention scripts/validate-staging-config.mjs
+          # already uses (parseUrl() never interpolates a raw value into
+          # any message). Answers whether ensurePgbouncerCompatibility()
+          # (src/server/db/connection-string-sanitizer.ts) would activate
+          # for the live value, using that function's own exact condition
+          # (port === "6543"), not a separate guess.
+          node -e '
+            const fs = require("fs");
+            const line = fs
+              .readFileSync(".vercel/.env.preview.local", "utf8")
+              .split("\n")
+              .find((l) => l.startsWith("DATABASE_URL="));
+            if (!line) {
+              console.log("DATABASE_URL PORT: missing");
+              console.log("PGBOUNCER=TRUE PRESENT: n/a (DATABASE_URL missing)");
+              console.log("CONNECTION_LIMIT=1 PRESENT: n/a (DATABASE_URL missing)");
+              console.log("SUPABASE POOLER HOSTNAME PATTERN: n/a (DATABASE_URL missing)");
+              console.log("ENSUREPGBOUNCERCOMPATIBILITY WOULD ACTIVATE: n/a (DATABASE_URL missing)");
+              process.exit(0);
+            }
+            let raw = line.slice("DATABASE_URL=".length).trim();
+            if (raw.startsWith("\"") && raw.endsWith("\"")) raw = raw.slice(1, -1);
+            let url;
+            try {
+              url = new URL(raw);
+            } catch {
+              console.log("DATABASE_URL PORT: unparseable");
+              console.log("PGBOUNCER=TRUE PRESENT: n/a (unparseable)");
+              console.log("CONNECTION_LIMIT=1 PRESENT: n/a (unparseable)");
+              console.log("SUPABASE POOLER HOSTNAME PATTERN: n/a (unparseable)");
+              console.log("ENSUREPGBOUNCERCOMPATIBILITY WOULD ACTIVATE: n/a (unparseable)");
+              process.exit(0);
+            }
+            const port = url.port || "5432 (default, no explicit port)";
+            const looksLikePooler = /(^|\.)pooler\.supabase\.com$/i.test(url.hostname) || /supavisor/i.test(url.hostname);
+            const wouldActivate = url.port === "6543";
+            console.log(`DATABASE_URL PORT: ${port}`);
+            console.log(`PGBOUNCER=TRUE PRESENT: ${url.searchParams.get("pgbouncer") === "true" ? "YES" : "NO"}`);
+            console.log(`CONNECTION_LIMIT=1 PRESENT: ${url.searchParams.get("connection_limit") === "1" ? "YES" : "NO"}`);
+            console.log(`SUPABASE POOLER HOSTNAME PATTERN: ${looksLikePooler ? "YES" : "NO"}`);
+            console.log(`ENSUREPGBOUNCERCOMPATIBILITY WOULD ACTIVATE: ${wouldActivate ? "YES" : "NO"}`);
+          '
+
           rm -rf .vercel
         env:
           STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
