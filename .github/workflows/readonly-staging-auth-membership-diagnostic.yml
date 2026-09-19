@@ -1,0 +1,79 @@
+name: Read-only staging auth/membership diagnostic
+
+on:
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+env:
+  VERCEL_CLI_VERSION: "56.3.2"
+  NODE_VERSION: "22"
+
+jobs:
+  diagnose:
+    name: Diagnose staging auth/membership state
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: staging
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+          submodules: false
+          lfs: false
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      # Read-only: scripts/diagnose-staging-auth-membership.ts performs no
+      # writes (no user/org/membership create/update/delete, no
+      # app_metadata change, no password reset) and is hardcoded to refuse
+      # running against any account other than the one it was reviewed for.
+      - name: Run read-only auth/membership diagnostic
+        run: npx tsx scripts/diagnose-staging-auth-membership.ts
+        env:
+          DIAGNOSTIC_EMAIL: "Ehabkia62@gmail.com"
+          DATABASE_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+
+      # Read-only: `vercel pull` only writes a local, git-ignored env file
+      # inside this ephemeral runner (removed at the end of this step) and
+      # never deploys or modifies anything. NEXT_PUBLIC_APP_URL is
+      # explicitly a public, non-secret value by Next.js's own convention
+      # (embedded in client bundles), so printing it is safe; every other
+      # line the pulled file could contain is deliberately never printed.
+      - name: Read staging callback domain configuration (read-only)
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes "vercel@$VERCEL_CLI_VERSION" pull --yes --environment=preview --token="$STAGING_VERCEL_TOKEN" >/dev/null
+          if [ -f .vercel/.env.preview.local ]; then
+            value="$(grep -m1 '^NEXT_PUBLIC_APP_URL=' .vercel/.env.preview.local || true)"
+            if [ -n "$value" ]; then
+              echo "CALLBACK DOMAIN CONFIG: $value"
+            else
+              echo "CALLBACK DOMAIN CONFIG: NEXT_PUBLIC_APP_URL not present in pulled staging (preview) config"
+            fi
+          else
+            echo "CALLBACK DOMAIN CONFIG: could not pull staging environment config"
+          fi
+          rm -rf .vercel
+        env:
+          STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
