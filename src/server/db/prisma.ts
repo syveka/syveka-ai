@@ -1,6 +1,7 @@
 import "server-only";
 
 import { PrismaClient } from "@prisma/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 import {
   ensurePgbouncerCompatibility,
   sanitizeConnectionString,
@@ -18,9 +19,24 @@ import {
  * make DB connectivity checks fail for the wrong reason. `sanitizeConnectionString`
  * strips whitespace/CR-LF/a trailing bare `?` that a dashboard paste can
  * introduce and that Prisma's stricter parser (unlike a lenient WHATWG URL
- * parse) rejects outright, and `ensurePgbouncerCompatibility` appends the
- * query params Prisma requires when the datasource is Supabase's
- * transaction-mode pooler — see connection-string-sanitizer.ts for both.
+ * parse) rejects outright.
+ *
+ * Uses the @prisma/adapter-pg driver adapter (Prisma + Supabase's own
+ * current official guidance for Supavisor transaction-mode pooling on a
+ * serverless runtime), not the classic engine's own `datasourceUrl`
+ * option. `ensurePgbouncerCompatibility`'s `pgbouncer=true`/
+ * `connection_limit=1` query-string params are specific to Prisma's
+ * classic Rust query engine -- confirmed empirically (pg-connection-string
+ * parses them through as harmless unused keys; `pg.Pool`/`pg.PoolConfig`
+ * never reads a `pgbouncer` or `connection_limit` field) they have no
+ * effect on `pg`/PrismaPg. Left in place anyway (harmless) so the exact
+ * connection string handed to the pool is unchanged in shape, and because
+ * `sanitizeConnectionString` alone is still load-bearing (a raw
+ * dashboard-pasted value's stray newline/trailing `?` would break `pg`'s
+ * own connection-string parser too). Actual connection sizing for the
+ * pool is `pg`'s own native `max` option (PrismaPgOptions has no
+ * connection-count field of its own — confirmed against the installed
+ * @prisma/adapter-pg 6.19.3 type declarations).
  */
 const globalForPrisma = globalThis as unknown as { prisma?: PrismaClient };
 
@@ -30,10 +46,13 @@ function resolveDatasourceUrl(): string | undefined {
 }
 
 function getPrisma(): PrismaClient {
-  globalForPrisma.prisma ??= new PrismaClient({
-    datasourceUrl: resolveDatasourceUrl(),
-    log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
-  });
+  if (!globalForPrisma.prisma) {
+    const adapter = new PrismaPg({ connectionString: resolveDatasourceUrl(), max: 1 });
+    globalForPrisma.prisma = new PrismaClient({
+      adapter,
+      log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
+    });
+  }
 
   return globalForPrisma.prisma;
 }
