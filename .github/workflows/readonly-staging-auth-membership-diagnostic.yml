@@ -145,6 +145,79 @@ jobs:
             console.log(`ENSUREPGBOUNCERCOMPATIBILITY WOULD ACTIVATE: ${wouldActivate ? "YES" : "NO"}`);
           '
 
+          # Effective-transformation check: calls the REAL, already-reviewed
+          # sanitizeConnectionString()/ensurePgbouncerCompatibility()
+          # functions (src/server/db/connection-string-sanitizer.ts)
+          # directly -- no reimplementation of their decision logic -- so
+          # this proves what those functions actually produce for the live
+          # value, not just what the raw stored value looks like (the check
+          # above). This temporary file is never committed: written to the
+          # repo root only so it can use the same relative-import
+          # convention as every other standalone script in this repo (see
+          # ensure-e2e-org-fixture.ts's own comment on avoiding `@/`
+          # aliases), and removed at the end of this step. Only port
+          # numbers and fixed YES/NO/SAME/DIFFERENT strings are ever
+          # printed -- the URL, hostname, query string, and any credential
+          # are read internally but never logged.
+          cat > ./tmp-pgbouncer-effective-check.mts <<'TS_EOF'
+          import { readFileSync } from "node:fs";
+          import {
+            sanitizeConnectionString,
+            ensurePgbouncerCompatibility,
+          } from "./src/server/db/connection-string-sanitizer";
+
+          function safePort(value: string): string {
+            try {
+              const u = new URL(value);
+              return u.port || "5432 (default, no explicit port)";
+            } catch {
+              return "unparseable";
+            }
+          }
+
+          function paramPresent(value: string, key: string, expected: string): string {
+            try {
+              const u = new URL(value);
+              return u.searchParams.get(key) === expected ? "YES" : "NO";
+            } catch {
+              return "n/a (unparseable)";
+            }
+          }
+
+          const line = readFileSync(".vercel/.env.preview.local", "utf8")
+            .split("\n")
+            .find((l) => l.startsWith("DATABASE_URL="));
+
+          if (!line) {
+            console.log("EFFECTIVE DATASOURCE PORT: missing");
+            console.log("EFFECTIVE PGBOUNCER=TRUE: n/a (DATABASE_URL missing)");
+            console.log("EFFECTIVE CONNECTION_LIMIT=1: n/a (DATABASE_URL missing)");
+            console.log("COMPATIBILITY TRANSFORMATION EXECUTED: n/a (DATABASE_URL missing)");
+            console.log("RAW VS TRANSFORMED PORT: n/a (DATABASE_URL missing)");
+            process.exit(0);
+          }
+
+          let raw = line.slice("DATABASE_URL=".length).trim();
+          if (raw.startsWith('"') && raw.endsWith('"')) raw = raw.slice(1, -1);
+
+          // The two calls below are the entire compatibility decision --
+          // this script never decides what to add or when, only inspects
+          // their real output.
+          const sanitized = sanitizeConnectionString(raw);
+          const transformed = ensurePgbouncerCompatibility(sanitized);
+
+          const rawPort = safePort(raw);
+          const transformedPort = safePort(transformed);
+
+          console.log(`EFFECTIVE DATASOURCE PORT: ${transformedPort}`);
+          console.log(`EFFECTIVE PGBOUNCER=TRUE: ${paramPresent(transformed, "pgbouncer", "true")}`);
+          console.log(`EFFECTIVE CONNECTION_LIMIT=1: ${paramPresent(transformed, "connection_limit", "1")}`);
+          console.log(`COMPATIBILITY TRANSFORMATION EXECUTED: ${transformed !== raw ? "YES" : "NO"}`);
+          console.log(`RAW VS TRANSFORMED PORT: ${rawPort === transformedPort ? "SAME" : "DIFFERENT"}`);
+          TS_EOF
+          npx tsx ./tmp-pgbouncer-effective-check.mts
+          rm -f ./tmp-pgbouncer-effective-check.mts
+
           rm -rf .vercel
         env:
           STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
