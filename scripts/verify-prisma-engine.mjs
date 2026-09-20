@@ -1,40 +1,42 @@
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
-// Vercel's Node.js Lambda runtime is Amazon Linux 2 (RHEL family), which needs the
-// rhel-openssl-3.0.x query engine binary. `binaryTargets` in prisma/schema.prisma
-// makes `prisma generate` produce that file, but Next.js's file-tracing (which
-// decides what actually ships in the deployed function bundle) can still drop it
-// if the engine isn't reachable from a traced require/read. This script checks the
-// real, generated tracing manifest -- not just the schema config -- so a future
-// regression can't silently ship a function missing its query engine again.
-const REQUIRED_ENGINE_PATTERN = /libquery_engine-rhel-openssl-3\.0\.x\.so\.node$/;
+// Prisma's Rust-free client (generator client { provider = "prisma-client", engineType =
+// "client" } in prisma/schema.prisma) has no native, per-platform query engine binary at
+// all -- query compilation is done by a portable WASM module embedded as base64 inside
+// @prisma/client/runtime, and all database I/O goes through the @prisma/adapter-pg driver
+// adapter (see src/server/db/prisma.ts). This previously guarded the OPPOSITE invariant
+// (that the classic engine's rhel-openssl-3.0.x binary shipped with the Vercel Lambda
+// bundle); now it guards that no such native binary has crept back in, since one appearing
+// again would mean a dependency or config regressed back toward the classic Rust-engine
+// architecture that caused the Supavisor prepared-statement incompatibility this migration
+// fixed.
+const NATIVE_ENGINE_PATTERN = /query[_-]engine[^/\\]*\.(so|dll|dylib)\.node$/;
 
 const nftPath = path.resolve(process.argv[2] ?? ".next/server/app/api/health/route.js.nft.json");
 
 if (!existsSync(nftPath)) {
   console.error(
-    `Prisma RHEL engine check: file-tracing manifest not found at "${path.basename(nftPath)}". Run "npm run build" first.`,
+    `Prisma native-engine-absence check: file-tracing manifest not found at "${path.basename(nftPath)}". Run "npm run build" first.`,
   );
   process.exit(1);
 }
 
 const manifest = JSON.parse(readFileSync(nftPath, "utf8"));
 const files = Array.isArray(manifest.files) ? manifest.files : [];
-const included = files.some((file) => REQUIRED_ENGINE_PATTERN.test(file));
+const nativeEngineFiles = files.filter((file) => NATIVE_ENGINE_PATTERN.test(file));
 
-if (!included) {
+if (nativeEngineFiles.length > 0) {
   console.error(
-    "Prisma RHEL engine check: the rhel-openssl-3.0.x query engine is missing from the " +
-      "/api/health function's file-tracing manifest. Vercel's Node.js Lambda runtime needs " +
-      "this binary -- without it, Prisma throws PrismaClientInitializationError at request " +
-      'time even though "prisma generate" succeeded. Confirm `binaryTargets` in ' +
-      'prisma/schema.prisma includes "rhel-openssl-3.0.x" and that next.config.ts keeps ' +
-      "@prisma/client external (serverExternalPackages) so Next's tracer can see the engine file.",
+    "Prisma native-engine-absence check: a native Prisma query engine binary is present in " +
+      `the /api/health function's file-tracing manifest (${nativeEngineFiles.join(", ")}). ` +
+      'The schema\'s "generator client" block should use provider = "prisma-client" with ' +
+      'engineType = "client" and no binaryTargets -- a native binary showing up here means ' +
+      "the build has regressed back toward the classic Rust-engine architecture.",
   );
   process.exit(1);
 }
 
 console.log(
-  "Prisma RHEL engine check: rhel-openssl-3.0.x query engine is present in build artifacts.",
+  "Prisma native-engine-absence check: no native query engine binary present in build artifacts.",
 );

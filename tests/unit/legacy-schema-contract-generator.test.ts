@@ -1,7 +1,14 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterAll, describe, expect, it } from "vitest";
+// Same official, generator-independent DMMF API scripts/generate-legacy-schema-contract.mjs
+// itself uses (see PRISMA_DMMF_CACHE_PATH below for why this test needs its own instance).
+import prismaInternals from "@prisma/internals";
+
+const { getDMMF } = prismaInternals;
 
 const GENERATOR_PATH = resolve(process.cwd(), "scripts/generate-legacy-schema-contract.mjs");
 const SCRIPTS_DIR = resolve(process.cwd(), "scripts");
@@ -16,10 +23,51 @@ interface GeneratorResult {
   stderr: string;
 }
 
-// Runs a (possibly mutated) copy of the generator as a real child process. The copy is written
-// inside scripts/ (not an OS temp dir) so Node's ESM resolution for the bare "@prisma/client"
-// specifier can walk up to this project's node_modules; it is always removed afterward.
-function runGenerator(source: string): GeneratorResult {
+/**
+ * Every runGenerator() call below spawns a real subprocess against the exact same,
+ * unmutated prisma/schema.prisma (only the generator's own config constants are mutated
+ * per test case -- never the schema), so its DMMF is identical every time. getDMMF()
+ * spawns Prisma's WASM schema engine, which costs real wall-clock time per call (~1-2s);
+ * computing it once here and handing every subprocess the cached JSON via
+ * PRISMA_DMMF_CACHE_PATH turns ~40 redundant schema-engine cold starts into one. This
+ * measurably fixed a full-suite regression: with 40 cold starts, this file alone took
+ * >70s wall-clock and starved unrelated, timing-sensitive tests (mobile-nav.test.tsx,
+ * auth-forms-password-visibility.test.tsx) of CPU past their timeouts in the shared
+ * worker pool.
+ *
+ * The cache is not a bare, unconditional bypass, but neither check below is a security
+ * boundary -- both PRISMA_DMMF_CACHE_PATH and VITEST are ordinary env vars a caller could
+ * set deliberately, and the cache file's own declared schemaHash is a plain string in a
+ * file this process trusts, not a cryptographic proof of how its `dmmf` value was
+ * derived. What they actually provide: VITEST=true (set by Vitest itself, and observed to
+ * propagate to a subprocess whose env is built by spreading process.env, as below) makes
+ * accidental activation outside a real test run unlikely; the schemaHash comparison
+ * catches an accidentally stale or mismatched cache (one computed for a different schema
+ * than what's currently on disk). Both assume this test file -- the only place that ever
+ * sets these values -- is a trusted writer that pairs a correct DMMF with the hash it
+ * declares. See generate-legacy-schema-contract.mjs's loadDatamodel() for both checks.
+ */
+const dmmfCacheDir = mkdtempSync(join(tmpdir(), "legacy-schema-contract-dmmf-"));
+const dmmfCachePath = join(dmmfCacheDir, "dmmf.json");
+const schemaSource = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+const schemaHash = createHash("sha256").update(schemaSource).digest("hex");
+const dmmf = await getDMMF({ datamodel: schemaSource });
+writeFileSync(dmmfCachePath, JSON.stringify({ schemaHash, dmmf }), "utf8");
+
+afterAll(() => {
+  rmSync(dmmfCacheDir, { recursive: true, force: true });
+});
+
+// Runs a (possibly mutated) copy of the generator as a real child process. The copy is
+// written inside scripts/ (not an OS temp dir) so Node's module resolution for its
+// "@prisma/internals" import can reach this project's own node_modules; it is always
+// removed afterward. `cwd`/`env` default to the normal cache-fast-path invocation every
+// other test in this file uses; the cache-integrity tests below override them to exercise
+// the real uncached path, a different cwd, or a deliberately broken cache/environment.
+function runGenerator(
+  source: string,
+  options: { cwd?: string; env?: NodeJS.ProcessEnv } = {},
+): GeneratorResult {
   const scriptPath = join(
     SCRIPTS_DIR,
     `.__tmp-legacy-schema-contract-${process.pid}-${Date.now()}.mjs`,
@@ -27,8 +75,9 @@ function runGenerator(source: string): GeneratorResult {
   writeFileSync(scriptPath, source, "utf8");
   try {
     const stdout = execFileSync(process.execPath, [scriptPath], {
-      cwd: process.cwd(),
+      cwd: options.cwd ?? process.cwd(),
       encoding: "utf8",
+      env: options.env ?? { ...process.env, PRISMA_DMMF_CACHE_PATH: dmmfCachePath },
     });
     return { status: 0, stdout, stderr: "" };
   } catch (error) {
@@ -639,5 +688,72 @@ describe("legacy schema contract generator", () => {
     expect(overrideStart).toBeGreaterThan(fkEnd);
     expect(overrideEnd).toBeGreaterThan(overrideStart);
     expect(rlsStart).toBeGreaterThan(overrideEnd);
+  });
+});
+
+describe("PRISMA_DMMF_CACHE_PATH cache-integrity guarantees", () => {
+  it("an invalid schema exercises the real, uncached getDMMF() path and fails closed", () => {
+    // Explicitly unsets PRISMA_DMMF_CACHE_PATH (every other test in this file relies on
+    // the default env, which sets it) so this run cannot take the cache fast path no
+    // matter what -- it must call the real getDMMF() against the broken schema below.
+    const brokenDir = mkdtempSync(join(tmpdir(), "legacy-schema-contract-broken-schema-"));
+    mkdirSync(join(brokenDir, "prisma"));
+    writeFileSync(
+      join(brokenDir, "prisma", "schema.prisma"),
+      `${schemaSource}\nthis is not valid prisma syntax {{{\n`,
+      "utf8",
+    );
+    try {
+      const envWithoutCache = { ...process.env };
+      delete envWithoutCache.PRISMA_DMMF_CACHE_PATH;
+      const result = runGenerator(generatorSource, { cwd: brokenDir, env: envWithoutCache });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("Validation Error");
+    } finally {
+      rmSync(brokenDir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails closed with a nonzero exit code when PRISMA_DMMF_CACHE_PATH points to malformed JSON", () => {
+    const badCacheDir = mkdtempSync(join(tmpdir(), "legacy-schema-contract-bad-cache-"));
+    const badCachePath = join(badCacheDir, "not-json.json");
+    writeFileSync(badCachePath, "{ this is not valid JSON", "utf8");
+    try {
+      const result = runGenerator(generatorSource, {
+        env: { ...process.env, PRISMA_DMMF_CACHE_PATH: badCachePath },
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr.length).toBeGreaterThan(0);
+    } finally {
+      rmSync(badCacheDir, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses PRISMA_DMMF_CACHE_PATH outside a real Vitest run", () => {
+    const envWithoutVitest: NodeJS.ProcessEnv = {
+      ...process.env,
+      PRISMA_DMMF_CACHE_PATH: dmmfCachePath,
+    };
+    delete envWithoutVitest.VITEST;
+    const result = runGenerator(generatorSource, { env: envWithoutVitest });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toContain("only supported under Vitest");
+  });
+
+  it("refuses a cache whose schemaHash does not match the current schema (stale or unrelated metadata)", () => {
+    const staleCacheDir = mkdtempSync(join(tmpdir(), "legacy-schema-contract-stale-cache-"));
+    const staleCachePath = join(staleCacheDir, "stale.json");
+    const staleCache = JSON.parse(readFileSync(dmmfCachePath, "utf8"));
+    staleCache.schemaHash = "0".repeat(64);
+    writeFileSync(staleCachePath, JSON.stringify(staleCache), "utf8");
+    try {
+      const result = runGenerator(generatorSource, {
+        env: { ...process.env, PRISMA_DMMF_CACHE_PATH: staleCachePath },
+      });
+      expect(result.status).not.toBe(0);
+      expect(result.stderr).toContain("schema hash mismatch");
+    } finally {
+      rmSync(staleCacheDir, { recursive: true, force: true });
+    }
   });
 });

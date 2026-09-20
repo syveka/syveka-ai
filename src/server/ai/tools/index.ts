@@ -5,7 +5,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { retrieveChunks } from "@/server/ai/rag";
 import { can, type Permission } from "@/server/auth/permissions";
-import type { Role } from "@prisma/client";
+import type { Role } from "@/generated/prisma/client/client";
 import { audit } from "@/server/services/audit";
 import { computeAvailableSlots, type DateOverride, type WeeklyRule } from "@/server/calendar/slots";
 import { addDaysUtc, isValidTimezone, zonedTimeToUtc } from "@/server/calendar/timezone";

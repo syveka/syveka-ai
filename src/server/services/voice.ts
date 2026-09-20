@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { VoiceAssistant } from "@prisma/client";
+import type { VoiceAssistant } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import {
   upsertVapiAssistant,

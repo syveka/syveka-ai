@@ -1,7 +1,7 @@
 "use server";
 
 import { redirect } from "next/navigation";
-import type { Plan } from "@prisma/client";
+import type { Plan } from "@/generated/prisma/client/client";
 
 type BillingInterval = "monthly" | "annual";
 

@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useTranslations } from "next-intl";
-import type { Plan } from "@prisma/client";
+import type { Plan } from "@/generated/prisma/client/client";
 import { startCheckoutAction } from "@/actions/billing";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";

@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 import { useRouter } from "@/i18n/routing";
 import { setCampaignAutopilotAction } from "@/actions/creator-studio";
 import { Button } from "@/components/ui/button";
-import type { SocialPlatform } from "@prisma/client";
+import type { SocialPlatform } from "@/generated/prisma/client/client";
 
 /** Phase 10: autopilot is opt-in and always ships with explicit, visible rules — never a silent toggle. */
 export function AutopilotToggle({

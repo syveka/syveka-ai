@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import type { CalendarProvider } from "@prisma/client";
+import type { CalendarProvider } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { audit } from "./audit";
 import { getProviderAdapter } from "@/server/integrations/calendar";

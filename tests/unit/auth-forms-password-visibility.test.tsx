@@ -39,6 +39,12 @@ function withProvider(children: React.ReactNode) {
 describe("auth forms use the shared password-visibility control", () => {
   afterEach(cleanup);
 
+  // First test in the file: its dynamic import pays a one-time cold-module-load cost
+  // (RegisterForm/ResetPasswordForm below reuse Node's warm module cache and run in
+  // single-digit ms). Directly measured at ~5.3s under full-suite contention from
+  // tests/unit/legacy-schema-contract-generator.test.ts's ~36 concurrent subprocess
+  // spawns, just over the default 5s budget, with no change in what this test does or
+  // asserts. Scoped to this one test only; see the migration report for the measurement.
   it("LoginForm: one password field, hidden by default, current-password autocomplete", async () => {
     const { LoginForm } = await import("../../src/app/[locale]/(auth)/login/login-form");
     const { container } = render(withProvider(<LoginForm />));
@@ -48,7 +54,7 @@ describe("auth forms use the shared password-visibility control", () => {
     expect(input.autocomplete).toBe("current-password");
     expect(input.required).toBe(true);
     expect(screen.getByRole("button", { name: "Show password" })).toBeTruthy();
-  });
+  }, 15000);
 
   it("RegisterForm: one password field, hidden by default, new-password autocomplete", async () => {
     const { RegisterForm } = await import("../../src/app/[locale]/(auth)/register/register-form");

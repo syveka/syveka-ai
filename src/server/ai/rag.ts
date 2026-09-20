@@ -1,6 +1,6 @@
 import "server-only";
 
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/generated/prisma/client/client";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { embedOne } from "@/server/integrations/openai";
 

@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Plan } from "@prisma/client";
+import type { Plan } from "@/generated/prisma/client/client";
 
 export type PlanLimits = {
   maxSeats: number;

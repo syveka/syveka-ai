@@ -11,7 +11,7 @@ import {
   revokeEntitlementGrantSchema,
 } from "@/lib/validators/entitlement-grants";
 import { AuthError } from "@/server/auth/session";
-import type { EntitlementMetric } from "@prisma/client";
+import type { EntitlementMetric } from "@/generated/prisma/client/client";
 
 export type EntitlementGrantActionState = { error?: string; message?: string };
 

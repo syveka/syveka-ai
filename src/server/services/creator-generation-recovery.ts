@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { CreatorGenerationType } from "@prisma/client";
+import type { CreatorGenerationType } from "@/generated/prisma/client/client";
 import { unscopedPrisma } from "@/server/db/tenant";
 import type { TenantContext } from "@/server/auth/session";
 import { audit } from "./audit";

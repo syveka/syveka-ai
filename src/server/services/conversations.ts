@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import type { TenantContext } from "@/server/auth/session";
 import { anthropic } from "@/server/integrations/anthropic";

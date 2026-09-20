@@ -32,7 +32,8 @@
  * DATABASE_URL/DIRECT_URL must be the same direct/session connection, same
  * requirement and reason as scripts/ensure-e2e-org-fixture.ts.
  */
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../src/generated/prisma/client/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 
 const CREATOR_STUDIO_FLAG = "creator_studio_v1";
 const DEFAULT_MIN_CREDITS = 500;
@@ -43,16 +44,17 @@ function requireEnv(name: string): string {
   return value;
 }
 
-function requireDirectConnection(): void {
+function requireDirectConnection(): string {
   const databaseUrl = requireEnv("DATABASE_URL");
   const directUrl = requireEnv("DIRECT_URL");
   if (databaseUrl !== directUrl) {
     throw new Error(
       "enable-creator-studio-for-org: DATABASE_URL and DIRECT_URL must be the same direct/" +
         "session connection for this script — it is a one-off admin script, not the deployed " +
-        "app, and PrismaClient's runtime query engine only ever uses DATABASE_URL/`url`.",
+        "app, and its PrismaPg adapter only ever connects using DATABASE_URL/`url`.",
     );
   }
+  return databaseUrl;
 }
 
 function parseArgs(): { email?: string; orgId?: string; minCredits: number } {
@@ -78,10 +80,10 @@ function parseArgs(): { email?: string; orgId?: string; minCredits: number } {
 }
 
 async function main(): Promise<void> {
-  requireDirectConnection();
+  const databaseUrl = requireDirectConnection();
   const { email, orgId: orgIdArg, minCredits } = parseArgs();
 
-  const prisma = new PrismaClient();
+  const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
   try {
     let orgId = orgIdArg;
     if (!orgId) {

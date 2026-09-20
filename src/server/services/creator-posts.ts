@@ -8,7 +8,7 @@ import { audit } from "./audit";
 import { notifyApprovers, notifyUser } from "./creator-notifications";
 import { enqueue } from "@/server/jobs/queue";
 import type { CreatePostInput, AutopilotRules } from "@/lib/validators/creator-studio";
-import type { CreatorCampaignApprovalMode, SocialPlatform } from "@prisma/client";
+import type { CreatorCampaignApprovalMode, SocialPlatform } from "@/generated/prisma/client/client";
 
 export class PostWorkflowError extends Error {
   constructor(

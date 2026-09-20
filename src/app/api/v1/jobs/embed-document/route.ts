@@ -25,7 +25,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     { recordUsage },
     { assertExtractionLimits, assertTenantStoragePath, verifyUploadObject },
   ] = await Promise.all([
-    import("@prisma/client"),
+    import("@/generated/prisma/client/client"),
     import("@/server/jobs/verify"),
     import("@/server/db/tenant"),
     import("@/server/supabase/server"),

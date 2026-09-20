@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { sanitizeErrorMessage as sanitizeErrorMessageShared } from "@/server/security/error-sanitization";
 import type Stripe from "stripe";
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "@/generated/prisma/client/client";
 import type { unscopedPrisma as prismaClient } from "@/server/db/tenant";
 import type { planForPriceId as resolvePlanForPriceId } from "@/server/integrations/stripe";
 import type { invalidateEntitlements as invalidateBillingEntitlements } from "@/server/services/billing/entitlements";

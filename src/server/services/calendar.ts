@@ -12,7 +12,7 @@ import { intervalsOverlap } from "@/server/calendar/slots";
 import { cancelBookingAsOwner, BookingError } from "./booking";
 import type { TenantContext } from "@/server/auth/session";
 import type { EventFilters, EventInput } from "@/lib/validators/calendar";
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "@/generated/prisma/client/client";
 
 export class CalendarError extends Error {
   constructor(

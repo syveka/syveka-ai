@@ -1,4 +1,4 @@
-import type { CalendarProvider } from "@prisma/client";
+import type { CalendarProvider } from "@/generated/prisma/client/client";
 
 /**
  * Provider abstraction for external calendar integrations.

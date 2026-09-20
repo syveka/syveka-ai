@@ -25,23 +25,19 @@ function runVerifyScript(nftPath: string): { status: number; stdout: string; std
   }
 }
 
-describe("Prisma rhel-openssl-3.0.x engine (Vercel Lambda runtime compatibility)", () => {
-  it("declares both native and rhel-openssl-3.0.x in binaryTargets", () => {
+describe("Prisma Rust-free client (no native query engine binary)", () => {
+  it("uses the prisma-client generator with engineType=client and no binaryTargets", () => {
     const block = generatorClientBlock();
-    const match = block.match(/binaryTargets\s*=\s*\[([^\]]*)\]/);
-    if (!match) throw new Error("generator client block must set binaryTargets");
-    const targets = match[1]!.split(",").map((t) => t.trim().replace(/^"|"$/g, ""));
-    expect(targets).toContain("native");
-    expect(targets).toContain("rhel-openssl-3.0.x");
+    expect(block).toMatch(/provider\s*=\s*"prisma-client"/);
+    expect(block).toMatch(/engineType\s*=\s*"client"/);
+    expect(block).not.toMatch(/binaryTargets/);
   });
 
   it("wires a build-artifact verification step into the staging workflow, after the build and before deploy", () => {
     const workflow = readFileSync(WORKFLOW_PATH, "utf8").replace(/\r\n?/g, "\n");
     expect(workflow).toContain("node scripts/verify-prisma-engine.mjs");
     const buildIdx = workflow.indexOf("- name: Production build");
-    const verifyIdx = workflow.indexOf(
-      "Verify Prisma RHEL query engine is included in build artifacts",
-    );
+    const verifyIdx = workflow.indexOf("scripts/verify-prisma-engine.mjs");
     const deployIdx = workflow.indexOf("- name: Deploy staging application");
     expect(buildIdx).toBeGreaterThan(-1);
     expect(verifyIdx).toBeGreaterThan(buildIdx);
@@ -49,8 +45,29 @@ describe("Prisma rhel-openssl-3.0.x engine (Vercel Lambda runtime compatibility)
   });
 
   describe("scripts/verify-prisma-engine.mjs", () => {
-    it("passes when the traced manifest includes the rhel-openssl-3.0.x engine", () => {
+    it("passes when the traced manifest has no native query engine binary", () => {
       const dir = mkdtempSync(path.join(tmpdir(), "prisma-engine-ok-"));
+      const nftPath = path.join(dir, "route.js.nft.json");
+      writeFileSync(
+        nftPath,
+        JSON.stringify({
+          files: [
+            "../../../../../node_modules/@prisma/client/runtime/client.js",
+            "../../../../../node_modules/@prisma/client/runtime/query_compiler_bg.postgresql.wasm-base64.js",
+          ],
+        }),
+      );
+      try {
+        const result = runVerifyScript(nftPath);
+        expect(result.status).toBe(0);
+        expect(result.stdout).toContain("no native query engine binary present");
+      } finally {
+        rmSync(dir, { recursive: true, force: true });
+      }
+    });
+
+    it("fails closed when a native query engine binary is present in the manifest", () => {
+      const dir = mkdtempSync(path.join(tmpdir(), "prisma-engine-regressed-"));
       const nftPath = path.join(dir, "route.js.nft.json");
       writeFileSync(
         nftPath,
@@ -63,29 +80,26 @@ describe("Prisma rhel-openssl-3.0.x engine (Vercel Lambda runtime compatibility)
       );
       try {
         const result = runVerifyScript(nftPath);
-        expect(result.status).toBe(0);
-        expect(result.stdout).toContain("is present in build artifacts");
+        expect(result.status).toBe(1);
+        expect(result.stderr).toContain("native Prisma query engine binary is present");
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }
     });
 
-    it("fails closed when the manifest is missing the rhel-openssl-3.0.x engine", () => {
-      const dir = mkdtempSync(path.join(tmpdir(), "prisma-engine-missing-"));
+    it("also fails closed for a Windows-style native engine binary", () => {
+      const dir = mkdtempSync(path.join(tmpdir(), "prisma-engine-windows-"));
       const nftPath = path.join(dir, "route.js.nft.json");
       writeFileSync(
         nftPath,
         JSON.stringify({
-          files: [
-            "../../../../../node_modules/.prisma/client/index.js",
-            "../../../../../node_modules/.prisma/client/query_engine-windows.dll.node",
-          ],
+          files: ["../../../../../node_modules/.prisma/client/query_engine-windows.dll.node"],
         }),
       );
       try {
         const result = runVerifyScript(nftPath);
         expect(result.status).toBe(1);
-        expect(result.stderr).toContain("rhel-openssl-3.0.x query engine is missing");
+        expect(result.stderr).toContain("native Prisma query engine binary is present");
       } finally {
         rmSync(dir, { recursive: true, force: true });
       }

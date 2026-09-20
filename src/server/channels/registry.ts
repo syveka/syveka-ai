@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { InboxChannel } from "@prisma/client";
+import type { InboxChannel } from "@/generated/prisma/client/client";
 import { getEmailChannelAdapter } from "./email";
 import type { EmailChannelAdapter } from "./email/types";
 

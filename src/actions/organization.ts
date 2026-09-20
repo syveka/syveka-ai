@@ -2,7 +2,7 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
-import type { Locale } from "@prisma/client";
+import type { Locale } from "@/generated/prisma/client/client";
 import { getSessionUser } from "@/server/auth/session";
 import { AuthError } from "@/server/auth/session";
 import { createOrganization, switchOrganization } from "@/server/services/organizations";

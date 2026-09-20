@@ -2,7 +2,7 @@ import "server-only";
 
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import type { TenantContext } from "@/server/auth/session";
-import type { InboxChannel } from "@prisma/client";
+import type { InboxChannel } from "@/generated/prisma/client/client";
 
 /**
  * Deterministic, collision-resistant local part derived from the org's slug.
