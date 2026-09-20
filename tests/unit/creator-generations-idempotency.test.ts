@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/generated/prisma/client/client";
 import type { TenantContext } from "@/server/auth/session";
 import type * as CreatorCreditsModule from "@/server/services/creator-credits";
 

@@ -65,7 +65,7 @@ vi.mock("@/server/services/contacts", () => ({
   listContacts: listContactsMock,
 }));
 
-import { Prisma } from "@prisma/client";
+import { Prisma } from "@/generated/prisma/client/client";
 import {
   approveMessage,
   assignThread,

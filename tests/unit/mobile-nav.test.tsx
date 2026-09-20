@@ -30,6 +30,15 @@ const messages = JSON.parse(
 describe("MobileNav", () => {
   afterEach(cleanup);
 
+  // This is the first test in the file, so its two dynamic imports pay a one-time
+  // cold-module-load cost (everything after it in this file reuses Node's warm module
+  // cache and runs in single-digit ms). That cold cost is normally well under a second,
+  // but under full-suite contention -- specifically, tests/unit/legacy-schema-contract-
+  // generator.test.ts spawning ~36 real subprocesses concurrently in the shared worker
+  // pool -- it has been directly measured pushing this test to ~5.3s, just over the
+  // default 5s budget, with no change in what the test itself does or asserts. Scoped to
+  // this one test only (not global) since the assertions and rendering logic are correct
+  // and fast on their own; see the migration report for the full measurement.
   it("reveals every permission-visible destination when opened, and hides gated ones", async () => {
     const { MobileNav } = await import("../../src/components/layout/mobile-nav");
     const { permissionsFor } = await import("../../src/server/auth/permissions");
@@ -57,7 +66,7 @@ describe("MobileNav", () => {
     // AppSidebar/NAV gates this route on) -- must stay hidden here too, or
     // the two navs would grant different access to the same role.
     expect(screen.queryByRole("menuitem", { name: "Analytics" })).toBeNull();
-  });
+  }, 15000);
 
   it("is only rendered for mobile viewports (md:hidden), never a second nav on desktop", async () => {
     const { MobileNav } = await import("../../src/components/layout/mobile-nav");

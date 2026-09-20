@@ -14,7 +14,7 @@ import {
 } from "@/server/crm/context";
 import { InboxError, upsertAiDraftMessage } from "./inbox";
 import type { TenantContext } from "@/server/auth/session";
-import type { InboxMessage } from "@prisma/client";
+import type { InboxMessage } from "@/generated/prisma/client/client";
 import type { BusinessDnaContext } from "@/server/business-dna/context";
 import type { CrmContactContext, CrmDealContext } from "@/server/crm/context";
 

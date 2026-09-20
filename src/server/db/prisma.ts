@@ -1,6 +1,6 @@
 import "server-only";
 
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "@/generated/prisma/client/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import {
   ensurePgbouncerCompatibility,

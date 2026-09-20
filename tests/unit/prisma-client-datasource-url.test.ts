@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 const PrismaClientMock = vi.fn();
 const PrismaPgMock = vi.fn();
 
-vi.mock("@prisma/client", () => ({
+vi.mock("@/generated/prisma/client/client", () => ({
   PrismaClient: PrismaClientMock,
 }));
 

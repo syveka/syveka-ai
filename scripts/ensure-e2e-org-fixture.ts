@@ -11,7 +11,8 @@
  * Safe to run on every staging-release: no-ops immediately if the account
  * already has any organization membership.
  */
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../src/generated/prisma/client/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { createClient } from "@supabase/supabase-js";
 import { DEFAULT_PIPELINE_STAGES } from "../src/lib/constants";
 
@@ -24,8 +25,8 @@ function requireEnv(name: string): string {
 /**
  * This is a one-off admin script, not the deployed serverless app -- it
  * must run against the direct/session database connection, not a
- * transaction-pooler URL meant for the app's own runtime. PrismaClient's
- * query engine always connects via `url`/DATABASE_URL (never `directUrl`,
+ * transaction-pooler URL meant for the app's own runtime. This script
+ * builds its own PrismaPg adapter from DATABASE_URL (never DIRECT_URL,
  * which only `prisma migrate`/`db` CLI commands use), so DATABASE_URL and
  * DIRECT_URL must be the same connection here. Caught staging-release
  * passing them as two different secrets once already (DATABASE_URL's
@@ -33,26 +34,27 @@ function requireEnv(name: string): string {
  * this check turns any future drift back into that same mistake into an
  * immediate, clear failure instead of a confusing raw Prisma auth error.
  */
-function requireDirectConnection(): void {
+function requireDirectConnection(): string {
   const databaseUrl = requireEnv("DATABASE_URL");
   const directUrl = requireEnv("DIRECT_URL");
   if (databaseUrl !== directUrl) {
     throw new Error(
       "ensure-e2e-org-fixture: DATABASE_URL and DIRECT_URL must be the same direct/session " +
         "connection for this script -- it is a one-off admin script, not the deployed app, " +
-        "and PrismaClient's runtime query engine only ever uses DATABASE_URL/`url`, never " +
+        "and its PrismaPg adapter only ever connects using DATABASE_URL/`url`, never " +
         "DIRECT_URL/`directUrl`. Point both at the direct connection secret in the workflow.",
     );
   }
+  return databaseUrl;
 }
 
 async function main(): Promise<void> {
-  requireDirectConnection();
+  const databaseUrl = requireDirectConnection();
   const email = requireEnv("E2E_USER_EMAIL");
   const supabaseUrl = requireEnv("SUPABASE_URL");
   const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 
-  const prisma = new PrismaClient();
+  const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
   try {
     const user = await prisma.user.findUnique({ where: { email }, select: { id: true } });
     if (!user) {

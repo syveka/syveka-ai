@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { CalendarProvider } from "@prisma/client";
+import type { CalendarProvider } from "@/generated/prisma/client/client";
 import { googleCalendarAdapter } from "./google";
 import { microsoftCalendarAdapter } from "./microsoft";
 import { mockCalendarAdapter } from "./mock";

@@ -1,7 +1,7 @@
 import "server-only";
 
 import Stripe from "stripe";
-import type { Plan } from "@prisma/client";
+import type { Plan } from "@/generated/prisma/client/client";
 import { getStripeEnv } from "@/env";
 
 let stripeClient: Stripe | null = null;

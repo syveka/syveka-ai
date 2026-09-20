@@ -1,4 +1,4 @@
-import type { Role } from "@prisma/client";
+import type { Role } from "@/generated/prisma/client/client";
 
 /**
  * RBAC single source of truth (§12.2).

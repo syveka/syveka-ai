@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
-import type { CalendarProvider } from "@prisma/client";
+import type { CalendarProvider } from "@/generated/prisma/client/client";
 import { requirePermission } from "@/server/auth/guard";
 import {
   checkConnectionHealth,

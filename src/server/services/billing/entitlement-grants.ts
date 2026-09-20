@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { EntitlementMetric } from "@prisma/client";
+import type { EntitlementMetric } from "@/generated/prisma/client/client";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { requireSuperadmin } from "@/server/auth/superadmin";
 import { audit } from "@/server/services/audit";

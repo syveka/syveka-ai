@@ -8,7 +8,12 @@
 //
 //   DATABASE_URL=postgresql://postgres:postgres@localhost:5432/postgres \
 //   DIRECT_URL=postgresql://postgres:postgres@localhost:5432/postgres \
-//     node tests/integration/run-workflow-step-fencing.mjs
+//     node --import tsx tests/integration/run-workflow-step-fencing.mjs
+//
+// Requires --import tsx (already a devDependency) because the imported
+// generated Prisma client (src/generated/prisma/client) is raw TypeScript
+// source under the new Rust-free/engineType=client generator -- plain
+// `node` cannot load it directly.
 //
 // Scenario: Worker A claims a step, then stalls (slow, not dead) past the
 // step-claim staleness threshold. Worker B (e.g. a QStash retry delivery)
@@ -25,10 +30,13 @@
 // route's own logic (not a hand-written analog), so this exercises the exact
 // mechanism under test, not a simplified stand-in for it.
 
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../../src/generated/prisma/client/client.ts";
+import { PrismaPg } from "@prisma/adapter-pg";
 import crypto from "node:crypto";
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+});
 const STALE_STEP_CLAIM_MS = 300; // shortened for test speed; the guard logic itself is identical to production
 
 function isUniqueViolation(err) {

@@ -1,7 +1,7 @@
 import "server-only";
 
 import { cache } from "react";
-import type { Role } from "@prisma/client";
+import type { Role } from "@/generated/prisma/client/client";
 import { createSupabaseServer } from "@/server/supabase/server";
 import { prisma } from "@/server/db/prisma";
 

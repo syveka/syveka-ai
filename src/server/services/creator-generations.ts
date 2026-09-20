@@ -1,6 +1,6 @@
 import "server-only";
 
-import { Prisma, type CreatorGenerationType } from "@prisma/client";
+import { Prisma, type CreatorGenerationType } from "@/generated/prisma/client/client";
 import { tenantDb } from "@/server/db/tenant";
 import type { TenantContext } from "@/server/auth/session";
 import { assertFeatureEnabled } from "./feature-flags";

@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { unscopedPrisma } from "@/server/db/tenant";
-import type { BookingTokenPurpose, Prisma } from "@prisma/client";
+import type { BookingTokenPurpose, Prisma } from "@/generated/prisma/client/client";
 
 /**
  * Secure expiring booking tokens (§public cancel/reschedule links).

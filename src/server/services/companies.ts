@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "@/generated/prisma/client/client";
 import { tenantDb } from "@/server/db/tenant";
 import { audit } from "./audit";
 import { archivedWhere, noteSubject } from "./contacts";

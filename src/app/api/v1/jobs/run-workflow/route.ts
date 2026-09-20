@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "@/generated/prisma/client/client";
 import { WorkflowNotificationEmail } from "../../../../../../emails/workflow-notification";
 import type { WorkflowStep } from "@/lib/validators/workflows";
 

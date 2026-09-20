@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { SocialPlatform } from "@prisma/client";
+import type { SocialPlatform } from "@/generated/prisma/client/client";
 import { createMockSocialProvider } from "./mock";
 import { TikTokPublishingProvider, YouTubePublishingProvider } from "./blocked-adapter";
 import {

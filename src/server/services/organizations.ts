@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Locale } from "@prisma/client";
+import type { Locale } from "@/generated/prisma/client/client";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { createSupabaseAdmin } from "@/server/supabase/server";
 import { slugify } from "@/lib/utils";

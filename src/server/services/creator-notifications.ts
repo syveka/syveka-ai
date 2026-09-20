@@ -2,7 +2,7 @@ import "server-only";
 
 import { unscopedPrisma } from "@/server/db/tenant";
 import type { TenantContext } from "@/server/auth/session";
-import type { Role } from "@prisma/client";
+import type { Role } from "@/generated/prisma/client/client";
 
 /**
  * Creator Studio in-app notifications — direct `notification.create` calls,

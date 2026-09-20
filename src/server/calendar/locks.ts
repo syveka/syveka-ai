@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "@/generated/prisma/client/client";
 
 /**
  * Transaction-scoped Postgres advisory locks that serialize concurrent

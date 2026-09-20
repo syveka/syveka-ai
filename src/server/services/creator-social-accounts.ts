@@ -2,7 +2,7 @@ import "server-only";
 
 import { tenantDb } from "@/server/db/tenant";
 import type { TenantContext } from "@/server/auth/session";
-import type { SocialPlatform } from "@prisma/client";
+import type { SocialPlatform } from "@/generated/prisma/client/client";
 import { assertFeatureEnabled } from "./feature-flags";
 import { CREATOR_STUDIO_FLAG } from "./creator-profiles";
 import { audit } from "./audit";
@@ -11,7 +11,7 @@ import { metaAuthorizeUrl } from "@/server/social/meta-provider";
 import { isMetaConfigured } from "@/server/integrations/meta/client";
 import { buildSocialOAuthState, verifySocialOAuthState } from "@/server/social/oauth-state";
 import { encryptSocialToken, decryptSocialToken } from "@/server/integrations/social/crypto";
-import type { SocialAccount } from "@prisma/client";
+import type { SocialAccount } from "@/generated/prisma/client/client";
 
 export class SocialConnectError extends Error {
   constructor(

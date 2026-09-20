@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Role } from "@prisma/client";
+import type { Role } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { createSupabaseAdmin } from "@/server/supabase/server";
 import { assertWithinLimit } from "./billing/entitlements";

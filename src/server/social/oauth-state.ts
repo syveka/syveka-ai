@@ -1,7 +1,7 @@
 import "server-only";
 
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import type { SocialPlatform } from "@prisma/client";
+import type { SocialPlatform } from "@/generated/prisma/client/client";
 
 /**
  * HMAC-signed, expiring, tenant-bound OAuth state for the Meta OAuth

@@ -2,12 +2,15 @@
  * Seeds: global prompt library (FI/EN) + demo data for local dev.
  * Global prompts have organizationId = null (§15.7).
  */
-import { PrismaClient, Locale } from "@prisma/client";
+import { PrismaClient, Locale } from "../src/generated/prisma/client/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { DEFAULT_PIPELINE_STAGES } from "../src/lib/constants";
 
 void DEFAULT_PIPELINE_STAGES; // re-exported for compat
 
-const prisma = new PrismaClient();
+const prisma = new PrismaClient({
+  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL }),
+});
 
 const globalPrompts: Array<{
   title: string;

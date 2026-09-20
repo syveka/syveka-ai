@@ -1,7 +1,20 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { Prisma } from "@prisma/client";
+// The Rust-free client (generator client { provider = "prisma-client", engineType =
+// "client" }) no longer exposes Prisma.dmmf at runtime, so the full schema model list is
+// read directly from the schema source via @prisma/internals instead -- the same official,
+// generator-independent API scripts/generate-legacy-schema-contract.mjs uses. @prisma/internals
+// ships as CommonJS, hence the default-import/destructure instead of a named import.
+import prismaInternals from "@prisma/internals";
+
+const { getDMMF } = prismaInternals;
+
+async function schemaModelNames(): Promise<string[]> {
+  const schemaSource = readFileSync(resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+  const dmmf = await getDMMF({ datamodel: schemaSource });
+  return dmmf.datamodel.models.map((model) => model.name);
+}
 
 /**
  * TENANT_MODELS (src/server/db/tenant.ts) is intentionally not exported - it's a
@@ -66,10 +79,11 @@ const DOCUMENTED_EXCLUSIONS = new Set([
   "EntitlementGrant",
 ]);
 
+const schemaModels = await schemaModelNames();
+
 describe("TENANT_MODELS coverage (src/server/db/tenant.ts)", () => {
   const tenantModels = extractTenantModels(tenantSource);
   const tenantModelSet = new Set(tenantModels);
-  const schemaModels = Prisma.dmmf.datamodel.models.map((m) => m.name);
   const schemaModelSet = new Set(schemaModels);
 
   it("parsed a non-trivial TENANT_MODELS list from the source", () => {

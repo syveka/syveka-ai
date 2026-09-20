@@ -1,8 +1,82 @@
+import { createHash } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
-import { Prisma } from "@prisma/client";
 
-const models = Prisma.dmmf.datamodel.models;
+function readSchemaSource() {
+  return readFileSync(path.resolve(process.cwd(), "prisma/schema.prisma"), "utf8");
+}
+
+function hashOf(source) {
+  return createHash("sha256").update(source).digest("hex");
+}
+
+async function loadDatamodel() {
+  // Test-only fast path: importing @prisma/internals at all (not just calling getDMMF())
+  // costs real wall-clock time per process -- measured at ~1s, independent of whether
+  // getDMMF() is ever invoked, since the package's own module graph is large (~360 files).
+  // tests/unit/legacy-schema-contract-generator.test.ts runs this exact script as a real
+  // subprocess many times over, each against the same unmutated prisma/schema.prisma (only
+  // this file's own config constants below are mutated per test case) -- so it computes
+  // the DMMF once and points every subprocess at that cached JSON via this env var instead
+  // of importing @prisma/internals and recomputing an identical result on every spawn.
+  // Unset (the normal case: CI, local dev, any real invocation) always takes the
+  // live-schema path below -- production behavior, including the getDMMF() call itself, is
+  // unchanged. The import is therefore dynamic and conditional, not static at module top
+  // level, so the cache path truly never pays for loading the package at all.
+  //
+  // Two checks reduce the chance of this fast path ever being used by accident, on top of
+  // the env var's name alone -- neither is a security boundary against a caller who
+  // deliberately sets these values, since PRISMA_DMMF_CACHE_PATH, VITEST, and the cache
+  // file's own contents are all ordinary, caller-controlled inputs to this process:
+  //  1. Accidental-use guard: VITEST=true is set by Vitest itself and observed to be
+  //     inherited by a spawned subprocess when its env is built by spreading
+  //     process.env (as tests/unit/legacy-schema-contract-generator.test.ts does) --
+  //     this makes it unlikely the cache path activates outside a real Vitest run by
+  //     mistake (e.g. a stray env var left over from an unrelated tool), but a caller
+  //     who explicitly sets VITEST=true can trigger it like any other env var; it is
+  //     not an authentication mechanism.
+  //  2. Freshness/consistency check, not authentication: the cache must declare a
+  //     schemaHash matching a fresh SHA-256 of the *current* prisma/schema.prisma on
+  //     disk (a cheap plain file read -- no @prisma/internals import needed for this
+  //     check). This detects an accidentally stale or mismatched cache -- one computed
+  //     for a different schema than the one currently on disk -- and refuses it with an
+  //     explicit error. It does not verify that the cached `dmmf` value was genuinely
+  //     produced by running Prisma's schema engine against that schema; the hash only
+  //     binds the cache to a schema *string*, not to how the DMMF inside it was derived.
+  //     This is safe only under the assumption that whatever wrote the cache (in
+  //     practice, only the one test file that sets this env var) is trusted to have
+  //     paired a correct DMMF with the hash it declares.
+  const cachePath = process.env.PRISMA_DMMF_CACHE_PATH;
+  if (cachePath) {
+    if (process.env.VITEST !== "true") {
+      throw new Error(
+        "PRISMA_DMMF_CACHE_PATH is only supported under Vitest (process.env.VITEST === 'true'); " +
+          "refusing to use a cached DMMF outside a real test run.",
+      );
+    }
+    if (!existsSync(cachePath)) {
+      throw new Error(`PRISMA_DMMF_CACHE_PATH is set but does not exist: ${cachePath}`);
+    }
+    const cached = JSON.parse(readFileSync(cachePath, "utf8"));
+    const actualHash = hashOf(readSchemaSource());
+    if (cached.schemaHash !== actualHash) {
+      throw new Error(
+        "PRISMA_DMMF_CACHE_PATH's cached DMMF was computed from a different prisma/schema.prisma " +
+          `(schema hash mismatch) -- refusing to use stale or unrelated schema metadata. ` +
+          `Expected ${actualHash}, cache declares ${cached.schemaHash ?? "<missing>"}.`,
+      );
+    }
+    return cached.dmmf;
+  }
+  // @prisma/internals ships as CommonJS, hence the default-import/destructure instead of a
+  // named import. This is the same official API `prisma generate`/`prisma validate` use
+  // internally, independent of which client generator is configured.
+  const { getDMMF } = (await import("@prisma/internals")).default;
+  return getDMMF({ datamodel: readSchemaSource() });
+}
+
+const dmmf = await loadDatamodel();
+const models = dmmf.datamodel.models;
 const modelByName = new Map(models.map((model) => [model.name, model]));
 
 const sqlString = (value) => `'${String(value).replaceAll("'", "''")}'`;

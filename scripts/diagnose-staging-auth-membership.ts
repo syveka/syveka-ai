@@ -16,7 +16,8 @@
  * never tokens, passwords, connection strings, service-role keys, or any
  * other Supabase Auth metadata field.
  */
-import { PrismaClient } from "@prisma/client";
+import { PrismaClient } from "../src/generated/prisma/client/client";
+import { PrismaPg } from "@prisma/adapter-pg";
 import { createClient } from "@supabase/supabase-js";
 
 const DIAGNOSTIC_EMAIL = "Ehabkia62@gmail.com";
@@ -37,7 +38,7 @@ function normalizeEmail(email: string): string {
  * the direct/session connection rather than the app's transaction-pooler
  * DATABASE_URL.
  */
-function requireDirectConnection(): void {
+function requireDirectConnection(): string {
   const databaseUrl = requireEnv("DATABASE_URL");
   const directUrl = requireEnv("DIRECT_URL");
   if (databaseUrl !== directUrl) {
@@ -46,6 +47,7 @@ function requireDirectConnection(): void {
         "direct/session connection for this script.",
     );
   }
+  return databaseUrl;
 }
 
 async function main(): Promise<void> {
@@ -58,11 +60,11 @@ async function main(): Promise<void> {
   }
   const normalizedEmail = normalizeEmail(DIAGNOSTIC_EMAIL);
 
-  requireDirectConnection();
+  const databaseUrl = requireDirectConnection();
   const supabaseUrl = requireEnv("SUPABASE_URL");
   const serviceRoleKey = requireEnv("SUPABASE_SERVICE_ROLE_KEY");
 
-  const prisma = new PrismaClient();
+  const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: databaseUrl }) });
   const admin = createClient(supabaseUrl, serviceRoleKey, {
     auth: { autoRefreshToken: false, persistSession: false },
   });

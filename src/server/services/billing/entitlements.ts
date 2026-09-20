@@ -1,6 +1,11 @@
 import "server-only";
 
-import type { EntitlementMetric, Plan, Prisma, UsageMetric } from "@prisma/client";
+import type {
+  EntitlementMetric,
+  Plan,
+  Prisma,
+  UsageMetric,
+} from "@/generated/prisma/client/client";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { redis } from "@/server/integrations/redis";
 import { PLAN_LIMITS, type PlanLimits } from "./plans";

@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma } from "@prisma/client";
+import type { Prisma } from "@/generated/prisma/client/client";
 import { unscopedPrisma } from "@/server/db/tenant";
 
 export class FeatureDisabledError extends Error {
