@@ -195,8 +195,9 @@ describe("getTenantContext", () => {
  * were previously indistinguishable, in the UI and in the logs, from a
  * genuinely logged-out or brand-new user. These tests lock in the fix: both
  * paths now log a sanitized diagnostic (name/status only, no PII, no error
- * message that could echo a connection string) without changing the actual
- * return value in any case.
+ * message that could echo a connection string). getSessionUser() still
+ * returns null on error; getTenantContextOrNull() now rethrows a non-AuthError
+ * rather than reporting it as a missing membership.
  */
 describe("getSessionUser", () => {
   it("returns the user and logs nothing when getUser() succeeds cleanly", async () => {
@@ -248,7 +249,7 @@ describe("getTenantContextOrNull", () => {
     expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 
-  it("returns null AND logs a sanitized diagnostic when the failure is not an AuthError (e.g. a DB error), instead of discarding it identically to a real new user", async () => {
+  it("returns the tenant context for an existing member", async () => {
     mocks.getUser.mockResolvedValue({
       data: {
         user: {
@@ -259,16 +260,46 @@ describe("getTenantContextOrNull", () => {
       },
       error: null,
     });
-    mocks.findFirst.mockRejectedValue(
-      Object.assign(new Error("Can't reach database server at db.example:5432"), {
-        name: "PrismaClientInitializationError",
-      }),
-    );
+    mocks.findFirst.mockResolvedValue({
+      organizationId: ORG_ID,
+      role: "OWNER",
+      organization: { defaultLocale: "FI", deletedAt: null },
+    });
 
     const { getTenantContextOrNull } = await import("@/server/auth/session");
-    const ctx = await getTenantContextOrNull();
+    await expect(getTenantContextOrNull()).resolves.toMatchObject({ orgId: ORG_ID });
+  });
 
-    expect(ctx).toBeNull();
+  it("returns null for an authenticated user with no usable membership", async () => {
+    mocks.getUser.mockResolvedValue({
+      data: { user: { id: AUTH_USER_ID, email: "e2e-user@example.test", app_metadata: {} } },
+      error: null,
+    });
+    mocks.findFirst.mockResolvedValue(null);
+
+    const { getTenantContextOrNull } = await import("@/server/auth/session");
+    await expect(getTenantContextOrNull()).resolves.toBeNull();
+  });
+
+  it("rethrows AND logs a sanitized diagnostic when the failure is not an AuthError (e.g. a DB error), instead of reporting it as a missing membership", async () => {
+    mocks.getUser.mockResolvedValue({
+      data: {
+        user: {
+          id: AUTH_USER_ID,
+          email: "e2e-user@example.test",
+          app_metadata: { last_active_org: ORG_ID },
+        },
+      },
+      error: null,
+    });
+    const dbError = Object.assign(new Error("Can't reach database server at db.example:5432"), {
+      name: "PrismaClientInitializationError",
+    });
+    mocks.findFirst.mockRejectedValue(dbError);
+
+    const { getTenantContextOrNull } = await import("@/server/auth/session");
+    await expect(getTenantContextOrNull()).rejects.toBe(dbError);
+
     expect(consoleErrorSpy).toHaveBeenCalledTimes(1);
     const loggedText = consoleErrorSpy.mock.calls[0]![0] as string;
     expect(JSON.parse(loggedText)).toEqual({
