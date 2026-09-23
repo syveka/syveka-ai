@@ -1,0 +1,285 @@
+name: Temporary read-only staging Production env audit
+
+# TEMPORARY, READ-ONLY. Pulls the syveka-ai-staging Vercel project's
+# Production-scoped (and, for comparison, Preview-scoped) environment into a
+# temp directory on this ephemeral runner and prints ONLY fixed labels with
+# fixed values (MATCH/MISMATCH/YES/NO/UNVERIFIED, port numbers) and a final
+# verdict. It never prints a variable value, hostname, username, password,
+# key or token, never checks out the repository, never deploys, and deletes
+# the pulled files on exit. Pulled values are not GitHub secrets, so GitHub
+# will NOT mask them -- the script therefore never writes them anywhere.
+#
+# Triggered only by a push of this file to its own audit branch, so it never
+# needs to exist on main.
+
+on:
+  push:
+    branches: [audit/staging-production-env-readonly]
+    paths: [.github/workflows/readonly-staging-production-env-audit.yml]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: readonly-staging-production-env-audit
+  cancel-in-progress: false
+
+env:
+  VERCEL_CLI_VERSION: "56.3.2"
+
+jobs:
+  audit:
+    name: Audit staging Production env (sanitized output only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: staging
+
+    steps:
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: "22"
+
+      - name: Pull Vercel env and print sanitized audit
+        shell: bash
+        env:
+          STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+          STAGING_SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+        run: |
+          set -euo pipefail
+          set +x
+          workdir="$(mktemp -d)"
+          trap 'rm -rf "$workdir"' EXIT
+          cd "$workdir"
+
+          # CLI output is discarded entirely; only a fixed status is printed.
+          for scope in production preview; do
+            if ! npx --yes "vercel@$VERCEL_CLI_VERSION" pull --yes --environment="$scope" \
+              --token="$STAGING_VERCEL_TOKEN" >/dev/null 2>&1; then
+              echo "PULL_${scope^^}: FAILED"
+              echo "SAFE_TO_PROMOTE=false"
+              exit 1
+            fi
+            echo "PULL_${scope^^}: OK"
+          done
+
+          node - <<'AUDIT'
+          "use strict";
+          const fs = require("fs");
+
+          // Every failure path prints a fixed string only -- never an Error
+          // object, whose message/`input` property can echo the value parsed.
+          function failClosed(reason) {
+            console.log(`AUDIT_ERROR: ${reason}`);
+            console.log("SAFE_TO_PROMOTE=false");
+            process.exit(1);
+          }
+          process.on("uncaughtException", () => failClosed("internal failure (details suppressed)"));
+          process.on("unhandledRejection", () => failClosed("internal failure (details suppressed)"));
+
+          const REF = process.env.STAGING_SUPABASE_PROJECT_REF || "";
+          if (!/^[a-z0-9]{20}$/.test(REF)) failClosed("staging project ref variable missing or malformed");
+          const EXPECTED_APP_URL = "https://syveka-ai-staging.vercel.app";
+
+          function loadEnv(file) {
+            let text;
+            try {
+              text = fs.readFileSync(file, "utf8");
+            } catch {
+              return null;
+            }
+            const env = new Map();
+            let ambiguous = false;
+            for (const line of text.split("\n")) {
+              if (line === "" || line.startsWith("#")) continue;
+              const eq = line.indexOf("=");
+              if (eq <= 0) {
+                ambiguous = true;
+                continue;
+              }
+              const key = line.slice(0, eq);
+              const raw = line.slice(eq + 1);
+              if (raw.length >= 2 && raw.startsWith('"') && raw.endsWith('"')) {
+                try {
+                  env.set(key, JSON.parse(raw));
+                } catch {
+                  ambiguous = true;
+                }
+              } else {
+                env.set(key, raw);
+              }
+            }
+            return { env, ambiguous };
+          }
+
+          function parseUrl(value) {
+            try {
+              return new URL(value);
+            } catch {
+              return null;
+            }
+          }
+
+          // Mirrors src/server/db/connection-string-sanitizer.ts.
+          function appSanitize(value) {
+            let v = value.replace(/[\r\n]/g, "").trim();
+            if (v.endsWith("?")) v = v.slice(0, -1);
+            return v;
+          }
+
+          function safeDecode(value) {
+            try {
+              return decodeURIComponent(value);
+            } catch {
+              return value;
+            }
+          }
+
+          function portLabel(url) {
+            if (!url) return "MISSING";
+            if (url.port === "") return "MISSING";
+            if (url.port === "6543" || url.port === "5432") return url.port;
+            return "OTHER";
+          }
+
+          function dbInfo(value) {
+            const info = { exists: value !== undefined, readable: false };
+            if (!info.exists) return info;
+            info.readable = value !== "";
+            info.surroundingWhitespace = value !== value.trim() || /[\r\n]/.test(value);
+            info.trailingQuestion = value.replace(/[\r\n]/g, "").trim().endsWith("?");
+            const url = parseUrl(appSanitize(value));
+            const parsed =
+              url !== null &&
+              (url.protocol === "postgres:" || url.protocol === "postgresql:") &&
+              url.hostname !== "";
+            info.parsed = parsed;
+            info.identity =
+              parsed && (url.hostname.includes(REF) || safeDecode(url.username).includes(REF));
+            info.pooler = parsed && url.hostname.endsWith(".pooler.supabase.com");
+            info.directHost = parsed && url.hostname === `db.${REF}.supabase.co`;
+            info.port = parsed ? portLabel(url) : "MISSING";
+            info.pgbouncerParam = parsed && url.searchParams.get("pgbouncer") === "true";
+            info.runtimeCompatible =
+              parsed &&
+              info.identity &&
+              url.username !== "" &&
+              url.password !== "" &&
+              url.pathname.length > 1;
+            return info;
+          }
+
+          function supabaseUrlMatch(value) {
+            if (value === undefined || value === "") return false;
+            const url = parseUrl(value.trim());
+            return url !== null && url.protocol === "https:" && url.hostname === `${REF}.supabase.co`;
+          }
+
+          // Legacy Supabase keys are JWTs whose (non-secret) payload names the
+          // project ref and role. Only those two claims are compared; nothing
+          // from the key is printed. New-format keys carry no project ref.
+          function keyCheck(value, expectedRole) {
+            if (value === undefined || value.trim() === "") return { exists: false, project: "UNVERIFIED" };
+            const key = value.trim();
+            if (key.startsWith("sb_publishable_") || key.startsWith("sb_secret_")) {
+              return { exists: true, project: "UNVERIFIED (new-format key has no project claim)" };
+            }
+            const parts = key.split(".");
+            if (parts.length !== 3) return { exists: true, project: "UNVERIFIED (not a JWT)" };
+            let payload;
+            try {
+              payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8"));
+            } catch {
+              return { exists: true, project: "UNVERIFIED (unreadable claims)" };
+            }
+            if (typeof payload.ref !== "string") return { exists: true, project: "UNVERIFIED (no project claim)" };
+            if (payload.ref !== REF) return { exists: true, project: "MISMATCH (project)" };
+            if (payload.role !== expectedRole) return { exists: true, project: "MISMATCH (role)" };
+            return { exists: true, project: "MATCH" };
+          }
+
+          function appUrlLabel(value) {
+            if (value === undefined || value === "") return "MISSING";
+            if (value === EXPECTED_APP_URL) return "MATCH";
+            const normalized = value.trim().replace(/\/+$/, "");
+            if (normalized === EXPECTED_APP_URL) return "MISMATCH (differs only by whitespace/trailing slash)";
+            return "MISMATCH";
+          }
+
+          const yn = (b) => (b ? "YES" : "NO");
+          const mm = (b) => (b ? "MATCH" : "MISMATCH");
+
+          const prodFile = loadEnv(".vercel/.env.production.local");
+          const prevFile = loadEnv(".vercel/.env.preview.local");
+          if (!prodFile) failClosed("production env file not produced by pull");
+          if (!prevFile) failClosed("preview env file not produced by pull");
+          const prod = prodFile.env;
+          const prev = prevFile.env;
+
+          const db = dbInfo(prod.get("DATABASE_URL"));
+          const direct = dbInfo(prod.get("DIRECT_URL"));
+          const supa = supabaseUrlMatch(prod.get("NEXT_PUBLIC_SUPABASE_URL"));
+          const anon = keyCheck(prod.get("NEXT_PUBLIC_SUPABASE_ANON_KEY"), "anon");
+          const service = keyCheck(prod.get("SUPABASE_SERVICE_ROLE_KEY"), "service_role");
+          const appUrl = appUrlLabel(prod.get("NEXT_PUBLIC_APP_URL"));
+
+          const prevDb = dbInfo(prev.get("DATABASE_URL"));
+          const prevSupa = supabaseUrlMatch(prev.get("NEXT_PUBLIC_SUPABASE_URL"));
+          const prevAppUrl = appUrlLabel(prev.get("NEXT_PUBLIC_APP_URL"));
+          const appUrlSame = prod.get("NEXT_PUBLIC_APP_URL") === prev.get("NEXT_PUBLIC_APP_URL");
+
+          console.log("== Production scope (syveka-ai-staging) ==");
+          console.log(`ENV_FILE_PARSE_AMBIGUOUS: ${yn(prodFile.ambiguous)}`);
+          console.log("-- DATABASE_URL");
+          console.log(`exists: ${yn(db.exists)}`);
+          console.log(`readable_by_pull: ${yn(db.readable)}`);
+          console.log(`staging_project: ${mm(db.identity)}`);
+          console.log(`supabase_pooler_host: ${yn(db.pooler)}`);
+          console.log(`port: ${db.port}`);
+          console.log(`surrounding_whitespace_or_newline: ${yn(db.surroundingWhitespace)}`);
+          console.log(`malformed_trailing_question_mark: ${yn(db.trailingQuestion)}`);
+          console.log(`pgbouncer_param_in_value: ${yn(db.pgbouncerParam)} (runtime adds it when port is 6543)`);
+          console.log(`runtime_compatible_prismapg: ${yn(db.runtimeCompatible)}`);
+          console.log("-- DIRECT_URL");
+          console.log(`exists: ${yn(direct.exists)}`);
+          console.log(`staging_project: ${mm(direct.identity)}`);
+          console.log(`port: ${direct.port}`);
+          const directShape = direct.parsed && (direct.pooler || direct.directHost) && direct.port === "5432";
+          console.log(`session_or_direct_shape: ${yn(directShape)}`);
+          console.log("-- Supabase");
+          console.log(`NEXT_PUBLIC_SUPABASE_URL staging_project: ${mm(supa)}`);
+          console.log(`NEXT_PUBLIC_SUPABASE_ANON_KEY exists: ${yn(anon.exists)} project: ${anon.project}`);
+          console.log(`SUPABASE_SERVICE_ROLE_KEY exists: ${yn(service.exists)} project: ${service.project}`);
+          console.log("-- NEXT_PUBLIC_APP_URL");
+          console.log(`expected_staging_alias: ${appUrl}`);
+
+          console.log("== Production vs Preview ==");
+          console.log(`preview_env_file_parse_ambiguous: ${yn(prevFile.ambiguous)}`);
+          console.log(`DATABASE_URL project identity: ${mm(db.identity && prevDb.identity)}`);
+          console.log(`DATABASE_URL port: ${mm(db.parsed && prevDb.parsed && db.port === prevDb.port)} (preview port: ${prevDb.port})`);
+          console.log(`Supabase project identity: ${mm(supa && prevSupa)}`);
+          console.log(
+            `NEXT_PUBLIC_APP_URL: ${appUrlSame ? "SAME" : "DIFFERENT"} (production: ${appUrl}; preview: ${prevAppUrl})`,
+          );
+
+          const blockers = [];
+          if (prodFile.ambiguous) blockers.push("production_env_parse_ambiguous");
+          if (!db.exists || !db.readable) blockers.push("database_url_missing_or_unreadable");
+          if (!db.identity) blockers.push("database_url_project");
+          if (!db.pooler) blockers.push("database_url_not_pooler");
+          if (db.port !== "6543") blockers.push("database_url_port");
+          if (db.surroundingWhitespace) blockers.push("database_url_whitespace");
+          if (db.trailingQuestion) blockers.push("database_url_trailing_question_mark");
+          if (!db.runtimeCompatible) blockers.push("database_url_runtime_compatibility");
+          if (!direct.exists || !direct.identity || !directShape) blockers.push("direct_url");
+          if (!supa) blockers.push("supabase_url_project");
+          if (!anon.exists || anon.project.startsWith("MISMATCH")) blockers.push("anon_key");
+          if (!service.exists || service.project.startsWith("MISMATCH")) blockers.push("service_role_key");
+          if (appUrl !== "MATCH") blockers.push("next_public_app_url");
+
+          console.log("== Verdict ==");
+          console.log(`BLOCKERS: ${blockers.length === 0 ? "none" : blockers.join(", ")}`);
+          console.log(`SAFE_TO_PROMOTE=${blockers.length === 0}`);
+          AUDIT
