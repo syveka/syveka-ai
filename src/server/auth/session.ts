@@ -101,27 +101,31 @@ export const getTenantContext = cache(async (): Promise<TenantContext> => {
   };
 });
 
-/** Nullable variant for layouts that render both states. */
+/**
+ * Nullable variant for layouts that render both states. Returns null ONLY
+ * for getTenantContext()'s two expected outcomes -- its only AuthError throw
+ * sites: not authenticated (401) and no usable membership (403). Every
+ * caller treats null as "show /onboarding" ("Create your organization").
+ */
 export async function getTenantContextOrNull(): Promise<TenantContext | null> {
   try {
     return await getTenantContext();
   } catch (error) {
-    // AuthError is the expected shape (not authenticated, or no usable
-    // membership -- both already diagnosed at their own throw sites above)
-    // and every caller already shows /onboarding for it, same as before.
-    // Anything else (e.g. a Prisma connection/timeout error) previously
-    // vanished into this same silent null, making a genuine infrastructure
-    // failure indistinguishable from a real new user in both the UI and the
-    // logs. Never logs the error message itself -- it could echo a raw
-    // connection string on some Prisma error shapes -- only its name.
-    if (!(error instanceof AuthError)) {
-      console.error(
-        JSON.stringify({
-          event: "get_tenant_context_or_null_unexpected_error",
-          name: error instanceof Error ? error.name : "unknown",
-        }),
-      );
-    }
-    return null;
+    if (error instanceof AuthError) return null;
+
+    // Anything else (a Prisma connection/timeout/query error, a programming
+    // error) is NOT evidence of a missing membership. Returning null here
+    // previously sent existing members to the organization-creation form on
+    // a transient DB failure; rethrowing lets the request fail through the
+    // error boundary instead. Never logs the error message itself -- it
+    // could echo a raw connection string on some Prisma error shapes -- only
+    // its name.
+    console.error(
+      JSON.stringify({
+        event: "get_tenant_context_or_null_unexpected_error",
+        name: error instanceof Error ? error.name : "unknown",
+      }),
+    );
+    throw error;
   }
 }
