@@ -279,7 +279,94 @@ jobs:
           if (!service.exists || service.project.startsWith("MISMATCH")) blockers.push("service_role_key");
           if (appUrl !== "MATCH") blockers.push("next_public_app_url");
 
+          const directRaw = prod.get("DIRECT_URL");
+          let directClass = "MISSING";
+          if (directRaw !== undefined) {
+            if (directRaw === "") directClass = "EMPTY_IN_PULL";
+            else {
+              const u = parseUrl(appSanitize(directRaw));
+              if (!u) directClass = "NOT_A_URL";
+              else if (u.protocol === "postgres:" || u.protocol === "postgresql:") directClass = "POSTGRES_URL";
+              else directClass = "OTHER_SCHEME";
+            }
+          }
+          console.log(`DIRECT_URL value_class: ${directClass}`);
+          const prevDirect = dbInfo(prev.get("DIRECT_URL"));
+          console.log(`DIRECT_URL preview staging_project: ${mm(prevDirect.identity)} preview port: ${prevDirect.port}`);
+
           console.log("== Verdict ==");
           console.log(`BLOCKERS: ${blockers.length === 0 ? "none" : blockers.join(", ")}`);
           console.log(`SAFE_TO_PROMOTE=${blockers.length === 0}`);
+
+          // Functional, read-only key checks: HTTP status codes only.
+          (async () => {
+            const base = `https://${REF}.supabase.co`;
+            async function status(path, key, bearer) {
+              if (!key) return "SKIPPED (missing)";
+              try {
+                const headers = { apikey: key.trim() };
+                if (bearer) headers.authorization = `Bearer ${key.trim()}`;
+                const res = await fetch(`${base}${path}`, { headers });
+                return String(res.status);
+              } catch {
+                return "REQUEST_FAILED";
+              }
+            }
+            console.log("== Functional key checks (HTTP status only) ==");
+            console.log(`anon_key auth_settings: ${await status("/auth/v1/settings", prod.get("NEXT_PUBLIC_SUPABASE_ANON_KEY"), false)}`);
+            console.log(
+              `service_role_key admin_list_one_user: ${await status("/auth/v1/admin/users?page=1&per_page=1", prod.get("SUPABASE_SERVICE_ROLE_KEY"), true)}`,
+            );
+          })().catch(() => failClosed("functional check failure (details suppressed)"));
           AUDIT
+
+      - name: Read Vercel env-var metadata (no values)
+        shell: bash
+        env:
+          STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+        run: |
+          set -euo pipefail
+          set +x
+          node - <<'META'
+          "use strict";
+          const fail = () => {
+            console.log("METADATA: FAILED (details suppressed)");
+            process.exit(1);
+          };
+          process.on("uncaughtException", fail);
+          process.on("unhandledRejection", fail);
+          const KEYS = new Set([
+            "DATABASE_URL",
+            "DIRECT_URL",
+            "NEXT_PUBLIC_APP_URL",
+            "NEXT_PUBLIC_SUPABASE_URL",
+            "NEXT_PUBLIC_SUPABASE_ANON_KEY",
+            "SUPABASE_SERVICE_ROLE_KEY",
+          ]);
+          (async () => {
+            const url =
+              `https://api.vercel.com/v10/projects/${encodeURIComponent(process.env.VERCEL_PROJECT_ID)}/env` +
+              `?teamId=${encodeURIComponent(process.env.VERCEL_ORG_ID)}`;
+            const res = await fetch(url, { headers: { authorization: `Bearer ${process.env.STAGING_VERCEL_TOKEN}` } });
+            console.log(`METADATA_HTTP: ${res.status}`);
+            if (!res.ok) return;
+            const body = await res.json();
+            for (const e of body.envs ?? []) {
+              if (!KEYS.has(e.key)) continue;
+              const targets = Array.isArray(e.target) ? e.target.filter((t) => /^[a-z]+$/.test(t)).join("+") : "?";
+              const flags = Object.entries(e)
+                .filter(([, v]) => typeof v === "boolean")
+                .map(([k, v]) => `${k}=${v}`)
+                .join(" ");
+              const fieldNames = Object.keys(e)
+                .filter((k) => !["value", "id", "key", "target", "type", "createdBy", "updatedBy", "configurationId"].includes(k))
+                .sort()
+                .join(",");
+              const type = /^[a-z]+$/.test(String(e.type)) ? e.type : "?";
+              console.log(`${e.key} | type=${type} | target=${targets} | branch_scoped=${e.gitBranch ? "YES" : "NO"} | ${flags}`);
+              console.log(`  other_fields: ${fieldNames}`);
+            }
+          })().catch(fail);
+          META
