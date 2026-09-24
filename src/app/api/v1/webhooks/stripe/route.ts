@@ -327,6 +327,20 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
       case "invoice.payment_failed": {
         const invoice = event.data.object;
+        const failedSubId =
+          typeof invoice.subscription === "string"
+            ? invoice.subscription
+            : invoice.subscription?.id;
+        if (failedSubId) {
+          // Same ordering hazard as subscription updates: a retried failure
+          // delivered after invoice.paid must not mark a paid-up subscription
+          // PAST_DUE. Only act while Stripe still reports it as unpaid.
+          const current = await stripe.subscriptions.retrieve(failedSubId);
+          if (!["past_due", "unpaid", "incomplete"].includes(current.status)) {
+            await markCompleted(unscopedPrisma, event.id, resolvedOrgId, invoice.id ?? null);
+            break;
+          }
+        }
         const customerId =
           typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
         const org = customerId

@@ -380,10 +380,13 @@ describe("existing subscription and entitlement behavior is unchanged", () => {
     });
     mocks.constructEvent.mockReturnValue(event);
     mocks.organizationFindUnique.mockResolvedValue({ id: "org-a" });
+    // After a failed payment Stripe reports the subscription as past_due.
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "past_due" }));
 
     const res = await POST(webhookRequest("{}"));
 
     expect(res.status).toBe(200);
+    expect(mocks.subscriptionsRetrieve).toHaveBeenCalledWith("sub_123");
     expect(mocks.txSubscriptionUpdate).toHaveBeenCalledWith({
       where: { organizationId: "org-a" },
       data: { status: "PAST_DUE" },
@@ -482,5 +485,45 @@ describe("subscription events are applied from Stripe's current state (out-of-or
       where: { stripeEventId: "evt_123" },
       data: expect.objectContaining({ status: "FAILED" }),
     });
+  });
+});
+
+describe("invoice.payment_failed is applied only while the subscription is still unpaid", () => {
+  it("does not mark a paid-up subscription PAST_DUE when a stale failure arrives after invoice.paid", async () => {
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent("invoice.payment_failed", {
+        id: "in_old",
+        customer: "cus_123",
+        subscription: "sub_123",
+      }),
+    );
+    mocks.organizationFindUnique.mockResolvedValue({ id: "org-a" });
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "active" }));
+
+    const res = await POST(webhookRequest("{}"));
+
+    expect(res.status).toBe(200);
+    expect(mocks.txSubscriptionUpdate).not.toHaveBeenCalled();
+    expect(mocks.invalidateEntitlements).not.toHaveBeenCalled();
+    expect(mocks.ledgerUpdate).toHaveBeenCalledWith({
+      where: { stripeEventId: "evt_123" },
+      data: expect.objectContaining({ status: "COMPLETED" }),
+    });
+  });
+
+  it("fails retryably (never COMPLETED) when Stripe cannot be reached", async () => {
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent("invoice.payment_failed", {
+        id: "in_1",
+        customer: "cus_123",
+        subscription: "sub_123",
+      }),
+    );
+    mocks.subscriptionsRetrieve.mockRejectedValue(new Error("stripe unavailable"));
+
+    const res = await POST(webhookRequest("{}"));
+
+    expect(res.status).toBe(500);
+    expect(mocks.txSubscriptionUpdate).not.toHaveBeenCalled();
   });
 });
