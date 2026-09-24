@@ -144,6 +144,43 @@ describe("login environment isolation", () => {
     await expect(forgotPasswordAction({}, form)).resolves.toEqual({ message: "verify_email_sent" });
   });
 
+  it("logs a failed reset request's code/status/name server-side, never the email or message", async () => {
+    const supabaseError = Object.assign(
+      new Error('Email address "person@example.com" cannot be used as it is not authorized'),
+      { name: "AuthApiError", code: "email_address_not_authorized", status: 400 },
+    );
+    mocks.resetPasswordForEmail.mockResolvedValueOnce({ error: supabaseError });
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const form = new FormData();
+    form.set("email", "person@example.com");
+    form.set("locale", "en");
+
+    await expect(forgotPasswordAction({}, form)).resolves.toEqual({ message: "verify_email_sent" });
+
+    expect(consoleError).toHaveBeenCalledTimes(1);
+    const logged = String(consoleError.mock.calls[0]![0]);
+    expect(JSON.parse(logged)).toEqual({
+      event: "forgot_password_request_failed",
+      code: "email_address_not_authorized",
+      status: 400,
+      name: "AuthApiError",
+    });
+    expect(logged).not.toContain("person@example.com");
+    expect(logged).not.toContain("not authorized");
+    consoleError.mockRestore();
+  });
+
+  it("logs nothing when Supabase accepts the reset request", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const form = new FormData();
+    form.set("email", "user@example.com");
+    form.set("locale", "en");
+
+    await expect(forgotPasswordAction({}, form)).resolves.toEqual({ message: "verify_email_sent" });
+    expect(consoleError).not.toHaveBeenCalled();
+    consoleError.mockRestore();
+  });
+
   it("resetPasswordAction only updates the password -- no organization/membership call of any kind", async () => {
     const form = new FormData();
     form.set("password", "a-new-secure-password");
