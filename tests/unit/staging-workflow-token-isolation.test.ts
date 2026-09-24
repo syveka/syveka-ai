@@ -71,7 +71,9 @@ describe("staging-release.yml Vercel credential isolation", () => {
       const buildIndex = steps.indexOf(build);
       const pull = steps[buildIndex - 1]!;
       expect(pull.run, build.name).toMatch(/vercel@\$VERCEL_CLI_VERSION" pull/);
-      expect(pull.run, build.name).toContain('grep -rqsF -- "$STAGING_VERCEL_TOKEN" .vercel');
+      expect(pull.run, build.name).toContain('guard_token="$STAGING_VERCEL_TOKEN"');
+      expect(pull.run, build.name).toContain("# >>> token-persistence guard");
+      expect(pull.run, build.name).toContain('grep -qF -- "$guard_token"');
     }
   });
 });
