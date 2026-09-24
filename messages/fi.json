@@ -159,6 +159,16 @@
       "generic": "Jokin meni pieleen. Yritä uudelleen."
     }
   },
+  "globalAssistant": {
+    "launcherLabel": "Avaa Syveka-avustaja",
+    "title": "Syveka-avustaja",
+    "close": "Sulje avustaja",
+    "greeting": "Hei! Miten voin auttaa sinua?",
+    "placeholder": "Kysy yrityksestäsi…",
+    "send": "Lähetä viesti",
+    "stop": "Pysäytä vastaus",
+    "openFullChat": "Avaa koko keskustelu"
+  },
   "knowledge": {
     "title": "Tietopankki",
     "subtitle": "Dokumentit, joita tekoälyavustaja käyttää vastatakseen yritystäsi koskeviin kysymyksiin.",
