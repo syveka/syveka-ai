@@ -92,7 +92,9 @@ describe("deploy.yml Vercel credential isolation", () => {
 
   it("checks that `vercel pull` did not persist the token before building", () => {
     expect(indexOf(PULL)).toBe(indexOf(BUILD) - 1);
-    expect(step(PULL).run).toContain('grep -rqsF -- "$VERCEL_TOKEN" .vercel');
+    expect(step(PULL).run).toContain('guard_token="$VERCEL_TOKEN"');
+    expect(step(PULL).run).toContain("# >>> token-persistence guard");
+    expect(step(PULL).run).toContain('grep -qF -- "$guard_token"');
   });
 });
 

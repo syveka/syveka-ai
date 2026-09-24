@@ -208,10 +208,61 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes "vercel@$VERCEL_CLI_VERSION" pull --yes --environment=preview --token="$STAGING_VERCEL_TOKEN"
-          if grep -rqsF -- "$STAGING_VERCEL_TOKEN" .vercel "$HOME/.local/share/com.vercel.cli" "$HOME/.vercel"; then
-            echo "The Vercel token was persisted to disk by vercel pull; refusing to build."
+          guard_token="$STAGING_VERCEL_TOKEN"
+          # >>> token-persistence guard (identical in deploy.yml and staging-release.yml)
+          # Fails closed if the token is found anywhere `vercel pull` or the CLI
+          # could have written it. Reports only the file path and, for dotenv
+          # files, the KEY name -- never a value, line, hash or fragment.
+          if [ -z "$guard_token" ] || [[ "$guard_token" == *$'\n'* || "$guard_token" == *$'\r'* ]]; then
+            echo "Token guard: the Vercel token is empty or multi-line; refusing to build."
             exit 1
           fi
+          guard_hits=0
+          for guard_root in .vercel "$HOME/.local/share/com.vercel.cli" "$HOME/.vercel"; do
+            [ -e "$guard_root" ] || continue
+            if [ "$guard_root" = ".vercel" ]; then
+              guard_category=".vercel (vercel pull output)"
+            else
+              guard_category="Vercel CLI config"
+            fi
+            if [ -n "$(find "$guard_root" ! -readable -print -quit 2>/dev/null)" ]; then
+              echo "Token guard: $guard_category contains unreadable entries; refusing to build."
+              guard_hits=$((guard_hits + 1))
+            fi
+            while IFS= read -r -d '' guard_file; do
+              guard_rc=0
+              grep -qF -- "$guard_token" "$guard_file" || guard_rc=$?
+              [ "$guard_rc" -eq 1 ] && continue
+              guard_hits=$((guard_hits + 1))
+              guard_path="${guard_file//"$guard_token"/[REDACTED]}"
+              guard_path="$(printf '%s' "$guard_path" | LC_ALL=C tr -c '[:print:]' '?')"
+              if [ "$guard_rc" -ne 0 ]; then
+                echo "Token guard: could not read $guard_category file: $guard_path"
+                continue
+              fi
+              echo "Token guard: token value found in $guard_category file: $guard_path"
+              case "${guard_file##*/}" in
+                .env | .env.* | *.env)
+                  GUARD_TOKEN="$guard_token" LC_ALL=C awk '
+                    index($0, ENVIRON["GUARD_TOKEN"]) {
+                      if (match($0, /^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*=/)) {
+                        key = substr($0, RSTART, RLENGTH - 1)
+                        sub(/^[ \t]*(export[ \t]+)?/, "", key)
+                        if (index(key, ENVIRON["GUARD_TOKEN"])) key = "[REDACTED]"
+                        print "Token guard:   in variable " key
+                      } else {
+                        print "Token guard:   on line " NR " (not a KEY=VALUE line)"
+                      }
+                    }' "$guard_file" | sort -u
+                  ;;
+              esac
+            done < <(find "$guard_root" -type f -print0 2>/dev/null)
+          done
+          if [ "$guard_hits" -ne 0 ]; then
+            echo "Token guard: the Vercel token was persisted to disk ($guard_hits finding(s)); refusing to build."
+            exit 1
+          fi
+          # <<< token-persistence guard
         env:
           STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
@@ -426,10 +477,61 @@ jobs:
         run: |
           set -euo pipefail
           npx --yes "vercel@$VERCEL_CLI_VERSION" pull --yes --environment=production --token="$STAGING_VERCEL_TOKEN"
-          if grep -rqsF -- "$STAGING_VERCEL_TOKEN" .vercel "$HOME/.local/share/com.vercel.cli" "$HOME/.vercel"; then
-            echo "The Vercel token was persisted to disk by vercel pull; refusing to build."
+          guard_token="$STAGING_VERCEL_TOKEN"
+          # >>> token-persistence guard (identical in deploy.yml and staging-release.yml)
+          # Fails closed if the token is found anywhere `vercel pull` or the CLI
+          # could have written it. Reports only the file path and, for dotenv
+          # files, the KEY name -- never a value, line, hash or fragment.
+          if [ -z "$guard_token" ] || [[ "$guard_token" == *$'\n'* || "$guard_token" == *$'\r'* ]]; then
+            echo "Token guard: the Vercel token is empty or multi-line; refusing to build."
             exit 1
           fi
+          guard_hits=0
+          for guard_root in .vercel "$HOME/.local/share/com.vercel.cli" "$HOME/.vercel"; do
+            [ -e "$guard_root" ] || continue
+            if [ "$guard_root" = ".vercel" ]; then
+              guard_category=".vercel (vercel pull output)"
+            else
+              guard_category="Vercel CLI config"
+            fi
+            if [ -n "$(find "$guard_root" ! -readable -print -quit 2>/dev/null)" ]; then
+              echo "Token guard: $guard_category contains unreadable entries; refusing to build."
+              guard_hits=$((guard_hits + 1))
+            fi
+            while IFS= read -r -d '' guard_file; do
+              guard_rc=0
+              grep -qF -- "$guard_token" "$guard_file" || guard_rc=$?
+              [ "$guard_rc" -eq 1 ] && continue
+              guard_hits=$((guard_hits + 1))
+              guard_path="${guard_file//"$guard_token"/[REDACTED]}"
+              guard_path="$(printf '%s' "$guard_path" | LC_ALL=C tr -c '[:print:]' '?')"
+              if [ "$guard_rc" -ne 0 ]; then
+                echo "Token guard: could not read $guard_category file: $guard_path"
+                continue
+              fi
+              echo "Token guard: token value found in $guard_category file: $guard_path"
+              case "${guard_file##*/}" in
+                .env | .env.* | *.env)
+                  GUARD_TOKEN="$guard_token" LC_ALL=C awk '
+                    index($0, ENVIRON["GUARD_TOKEN"]) {
+                      if (match($0, /^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*=/)) {
+                        key = substr($0, RSTART, RLENGTH - 1)
+                        sub(/^[ \t]*(export[ \t]+)?/, "", key)
+                        if (index(key, ENVIRON["GUARD_TOKEN"])) key = "[REDACTED]"
+                        print "Token guard:   in variable " key
+                      } else {
+                        print "Token guard:   on line " NR " (not a KEY=VALUE line)"
+                      }
+                    }' "$guard_file" | sort -u
+                  ;;
+              esac
+            done < <(find "$guard_root" -type f -print0 2>/dev/null)
+          done
+          if [ "$guard_hits" -ne 0 ]; then
+            echo "Token guard: the Vercel token was persisted to disk ($guard_hits finding(s)); refusing to build."
+            exit 1
+          fi
+          # <<< token-persistence guard
         env:
           STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
