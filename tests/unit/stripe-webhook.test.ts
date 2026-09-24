@@ -111,6 +111,9 @@ beforeEach(() => {
   mocks.ledgerUpdate.mockResolvedValue({});
   mocks.organizationFindUnique.mockResolvedValue(null);
   mocks.subscriptionsUpdate.mockResolvedValue({});
+  // Subscription events are applied from Stripe's current state, not the
+  // event copy; by default the current state equals the event's subscription.
+  mocks.subscriptionsRetrieve.mockImplementation(async (id: string) => fakeSubscription({ id }));
   mocks.planForPriceId.mockReturnValue("PRO");
   mocks.invalidateEntitlements.mockResolvedValue(undefined);
   mocks.getStripeEnv.mockReturnValue({ STRIPE_WEBHOOK_SECRET: "whsec_test" });
@@ -202,9 +205,11 @@ describe("duplicate delivery after successful completion", () => {
 
 describe("failure before completion, then a successful Stripe retry", () => {
   it("marks FAILED (never COMPLETED) on the failing attempt, then lets the retry succeed", async () => {
-    // First delivery: subscription is missing orgId metadata -> throws mid-processing.
+    // First delivery: the subscription (as currently stored in Stripe, which is
+    // what the handler applies) is missing orgId metadata -> throws mid-processing.
     const badEvent = fakeEvent("customer.subscription.updated", fakeSubscription({ metadata: {} }));
     mocks.constructEvent.mockReturnValueOnce(badEvent);
+    mocks.subscriptionsRetrieve.mockResolvedValueOnce(fakeSubscription({ metadata: {} }));
 
     const firstAttempt = await POST(webhookRequest("{}"));
     expect(firstAttempt.status).toBe(500);
@@ -375,10 +380,13 @@ describe("existing subscription and entitlement behavior is unchanged", () => {
     });
     mocks.constructEvent.mockReturnValue(event);
     mocks.organizationFindUnique.mockResolvedValue({ id: "org-a" });
+    // After a failed payment Stripe reports the subscription as past_due.
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "past_due" }));
 
     const res = await POST(webhookRequest("{}"));
 
     expect(res.status).toBe(200);
+    expect(mocks.subscriptionsRetrieve).toHaveBeenCalledWith("sub_123");
     expect(mocks.txSubscriptionUpdate).toHaveBeenCalledWith({
       where: { organizationId: "org-a" },
       data: { status: "PAST_DUE" },
@@ -397,5 +405,125 @@ describe("existing subscription and entitlement behavior is unchanged", () => {
     expect(mocks.subscriptionsRetrieve).toHaveBeenCalledWith("sub_123");
     expect(mocks.txSubscriptionUpsert).toHaveBeenCalled();
     expect(mocks.invalidateEntitlements).toHaveBeenCalledWith("org-a");
+  });
+});
+
+/**
+ * Stripe does not order events and keeps retrying failed deliveries, so a
+ * customer.subscription.updated/created event can arrive after newer state
+ * (including after customer.subscription.deleted). The handler must apply the
+ * subscription's CURRENT state from Stripe, never the event's stale copy.
+ */
+describe("subscription events are applied from Stripe's current state (out-of-order safety)", () => {
+  it("applies the current subscription, not the stale event copy", async () => {
+    const staleEvent = fakeEvent(
+      "customer.subscription.updated",
+      fakeSubscription({
+        status: "active",
+        items: { data: [{ price: { id: "price_old" }, quantity: 9 }] },
+      }),
+    );
+    mocks.constructEvent.mockReturnValue(staleEvent);
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "past_due" }));
+
+    const res = await POST(webhookRequest("{}"));
+
+    expect(res.status).toBe(200);
+    expect(mocks.subscriptionsRetrieve).toHaveBeenCalledWith("sub_123");
+    expect(mocks.txSubscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ status: "PAST_DUE", seats: 1 }),
+      }),
+    );
+  });
+
+  it("never revives a canceled subscription when a stale 'active' update arrives after deletion", async () => {
+    const staleActive = fakeEvent(
+      "customer.subscription.updated",
+      fakeSubscription({ status: "active" }),
+    );
+    mocks.constructEvent.mockReturnValue(staleActive);
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "canceled" }));
+
+    const res = await POST(webhookRequest("{}"));
+
+    expect(res.status).toBe(200);
+    expect(mocks.txSubscriptionUpsert).not.toHaveBeenCalled();
+    expect(mocks.txSubscriptionUpdate).not.toHaveBeenCalled();
+    expect(mocks.invalidateEntitlements).not.toHaveBeenCalled();
+    const completed = [
+      ...mocks.ledgerUpdate.mock.calls.map((c) => c[0]),
+      ...mocks.txStripeWebhookEventUpdate.mock.calls.map((c) => c[0]),
+    ].filter((arg) => arg.data?.status === "COMPLETED");
+    expect(completed).toHaveLength(1);
+  });
+
+  it("does the same for customer.subscription.created", async () => {
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent("customer.subscription.created", fakeSubscription({ status: "active" })),
+    );
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "canceled" }));
+
+    const res = await POST(webhookRequest("{}"));
+
+    expect(res.status).toBe(200);
+    expect(mocks.subscriptionsRetrieve).toHaveBeenCalledWith("sub_123");
+    expect(mocks.txSubscriptionUpsert).not.toHaveBeenCalled();
+  });
+
+  it("marks the event FAILED (retryable) when Stripe cannot be reached, never COMPLETED", async () => {
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent("customer.subscription.updated", fakeSubscription()),
+    );
+    mocks.subscriptionsRetrieve.mockRejectedValue(new Error("stripe unavailable"));
+
+    const res = await POST(webhookRequest("{}"));
+
+    expect(res.status).toBe(500);
+    expect(mocks.txSubscriptionUpsert).not.toHaveBeenCalled();
+    expect(mocks.ledgerUpdate).toHaveBeenCalledWith({
+      where: { stripeEventId: "evt_123" },
+      data: expect.objectContaining({ status: "FAILED" }),
+    });
+  });
+});
+
+describe("invoice.payment_failed is applied only while the subscription is still unpaid", () => {
+  it("does not mark a paid-up subscription PAST_DUE when a stale failure arrives after invoice.paid", async () => {
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent("invoice.payment_failed", {
+        id: "in_old",
+        customer: "cus_123",
+        subscription: "sub_123",
+      }),
+    );
+    mocks.organizationFindUnique.mockResolvedValue({ id: "org-a" });
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "active" }));
+
+    const res = await POST(webhookRequest("{}"));
+
+    expect(res.status).toBe(200);
+    expect(mocks.txSubscriptionUpdate).not.toHaveBeenCalled();
+    expect(mocks.invalidateEntitlements).not.toHaveBeenCalled();
+    expect(mocks.ledgerUpdate).toHaveBeenCalledWith({
+      where: { stripeEventId: "evt_123" },
+      data: expect.objectContaining({ status: "COMPLETED" }),
+    });
+  });
+
+  it("fails retryably (never COMPLETED) when Stripe cannot be reached", async () => {
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent("invoice.payment_failed", {
+        id: "in_1",
+        customer: "cus_123",
+        subscription: "sub_123",
+      }),
+    );
+    mocks.subscriptionsRetrieve.mockRejectedValue(new Error("stripe unavailable"));
+
+    const res = await POST(webhookRequest("{}"));
+
+    expect(res.status).toBe(500);
+    expect(mocks.txSubscriptionUpdate).not.toHaveBeenCalled();
   });
 });

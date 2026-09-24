@@ -246,7 +246,18 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
       case "customer.subscription.created":
       case "customer.subscription.updated": {
-        const sub = event.data.object;
+        // Stripe neither orders events nor stops retrying failed deliveries, so
+        // this event's copy may be older than state already applied (e.g. an
+        // "active" update retried after customer.subscription.deleted would
+        // restore a paid plan). Apply the subscription's current state instead
+        // -- fetched before the transaction opens, as for invoice.paid.
+        const sub = await stripe.subscriptions.retrieve(event.data.object.id);
+        if (sub.status === "canceled") {
+          // customer.subscription.deleted owns the downgrade; a stale update
+          // must neither revive nor downgrade anything on its own.
+          await markCompleted(unscopedPrisma, event.id, resolvedOrgId, sub.id);
+          break;
+        }
         await unscopedPrisma.$transaction(async (tx) => {
           resolvedOrgId = await applySubscriptionUpsert(tx, sub, deps);
           await tx.stripeWebhookEvent.update({
@@ -316,6 +327,20 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
       case "invoice.payment_failed": {
         const invoice = event.data.object;
+        const failedSubId =
+          typeof invoice.subscription === "string"
+            ? invoice.subscription
+            : invoice.subscription?.id;
+        if (failedSubId) {
+          // Same ordering hazard as subscription updates: a retried failure
+          // delivered after invoice.paid must not mark a paid-up subscription
+          // PAST_DUE. Only act while Stripe still reports it as unpaid.
+          const current = await stripe.subscriptions.retrieve(failedSubId);
+          if (!["past_due", "unpaid", "incomplete"].includes(current.status)) {
+            await markCompleted(unscopedPrisma, event.id, resolvedOrgId, invoice.id ?? null);
+            break;
+          }
+        }
         const customerId =
           typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
         const org = customerId
