@@ -23,6 +23,9 @@ concurrency:
 env:
   NODE_VERSION: "22"
   VERCEL_CLI_VERSION: "56.3.2"
+  # The canonical production domain (NEXT_PUBLIC_APP_URL). The release must
+  # prove this domain -- not only vars.PROD_URL -- serves the candidate.
+  PROD_CANONICAL_URL: https://syveka.com
 
 jobs:
   verify-release-chain:
@@ -120,34 +123,226 @@ jobs:
         env:
           PROD_DIRECT_URL: ${{ secrets.PROD_DIRECT_URL }}
 
-      - name: Build immutable production deployment
-        run: |
-          npx --yes "vercel@$VERCEL_CLI_VERSION" pull --yes --environment=production --token="$VERCEL_TOKEN"
-          npx --yes "vercel@$VERCEL_CLI_VERSION" build --prod --token="$VERCEL_TOKEN"
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-
-      - name: Deploy immutable production build
-        run: npx --yes "vercel@$VERCEL_CLI_VERSION" deploy --prebuilt --prod --token="$VERCEL_TOKEN"
-        env:
-          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-
-      - name: Post-deploy synthetic check
+      # --- Vercel build, staged deploy, verified promotion ------------------
+      # VERCEL_TOKEN can deploy to production, so it is only ever in the
+      # environment of steps that run the Vercel CLI (`pull`/`deploy`/
+      # `promote`) or read-only Vercel API calls -- never in a step that runs
+      # repository code. `vercel build` runs `next build`, so it has no
+      # credential. The candidate is deployed with --skip-domain (STAGED),
+      # checked, then promoted explicitly, and the release only succeeds once
+      # the production domains are proven to serve the candidate's build SHA.
+      # tests/unit/production-workflow-release-hardening.test.ts enforces this.
+      - name: Pull production config (Vercel credentials)
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in 1 2 3; do
-            code=$(curl --silent --output /dev/null --write-out "%{http_code}" "$PROD_URL/api/health")
-            if [ "$code" = "200" ]; then
+          npx --yes "vercel@$VERCEL_CLI_VERSION" pull --yes --environment=production --token="$VERCEL_TOKEN"
+          if grep -rqsF -- "$VERCEL_TOKEN" .vercel "$HOME/.local/share/com.vercel.cli" "$HOME/.vercel"; then
+            echo "The Vercel token was persisted to disk by vercel pull; refusing to build."
+            exit 1
+          fi
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Build immutable production deployment (no Vercel credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          app_url="$(node --env-file=.vercel/.env.production.local -e 'process.stdout.write(process.env.NEXT_PUBLIC_APP_URL ?? "")')"
+          if [ "$app_url" != "$PROD_CANONICAL_URL" ]; then
+            echo "The production NEXT_PUBLIC_APP_URL is not $PROD_CANONICAL_URL."
+            exit 1
+          fi
+          npx --yes "vercel@$VERCEL_CLI_VERSION" build --prod
+        env:
+          # Inlined into /api/health's `build` field so the promoted domains
+          # can be proven to serve this exact commit.
+          NEXT_PUBLIC_BUILD_SHA: ${{ needs.verify-release-chain.outputs.candidate_sha }}
+
+      - name: Record the current production deployment (Vercel credentials)
+        id: previous
+        shell: bash
+        run: |
+          set -euo pipefail
+          previous_id=$(curl --fail --silent --show-error --max-time 30 \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID?teamId=$VERCEL_ORG_ID" |
+            jq -r '.targets.production.id // empty')
+          if [[ ! "$previous_id" =~ ^dpl_[A-Za-z0-9]+$ ]]; then
+            echo "Could not read the current production deployment (the rollback target)."
+            exit 1
+          fi
+          echo "id=$previous_id" >> "$GITHUB_OUTPUT"
+          echo "Rollback target (currently live): $previous_id"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Deploy the candidate as a staged production deployment (Vercel credentials)
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          deployment_url=$(npx --yes "vercel@$VERCEL_CLI_VERSION" deploy --prebuilt --prod --skip-domain --token="$VERCEL_TOKEN")
+          if [[ ! "$deployment_url" =~ ^https://[a-z0-9.-]+\.vercel\.app$ ]]; then
+            echo "Vercel did not return an HTTPS deployment URL."
+            exit 1
+          fi
+          echo "url=$deployment_url" >> "$GITHUB_OUTPUT"
+        env:
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Verify the staged candidate deployment (Vercel credentials)
+        id: candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          info=$(curl --fail --silent --show-error --max-time 30 \
+            -H "Authorization: Bearer $VERCEL_TOKEN" \
+            "https://api.vercel.com/v13/deployments/${DEPLOYMENT_URL#https://}?teamId=$VERCEL_ORG_ID")
+          deployment_id=$(jq -r '.id // empty' <<<"$info")
+          project_id=$(jq -r '.projectId // empty' <<<"$info")
+          ready_state=$(jq -r '.readyState // empty' <<<"$info")
+          ready_substate=$(jq -r '.readySubstate // empty' <<<"$info")
+          target=$(jq -r '.target // empty' <<<"$info")
+          commit_sha=$(jq -r '.meta.githubCommitSha // .meta.gitCommitSha // empty' <<<"$info")
+          echo "Candidate $deployment_id: readyState=$ready_state readySubstate=$ready_substate target=$target sha=$commit_sha"
+          if [[ ! "$deployment_id" =~ ^dpl_[A-Za-z0-9]+$ ]] ||
+            [ "$project_id" != "$VERCEL_PROJECT_ID" ] ||
+            [ "$ready_state" != "READY" ] ||
+            [ "$ready_substate" != "STAGED" ] ||
+            [ "$target" != "production" ] ||
+            [ "$commit_sha" != "$CANDIDATE_SHA" ]; then
+            echo "The staged deployment is not a READY, STAGED production deployment of $CANDIDATE_SHA in this project."
+            exit 1
+          fi
+          echo "id=$deployment_id" >> "$GITHUB_OUTPUT"
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+          CANDIDATE_SHA: ${{ needs.verify-release-chain.outputs.candidate_sha }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Check the staged candidate before promotion
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            echo "VERCEL_AUTOMATION_BYPASS_SECRET is not configured for the production environment;" \
+                 "the staged deployment sits behind Vercel Deployment Protection and cannot be checked."
+            exit 1
+          fi
+          max_attempts=30
+          for attempt in $(seq 1 "$max_attempts"); do
+            body_file=$(mktemp)
+            status=$(curl --silent --max-time 15 --connect-timeout 10 -o "$body_file" -w '%{http_code}' \
+              -H "x-vercel-protection-bypass: $VERCEL_AUTOMATION_BYPASS_SECRET" \
+              "$DEPLOYMENT_URL/api/health") || status=000
+            body=$(head -c 500 "$body_file" 2>/dev/null)
+            rm -f "$body_file"
+            if [ "$status" = "200" ] && [[ "$body" == *"\"status\":\"healthy\""* ]] &&
+              [[ "$body" == *"\"build\":\"$CANDIDATE_SHA\""* ]]; then
+              echo "Staged candidate is healthy and reports $CANDIDATE_SHA (attempt $attempt/$max_attempts): $body"
               exit 0
             fi
+            echo "Attempt $attempt/$max_attempts: status=$status body=$body"
             sleep 10
           done
-          echo "Production health check failed."
+          echo "The staged candidate did not report a healthy $CANDIDATE_SHA within ~5 minutes; not promoting."
           exit 1
         env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+          CANDIDATE_SHA: ${{ needs.verify-release-chain.outputs.candidate_sha }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      - name: Promote the verified candidate (Vercel credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes "vercel@$VERCEL_CLI_VERSION" promote "$CANDIDATE_DEPLOYMENT_ID" --timeout 5m --yes --token="$VERCEL_TOKEN"
+        env:
+          CANDIDATE_DEPLOYMENT_ID: ${{ steps.candidate.outputs.id }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Verify the production domains point at the candidate (Vercel credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          api() {
+            curl --fail --silent --show-error --max-time 30 \
+              -H "Authorization: Bearer $VERCEL_TOKEN" "https://api.vercel.com$1?teamId=$VERCEL_ORG_ID"
+          }
+          live_id=$(api "/v9/projects/$VERCEL_PROJECT_ID" | jq -r '.targets.production.id // empty')
+          ready_substate=$(api "/v13/deployments/$CANDIDATE_DEPLOYMENT_ID" | jq -r '.readySubstate // empty')
+          echo "Project production deployment: $live_id; candidate readySubstate: $ready_substate"
+          if [ "$live_id" != "$CANDIDATE_DEPLOYMENT_ID" ] || [ "$ready_substate" != "PROMOTED" ]; then
+            echo "The candidate was not promoted (still STAGED or another deployment is live)."
+            exit 1
+          fi
+          for domain in "${PROD_CANONICAL_URL#https://}" "${PROD_URL#https://}"; do
+            aliased_id=$(api "/v4/aliases/$domain" | jq -r '.deploymentId // empty')
+            echo "$domain -> $aliased_id"
+            if [ "$aliased_id" != "$CANDIDATE_DEPLOYMENT_ID" ]; then
+              echo "$domain does not point at the promoted candidate."
+              exit 1
+            fi
+          done
+        env:
+          CANDIDATE_DEPLOYMENT_ID: ${{ steps.candidate.outputs.id }}
           PROD_URL: ${{ vars.PROD_URL }}
+          VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+      - name: Prove the production domains serve the candidate build
+        shell: bash
+        run: |
+          set -euo pipefail
+          for base_url in "$PROD_CANONICAL_URL" "$PROD_URL"; do
+            max_attempts=30
+            served=false
+            for attempt in $(seq 1 "$max_attempts"); do
+              body_file=$(mktemp)
+              status=$(curl --silent --max-time 15 --connect-timeout 10 -o "$body_file" -w '%{http_code}' \
+                "$base_url/api/health") || status=000
+              body=$(head -c 500 "$body_file" 2>/dev/null)
+              rm -f "$body_file"
+              if [ "$status" = "200" ] && [[ "$body" == *"\"status\":\"healthy\""* ]] &&
+                [[ "$body" == *"\"build\":\"$CANDIDATE_SHA\""* ]]; then
+                echo "$base_url serves a healthy $CANDIDATE_SHA (attempt $attempt/$max_attempts): $body"
+                served=true
+                break
+              fi
+              echo "$base_url attempt $attempt/$max_attempts: status=$status body=$body"
+              sleep 10
+            done
+            if [ "$served" != "true" ]; then
+              echo "$base_url did not serve a healthy $CANDIDATE_SHA within ~5 minutes."
+              exit 1
+            fi
+          done
+        env:
+          CANDIDATE_SHA: ${{ needs.verify-release-chain.outputs.candidate_sha }}
+          PROD_URL: ${{ vars.PROD_URL }}
+
+      - name: Print the rollback command
+        if: failure() && steps.previous.outputs.id != ''
+        shell: bash
+        run: |
+          {
+            echo "### Production release failed after the rollback target was recorded"
+            echo
+            echo "If the candidate was promoted, restore the previous production deployment with:"
+            echo
+            echo "\`vercel rollback $PREVIOUS_DEPLOYMENT_ID --timeout 5m --yes\`"
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+        env:
+          PREVIOUS_DEPLOYMENT_ID: ${{ steps.previous.outputs.id }}

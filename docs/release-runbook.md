@@ -224,11 +224,21 @@ npx prisma migrate status
    `tests/staging/release-invariants.sql` assertion.
 8. Apply the rerunnable `prisma/sql/004_storage.sql` and validate its exact policy
    definitions with `tests/staging/storage-invariants.sql`.
-9. Deploy the pinned Vercel CLI build for the same immutable SHA.
+9. Build the same immutable SHA with the pinned Vercel CLI (no Vercel credential in
+   the build step; `NEXT_PUBLIC_BUILD_SHA` set to the candidate) and deploy it
+   **staged** (`--skip-domain`). The workflow records the currently live deployment
+   as the rollback target, verifies the staged deployment is this project's READY
+   build of the candidate, checks its `/api/health` (healthy, same build SHA)
+   through the protection-bypass header, then promotes it explicitly and fails
+   unless both `https://syveka.com` and `PROD_URL` point at it and serve a healthy
+   build of the candidate SHA. On any failure after the rollback target is recorded,
+   the job summary prints the exact `vercel rollback <previous deployment>` command.
 10. Run the production smoke checklist. End the write freeze only after it passes.
 
 Required production Environment secrets are `PROD_DATABASE_URL`,
-`PROD_DIRECT_URL`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, and `VERCEL_PROJECT_ID`.
+`PROD_DIRECT_URL`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, and
+`VERCEL_AUTOMATION_BYPASS_SECRET` (the production Vercel project's Protection
+Bypass for Automation secret; the release fails closed without it).
 Required production Environment variable is `PROD_URL`. The automatically
 provided `GITHUB_TOKEN` needs only `contents: read` and `actions: read`.
 `PRODUCTION_SUPABASE_PROJECT_REF` and `PRODUCTION_VERCEL_PROJECT_ID` are staging

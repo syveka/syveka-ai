@@ -57,6 +57,8 @@ Secrets:
 - See `docs/release-runbook.md` for the staging workflow's `STAGING_*` secrets.
 - `PROD_DATABASE_URL`
 - `PROD_DIRECT_URL`
+- `VERCEL_AUTOMATION_BYPASS_SECRET` (production Environment; lets `deploy.yml` check the
+  staged candidate's `/api/health` before promoting it)
 - `VERCEL_TOKEN`
 - `VERCEL_ORG_ID`
 - `VERCEL_PROJECT_ID`
