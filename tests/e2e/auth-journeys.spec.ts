@@ -141,10 +141,15 @@ test.describe("auth journeys on the stable staging host (opt-in)", () => {
     page,
   }) => {
     await signIn(page, requireEnv("E2E_NO_ORG_USER_EMAIL"), requireEnv("E2E_NO_ORG_USER_PASSWORD"));
-    expect(
-      classifyE2ELoginPathname(pathOf(page)),
-      `no-membership login landed on ${pathOf(page)}`,
-    ).toBe("onboarding");
+    // Login's server action redirects to /dashboard, whose (app) layout then
+    // redirects a membership-less user to /onboarding, so the URL passes
+    // through /dashboard first. Wait for the route to settle, not the first hop.
+    await expect
+      .poll(() => classifyE2ELoginPathname(pathOf(page)), {
+        message: "no-membership login did not settle on onboarding",
+        timeout: 20_000,
+      })
+      .toBe("onboarding");
     await expect(page.getByText(/Create your organization|Luo organisaatiosi/)).toBeVisible();
   });
 });
