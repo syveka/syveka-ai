@@ -59,14 +59,13 @@ async function readRecoveryState(
   }
 }
 
+// trace/screenshot/video are worker-scoped: Playwright refuses to load the
+// file if they are set inside a describe group, so they are file-level here.
+test.use({ trace: "off", screenshot: "off", video: "off" });
+
 test.describe("auth journeys on the stable staging host (opt-in)", () => {
   test.describe.configure({ mode: "serial" });
-  test.use({
-    storageState: { cookies: [], origins: [] },
-    trace: "off",
-    screenshot: "off",
-    video: "off",
-  });
+  test.use({ storageState: { cookies: [], origins: [] } });
 
   test.beforeEach(() => {
     test.skip(
