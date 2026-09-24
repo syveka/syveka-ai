@@ -23,6 +23,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
@@ -33,6 +34,7 @@ describe("GET /api/health", () => {
     await expect(response.json()).resolves.toEqual({
       status: "healthy",
       checks: { database: "ok", redis: "ok" },
+      build: "unknown",
     });
   });
 
@@ -43,6 +45,7 @@ describe("GET /api/health", () => {
     await expect(response.json()).resolves.toEqual({
       status: "degraded",
       checks: { database: "fail", redis: "ok" },
+      build: "unknown",
     });
   });
 
@@ -53,6 +56,7 @@ describe("GET /api/health", () => {
     await expect(response.json()).resolves.toEqual({
       status: "degraded",
       checks: { database: "ok", redis: "fail" },
+      build: "unknown",
     });
   });
 
@@ -69,5 +73,19 @@ describe("GET /api/health", () => {
     expect(details.name).toBe("Error");
     expect(details.message).not.toContain("super-secret-pw");
     expect(details.message).toContain("[redacted-url]");
+  });
+
+  it("reports the build SHA inlined at build time so a host can be tied to an exact commit", async () => {
+    vi.stubEnv("NEXT_PUBLIC_BUILD_SHA", "5c04ba4f4e56cb8954bce0f39f6211e75562335b");
+    const response = await GET();
+    await expect(response.json()).resolves.toMatchObject({
+      build: "5c04ba4f4e56cb8954bce0f39f6211e75562335b",
+    });
+  });
+
+  it("reports build 'unknown' for anything other than a full lowercase commit SHA", async () => {
+    vi.stubEnv("NEXT_PUBLIC_BUILD_SHA", "not-a-sha <script>");
+    const response = await GET();
+    await expect(response.json()).resolves.toMatchObject({ build: "unknown" });
   });
 });

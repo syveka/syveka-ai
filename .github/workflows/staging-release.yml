@@ -196,15 +196,37 @@ jobs:
           STAGING_META_APP_SECRET: ${{ secrets.STAGING_META_APP_SECRET }}
           STAGING_SOCIAL_TOKEN_ENCRYPTION_KEY: ${{ secrets.STAGING_SOCIAL_TOKEN_ENCRYPTION_KEY }}
 
-      - name: Build staging deployment with pinned Vercel CLI
+      # Vercel credential isolation: the staging Vercel credential is only
+      # ever in the environment of steps that run nothing but the Vercel CLI's
+      # `pull` or `deploy` (plus a check that it was not persisted to disk).
+      # `vercel build` runs `next build`, which executes application code, so
+      # it runs in its own step with no Vercel credential in its environment
+      # or arguments. tests/unit/staging-workflow-token-isolation.test.ts
+      # enforces this.
+      - name: Pull staging Preview config (Vercel credentials)
+        shell: bash
         run: |
+          set -euo pipefail
           npx --yes "vercel@$VERCEL_CLI_VERSION" pull --yes --environment=preview --token="$STAGING_VERCEL_TOKEN"
-          STAGING_CONFIG_MODE=runtime node --env-file=.vercel/.env.preview.local scripts/validate-staging-config.mjs
-          npx --yes "vercel@$VERCEL_CLI_VERSION" build --token="$STAGING_VERCEL_TOKEN"
+          if grep -rqsF -- "$STAGING_VERCEL_TOKEN" .vercel "$HOME/.local/share/com.vercel.cli" "$HOME/.vercel"; then
+            echo "The Vercel token was persisted to disk by vercel pull; refusing to build."
+            exit 1
+          fi
         env:
           STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+
+      - name: Build staging deployment (no Vercel credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGING_CONFIG_MODE=runtime node --env-file=.vercel/.env.preview.local scripts/validate-staging-config.mjs
+          npx --yes "vercel@$VERCEL_CLI_VERSION" build
+        env:
+          # Inlined into /api/health's `build` field so every host can be
+          # proven to serve this exact commit.
+          NEXT_PUBLIC_BUILD_SHA: ${{ github.sha }}
           # Compared against Vercel's own pulled NEXT_PUBLIC_SUPABASE_URL/
           # DATABASE_URL (from .env.preview.local, loaded via --env-file
           # above) inside validate-staging-config.mjs's "runtime" mode --
@@ -347,6 +369,10 @@ jobs:
             if [ "$status" = "200" ]; then
               echo "Staging health check succeeded on attempt $attempt/$max_attempts: $body"
               rm -f "$headers_file" "$body_file"
+              if [[ "$body" != *"\"build\":\"$GITHUB_SHA\""* ]]; then
+                echo "The staging Preview is healthy but does not report build $GITHUB_SHA."
+                exit 1
+              fi
               exit 0
             fi
             # Location is our own deployment's redirect target, never a token/cookie --
@@ -386,6 +412,122 @@ jobs:
           E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
           VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
 
+      # --- Stable staging alias ------------------------------------------------
+      # Everything above validated a per-deployment Preview URL. Auth emails
+      # (password recovery, signup, magic link) always return to
+      # NEXT_PUBLIC_APP_URL -- the staging project's own Production alias --
+      # so that alias must serve the same validated commit, built from the
+      # staging project's Production-scoped config. "Refuse non-staging
+      # targets" above already proved VERCEL_PROJECT_ID is the staging project,
+      # never the real production project, so `--prod` here only ever moves
+      # the staging project's alias.
+      - name: Pull stable staging alias config (Vercel credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes "vercel@$VERCEL_CLI_VERSION" pull --yes --environment=production --token="$STAGING_VERCEL_TOKEN"
+          if grep -rqsF -- "$STAGING_VERCEL_TOKEN" .vercel "$HOME/.local/share/com.vercel.cli" "$HOME/.vercel"; then
+            echo "The Vercel token was persisted to disk by vercel pull; refusing to build."
+            exit 1
+          fi
+        env:
+          STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+
+      - name: Build validated candidate for the stable staging alias (no Vercel credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          STAGING_CONFIG_MODE=runtime node --env-file=.vercel/.env.production.local scripts/validate-staging-config.mjs
+          app_url="$(node --env-file=.vercel/.env.production.local -e 'process.stdout.write(process.env.NEXT_PUBLIC_APP_URL ?? "")')"
+          if [ "$app_url" != "$STAGING_STABLE_URL" ]; then
+            echo "The staging project's Production NEXT_PUBLIC_APP_URL is not $STAGING_STABLE_URL."
+            exit 1
+          fi
+          npx --yes "vercel@$VERCEL_CLI_VERSION" build --prod
+        env:
+          NEXT_PUBLIC_BUILD_SHA: ${{ github.sha }}
+          STAGING_SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+          STAGING_STABLE_URL: https://syveka-ai-staging.vercel.app
+
+      - name: Deploy validated candidate to the stable staging alias
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes "vercel@$VERCEL_CLI_VERSION" deploy --prebuilt --prod --token="$STAGING_VERCEL_TOKEN"
+        env:
+          STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+
+      - name: Prove the stable staging alias serves the candidate
+        shell: bash
+        run: |
+          set -euo pipefail
+          max_attempts=30
+          for attempt in $(seq 1 "$max_attempts"); do
+            body_file=$(mktemp)
+            status=$(curl --silent --max-time 15 --connect-timeout 10 -o "$body_file" -w '%{http_code}' \
+              "$STAGING_STABLE_URL/api/health") || status=000
+            body=$(head -c 500 "$body_file" 2>/dev/null)
+            rm -f "$body_file"
+            if [ "$status" = "200" ] && [[ "$body" == *"\"build\":\"$GITHUB_SHA\""* ]]; then
+              echo "Stable staging alias serves $GITHUB_SHA (attempt $attempt/$max_attempts, $(date -u +%Y-%m-%dT%H:%M:%SZ)): $body"
+              exit 0
+            fi
+            echo "Attempt $attempt/$max_attempts: status=$status body=$body"
+            sleep 10
+          done
+          echo "The stable staging alias did not serve $GITHUB_SHA within ~5 minutes."
+          exit 1
+        env:
+          STAGING_STABLE_URL: https://syveka-ai-staging.vercel.app
+
+      - name: Prepare auth journey fixtures
+        id: journey-fixtures
+        run: npx tsx scripts/ensure-e2e-auth-journey-fixtures.ts prepare
+        env:
+          DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
+          SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+
+      - name: Run auth journeys on the stable staging alias
+        # Password recovery from the stable host, fresh login, and genuine
+        # no-membership onboarding. No Vercel bypass header: the stable alias
+        # is public, and the recovery journey also navigates to Supabase,
+        # which must never receive that header. Retries are disabled because
+        # a retried recovery request would hit Supabase's per-user throttle.
+        run: npx playwright test tests/e2e/auth-journeys.spec.ts --project=desktop --retries=0
+        env:
+          E2E_AUTH_JOURNEYS: "1"
+          E2E_BASE_URL: https://syveka-ai-staging.vercel.app
+          E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
+          E2E_SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+          E2E_DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+
+      - name: Restore the E2E account password
+        # Also runs when the journeys fail, so a failed run never leaves the
+        # shared E2E account with the journey's temporary password.
+        if: always() && steps.journey-fixtures.outcome != 'skipped'
+        run: npx tsx scripts/ensure-e2e-auth-journey-fixtures.ts restore
+        env:
+          DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
+          SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+
+      - name: Run essential smoke tests on the stable staging alias
+        run: npm run test:e2e
+        env:
+          E2E_BASE_URL: https://syveka-ai-staging.vercel.app
+          E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
+
       - name: Upload Playwright traces on failure
         # Without this, a failed staging E2E run's trace.zip/error-context.md
         # (the only way to see the actual DOM/network state at the moment of
@@ -409,4 +551,5 @@ jobs:
           path: |
             test-results/
             !test-results/.auth/
+            !test-results/auth-journeys*/**
           retention-days: 7

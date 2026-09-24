@@ -46,8 +46,33 @@ describe("staging-release.yml Vercel Deployment Protection bypass", () => {
     expect(block).toContain("steps.staging-url.outputs.url");
   });
 
-  it("never targets the stable production-target alias anywhere in the job", () => {
-    expect(workflow).not.toContain("syveka-ai-staging.vercel.app");
+  // The stable alias (the staging project's own Production target, and the
+  // host every auth email returns to) is now deliberately updated -- but only
+  // after the per-run Preview has passed every check, and never with the
+  // Deployment Protection bypass secret, which stays confined to the per-run
+  // Preview URL.
+  it("never sends the bypass secret to the stable alias", () => {
+    const steps = workflow.split("\n      - name:").slice(1);
+    const aliasSteps = steps.filter((step) => step.includes("syveka-ai-staging.vercel.app"));
+    expect(aliasSteps.length).toBeGreaterThan(0);
+    for (const step of aliasSteps) {
+      expect(step).not.toContain("VERCEL_AUTOMATION_BYPASS_SECRET");
+      expect(step).not.toContain("x-vercel-protection-bypass");
+    }
+  });
+
+  it("only touches the stable alias after the per-run Preview smoke tests pass", () => {
+    const previewSmoke = workflow.indexOf("- name: Run essential staging smoke tests");
+    const firstAliasReference = workflow.indexOf("syveka-ai-staging.vercel.app");
+    expect(previewSmoke).toBeGreaterThan(-1);
+    expect(firstAliasReference).toBeGreaterThan(previewSmoke);
+  });
+
+  it("uses --prod only in the dedicated stable-alias deploy step", () => {
+    const steps = workflow.split("\n      - name:").slice(1);
+    const prodSteps = steps.filter((step) => /deploy --prebuilt --prod/.test(step));
+    expect(prodSteps).toHaveLength(1);
+    expect(prodSteps[0]).toMatch(/^ Deploy validated candidate to the stable staging alias\n/);
   });
 
   it("never uses --prod for the staging deploy", () => {
