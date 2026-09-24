@@ -58,11 +58,37 @@ export const getTenantContext = cache(async (): Promise<TenantContext> => {
 
   const claimOrg = (user.app_metadata?.last_active_org ?? null) as string | null;
 
-  const membership = await prisma.organizationMember.findFirst({
+  const include = { organization: { select: { defaultLocale: true, deletedAt: true } } } as const;
+  let membership = await prisma.organizationMember.findFirst({
     where: { userId: user.id, ...(claimOrg ? { organizationId: claimOrg } : {}) },
     orderBy: { joinedAt: "asc" },
-    include: { organization: { select: { defaultLocale: true, deletedAt: true } } },
+    include,
   });
+
+  if (claimOrg && (!membership || membership.organization.deletedAt)) {
+    // Stale claim: last_active_org names an org the user was removed from (or
+    // that was soft-deleted) -- removeMember() does not rewrite the removed
+    // user's app_metadata. The access-token hook already falls back to the
+    // earliest remaining membership for the JWT's org_id claim; mirror it here
+    // so a user who still belongs to another org is not sent to /onboarding.
+    // Only ever one of the user's own memberships, so no access is widened.
+    const fallback = await prisma.organizationMember.findFirst({
+      where: { userId: user.id, organization: { deletedAt: null } },
+      orderBy: { joinedAt: "asc" },
+      include,
+    });
+    if (fallback && !fallback.organization.deletedAt) {
+      console.error(
+        JSON.stringify({
+          event: "tenant_context_stale_claim_fallback",
+          userId: user.id,
+          claimMatchedMembership: Boolean(membership),
+          claimMatchedOrgDeleted: Boolean(membership?.organization.deletedAt),
+        }),
+      );
+      membership = fallback;
+    }
+  }
 
   if (!membership || membership.organization.deletedAt) {
     // Diagnostic only -- never changes the outcome. A user reaching this
