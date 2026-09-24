@@ -309,3 +309,130 @@ describe("getTenantContextOrNull", () => {
     expect(loggedText).not.toContain("db.example");
   });
 });
+
+/**
+ * removeMember() deletes the membership but not the removed user's
+ * app_metadata.last_active_org. The access-token hook already falls back to
+ * the user's earliest remaining membership for the JWT; getTenantContext()
+ * must do the same instead of sending a still-a-member user to /onboarding.
+ */
+describe("getTenantContext stale last_active_org claim", () => {
+  const OTHER_ORG_ID = "33333333-3333-4333-8333-333333333333";
+  const sessionWithClaim = () =>
+    mocks.getUser.mockResolvedValue({
+      data: {
+        user: {
+          id: AUTH_USER_ID,
+          email: "multi-org@example.test",
+          app_metadata: { last_active_org: ORG_ID },
+        },
+      },
+      error: null,
+    });
+  const otherActiveMembership = {
+    organizationId: OTHER_ORG_ID,
+    role: "MEMBER",
+    organization: { defaultLocale: "EN", deletedAt: null },
+  };
+
+  it("falls back to the user's earliest remaining active membership when the claimed org's membership is gone", async () => {
+    sessionWithClaim();
+    mocks.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(otherActiveMembership);
+
+    const { getTenantContext } = await import("@/server/auth/session");
+    const ctx = await getTenantContext();
+
+    expect(ctx).toMatchObject({ orgId: OTHER_ORG_ID, role: "MEMBER", locale: "en" });
+    expect(mocks.findFirst).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: { userId: AUTH_USER_ID, organization: { deletedAt: null } },
+        orderBy: { joinedAt: "asc" },
+      }),
+    );
+    const logged = consoleErrorSpy.mock.calls.map((c: unknown[]) => String(c[0])).join("\n");
+    expect(logged).toContain('"event":"tenant_context_stale_claim_fallback"');
+    expect(logged).not.toContain("tenant_context_no_usable_membership");
+    expect(logged).not.toContain("multi-org@example.test");
+    expect(logged).not.toContain(ORG_ID);
+    expect(logged).not.toContain(OTHER_ORG_ID);
+  });
+
+  it("falls back when the claimed org is soft-deleted", async () => {
+    sessionWithClaim();
+    mocks.findFirst
+      .mockResolvedValueOnce({
+        organizationId: ORG_ID,
+        role: "OWNER",
+        organization: { defaultLocale: "FI", deletedAt: new Date("2026-09-01T00:00:00Z") },
+      })
+      .mockResolvedValueOnce(otherActiveMembership);
+
+    const { getTenantContext } = await import("@/server/auth/session");
+    await expect(getTenantContext()).resolves.toMatchObject({
+      orgId: OTHER_ORG_ID,
+      role: "MEMBER",
+    });
+  });
+
+  it("still fails closed when the claim is stale and the user has no other active membership", async () => {
+    sessionWithClaim();
+    mocks.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce(null);
+    mocks.count.mockResolvedValue(0);
+
+    const { getTenantContext } = await import("@/server/auth/session");
+    await expect(getTenantContext()).rejects.toThrow("No organization membership");
+    expect(mocks.findFirst).toHaveBeenCalledTimes(2);
+  });
+
+  it("never uses a fallback membership whose organization is soft-deleted", async () => {
+    sessionWithClaim();
+    const deleted = { deletedAt: new Date("2026-09-01T00:00:00Z"), defaultLocale: "EN" };
+    mocks.findFirst.mockResolvedValueOnce(null).mockResolvedValueOnce({
+      organizationId: OTHER_ORG_ID,
+      role: "MEMBER",
+      organization: deleted,
+    });
+
+    const { getTenantContext } = await import("@/server/auth/session");
+    await expect(getTenantContext()).rejects.toThrow("No organization membership");
+  });
+
+  it("with no claim, skips a soft-deleted earliest org and uses the next active membership", async () => {
+    mocks.getUser.mockResolvedValue({
+      data: { user: { id: AUTH_USER_ID, email: "no-claim@example.test", app_metadata: {} } },
+      error: null,
+    });
+    mocks.findFirst
+      .mockResolvedValueOnce({
+        organizationId: ORG_ID,
+        role: "OWNER",
+        organization: { defaultLocale: "FI", deletedAt: new Date("2026-09-01T00:00:00Z") },
+      })
+      .mockResolvedValueOnce(otherActiveMembership);
+
+    const { getTenantContext } = await import("@/server/auth/session");
+    await expect(getTenantContext()).resolves.toMatchObject({
+      orgId: OTHER_ORG_ID,
+      role: "MEMBER",
+    });
+    expect(mocks.findFirst).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: { userId: AUTH_USER_ID, organization: { deletedAt: null } },
+      }),
+    );
+  });
+
+  it("does not run a fallback lookup when there is no claim at all", async () => {
+    mocks.getUser.mockResolvedValue({
+      data: { user: { id: AUTH_USER_ID, email: "new@example.test", app_metadata: {} } },
+      error: null,
+    });
+    mocks.findFirst.mockResolvedValue(null);
+
+    const { getTenantContext } = await import("@/server/auth/session");
+    await expect(getTenantContext()).rejects.toThrow("No organization membership");
+    expect(mocks.findFirst).toHaveBeenCalledTimes(1);
+  });
+});
