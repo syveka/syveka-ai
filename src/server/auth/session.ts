@@ -65,12 +65,14 @@ export const getTenantContext = cache(async (): Promise<TenantContext> => {
     include,
   });
 
-  if (claimOrg && (!membership || membership.organization.deletedAt)) {
-    // Stale claim: last_active_org names an org the user was removed from (or
-    // that was soft-deleted) -- removeMember() does not rewrite the removed
-    // user's app_metadata. The access-token hook already falls back to the
-    // earliest remaining membership for the JWT's org_id claim; mirror it here
-    // so a user who still belongs to another org is not sent to /onboarding.
+  if ((claimOrg && !membership) || membership?.organization.deletedAt) {
+    // Stale claim -- last_active_org names an org the user was removed from
+    // (removeMember() does not rewrite the removed user's app_metadata) -- or the
+    // resolved org (claimed, or earliest when there is no claim) is soft-deleted.
+    // The access-token hook already falls back to the earliest remaining
+    // membership for the JWT's org_id claim; mirror it here (never picking a
+    // soft-deleted org) so a user who still belongs to another org is not sent
+    // to /onboarding.
     // Only ever one of the user's own memberships, so no access is widened.
     const fallback = await prisma.organizationMember.findFirst({
       where: { userId: user.id, organization: { deletedAt: null } },

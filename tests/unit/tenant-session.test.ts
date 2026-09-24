@@ -398,6 +398,32 @@ describe("getTenantContext stale last_active_org claim", () => {
     await expect(getTenantContext()).rejects.toThrow("No organization membership");
   });
 
+  it("with no claim, skips a soft-deleted earliest org and uses the next active membership", async () => {
+    mocks.getUser.mockResolvedValue({
+      data: { user: { id: AUTH_USER_ID, email: "no-claim@example.test", app_metadata: {} } },
+      error: null,
+    });
+    mocks.findFirst
+      .mockResolvedValueOnce({
+        organizationId: ORG_ID,
+        role: "OWNER",
+        organization: { defaultLocale: "FI", deletedAt: new Date("2026-09-01T00:00:00Z") },
+      })
+      .mockResolvedValueOnce(otherActiveMembership);
+
+    const { getTenantContext } = await import("@/server/auth/session");
+    await expect(getTenantContext()).resolves.toMatchObject({
+      orgId: OTHER_ORG_ID,
+      role: "MEMBER",
+    });
+    expect(mocks.findFirst).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        where: { userId: AUTH_USER_ID, organization: { deletedAt: null } },
+      }),
+    );
+  });
+
   it("does not run a fallback lookup when there is no claim at all", async () => {
     mocks.getUser.mockResolvedValue({
       data: { user: { id: AUTH_USER_ID, email: "new@example.test", app_metadata: {} } },
