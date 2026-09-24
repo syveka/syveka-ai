@@ -103,9 +103,23 @@ export async function forgotPasswordAction(
 
   const supabase = await createSupabaseServer();
   // Always report success — do not leak account existence (§13)
-  await supabase.auth.resetPasswordForEmail(email, {
+  const { error } = await supabase.auth.resetPasswordForEmail(email, {
     redirectTo: authCallbackUrl(locale, "/reset-password"),
   });
+  if (error) {
+    // Server-side only, so a rate limit, an unauthorized sender or an SMTP
+    // failure is diagnosable. Never the email or error.message (Supabase
+    // messages can echo the address) -- only the error's code/status/name.
+    const { code, status, name } = error as { code?: unknown; status?: unknown; name?: unknown };
+    console.error(
+      JSON.stringify({
+        event: "forgot_password_request_failed",
+        code: typeof code === "string" ? code : null,
+        status: typeof status === "number" ? status : null,
+        name: typeof name === "string" ? name : "unknown",
+      }),
+    );
+  }
   return { message: "verify_email_sent" };
 }
 
