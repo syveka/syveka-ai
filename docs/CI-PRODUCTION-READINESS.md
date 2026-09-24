@@ -34,7 +34,11 @@ current `main` tip **and** has both a successful push-triggered CI run **and** a
 staging `workflow_dispatch` run at that same SHA. Only then does `migrate-and-deploy`
 (protected `production` Environment, 45-minute timeout) re-verify the SHA, run the read-only
 legacy preflight, `prisma migrate deploy`, `prisma migrate status`, storage-compatibility SQL,
-DB invariant checks, a pinned Vercel CLI (`56.3.2`) deploy, and poll `/api/health`.
+DB invariant checks, then a pinned Vercel CLI (`56.3.2`) credential-free build, a staged
+(`--skip-domain`) deploy, a pre-promotion health/build-SHA check, an explicit `vercel
+promote`, and a post-promotion proof that `https://syveka.com` and `PROD_URL` both point at
+the candidate and serve its build SHA (enforced by
+`tests/unit/production-workflow-release-hardening.test.ts`).
 
 ### `.github/workflows/staging-release.yml`
 
