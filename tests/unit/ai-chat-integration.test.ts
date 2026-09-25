@@ -163,3 +163,51 @@ describe("AI chat route integration", () => {
     );
   });
 });
+
+describe("AI chat stream failure logging", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.moderation.mockResolvedValue(false);
+    mocks.limitAiChat.mockResolvedValue({
+      success: true,
+      reset: Date.now() + 60_000,
+      limit: 30,
+      remaining: 29,
+    });
+  });
+
+  it("logs only non-content identifiers -- never the error message, user text, or URLs", async () => {
+    const leaky = Object.assign(
+      new Error(
+        'Invalid `prisma.message.create()` invocation: { data: { content: "my private question" } } see https://user:pw@db.example/x',
+      ),
+      { name: "PrismaClientValidationError", code: "P2009", status: 400, request_id: "req_abc123" },
+    );
+    mocks.streamClaude.mockRejectedValue(leaky);
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const response = await POST(
+      new Request("http://localhost/api/v1/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId: "33333333-3333-4333-8333-333333333333",
+          message: "my private question",
+        }),
+      }),
+    );
+    const body = await response.text();
+
+    expect(body).toContain('"code":"generation_failed"');
+    const logged = consoleError.mock.calls.map((c) => c.map(String).join(" ")).join("\n");
+    expect(logged).toContain('"event":"ai_chat_stream_failed"');
+    expect(logged).toContain('"name":"PrismaClientValidationError"');
+    expect(logged).toContain('"code":"P2009"');
+    expect(logged).toContain('"requestId":"req_abc123"');
+    expect(logged).not.toContain("my private question");
+    expect(logged).not.toContain("prisma.message.create");
+    expect(logged).not.toContain("db.example");
+    expect(logged).not.toContain("user:pw");
+    consoleError.mockRestore();
+  });
+});
