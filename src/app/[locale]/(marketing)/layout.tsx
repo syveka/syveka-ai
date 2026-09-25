@@ -1,6 +1,7 @@
 import { Link } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
 import { useTranslations } from "next-intl";
+import { getTranslations } from "next-intl/server";
 import { PublicSyvekaAssistant } from "@/components/marketing/public-syveka-assistant";
 
 export default async function MarketingLayout({
@@ -11,13 +12,15 @@ export default async function MarketingLayout({
   params: Promise<{ locale: string }>;
 }) {
   const { locale } = await params;
+  const t = await getTranslations("marketing");
   return (
     <div className="flex min-h-screen flex-col">
       <MarketingNav />
       <main className="flex-1">{children}</main>
       <footer className="border-t py-8 text-center text-sm text-muted-foreground">
-        © {new Date().getFullYear()} Syveka AI · <Link href="/legal/privacy">Privacy</Link> ·{" "}
-        <Link href="/legal/terms">Terms</Link>
+        © {new Date().getFullYear()} Syveka AI ·{" "}
+        <Link href="/legal/privacy">{t("footerPrivacy")}</Link> ·{" "}
+        <Link href="/legal/terms">{t("footerTerms")}</Link>
       </footer>
       <PublicSyvekaAssistant locale={locale} />
     </div>

@@ -1077,5 +1077,22 @@
       "autopilotPublished": "{count} julkaisua autopilotin kautta",
       "avgApprovalTurnaround": "~{hours} h keskimääräinen hyväksyntäaika"
     }
+  },
+  "marketing": {
+    "heroTitle": "Tekoälyavustaja, joka tuntee yrityksesi",
+    "heroSubtitle": "Chat, puheavustaja, CRM ja automaatiot — yhdessä alustassa suomalaisille pk-yrityksille.",
+    "startFree": "Aloita ilmaiseksi",
+    "pricing": "Hinnoittelu",
+    "pricingTitle": "Hinnoittelu",
+    "pricingSubtitle": "Hinnat / käyttäjä / kk + ALV. 14 päivän ilmainen Pro-kokeilu.",
+    "planSeats": "{count} käyttäjää",
+    "planAiMessages": "{count} AI-viestiä/kk",
+    "planAiMessagesPerUser": "{count} AI-viestiä / käyttäjä / kk",
+    "planVoiceMinutes": "Puheavustaja: {minutes} min",
+    "planVoiceNone": "Puheavustaja: —",
+    "getStarted": "Aloita",
+    "enterprise": "Suuryrityksille:",
+    "footerPrivacy": "Tietosuoja",
+    "footerTerms": "Käyttöehdot"
   }
 }

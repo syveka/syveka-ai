@@ -1077,5 +1077,22 @@
       "autopilotPublished": "{count} posts published via autopilot",
       "avgApprovalTurnaround": "~{hours}h average approval turnaround"
     }
+  },
+  "marketing": {
+    "heroTitle": "The AI assistant that knows your business",
+    "heroSubtitle": "Chat, voice assistant, CRM and automations — one platform built for Finnish SMBs.",
+    "startFree": "Start free",
+    "pricing": "Pricing",
+    "pricingTitle": "Pricing",
+    "pricingSubtitle": "Per user / month + VAT. 14-day free Pro trial.",
+    "planSeats": "{count} seats",
+    "planAiMessages": "{count} AI messages/mo",
+    "planAiMessagesPerUser": "{count} AI messages per user/mo",
+    "planVoiceMinutes": "Voice AI: {minutes} min",
+    "planVoiceNone": "Voice AI: —",
+    "getStarted": "Get started",
+    "enterprise": "Enterprise:",
+    "footerPrivacy": "Privacy",
+    "footerTerms": "Terms"
   }
 }

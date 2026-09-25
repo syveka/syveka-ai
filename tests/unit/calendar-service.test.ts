@@ -38,6 +38,7 @@ vi.mock("@/server/services/booking", () => ({
 }));
 
 import {
+  updateEvent,
   CalendarError,
   cancelEvent,
   createEvent,
@@ -73,7 +74,7 @@ type Db = {
   contact: { findFirst: ReturnType<typeof vi.fn>; count: ReturnType<typeof vi.fn> };
   company: { findFirst: ReturnType<typeof vi.fn> };
   deal: { findFirst: ReturnType<typeof vi.fn> };
-  organizationMember: { findFirst: ReturnType<typeof vi.fn> };
+  organizationMember: { findFirst: ReturnType<typeof vi.fn>; count: ReturnType<typeof vi.fn> };
 };
 
 function makeDb(): Db {
@@ -88,7 +89,10 @@ function makeDb(): Db {
     contact: { findFirst: vi.fn(async () => ({ id: "c-1" })), count: vi.fn(async () => 0) },
     company: { findFirst: vi.fn(async () => ({ id: "co-1" })) },
     deal: { findFirst: vi.fn(async () => ({ id: "d-1" })) },
-    organizationMember: { findFirst: vi.fn(async () => ({ id: "m-1" })) },
+    organizationMember: {
+      findFirst: vi.fn(async () => ({ id: "m-1" })),
+      count: vi.fn(async () => 0),
+    },
   };
 }
 
@@ -323,5 +327,97 @@ describe("cancelEvent", () => {
     cancelBookingAsOwnerMock.mockRejectedValue(dbError);
 
     await expect(cancelEvent(ctx(), "evt-1")).rejects.toBe(dbError);
+  });
+});
+
+describe("attendee links stay inside the tenant and are checked before any write", () => {
+  const FOREIGN_USER = "44444444-4444-4444-8444-444444444444";
+  const MEMBER_USER = "55555555-5555-4555-8555-555555555555";
+  const FOREIGN_CONTACT = "66666666-6666-4666-8666-666666666666";
+
+  it("rejects an attendee userId who is not a member of this org, before the event is created", async () => {
+    db.organizationMember.count.mockResolvedValue(0);
+    await expect(
+      createEvent(ctx(), baseInput({ attendees: [{ userId: FOREIGN_USER }] })),
+    ).rejects.toMatchObject({ code: "invalid_relation" });
+    expect(db.calendarEvent.create).not.toHaveBeenCalled();
+    expect(unscopedMock.eventAttendee.createMany).not.toHaveBeenCalled();
+    expect(db.organizationMember.count).toHaveBeenCalledWith({
+      where: { userId: { in: [FOREIGN_USER] } },
+    });
+  });
+
+  it("rejects a foreign attendee contact before the event is created (previously after)", async () => {
+    db.contact.count.mockResolvedValue(0);
+    await expect(
+      createEvent(ctx(), baseInput({ attendees: [{ contactId: FOREIGN_CONTACT }] })),
+    ).rejects.toMatchObject({ code: "invalid_relation" });
+    expect(db.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a foreign attendee userId on update, before the event is updated", async () => {
+    db.calendarEvent.findFirst.mockResolvedValue({ id: "evt-1", title: "Existing" });
+    db.organizationMember.count.mockResolvedValue(0);
+    await expect(
+      updateEvent(ctx(), "evt-1", baseInput({ attendees: [{ userId: FOREIGN_USER }] })),
+    ).rejects.toMatchObject({ code: "invalid_relation" });
+    expect(db.calendarEvent.update).not.toHaveBeenCalled();
+    // The existing attendee list must survive a rejected update untouched.
+    expect(unscopedMock.eventAttendee.deleteMany).not.toHaveBeenCalled();
+    expect(unscopedMock.eventAttendee.createMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a mix of a member and a foreign userId (no partial write)", async () => {
+    db.organizationMember.count.mockResolvedValue(1);
+    await expect(
+      createEvent(
+        ctx(),
+        baseInput({ attendees: [{ userId: MEMBER_USER }, { userId: FOREIGN_USER }] }),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_relation" });
+    expect(db.organizationMember.count).toHaveBeenCalledWith({
+      where: { userId: { in: [MEMBER_USER, FOREIGN_USER] } },
+    });
+    expect(db.calendarEvent.create).not.toHaveBeenCalled();
+    expect(unscopedMock.eventAttendee.createMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a valid contact alongside a foreign userId on update (no partial write)", async () => {
+    db.calendarEvent.findFirst.mockResolvedValue({ id: "evt-1", title: "Existing" });
+    db.contact.count.mockResolvedValue(1);
+    db.organizationMember.count.mockResolvedValue(0);
+    await expect(
+      updateEvent(
+        ctx(),
+        "evt-1",
+        baseInput({ attendees: [{ contactId: "c-1" }, { userId: FOREIGN_USER }] }),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_relation" });
+    expect(db.calendarEvent.update).not.toHaveBeenCalled();
+    expect(unscopedMock.eventAttendee.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("accepts an in-tenant contact attendee and a member attendee together", async () => {
+    db.contact.count.mockResolvedValue(1);
+    db.organizationMember.count.mockResolvedValue(1);
+    await createEvent(
+      ctx(),
+      baseInput({ attendees: [{ contactId: "c-1" }, { userId: MEMBER_USER }] }),
+    );
+    expect(db.calendarEvent.create).toHaveBeenCalledTimes(1);
+    expect(unscopedMock.eventAttendee.createMany).toHaveBeenCalledTimes(1);
+  });
+
+  it("accepts member attendees (duplicates counted once) and writes them", async () => {
+    db.organizationMember.count.mockResolvedValue(1);
+    await createEvent(
+      ctx(),
+      baseInput({ attendees: [{ userId: MEMBER_USER }, { userId: MEMBER_USER, name: "Dup" }] }),
+    );
+    expect(db.organizationMember.count).toHaveBeenCalledWith({
+      where: { userId: { in: [MEMBER_USER] } },
+    });
+    expect(db.calendarEvent.create).toHaveBeenCalledTimes(1);
+    expect(unscopedMock.eventAttendee.createMany).toHaveBeenCalledTimes(1);
   });
 });
