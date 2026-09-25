@@ -14,6 +14,7 @@ import {
   InsufficientCreditsError,
 } from "./creator-credits";
 import { getCreatorMediaProvider, getCreatorCaptionProvider } from "@/server/ai/creator";
+import { isUnconfiguredMockInProduction } from "@/server/ai/creator/router";
 import type {
   AspectRatio,
   GenerationQuality,
@@ -473,6 +474,17 @@ export async function persistGeneratedAssetWithCleanup(
   }
 }
 
+/** Media provider for a generation; fails closed before any credit is reserved. */
+function getGenerationMediaProvider() {
+  if (isUnconfiguredMockInProduction()) {
+    throw new CreatorProfileError(
+      "media_provider_not_configured",
+      "Media generation is not configured.",
+    );
+  }
+  return getCreatorMediaProvider();
+}
+
 async function requireActiveProfileWithReferences(ctx: TenantContext, creatorProfileId: string) {
   const db = tenantDb(ctx.orgId);
   const profile = await db.creatorProfile.findFirstOrThrow({
@@ -507,7 +519,7 @@ export async function requestCharacterImageGeneration(
 ) {
   await assertFeatureEnabled(ctx.orgId, CREATOR_STUDIO_FLAG);
   const profile = await requireActiveProfileWithReferences(ctx, input.creatorProfileId);
-  const provider = getCreatorMediaProvider();
+  const provider = getGenerationMediaProvider();
   const creditCost = getCreatorGenerationCreditCost("IMAGE", provider.name, "default", {
     quality: input.quality,
   });
@@ -574,7 +586,7 @@ export async function requestImageFromCharacterGeneration(
 ) {
   await assertFeatureEnabled(ctx.orgId, CREATOR_STUDIO_FLAG);
   const profile = await requireActiveProfileWithReferences(ctx, input.creatorProfileId);
-  const provider = getCreatorMediaProvider();
+  const provider = getGenerationMediaProvider();
   const creditCost = getCreatorGenerationCreditCost("IMAGE", provider.name, "default", {
     quality: input.quality,
   });
@@ -647,7 +659,7 @@ export async function requestVideoFromImageGeneration(
   const sourceAsset = await db.creatorReferenceAsset.findFirstOrThrow({
     where: { id: input.sourceAssetId },
   });
-  const provider = getCreatorMediaProvider();
+  const provider = getGenerationMediaProvider();
   const creditCost = getCreatorGenerationCreditCost("IMAGE_TO_VIDEO", provider.name, "default", {
     quality: input.quality,
     durationSeconds: input.durationSeconds,

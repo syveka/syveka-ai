@@ -52,6 +52,10 @@ vi.mock("@/server/ai/creator", () => ({
   getCreatorMediaProvider: () => providerMock,
   getCreatorCaptionProvider: vi.fn(),
 }));
+const unconfiguredMockMock = vi.hoisted(() => vi.fn(() => false));
+vi.mock("@/server/ai/creator/router", () => ({
+  isUnconfiguredMockInProduction: unconfiguredMockMock,
+}));
 
 import { requestCharacterImageGeneration } from "@/server/services/creator-generations";
 
@@ -116,6 +120,21 @@ function makeDb() {
 describe("runGeneration (via requestCharacterImageGeneration)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  it("fails closed before reserving credits when production would serve unconfigured mock media", async () => {
+    tenantDbMock.mockReturnValue(makeDb());
+    unconfiguredMockMock.mockReturnValueOnce(true);
+
+    await expect(
+      requestCharacterImageGeneration(ctx(), {
+        creatorProfileId: "profile-1",
+        prompt: "a portrait",
+        aspectRatio: "1:1",
+      }),
+    ).rejects.toMatchObject({ code: "media_provider_not_configured" });
+    expect(reserveMock).not.toHaveBeenCalled();
+    expect(providerMock.generateCharacterImage).not.toHaveBeenCalled();
   });
 
   it("reserves once and commits exactly once on success — never releases", async () => {

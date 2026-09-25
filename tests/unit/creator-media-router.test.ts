@@ -40,3 +40,45 @@ describe("Creator Studio media provider routing", () => {
     expect(getRoutedCreatorMediaProvider().name).toBe("fal");
   });
 });
+
+describe("isUnconfiguredMockInProduction (generation fails closed)", () => {
+  beforeEach(() => {
+    vi.resetModules();
+    delete process.env.FAL_API_KEY;
+    delete process.env.CREATOR_MEDIA_PROVIDER;
+  });
+
+  afterEach(() => {
+    process.env.FAL_API_KEY = originalFalKey;
+    process.env.CREATOR_MEDIA_PROVIDER = originalPin;
+    vi.unstubAllEnvs();
+  });
+
+  it("is true in production when FAL_API_KEY is missing and nothing is pinned", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const { isUnconfiguredMockInProduction, getRoutedCreatorMediaProvider } =
+      await import("@/server/ai/creator/router");
+    expect(isUnconfiguredMockInProduction()).toBe(true);
+    // Resolution itself never throws, so pages that only display cost estimates still render.
+    expect(getRoutedCreatorMediaProvider().name).toBe("mock");
+  });
+
+  it("is false in production with FAL_API_KEY configured", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    process.env.FAL_API_KEY = "test-key";
+    const { isUnconfiguredMockInProduction } = await import("@/server/ai/creator/router");
+    expect(isUnconfiguredMockInProduction()).toBe(false);
+  });
+
+  it("is false in production when mock is explicitly pinned", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    process.env.CREATOR_MEDIA_PROVIDER = "mock";
+    const { isUnconfiguredMockInProduction } = await import("@/server/ai/creator/router");
+    expect(isUnconfiguredMockInProduction()).toBe(false);
+  });
+
+  it("is false outside production (dev/test keep the mock fallback)", async () => {
+    const { isUnconfiguredMockInProduction } = await import("@/server/ai/creator/router");
+    expect(isUnconfiguredMockInProduction()).toBe(false);
+  });
+});
