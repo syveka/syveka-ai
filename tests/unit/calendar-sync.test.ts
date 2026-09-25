@@ -200,6 +200,18 @@ describe("idempotent import sync", () => {
     expect(result.imported).toBe(0);
     expect(getFreshTokensMock).not.toHaveBeenCalled();
   });
+
+  it("imports nothing for a soft-deleted org: the lookup excludes deleted orgs", async () => {
+    // Prisma returns null when the relation filter excludes the org.
+    unscopedMock.externalCalendar.findUnique.mockResolvedValue(null);
+    const result = await syncExternalCalendar("extcal-1");
+    expect(unscopedMock.externalCalendar.findUnique.mock.calls[0]?.[0]).toMatchObject({
+      where: { id: "extcal-1", organization: { deletedAt: null } },
+    });
+    expect(result.imported).toBe(0);
+    expect(getFreshTokensMock).not.toHaveBeenCalled();
+    expect(unscopedMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
 });
 
 describe("webhook verification secret helper", () => {
@@ -245,6 +257,16 @@ describe("webhook verification secret helper", () => {
 });
 
 describe("ensureWebhookSubscription", () => {
+  it("never subscribes for a soft-deleted org: the lookup excludes deleted orgs", async () => {
+    unscopedMock.externalCalendar.findUnique.mockResolvedValue(null);
+    const outcome = await ensureWebhookSubscription("extcal-1");
+    expect(outcome).toBe("skipped");
+    expect(unscopedMock.externalCalendar.findUnique.mock.calls[0]?.[0]).toMatchObject({
+      where: { id: "extcal-1", organization: { deletedAt: null } },
+    });
+    expect(unscopedMock.calendarSyncState.upsert).not.toHaveBeenCalled();
+  });
+
   it("creates a fresh subscription and persists only its secret hash", async () => {
     unscopedMock.externalCalendar.findUnique.mockResolvedValue(
       externalCalendar({ syncState: calendarSyncState() }),

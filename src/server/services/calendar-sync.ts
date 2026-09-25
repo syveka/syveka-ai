@@ -120,8 +120,9 @@ async function applyRemoteEvent(
 }
 
 export async function syncExternalCalendar(externalCalendarId: string): Promise<SyncResult> {
+  // A soft-deleted org's calendars are treated as gone: nothing is imported.
   const calendar = await unscopedPrisma.externalCalendar.findUnique({
-    where: { id: externalCalendarId },
+    where: { id: externalCalendarId, organization: { deletedAt: null } },
     include: { connection: true, syncState: true },
   });
   if (!calendar || !calendar.syncEnabled) {
@@ -243,8 +244,9 @@ export type WebhookSubscriptionOutcome = "reused" | "renewed" | "skipped";
 export async function ensureWebhookSubscription(
   externalCalendarId: string,
 ): Promise<WebhookSubscriptionOutcome> {
+  // Never create or renew a provider subscription for a soft-deleted org.
   const calendar = await unscopedPrisma.externalCalendar.findUnique({
-    where: { id: externalCalendarId },
+    where: { id: externalCalendarId, organization: { deletedAt: null } },
     include: { connection: true, syncState: true },
   });
   if (!calendar?.syncEnabled) return "skipped";
