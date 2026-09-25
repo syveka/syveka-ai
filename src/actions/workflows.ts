@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requirePermission } from "@/server/auth/guard";
-import { upsertWorkflow, setWorkflowActive } from "@/server/services/workflows";
+import { upsertWorkflow, setWorkflowActive, WorkflowError } from "@/server/services/workflows";
 import { workflowSchema } from "@/lib/validators/workflows";
 import { EntitlementError } from "@/server/services/billing/entitlements";
 
@@ -19,7 +19,13 @@ export async function saveWorkflowAction(
     return { error: parsed.error.issues[0]?.message ?? "invalid_input" };
   }
 
-  const workflow = await upsertWorkflow(ctx, parsed.data, workflowId);
+  let workflow;
+  try {
+    workflow = await upsertWorkflow(ctx, parsed.data, workflowId);
+  } catch (e) {
+    if (e instanceof WorkflowError) return { error: e.code };
+    throw e;
+  }
   revalidatePath("/workflows");
   if (!workflowId) redirect(`/workflows/${workflow.id}`);
   return { message: "saved" };
