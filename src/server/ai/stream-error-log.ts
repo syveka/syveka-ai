@@ -22,7 +22,11 @@ export function describeAiChatStreamError(err: unknown): {
   };
   return {
     event: "ai_chat_stream_failed",
-    name: typeof e.name === "string" ? e.name : typeof err,
+    // Class names only: any code can set err.name to arbitrary text.
+    name:
+      typeof e.name === "string" && /^[A-Za-z][A-Za-z0-9_$.-]{0,63}$/.test(e.name)
+        ? e.name
+        : "unknown",
     status: typeof e.status === "number" ? e.status : null,
     code: typeof e.code === "string" && /^[A-Za-z0-9_.-]{1,64}$/.test(e.code) ? e.code : null,
     requestId:
