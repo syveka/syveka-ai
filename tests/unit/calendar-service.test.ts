@@ -362,6 +362,50 @@ describe("attendee links stay inside the tenant and are checked before any write
       updateEvent(ctx(), "evt-1", baseInput({ attendees: [{ userId: FOREIGN_USER }] })),
     ).rejects.toMatchObject({ code: "invalid_relation" });
     expect(db.calendarEvent.update).not.toHaveBeenCalled();
+    // The existing attendee list must survive a rejected update untouched.
+    expect(unscopedMock.eventAttendee.deleteMany).not.toHaveBeenCalled();
+    expect(unscopedMock.eventAttendee.createMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a mix of a member and a foreign userId (no partial write)", async () => {
+    db.organizationMember.count.mockResolvedValue(1);
+    await expect(
+      createEvent(
+        ctx(),
+        baseInput({ attendees: [{ userId: MEMBER_USER }, { userId: FOREIGN_USER }] }),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_relation" });
+    expect(db.organizationMember.count).toHaveBeenCalledWith({
+      where: { userId: { in: [MEMBER_USER, FOREIGN_USER] } },
+    });
+    expect(db.calendarEvent.create).not.toHaveBeenCalled();
+    expect(unscopedMock.eventAttendee.createMany).not.toHaveBeenCalled();
+  });
+
+  it("rejects a valid contact alongside a foreign userId on update (no partial write)", async () => {
+    db.calendarEvent.findFirst.mockResolvedValue({ id: "evt-1", title: "Existing" });
+    db.contact.count.mockResolvedValue(1);
+    db.organizationMember.count.mockResolvedValue(0);
+    await expect(
+      updateEvent(
+        ctx(),
+        "evt-1",
+        baseInput({ attendees: [{ contactId: "c-1" }, { userId: FOREIGN_USER }] }),
+      ),
+    ).rejects.toMatchObject({ code: "invalid_relation" });
+    expect(db.calendarEvent.update).not.toHaveBeenCalled();
+    expect(unscopedMock.eventAttendee.deleteMany).not.toHaveBeenCalled();
+  });
+
+  it("accepts an in-tenant contact attendee and a member attendee together", async () => {
+    db.contact.count.mockResolvedValue(1);
+    db.organizationMember.count.mockResolvedValue(1);
+    await createEvent(
+      ctx(),
+      baseInput({ attendees: [{ contactId: "c-1" }, { userId: MEMBER_USER }] }),
+    );
+    expect(db.calendarEvent.create).toHaveBeenCalledTimes(1);
+    expect(unscopedMock.eventAttendee.createMany).toHaveBeenCalledTimes(1);
   });
 
   it("accepts member attendees (duplicates counted once) and writes them", async () => {
