@@ -3,12 +3,14 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 /**
- * Staging Creator Studio runtime config: the GitHub `staging` environment
- * secret STAGING_FAL_API_KEY must reach both staging deployments as the
- * runtime FAL_API_KEY (via `vercel deploy --env`), be proven present by name
- * only, and never be exposed to a step that runs repository code, written to
- * disk/GITHUB_ENV/GITHUB_OUTPUT, printed, or referenced by the production
- * release workflow.
+ * Staging Creator Studio runtime config: FAL_API_KEY comes from the staging
+ * Vercel project's own (Sensitive) environment. `vercel deploy --prebuilt`
+ * ignores `--env` (run 36176876155 proved it: the deployment's env names were
+ * unchanged), so the workflow never forwards the GitHub secret to a deploy.
+ * Both staging deploys must instead prove, by NAME only, that Vercel attached
+ * FAL_API_KEY -- and the GitHub secret STAGING_FAL_API_KEY stays confined to
+ * the config-presence check, never printed, persisted, or given to the
+ * production release workflow.
  */
 const read = (file: string) =>
   fs
@@ -33,26 +35,21 @@ const DEPLOY_STEPS = [
 const step = (name: string) => steps.find((s) => s.name === name)!;
 
 describe("staging-release.yml runtime FAL_API_KEY", () => {
-  it("exposes STAGING_FAL_API_KEY only to the config check and the two deploy steps", () => {
+  it("confines STAGING_FAL_API_KEY to the Creator Studio config check", () => {
     const withSecret = steps
       .filter((s) => s.text.includes("STAGING_FAL_API_KEY"))
       .map((s) => s.name);
-    expect(withSecret).toEqual(["Verify Creator Studio provider configuration", ...DEPLOY_STEPS]);
+    expect(withSecret).toEqual(["Verify Creator Studio provider configuration"]);
   });
 
-  it.each(DEPLOY_STEPS)("%s refuses an empty or multi-line secret before deploying", (name) => {
+  it.each(DEPLOY_STEPS)("%s does not pass FAL_API_KEY via the ignored --env flag", (name) => {
     const run = step(name).run;
-    const guard = run.indexOf('if [ -z "$STAGING_FAL_API_KEY" ]');
-    expect(guard).toBeGreaterThan(-1);
-    expect(run).toContain(`*$'\\n'*`);
-    expect(run).toContain(`*$'\\r'*`);
-    expect(guard).toBeLessThan(run.indexOf("deploy --prebuilt"));
-  });
-
-  it.each(DEPLOY_STEPS)("%s passes the secret as the runtime FAL_API_KEY", (name) => {
-    expect(step(name).run).toMatch(
-      /vercel@\$VERCEL_CLI_VERSION" deploy --prebuilt (--prod )?--env "FAL_API_KEY=\$STAGING_FAL_API_KEY"/,
-    );
+    const commands = run
+      .split("\n")
+      .filter((line) => !/^\s*#/.test(line))
+      .join("\n");
+    expect(commands).toMatch(/vercel@\$VERCEL_CLI_VERSION" deploy --prebuilt /);
+    expect(commands).not.toMatch(/--env\b|\s-e\s+"?FAL_API_KEY/);
   });
 
   it.each(DEPLOY_STEPS)(
@@ -62,11 +59,19 @@ describe("staging-release.yml runtime FAL_API_KEY", () => {
       const deploy = run.indexOf("deploy --prebuilt");
       const lookup = run.indexOf("https://api.vercel.com/v13/deployments/");
       const check = run.indexOf(`jq -e '(.env // []) | index("FAL_API_KEY") != null'`);
+      expect(deploy).toBeGreaterThan(-1);
       expect(lookup).toBeGreaterThan(deploy);
       expect(check).toBeGreaterThan(lookup);
       expect(run.slice(check)).toMatch(/refusing to continue\."\n\s+exit 1/);
     },
   );
+
+  it.each(DEPLOY_STEPS)("%s never prints the deployment's environment response", (name) => {
+    for (const line of step(name).run.split("\n")) {
+      if (!line.includes("runtime_env")) continue;
+      expect(line, name).not.toMatch(/\b(echo|printf|tee|cat)\b/);
+    }
+  });
 
   it("never prints, persists or forwards the secret value", () => {
     for (const s of steps) {

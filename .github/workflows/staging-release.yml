@@ -317,20 +317,14 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Creator Studio runtime config: STAGING_FAL_API_KEY (GitHub staging
-          # environment secret) becomes this deployment's runtime FAL_API_KEY via
-          # --env, never via disk or a build step. Checked fail-closed without
-          # ever printing the value; the post-deploy check reads only env NAMES.
-          if [ -z "$STAGING_FAL_API_KEY" ] || [[ "$STAGING_FAL_API_KEY" == *$'\n'* || "$STAGING_FAL_API_KEY" == *$'\r'* ]]; then
-            echo "STAGING_FAL_API_KEY is empty or multi-line; refusing to deploy."
-            exit 1
-          fi
-          deployment_url=$(npx --yes "vercel@$VERCEL_CLI_VERSION" deploy --prebuilt --env "FAL_API_KEY=$STAGING_FAL_API_KEY" --token="$STAGING_VERCEL_TOKEN")
+          deployment_url=$(npx --yes "vercel@$VERCEL_CLI_VERSION" deploy --prebuilt --token="$STAGING_VERCEL_TOKEN")
           if [[ "$deployment_url" != https://* ]]; then
             echo "Vercel did not return an HTTPS staging deployment URL."
             exit 1
           fi
-          # Fail closed unless Vercel reports FAL_API_KEY among this deployment's
+          # Creator Studio needs FAL_API_KEY at runtime. It comes from the staging
+          # Vercel project's own (Sensitive) env; `vercel deploy --prebuilt` ignores
+          # --env. Fail closed unless Vercel lists it among this deployment's
           # runtime environment variable NAMES (the API returns names only).
           runtime_env=$(curl --fail --silent --show-error --max-time 30 \
             -H "Authorization: Bearer $STAGING_VERCEL_TOKEN" \
@@ -345,7 +339,6 @@ jobs:
           STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
-          STAGING_FAL_API_KEY: ${{ secrets.STAGING_FAL_API_KEY }}
 
       - name: Validate staging E2E base URL
         id: staging-url
@@ -576,21 +569,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          # Creator Studio runtime config: STAGING_FAL_API_KEY (GitHub staging
-          # environment secret) becomes this deployment's runtime FAL_API_KEY via
-          # --env, never via disk or a build step. Checked fail-closed without
-          # ever printing the value; the post-deploy check reads only env NAMES.
-          if [ -z "$STAGING_FAL_API_KEY" ] || [[ "$STAGING_FAL_API_KEY" == *$'\n'* || "$STAGING_FAL_API_KEY" == *$'\r'* ]]; then
-            echo "STAGING_FAL_API_KEY is empty or multi-line; refusing to deploy."
-            exit 1
-          fi
-          stable_deployment_url=$(npx --yes "vercel@$VERCEL_CLI_VERSION" deploy --prebuilt --prod --env "FAL_API_KEY=$STAGING_FAL_API_KEY" --token="$STAGING_VERCEL_TOKEN")
+          stable_deployment_url=$(npx --yes "vercel@$VERCEL_CLI_VERSION" deploy --prebuilt --prod --token="$STAGING_VERCEL_TOKEN")
           if [[ "$stable_deployment_url" != https://* ]]; then
             echo "Vercel did not return an HTTPS deployment URL for the stable staging alias."
             exit 1
           fi
           echo "$stable_deployment_url"
-          # Fail closed unless Vercel reports FAL_API_KEY among this deployment's
+          # Creator Studio needs FAL_API_KEY at runtime. It comes from the staging
+          # Vercel project's own (Sensitive) env; `vercel deploy --prebuilt` ignores
+          # --env. Fail closed unless Vercel lists it among this deployment's
           # runtime environment variable NAMES (the API returns names only).
           runtime_env=$(curl --fail --silent --show-error --max-time 30 \
             -H "Authorization: Bearer $STAGING_VERCEL_TOKEN" \
@@ -604,7 +591,6 @@ jobs:
           STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
           VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
           VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
-          STAGING_FAL_API_KEY: ${{ secrets.STAGING_FAL_API_KEY }}
 
       - name: Prove the stable staging alias serves the candidate
         shell: bash
