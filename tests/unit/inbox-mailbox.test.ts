@@ -35,6 +35,7 @@ describe("resolveOrgIdByMailboxAddress", () => {
         where: {
           address: { equals: "Acme-Oy@Inbox.Syveka.Ai", mode: "insensitive" },
           channel: "EMAIL",
+          organization: { deletedAt: null },
         },
       }),
     );

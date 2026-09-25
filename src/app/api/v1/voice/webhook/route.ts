@@ -52,7 +52,8 @@ async function resolveAssistant(
 ) {
   if (!vapiAssistantId) return null;
   return unscopedPrisma.voiceAssistant.findFirst({
-    where: { vapiAssistantId },
+    // A soft-deleted org's assistant is treated as unknown: nothing is ingested.
+    where: { vapiAssistantId, organization: { deletedAt: null } },
     select: {
       id: true,
       organizationId: true,
@@ -128,13 +129,32 @@ export async function POST(request: Request): Promise<NextResponse> {
         ...(assistant.useKnowledgeBase ? ["searchKnowledgeBase"] : []),
       ]);
 
+      // Replay guard: the HMAC covers the body but carries no timestamp, so a
+      // captured tool-calls request stays validly signed forever. Each Vapi
+      // tool-call id runs at most once -- a replay (or a retry after the first
+      // attempt already ran) must not repeat a booking or return tool output
+      // to whoever re-sent it. Claimed atomically before executing, released
+      // if execution throws so a legitimate retry can still run it.
       const results = await Promise.all(
-        (message.toolCallList ?? []).map(async (tc) => ({
-          toolCallId: tc.id,
-          result: enabled.has(tc.name)
-            ? await executeTool(identity, tc.name, tc.arguments ?? {})
-            : JSON.stringify({ error: "tool_not_enabled" }),
-        })),
+        (message.toolCallList ?? []).map(async (tc) => {
+          if (!enabled.has(tc.name)) {
+            return { toolCallId: tc.id, result: JSON.stringify({ error: "tool_not_enabled" }) };
+          }
+          const claimKey = `vapi:tool:${orgId}:${tc.id}`;
+          const claimed = await redis.set(claimKey, "1", { nx: true, ex: 60 * 60 * 24 });
+          if (claimed === null) {
+            return { toolCallId: tc.id, result: JSON.stringify({ error: "duplicate_tool_call" }) };
+          }
+          try {
+            return {
+              toolCallId: tc.id,
+              result: await executeTool(identity, tc.name, tc.arguments ?? {}),
+            };
+          } catch (err) {
+            await redis.del(claimKey);
+            throw err;
+          }
+        }),
       );
       return NextResponse.json({ results });
     }
