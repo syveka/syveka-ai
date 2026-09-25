@@ -351,9 +351,47 @@ describe("trigger-level idempotency: resumes are unaffected by the claim path", 
     expect(await res.json()).toEqual({ ok: true });
     expect(mocks.runCreate).not.toHaveBeenCalled();
     expect(mocks.runUpdate).toHaveBeenCalledWith({
-      where: { id: runId },
+      where: { id: runId, workflowId: WORKFLOW, organizationId: ORG },
       data: { status: "RUNNING" },
     });
+  });
+
+  it("a resume whose runId belongs to another workflow or org is skipped without running any step", async () => {
+    mocks.workflowFindFirst.mockResolvedValue(activeWorkflow());
+    // Prisma throws P2025 when the bound where clause matches no run.
+    mocks.runUpdate.mockRejectedValueOnce(new FakePrismaKnownError("P2025"));
+
+    const res = await post({
+      workflowId: WORKFLOW,
+      orgId: ORG,
+      triggerType: "booking.created",
+      triggerData: {},
+      runId: "55555555-5555-4555-8555-555555555555",
+      resumeFromIndex: 0,
+    });
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ skipped: "run not found for workflow" });
+    expect(mocks.runUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.stepExecCreate).not.toHaveBeenCalled();
+    expect(mocks.notificationCreate).not.toHaveBeenCalled();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("a resume update failing for any other reason still surfaces as an error (QStash retries)", async () => {
+    mocks.workflowFindFirst.mockResolvedValue(activeWorkflow());
+    mocks.runUpdate.mockRejectedValueOnce(new FakePrismaKnownError("P1001"));
+
+    await expect(
+      post({
+        workflowId: WORKFLOW,
+        orgId: ORG,
+        triggerType: "booking.created",
+        triggerData: {},
+        runId: "55555555-5555-4555-8555-555555555555",
+        resumeFromIndex: 0,
+      }),
+    ).rejects.toThrow(/P1001/);
   });
 });
 

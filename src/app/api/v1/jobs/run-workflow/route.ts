@@ -74,6 +74,10 @@ function isUniqueViolation(err: unknown): boolean {
   return typeof err === "object" && err !== null && "code" in err && err.code === "P2002";
 }
 
+function isRecordNotFound(err: unknown): boolean {
+  return typeof err === "object" && err !== null && "code" in err && err.code === "P2025";
+}
+
 type StepClaimResult =
   | { claimed: true; stepExecutionId: string; startedAt: Date }
   | { claimed: false; reason: "succeeded"; output: unknown }
@@ -254,10 +258,17 @@ export async function POST(request: Request): Promise<NextResponse> {
   // under two concurrent deliveries of the same event.
   let run: Prisma.WorkflowRunGetPayload<Record<string, never>>;
   if (runId) {
-    run = await unscopedPrisma.workflowRun.update({
-      where: { id: runId },
-      data: { status: "RUNNING" },
-    });
+    // Bind the resumed run to the workflow and org it was loaded for above, so
+    // a mismatched payload can never rewrite another tenant's run record.
+    try {
+      run = await unscopedPrisma.workflowRun.update({
+        where: { id: runId, workflowId, organizationId: orgId },
+        data: { status: "RUNNING" },
+      });
+    } catch (err) {
+      if (!isRecordNotFound(err)) throw err;
+      return NextResponse.json({ skipped: "run not found for workflow" });
+    }
   } else {
     try {
       run = await unscopedPrisma.workflowRun.create({
