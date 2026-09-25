@@ -28,7 +28,10 @@ const messages = JSON.parse(
  * of the crash investigation; kept as permanent coverage since neither had
  * any render test before.
  */
-describe("(app) layout shell renders for a brand-new-org OWNER", () => {
+// Each test cold-imports the whole sidebar/topbar module graph (dynamic import
+// on first use); under full-suite load that transform alone has exceeded the
+// 5s default. The render assertions themselves are instant.
+describe("(app) layout shell renders for a brand-new-org OWNER", { timeout: 20_000 }, () => {
   afterEach(cleanup);
 
   it("AppSidebar mounts without throwing", async () => {
