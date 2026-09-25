@@ -6,6 +6,16 @@ import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
 import type { WorkflowInput } from "@/lib/validators/workflows";
 
+export class WorkflowError extends Error {
+  constructor(
+    message: string,
+    public readonly code: "recipient_not_member",
+  ) {
+    super(message);
+    this.name = "WorkflowError";
+  }
+}
+
 export async function listWorkflows(ctx: TenantContext) {
   const db = tenantDb(ctx.orgId);
   return db.workflow.findMany({
@@ -23,6 +33,23 @@ export async function upsertWorkflow(
   workflowId?: string,
 ) {
   const db = tenantDb(ctx.orgId);
+
+  // notify.member recipients must be members of this org: the run-workflow job
+  // writes the notification with no further check. organizationMember is
+  // tenant-scoped, so the count only sees this org's memberships.
+  const recipientIds = [
+    ...new Set(
+      input.steps.flatMap((step) =>
+        step.type === "notify.member" && step.userId ? [step.userId] : [],
+      ),
+    ),
+  ];
+  if (recipientIds.length > 0) {
+    const members = await db.organizationMember.count({ where: { userId: { in: recipientIds } } });
+    if (members !== recipientIds.length) {
+      throw new WorkflowError("Notification recipient is not a member", "recipient_not_member");
+    }
+  }
 
   if (workflowId) {
     const before = await db.workflow.findFirstOrThrow({ where: { id: workflowId } });
