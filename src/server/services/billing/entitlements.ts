@@ -90,6 +90,9 @@ export class EntitlementError extends Error {
 
 const CACHE_TTL_SECONDS = 60;
 
+/** Subscription statuses that keep the stored plan's limits. */
+const PAYING_STATUSES: ReadonlySet<string> = new Set(["ACTIVE", "TRIALING", "PAST_DUE"]);
+
 /**
  * Plan → limits, Redis-cached 60s (§14.2). Invalidated by the Stripe
  * webhook, and by grantEntitlementOverride()/revokeEntitlementOverride()
@@ -112,8 +115,14 @@ export async function getEntitlements(orgId: string): Promise<Entitlements> {
     listActiveGrants(orgId),
   ]);
 
-  const plan: Plan = sub?.plan ?? "FREE";
   const status = sub?.status ?? "ACTIVE";
+  // Paid limits only while the subscription is in good standing. A checkout
+  // whose first payment never completes is stored with its paid plan but
+  // status INCOMPLETE, and Stripe moves it to incomplete_expired (CANCELED)
+  // without ever sending customer.subscription.deleted -- so the stored plan
+  // alone would grant paid limits that were never paid for. PAST_DUE keeps
+  // its limits (read-only after 14 days, below) per §14.4.
+  const plan: Plan = PAYING_STATUSES.has(status) ? (sub?.plan ?? "FREE") : "FREE";
 
   const pastDueTooLong =
     status === "PAST_DUE" &&

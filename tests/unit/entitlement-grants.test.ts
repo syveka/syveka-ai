@@ -270,3 +270,84 @@ describe("getEntitlements + internal entitlement grants", () => {
     expect(ent.voiceAssistants).toBe(Number.MAX_SAFE_INTEGER);
   });
 });
+
+/**
+ * Paid limits only while the subscription is in good standing. A checkout
+ * whose first payment never completes is stored with its paid plan and status
+ * INCOMPLETE, then moves to incomplete_expired (stored CANCELED) without
+ * customer.subscription.deleted ever arriving to reset the plan.
+ */
+describe("getEntitlements: subscription status gates the stored plan", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.redisGet.mockResolvedValue(null);
+    mocks.grantFindMany.mockResolvedValue([]);
+  });
+
+  const proSub = (status: string) => ({
+    organizationId: "org-a",
+    plan: "PRO",
+    status,
+    seats: 3,
+    updatedAt: new Date(),
+  });
+
+  it.each(["ACTIVE", "TRIALING", "PAST_DUE"])("keeps PRO limits while %s", async (status) => {
+    mocks.subscriptionFindUnique.mockResolvedValue(proSub(status));
+    const ent = await getEntitlements("org-a");
+    expect(ent.plan).toBe("PRO");
+    expect(ent.maxContacts).toBe(PLAN_LIMITS.PRO.maxContacts);
+    expect(ent.status).toBe(status);
+  });
+
+  it.each(["INCOMPLETE", "CANCELED", "PAUSED"])(
+    "falls back to FREE limits while %s (paid plan never paid for / no longer paid)",
+    async (status) => {
+      mocks.subscriptionFindUnique.mockResolvedValue(proSub(status));
+      const ent = await getEntitlements("org-a");
+      expect(ent.plan).toBe("FREE");
+      expect(ent.maxContacts).toBe(PLAN_LIMITS.FREE.maxContacts);
+      expect(ent.voiceAssistants).toBe(PLAN_LIMITS.FREE.voiceAssistants);
+      expect(ent.status).toBe(status);
+    },
+  );
+
+  it("still adds internal grants on top of FREE limits for a non-paying org", async () => {
+    mocks.subscriptionFindUnique.mockResolvedValue(proSub("INCOMPLETE"));
+    mocks.grantFindMany.mockResolvedValue([grantRow({ metric: "VOICE_ASSISTANTS", amount: 2 })]);
+    const ent = await getEntitlements("org-a");
+    expect(ent.voiceAssistants).toBe(PLAN_LIMITS.FREE.voiceAssistants + 2);
+  });
+
+  it("adds internal grants on top of PRO limits while ACTIVE", async () => {
+    mocks.subscriptionFindUnique.mockResolvedValue(proSub("ACTIVE"));
+    mocks.grantFindMany.mockResolvedValue([grantRow({ metric: "VOICE_ASSISTANTS", amount: 2 })]);
+    const ent = await getEntitlements("org-a");
+    expect(ent.plan).toBe("PRO");
+    expect(ent.voiceAssistants).toBe(PLAN_LIMITS.PRO.voiceAssistants + 2);
+  });
+
+  // Stripe `unpaid` is stored as PAST_DUE and `incomplete_expired` as CANCELED
+  // by the webhook (SUB_STATUS_MAP), so those are covered by the cases above.
+  it("keeps PRO limits but goes read-only once PAST_DUE for more than 14 days", async () => {
+    mocks.subscriptionFindUnique.mockResolvedValue({
+      ...proSub("PAST_DUE"),
+      updatedAt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000),
+    });
+    const ent = await getEntitlements("org-a");
+    expect(ent).toMatchObject({ plan: "PRO", status: "PAST_DUE", readOnly: true });
+  });
+
+  it("keeps a FREE plan FREE while ACTIVE", async () => {
+    mocks.subscriptionFindUnique.mockResolvedValue({ ...proSub("ACTIVE"), plan: "FREE" });
+    const ent = await getEntitlements("org-a");
+    expect(ent).toMatchObject({ plan: "FREE", readOnly: false });
+    expect(ent.maxContacts).toBe(PLAN_LIMITS.FREE.maxContacts);
+  });
+
+  it("treats a missing subscription row as FREE/ACTIVE, unchanged", async () => {
+    mocks.subscriptionFindUnique.mockResolvedValue(null);
+    const ent = await getEntitlements("org-a");
+    expect(ent).toMatchObject({ plan: "FREE", status: "ACTIVE" });
+  });
+});
