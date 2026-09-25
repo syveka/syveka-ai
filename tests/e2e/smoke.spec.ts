@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { openAuthenticatedE2EDashboard, requireE2EUserCredentials } from "./helpers/auth";
+import type { ChatStreamEvent } from "../../src/lib/validators/chat";
 
 /**
  * Critical-journey smoke suite (§23). Runs against preview/staging.
@@ -71,12 +72,31 @@ test.describe("authenticated", () => {
   });
 
   test("chat streams a reply", async ({ page }) => {
+    // The real route makes a billed Anthropic call; this smoke test only
+    // proves the browser-side SSE plumbing, so the request is answered here
+    // and never reaches the server. No "meta" event: without a conversation
+    // id the client stays on /chat instead of navigating to a fake one.
+    let intercepted = 0;
+    await page.route("**/api/v1/ai/chat", async (route) => {
+      intercepted += 1;
+      const events: ChatStreamEvent[] = [
+        { type: "text", delta: "Voin auttaa CRM:n, " },
+        { type: "text", delta: "kalenterin ja puheluiden kanssa." },
+        { type: "done", tokensIn: 0, tokensOut: 0, estimatedCostUsd: 0 },
+      ];
+      await route.fulfill({
+        status: 200,
+        contentType: "text/event-stream",
+        body: events.map((event) => `data: ${JSON.stringify(event)}\n\n`).join(""),
+      });
+    });
+
     await page.goto("/chat");
     await page.getByPlaceholder(/viesti|message/i).fill("Hei! Mitä osaat tehdä?");
     await page.keyboard.press("Enter");
-    // assistant bubble appears and grows (streaming)
     const bubble = page.locator("[class*=bg-muted]").last();
-    await expect(bubble).toBeVisible({ timeout: 30_000 });
+    await expect(bubble).toContainText("CRM:n, kalenterin", { timeout: 30_000 });
+    expect(intercepted).toBe(1);
   });
 
   test("CRM contact create → visible in list", async ({ page }) => {
