@@ -9,11 +9,13 @@ import { encryptToken, decryptToken } from "@/server/integrations/calendar/crypt
 import { ProviderError, type OAuthTokens } from "@/server/integrations/calendar/types";
 import { getAppUrlEnv } from "@/env";
 import type { TenantContext } from "@/server/auth/session";
+import { can } from "@/server/auth/permissions";
 
 export class ConnectionError extends Error {
   constructor(
     message: string,
-    public readonly code: "not_found" | "not_configured" | "bad_state" | "provider_error",
+    public readonly code:
+      "not_found" | "not_configured" | "bad_state" | "provider_error" | "membership_revoked",
   ) {
     super(message);
     this.name = "ConnectionError";
@@ -120,6 +122,25 @@ export async function completeConnection(params: {
 }): Promise<{ orgId: string; connectionId: string }> {
   const { orgId, userId, provider } = verifyOAuthState(params.state);
   if (provider !== params.provider) throw new ConnectionError("Provider mismatch", "bad_state");
+
+  // The signed state proves the flow was legitimately started for
+  // (orgId, userId, provider) up to 10 minutes ago, but says nothing about
+  // right now -- a member removed from the org, or downgraded below
+  // integrations:manage, within that window would otherwise still get
+  // their calendar tokens attached to the org purely because they hold a
+  // still-valid signature. Re-verified here, immediately before exchanging
+  // the code and persisting anything, not just at OAuth start. A
+  // soft-deleted org counts as revoked too.
+  const member = await unscopedPrisma.organizationMember.findFirst({
+    where: { organizationId: orgId, userId, organization: { deletedAt: null } },
+    select: { role: true },
+  });
+  if (!member || !can(member.role, "integrations:manage")) {
+    throw new ConnectionError(
+      "User is no longer an authorized member of this organization",
+      "membership_revoked",
+    );
+  }
 
   const adapter = getProviderAdapter(provider);
   const tokens = await adapter.exchangeCode({
