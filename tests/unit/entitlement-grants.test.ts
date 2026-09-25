@@ -319,6 +319,32 @@ describe("getEntitlements: subscription status gates the stored plan", () => {
     expect(ent.voiceAssistants).toBe(PLAN_LIMITS.FREE.voiceAssistants + 2);
   });
 
+  it("adds internal grants on top of PRO limits while ACTIVE", async () => {
+    mocks.subscriptionFindUnique.mockResolvedValue(proSub("ACTIVE"));
+    mocks.grantFindMany.mockResolvedValue([grantRow({ metric: "VOICE_ASSISTANTS", amount: 2 })]);
+    const ent = await getEntitlements("org-a");
+    expect(ent.plan).toBe("PRO");
+    expect(ent.voiceAssistants).toBe(PLAN_LIMITS.PRO.voiceAssistants + 2);
+  });
+
+  // Stripe `unpaid` is stored as PAST_DUE and `incomplete_expired` as CANCELED
+  // by the webhook (SUB_STATUS_MAP), so those are covered by the cases above.
+  it("keeps PRO limits but goes read-only once PAST_DUE for more than 14 days", async () => {
+    mocks.subscriptionFindUnique.mockResolvedValue({
+      ...proSub("PAST_DUE"),
+      updatedAt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000),
+    });
+    const ent = await getEntitlements("org-a");
+    expect(ent).toMatchObject({ plan: "PRO", status: "PAST_DUE", readOnly: true });
+  });
+
+  it("keeps a FREE plan FREE while ACTIVE", async () => {
+    mocks.subscriptionFindUnique.mockResolvedValue({ ...proSub("ACTIVE"), plan: "FREE" });
+    const ent = await getEntitlements("org-a");
+    expect(ent).toMatchObject({ plan: "FREE", readOnly: false });
+    expect(ent.maxContacts).toBe(PLAN_LIMITS.FREE.maxContacts);
+  });
+
   it("treats a missing subscription row as FREE/ACTIVE, unchanged", async () => {
     mocks.subscriptionFindUnique.mockResolvedValue(null);
     const ent = await getEntitlements("org-a");
