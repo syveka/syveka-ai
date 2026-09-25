@@ -303,6 +303,45 @@ describe("Vapi voice webhook — tool-calls replay protection", () => {
   });
 });
 
+describe("Vapi voice webhook — soft-deleted organization", () => {
+  it("looks up the assistant only in non-deleted orgs and ingests nothing when none matches", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce(null as never);
+
+    const response = await POST(eocrRequest());
+
+    expect(response.status).toBe(404);
+    expect(mocks.voiceAssistantFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { vapiAssistantId: "assistant-1", organization: { deletedAt: null } },
+      }),
+    );
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("a tool-calls request for a soft-deleted org's assistant claims and executes nothing", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce(null as never);
+
+    const response = await POST(
+      new Request("http://localhost/api/v1/voice/webhook", {
+        method: "POST",
+        headers: { "x-vapi-signature": "sig" },
+        body: JSON.stringify({
+          message: {
+            type: "tool-calls",
+            call: { id: "call-6", assistantId: "assistant-1" },
+            toolCallList: [{ id: "tc-1", name: "bookMeeting", arguments: {} }],
+          },
+        }),
+      }),
+    );
+
+    expect(response.status).toBe(404);
+    expect(mocks.redisSet).not.toHaveBeenCalled();
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+  });
+});
+
 describe("Vapi voice webhook — deactivated assistant refuses tool-call writes (rollback safety)", () => {
   it("refuses every tool call for a deactivated assistant, even an already-enabled one, without executing any of them", async () => {
     // Regression for a proven gap: previously the webhook never checked
