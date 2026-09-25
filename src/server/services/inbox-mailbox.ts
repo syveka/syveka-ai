@@ -26,7 +26,12 @@ export async function resolveOrgIdByMailboxAddress(
   channel: InboxChannel,
 ): Promise<string | null> {
   const mailbox = await unscopedPrisma.inboxMailbox.findFirst({
-    where: { address: { equals: address.trim(), mode: "insensitive" }, channel },
+    // A soft-deleted org's mailbox stops accepting mail, as if unregistered.
+    where: {
+      address: { equals: address.trim(), mode: "insensitive" },
+      channel,
+      organization: { deletedAt: null },
+    },
     select: { organizationId: true },
   });
   return mailbox?.organizationId ?? null;
