@@ -1,4 +1,5 @@
 import { NextResponse } from "next/server";
+import { describeAiChatStreamError } from "@/server/ai/stream-error-log";
 import { chatRequestSchema, type ChatStreamEvent } from "@/lib/validators/chat";
 import type { RetrievedChunk } from "@/server/ai/rag";
 import type { ToolIdentity } from "@/server/ai/tools";
@@ -325,7 +326,7 @@ export async function POST(request: Request): Promise<Response> {
         });
       } catch (err) {
         if (isAbortError(err) || request.signal.aborted) return;
-        console.error("ai/chat stream failed", err);
+        console.error(JSON.stringify(describeAiChatStreamError(err)));
         send({ type: "error", code: "generation_failed" });
       } finally {
         clearInterval(heartbeat);
