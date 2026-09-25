@@ -214,6 +214,20 @@ describe("completeConnection membership revalidation", () => {
     expect(unscopedMock.calendarConnection.upsert).toHaveBeenCalledTimes(1);
   });
 
+  it("treats a soft-deleted org as revoked: the membership lookup excludes deleted orgs", async () => {
+    // Prisma returns null when the relation filter excludes the org.
+    unscopedMock.organizationMember.findFirst.mockResolvedValue(null);
+    const state = buildOAuthState(ctx, "GOOGLE");
+
+    await expect(
+      completeConnection({ provider: "GOOGLE", code: "auth-code", state }),
+    ).rejects.toMatchObject({ code: "membership_revoked" });
+    expect(unscopedMock.organizationMember.findFirst.mock.calls[0]?.[0]).toMatchObject({
+      where: { organization: { deletedAt: null } },
+    });
+    expect(adapterMock.exchangeCode).not.toHaveBeenCalled();
+  });
+
   it("checks membership scoped to the exact org from the signed state, not just the user id", async () => {
     unscopedMock.organizationMember.findFirst.mockResolvedValue({ role: "OWNER" });
     const state = buildOAuthState(ctx, "GOOGLE");
@@ -221,7 +235,7 @@ describe("completeConnection membership revalidation", () => {
     await completeConnection({ provider: "GOOGLE", code: "auth-code", state });
 
     expect(unscopedMock.organizationMember.findFirst).toHaveBeenCalledWith({
-      where: { organizationId: "org-a", userId: "user-a" },
+      where: { organizationId: "org-a", userId: "user-a", organization: { deletedAt: null } },
       select: { role: true },
     });
   });

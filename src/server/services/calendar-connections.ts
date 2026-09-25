@@ -129,9 +129,10 @@ export async function completeConnection(params: {
   // integrations:manage, within that window would otherwise still get
   // their calendar tokens attached to the org purely because they hold a
   // still-valid signature. Re-verified here, immediately before exchanging
-  // the code and persisting anything, not just at OAuth start.
+  // the code and persisting anything, not just at OAuth start. A
+  // soft-deleted org counts as revoked too.
   const member = await unscopedPrisma.organizationMember.findFirst({
-    where: { organizationId: orgId, userId },
+    where: { organizationId: orgId, userId, organization: { deletedAt: null } },
     select: { role: true },
   });
   if (!member || !can(member.role, "integrations:manage")) {
