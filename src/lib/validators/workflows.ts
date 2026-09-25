@@ -62,7 +62,27 @@ export const workflowSchema = z.object({
   name: z.string().min(1).max(120),
   description: z.string().max(500).optional(),
   trigger: triggerSchema,
-  steps: z.array(stepSchema).min(1).max(20),
+  // step.id becomes the durable execution identity (WorkflowStepExecution is
+  // unique on [workflowRunId, stepId]), so a repeated id would make the later
+  // step's claim collide with the earlier one and be skipped as "already
+  // succeeded". Case-sensitive, matching the engine's plain string equality.
+  steps: z
+    .array(stepSchema)
+    .min(1)
+    .max(20)
+    .superRefine((steps, ctx) => {
+      const seen = new Set<string>();
+      steps.forEach((step, index) => {
+        if (seen.has(step.id)) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: "duplicate_step_id",
+            path: [index, "id"],
+          });
+        }
+        seen.add(step.id);
+      });
+    }),
 });
 
 export type WorkflowTrigger = z.infer<typeof triggerSchema>;
