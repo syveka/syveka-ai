@@ -12,11 +12,12 @@ import { isMetaConfigured } from "@/server/integrations/meta/client";
 import { buildSocialOAuthState, verifySocialOAuthState } from "@/server/social/oauth-state";
 import { encryptSocialToken, decryptSocialToken } from "@/server/integrations/social/crypto";
 import type { SocialAccount } from "@/generated/prisma/client/client";
+import { can } from "@/server/auth/permissions";
 
 export class SocialConnectError extends Error {
   constructor(
     message: string,
-    public readonly code: "not_configured" | "bad_state",
+    public readonly code: "not_configured" | "bad_state" | "membership_revoked",
   ) {
     super(message);
     this.name = "SocialConnectError";
@@ -135,6 +136,19 @@ export async function completeMetaOAuthCallback(params: {
   state: string;
 }): Promise<{ orgId: string; accountId: string }> {
   const { orgId, userId, platform } = verifySocialOAuthState(params.state);
+  // The signed state only proves the flow was started by an authorized member
+  // up to 10 minutes ago. Re-check now, before exchanging the code and storing
+  // tokens: a removed or downgraded member, or a deleted org, must not finish.
+  const member = await tenantDb(orgId).organizationMember.findFirst({
+    where: { userId, organization: { deletedAt: null } },
+    select: { role: true },
+  });
+  if (!member || !can(member.role, "creator:manage-social-accounts")) {
+    throw new SocialConnectError(
+      "User is no longer an authorized member of this organization",
+      "membership_revoked",
+    );
+  }
   const account = await connectSocialAccount(
     { orgId, userId },
     { platform, authCode: params.code },
