@@ -1077,5 +1077,22 @@
       "autopilotPublished": "{count} منشور تم نشره عبر الطيار الآلي",
       "avgApprovalTurnaround": "~{hours} ساعة متوسط زمن الموافقة"
     }
+  },
+  "marketing": {
+    "heroTitle": "مساعد ذكي يعرف شركتك",
+    "heroSubtitle": "الدردشة والمساعد الصوتي وإدارة علاقات العملاء والأتمتة — منصة واحدة مصممة للشركات الصغيرة والمتوسطة في فنلندا.",
+    "startFree": "ابدأ مجانًا",
+    "pricing": "الأسعار",
+    "pricingTitle": "الأسعار",
+    "pricingSubtitle": "الأسعار لكل مستخدم شهريًا، غير شاملة ضريبة القيمة المضافة. تجربة مجانية لخطة Pro لمدة 14 يومًا.",
+    "planSeats": "عدد المستخدمين: {count}",
+    "planAiMessages": "رسائل الذكاء الاصطناعي شهريًا: {count}",
+    "planAiMessagesPerUser": "رسائل الذكاء الاصطناعي لكل مستخدم شهريًا: {count}",
+    "planVoiceMinutes": "المساعد الصوتي: {minutes} دقيقة",
+    "planVoiceNone": "المساعد الصوتي: —",
+    "getStarted": "ابدأ الآن",
+    "enterprise": "للمؤسسات:",
+    "footerPrivacy": "الخصوصية",
+    "footerTerms": "الشروط"
   }
 }
