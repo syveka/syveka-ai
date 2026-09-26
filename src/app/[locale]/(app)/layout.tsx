@@ -6,6 +6,7 @@ import { unscopedPrisma } from "@/server/db/tenant";
 import { unreadCount } from "@/server/services/notifications";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { Topbar } from "@/components/layout/topbar";
+import { GlobalChatAssistant } from "@/components/chat/global-chat-assistant";
 import { permissionsFor } from "@/server/auth/permissions";
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
@@ -33,6 +34,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
         />
         <main className="flex-1 p-4 md:p-6">{children}</main>
       </div>
+      {permissions.includes("chat:use") ? <GlobalChatAssistant /> : null}
     </div>
   );
 }

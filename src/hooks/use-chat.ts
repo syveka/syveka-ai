@@ -14,7 +14,12 @@ export type UiMessage = {
 };
 
 /** Consumes the SSE stream from /api/v1/ai/chat (§15.1). */
-export function useChat(params: { conversationId?: string; initialMessages: UiMessage[] }) {
+export function useChat(params: {
+  conversationId?: string;
+  initialMessages: UiMessage[];
+  /** Keep floating/embedded chat surfaces in place after creating a conversation. */
+  navigateOnCreate?: boolean;
+}) {
   const [messages, setMessages] = useState<UiMessage[]>(params.initialMessages);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -117,8 +122,10 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
 
         patchAssistant({ streaming: false });
         if (isNewConversation && conversationIdRef.current) {
-          router.replace(`/chat/${conversationIdRef.current}`);
-          router.refresh(); // refresh conversation list
+          if (params.navigateOnCreate !== false) {
+            router.replace(`/chat/${conversationIdRef.current}`);
+          }
+          router.refresh(); // refresh conversation list and app-shell data
         }
       } catch (requestError) {
         if (requestError instanceof DOMException && requestError.name === "AbortError") {
@@ -134,7 +141,7 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
         setIsStreaming(false);
       }
     },
-    [isStreaming, router],
+    [isStreaming, params.navigateOnCreate, router],
   );
 
   const abort = useCallback(() => abortControllerRef.current?.abort(), []);
