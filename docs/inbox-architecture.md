@@ -101,8 +101,22 @@ required before the email channel's setup-readiness state can move past `not_con
 5. **API key** — `RESEND_API_KEY` (used for both outbound send and the inbound
    `GET /emails/receiving/{id}` content-fetch call the webhook makes after verifying the event).
 6. **Per-organization mailbox** — once the domain/env vars above are live, each organization's
-   mailbox address is provisioned automatically the first time an operator visits inbox settings
-   (`getOrCreateMailbox`) — no separate manual per-tenant provisioning step.
+   mailbox address is provisioned automatically the first time an owner/admin opens the Inbox
+   page (`getOrCreateMailbox`, called from `src/app/[locale]/(app)/inbox/page.tsx`), which also
+   displays the address. No separate manual per-tenant provisioning step. The dashboard's
+   setup-readiness "Email channel" row links to the Inbox for exactly this step.
+
+### Setup-readiness states for the email channel
+
+`src/server/services/setup-readiness.ts` reports, in order:
+
+| State                   | Hint                            | Meaning                                                             |
+| ----------------------- | ------------------------------- | ------------------------------------------------------------------- |
+| `not_configured`        | `email_outbound_not_configured` | Mock provider, or `RESEND_API_KEY`/`EMAIL_FROM` missing             |
+| `setup_required`        | `email_inbound_not_configured`  | `INBOX_EMAIL_DOMAIN` or `RESEND_INBOUND_WEBHOOK_SECRET` missing     |
+| `setup_required`        | `email_mailbox_not_provisioned` | No `inbox_mailboxes` row for the org yet (open the Inbox page)      |
+| `verification_required` | `email_awaiting_first_inbound`  | Fully configured; no real inbound email with a provider id received |
+| `ready`                 | —                               | At least one real inbound email has been received                   |
 
 ### Manual verification checklist (do not claim this passed unless you actually performed it)
 

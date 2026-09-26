@@ -5,8 +5,10 @@ const mocks = vi.hoisted(() => ({
   tenantDb: vi.fn(),
   unscopedMailboxFindFirst: vi.fn(),
   organizationFindUniqueOrThrow: vi.fn(async () => ({ slug: "acme-oy" })),
+  audit: vi.fn(async () => undefined),
 }));
 
+vi.mock("@/server/services/audit", () => ({ audit: mocks.audit }));
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: mocks.tenantDb,
   unscopedPrisma: {
@@ -77,6 +79,7 @@ describe("getOrCreateMailbox", () => {
 
     expect(result).toEqual({ id: "mb-1", address: "acme-oy@inbox.syveka.ai" });
     expect(create).not.toHaveBeenCalled();
+    expect(mocks.audit).not.toHaveBeenCalled();
   });
 
   it("lazily provisions a mailbox derived from the org's slug, scoped to the caller's org", async () => {
@@ -100,6 +103,14 @@ describe("getOrCreateMailbox", () => {
       }),
     );
     expect(result?.address).toBe("acme-oy@inbox.syveka.ai");
+    expect(mocks.audit).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: "org-a" }),
+      expect.objectContaining({
+        action: "inbox_mailbox.create",
+        resourceType: "inbox_mailbox",
+        resourceId: "mb-new",
+      }),
+    );
   });
 
   it("returns null (never throws or fabricates a domain) when INBOX_EMAIL_DOMAIN is not configured", async () => {
@@ -111,6 +122,26 @@ describe("getOrCreateMailbox", () => {
     const result = await getOrCreateMailbox(ctx("org-a"), "EMAIL");
 
     expect(result).toBeNull();
+    expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe("getExistingMailbox", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("reads only the caller's org mailbox and never provisions one", async () => {
+    const findFirst = vi.fn(async () => null);
+    const create = vi.fn();
+    mocks.tenantDb.mockReturnValue({ inboxMailbox: { findFirst, create } });
+    const { getExistingMailbox } = await import("@/server/services/inbox-mailbox");
+
+    const result = await getExistingMailbox(ctx("org-b"), "EMAIL");
+
+    expect(result).toBeNull();
+    expect(mocks.tenantDb).toHaveBeenCalledWith("org-b");
+    expect(findFirst).toHaveBeenCalledWith({ where: { channel: "EMAIL" } });
     expect(create).not.toHaveBeenCalled();
   });
 });

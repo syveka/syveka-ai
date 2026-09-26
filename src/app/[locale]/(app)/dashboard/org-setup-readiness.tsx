@@ -8,6 +8,7 @@ import { Link } from "@/i18n/routing";
 
 const ACTION_HREF: Partial<Record<string, string>> = {
   businessDna: "/settings/business-dna",
+  emailChannel: "/inbox",
   booking: "/calendar/booking-types",
   voice: "/voice",
 };
@@ -37,9 +38,14 @@ export async function OrgSetupReadiness({ ctx }: { ctx: TenantContext }) {
         {items.map((item) => {
           const href = ACTION_HREF[item.key];
           const row = (
-            <div className="flex items-center justify-between gap-2 py-1 text-sm">
-              <span>{t(`items.${item.key}`)}</span>
-              <StateBadge state={item.state} t={t} />
+            <div className="py-1 text-sm">
+              <div className="flex items-center justify-between gap-2">
+                <span>{t(`items.${item.key}`)}</span>
+                <StateBadge state={item.state} t={t} />
+              </div>
+              {item.hint ? (
+                <p className="mt-0.5 text-xs text-muted-foreground">{t(`hints.${item.hint}`)}</p>
+              ) : null}
             </div>
           );
           return href && item.state !== "ready" ? (

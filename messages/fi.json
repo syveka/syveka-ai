@@ -136,6 +136,36 @@
       "unsupported_file": "Käytä PDF-, DOCX- tai TXT-tiedostoa.",
       "file_too_large": "Tiedoston enimmäiskoko on 25 Mt.",
       "invalid_document": "Yksi liitetyistä tiedostoista ei ole käytettävissä."
+    },
+    "voice": {
+      "start": "Aloita puhekeskustelu",
+      "title": "Puhekeskustelu",
+      "status": {
+        "idle": "Yhteys katkaistu",
+        "connecting": "Yhdistetään…",
+        "listening": "Kuunnellaan…",
+        "thinking": "Mietitään…",
+        "speaking": "Puhutaan…",
+        "muted": "Mikrofoni mykistetty",
+        "error": "Puhe keskeytetty"
+      },
+      "mute": "Mykistä mikrofoni",
+      "unmute": "Poista mikrofonin mykistys",
+      "end": "Lopeta puhekeskustelu",
+      "retry": "Yritä uudelleen",
+      "interrupt": "Keskeytä puhe ja kuuntele",
+      "interruptHint": "Napauta keskeyttääksesi",
+      "you": "Sinä",
+      "assistant": "Syveka",
+      "privacyNote": "Selaimesi tai laitteesi muuttaa puheesi tekstiksi. Vastaukset tulevat organisaatiosi Syveka-avustajalta.",
+      "errors": {
+        "unsupported": "Tämä selain ei tue puhetta.",
+        "permission_denied": "Mikrofonin käyttö estettiin. Salli se selaimen asetuksista ja yritä uudelleen.",
+        "no_microphone": "Mikrofonia ei löytynyt.",
+        "network": "Puheentunnistuksen yhteys katkesi. Yritä uudelleen.",
+        "recognition_failed": "Puheentunnistus pysähtyi odottamatta. Yritä uudelleen.",
+        "generic": "Jokin meni pieleen. Yritä uudelleen."
+      }
     }
   },
   "publicAssistant": {
@@ -680,7 +710,10 @@
     "channelStatus": {
       "connected": "Sähköposti yhdistetty",
       "mock": "Testisähköpostipalvelu käytössä — viestit ovat simuloituja, eivät oikeita",
-      "notConfigured": "Sähköpostia ei ole vielä määritetty"
+      "notConfigured": "Sähköpostia ei ole vielä määritetty",
+      "inboundNotConfigured": "Sähköpostin vastaanottoa ei ole vielä määritetty tässä ympäristössä.",
+      "inboundAddress": "Saapuneet-osoitteesi:",
+      "inboundVerifyHint": "Lähetä testisähköposti tähän osoitteeseen kanavan vahvistamiseksi."
     },
     "status": {
       "OPEN": "Avoin",
@@ -876,6 +909,17 @@
       "not_configured": "Ei määritetty",
       "blocked": "Estynyt",
       "verification_required": "Vaatii vahvistuksen"
+    },
+    "hints": {
+      "email_outbound_not_configured": "Sähköpostin lähetystä ei ole vielä yhdistetty tässä ympäristössä.",
+      "email_inbound_not_configured": "Sähköpostin vastaanottoa ei ole vielä määritetty — saapuvan postin verkkotunnus ja webhook-salaisuus tarvitaan.",
+      "email_mailbox_not_provisioned": "Avaa Saapuneet luodaksesi organisaatiosi sähköpostiosoitteen.",
+      "email_awaiting_first_inbound": "Lähetä testisähköposti Saapuneet-osoitteeseesi kanavan vahvistamiseksi.",
+      "voice_provider_not_configured": "Puhepalvelua ei ole vielä yhdistetty tässä ympäristössä.",
+      "voice_no_assistant": "Aloita luomalla puheavustaja.",
+      "voice_assistant_not_synced": "Aktivoi puheavustaja synkronoidaksesi sen.",
+      "voice_phone_number_missing": "Liitä puheavustajaan puhelinnumero.",
+      "voice_awaiting_first_call": "Soita testipuhelu avustajan numeroon vahvistaaksesi."
     }
   },
   "creatorStudio": {

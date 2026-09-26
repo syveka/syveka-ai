@@ -2,7 +2,8 @@ import "server-only";
 
 import { tenantDb } from "@/server/db/tenant";
 import { getBusinessDnaContext } from "@/server/business-dna/context";
-import { getEmailChannelAdapter } from "@/server/channels/email";
+import { getEmailChannelAdapter, isInboundEmailConfigured } from "@/server/channels/email";
+import { getVapiEnv } from "@/env";
 import type { TenantContext } from "@/server/auth/session";
 
 export type ReadinessState =
@@ -10,9 +11,25 @@ export type ReadinessState =
 
 export type ReadinessItemKey = "businessDna" | "emailChannel" | "booking" | "crm" | "voice";
 
+/**
+ * The specific missing step behind a non-ready state, so the checklist can
+ * tell an operator exactly what to do next instead of a bare badge.
+ */
+export type ReadinessHint =
+  | "email_outbound_not_configured"
+  | "email_inbound_not_configured"
+  | "email_mailbox_not_provisioned"
+  | "email_awaiting_first_inbound"
+  | "voice_provider_not_configured"
+  | "voice_no_assistant"
+  | "voice_assistant_not_synced"
+  | "voice_phone_number_missing"
+  | "voice_awaiting_first_call";
+
 export type ReadinessItem = {
   key: ReadinessItemKey;
   state: ReadinessState;
+  hint?: ReadinessHint;
 };
 
 function businessDnaHasAnyFact(dna: Awaited<ReturnType<typeof getBusinessDnaContext>>): boolean {
@@ -33,6 +50,72 @@ function businessDnaHasAnyFact(dna: Awaited<ReturnType<typeof getBusinessDnaCont
   );
 }
 
+/** Presence-only check of the Vapi integration's own scoped config. */
+function isVapiConfigured(): boolean {
+  try {
+    const env = getVapiEnv();
+    return Boolean(env.VAPI_API_KEY && env.VAPI_WEBHOOK_SECRET && env.VAPI_WEBHOOK_CREDENTIAL_ID);
+  } catch {
+    return false;
+  }
+}
+
+type EmailEvidence = {
+  hasMailbox: boolean;
+  hasReceivedRealEmail: boolean;
+};
+
+function emailReadiness({ hasMailbox, hasReceivedRealEmail }: EmailEvidence): ReadinessItem {
+  const adapter = getEmailChannelAdapter();
+  if (adapter.provider !== "RESEND" || !adapter.isConfigured()) {
+    return { key: "emailChannel", state: "not_configured", hint: "email_outbound_not_configured" };
+  }
+  if (!isInboundEmailConfigured()) {
+    return { key: "emailChannel", state: "setup_required", hint: "email_inbound_not_configured" };
+  }
+  if (!hasMailbox) {
+    return { key: "emailChannel", state: "setup_required", hint: "email_mailbox_not_provisioned" };
+  }
+  if (!hasReceivedRealEmail) {
+    return {
+      key: "emailChannel",
+      state: "verification_required",
+      hint: "email_awaiting_first_inbound",
+    };
+  }
+  return { key: "emailChannel", state: "ready" };
+}
+
+type VoiceAssistantSummary = {
+  isActive: boolean;
+  vapiAssistantId: string | null;
+};
+
+function voiceReadiness(
+  assistants: VoiceAssistantSummary[],
+  hasCompletedRealCall: boolean,
+): ReadinessItem {
+  if (!isVapiConfigured()) {
+    return { key: "voice", state: "not_configured", hint: "voice_provider_not_configured" };
+  }
+  if (assistants.length === 0) {
+    return { key: "voice", state: "setup_required", hint: "voice_no_assistant" };
+  }
+  const synced = assistants.filter((a) => a.vapiAssistantId !== null);
+  if (synced.length === 0) {
+    return { key: "voice", state: "setup_required", hint: "voice_assistant_not_synced" };
+  }
+  // `activateAssistant` only sets isActive once a phone number is attached,
+  // so a synced-but-inactive assistant is specifically missing its number.
+  if (!synced.some((a) => a.isActive)) {
+    return { key: "voice", state: "setup_required", hint: "voice_phone_number_missing" };
+  }
+  if (!hasCompletedRealCall) {
+    return { key: "voice", state: "verification_required", hint: "voice_awaiting_first_call" };
+  }
+  return { key: "voice", state: "ready" };
+}
+
 /**
  * Truthful, org-scoped setup-readiness summary for the core MVP loop
  * (Business DNA -> Email channel -> Booking -> CRM -> Voice). Deliberately
@@ -42,14 +125,17 @@ function businessDnaHasAnyFact(dna: Awaited<ReturnType<typeof getBusinessDnaCont
  * signal.
  *
  * `emailChannel` and `voice` use `verification_required` rather than
- * `ready` when credentials are present but there is no LOCAL evidence the
- * integration has actually round-tripped with the real external provider
- * (an inbound email actually received; a voice call actually completed) —
- * this app has no way to run a live check against Resend/Vapi from here,
- * so claiming "ready" from config presence alone would overclaim. `ready`
- * is only reported once real inbound activity proves it. `blocked` is
- * reserved in the type but never emitted — nothing here detects a
- * previously-working-now-broken integration (unlike Calendar's
+ * `ready` when every configuration step is complete but there is no LOCAL
+ * evidence the integration has actually round-tripped with the real
+ * external provider (an inbound email actually received; a voice call
+ * actually completed) — this app has no way to run a live check against
+ * Resend/Vapi from here, so claiming "ready" from config presence alone
+ * would overclaim. Missing configuration steps (inbound email not wired, no
+ * org mailbox, no synced assistant, no phone number) report
+ * `setup_required` with a `hint` naming the exact step, rather than
+ * asking the operator to "verify" something that cannot work yet.
+ * `blocked` is reserved in the type but never emitted — nothing here
+ * detects a previously-working-now-broken integration (unlike Calendar's
  * NEEDS_REAUTH), so fabricating that state would violate "truthful states
  * only."
  */
@@ -59,12 +145,14 @@ export async function getOrgSetupReadiness(ctx: TenantContext): Promise<Readines
   const [
     businessDna,
     activeBookingTypeCount,
+    emailMailbox,
     hasReceivedRealEmail,
-    activeVoiceAssistant,
+    voiceAssistants,
     hasCompletedRealCall,
   ] = await Promise.all([
     getBusinessDnaContext(ctx.orgId),
     db.bookingType.count({ where: { isActive: true, deletedAt: null } }),
+    db.inboxMailbox.findFirst({ where: { channel: "EMAIL" }, select: { id: true } }),
     db.inboxThread.findFirst({
       where: {
         channel: "EMAIL",
@@ -72,37 +160,23 @@ export async function getOrgSetupReadiness(ctx: TenantContext): Promise<Readines
       },
       select: { id: true },
     }),
-    db.voiceAssistant.findFirst({
-      where: { isActive: true, vapiAssistantId: { not: null } },
-      select: { id: true },
-    }),
+    db.voiceAssistant.findMany({ select: { isActive: true, vapiAssistantId: true } }),
     db.voiceCall.findFirst({ where: { status: "COMPLETED" }, select: { id: true } }),
   ]);
-
-  const emailAdapter = getEmailChannelAdapter();
-  const emailConfigured = emailAdapter.provider === "RESEND" && emailAdapter.isConfigured();
-  const emailState: ReadinessState = !emailConfigured
-    ? "not_configured"
-    : hasReceivedRealEmail
-      ? "ready"
-      : "verification_required";
-
-  const voiceState: ReadinessState = !activeVoiceAssistant
-    ? "setup_required"
-    : hasCompletedRealCall
-      ? "ready"
-      : "verification_required";
 
   return [
     {
       key: "businessDna",
       state: businessDnaHasAnyFact(businessDna) ? "ready" : "setup_required",
     },
-    { key: "emailChannel", state: emailState },
+    emailReadiness({
+      hasMailbox: Boolean(emailMailbox),
+      hasReceivedRealEmail: Boolean(hasReceivedRealEmail),
+    }),
     { key: "booking", state: activeBookingTypeCount > 0 ? "ready" : "setup_required" },
     // CRM has no external configuration or org action required to become
     // usable — it is ready as soon as the organization exists.
     { key: "crm", state: "ready" },
-    { key: "voice", state: voiceState },
+    voiceReadiness(voiceAssistants, Boolean(hasCompletedRealCall)),
   ];
 }

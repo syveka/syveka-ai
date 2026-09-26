@@ -2,6 +2,7 @@ import "server-only";
 
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import type { TenantContext } from "@/server/auth/session";
+import { audit } from "./audit";
 import type { InboxChannel } from "@/generated/prisma/client/client";
 
 /**
@@ -37,6 +38,11 @@ export async function resolveOrgIdByMailboxAddress(
   return mailbox?.organizationId ?? null;
 }
 
+/** Reads the org's mailbox for a channel without provisioning one. */
+export async function getExistingMailbox(ctx: TenantContext, channel: InboxChannel = "EMAIL") {
+  return tenantDb(ctx.orgId).inboxMailbox.findFirst({ where: { channel } });
+}
+
 /**
  * Lazily provisions (idempotent) and returns the org's mailbox address for a
  * channel. Called from an authenticated context (settings UI), so it's safe
@@ -56,8 +62,9 @@ export async function getOrCreateMailbox(ctx: TenantContext, channel: InboxChann
     select: { slug: true },
   });
 
+  let mailbox;
   try {
-    return await db.inboxMailbox.create({
+    mailbox = await db.inboxMailbox.create({
       data: { organizationId: ctx.orgId, channel, address: addressFor(org.slug, domain) },
     });
   } catch {
@@ -65,4 +72,11 @@ export async function getOrCreateMailbox(ctx: TenantContext, channel: InboxChann
     // rather than surfacing a spurious unique-constraint error.
     return db.inboxMailbox.findFirst({ where: { channel } });
   }
+  await audit(ctx, {
+    action: "inbox_mailbox.create",
+    resourceType: "inbox_mailbox",
+    resourceId: mailbox.id,
+    after: { channel, address: mailbox.address },
+  });
+  return mailbox;
 }
