@@ -905,7 +905,7 @@
       "emailChannel": "Email channel",
       "booking": "Booking",
       "crm": "CRM",
-      "voice": "Voice"
+      "voice": "Phone voice channel"
     },
     "state": {
       "ready": "Ready",

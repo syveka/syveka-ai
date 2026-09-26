@@ -905,7 +905,7 @@
       "emailChannel": "Sähköpostikanava",
       "booking": "Ajanvaraus",
       "crm": "CRM",
-      "voice": "Puheavustaja"
+      "voice": "Puhelinkanava (puheavustaja)"
     },
     "state": {
       "ready": "Valmis",

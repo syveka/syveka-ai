@@ -220,6 +220,11 @@ describe("Assistant chat — voice mode UI", () => {
     expect(classes).toEqual(expect.arrayContaining(["fixed", "inset-0", "z-50"]));
     expect(panel.className).toContain("env(safe-area-inset-bottom)");
     expect(classes).toEqual(expect.arrayContaining(["md:inset-auto", "md:w-96", "md:end-6"]));
+    // Landscape phones are past md but only ~400px tall: the card must be
+    // height-capped and scroll, or its header is pushed off-screen.
+    expect(classes).toEqual(
+      expect.arrayContaining(["overflow-y-auto", "md:max-h-[calc(100dvh-3rem)]"]),
+    );
     // Logical (RTL-safe) positioning only.
     expect(panel.className).not.toMatch(/\b(md:)?(right|left)-/);
   });

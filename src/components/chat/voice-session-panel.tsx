@@ -81,7 +81,9 @@ export function VoiceSessionPanel({
       className={cn(
         "fixed inset-0 z-50 flex flex-col overflow-y-auto bg-background",
         "pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]",
-        "md:inset-auto md:bottom-6 md:end-6 md:w-96 md:rounded-2xl md:border md:pb-4 md:pt-4 md:shadow-xl",
+        // Capped to the dynamic viewport so a short landscape phone (past md,
+        // ~400px tall) never pushes the header off-screen; the panel scrolls.
+        "md:inset-auto md:bottom-6 md:end-6 md:max-h-[calc(100dvh-3rem)] md:w-96 md:rounded-2xl md:border md:pb-4 md:pt-4 md:shadow-xl",
       )}
     >
       <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4">
