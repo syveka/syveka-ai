@@ -1048,7 +1048,15 @@
       "draftPostsTitle": "منشورات المسودة",
       "noDrafts": "لا توجد منشورات مسودة.",
       "noCaption": "بدون تعليق",
-      "requestApprovalCta": "طلب الموافقة"
+      "requestApprovalCta": "طلب الموافقة",
+      "preview": {
+        "alt": "صورة مُنشأة",
+        "loading": "جارٍ تحميل الصورة…",
+        "missing": "لا تتوفر صورة",
+        "error": "تعذّر تحميل الصورة",
+        "retry": "إعادة المحاولة",
+        "open": "فتح الصورة المُنشأة في علامة تبويب جديدة"
+      }
     },
     "socialAccounts": {
       "platformLabel": "المنصة",

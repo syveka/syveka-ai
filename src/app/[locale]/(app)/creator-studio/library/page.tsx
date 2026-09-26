@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { formatDate } from "@/lib/utils";
 import { CreatePostFromAssetForm } from "@/components/creator-studio/create-post-from-asset-form";
 import { RequestApprovalButton } from "@/components/creator-studio/request-approval-button";
+import { GeneratedImagePreview } from "@/components/creator-studio/generated-image-preview";
 
 export default async function CreatorLibraryPage() {
   const ctx = await requirePermission("creator:read");
@@ -35,7 +36,13 @@ export default async function CreatorLibraryPage() {
                 const outputAssetId = g.outputAssetIds[0];
                 const output = g.output as { primary?: string } | null;
                 return (
-                  <div key={g.id} className="flex items-center justify-between gap-4 p-4">
+                  <div key={g.id} className="flex flex-wrap items-center justify-between gap-4 p-4">
+                    {g.generationType === "IMAGE" && g.status === "COMPLETED" ? (
+                      <GeneratedImagePreview
+                        generationId={g.id}
+                        hasOutput={Boolean(outputAssetId)}
+                      />
+                    ) : null}
                     <div className="min-w-0 flex-1">
                       <p className="text-sm font-medium">
                         {t(`type.${g.generationType}` as never)} ·{" "}

@@ -53,7 +53,12 @@ vi.mock("@/server/ai/creator", () => ({
   getCreatorCaptionProvider: vi.fn(),
 }));
 
-import { requestCharacterImageGeneration } from "@/server/services/creator-generations";
+import {
+  claimGenerationCompleted,
+  isRecordableModel,
+  persistProviderRequestIdentity,
+  requestCharacterImageGeneration,
+} from "@/server/services/creator-generations";
 
 function ctx(orgId = "org-a"): TenantContext {
   return { userId: "user-1", email: "u@example.com", orgId, role: "MANAGER", locale: "en" };
@@ -320,10 +325,19 @@ describe("runGeneration (via requestCharacterImageGeneration)", () => {
     // The early write used the real generation id created by this same call
     // (not a hardcoded stand-in).
     expect(db.generation.id).toBe("gen-1");
-    // The COMPLETED claim's own providerRequestId (the final output url)
-    // overwrote the early JSON — the row ends up COMPLETED, not stuck with
-    // the mid-flight value.
-    expect(db.generation.providerRequestId).toBe("https://fal.media/out.png");
+    // The row ends up COMPLETED, and completion keeps the durable submission
+    // record instead of overwriting it with the output url, so the provider
+    // request id and the endpoint actually submitted survive.
+    expect(db.generation.status).toBe("COMPLETED");
+    expect(JSON.parse(db.generation.providerRequestId as string)).toEqual({
+      requestId: "req-1",
+      statusUrl: "https://queue.fal.run/x/status",
+      responseUrl: "https://queue.fal.run/x",
+      model: "fal-ai/flux/schnell",
+    });
+    expect(db.generation.providerRequestId).not.toContain("fal.media/out.png");
+    // The real endpoint replaces the "default" placeholder in the model column.
+    expect(db.generation.model).toBe("fal-ai/flux/schnell");
   });
 
   it("aborts the generation (FAILED + RELEASE) without submitting a second provider call if persisting the request identity fails", async () => {
@@ -470,5 +484,225 @@ describe("runGeneration (via requestCharacterImageGeneration)", () => {
       expect(db.creatorReferenceAsset.create).toHaveBeenCalledTimes(1);
       expect(providerMock.cleanupGeneratedOutput).not.toHaveBeenCalled();
     });
+  });
+});
+
+describe("durable provider metadata", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  const submission = {
+    requestId: "req-9",
+    statusUrl: "https://queue.fal.run/y/status",
+    responseUrl: "https://queue.fal.run/y",
+    model: "fal-ai/flux/dev/image-to-image",
+  };
+  const falResult = {
+    outputStoragePath: "fal/out.jpeg",
+    mimeType: "image/jpeg",
+    sizeBytes: 2048,
+    providerRequestId: "https://fal.media/out.jpeg",
+    latencyMs: 400,
+  };
+
+  it("records the actual submitted endpoint (e.g. a template/override path), not 'default'", async () => {
+    const db = makeDb();
+    tenantDbMock.mockReturnValue(db);
+    providerMock.generateCharacterImage.mockImplementationOnce(
+      async (req: CharacterImageRequest) => {
+        await req.onProviderSubmitted!(submission);
+        return falResult;
+      },
+    );
+    await requestCharacterImageGeneration(ctx(), {
+      creatorProfileId: "profile-1",
+      prompt: "a portrait",
+      aspectRatio: "1:1",
+    });
+    expect(db.generation.model).toBe("fal-ai/flux/dev/image-to-image");
+    expect(JSON.parse(db.generation.providerRequestId as string)).toEqual(submission);
+    expect(reserveMock).toHaveBeenCalledTimes(1);
+    expect(commitMock).toHaveBeenCalledTimes(1);
+    expect(releaseMock).not.toHaveBeenCalled();
+    expect(providerMock.generateCharacterImage).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the submission identity and endpoint through a failure after submission", async () => {
+    const db = makeDb();
+    tenantDbMock.mockReturnValue(db);
+    providerMock.generateCharacterImage.mockImplementationOnce(
+      async (req: CharacterImageRequest) => {
+        await req.onProviderSubmitted!(submission);
+        throw new Error("fal job failed");
+      },
+    );
+    await expect(
+      requestCharacterImageGeneration(ctx(), {
+        creatorProfileId: "profile-1",
+        prompt: "a portrait",
+        aspectRatio: "1:1",
+      }),
+    ).rejects.toThrow("fal job failed");
+    expect(db.generation.status).toBe("FAILED");
+    expect(JSON.parse(db.generation.providerRequestId as string)).toEqual(submission);
+    expect(db.generation.model).toBe("fal-ai/flux/dev/image-to-image");
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+    expect(commitMock).not.toHaveBeenCalled();
+  });
+
+  it("still records the completion id for a provider that never submits an identity (mock)", async () => {
+    const db = makeDb();
+    tenantDbMock.mockReturnValue(db);
+    providerMock.generateCharacterImage.mockResolvedValueOnce({
+      ...falResult,
+      providerRequestId: "mock_abc",
+    });
+    await requestCharacterImageGeneration(ctx(), {
+      creatorProfileId: "profile-1",
+      prompt: "a portrait",
+      aspectRatio: "1:1",
+    });
+    expect(db.generation.status).toBe("COMPLETED");
+    expect(db.generation.providerRequestId).toBe("mock_abc");
+    // Nothing was submitted, so nothing is invented: the placeholder stays.
+    expect(db.generation.model).toBe("default");
+  });
+
+  it("does not record a malformed endpoint, but still stores the submission identity", async () => {
+    const db = makeDb();
+    tenantDbMock.mockReturnValue(db);
+    providerMock.generateCharacterImage.mockImplementationOnce(
+      async (req: CharacterImageRequest) => {
+        await req.onProviderSubmitted!({ ...submission, model: "https://evil.example/x" });
+        return falResult;
+      },
+    );
+    await requestCharacterImageGeneration(ctx(), {
+      creatorProfileId: "profile-1",
+      prompt: "a portrait",
+      aspectRatio: "1:1",
+    });
+    expect(db.generation.model).toBe("default");
+    expect(JSON.parse(db.generation.providerRequestId as string).requestId).toBe("req-9");
+  });
+
+  it("recovery-style completion keeps an existing record and commits once; a repeat is a no-op", async () => {
+    const db = makeDb();
+    tenantDbMock.mockReturnValue(db);
+    Object.assign(db.generation, {
+      id: "gen-1",
+      status: "GENERATING",
+      model: "fal-ai/flux/schnell",
+      providerRequestId: JSON.stringify({ ...submission, model: "fal-ai/flux/schnell" }),
+    });
+    const result = {
+      outputAssetIds: ["out-1"],
+      providerRequestId: "https://fal.media/r.jpeg",
+      latencyMs: 1,
+    };
+    await expect(claimGenerationCompleted(ctx(), "gen-1", "IMAGE", 20, result)).resolves.toEqual({
+      claimed: true,
+    });
+    await expect(claimGenerationCompleted(ctx(), "gen-1", "IMAGE", 20, result)).resolves.toEqual({
+      claimed: false,
+    });
+    expect(JSON.parse(db.generation.providerRequestId as string).model).toBe("fal-ai/flux/schnell");
+    expect(commitMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("leaves legacy completed rows (URL-shaped id, 'default' model) untouched", async () => {
+    const db = makeDb();
+    tenantDbMock.mockReturnValue(db);
+    Object.assign(db.generation, {
+      id: "gen-1",
+      status: "COMPLETED",
+      model: "default",
+      providerRequestId: "https://fal.media/legacy.jpeg",
+    });
+    await expect(
+      claimGenerationCompleted(ctx(), "gen-1", "IMAGE", 20, {
+        outputAssetIds: ["out-1"],
+        providerRequestId: "https://fal.media/other.jpeg",
+        latencyMs: 1,
+      }),
+    ).resolves.toEqual({ claimed: false });
+    expect(db.generation.providerRequestId).toBe("https://fal.media/legacy.jpeg");
+    expect(db.generation.model).toBe("default");
+    expect(commitMock).not.toHaveBeenCalled();
+  });
+
+  /**
+   * Interleaving regression: a concurrent persistProviderRequestIdentity
+   * commits either before completion's first statement or immediately after
+   * it. Invariant: a submission identity that landed is never overwritten by
+   * the completion fallback; otherwise the fallback is stored. The previous
+   * read-then-update implementation failed the "after-first-statement" case.
+   */
+  it.each(["before-first-statement", "after-first-statement"] as const)(
+    "never overwrites a submission identity written concurrently (%s)",
+    async (when) => {
+      const db = makeDb();
+      tenantDbMock.mockReturnValue(db);
+      Object.assign(db.generation, {
+        id: "gen-1",
+        status: "GENERATING",
+        model: "default",
+        providerRequestId: null,
+      });
+      let writer: "pending" | "won" | "lost" = "pending";
+      const runWriter = async () => {
+        try {
+          await persistProviderRequestIdentity(ctx(), "gen-1", submission);
+          writer = "won";
+        } catch {
+          writer = "lost";
+        }
+      };
+      if (when === "before-first-statement") await runWriter();
+
+      let first = when === "after-first-statement";
+      const hook = <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
+        vi.fn(async (...args: A) => {
+          // Like a real database read, return a point-in-time copy, not a live
+          // reference to the harness row (which would hide the interleaving).
+          const raw = await fn(...args);
+          const result = (raw && typeof raw === "object" ? { ...raw } : raw) as R;
+          if (first) {
+            first = false;
+            await runWriter();
+          }
+          return result;
+        });
+      db.creatorGeneration.updateMany = hook(db.creatorGeneration.updateMany);
+      db.creatorGeneration.findUniqueOrThrow = hook(db.creatorGeneration.findUniqueOrThrow);
+
+      const claim = await claimGenerationCompleted(ctx(), "gen-1", "IMAGE", 20, {
+        outputAssetIds: ["out-1"],
+        providerRequestId: "mock_fallback",
+        latencyMs: 1,
+      });
+
+      // Assigned inside closures, so read it through an explicit widening.
+      const outcome = writer as "pending" | "won" | "lost";
+      expect(outcome).not.toBe("pending");
+      expect(claim).toEqual({ claimed: true });
+      expect(db.generation.status).toBe("COMPLETED");
+      if (outcome === "won") {
+        expect(JSON.parse(db.generation.providerRequestId as string)).toEqual(submission);
+      } else {
+        expect(db.generation.providerRequestId).toBe("mock_fallback");
+      }
+      expect(commitMock).toHaveBeenCalledTimes(1);
+      expect(releaseMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("accepts only plausible endpoint ids", () => {
+    expect(isRecordableModel("fal-ai/flux/schnell")).toBe(true);
+    expect(isRecordableModel("fal-ai/kling-video/v2.1/standard/image-to-video")).toBe(true);
+    for (const bad of ["", "default ", "https://x.example/y", 7, null, "a".repeat(201)]) {
+      expect(isRecordableModel(bad)).toBe(false);
+    }
   });
 });

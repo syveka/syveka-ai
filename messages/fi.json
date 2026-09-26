@@ -1048,7 +1048,15 @@
       "draftPostsTitle": "Luonnosjulkaisut",
       "noDrafts": "Ei luonnosjulkaisuja.",
       "noCaption": "Ei kuvatekstiä",
-      "requestApprovalCta": "Pyydä hyväksyntää"
+      "requestApprovalCta": "Pyydä hyväksyntää",
+      "preview": {
+        "alt": "Luotu kuva",
+        "loading": "Ladataan kuvaa…",
+        "missing": "Kuvaa ei ole saatavilla",
+        "error": "Kuvaa ei voitu ladata",
+        "retry": "Yritä uudelleen",
+        "open": "Avaa luotu kuva uudessa välilehdessä"
+      }
     },
     "socialAccounts": {
       "platformLabel": "Alusta",

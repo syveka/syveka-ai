@@ -38,15 +38,29 @@ type GenerationExecution = {
  * before any polling/waiting begins (P0 crash-recovery hardening). Encoded
  * as JSON into the existing nullable `providerRequestId` column rather than
  * a new one: that column already means "how to identify this generation's
- * provider-side work," and it gets unconditionally overwritten with the
- * real final output identifier once the generation completes, so an early
- * JSON-encoded value here is never left stale.
+ * provider-side work." The record is permanent: claimGenerationCompleted
+ * no longer replaces it with the output URL, so the provider request id and
+ * the endpoint actually submitted survive completion. The submitted
+ * endpoint is also written to `model` (which otherwise holds the
+ * placeholder "default"), in the same atomic update.
  *
  * The conditional `where: { providerRequestId: null }` guards against
  * silently overwriting a different, already-recorded identity — this
  * should only ever be called once per generation, but guards against it
  * being called twice regardless (count !== 1 throws rather than clobbers).
  */
+/** A provider endpoint id worth recording (e.g. "fal-ai/flux/schnell"). */
+export function isRecordableModel(model: unknown): model is string {
+  return (
+    typeof model === "string" &&
+    model.length > 0 &&
+    model.length <= 200 &&
+    /^[A-Za-z0-9][A-Za-z0-9/._-]*$/.test(model) &&
+    !model.includes("//") &&
+    !model.includes("..")
+  );
+}
+
 export async function persistProviderRequestIdentity(
   ctx: TenantContext,
   generationId: string,
@@ -55,7 +69,10 @@ export async function persistProviderRequestIdentity(
   const db = tenantDb(ctx.orgId);
   const claim = await db.creatorGeneration.updateMany({
     where: { id: generationId, providerRequestId: null },
-    data: { providerRequestId: JSON.stringify(info) },
+    data: {
+      providerRequestId: JSON.stringify(info),
+      ...(isRecordableModel(info.model) ? { model: info.model } : {}),
+    },
   });
   if (claim.count !== 1) {
     throw new Error(
@@ -259,18 +276,33 @@ export async function claimGenerationCompleted(
   result: GenerationExecution,
 ): Promise<{ claimed: boolean }> {
   const db = tenantDb(ctx.orgId);
-  const claim = await db.creatorGeneration.updateMany({
-    where: { id: generationId, status: "GENERATING" },
-    data: {
-      status: "COMPLETED",
-      outputAssetIds: result.outputAssetIds,
-      output: result.output,
-      providerRequestId: result.providerRequestId,
-      latencyMs: result.latencyMs,
-      creditsConsumed: creditCost,
-      completedAt: new Date(),
-    },
+  // Never overwrite a recorded submission identity (persistProviderRequestIdentity)
+  // with the output reference, even if one is written concurrently. Two
+  // compare-and-set claims, each a single atomic statement guarded on
+  // status GENERATING, so at most one of them can claim:
+  //   A. still no identity -> claim and store this completion's id (mock,
+  //      caption and any provider that never records a submission);
+  //   B. otherwise -> claim without touching providerRequestId.
+  // A stores the fallback only if the column is null at the instant it
+  // executes; B never writes the column. No read-then-write window.
+  const completion = {
+    status: "COMPLETED" as const,
+    outputAssetIds: result.outputAssetIds,
+    output: result.output,
+    latencyMs: result.latencyMs,
+    creditsConsumed: creditCost,
+    completedAt: new Date(),
+  };
+  let claim = await db.creatorGeneration.updateMany({
+    where: { id: generationId, status: "GENERATING", providerRequestId: null },
+    data: { ...completion, providerRequestId: result.providerRequestId },
   });
+  if (claim.count !== 1) {
+    claim = await db.creatorGeneration.updateMany({
+      where: { id: generationId, status: "GENERATING" },
+      data: completion,
+    });
+  }
   if (claim.count !== 1) return { claimed: false };
   // COMPLETED is now claimed and terminal — the real provider output,
   // asset, and Storage object all genuinely exist. Everything past this

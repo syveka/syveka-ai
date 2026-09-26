@@ -1048,7 +1048,15 @@
       "draftPostsTitle": "Draft posts",
       "noDrafts": "No draft posts.",
       "noCaption": "No caption",
-      "requestApprovalCta": "Request approval"
+      "requestApprovalCta": "Request approval",
+      "preview": {
+        "alt": "Generated image",
+        "loading": "Loading image…",
+        "missing": "No image available",
+        "error": "Image could not be loaded",
+        "retry": "Retry",
+        "open": "Open generated image in a new tab"
+      }
     },
     "socialAccounts": {
       "platformLabel": "Platform",

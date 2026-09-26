@@ -229,8 +229,10 @@ describe("paid image spec gating (never runs in ordinary CI or staging smoke)", 
 
   it("verifies the fal endpoint from provider metadata, never the row's model field", () => {
     expect(spec).toContain("parseProviderReference(g.providerRequestId)");
+    // Either documented completed shape, and a recorded endpoint must be schnell.
+    expect(spec).toContain('"completed provider reference").toContain(reference.kind);');
     expect(spec).toContain(
-      'expect(reference.kind, "completed result reference").toBe("result-url");',
+      'expect(reference.model, "recorded fal endpoint").toBe(PAID_IMAGE_TEST.model);',
     );
     expect(spec).toMatch(
       /process\.env\.VERIFIED_FAL_ENDPOINT, "fal endpoint verified before submission"/,
