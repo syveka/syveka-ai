@@ -7,10 +7,19 @@ import { toSpokenText } from "@/lib/voice/spoken-text";
 export type VoiceSessionStatus =
   "idle" | "connecting" | "listening" | "thinking" | "speaking" | "muted" | "error";
 
-/** Voice-layer failures plus any chat-route error code (rate_limited, …). */
-export type VoiceSessionError = VoiceErrorCode | string;
+/**
+ * Where a failure came from. Kept separate because the two code spaces
+ * overlap: the chat route's `permission_denied` is an RBAC denial, the
+ * voice layer's is a blocked microphone — they need different guidance.
+ */
+export type VoiceSessionError =
+  { source: "voice"; code: VoiceErrorCode } | { source: "chat"; code: string };
 
 export type VoiceTurnResult = { text: string; error: string | null };
+
+function voiceFailure(err: unknown): VoiceSessionError {
+  return { source: "voice", code: err instanceof VoiceError ? err.code : "recognition_failed" };
+}
 
 /** Consecutive silent listens before auto-muting instead of looping forever. */
 export const MAX_SILENT_LISTENS = 3;
@@ -80,7 +89,7 @@ export function useVoiceSession(params: {
         try {
           transcript = await handle.result;
         } catch (err) {
-          if (isCurrent()) fail(err instanceof VoiceError ? err.code : "recognition_failed");
+          if (isCurrent()) fail(voiceFailure(err));
           return;
         } finally {
           if (listenRef.current === handle) listenRef.current = null;
@@ -99,10 +108,15 @@ export function useVoiceSession(params: {
         silentListensRef.current = 0;
 
         setState("thinking");
-        const reply = await paramsRef.current.sendTurn(transcript);
+        let reply: VoiceTurnResult;
+        try {
+          reply = await paramsRef.current.sendTurn(transcript);
+        } catch {
+          reply = { text: "", error: "network_error" };
+        }
         if (!isCurrent()) return;
         if (reply.error) {
-          fail(reply.error);
+          fail({ source: "chat", code: reply.error });
           return;
         }
 
@@ -131,7 +145,7 @@ export function useVoiceSession(params: {
     silentListensRef.current = 0;
 
     if (!engine.isSupported()) {
-      fail("unsupported");
+      fail({ source: "voice", code: "unsupported" });
       return;
     }
     setState("connecting");
@@ -140,9 +154,7 @@ export function useVoiceSession(params: {
     try {
       await engine.requestMicrophone();
     } catch (err) {
-      if (generation === generationRef.current) {
-        fail(err instanceof VoiceError ? err.code : "recognition_failed");
-      }
+      if (generation === generationRef.current) fail(voiceFailure(err));
       return;
     }
     if (generation !== generationRef.current) return;
@@ -193,12 +205,14 @@ export function useVoiceSession(params: {
     void start();
   }, [start]);
 
-  // Never leave the microphone or speech running after unmount.
+  // Never leave the microphone, speech or a billed in-flight turn running
+  // after unmount (e.g. navigating away mid-call).
   useEffect(
     () => () => {
       generationRef.current += 1;
       listenRef.current?.stop();
       speakRef.current?.cancel();
+      if (statusRef.current === "thinking") paramsRef.current.onAbortTurn?.();
     },
     [],
   );

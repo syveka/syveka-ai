@@ -55,7 +55,7 @@ function baseDb() {
   return {
     bookingType: { count: vi.fn(async () => 0) },
     inboxMailbox: { findFirst: vi.fn(async () => ({ id: "mailbox-1" }) as { id: string } | null) },
-    inboxThread: { findFirst: vi.fn(async () => null as { id: string } | null) },
+    inboxThread: { findFirst: vi.fn(async (_args?: unknown) => null as { id: string } | null) },
     voiceAssistant: {
       findMany: vi.fn(
         async () => [] as Array<{ isActive: boolean; vapiAssistantId: string | null }>,
@@ -161,22 +161,76 @@ describe("getOrgSetupReadiness", () => {
     });
   });
 
-  it("marks the email channel ready when Resend is configured and a real inbound email has been received", async () => {
+  function mockEmailEvidence(evidence: { inbound: boolean; outbound: boolean }) {
+    db.inboxThread.findFirst.mockImplementation(async (args: unknown) => {
+      const direction = (args as { where: { messages: { some: { direction: string } } } }).where
+        .messages.some.direction;
+      const present = direction === "INBOUND" ? evidence.inbound : evidence.outbound;
+      return present ? { id: `thread-${direction}` } : null;
+    });
+  }
+
+  it("keeps the email channel at verification_required after a real inbound email until a real reply is sent", async () => {
     getEmailChannelAdapterMock.mockReturnValue({ provider: "RESEND", isConfigured: () => true });
-    db.inboxThread.findFirst.mockResolvedValue({ id: "thread-1" });
+    mockEmailEvidence({ inbound: true, outbound: false });
+    const items = await getOrgSetupReadiness(ctx());
+    expect(items.find((i) => i.key === "emailChannel")).toEqual({
+      key: "emailChannel",
+      state: "verification_required",
+      hint: "email_awaiting_first_reply",
+    });
+  });
+
+  it("never counts an outbound send without an inbound email as ready", async () => {
+    getEmailChannelAdapterMock.mockReturnValue({ provider: "RESEND", isConfigured: () => true });
+    mockEmailEvidence({ inbound: false, outbound: true });
+    const items = await getOrgSetupReadiness(ctx());
+    expect(items.find((i) => i.key === "emailChannel")?.hint).toBe("email_awaiting_first_inbound");
+  });
+
+  it("marks the email channel ready only with real inbound AND real (non-mock) outbound evidence", async () => {
+    getEmailChannelAdapterMock.mockReturnValue({ provider: "RESEND", isConfigured: () => true });
+    mockEmailEvidence({ inbound: true, outbound: true });
     const items = await getOrgSetupReadiness(ctx());
     expect(items.find((i) => i.key === "emailChannel")).toEqual({
       key: "emailChannel",
       state: "ready",
     });
-    expect(db.inboxThread.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({
-        where: expect.objectContaining({
-          channel: "EMAIL",
-          messages: { some: { direction: "INBOUND", externalId: { not: null } } },
-        }),
-      }),
-    );
+    expect(db.inboxThread.findFirst).toHaveBeenCalledWith({
+      where: {
+        channel: "EMAIL",
+        deletedAt: null,
+        messages: { some: { direction: "INBOUND", externalId: { not: null } } },
+      },
+      select: { id: true },
+    });
+    expect(db.inboxThread.findFirst).toHaveBeenCalledWith({
+      where: {
+        channel: "EMAIL",
+        deletedAt: null,
+        messages: {
+          some: {
+            direction: "OUTBOUND",
+            status: "SENT",
+            AND: [
+              { externalId: { not: null } },
+              { NOT: { externalId: { startsWith: "mock-email-" } } },
+            ],
+          },
+        },
+      },
+      select: { id: true },
+    });
+  });
+
+  it("never reports Email or Voice ready from configuration alone", async () => {
+    getEmailChannelAdapterMock.mockReturnValue({ provider: "RESEND", isConfigured: () => true });
+    db.voiceAssistant.findMany.mockResolvedValue([{ isActive: true, vapiAssistantId: "v-1" }]);
+    mockEmailEvidence({ inbound: false, outbound: false });
+    db.voiceCall.findFirst.mockResolvedValue(null);
+    const items = await getOrgSetupReadiness(ctx());
+    expect(items.find((i) => i.key === "emailChannel")?.state).not.toBe("ready");
+    expect(items.find((i) => i.key === "voice")?.state).not.toBe("ready");
   });
 
   it("marks booking setup_required with zero active booking types", async () => {
@@ -266,7 +320,12 @@ describe("getOrgSetupReadiness", () => {
     const items = await getOrgSetupReadiness(ctx());
     expect(items.find((i) => i.key === "voice")).toEqual({ key: "voice", state: "ready" });
     expect(db.voiceCall.findFirst).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { status: "COMPLETED" } }),
+      expect.objectContaining({
+        where: {
+          status: "COMPLETED",
+          assistant: { isActive: true, vapiAssistantId: { not: null } },
+        },
+      }),
     );
   });
 

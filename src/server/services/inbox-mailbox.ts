@@ -2,6 +2,7 @@ import "server-only";
 
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import type { TenantContext } from "@/server/auth/session";
+import { can } from "@/server/auth/permissions";
 import { audit } from "./audit";
 import type { InboxChannel } from "@/generated/prisma/client/client";
 
@@ -57,10 +58,14 @@ export async function getOrCreateMailbox(ctx: TenantContext, channel: InboxChann
   const domain = process.env.INBOX_EMAIL_DOMAIN;
   if (!domain) return null;
 
-  const org = await unscopedPrisma.organization.findUniqueOrThrow({
-    where: { id: ctx.orgId },
+  // `getTenantContext` already refuses soft-deleted orgs; re-checked here so
+  // this write path can never provision an address for one regardless of
+  // how it's called (a deleted org's address must stay unroutable).
+  const org = await unscopedPrisma.organization.findFirst({
+    where: { id: ctx.orgId, deletedAt: null },
     select: { slug: true },
   });
+  if (!org) return null;
 
   let mailbox;
   try {
@@ -79,4 +84,15 @@ export async function getOrCreateMailbox(ctx: TenantContext, channel: InboxChann
     after: { channel, address: mailbox.address },
   });
   return mailbox;
+}
+
+/**
+ * The org mailbox as the current viewer may see it. Provisioning is org-level
+ * channel configuration, so only roles with `org:update` (owner/admin) can
+ * create it; everyone else only ever reads an already-provisioned address.
+ */
+export async function getMailboxForViewer(ctx: TenantContext, channel: InboxChannel = "EMAIL") {
+  return can(ctx.role, "org:update")
+    ? getOrCreateMailbox(ctx, channel)
+    : getExistingMailbox(ctx, channel);
 }

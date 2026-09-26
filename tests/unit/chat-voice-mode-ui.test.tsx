@@ -164,6 +164,52 @@ describe("Assistant chat — voice mode UI", () => {
     expect(screen.getByRole("alert").textContent).toContain(MESSAGES.en.chat.errors.rate_limited);
   });
 
+  it.each([
+    [403, "permission_denied", "not_permitted"],
+    [401, "unauthenticated", "session_expired"],
+  ] as const)(
+    "a chat %s (%s) mid-call shows access guidance, never the microphone message",
+    async (status, code, voiceKey) => {
+      fetchMock.mockResolvedValue(new Response(JSON.stringify({ error: { code } }), { status }));
+      const { fake } = renderChat("en");
+      const start = await screen.findByRole("button", { name: MESSAGES.en.chat.voice.start });
+      await waitFor(() => expect((start as HTMLButtonElement).disabled).toBe(false));
+      await act(async () => fireEvent.click(start));
+      const panel = await screen.findByTestId("voice-session-panel");
+      await waitFor(() => expect(panel.getAttribute("data-status")).toBe("listening"));
+      await act(async () => fake.lastListen.resolve("Hi"));
+
+      await waitFor(() => expect(panel.getAttribute("data-status")).toBe("error"));
+      const alert = screen.getByRole("alert").textContent ?? "";
+      expect(alert).toContain(MESSAGES.en.chat.voice.errors[voiceKey]);
+      expect(alert).not.toContain(MESSAGES.en.chat.voice.errors.permission_denied);
+    },
+  );
+
+  it("moves focus into the call view when it opens", async () => {
+    renderChat("en");
+    const start = await screen.findByRole("button", { name: MESSAGES.en.chat.voice.start });
+    await waitFor(() => expect((start as HTMLButtonElement).disabled).toBe(false));
+    await act(async () => fireEvent.click(start));
+    await screen.findByTestId("voice-session-panel");
+    expect(document.activeElement).toBe(
+      screen.getByRole("button", { name: MESSAGES.en.chat.voice.end }),
+    );
+  });
+
+  it("the voice button can't start a second session or send text while a call is live", async () => {
+    renderChat("en");
+    const start = await screen.findByRole("button", { name: MESSAGES.en.chat.voice.start });
+    await waitFor(() => expect((start as HTMLButtonElement).disabled).toBe(false));
+    await act(async () => fireEvent.click(start));
+    await screen.findByTestId("voice-session-panel");
+    expect((start as HTMLButtonElement).disabled).toBe(true);
+    const input = screen.getByPlaceholderText(MESSAGES.en.chat.placeholder);
+    fireEvent.change(input, { target: { value: "typed while talking" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("is a full-screen, safe-area-aware sheet on mobile and a floating card from md up", async () => {
     renderChat("en");
     const start = await screen.findByRole("button", { name: MESSAGES.en.chat.voice.start });

@@ -9,7 +9,13 @@ import { splitForSpeech } from "./spoken-text";
  * engine can implement the same interface later without touching the UI.
  */
 export type VoiceErrorCode =
-  "unsupported" | "permission_denied" | "no_microphone" | "network" | "recognition_failed";
+  | "unsupported"
+  | "permission_denied"
+  | "no_microphone"
+  | "microphone_unavailable"
+  | "language_unsupported"
+  | "network"
+  | "recognition_failed";
 
 export class VoiceError extends Error {
   constructor(public readonly code: VoiceErrorCode) {
@@ -74,12 +80,25 @@ function recognitionErrorCode(error: string): VoiceErrorCode | null {
     case "service-not-allowed":
       return "permission_denied";
     case "audio-capture":
-      return "no_microphone";
+      return "microphone_unavailable";
+    case "language-not-supported":
+      return "language_unsupported";
     case "network":
       return "network";
     default:
       return "recognition_failed";
   }
+}
+
+/** Strong refs so in-flight utterances can't be garbage-collected (Chrome bug). */
+let activeUtterances: SpeechSynthesisUtterance[] = [];
+
+/**
+ * Upper bound for speaking `text` before the watchdog settles it: ~5 chars
+ * per second at the slowest realistic synthesis rate, plus headroom.
+ */
+export function speechWatchdogMs(text: string): number {
+  return 8_000 + text.length * 200;
 }
 
 function pickVoice(lang: string): SpeechSynthesisVoice | undefined {
@@ -127,6 +146,11 @@ export function createBrowserSpeechEngine(): SpeechEngine {
         }
         if (name === "NotFoundError" || name === "OverconstrainedError") {
           throw new VoiceError("no_microphone");
+        }
+        // Held by another app/tab (common on Android during a phone call) or
+        // a hardware/OS-level failure — present, but not usable right now.
+        if (name === "NotReadableError" || name === "AbortError") {
+          throw new VoiceError("microphone_unavailable");
         }
         throw new VoiceError("recognition_failed");
       }
@@ -191,21 +215,41 @@ export function createBrowserSpeechEngine(): SpeechEngine {
       if (chunks.length === 0) return { done: Promise.resolve(), cancel() {} };
 
       const voice = pickVoice(lang);
+      let batch: SpeechSynthesisUtterance[] = [];
+      let finish!: () => void;
       const done = new Promise<void>((resolve) => {
-        chunks.forEach((chunk, index) => {
-          const utterance = new SpeechSynthesisUtterance(chunk);
-          utterance.lang = lang;
-          if (voice) utterance.voice = voice;
-          if (index === chunks.length - 1) {
-            utterance.onend = () => resolve();
-          }
-          // "interrupted"/"canceled" also land here — speaking is never a
-          // reason to fail the session, so always settle.
-          utterance.onerror = () => resolve();
-          synth.speak(utterance);
-        });
+        finish = () => {
+          clearTimeout(watchdog);
+          // A cancelled earlier reply settles asynchronously; never let it
+          // drop the references of the reply that replaced it.
+          if (activeUtterances === batch) activeUtterances = [];
+          resolve();
+        };
       });
-      return { done, cancel: () => synth.cancel() };
+      // Chrome (desktop and Android) can drop `onend` entirely — e.g. when an
+      // utterance object is garbage-collected mid-speech — which would leave
+      // the session stuck in "speaking" forever. Hold strong references for
+      // the duration, and settle anyway after a generous upper bound.
+      batch = chunks.map((chunk, index) => {
+        const utterance = new SpeechSynthesisUtterance(chunk);
+        utterance.lang = lang;
+        if (voice) utterance.voice = voice;
+        if (index === chunks.length - 1) utterance.onend = finish;
+        // "interrupted"/"canceled" also land here — speaking is never a
+        // reason to fail the session, so always settle.
+        utterance.onerror = finish;
+        return utterance;
+      });
+      activeUtterances = batch;
+      const watchdog = setTimeout(finish, speechWatchdogMs(text));
+      batch.forEach((utterance) => synth.speak(utterance));
+      return {
+        done,
+        cancel: () => {
+          synth.cancel();
+          finish();
+        },
+      };
     },
   };
 }

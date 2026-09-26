@@ -24,6 +24,12 @@ const mocks = vi.hoisted(() => ({
   getBusinessDnaContext: vi.fn(async () => null),
   retrieveChunks: vi.fn(async () => []),
   anthropicToolsFor: vi.fn(() => []),
+  assertWithinLimit: vi.fn(async () => undefined),
+  messageCreate: vi.fn(async () => ({})),
+  EntitlementError: class EntitlementError extends Error {
+    code = "entitlement_exceeded";
+    limit = 100;
+  },
 }));
 
 vi.mock("@/server/auth/session", () => ({ getTenantContext: mocks.getTenantContext }));
@@ -34,7 +40,7 @@ vi.mock("@/server/integrations/anthropic", () => ({ streamClaude: mocks.streamCl
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: mocks.tenantDb,
   unscopedPrisma: {
-    message: { findMany: vi.fn(async () => []), create: vi.fn(async () => ({})) },
+    message: { findMany: vi.fn(async () => []), create: mocks.messageCreate },
     organization: { findUniqueOrThrow: vi.fn(async () => ({ name: "Acme", settings: {} })) },
     conversation: { update: vi.fn(async () => ({})) },
   },
@@ -55,10 +61,10 @@ vi.mock("@/server/ai/tools", () => ({
   executeTool: vi.fn(),
 }));
 vi.mock("@/server/services/billing/entitlements", () => ({
-  assertWithinLimit: vi.fn(async () => undefined),
+  assertWithinLimit: mocks.assertWithinLimit,
   getMonthUsage: vi.fn(async () => 0),
   recordUsage: vi.fn(async () => undefined),
-  EntitlementError: class EntitlementError extends Error {},
+  EntitlementError: mocks.EntitlementError,
 }));
 vi.mock("@/server/services/conversations", () => ({
   attachDocumentsToConversation: vi.fn(async () => []),
@@ -95,6 +101,7 @@ describe("assistant voice mode — chat route", () => {
       remaining: 29,
     });
     mocks.moderation.mockResolvedValue(false);
+    mocks.assertWithinLimit.mockResolvedValue(undefined);
     mocks.conversationFindFirst.mockResolvedValue({ id: CONVERSATION, model: null });
     mocks.tenantDb.mockImplementation(() => ({
       conversation: { findFirst: mocks.conversationFindFirst, create: vi.fn() },
@@ -189,5 +196,52 @@ describe("assistant voice mode — chat route", () => {
   it("rejects an unknown response mode", async () => {
     const response = await POST(voiceRequest({ responseMode: "video" }));
     expect(response.status).toBe(400);
+  });
+
+  it("moderates the spoken transcript before any model call", async () => {
+    mocks.moderation.mockResolvedValueOnce(true);
+    const response = await POST(
+      voiceRequest({ conversationId: CONVERSATION, responseMode: "voice" }),
+    );
+    expect(response.status).toBe(422);
+    expect(mocks.moderation).toHaveBeenCalledWith("What are our opening hours?", expect.anything());
+    expect(mocks.streamClaude).not.toHaveBeenCalled();
+  });
+
+  it("never releases or stores a flagged reply that would otherwise be spoken", async () => {
+    mocks.moderation.mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+    const response = await POST(
+      voiceRequest({ conversationId: CONVERSATION, responseMode: "voice" }),
+    );
+    const body = await response.text();
+    expect(body).toContain('"code":"content_flagged"');
+    expect(body).not.toContain("We are open nine to five.");
+    expect(mocks.messageCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ role: "ASSISTANT" }) }),
+    );
+  });
+
+  it("enforces the same monthly AI quota as text chat", async () => {
+    mocks.assertWithinLimit.mockRejectedValueOnce(new mocks.EntitlementError("quota"));
+    const response = await POST(
+      voiceRequest({ conversationId: CONVERSATION, responseMode: "voice" }),
+    );
+    expect(response.status).toBe(402);
+    expect(mocks.assertWithinLimit).toHaveBeenCalledWith(ORG_A, expect.anything());
+    expect(mocks.streamClaude).not.toHaveBeenCalled();
+  });
+
+  it("never streams the system prompt or Business DNA to the browser", async () => {
+    const { buildSystemPrompt: build } = await import("@/server/ai/prompts/system");
+    vi.mocked(build).mockReturnValueOnce("SECRET-SYSTEM-PROMPT with BUSINESS-DNA-MARKER");
+    const response = await POST(
+      voiceRequest({ conversationId: CONVERSATION, responseMode: "voice" }),
+    );
+    const body = await response.text();
+    expect(body).not.toContain("SECRET-SYSTEM-PROMPT");
+    expect(body).not.toContain("BUSINESS-DNA-MARKER");
+    expect(mocks.streamClaude).toHaveBeenCalledWith(
+      expect.objectContaining({ system: expect.stringContaining("SECRET-SYSTEM-PROMPT") }),
+    );
   });
 });

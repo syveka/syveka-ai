@@ -6,7 +6,7 @@ import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";
 import { listThreads } from "@/server/services/inbox";
 import { getEmailChannelAdapter, isInboundEmailConfigured } from "@/server/channels/email";
-import { getExistingMailbox, getOrCreateMailbox } from "@/server/services/inbox-mailbox";
+import { getMailboxForViewer } from "@/server/services/inbox-mailbox";
 import type { TenantContext } from "@/server/auth/session";
 import { threadListQuerySchema } from "@/lib/validators/inbox";
 import { Link } from "@/i18n/routing";
@@ -157,9 +157,7 @@ async function InboundMailboxStatus({ ctx }: { ctx: TenantContext }) {
       <p className="text-xs text-muted-foreground">{t("channelStatus.inboundNotConfigured")}</p>
     );
   }
-  const mailbox = can(ctx.role, "org:update")
-    ? await getOrCreateMailbox(ctx, "EMAIL")
-    : await getExistingMailbox(ctx, "EMAIL");
+  const mailbox = await getMailboxForViewer(ctx, "EMAIL");
   if (!mailbox) return null;
   return (
     <div className="text-xs text-muted-foreground">

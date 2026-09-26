@@ -1,18 +1,11 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { AlertCircle, Loader2, Mic, MicOff, PhoneOff, Sparkles, Volume2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { VoiceSessionError, VoiceSessionStatus } from "@/hooks/use-voice-session";
-
-const VOICE_ERROR_KEYS = new Set([
-  "unsupported",
-  "permission_denied",
-  "no_microphone",
-  "network",
-  "recognition_failed",
-]);
 
 const CHAT_ERROR_KEYS = new Set([
   "rate_limited",
@@ -21,6 +14,23 @@ const CHAT_ERROR_KEYS = new Set([
   "generation_failed",
   "network_error",
 ]);
+
+/** Chat-route codes that need voice-specific guidance rather than chat's copy. */
+const CHAT_CODES_WITH_VOICE_COPY: Record<string, string> = {
+  unauthenticated: "session_expired",
+  permission_denied: "not_permitted",
+};
+
+function useVoiceErrorMessage(error: VoiceSessionError | null): string | null {
+  const t = useTranslations("chat.voice");
+  const tChat = useTranslations("chat");
+  if (!error) return null;
+  if (error.source === "voice") return t(`errors.${error.code}`);
+  const voiceKey = CHAT_CODES_WITH_VOICE_COPY[error.code];
+  if (voiceKey) return t(`errors.${voiceKey}` as never);
+  if (CHAT_ERROR_KEYS.has(error.code)) return tChat(`errors.${error.code}` as never);
+  return t("errors.generic");
+}
 
 /**
  * The live voice-call surface. Full-screen on mobile (thumb-reachable
@@ -52,15 +62,14 @@ export function VoiceSessionPanel({
   onRetry: () => void;
 }) {
   const t = useTranslations("chat.voice");
-  const tChat = useTranslations("chat");
+  const errorMessage = useVoiceErrorMessage(error);
+  const endButtonRef = useRef<HTMLButtonElement>(null);
 
-  const errorMessage = !error
-    ? null
-    : VOICE_ERROR_KEYS.has(error)
-      ? t(`errors.${error}` as never)
-      : CHAT_ERROR_KEYS.has(error)
-        ? tChat(`errors.${error}` as never)
-        : t("errors.generic");
+  // On mobile the panel covers the whole chat, so move keyboard/screen-reader
+  // focus into it — otherwise focus stays on the hidden composer beneath.
+  useEffect(() => {
+    endButtonRef.current?.focus();
+  }, []);
 
   return (
     <div
@@ -70,12 +79,12 @@ export function VoiceSessionPanel({
       data-testid="voice-session-panel"
       data-status={status}
       className={cn(
-        "fixed inset-0 z-50 flex flex-col bg-background",
+        "fixed inset-0 z-50 flex flex-col overflow-y-auto bg-background",
         "pb-[max(1rem,env(safe-area-inset-bottom))] pt-[max(1rem,env(safe-area-inset-top))]",
         "md:inset-auto md:bottom-6 md:end-6 md:w-96 md:rounded-2xl md:border md:pb-4 md:pt-4 md:shadow-xl",
       )}
     >
-      <div className="flex items-center justify-between px-4">
+      <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-4">
         <h2 className="text-base font-semibold">{t("title")}</h2>
         <p role="status" aria-live="polite" className="text-sm text-muted-foreground">
           {t(`status.${status}`)}
@@ -156,6 +165,7 @@ export function VoiceSessionPanel({
         )}
         <Button
           type="button"
+          ref={endButtonRef}
           variant="destructive"
           size="icon"
           className="size-14 rounded-full"

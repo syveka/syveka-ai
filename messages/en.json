@@ -157,14 +157,18 @@
       "interruptHint": "Tap to interrupt",
       "you": "You",
       "assistant": "Syveka",
-      "privacyNote": "Your speech is transcribed by your browser or device. Answers come from your organization's Syveka assistant.",
+      "privacyNote": "Speech recognition and playback are handled by your browser, which may send audio to its provider (e.g. Google or Apple). Syveka never records audio; the text of each turn is saved in this conversation.",
       "errors": {
         "unsupported": "Voice isn't supported in this browser.",
         "permission_denied": "Microphone access was blocked. Allow it in your browser settings and try again.",
         "no_microphone": "No microphone was found.",
         "network": "Speech recognition lost its connection. Try again.",
         "recognition_failed": "Speech recognition stopped unexpectedly. Try again.",
-        "generic": "Something went wrong. Please try again."
+        "generic": "Something went wrong. Please try again.",
+        "microphone_unavailable": "The microphone is in use or unavailable. Close other apps using it and try again.",
+        "language_unsupported": "Speech recognition doesn't support this language in this browser.",
+        "session_expired": "Your session has expired. Sign in again to continue.",
+        "not_permitted": "Your role doesn't have access to the assistant."
       }
     }
   },
@@ -915,6 +919,7 @@
       "email_inbound_not_configured": "Receiving email isn't set up yet — inbound domain and webhook secret are required.",
       "email_mailbox_not_provisioned": "Open Inbox to create your organization's email address.",
       "email_awaiting_first_inbound": "Send a test email to your Inbox address to verify the channel.",
+      "email_awaiting_first_reply": "Reply to that email from the Inbox to verify sending.",
       "voice_provider_not_configured": "The voice provider isn't connected in this environment yet.",
       "voice_no_assistant": "Create a voice assistant to get started.",
       "voice_assistant_not_synced": "Activate your voice assistant to sync it.",

@@ -116,7 +116,15 @@ required before the email channel's setup-readiness state can move past `not_con
 | `setup_required`        | `email_inbound_not_configured`  | `INBOX_EMAIL_DOMAIN` or `RESEND_INBOUND_WEBHOOK_SECRET` missing     |
 | `setup_required`        | `email_mailbox_not_provisioned` | No `inbox_mailboxes` row for the org yet (open the Inbox page)      |
 | `verification_required` | `email_awaiting_first_inbound`  | Fully configured; no real inbound email with a provider id received |
-| `ready`                 | —                               | At least one real inbound email has been received                   |
+| `verification_required` | `email_awaiting_first_reply`    | Inbound works; no reply yet accepted by Resend (mock ids excluded)  |
+| `ready`                 | —                               | A real inbound email received AND a real reply accepted by Resend   |
+
+> **Known limitation:** `inbox_messages` does not record which webhook created a row, so the
+> shared-secret test endpoint (`/api/v1/webhooks/inbox-email`) can insert an inbound message with
+> any `externalId` and satisfy the inbound step without a real Resend delivery. That endpoint
+> fails closed (`503`) unless `INBOX_EMAIL_WEBHOOK_SECRET` is set — keep it unset in any
+> environment whose readiness must be trusted. Closing this fully needs a `provider` column on
+> `inbox_messages` (schema change, separately authorized).
 
 ### Manual verification checklist (do not claim this passed unless you actually performed it)
 

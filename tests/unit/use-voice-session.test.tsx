@@ -1,11 +1,20 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, renderHook, waitFor } from "@testing-library/react";
-import { MAX_SILENT_LISTENS, useVoiceSession } from "@/hooks/use-voice-session";
+import {
+  MAX_SILENT_LISTENS,
+  useVoiceSession,
+  type VoiceTurnResult,
+} from "@/hooks/use-voice-session";
 import { VoiceError } from "@/lib/voice/speech-engine";
 import { createFakeSpeechEngine } from "./fake-speech-engine";
 
-function setup(sendTurn = vi.fn(async (_text: string) => ({ text: "Reply", error: null }))) {
+function setup(
+  sendTurn = vi.fn(async (_text: string): Promise<VoiceTurnResult> => ({
+    text: "Reply",
+    error: null,
+  })),
+) {
   const fake = createFakeSpeechEngine();
   const onAbortTurn = vi.fn();
   const hook = renderHook(() =>
@@ -62,7 +71,7 @@ describe("useVoiceSession", () => {
       await hook.result.current.start();
     });
     expect(hook.result.current.status).toBe("error");
-    expect(hook.result.current.error).toBe("permission_denied");
+    expect(hook.result.current.error).toEqual({ source: "voice", code: "permission_denied" });
     expect(fake.engine.listen).not.toHaveBeenCalled();
 
     fake.allowMicrophone();
@@ -80,7 +89,7 @@ describe("useVoiceSession", () => {
       await hook.result.current.start();
     });
     expect(hook.result.current.status).toBe("error");
-    expect(hook.result.current.error).toBe("unsupported");
+    expect(hook.result.current.error).toEqual({ source: "voice", code: "unsupported" });
     expect(fake.engine.requestMicrophone).not.toHaveBeenCalled();
   });
 
@@ -142,7 +151,7 @@ describe("useVoiceSession", () => {
     await waitFor(() => expect(hook.result.current.status).toBe("listening"));
     await act(async () => fake.lastListen.resolve("Hello"));
     expect(hook.result.current.status).toBe("error");
-    expect(hook.result.current.error).toBe("rate_limited");
+    expect(hook.result.current.error).toEqual({ source: "chat", code: "rate_limited" });
     expect(fake.engine.speak).not.toHaveBeenCalled();
 
     await act(async () => hook.result.current.retry());
@@ -157,7 +166,7 @@ describe("useVoiceSession", () => {
     await waitFor(() => expect(hook.result.current.status).toBe("listening"));
     await act(async () => fake.lastListen.reject(new VoiceError("network")));
     expect(hook.result.current.status).toBe("error");
-    expect(hook.result.current.error).toBe("network");
+    expect(hook.result.current.error).toEqual({ source: "voice", code: "network" });
   });
 
   it(`auto-mutes after ${MAX_SILENT_LISTENS} silent listens instead of looping forever`, async () => {
@@ -240,5 +249,96 @@ describe("useVoiceSession", () => {
     const handle = listen.mock.results[0]!.value as { stop: ReturnType<typeof vi.fn> };
     hook.unmount();
     expect(handle.stop).toHaveBeenCalled();
+  });
+
+  it("keeps a chat-route RBAC denial distinct from a blocked microphone", async () => {
+    const sendTurn = vi.fn(async () => ({ text: "", error: "permission_denied" }));
+    const { fake, hook } = setup(sendTurn);
+    await act(async () => {
+      void hook.result.current.start();
+    });
+    await waitFor(() => expect(hook.result.current.status).toBe("listening"));
+    await act(async () => fake.lastListen.resolve("Hello"));
+    expect(hook.result.current.error).toEqual({ source: "chat", code: "permission_denied" });
+  });
+
+  it("maps a busy/unavailable microphone to its own error", async () => {
+    const { fake, hook } = setup();
+    fake.denyMicrophone("microphone_unavailable");
+    await act(async () => {
+      await hook.result.current.start();
+    });
+    expect(hook.result.current.error).toEqual({ source: "voice", code: "microphone_unavailable" });
+  });
+
+  it("a double tap on start never opens two listeners or sends twice", async () => {
+    const { fake, hook, sendTurn } = setup();
+    await act(async () => {
+      void hook.result.current.start();
+      void hook.result.current.start();
+    });
+    await waitFor(() => expect(hook.result.current.status).toBe("listening"));
+    await flush();
+    expect(fake.listens).toHaveLength(1);
+    await act(async () => fake.lastListen.resolve("Hello"));
+    await waitFor(() => expect(hook.result.current.status).toBe("speaking"));
+    expect(sendTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("each utterance is sent exactly once across consecutive turns", async () => {
+    const { fake, hook, sendTurn } = setup();
+    await act(async () => {
+      void hook.result.current.start();
+    });
+    for (const phrase of ["First", "Second"]) {
+      await waitFor(() => expect(hook.result.current.status).toBe("listening"));
+      await act(async () => fake.lastListen.resolve(phrase));
+      await waitFor(() => expect(hook.result.current.status).toBe("speaking"));
+      await act(async () => fake.lastSpeech.resolve());
+    }
+    expect(sendTurn.mock.calls.map((c) => c[0])).toEqual(["First", "Second"]);
+  });
+
+  it("a turn that throws becomes a visible error instead of a stuck 'thinking' state", async () => {
+    const sendTurn = vi.fn(async () => {
+      throw new Error("boom");
+    });
+    const { fake, hook } = setup(sendTurn as never);
+    await act(async () => {
+      void hook.result.current.start();
+    });
+    await waitFor(() => expect(hook.result.current.status).toBe("listening"));
+    await act(async () => fake.lastListen.resolve("Hello"));
+    expect(hook.result.current.status).toBe("error");
+    expect(hook.result.current.error).toEqual({ source: "chat", code: "network_error" });
+  });
+
+  it("unmounting mid-turn aborts the in-flight request", async () => {
+    const sendTurn = vi.fn(() => new Promise<{ text: string; error: null }>(() => {}));
+    const { fake, hook, onAbortTurn } = setup(sendTurn);
+    await act(async () => {
+      void hook.result.current.start();
+    });
+    await waitFor(() => expect(hook.result.current.status).toBe("listening"));
+    await act(async () => fake.lastListen.resolve("Hello"));
+    expect(hook.result.current.status).toBe("thinking");
+    hook.unmount();
+    expect(onAbortTurn).toHaveBeenCalledTimes(1);
+  });
+
+  it("ending while muted leaves nothing running and a new session starts unmuted", async () => {
+    const { fake, hook } = setup();
+    await act(async () => {
+      void hook.result.current.start();
+    });
+    await waitFor(() => expect(hook.result.current.status).toBe("listening"));
+    await act(async () => hook.result.current.mute());
+    act(() => hook.result.current.end());
+    expect(hook.result.current.isMuted).toBe(false);
+    await act(async () => {
+      void hook.result.current.start();
+    });
+    await waitFor(() => expect(hook.result.current.status).toBe("listening"));
+    expect(fake.listens).toHaveLength(2);
   });
 });

@@ -20,6 +20,7 @@ export type ReadinessHint =
   | "email_inbound_not_configured"
   | "email_mailbox_not_provisioned"
   | "email_awaiting_first_inbound"
+  | "email_awaiting_first_reply"
   | "voice_provider_not_configured"
   | "voice_no_assistant"
   | "voice_assistant_not_synced"
@@ -63,9 +64,17 @@ function isVapiConfigured(): boolean {
 type EmailEvidence = {
   hasMailbox: boolean;
   hasReceivedRealEmail: boolean;
+  hasSentRealEmail: boolean;
 };
 
-function emailReadiness({ hasMailbox, hasReceivedRealEmail }: EmailEvidence): ReadinessItem {
+/** Prefix the mock adapter gives its fake provider ids (`channels/email/mock.ts`). */
+const MOCK_EMAIL_ID_PREFIX = "mock-email-";
+
+function emailReadiness({
+  hasMailbox,
+  hasReceivedRealEmail,
+  hasSentRealEmail,
+}: EmailEvidence): ReadinessItem {
   const adapter = getEmailChannelAdapter();
   if (adapter.provider !== "RESEND" || !adapter.isConfigured()) {
     return { key: "emailChannel", state: "not_configured", hint: "email_outbound_not_configured" };
@@ -81,6 +90,15 @@ function emailReadiness({ hasMailbox, hasReceivedRealEmail }: EmailEvidence): Re
       key: "emailChannel",
       state: "verification_required",
       hint: "email_awaiting_first_inbound",
+    };
+  }
+  // Receiving alone doesn't prove the channel works: Resend rejects sends
+  // from a domain that isn't verified for sending.
+  if (!hasSentRealEmail) {
+    return {
+      key: "emailChannel",
+      state: "verification_required",
+      hint: "email_awaiting_first_reply",
     };
   }
   return { key: "emailChannel", state: "ready" };
@@ -127,8 +145,9 @@ function voiceReadiness(
  * `emailChannel` and `voice` use `verification_required` rather than
  * `ready` when every configuration step is complete but there is no LOCAL
  * evidence the integration has actually round-tripped with the real
- * external provider (an inbound email actually received; a voice call
- * actually completed) — this app has no way to run a live check against
+ * external provider (an inbound email actually received AND a reply
+ * actually accepted by Resend; a voice call actually completed on a
+ * currently-live assistant) — this app has no way to run a live check against
  * Resend/Vapi from here, so claiming "ready" from config presence alone
  * would overclaim. Missing configuration steps (inbound email not wired, no
  * org mailbox, no synced assistant, no phone number) report
@@ -147,6 +166,7 @@ export async function getOrgSetupReadiness(ctx: TenantContext): Promise<Readines
     activeBookingTypeCount,
     emailMailbox,
     hasReceivedRealEmail,
+    hasSentRealEmail,
     voiceAssistants,
     hasCompletedRealCall,
   ] = await Promise.all([
@@ -156,12 +176,41 @@ export async function getOrgSetupReadiness(ctx: TenantContext): Promise<Readines
     db.inboxThread.findFirst({
       where: {
         channel: "EMAIL",
+        deletedAt: null,
         messages: { some: { direction: "INBOUND", externalId: { not: null } } },
       },
       select: { id: true },
     }),
+    // A provider id is only written after the adapter's send succeeded;
+    // mock-provider ids are excluded so simulated sends never count.
+    db.inboxThread.findFirst({
+      where: {
+        channel: "EMAIL",
+        deletedAt: null,
+        messages: {
+          some: {
+            direction: "OUTBOUND",
+            status: "SENT",
+            AND: [
+              { externalId: { not: null } },
+              { NOT: { externalId: { startsWith: MOCK_EMAIL_ID_PREFIX } } },
+            ],
+          },
+        },
+      },
+      select: { id: true },
+    }),
     db.voiceAssistant.findMany({ select: { isActive: true, vapiAssistantId: true } }),
-    db.voiceCall.findFirst({ where: { status: "COMPLETED" }, select: { id: true } }),
+    // Only a call handled by an assistant that is still live counts — a
+    // completed call on a since-deactivated assistant (or its old number)
+    // proves nothing about the current setup.
+    db.voiceCall.findFirst({
+      where: {
+        status: "COMPLETED",
+        assistant: { isActive: true, vapiAssistantId: { not: null } },
+      },
+      select: { id: true },
+    }),
   ]);
 
   return [
@@ -172,6 +221,7 @@ export async function getOrgSetupReadiness(ctx: TenantContext): Promise<Readines
     emailReadiness({
       hasMailbox: Boolean(emailMailbox),
       hasReceivedRealEmail: Boolean(hasReceivedRealEmail),
+      hasSentRealEmail: Boolean(hasSentRealEmail),
     }),
     { key: "booking", state: activeBookingTypeCount > 0 ? "ready" : "setup_required" },
     // CRM has no external configuration or org action required to become
