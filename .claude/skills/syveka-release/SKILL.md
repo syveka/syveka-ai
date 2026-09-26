@@ -16,7 +16,13 @@ hooks:
 Release: `$ARGUMENTS`. Follow [guardrails](../syveka-context/references/guardrails.md). Source of
 truth for procedure: `docs/release-runbook.md` (read the relevant section only when needed).
 
-Claude **verifies and reports**; humans perform every gated action. Stop at the first failed step.
+This is a **planning and verification** skill, not an execution skill. Claude **verifies and
+reports**; humans perform every gated action. Stop at the first failed step.
+
+It deliberately arms the prod-guard hook, which stays registered for the **rest of this session**.
+Claude therefore cannot run merge, dispatch, migration, or deploy commands later in the same
+session, even if authorized. The human runs them, or an explicitly authorized execution happens
+in a separate session. Do not try to get past a block.
 
 ## Checklist
 

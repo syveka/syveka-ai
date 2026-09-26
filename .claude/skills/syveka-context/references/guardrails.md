@@ -35,13 +35,19 @@ port 6543, params [pgbouncer, connection_limit]`.
 - Mask identifiers: emails `e***@domain`, UUIDs `abcd…wxyz`, deployment IDs first 8 chars.
 - Never paste raw logs containing URLs with credentials; sanitize first.
 
-## Technical backstop
+## Partial technical backstop (defense in depth)
+
+These rules are behavioral guidance, not an access-control boundary. Real protection comes from
+credentials, permission rules, GitHub Environment approvals, and branch protection.
 
 Skills that touch environments register `.claude/skills/syveka-context/scripts/prod-guard.mjs`
-as a `PreToolUse` hook. It blocks deploy/alias/env/migration/write-SQL/merge/dispatch/force-push
-commands and secret dumps for the rest of the session. It has **no override**: if a blocked
-action is authorized, the human runs it. A block is a signal to stop and report, never to find an
-alternate command path.
+as a `PreToolUse` hook for the rest of the session. It pattern-matches direct command forms of
+deploy/alias/env/migration/write-SQL/merge/dispatch/force-push and secret dumps. It does **not**
+see indirect execution (`bash -c`, `node -e`, scripts), the Read tool, or every SQL/CLI form. So
+a command it allows is not thereby safe, and the rules above still apply in full. It has **no
+override**: if a blocked action is authorized, the human runs it (or, if Claude is explicitly
+authorized to execute, a separate session without guarded skills). A block is a signal to stop
+and report, never to find an alternate command path. Limitations: `docs/claude-skills.md`.
 
 ## Parallelism
 

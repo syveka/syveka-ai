@@ -67,6 +67,16 @@ describe("prod-guard skill hook", () => {
     "cat .env",
     "cat .env.local",
     "ls && vercel --prod",
+    "(vercel --prod)",
+    "FOO=1 npx vercel deploy",
+    "bunx vercel promote https://x.vercel.app",
+    "npx -y prisma migrate deploy",
+    "git -C /repo push --force origin feature",
+    "git push -u origin main",
+    "git push origin HEAD:main -u",
+    "git clean --force",
+    "git stash drop",
+    "git stash clear",
   ])("blocks %s", (command) => {
     const { status, stderr } = bash(command);
     expect(status).toBe(2);
@@ -98,8 +108,32 @@ describe("prod-guard skill hook", () => {
     "gh run list",
     `git commit -F - <<'EOF'\nfix: explain why vercel --prod and git push --force are blocked\nEOF`,
     "npm test",
+    "cat vercel.json",
+    "grep -rn vercel src",
+    "git log --oneline -- vercel.json",
+    "cat prisma/schema.prisma",
+    "ls supabase",
+    "git clean -n",
+    "git stash list",
   ])("allows %s", (command) => {
     expect(bash(command).status).toBe(0);
+  });
+
+  // Pattern matching over command text cannot see through indirection. These pin the
+  // documented limitation (docs/claude-skills.md) so a change in coverage is deliberate.
+  it.each([
+    'bash -c "vercel --prod"',
+    "node -e \"require('child_process').execSync('vercel --prod')\"",
+    "sh ./scripts/some-release.sh",
+    "echo x | xargs vercel --prod",
+  ])("does not detect indirect form (known limitation): %s", (command) => {
+    expect(bash(command).status).toBe(0);
+  });
+
+  it("allows tool calls without a string command", () => {
+    expect(runHook({ tool_name: "Bash" }).status).toBe(0);
+    expect(runHook({ tool_name: "Bash", tool_input: { command: 42 } }).status).toBe(0);
+    expect(runHook({ tool_name: "Bash", tool_input: { command: "   " } }).status).toBe(0);
   });
 
   it("blocks merging and dispatching through the GitHub MCP tools", () => {
@@ -116,11 +150,10 @@ describe("prod-guard skill hook", () => {
     expect(runHook({ tool_name: "mcp__github__pull_request_read", tool_input: {} }).status).toBe(0);
   });
 
-  it("fails open on unparsable input", () => {
-    const result = spawnSync(process.execPath, [HOOK_PATH], {
-      input: "not json",
-      encoding: "utf8",
-    });
-    expect(result.status).toBe(0);
+  it("exits 0 on unparsable or empty input (same convention as the repo's other hooks)", () => {
+    for (const input of ["not json", ""]) {
+      const result = spawnSync(process.execPath, [HOOK_PATH], { input, encoding: "utf8" });
+      expect(result.status).toBe(0);
+    }
   });
 });

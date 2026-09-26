@@ -1,13 +1,18 @@
 #!/usr/bin/env node
 // PreToolUse guard registered by the Syveka diagnostic/audit/release skills (via
-// their `hooks:` frontmatter). Once one of those skills is invoked, the guard stays
-// active for the rest of the session and blocks agent-initiated commands that could
-// mutate production/staging infrastructure, databases, secrets, or protected git
-// state, or that would print secret values (CLAUDE.md §1, §9).
+// their `hooks:` frontmatter). Claude Code keeps skill hooks registered for the rest
+// of the session once the skill is invoked. It rejects the directly-invoked command
+// forms matched below that could mutate production/staging infrastructure, databases,
+// secrets, or protected git state, or print secret values (CLAUDE.md §1, §9).
+//
+// This is pattern matching over the command text: defense in depth, not enforcement.
+// Indirect execution (bash -c, node -e, scripts, xargs, aliases), other tools (Read,
+// Write), and unlisted SQL/CLI forms are not detected. Real protection comes from
+// credentials, permissions, GitHub Environment approvals, and branch protection.
 //
 // Like block-no-verify, there is deliberately no override flag: a human who has
 // authorized a specific protected action runs it themselves, in their own terminal.
-// The guard is a backstop, not the policy — the skills' human gates still apply.
+// Unparsable or command-less input exits 0 (same convention as the repo's other hooks).
 
 const SECRET_NAME =
   /(DATABASE_URL|DIRECT_URL|SERVICE_ROLE|SECRET|TOKEN|PASSWORD|API_KEY|PRIVATE_KEY|_KEY\b)/i;
@@ -68,12 +73,25 @@ function splitSegments(command) {
     .filter(Boolean);
 }
 
-// Returns the args after `tool` when the segment invokes it (directly or via npx).
+// Package-runner and process wrappers recognized in front of a tool name. Anything else
+// (bash -c, node -e, xargs, scripts, aliases) is not recognized — see docs/claude-skills.md.
+const LAUNCHER = String.raw`(?:(?:sudo|time|command|exec|nice|nohup)\s+)*(?:(?:npx|bunx|pnpm\s+(?:dlx|exec)|npm\s+exec|yarn(?:\s+dlx)?)\s+(?:(?:-y|--yes|--)\s+)*)?`;
+
+// Returns the args after `tool` only when the segment invokes it in command position
+// (optionally after env assignments, a subshell opener, a path prefix, or a LAUNCHER),
+// so read-only commands that merely mention the name (`cat vercel.json`) are not matched.
 function argsAfter(segment, tool) {
-  const match = new RegExp(`(?:^|\\s|/)(?:npx\\s+(?:-y\\s+)?)?${tool}(?:@\\S+)?\\s*(.*)$`).exec(
+  const match = new RegExp(
+    String.raw`^[({$\x60]*\s*(?:[A-Za-z_]\w*=\S*\s+)*${LAUNCHER}(?:\S*/)?${tool}(?:@\S+)?(?:\s+(.*))?$`,
+  ).exec(segment);
+  return match ? (match[1] ?? "").trim() : null;
+}
+
+// True when the segment runs `git <sub>`, allowing global options before the subcommand.
+function gitInvokes(segment, sub) {
+  return new RegExp(String.raw`\bgit\s+(?:-[cC]\s+\S+\s+|--[\w-]+(?:=\S+)?\s+)*${sub}\b`).test(
     segment,
   );
-  return match ? match[1].trim() : null;
 }
 
 function checkVercel(segment) {
@@ -124,16 +142,25 @@ function checkPsql(rawSegment) {
 
 function checkGit(segment) {
   if (!/(^|\s)git\s/.test(segment)) return null;
-  if (/\bgit\s+push\b/.test(segment)) {
+  if (gitInvokes(segment, "push")) {
     if (/\s(--force|--force-with-lease|-f|--mirror|--delete|-d)\b|\s\+\S/.test(segment)) {
       return "force/delete git push";
     }
-    if (/\s(\S+:)?(refs\/heads\/)?(main|master)\s*$/.test(segment)) return "git push to main";
+    if (/\s(\S+:)?(refs\/heads\/)?(main|master)(?=\s|$)/.test(segment)) return "git push to main";
   }
-  if (/\bgit\s+reset\s+--hard\b/.test(segment)) return "git reset --hard discards work";
-  if (/\bgit\s+clean\s+-\w*f/.test(segment)) return "git clean -f deletes untracked files";
-  if (/\bgit\s+branch\s+-(D|d)\b/.test(segment)) return "git branch deletion";
-  if (/\bgit\s+(filter-branch|filter-repo)\b/.test(segment)) return "history rewrite";
+  if (gitInvokes(segment, "reset") && /\s--hard\b/.test(segment)) {
+    return "git reset --hard discards work";
+  }
+  if (gitInvokes(segment, "clean") && /\s(-\w*f\w*|--force)\b/.test(segment)) {
+    return "git clean -f deletes untracked files";
+  }
+  if (gitInvokes(segment, "branch") && /\s(-D|-d|--delete)\b/.test(segment)) {
+    return "git branch deletion";
+  }
+  if (gitInvokes(segment, "stash") && /\sstash\s+(drop|clear)\b/.test(segment)) {
+    return "git stash drop/clear deletes stashed work";
+  }
+  if (gitInvokes(segment, "(filter-branch|filter-repo)")) return "history rewrite";
   return null;
 }
 
