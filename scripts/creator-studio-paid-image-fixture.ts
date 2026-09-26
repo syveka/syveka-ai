@@ -358,6 +358,7 @@ async function verify(prisma: PrismaClient): Promise<void> {
       : null,
     storedImageFormat,
     storedImageBytes,
+    preSubmissionEndpoint: process.env.VERIFIED_FAL_ENDPOINT?.trim() || null,
   });
   const g = generations.length === 1 ? generations[0]! : null;
   // Fixed fields only: never the raw providerRequestId, storage path or URLs.
@@ -365,7 +366,8 @@ async function verify(prisma: PrismaClient): Promise<void> {
   console.log(`${LOG_PREFIX}: billing: ${result.billing}`);
   console.log(
     `${LOG_PREFIX}: job status=${g?.status ?? "none"} provider=${g?.provider ?? "none"}` +
-      ` falEndpoint=${result.providerModel ?? "unknown"} generations=${generations.length}` +
+      ` falEndpoint=${result.providerModel ?? "unknown"} endpointEvidence=${result.endpointEvidence}` +
+      ` resultHost=${result.resultHost ?? "none"} generations=${generations.length}` +
       ` experiment=${claimRecord?.experimentId ?? "none"}`,
   );
   console.log(
@@ -402,6 +404,10 @@ function checkDeployment(): void {
     expectedBuildSha,
   });
   if (problems.length > 0) fail(`deployment check failed: ${problems.join("; ")}`);
+  // The serving deployment runs the reviewed SHA without FAL_IMAGE_MODEL, so
+  // the reviewed code's default endpoint applies. A completed generation no
+  // longer records its endpoint, so verify uses this in-run evidence.
+  exportEnv("VERIFIED_FAL_ENDPOINT", PAID_IMAGE_TEST.model, { mask: false });
   console.log(
     `${LOG_PREFIX}: ${deploymentId} serves ${expectedBuildSha}; FAL_API_KEY present by name,` +
       ` ${FORBIDDEN_RUNTIME_ENV.join(" and ")} absent (names only; key value not verified).`,
