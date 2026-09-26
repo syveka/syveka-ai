@@ -10,6 +10,7 @@ import {
   detectImageFormat,
   classifyOutcome,
   evaluateDeployment,
+  parseProviderReference,
   parseProviderSubmission,
   sanitizedCall,
   sanitizedHttpFailure,
@@ -432,5 +433,143 @@ describe("outcome classification (job status and ledger reported separately)", (
     });
     expect(noImage.outcome).toBe("COMPLETED_UNVERIFIED");
     expect(noImage.problems).toHaveLength(2);
+  });
+});
+/**
+ * Regression for run 36235671519: at the served SHA, claimGenerationCompleted
+ * overwrites providerRequestId with the final output URL (persistFirstImage
+ * `providerRequestId: url`). The fixture below is synthetic but has the real
+ * stored shape: a plain https URL string, not JSON.
+ */
+const COMPLETED_RESULT_URL = "https://v3.fal.media/files/synthetic/output-0001.jpeg";
+
+describe("provider reference shapes (submission record vs completed result URL)", () => {
+  it("regression: a completed row's plain output URL is a result reference, not malformed", () => {
+    expect(parseProviderSubmission(COMPLETED_RESULT_URL)).toEqual({
+      ok: false,
+      reason: "malformed",
+    });
+    expect(parseProviderReference(COMPLETED_RESULT_URL)).toEqual({
+      kind: "result-url",
+      host: "v3.fal.media",
+    });
+  });
+  it("reads the endpoint from a submission record", () => {
+    expect(parseProviderReference(SUBMISSION)).toEqual({
+      kind: "submission",
+      model: "fal-ai/flux/schnell",
+    });
+  });
+  it.each([
+    [null, "missing"],
+    ["", "missing"],
+    [17, "unexpected"],
+    ["not a url", "malformed"],
+    ["http://v3.fal.media/files/x.jpeg", "unexpected"],
+    ["https://user:secret@v3.fal.media/files/x.jpeg", "unexpected"],
+    ['{"requestId":"r","model":7}', "unexpected"],
+    ["{broken", "malformed"],
+  ])("rejects %j as %s without echoing it", (raw, reason) => {
+    const parsed = parseProviderReference(raw);
+    expect(parsed).toEqual({ kind: "invalid", reason });
+    expect(JSON.stringify(parsed)).not.toMatch(/secret|files\/x/);
+  });
+  it("returns only the hostname of a result URL, never its path or query", () => {
+    const parsed = parseProviderReference("https://v3.fal.media/files/a/b.jpeg?token=SECRET");
+    expect(parsed).toEqual({ kind: "result-url", host: "v3.fal.media" });
+  });
+});
+
+describe("completed generation with the real stored shape", () => {
+  const completedWithUrl: GenerationRecord = {
+    id: "g1",
+    provider: "fal",
+    status: "COMPLETED",
+    generationType: "IMAGE",
+    errorCode: null,
+    outputAssetIds: ["a1"],
+    creditsConsumed: 20,
+    providerRequestIdRaw: COMPLETED_RESULT_URL,
+  };
+  const evidence = {
+    claimPresent: true,
+    generations: [completedWithUrl],
+    ledger: [
+      { generationId: null, type: "GRANT", amount: 20 },
+      { generationId: "g1", type: "RESERVE", amount: 20 },
+      { generationId: "g1", type: "COMMIT", amount: 20 },
+    ],
+    balance: { available: 0, reserved: 0 },
+    storedImageFormat: "jpeg",
+    storedImageBytes: 405934,
+  };
+
+  it("PASSes only with this run's pre-submission endpoint verification", () => {
+    const result = classifyOutcome({
+      ...evidence,
+      preSubmissionEndpoint: "fal-ai/flux/schnell",
+    });
+    expect(result).toMatchObject({
+      outcome: "COMPLETED_VERIFIED",
+      pass: true,
+      providerModel: "fal-ai/flux/schnell",
+      endpointEvidence: "pre-submission-deployment-check",
+      resultHost: "v3.fal.media",
+      ledger: { reserved: 20, committed: 20, released: 0 },
+      problems: [],
+    });
+  });
+
+  it("is COMPLETED_UNVERIFIED (not ambiguous billing) without endpoint evidence, e.g. a later inspect run", () => {
+    const result = classifyOutcome(evidence);
+    expect(result).toMatchObject({
+      outcome: "COMPLETED_UNVERIFIED",
+      pass: false,
+      providerModel: null,
+      endpointEvidence: "none",
+    });
+    expect(result.problems).toEqual([
+      "fal endpoint is not recorded after completion and this run has no pre-submission endpoint verification",
+    ]);
+    expect(result.billing).toBe("One fal job completed (billed by fal).");
+  });
+
+  it("stays strict: a different pre-submission endpoint fails", () => {
+    const result = classifyOutcome({
+      ...evidence,
+      preSubmissionEndpoint: "fal-ai/flux-pro/v1.1-ultra",
+    });
+    expect(result.pass).toBe(false);
+    expect(result.problems.join("|")).toMatch(/pre-submission endpoint fal-ai\/flux-pro/);
+  });
+
+  it("prefers a recorded submission and still rejects a wrong recorded endpoint", () => {
+    const wrong = {
+      ...completedWithUrl,
+      providerRequestIdRaw: JSON.stringify({
+        requestId: "r",
+        model: "fal-ai/flux/dev",
+      }),
+    };
+    const result = classifyOutcome({
+      ...evidence,
+      generations: [wrong],
+      preSubmissionEndpoint: "fal-ai/flux/schnell",
+    });
+    expect(result.pass).toBe(false);
+    expect(result.endpointEvidence).toBe("submission-record");
+    expect(result.problems.join("|")).toMatch(/fal endpoint fal-ai\/flux\/dev/);
+  });
+
+  it("treats a result URL on a non-completed generation as ambiguous", () => {
+    const result = classifyOutcome({
+      ...evidence,
+      generations: [{ ...completedWithUrl, status: "GENERATING" }],
+      preSubmissionEndpoint: "fal-ai/flux/schnell",
+    });
+    expect(result).toMatchObject({
+      outcome: "NO_PROVIDER_REQUEST_ID",
+      pass: false,
+    });
   });
 });

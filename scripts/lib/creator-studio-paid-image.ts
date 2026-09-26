@@ -168,10 +168,15 @@ export function detectImageFormat(bytes: Uint8Array): "png" | "jpeg" | "webp" | 
 
 /**
  * The generation row's `model` column is NOT the fal endpoint (the character
- * image path stores "default"). The endpoint actually submitted is recorded
- * after fal accepts the job, as JSON in `providerRequestId` (fal-provider.ts
- * withSubmissionMeta: { requestId, statusUrl, responseUrl, model }). This
- * parser reads only what we need and never returns or echoes the raw value.
+ * image path stores "default"). `providerRequestId` holds one of two
+ * documented shapes (creator-generation-recovery.ts parseProviderRequestRecord):
+ *   - while QUEUED/GENERATING (and after a FAILED transition, which does not
+ *     touch the column): JSON { requestId, statusUrl, responseUrl, model }
+ *     written by persistProviderRequestIdentity once fal accepts the job;
+ *   - once COMPLETED: claimGenerationCompleted overwrites it with the final
+ *     output URL (fal-provider.ts persistFirstImage `providerRequestId: url`),
+ *     so the submitted endpoint is no longer recorded on the row.
+ * These parsers return only derived facts and never echo the raw value.
  */
 export type ProviderSubmission =
   { ok: true; model: string } | { ok: false; reason: "missing" | "malformed" | "unexpected" };
@@ -196,6 +201,34 @@ export function parseProviderSubmission(raw: unknown): ProviderSubmission {
     return { ok: false, reason: "unexpected" };
   }
   return { ok: true, model };
+}
+
+export type ProviderReference =
+  | { kind: "submission"; model: string }
+  | { kind: "result-url"; host: string }
+  | { kind: "invalid"; reason: "missing" | "malformed" | "unexpected" };
+
+/** Classifies providerRequestId as a submission record or a completed result URL. */
+export function parseProviderReference(raw: unknown): ProviderReference {
+  if (raw === null || raw === undefined || raw === "")
+    return { kind: "invalid", reason: "missing" };
+  if (typeof raw !== "string") return { kind: "invalid", reason: "unexpected" };
+  if (raw.trimStart().startsWith("{")) {
+    const submission = parseProviderSubmission(raw);
+    return submission.ok
+      ? { kind: "submission", model: submission.model }
+      : { kind: "invalid", reason: submission.reason };
+  }
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return { kind: "invalid", reason: "malformed" };
+  }
+  if (url.protocol !== "https:" || url.username || url.password || !url.hostname) {
+    return { kind: "invalid", reason: "unexpected" };
+  }
+  return { kind: "result-url", host: url.hostname };
 }
 
 /**
@@ -314,6 +347,8 @@ export type OutcomeCase =
   | "COMPLETED_UNVERIFIED"
   | "COMPLETED_VERIFIED";
 
+export type EndpointEvidence = "submission-record" | "pre-submission-deployment-check" | "none";
+
 export type Outcome = {
   outcome: OutcomeCase;
   pass: boolean;
@@ -321,6 +356,10 @@ export type Outcome = {
   automaticRetry: false;
   billing: string;
   providerModel: string | null;
+  /** Where providerModel comes from; a completed row no longer records it. */
+  endpointEvidence: EndpointEvidence;
+  /** Hostname of the completed result reference (no path, query or token). */
+  resultHost: string | null;
   ledger: { reserved: number; committed: number; released: number };
   problems: string[];
 };
@@ -331,6 +370,13 @@ const RESERVATION_FAILURE_CODES = new Set(["insufficient_credits", "reserve_fail
  * Classifies the fixture org's state after (or instead of) the one request.
  * Job status and ledger movements are reported separately; a FAILED job is
  * not assumed refunded -- only a RELEASE row shows that.
+ *
+ * Endpoint validation stays strict: a COMPLETED row no longer records the
+ * submitted endpoint, so PASS requires either the submission record or
+ * `preSubmissionEndpoint` -- the endpoint proven by this same run's
+ * credential-free deployment check (serving deployment on the reviewed SHA,
+ * FAL_IMAGE_MODEL absent, so the reviewed code's default applies). Without
+ * either, a completed generation is COMPLETED_UNVERIFIED.
  */
 export function classifyOutcome(input: {
   claimPresent: boolean;
@@ -339,6 +385,7 @@ export function classifyOutcome(input: {
   balance: { available: number; reserved: number } | null;
   storedImageFormat: string | null;
   storedImageBytes: number;
+  preSubmissionEndpoint?: string | null;
 }): Outcome {
   const target = PAID_IMAGE_TEST.targetCredits;
   const sum = (generationId: string | null, type: string) =>
@@ -349,14 +396,20 @@ export function classifyOutcome(input: {
     outcome: OutcomeCase,
     billing: string,
     g: GenerationRecord | null,
-    providerModel: string | null,
+    endpoint: {
+      model: string | null;
+      evidence: EndpointEvidence;
+      resultHost: string | null;
+    },
     problems: string[],
   ): Outcome => ({
     outcome,
     pass: outcome === "COMPLETED_VERIFIED" && problems.length === 0,
     automaticRetry: false,
     billing,
-    providerModel,
+    providerModel: endpoint.model,
+    endpointEvidence: endpoint.evidence,
+    resultHost: endpoint.resultHost,
     ledger: g
       ? {
           reserved: sum(g.id, "RESERVE"),
@@ -366,6 +419,11 @@ export function classifyOutcome(input: {
       : { reserved: 0, committed: 0, released: 0 },
     problems,
   });
+  const noEndpoint = {
+    model: null,
+    evidence: "none" as const,
+    resultHost: null,
+  };
 
   if (input.generations.length === 0) {
     return input.claimPresent
@@ -375,14 +433,14 @@ export function classifyOutcome(input: {
             "are reserved and before the provider call, so that path made no provider request. " +
             "Needs human review; never retried automatically.",
           null,
-          null,
+          noEndpoint,
           ["a claim exists but no generation was recorded"],
         )
       : base(
           "NOT_ATTEMPTED",
           "No claim and no generation: this workflow has not submitted.",
           null,
-          null,
+          noEndpoint,
           ["no paid request has been attempted"],
         );
   }
@@ -391,24 +449,31 @@ export function classifyOutcome(input: {
       "MULTIPLE_GENERATIONS",
       "More than one generation exists in the fixture org; each may have been billed.",
       null,
-      null,
+      noEndpoint,
       [`expected at most 1 generation, found ${input.generations.length}`],
     );
   }
 
   const g = input.generations[0]!;
-  const submission = parseProviderSubmission(g.providerRequestIdRaw);
+  const ref = parseProviderReference(g.providerRequestIdRaw);
   const problems: string[] = [];
   if (g.generationType !== "IMAGE")
     problems.push(`generation type ${g.generationType}, expected IMAGE`);
   if (g.provider !== PAID_IMAGE_TEST.provider)
     problems.push(`provider ${g.provider}, expected fal`);
-  if (submission.ok && submission.model !== PAID_IMAGE_TEST.model) {
-    problems.push(`fal endpoint ${submission.model}, expected ${PAID_IMAGE_TEST.model}`);
+  const recorded =
+    ref.kind === "submission"
+      ? {
+          model: ref.model,
+          evidence: "submission-record" as const,
+          resultHost: null,
+        }
+      : noEndpoint;
+  if (ref.kind === "submission" && ref.model !== PAID_IMAGE_TEST.model) {
+    problems.push(`fal endpoint ${ref.model}, expected ${PAID_IMAGE_TEST.model}`);
   }
-  const model = submission.ok ? submission.model : null;
 
-  if (!submission.ok) {
+  if (ref.kind === "invalid") {
     const reservationFailed =
       g.status === "FAILED" && g.errorCode !== null && RESERVATION_FAILURE_CODES.has(g.errorCode);
     return base(
@@ -416,12 +481,21 @@ export function classifyOutcome(input: {
       reservationFailed
         ? "Failed at credit reservation, before the provider call; the provider was not called."
         : "AMBIGUOUS: no usable provider request id (" +
-            submission.reason +
+            ref.reason +
             "). The id is recorded only after fal accepts the submission, so a request may have " +
             "reached fal and may be billed. Never retried automatically.",
       g,
-      null,
-      [...problems, `provider request id ${submission.reason}`],
+      noEndpoint,
+      [...problems, `provider request id ${ref.reason}`],
+    );
+  }
+  if (g.status !== "COMPLETED" && ref.kind === "result-url") {
+    return base(
+      "NO_PROVIDER_REQUEST_ID",
+      `AMBIGUOUS: a completed-result reference on a ${g.status} generation. Never retried automatically.`,
+      g,
+      noEndpoint,
+      [...problems, `unexpected result reference on status ${g.status}`],
     );
   }
   if (g.status === "QUEUED" || g.status === "GENERATING") {
@@ -430,7 +504,7 @@ export function classifyOutcome(input: {
       "fal accepted the job (billing likely); the result is not yet known. The reconciler may " +
         "still finish it. Never resubmitted.",
       g,
-      model,
+      recorded,
       [...problems, `generation status ${g.status}`],
     );
   }
@@ -440,17 +514,43 @@ export function classifyOutcome(input: {
       "fal accepted the job and the generation then failed; fal may still bill an accepted job. " +
         "Refund status is shown by the ledger, not assumed.",
       g,
-      model,
+      recorded,
       [...problems, `generation failed (${g.errorCode ?? "no error code"})`],
     );
   }
   if (g.status !== "COMPLETED") {
-    return base("NO_PROVIDER_REQUEST_ID", `Unexpected generation status ${g.status}.`, g, model, [
-      ...problems,
-      `unexpected status ${g.status}`,
-    ]);
+    return base(
+      "NO_PROVIDER_REQUEST_ID",
+      `Unexpected generation status ${g.status}.`,
+      g,
+      recorded,
+      [...problems, `unexpected status ${g.status}`],
+    );
   }
 
+  // COMPLETED: the documented shape is the final output URL.
+  let endpoint: {
+    model: string | null;
+    evidence: EndpointEvidence;
+    resultHost: string | null;
+  } = recorded;
+  if (ref.kind === "result-url") {
+    const pre = input.preSubmissionEndpoint ?? null;
+    endpoint = pre
+      ? {
+          model: pre,
+          evidence: "pre-submission-deployment-check",
+          resultHost: ref.host,
+        }
+      : { model: null, evidence: "none", resultHost: ref.host };
+    if (!pre) {
+      problems.push(
+        "fal endpoint is not recorded after completion and this run has no pre-submission endpoint verification",
+      );
+    } else if (pre !== PAID_IMAGE_TEST.model) {
+      problems.push(`pre-submission endpoint ${pre}, expected ${PAID_IMAGE_TEST.model}`);
+    }
+  }
   if (g.outputAssetIds.length !== 1)
     problems.push(`expected 1 output asset, found ${g.outputAssetIds.length}`);
   if (g.creditsConsumed !== target)
@@ -477,7 +577,7 @@ export function classifyOutcome(input: {
     problems.length === 0 ? "COMPLETED_VERIFIED" : "COMPLETED_UNVERIFIED",
     "One fal job completed (billed by fal).",
     g,
-    model,
+    endpoint,
     problems,
   );
 }

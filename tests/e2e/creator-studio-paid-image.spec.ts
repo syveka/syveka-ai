@@ -2,7 +2,7 @@ import { test, expect, type APIRequestContext, type Page } from "@playwright/tes
 import { openAuthenticatedE2EDashboard, requireE2EUserCredentials } from "./helpers/auth";
 import {
   PAID_IMAGE_TEST,
-  parseProviderSubmission,
+  parseProviderReference,
   sanitizedCall,
 } from "../../scripts/lib/creator-studio-paid-image";
 
@@ -250,9 +250,12 @@ test.describe("Creator Studio paid image (single approved fal request)", () => {
     expect(g.generationType, "generation type").toBe("IMAGE");
     expect(g.status, "generation status").toBe("COMPLETED");
     expect(g.provider, "provider").toBe(PAID_IMAGE_TEST.provider);
-    const submission = parseProviderSubmission(g.providerRequestId);
-    expect(submission.ok ? "ok" : submission.reason, "provider request metadata").toBe("ok");
-    expect(submission.ok ? submission.model : null, "fal endpoint actually used").toBe(
+    // A COMPLETED row holds the final output URL, not the submission record
+    // (claimGenerationCompleted overwrites it), so the endpoint is proven by
+    // this run's pre-submission deployment check instead.
+    const reference = parseProviderReference(g.providerRequestId);
+    expect(reference.kind, "completed result reference").toBe("result-url");
+    expect(process.env.VERIFIED_FAL_ENDPOINT, "fal endpoint verified before submission").toBe(
       PAID_IMAGE_TEST.model,
     );
     expect(g.creditsConsumed, "credits consumed").toBe(PAID_IMAGE_TEST.targetCredits);

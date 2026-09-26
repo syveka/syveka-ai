@@ -176,6 +176,25 @@ describe("staging paid image workflow: secrets and side effects", () => {
   });
 });
 
+describe("endpoint evidence ties to the reviewed code", () => {
+  it("uses the deployed code's default image endpoint as the only accepted endpoint", () => {
+    const provider = read("src/server/ai/creator/fal-provider.ts");
+    expect(provider).toContain('const DEFAULT_IMAGE_MODEL = "fal-ai/flux/schnell";');
+    expect(provider).toContain("return process.env.FAL_IMAGE_MODEL || DEFAULT_IMAGE_MODEL;");
+    expect(read("scripts/lib/creator-studio-paid-image.ts")).toContain(
+      'model: "fal-ai/flux/schnell",',
+    );
+  });
+  it("records the verified endpoint only after the credential-free deployment check passes", () => {
+    const script = read("scripts/creator-studio-paid-image-fixture.ts");
+    const failIdx = script.indexOf('fail(`deployment check failed: ${problems.join("; ")}`)');
+    const exportIdx = script.indexOf('exportEnv("VERIFIED_FAL_ENDPOINT", PAID_IMAGE_TEST.model');
+    expect(failIdx).toBeGreaterThan(-1);
+    expect(exportIdx).toBeGreaterThan(failIdx);
+    expect(script).toContain("preSubmissionEndpoint: process.env.VERIFIED_FAL_ENDPOINT");
+  });
+});
+
 describe("paid image spec gating (never runs in ordinary CI or staging smoke)", () => {
   it("is skipped unless the workflow enables it, and submits only when the claim allowed it", () => {
     expect(spec).toContain('const ENABLED = process.env.CREATOR_STUDIO_PAID_IMAGE_TEST === "1";');
@@ -209,7 +228,13 @@ describe("paid image spec gating (never runs in ordinary CI or staging smoke)", 
   });
 
   it("verifies the fal endpoint from provider metadata, never the row's model field", () => {
-    expect(spec).toContain("parseProviderSubmission(g.providerRequestId)");
+    expect(spec).toContain("parseProviderReference(g.providerRequestId)");
+    expect(spec).toContain(
+      'expect(reference.kind, "completed result reference").toBe("result-url");',
+    );
+    expect(spec).toMatch(
+      /process\.env\.VERIFIED_FAL_ENDPOINT, "fal endpoint verified before submission"/,
+    );
     expect(spec).not.toMatch(/g\.model\b|model: PAID_IMAGE_TEST\.model/);
     // No whole-object assertions that would print raw provider metadata.
     expect(spec).not.toMatch(/expect\(g\)|toMatchObject\(/);
