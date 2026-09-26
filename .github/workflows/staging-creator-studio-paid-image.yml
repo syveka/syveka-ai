@@ -1,0 +1,206 @@
+name: Staging Creator Studio paid image test
+
+# ONE human-approved, real fal.ai image generation on staging, through the
+# normal authenticated Creator Studio UI, for a dedicated fixture org only.
+# Manual dispatch only; gated by the `staging` environment approval. At most
+# one paid request per fixture org, ever: scripts/creator-studio-paid-image-
+# fixture.ts refuses to grant credits or claim once the org has any
+# generation or claim, so a rerun only inspects. Budget: one
+# fal-ai/flux/schnell 1024x1024 image (2 billed megapixels x USD 0.003).
+
+on:
+  workflow_dispatch:
+    inputs:
+      experiment_id:
+        description: "Unique experiment id, e.g. cs-paid-img-2026-09-26-a"
+        required: true
+        type: string
+      expected_build_sha:
+        description: "40-character SHA the staging app must be serving"
+        required: true
+        type: string
+      staging_project_ref:
+        description: "Type the 20-character staging Supabase project ref"
+        required: true
+        type: string
+      confirm_paid_request:
+        description: "Type exactly: ONE FAL IMAGE MAX USD 0.10"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: staging-creator-studio-paid-image
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  STAGING_STABLE_URL: https://syveka-ai-staging.vercel.app
+
+jobs:
+  paid-image:
+    name: One approved fal image on staging
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 30
+    steps:
+      - name: Validate inputs and refuse non-staging targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$RUN_REF" != "refs/heads/main" ]; then
+            echo "Only allowed from main."; exit 1
+          fi
+          if [[ ! "$EXPERIMENT_ID" =~ ^cs-paid-img-[a-z0-9][a-z0-9-]{3,40}$ ]]; then
+            echo "experiment_id must match cs-paid-img-<lowercase letters, digits, dashes>."; exit 1
+          fi
+          if [[ ! "$EXPECTED_BUILD_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "expected_build_sha must be a full 40-character lowercase SHA."; exit 1
+          fi
+          if [ "$CONFIRM_PAID_REQUEST" != "ONE FAL IMAGE MAX USD 0.10" ]; then
+            echo "The paid-request confirmation phrase does not match."; exit 1
+          fi
+          if [ "$CONFIRM_STAGING_PROJECT_REF" != "$STAGING_SUPABASE_PROJECT_REF" ]; then
+            echo "The confirmation input does not match the staging project ref."; exit 1
+          fi
+          if [ -z "$PRODUCTION_SUPABASE_PROJECT_REF" ] || [ "$STAGING_SUPABASE_PROJECT_REF" = "$PRODUCTION_SUPABASE_PROJECT_REF" ]; then
+            echo "Staging and production Supabase project refs must be present and different."; exit 1
+          fi
+        env:
+          RUN_REF: ${{ github.ref }}
+          EXPERIMENT_ID: ${{ inputs.experiment_id }}
+          EXPECTED_BUILD_SHA: ${{ inputs.expected_build_sha }}
+          CONFIRM_PAID_REQUEST: ${{ inputs.confirm_paid_request }}
+          CONFIRM_STAGING_PROJECT_REF: ${{ inputs.staging_project_ref }}
+          STAGING_SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+          PRODUCTION_SUPABASE_PROJECT_REF: ${{ vars.PRODUCTION_SUPABASE_PROJECT_REF }}
+
+      # A staging release can redeploy the app mid-test (and runs its own E2E
+      # identity changes); never overlap with one.
+      - name: Refuse while a staging release is running
+        shell: bash
+        run: |
+          set -euo pipefail
+          for status in queued in_progress waiting pending requested; do
+            count=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/staging-release.yml/runs?status=$status" --jq '.total_count')
+            if [ "$count" != "0" ]; then
+              echo "A staging release run is $status; refusing to overlap."; exit 1
+            fi
+          done
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Checkout exact main commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate Prisma client
+        run: npx prisma generate
+
+      - name: Validate staging project identity
+        run: node scripts/validate-staging-config.mjs
+        env:
+          STAGING_CONFIG_MODE: identity
+          STAGING_SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+          PRODUCTION_SUPABASE_PROJECT_REF: ${{ vars.PRODUCTION_SUPABASE_PROJECT_REF }}
+          STAGING_SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+          STAGING_DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          STAGING_DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+
+      - name: Verify the deployed staging build before any mutation
+        shell: bash
+        run: |
+          set -euo pipefail
+          body=$(curl --fail --silent --show-error --max-time 20 "$STAGING_STABLE_URL/api/health")
+          echo "Staging health: $body"
+          if [[ "$body" != *'"status":"healthy"'* || "$body" != *'"database":"ok"'* || "$body" != *'"redis":"ok"'* ]]; then
+            echo "Staging is not healthy."; exit 1
+          fi
+          if [[ "$body" != *"\"build\":\"$EXPECTED_BUILD_SHA\""* ]]; then
+            echo "Staging is not serving the expected build $EXPECTED_BUILD_SHA."; exit 1
+          fi
+        env:
+          EXPECTED_BUILD_SHA: ${{ inputs.expected_build_sha }}
+
+      - name: Prepare the dedicated fixture (identity, org, flag, credits)
+        run: npx tsx scripts/creator-studio-paid-image-fixture.ts prepare
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
+          E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
+          EXPERIMENT_ID: ${{ inputs.experiment_id }}
+
+      - name: Install Playwright Chromium
+        if: env.PAID_TEST_STATE == 'ready'
+        run: npx playwright install --with-deps chromium
+
+      - name: Preflight through the app (free; provider must be fal, estimate 20)
+        if: env.PAID_TEST_STATE == 'ready'
+        run: npx playwright test tests/e2e/creator-studio-paid-image.spec.ts --project=desktop --workers=1 --retries=0 --trace=off --reporter=list --grep @preflight
+        env:
+          E2E_BASE_URL: ${{ env.STAGING_STABLE_URL }}
+          E2E_USER_EMAIL: ${{ env.PAID_TEST_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ env.PAID_TEST_USER_PASSWORD }}
+          CREATOR_STUDIO_PAID_IMAGE_TEST: "1"
+
+      - name: Re-verify the deployed staging build before claiming
+        if: env.PAID_TEST_STATE == 'ready'
+        shell: bash
+        run: |
+          set -euo pipefail
+          body=$(curl --fail --silent --show-error --max-time 20 "$STAGING_STABLE_URL/api/health")
+          echo "Staging health: $body"
+          if [[ "$body" != *'"status":"healthy"'* || "$body" != *'"database":"ok"'* || "$body" != *'"redis":"ok"'* ]]; then
+            echo "Staging is not healthy."; exit 1
+          fi
+          if [[ "$body" != *"\"build\":\"$EXPECTED_BUILD_SHA\""* ]]; then
+            echo "Staging is not serving the expected build $EXPECTED_BUILD_SHA."; exit 1
+          fi
+        env:
+          EXPECTED_BUILD_SHA: ${{ inputs.expected_build_sha }}
+
+      - name: Claim the single paid request for this experiment
+        if: env.PAID_TEST_STATE == 'ready'
+        run: npx tsx scripts/creator-studio-paid-image-fixture.ts claim
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          EXPERIMENT_ID: ${{ inputs.experiment_id }}
+
+      - name: Submit exactly one image through the Creator Studio UI (paid)
+        if: env.PAID_TEST_SUBMIT == '1'
+        run: npx playwright test tests/e2e/creator-studio-paid-image.spec.ts --project=desktop --workers=1 --retries=0 --trace=off --reporter=list --grep @submit
+        env:
+          E2E_BASE_URL: ${{ env.STAGING_STABLE_URL }}
+          E2E_USER_EMAIL: ${{ env.PAID_TEST_USER_EMAIL }}
+          E2E_USER_PASSWORD: ${{ env.PAID_TEST_USER_PASSWORD }}
+          CREATOR_STUDIO_PAID_IMAGE_TEST: "1"
+          CREATOR_STUDIO_PAID_IMAGE_SUBMIT: "1"
+
+      # Runs even after a failed or skipped submission, and on inspect-only
+      # reruns, so the recorded outcome of the one request is always reported.
+      - name: Verify the recorded outcome (database, ledger, stored image)
+        if: always() && env.PAID_TEST_STATE != ''
+        run: npx tsx scripts/creator-studio-paid-image-fixture.ts verify
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          DIRECT_URL: ${{ secrets.STAGING_DIRECT_URL }}
+          SUPABASE_URL: ${{ vars.STAGING_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
