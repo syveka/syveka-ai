@@ -7,6 +7,8 @@ export const chatRequestSchema = z
     useKnowledgeBase: z.boolean().default(true),
     deepMode: z.boolean().default(false),
     documentIds: z.array(z.string().uuid()).max(10).default([]),
+    /** "voice" asks for a short, speakable reply; same auth/context/tools either way. */
+    responseMode: z.enum(["text", "voice"]).default("text"),
   })
   .strict();
 
