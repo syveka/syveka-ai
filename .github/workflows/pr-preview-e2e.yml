@@ -29,6 +29,10 @@ env:
 jobs:
   verify-and-test:
     name: Verify preview deployment and run trusted E2E harness
+    # Evaluated before the job starts: a dispatch from any other ref is skipped
+    # before it can request the staging environment, receive its secrets, or
+    # run a single step (same trusted-workflow pattern as staging-release.yml).
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     environment: staging
@@ -36,8 +40,15 @@ jobs:
     steps:
       - name: Validate inputs
         shell: bash
+        env:
+          RUN_REF: ${{ github.ref }}
         run: |
           set -euo pipefail
+          # Defense in depth behind the job-level main-only guard.
+          if [ "$RUN_REF" != "refs/heads/main" ]; then
+            echo "RUN_REF_NOT_MAIN"
+            exit 1
+          fi
           if [[ ! "$PR_NUMBER" =~ ^[0-9]+$ ]]; then
             echo "PR_NUMBER_INVALID"
             exit 1

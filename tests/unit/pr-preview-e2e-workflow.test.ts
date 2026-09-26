@@ -49,6 +49,23 @@ describe("pr-preview-e2e workflow: triggers and gates", () => {
     expect(permissions).not.toMatch(/:\s*write/);
   });
 
+  it("guards the only (secret-bearing) job to main before it starts", () => {
+    const jobs = workflow.slice(workflow.indexOf("\njobs:\n"));
+    const header = jobs.slice(0, jobs.indexOf("\n    steps:\n"));
+    // Exactly one job, so no unguarded sibling can receive staging secrets.
+    expect(jobs.match(/\n    runs-on:/g)).toHaveLength(1);
+    // A job-level (4-space) condition, evaluated before environment/secrets/steps.
+    expect(header).toContain("\n    if: github.ref == 'refs/heads/main'\n");
+    expect(header).toContain("\n    environment: staging\n");
+    expect(header).not.toMatch(/\n    if: .*(\|\||always\(\)|!cancelled|success\(\))/);
+  });
+
+  it("re-checks the ref as the first step (defense in depth)", () => {
+    expect(steps[0]!.name).toBe("Validate inputs");
+    expect(steps[0]!.text).toContain("RUN_REF: ${{ github.ref }}");
+    expect(steps[0]!.text).toContain('if [ "$RUN_REF" != "refs/heads/main" ]; then');
+  });
+
   it("never references production configuration (outside explanatory comments)", () => {
     const code = workflow
       .split("\n")
