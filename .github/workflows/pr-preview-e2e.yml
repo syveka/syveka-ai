@@ -61,122 +61,14 @@ jobs:
             exit 1
           fi
 
-      # Treats GitHub's deployment/status metadata as untrusted input: only a
-      # deployment whose sha exactly matches the verified PR head, whose
-      # environment is "Preview" (never production), and whose single most
-      # recent status (highest status id, not merely any status ever seen)
-      # is "success" can produce a base URL. The resulting URL is
-      # re-validated as a bare HTTPS origin (no credentials/path/query/hash)
-      # before use, so no floating alias, staging, production, or arbitrary
-      # URL can be substituted.
-      - name: Resolve verified Preview deployment URL
-        id: resolve
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GITHUB_REPOSITORY_FULL: ${{ github.repository }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          cat > "$RUNNER_TEMP/resolve-preview.mjs" <<'NODE_EOF'
-          const repo = process.env.GITHUB_REPOSITORY_FULL;
-          const token = process.env.GH_TOKEN;
-          const expectedSha = process.env.EXPECTED_SHA.toLowerCase();
-
-          async function ghApi(path) {
-            const res = await fetch(`https://api.github.com${path}`, {
-              headers: {
-                Authorization: `Bearer ${token}`,
-                Accept: "application/vnd.github+json",
-                "X-GitHub-Api-Version": "2022-11-28",
-              },
-            });
-            if (!res.ok) {
-              throw new Error(`GitHub API request failed: ${res.status} ${path}`);
-            }
-            return res.json();
-          }
-
-          function verifiedOrigin(value) {
-            if (typeof value !== "string" || !value) return null;
-            let url;
-            try {
-              url = new URL(value);
-            } catch {
-              return null;
-            }
-            if (
-              url.protocol !== "https:" ||
-              !url.hostname ||
-              url.username ||
-              url.password ||
-              url.pathname !== "/" ||
-              url.search ||
-              url.hash
-            ) {
-              return null;
-            }
-            return url.origin;
-          }
-
-          const deployments = await ghApi(
-            `/repos/${repo}/deployments?sha=${expectedSha}&per_page=100`,
-          );
-
-          const candidates = deployments.filter(
-            (d) =>
-              typeof d.sha === "string" &&
-              d.sha.toLowerCase() === expectedSha &&
-              d.environment === "Preview" &&
-              d.production_environment === false,
-          );
-
-          if (candidates.length === 0) {
-            console.error("NO_MATCHING_PREVIEW_DEPLOYMENT");
-            process.exit(1);
-          }
-
-          let verifiedUrl = null;
-          for (const deployment of candidates) {
-            const statuses = await ghApi(
-              `/repos/${repo}/deployments/${deployment.id}/statuses?per_page=100`,
-            );
-            if (statuses.length === 0) continue;
-
-            // Authoritative "current" status: GitHub status ids are a
-            // monotonically increasing sequence, so the highest id is the
-            // single most recent status -- never "any success ever posted".
-            const latest = statuses.reduce(
-              (newest, s) => (s.id > newest.id ? s : newest),
-              statuses[0],
-            );
-
-            if (latest.state !== "success") continue;
-
-            const origin = verifiedOrigin(latest.environment_url || latest.target_url);
-            if (origin) {
-              verifiedUrl = origin;
-              break;
-            }
-          }
-
-          if (!verifiedUrl) {
-            console.error("NO_CURRENT_SUCCESSFUL_PREVIEW_DEPLOYMENT_STATUS");
-            process.exit(1);
-          }
-
-          process.stdout.write(verifiedUrl);
-          NODE_EOF
-          verified_url="$(node "$RUNNER_TEMP/resolve-preview.mjs")"
-          rm -f "$RUNNER_TEMP/resolve-preview.mjs"
-          echo "url=$verified_url" >> "$GITHUB_OUTPUT"
-
       # The PR under test is never checked out and never executes with
       # secrets available (see below): only its identity (expected_sha) and
       # its verified Preview URL are used. The E2E harness itself (Playwright
-      # config, test specs, and everything they import) is sourced from the
-      # protected `main` branch, resolved to an exact commit SHA here rather
-      # than trusted as a floating ref, so a PR cannot smuggle in test code
-      # that runs alongside the credentials below.
+      # config, test specs, the preview resolver, and everything they import)
+      # is sourced from the protected `main` branch, resolved to an exact
+      # commit SHA here rather than trusted as a floating ref, so a PR cannot
+      # smuggle in test or resolver code that runs alongside the credentials
+      # below.
       - name: Resolve trusted main harness SHA
         id: trusted-main
         env:
@@ -225,6 +117,41 @@ jobs:
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
+
+      # Treats GitHub deployment/status metadata and Vercel API responses as
+      # untrusted input. scripts/ci/select-staging-preview-deployment.mjs (run
+      # from the pinned trusted checkout above, unit-tested in
+      # tests/unit/select-staging-preview-deployment.test.ts) selects exactly
+      # one deployment and fails closed otherwise. It requires:
+      # - the PR is open, same-repository, and its head is expected_sha;
+      # - a vercel[bot] GitHub deployment for expected_sha labelled exactly
+      #   "Preview – syveka-ai-staging", production_environment false, whose
+      #   single latest status is a vercel[bot] success on the
+      #   syveka-ai-staging-*-syveka-ai.vercel.app host (never the
+      #   syveka-ai-production project's preview), with exactly one such URL;
+      # - Vercel's own record for that host, read with the staging token,
+      #   has projectId == STAGING_VERCEL_PROJECT_ID, target null (preview),
+      #   readyState READY, and was built from expected_sha on the PR's
+      #   branch in this repository (and this PR, when Vercel records one).
+      # The resulting origin is re-validated here before use.
+      - name: Resolve verified Preview deployment URL
+        id: resolve
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY_FULL: ${{ github.repository }}
+          STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
+          STAGING_VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+          STAGING_VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          verified_url="$(node scripts/ci/select-staging-preview-deployment.mjs)"
+          if [[ ! "$verified_url" =~ ^https://syveka-ai-staging-[a-z0-9]+-syveka-ai\.vercel\.app$ ]]; then
+            echo "RESOLVED_URL_INVALID"
+            exit 1
+          fi
+          echo "Verified staging Preview: $verified_url"
+          echo "url=$verified_url" >> "$GITHUB_OUTPUT"
 
       - name: Install dependencies (trusted harness)
         run: npm ci
