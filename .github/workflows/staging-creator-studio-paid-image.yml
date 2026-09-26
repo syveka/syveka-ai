@@ -5,8 +5,12 @@ name: Staging Creator Studio paid image test
 # Manual dispatch only; gated by the `staging` environment approval. At most
 # one paid request per fixture org, ever: scripts/creator-studio-paid-image-
 # fixture.ts refuses to grant credits or claim once the org has any
-# generation or claim, so a rerun only inspects. Budget: one
-# fal-ai/flux/schnell 1024x1024 image (2 billed megapixels x USD 0.003).
+# generation or claim, so a rerun only inspects (it still rotates the fixture
+# password and re-sets its metadata/flag). Budget: USD 0.10 total external
+# cost ceiling; the pinned request is one fal-ai/flux/schnell 1024x1024 image
+# (2 billed megapixels x USD 0.003), verified before submission. Scope:
+# backend generation/storage + UI status; generated-image display is not
+# covered (Creator Studio has no image preview).
 
 on:
   workflow_dispatch:
@@ -160,6 +164,53 @@ jobs:
           E2E_USER_PASSWORD: ${{ env.PAID_TEST_USER_PASSWORD }}
           CREATOR_STUDIO_PAID_IMAGE_TEST: "1"
 
+      # Read-only: the only step with the Vercel credential. curl + jq only, no
+      # repository code. Resolves the deployment actually serving the stable
+      # hostname, confirms it belongs to the staging project, and saves the two
+      # JSON responses (metadata and env NAMES only) for the next step.
+      - name: Fetch the deployment serving staging (read-only; Vercel credentials)
+        if: env.PAID_TEST_STATE == 'ready'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "$STAGING_VERCEL_PROJECT_ID" ] || [ -z "$VERCEL_ORG_ID" ] || [ "$STAGING_VERCEL_PROJECT_ID" = "$PRODUCTION_VERCEL_PROJECT_ID" ]; then
+            echo "The staging Vercel project must be configured and differ from production."; exit 1
+          fi
+          api() {
+            curl --fail --silent --show-error --max-time 30 \
+              -H "Authorization: Bearer $STAGING_VERCEL_TOKEN" \
+              "https://api.vercel.com$1?teamId=$VERCEL_ORG_ID"
+          }
+          api "/v4/aliases/${STAGING_STABLE_URL#https://}" > "$RUNNER_TEMP/staging-alias.json"
+          deployment_id=$(jq -er '.deploymentId | select(type == "string" and test("^dpl_[A-Za-z0-9]+$"))' "$RUNNER_TEMP/staging-alias.json")
+          if [ "$(jq -r '.projectId // empty' "$RUNNER_TEMP/staging-alias.json")" != "$STAGING_VERCEL_PROJECT_ID" ]; then
+            echo "The stable hostname is not served by the staging Vercel project."; exit 1
+          fi
+          api "/v13/deployments/$deployment_id" > "$RUNNER_TEMP/staging-deployment.json"
+          if [ "$(jq -r '.projectId // empty' "$RUNNER_TEMP/staging-deployment.json")" != "$STAGING_VERCEL_PROJECT_ID" ]; then
+            echo "The serving deployment does not belong to the staging Vercel project."; exit 1
+          fi
+          echo "Stable staging hostname -> $deployment_id (staging project verified)."
+        env:
+          STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
+          STAGING_VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+          PRODUCTION_VERCEL_PROJECT_ID: ${{ vars.PRODUCTION_VERCEL_PROJECT_ID }}
+
+      # No credentials. Fails closed unless the serving deployment is READY, the
+      # staging project's stable deployment, built from expected_build_sha, has
+      # FAL_API_KEY among its runtime env names, and has neither FAL_IMAGE_MODEL
+      # nor CREATOR_MEDIA_PROVIDER. Names only: a present FAL_API_KEY is not
+      # proof of a non-empty or valid key (the app's fal estimate is still
+      # required in preflight).
+      - name: Check the serving deployment's build and runtime env names
+        if: env.PAID_TEST_STATE == 'ready'
+        run: npx tsx scripts/creator-studio-paid-image-fixture.ts check-deployment
+        env:
+          EXPECTED_BUILD_SHA: ${{ inputs.expected_build_sha }}
+          STAGING_ALIAS_JSON: ${{ runner.temp }}/staging-alias.json
+          STAGING_DEPLOYMENT_JSON: ${{ runner.temp }}/staging-deployment.json
+
       - name: Re-verify the deployed staging build before claiming
         if: env.PAID_TEST_STATE == 'ready'
         shell: bash
@@ -193,9 +244,14 @@ jobs:
           E2E_USER_PASSWORD: ${{ env.PAID_TEST_USER_PASSWORD }}
           CREATOR_STUDIO_PAID_IMAGE_TEST: "1"
           CREATOR_STUDIO_PAID_IMAGE_SUBMIT: "1"
+          EXPECTED_BUILD_SHA: ${{ inputs.expected_build_sha }}
 
-      # Runs even after a failed or skipped submission, and on inspect-only
-      # reruns, so the recorded outcome of the one request is always reported.
+      # Runs after a failed, timed-out or skipped browser step, and on
+      # inspect-only reruns; it only reads (plus records the generation id on
+      # the claim) and never resubmits. It is NOT guaranteed to run after a
+      # hard job timeout, cancellation or runner loss: in those cases dispatch
+      # this workflow again with a NEW experiment id -- the fixture is then in
+      # inspect state, so that run only re-executes this read-only verification.
       - name: Verify the recorded outcome (database, ledger, stored image)
         if: always() && env.PAID_TEST_STATE != ''
         run: npx tsx scripts/creator-studio-paid-image-fixture.ts verify

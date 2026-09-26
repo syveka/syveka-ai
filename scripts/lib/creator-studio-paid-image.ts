@@ -166,64 +166,306 @@ export function detectImageFormat(bytes: Uint8Array): "png" | "jpeg" | "webp" | 
   return null;
 }
 
+/**
+ * The generation row's `model` column is NOT the fal endpoint (the character
+ * image path stores "default"). The endpoint actually submitted is recorded
+ * after fal accepts the job, as JSON in `providerRequestId` (fal-provider.ts
+ * withSubmissionMeta: { requestId, statusUrl, responseUrl, model }). This
+ * parser reads only what we need and never returns or echoes the raw value.
+ */
+export type ProviderSubmission =
+  { ok: true; model: string } | { ok: false; reason: "missing" | "malformed" | "unexpected" };
+
+export function parseProviderSubmission(raw: unknown): ProviderSubmission {
+  if (raw === null || raw === undefined || raw === "") return { ok: false, reason: "missing" };
+  if (typeof raw !== "string") return { ok: false, reason: "unexpected" };
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return { ok: false, reason: "malformed" };
+  }
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    return { ok: false, reason: "unexpected" };
+  }
+  const { model, requestId } = parsed as Record<string, unknown>;
+  if (typeof requestId !== "string" || requestId.length === 0) {
+    return { ok: false, reason: "unexpected" };
+  }
+  if (typeof model !== "string" || !/^fal-ai\/[a-z0-9][a-z0-9/._-]{0,120}$/.test(model)) {
+    return { ok: false, reason: "unexpected" };
+  }
+  return { ok: true, model };
+}
+
+/**
+ * Pre-submission check of the deployment actually serving the stable staging
+ * hostname, from the Vercel API responses the credential step saved (alias
+ * lookup + deployment). Env NAMES only: presence of FAL_API_KEY does not prove
+ * the value is non-empty or valid -- the app's own estimate check (fal = 20
+ * credits) is still required. Any missing or unexpected field fails closed.
+ */
+export const FORBIDDEN_RUNTIME_ENV = ["FAL_IMAGE_MODEL", "CREATOR_MEDIA_PROVIDER"] as const;
+
+export function evaluateDeployment(input: {
+  alias: unknown;
+  deployment: unknown;
+  expectedBuildSha: string;
+}): { problems: string[]; deploymentId: string | null } {
+  const problems: string[] = [];
+  const obj = (v: unknown) =>
+    v && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : null;
+  const alias = obj(input.alias);
+  const dep = obj(input.deployment);
+  if (!alias || !dep) {
+    return {
+      problems: ["the alias or deployment response is not a JSON object"],
+      deploymentId: null,
+    };
+  }
+  const deploymentId = typeof dep.id === "string" ? dep.id : null;
+  if (!deploymentId || !/^dpl_[A-Za-z0-9]+$/.test(deploymentId)) {
+    problems.push("the deployment id is missing or malformed");
+  }
+  if (alias.deploymentId !== deploymentId) {
+    problems.push("the stable alias does not point at the inspected deployment");
+  }
+  if (typeof dep.projectId !== "string" || alias.projectId !== dep.projectId) {
+    problems.push("the alias and deployment do not belong to the same project");
+  }
+  if (dep.readyState !== "READY") problems.push("the deployment is not READY");
+  if (dep.target !== "production") {
+    problems.push(
+      "the deployment is not the staging project's stable (production-target) deployment",
+    );
+  }
+  const meta = obj(dep.meta);
+  const sha = meta?.githubCommitSha ?? meta?.gitCommitSha;
+  if (typeof sha !== "string" || sha !== input.expectedBuildSha) {
+    problems.push("the deployment's commit SHA is missing or differs from expected_build_sha");
+  }
+  const env = dep.env;
+  if (!Array.isArray(env) || !env.every((name) => typeof name === "string")) {
+    problems.push("the deployment's runtime env name list is missing or malformed");
+  } else {
+    if (!env.includes("FAL_API_KEY")) problems.push("FAL_API_KEY is not in the runtime env names");
+    for (const name of FORBIDDEN_RUNTIME_ENV) {
+      if (env.includes(name))
+        problems.push(`${name} is set; the request could differ from flux/schnell`);
+    }
+  }
+  return { problems, deploymentId };
+}
+
+/**
+ * Error text for failed HTTP calls in the paid test. Fixed label + numeric
+ * status only: never the URL (signed upload URLs carry tokens), headers or
+ * response body.
+ */
+export function sanitizedHttpFailure(label: string, status: number | null): string {
+  const safeLabel = /^[a-z][a-z0-9 -]{0,60}$/.test(label) ? label : "request";
+  return status === null
+    ? `${safeLabel} failed (network error)`
+    : `${safeLabel} failed (HTTP ${Number.isInteger(status) ? status : "unknown"})`;
+}
+
+/** Runs one HTTP call; any thrown error is replaced by a sanitized one. */
+export async function sanitizedCall<T extends { status(): number; ok(): boolean }>(
+  label: string,
+  call: () => Promise<T>,
+  { expectStatus }: { expectStatus?: number } = {},
+): Promise<T> {
+  let res: T;
+  try {
+    res = await call();
+  } catch {
+    throw new Error(sanitizedHttpFailure(label, null));
+  }
+  const good = expectStatus === undefined ? res.ok() : res.status() === expectStatus;
+  if (!good) throw new Error(sanitizedHttpFailure(label, res.status()));
+  return res;
+}
+
 export type GenerationRecord = {
   id: string;
   provider: string;
-  model: string;
   status: string;
   generationType: string;
+  errorCode: string | null;
   outputAssetIds: string[];
-  creditsReserved: number;
   creditsConsumed: number;
-  hasProviderRequestId: boolean;
+  /** Raw providerRequestId column; parsed here, never printed. */
+  providerRequestIdRaw: unknown;
 };
 
-export type LedgerEntry = { generationId: string | null; type: string; amount: number };
+export type LedgerEntry = {
+  generationId: string | null;
+  type: string;
+  amount: number;
+};
 
-/** Post-run verification: every problem is listed; an empty list means PASS. */
-export function evaluateOutcome(input: {
+export type OutcomeCase =
+  | "NOT_ATTEMPTED"
+  | "CLAIMED_NO_GENERATION"
+  | "MULTIPLE_GENERATIONS"
+  | "NO_PROVIDER_REQUEST_ID"
+  | "PROVIDER_JOB_PENDING"
+  | "GENERATION_FAILED"
+  | "COMPLETED_UNVERIFIED"
+  | "COMPLETED_VERIFIED";
+
+export type Outcome = {
+  outcome: OutcomeCase;
+  pass: boolean;
+  /** Ambiguous or failed outcomes are never retried automatically. */
+  automaticRetry: false;
+  billing: string;
+  providerModel: string | null;
+  ledger: { reserved: number; committed: number; released: number };
+  problems: string[];
+};
+
+const RESERVATION_FAILURE_CODES = new Set(["insufficient_credits", "reserve_failed"]);
+
+/**
+ * Classifies the fixture org's state after (or instead of) the one request.
+ * Job status and ledger movements are reported separately; a FAILED job is
+ * not assumed refunded -- only a RELEASE row shows that.
+ */
+export function classifyOutcome(input: {
+  claimPresent: boolean;
   generations: GenerationRecord[];
   ledger: LedgerEntry[];
   balance: { available: number; reserved: number } | null;
   storedImageFormat: string | null;
   storedImageBytes: number;
-}): string[] {
-  const problems: string[] = [];
-  if (input.generations.length !== 1) {
-    problems.push(
-      `expected exactly 1 generation in the fixture org, found ${input.generations.length}`,
-    );
-    return problems;
+}): Outcome {
+  const target = PAID_IMAGE_TEST.targetCredits;
+  const sum = (generationId: string | null, type: string) =>
+    input.ledger
+      .filter((e) => e.generationId === generationId && e.type === type)
+      .reduce((total, e) => total + e.amount, 0);
+  const base = (
+    outcome: OutcomeCase,
+    billing: string,
+    g: GenerationRecord | null,
+    providerModel: string | null,
+    problems: string[],
+  ): Outcome => ({
+    outcome,
+    pass: outcome === "COMPLETED_VERIFIED" && problems.length === 0,
+    automaticRetry: false,
+    billing,
+    providerModel,
+    ledger: g
+      ? {
+          reserved: sum(g.id, "RESERVE"),
+          committed: sum(g.id, "COMMIT"),
+          released: sum(g.id, "RELEASE"),
+        }
+      : { reserved: 0, committed: 0, released: 0 },
+    problems,
+  });
+
+  if (input.generations.length === 0) {
+    return input.claimPresent
+      ? base(
+          "CLAIMED_NO_GENERATION",
+          "No generation row. In the app's generation path the row is committed before credits " +
+            "are reserved and before the provider call, so that path made no provider request. " +
+            "Needs human review; never retried automatically.",
+          null,
+          null,
+          ["a claim exists but no generation was recorded"],
+        )
+      : base(
+          "NOT_ATTEMPTED",
+          "No claim and no generation: this workflow has not submitted.",
+          null,
+          null,
+          ["no paid request has been attempted"],
+        );
   }
+  if (input.generations.length > 1) {
+    return base(
+      "MULTIPLE_GENERATIONS",
+      "More than one generation exists in the fixture org; each may have been billed.",
+      null,
+      null,
+      [`expected at most 1 generation, found ${input.generations.length}`],
+    );
+  }
+
   const g = input.generations[0]!;
+  const submission = parseProviderSubmission(g.providerRequestIdRaw);
+  const problems: string[] = [];
   if (g.generationType !== "IMAGE")
     problems.push(`generation type ${g.generationType}, expected IMAGE`);
   if (g.provider !== PAID_IMAGE_TEST.provider)
     problems.push(`provider ${g.provider}, expected fal`);
-  if (g.model !== PAID_IMAGE_TEST.model)
-    problems.push(`model ${g.model}, expected ${PAID_IMAGE_TEST.model}`);
-  if (g.status !== "COMPLETED") problems.push(`status ${g.status}, expected COMPLETED`);
-  if (!g.hasProviderRequestId) problems.push("no provider request id was recorded");
-  if (g.outputAssetIds.length !== 1)
-    problems.push(`expected 1 output asset, found ${g.outputAssetIds.length}`);
-  if (g.creditsConsumed !== PAID_IMAGE_TEST.targetCredits) {
-    problems.push(
-      `credits consumed ${g.creditsConsumed}, expected ${PAID_IMAGE_TEST.targetCredits}`,
+  if (submission.ok && submission.model !== PAID_IMAGE_TEST.model) {
+    problems.push(`fal endpoint ${submission.model}, expected ${PAID_IMAGE_TEST.model}`);
+  }
+  const model = submission.ok ? submission.model : null;
+
+  if (!submission.ok) {
+    const reservationFailed =
+      g.status === "FAILED" && g.errorCode !== null && RESERVATION_FAILURE_CODES.has(g.errorCode);
+    return base(
+      "NO_PROVIDER_REQUEST_ID",
+      reservationFailed
+        ? "Failed at credit reservation, before the provider call; the provider was not called."
+        : "AMBIGUOUS: no usable provider request id (" +
+            submission.reason +
+            "). The id is recorded only after fal accepts the submission, so a request may have " +
+            "reached fal and may be billed. Never retried automatically.",
+      g,
+      null,
+      [...problems, `provider request id ${submission.reason}`],
     );
   }
-  const forGen = input.ledger.filter((e) => e.generationId === g.id);
-  const summary = forGen
-    .map((e) => `${e.type}:${e.amount}`)
-    .sort()
-    .join(",");
-  const expected = [
-    `COMMIT:${PAID_IMAGE_TEST.targetCredits}`,
-    `RESERVE:${PAID_IMAGE_TEST.targetCredits}`,
-  ].join(",");
-  if (summary !== expected)
-    problems.push(`ledger for the generation is [${summary}], expected [${expected}]`);
-  const otherSpend = input.ledger.filter((e) => e.generationId !== null && e.generationId !== g.id);
-  if (otherSpend.length > 0) problems.push("ledger has entries for another generation");
+  if (g.status === "QUEUED" || g.status === "GENERATING") {
+    return base(
+      "PROVIDER_JOB_PENDING",
+      "fal accepted the job (billing likely); the result is not yet known. The reconciler may " +
+        "still finish it. Never resubmitted.",
+      g,
+      model,
+      [...problems, `generation status ${g.status}`],
+    );
+  }
+  if (g.status === "FAILED") {
+    return base(
+      "GENERATION_FAILED",
+      "fal accepted the job and the generation then failed; fal may still bill an accepted job. " +
+        "Refund status is shown by the ledger, not assumed.",
+      g,
+      model,
+      [...problems, `generation failed (${g.errorCode ?? "no error code"})`],
+    );
+  }
+  if (g.status !== "COMPLETED") {
+    return base("NO_PROVIDER_REQUEST_ID", `Unexpected generation status ${g.status}.`, g, model, [
+      ...problems,
+      `unexpected status ${g.status}`,
+    ]);
+  }
+
+  if (g.outputAssetIds.length !== 1)
+    problems.push(`expected 1 output asset, found ${g.outputAssetIds.length}`);
+  if (g.creditsConsumed !== target)
+    problems.push(`credits consumed ${g.creditsConsumed}, expected ${target}`);
+  const reserved = sum(g.id, "RESERVE");
+  const committed = sum(g.id, "COMMIT");
+  const released = sum(g.id, "RELEASE");
+  if (reserved !== target || committed !== target || released !== 0) {
+    problems.push(
+      `ledger reserve/commit/release ${reserved}/${committed}/${released}, expected ${target}/${target}/0`,
+    );
+  }
+  if (input.ledger.some((e) => e.generationId !== null && e.generationId !== g.id)) {
+    problems.push("ledger has entries for another generation");
+  }
   if (!input.balance || input.balance.available !== 0 || input.balance.reserved !== 0) {
     problems.push(
       `balance ${JSON.stringify(input.balance)}, expected {"available":0,"reserved":0}`,
@@ -231,5 +473,11 @@ export function evaluateOutcome(input: {
   }
   if (!input.storedImageFormat) problems.push("stored output is not a recognizable image");
   if (input.storedImageBytes <= 0) problems.push("stored output is empty");
-  return problems;
+  return base(
+    problems.length === 0 ? "COMPLETED_VERIFIED" : "COMPLETED_UNVERIFIED",
+    "One fal job completed (billed by fal).",
+    g,
+    model,
+    problems,
+  );
 }

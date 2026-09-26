@@ -14,6 +14,8 @@
  *   claim    Immediately before the one UI submission: under a row lock,
  *            re-checks "never spent" and records the experiment id in the
  *            org's settings. A claim is permanent -- reruns only inspect.
+ *   check-deployment  Token-free check of the saved Vercel responses for the
+ *            deployment serving the stable hostname (SHA, env names).
  *   verify   Checks the outcome in the database and private storage (one
  *            fal/flux-schnell IMAGE generation, RESERVE+COMMIT of 20 in the
  *            ledger, zero balance, stored bytes are an image).
@@ -22,7 +24,7 @@
  * Standalone script: no `@/` aliases (see scripts/verify-release-chain.ts).
  */
 import { randomBytes } from "node:crypto";
-import { appendFileSync } from "node:fs";
+import { appendFileSync, readFileSync } from "node:fs";
 import { PrismaClient } from "../src/generated/prisma/client/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { createClient } from "@supabase/supabase-js";
@@ -34,8 +36,10 @@ import {
   assertWithinBudget,
   creditShortfall,
   decideState,
+  FORBIDDEN_RUNTIME_ENV,
+  classifyOutcome,
   detectImageFormat,
-  evaluateOutcome,
+  evaluateDeployment,
   readClaim,
   type Claim,
 } from "./lib/creator-studio-paid-image";
@@ -291,13 +295,12 @@ async function verify(prisma: PrismaClient): Promise<void> {
   const generations = rows.map((g) => ({
     id: g.id,
     provider: g.provider,
-    model: g.model,
     status: g.status,
     generationType: g.generationType,
+    errorCode: g.errorCode,
     outputAssetIds: g.outputAssetIds,
-    creditsReserved: g.creditsReserved,
     creditsConsumed: g.creditsConsumed,
-    hasProviderRequestId: Boolean(g.providerRequestId),
+    providerRequestIdRaw: g.providerRequestId,
   }));
   const ledger = await prisma.creatorCreditTransaction.findMany({
     where: { organizationId: org.id },
@@ -334,40 +337,82 @@ async function verify(prisma: PrismaClient): Promise<void> {
       data: {
         settings: {
           ...settings,
-          [PAID_IMAGE_TEST.claimKey]: { ...claimRecord, generationId: generations[0]!.id },
+          [PAID_IMAGE_TEST.claimKey]: {
+            ...claimRecord,
+            generationId: generations[0]!.id,
+          },
         },
       },
     });
   }
 
-  const g = generations[0];
-  console.log(
-    `${LOG_PREFIX}: generations=${generations.length}` +
-      (g
-        ? ` provider=${g.provider} model=${g.model} status=${g.status} creditsConsumed=${g.creditsConsumed} providerRequestRecorded=${g.hasProviderRequestId}`
-        : "") +
-      ` ledger=[${ledger.map((e) => `${e.type}:${e.amount}`).join(",")}]` +
-      ` balance=${balance ? `${balance.availableCredits}/${balance.reservedCredits}` : "none"}` +
-      ` image=${storedImageFormat ?? "none"}:${storedImageBytes}B` +
-      ` experiment=${claimRecord?.experimentId ?? "none"}`,
-  );
-  const problems = evaluateOutcome({
+  const result = classifyOutcome({
+    claimPresent: claimRecord !== null,
     generations,
     ledger,
     balance: balance
-      ? { available: balance.availableCredits, reserved: balance.reservedCredits }
+      ? {
+          available: balance.availableCredits,
+          reserved: balance.reservedCredits,
+        }
       : null,
     storedImageFormat,
     storedImageBytes,
   });
-  if (problems.length > 0) fail(`verification failed: ${problems.join("; ")}`);
-  console.log(`${LOG_PREFIX}: PASS -- one fal image, one 20-credit charge, stored image present.`);
+  const g = generations.length === 1 ? generations[0]! : null;
+  // Fixed fields only: never the raw providerRequestId, storage path or URLs.
+  console.log(`${LOG_PREFIX}: outcome=${result.outcome}`);
+  console.log(`${LOG_PREFIX}: billing: ${result.billing}`);
+  console.log(
+    `${LOG_PREFIX}: job status=${g?.status ?? "none"} provider=${g?.provider ?? "none"}` +
+      ` falEndpoint=${result.providerModel ?? "unknown"} generations=${generations.length}` +
+      ` experiment=${claimRecord?.experimentId ?? "none"}`,
+  );
+  console.log(
+    `${LOG_PREFIX}: ledger for the generation reserve=${result.ledger.reserved}` +
+      ` commit=${result.ledger.committed} release=${result.ledger.released};` +
+      ` balance=${balance ? `${balance.availableCredits}/${balance.reservedCredits}` : "none"}` +
+      ` (available/reserved)`,
+  );
+  console.log(`${LOG_PREFIX}: stored image=${storedImageFormat ?? "none"}:${storedImageBytes}B`);
+  if (!result.pass) {
+    fail(`NOT PASS (${result.outcome}; automatic retry: no): ${result.problems.join("; ")}`);
+  }
+  console.log(
+    `${LOG_PREFIX}: PASS -- one fal flux/schnell image, one 20-credit charge, stored image present.`,
+  );
+}
+
+/**
+ * Token-free validation of the Vercel responses saved by the preceding
+ * credential step (alias lookup + deployment). Reads files only.
+ */
+function checkDeployment(): void {
+  const expectedBuildSha = requireEnv("EXPECTED_BUILD_SHA");
+  const read = (name: string): unknown => {
+    try {
+      return JSON.parse(readFileSync(requireEnv(name), "utf8"));
+    } catch {
+      fail(`could not read ${name} as JSON`);
+    }
+  };
+  const { problems, deploymentId } = evaluateDeployment({
+    alias: read("STAGING_ALIAS_JSON"),
+    deployment: read("STAGING_DEPLOYMENT_JSON"),
+    expectedBuildSha,
+  });
+  if (problems.length > 0) fail(`deployment check failed: ${problems.join("; ")}`);
+  console.log(
+    `${LOG_PREFIX}: ${deploymentId} serves ${expectedBuildSha}; FAL_API_KEY present by name,` +
+      ` ${FORBIDDEN_RUNTIME_ENV.join(" and ")} absent (names only; key value not verified).`,
+  );
 }
 
 async function main(): Promise<void> {
   const mode = process.argv[2];
+  if (mode === "check-deployment") return checkDeployment();
   if (mode !== "prepare" && mode !== "claim" && mode !== "verify") {
-    fail("usage: creator-studio-paid-image-fixture.ts prepare|claim|verify");
+    fail("usage: creator-studio-paid-image-fixture.ts prepare|check-deployment|claim|verify");
   }
   const prisma = connect();
   try {

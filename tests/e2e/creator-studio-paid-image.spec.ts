@@ -1,6 +1,10 @@
 import { test, expect, type APIRequestContext, type Page } from "@playwright/test";
 import { openAuthenticatedE2EDashboard, requireE2EUserCredentials } from "./helpers/auth";
-import { PAID_IMAGE_TEST } from "../../scripts/lib/creator-studio-paid-image";
+import {
+  PAID_IMAGE_TEST,
+  parseProviderSubmission,
+  sanitizedCall,
+} from "../../scripts/lib/creator-studio-paid-image";
 
 /**
  * ONE human-approved, real-provider (fal.ai) Creator Studio image, driven only
@@ -9,14 +13,22 @@ import { PAID_IMAGE_TEST } from "../../scripts/lib/creator-studio-paid-image";
  * prepares. Skipped everywhere else (staging release smoke, PR previews,
  * local runs) because CREATOR_STUDIO_PAID_IMAGE_TEST is never set there.
  *
- *   @preflight  free: sets up a synthetic character (tiny generated PNGs, not a
- *               real person's likeness) and proves through the app that the
- *               provider is fal (image estimate 20 credits; mock would be 10),
- *               that the org has never generated, and holds exactly 20 credits.
- *   @submit     the single paid request: one click on Generate, never
+ * Scope: backend generation/storage plus UI-status test. Creator Studio has no
+ * UI that displays a generated image, so "the image displays" is NOT tested.
+ *
+ *   @preflight  free: synthetic character (tiny generated PNGs, not a real
+ *               person's likeness); proves through the app that the provider
+ *               is fal (image estimate 20 credits; mock/unknown would be 10),
+ *               the org never generated, and holds exactly 20 credits.
+ *   @submit     the single paid request: "No template" + 1:1 pinned (the
+ *               deployed code maps this to one 1024x1024 fal-ai/flux/schnell
+ *               image), build SHA re-checked, one click on Generate, never
  *               repeated. Only runs when the claim step set
- *               CREATOR_STUDIO_PAID_IMAGE_SUBMIT=1. If the UI times out, it only
+ *               CREATOR_STUDIO_PAID_IMAGE_SUBMIT=1. On a UI timeout it only
  *               inspects the existing job.
+ *
+ * HTTP failures are reported as fixed labels + status codes only
+ * (sanitizedCall): never URLs (signed upload URLs carry tokens) or bodies.
  */
 const ENABLED = process.env.CREATOR_STUDIO_PAID_IMAGE_TEST === "1";
 const SUBMIT = process.env.CREATOR_STUDIO_PAID_IMAGE_SUBMIT === "1";
@@ -32,36 +44,39 @@ const SYNTHETIC_PNG = Buffer.from(
 const REQUEST_TIMEOUT_MS = 60_000;
 const GENERATION_WAIT_MS = 5 * 60_000;
 
-type Json<T> = { data?: T; error?: { code: string } };
+type Json<T> = { data?: T };
 type Generation = {
   id: string;
   status: string;
   provider: string;
-  model: string;
   generationType: string;
   outputAssetIds: string[];
   creditsConsumed: number;
+  providerRequestId: unknown;
 };
 
-async function getJson<T>(api: APIRequestContext, url: string): Promise<T> {
-  const res = await api.get(url, { timeout: REQUEST_TIMEOUT_MS });
-  const body = (await res.json().catch(() => ({}))) as Json<T>;
-  expect(res.ok(), `GET ${url} failed with ${res.status()} ${body.error?.code ?? ""}`).toBeTruthy();
-  return body.data as T;
+async function getJson<T>(api: APIRequestContext, label: string, url: string): Promise<T> {
+  const res = await sanitizedCall(label, () => api.get(url, { timeout: REQUEST_TIMEOUT_MS }));
+  return ((await res.json().catch(() => ({}))) as Json<T>).data as T;
 }
 
 async function ensureSyntheticProfile(api: APIRequestContext): Promise<string> {
   const profiles = await getJson<Array<{ id: string; displayName: string; status: string }>>(
     api,
+    "list profiles",
     "/api/v1/creator-studio/profiles",
   );
   let profile = profiles.find((p) => p.displayName === PAID_IMAGE_TEST.profileDisplayName);
   if (!profile) {
-    const res = await api.post("/api/v1/creator-studio/profiles", {
-      data: { displayName: PAID_IMAGE_TEST.profileDisplayName },
-      timeout: REQUEST_TIMEOUT_MS,
-    });
-    expect(res.status(), "create synthetic profile").toBe(201);
+    const res = await sanitizedCall(
+      "create synthetic profile",
+      () =>
+        api.post("/api/v1/creator-studio/profiles", {
+          data: { displayName: PAID_IMAGE_TEST.profileDisplayName },
+          timeout: REQUEST_TIMEOUT_MS,
+        }),
+      { expectStatus: 201 },
+    );
     profile = ((await res.json()) as Json<{ id: string; displayName: string; status: string }>)
       .data!;
   }
@@ -69,54 +84,61 @@ async function ensureSyntheticProfile(api: APIRequestContext): Promise<string> {
 
   const detail = await getJson<{ referenceAssets: Array<{ validationStatus: string }> }>(
     api,
+    "read synthetic profile",
     `/api/v1/creator-studio/profiles/${profile.id}`,
   );
   const approved = detail.referenceAssets.filter((a) => a.validationStatus === "APPROVED").length;
   for (let i = approved; i < 3; i++) {
-    const intent = await api.post(
-      `/api/v1/creator-studio/profiles/${profile.id}/reference-assets/upload-url`,
-      {
+    const intent = await sanitizedCall("reference upload intent", () =>
+      api.post(`/api/v1/creator-studio/profiles/${profile.id}/reference-assets/upload-url`, {
         data: {
           fileName: `synthetic-${i}.png`,
           mimeType: "image/png",
           sizeBytes: SYNTHETIC_PNG.length,
         },
         timeout: REQUEST_TIMEOUT_MS,
-      },
+      }),
     );
-    expect(intent.ok(), "reference upload intent").toBeTruthy();
     const { uploadIntentId, signedUrl } = (
-      (await intent.json()) as Json<{
-        uploadIntentId: string;
-        signedUrl: string;
-      }>
+      (await intent.json()) as Json<{ uploadIntentId: string; signedUrl: string }>
     ).data!;
-    const put = await api.put(signedUrl, {
-      data: SYNTHETIC_PNG,
-      headers: { "Content-Type": "image/png" },
-      timeout: REQUEST_TIMEOUT_MS,
-    });
-    expect(put.ok(), "reference upload").toBeTruthy();
-    const confirm = await api.post(
-      `/api/v1/creator-studio/profiles/${profile.id}/reference-assets/confirm`,
-      { data: { uploadIntentId }, timeout: REQUEST_TIMEOUT_MS },
+    await sanitizedCall("reference upload", () =>
+      api.put(signedUrl, {
+        data: SYNTHETIC_PNG,
+        headers: { "Content-Type": "image/png" },
+        timeout: REQUEST_TIMEOUT_MS,
+      }),
     );
-    expect(confirm.status(), "reference confirm").toBe(201);
+    await sanitizedCall(
+      "reference confirm",
+      () =>
+        api.post(`/api/v1/creator-studio/profiles/${profile.id}/reference-assets/confirm`, {
+          data: { uploadIntentId },
+          timeout: REQUEST_TIMEOUT_MS,
+        }),
+      { expectStatus: 201 },
+    );
   }
   // Operator attestation for a synthetic test subject; no real person is depicted.
-  const consent = await api.post(`/api/v1/creator-studio/profiles/${profile.id}/consent`, {
-    data: { consentConfirmed: true },
-    timeout: REQUEST_TIMEOUT_MS,
-  });
-  expect(consent.ok(), "synthetic profile activation").toBeTruthy();
+  await sanitizedCall("synthetic profile activation", () =>
+    api.post(`/api/v1/creator-studio/profiles/${profile.id}/consent`, {
+      data: { consentConfirmed: true },
+      timeout: REQUEST_TIMEOUT_MS,
+    }),
+  );
   return profile.id;
 }
 
 async function assertNeverSpentAndFunded(api: APIRequestContext): Promise<void> {
-  const generations = await getJson<Generation[]>(api, "/api/v1/creator-studio/generations");
-  expect(generations, "the fixture org must never have generated before").toHaveLength(0);
+  const generations = await getJson<Generation[]>(
+    api,
+    "list generations",
+    "/api/v1/creator-studio/generations",
+  );
+  expect(generations.length, "the fixture org must never have generated before").toBe(0);
   const credits = await getJson<{ availableCredits: number; reservedCredits: number }>(
     api,
+    "read credits",
     "/api/v1/creator-studio/credits",
   );
   expect(credits).toEqual({ availableCredits: PAID_IMAGE_TEST.targetCredits, reservedCredits: 0 });
@@ -133,6 +155,41 @@ async function openCreateAndAssertFalEstimate(page: Page, profileId: string): Pr
   ).toHaveCount(0);
 }
 
+/**
+ * Pins the request the deployed code turns into one 1024x1024
+ * fal-ai/flux/schnell image: IMAGE mode, "No template" (a template switches to
+ * fal-ai/flux/dev/image-to-image) and aspect ratio 1:1.
+ */
+async function pinNoTemplateSquareImage(page: Page): Promise<void> {
+  const template = page.locator("select", {
+    has: page.locator('option[value=""]', { hasText: "No template" }),
+  });
+  await expect(template).toHaveCount(1);
+  await template.selectOption("");
+  await expect(template).toHaveValue("");
+
+  const ratio = (label: string) => page.getByRole("button", { name: label, exact: true });
+  await ratio("1:1").click();
+  const selected = await ratio("1:1").getAttribute("class");
+  const others = await Promise.all(
+    ["4:5", "9:16", "16:9"].map((r) => ratio(r).getAttribute("class")),
+  );
+  expect(new Set(others).size, "the unselected ratios share one style").toBe(1);
+  expect(selected, "1:1 is the selected ratio").not.toBe(others[0]);
+}
+
+/** Final build check immediately before the click; not a deployment lock. */
+async function assertServingExpectedBuild(api: APIRequestContext): Promise<void> {
+  const expectedSha = process.env.EXPECTED_BUILD_SHA;
+  expect(expectedSha, "EXPECTED_BUILD_SHA must be provided").toMatch(/^[0-9a-f]{40}$/);
+  const res = await sanitizedCall("staging health", () =>
+    api.get("/api/health", { timeout: REQUEST_TIMEOUT_MS }),
+  );
+  const body = (await res.json().catch(() => ({}))) as { status?: string; build?: string };
+  expect(body.status, "staging must be healthy").toBe("healthy");
+  expect(body.build, "staging must still serve the expected build").toBe(expectedSha);
+}
+
 test.describe("Creator Studio paid image (single approved fal request)", () => {
   test.describe.configure({ mode: "serial", retries: 0 });
 
@@ -147,9 +204,10 @@ test.describe("Creator Studio paid image (single approved fal request)", () => {
     const profileId = await ensureSyntheticProfile(page.request);
     await assertNeverSpentAndFunded(page.request);
     await openCreateAndAssertFalEstimate(page, profileId);
+    await pinNoTemplateSquareImage(page);
   });
 
-  test("@submit exactly one generation, persisted after refresh, one 20-credit charge", async ({
+  test("@submit one generation, persisted after refresh, one 20-credit charge", async ({
     page,
   }) => {
     test.skip(!SUBMIT, "The claim step did not authorize a submission for this run.");
@@ -158,10 +216,12 @@ test.describe("Creator Studio paid image (single approved fal request)", () => {
     const profileId = await ensureSyntheticProfile(page.request);
     await assertNeverSpentAndFunded(page.request);
     await openCreateAndAssertFalEstimate(page, profileId);
+    await pinNoTemplateSquareImage(page);
 
     await page.getByPlaceholder("Describe the scene, setting, and style…").fill(PAID_IMAGE_PROMPT);
     const generate = page.getByRole("button", { name: "Generate", exact: true });
     await expect(generate).toBeEnabled();
+    await assertServingExpectedBuild(page.request);
     await generate.click(); // the single paid submission -- never clicked again
 
     // Wait for the UI outcome, but never resubmit: a timeout falls through to
@@ -175,21 +235,28 @@ test.describe("Creator Studio paid image (single approved fal request)", () => {
     let generations: Generation[] = [];
     const deadline = Date.now() + GENERATION_WAIT_MS;
     do {
-      generations = await getJson<Generation[]>(page.request, "/api/v1/creator-studio/generations");
+      generations = await getJson<Generation[]>(
+        page.request,
+        "list generations",
+        "/api/v1/creator-studio/generations",
+      );
       if (generations.every((g) => g.status === "COMPLETED" || g.status === "FAILED")) break;
       await page.waitForTimeout(5_000);
     } while (Date.now() < deadline);
 
-    expect(generations, "exactly one generation from one click").toHaveLength(1);
+    // Field-by-field so a failure never dumps the raw provider metadata.
+    expect(generations.length, "exactly one generation from one click").toBe(1);
     const g = generations[0]!;
-    expect(g).toMatchObject({
-      generationType: "IMAGE",
-      status: "COMPLETED",
-      provider: PAID_IMAGE_TEST.provider,
-      model: PAID_IMAGE_TEST.model,
-      creditsConsumed: PAID_IMAGE_TEST.targetCredits,
-    });
-    expect(g.outputAssetIds).toHaveLength(1);
+    expect(g.generationType, "generation type").toBe("IMAGE");
+    expect(g.status, "generation status").toBe("COMPLETED");
+    expect(g.provider, "provider").toBe(PAID_IMAGE_TEST.provider);
+    const submission = parseProviderSubmission(g.providerRequestId);
+    expect(submission.ok ? "ok" : submission.reason, "provider request metadata").toBe("ok");
+    expect(submission.ok ? submission.model : null, "fal endpoint actually used").toBe(
+      PAID_IMAGE_TEST.model,
+    );
+    expect(g.creditsConsumed, "credits consumed").toBe(PAID_IMAGE_TEST.targetCredits);
+    expect(g.outputAssetIds.length, "output assets").toBe(1);
 
     await page.goto("/en/creator-studio/library");
     await page.reload();
@@ -198,6 +265,7 @@ test.describe("Creator Studio paid image (single approved fal request)", () => {
 
     const credits = await getJson<{ availableCredits: number; reservedCredits: number }>(
       page.request,
+      "read credits",
       "/api/v1/creator-studio/credits",
     );
     expect(credits).toEqual({ availableCredits: 0, reservedCredits: 0 });

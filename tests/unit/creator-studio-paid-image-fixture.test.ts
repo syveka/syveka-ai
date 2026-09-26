@@ -8,7 +8,11 @@ import {
   creditShortfall,
   decideState,
   detectImageFormat,
-  evaluateOutcome,
+  classifyOutcome,
+  evaluateDeployment,
+  parseProviderSubmission,
+  sanitizedCall,
+  sanitizedHttpFailure,
   maxImageCostUsd,
   readClaim,
   type GenerationRecord,
@@ -126,20 +130,142 @@ describe("stored image detection", () => {
   });
 });
 
-describe("outcome verification", () => {
-  const generation: GenerationRecord = {
+const SUBMISSION = JSON.stringify({
+  requestId: "req-1",
+  statusUrl: "https://queue.fal.run/fal-ai/flux/requests/req-1/status",
+  responseUrl: "https://queue.fal.run/fal-ai/flux/requests/req-1",
+  model: "fal-ai/flux/schnell",
+});
+
+describe("provider request metadata (the real fal endpoint)", () => {
+  it("reads the endpoint from providerRequestId, not the row's model field", () => {
+    expect(parseProviderSubmission(SUBMISSION)).toEqual({
+      ok: true,
+      model: "fal-ai/flux/schnell",
+    });
+  });
+  it.each([
+    [null, "missing"],
+    [undefined, "missing"],
+    ["", "missing"],
+    ["{not json", "malformed"],
+    [42, "unexpected"],
+    ['["array"]', "unexpected"],
+    [JSON.stringify({ requestId: "r", model: 7 }), "unexpected"],
+    [JSON.stringify({ model: "fal-ai/flux/schnell" }), "unexpected"],
+    [JSON.stringify({ requestId: "r", model: "https://evil.example/x" }), "unexpected"],
+  ])("rejects %j as %s without echoing it", (raw, reason) => {
+    const parsed = parseProviderSubmission(raw);
+    expect(parsed).toEqual({ ok: false, reason });
+    expect(JSON.stringify(parsed)).not.toContain("queue.fal.run");
+  });
+});
+
+describe("pre-submission deployment check (env names only)", () => {
+  const SHA = "a".repeat(40);
+  const alias = { deploymentId: "dpl_abc123", projectId: "prj_staging" };
+  const deployment = {
+    id: "dpl_abc123",
+    projectId: "prj_staging",
+    readyState: "READY",
+    target: "production",
+    meta: { githubCommitSha: SHA },
+    env: ["DATABASE_URL", "FAL_API_KEY", "VERCEL_URL"],
+  };
+  const check = (a: unknown, d: unknown) =>
+    evaluateDeployment({ alias: a, deployment: d, expectedBuildSha: SHA });
+
+  it("accepts the serving staging deployment with FAL_API_KEY and no overrides", () => {
+    expect(check(alias, deployment)).toEqual({
+      problems: [],
+      deploymentId: "dpl_abc123",
+    });
+  });
+  it.each(["FAL_IMAGE_MODEL", "CREATOR_MEDIA_PROVIDER"])(
+    "rejects a runtime %s override",
+    (name) => {
+      expect(
+        check(alias, {
+          ...deployment,
+          env: [...deployment.env, name],
+        }).problems.join("|"),
+      ).toContain(name);
+    },
+  );
+  it.each([
+    ["missing FAL_API_KEY", { env: ["DATABASE_URL"] }, /FAL_API_KEY is not/],
+    ["malformed env list", { env: "FAL_API_KEY" }, /env name list/],
+    ["env list with values", { env: [{ key: "FAL_API_KEY" }] }, /env name list/],
+    ["another build", { meta: { githubCommitSha: "b".repeat(40) } }, /commit SHA/],
+    ["no build metadata", { meta: undefined }, /commit SHA/],
+    ["not ready", { readyState: "BUILDING" }, /not READY/],
+    ["a preview deployment", { target: null }, /stable/],
+    ["another project", { projectId: "prj_other" }, /same project/],
+    ["a malformed id", { id: "x" }, /id is missing or malformed/],
+  ])("rejects %s", (_label, override, message) => {
+    expect(check(alias, { ...deployment, ...override }).problems.join("|")).toMatch(message);
+  });
+  it("rejects an alias pointing elsewhere, and non-object responses", () => {
+    expect(check({ ...alias, deploymentId: "dpl_other" }, deployment).problems.join("|")).toMatch(
+      /does not point/,
+    );
+    expect(check("oops", deployment).problems).toEqual([
+      "the alias or deployment response is not a JSON object",
+    ]);
+    expect(check(alias, null).problems).toEqual([
+      "the alias or deployment response is not a JSON object",
+    ]);
+  });
+});
+
+describe("sanitized HTTP failures (no URLs, tokens or bodies)", () => {
+  const signed = "https://x.supabase.co/storage/v1/object/upload/sign/b/p?token=SECRET";
+  const response = (status: number) => ({
+    status: () => status,
+    ok: () => status < 400,
+  });
+
+  it("replaces a network error (which may embed the signed URL) with a fixed label", async () => {
+    const error = await sanitizedCall("reference upload", async () => {
+      throw new Error(`apiRequestContext.put: connect ECONNRESET ${signed}`);
+    }).catch((e: Error) => e);
+    expect((error as Error).message).toBe("reference upload failed (network error)");
+    expect((error as Error).message).not.toContain("SECRET");
+  });
+  it("reports HTTP failures by status code only", async () => {
+    await expect(sanitizedCall("reference upload", async () => response(403))).rejects.toThrow(
+      /^reference upload failed \(HTTP 403\)$/,
+    );
+    await expect(
+      sanitizedCall("reference confirm", async () => response(200), {
+        expectStatus: 201,
+      }),
+    ).rejects.toThrow("reference confirm failed (HTTP 200)");
+  });
+  it("passes successful responses through", async () => {
+    const ok = response(201);
+    await expect(sanitizedCall("create", async () => ok, { expectStatus: 201 })).resolves.toBe(ok);
+  });
+  it("never lets a caller-supplied label smuggle data", () => {
+    expect(sanitizedHttpFailure(signed, null)).toBe("request failed (network error)");
+    expect(sanitizedHttpFailure("read credits", 500)).toBe("read credits failed (HTTP 500)");
+  });
+});
+
+describe("outcome classification (job status and ledger reported separately)", () => {
+  const completed: GenerationRecord = {
     id: "g1",
     provider: "fal",
-    model: "fal-ai/flux/schnell",
     status: "COMPLETED",
     generationType: "IMAGE",
+    errorCode: null,
     outputAssetIds: ["a1"],
-    creditsReserved: 20,
     creditsConsumed: 20,
-    hasProviderRequestId: true,
+    providerRequestIdRaw: SUBMISSION,
   };
   const good = {
-    generations: [generation],
+    claimPresent: true,
+    generations: [completed],
     ledger: [
       { generationId: null, type: "GRANT", amount: 20 },
       { generationId: "g1", type: "RESERVE", amount: 20 },
@@ -149,48 +275,162 @@ describe("outcome verification", () => {
     storedImageFormat: "jpeg",
     storedImageBytes: 12345,
   };
+  const failedLedger = [
+    { generationId: "g1", type: "RESERVE", amount: 20 },
+    { generationId: "g1", type: "RELEASE", amount: 20 },
+  ];
 
-  it("passes for one fal image with one 20-credit charge and a stored image", () => {
-    expect(evaluateOutcome(good)).toEqual([]);
-  });
-  it("flags a duplicate provider request (two generations)", () => {
-    expect(
-      evaluateOutcome({ ...good, generations: [generation, { ...generation, id: "g2" }] }),
-    ).toEqual(["expected exactly 1 generation in the fixture org, found 2"]);
-  });
-  it("flags the mock provider", () => {
-    expect(
-      evaluateOutcome({
-        ...good,
-        generations: [{ ...generation, provider: "mock", model: "mock-image-v1" }],
-      }),
-    ).toEqual(expect.arrayContaining([expect.stringContaining("provider mock")]));
-  });
-  it("flags a failed generation whose reservation was released", () => {
-    const problems = evaluateOutcome({
-      ...good,
-      generations: [{ ...generation, status: "FAILED", creditsConsumed: 0, outputAssetIds: [] }],
-      ledger: [
-        { generationId: "g1", type: "RESERVE", amount: 20 },
-        { generationId: "g1", type: "RELEASE", amount: 20 },
-      ],
-      balance: { available: 20, reserved: 0 },
-      storedImageFormat: null,
-      storedImageBytes: 0,
+  it("PASSes one completed flux/schnell image with one 20-credit charge and a stored image", () => {
+    const result = classifyOutcome(good);
+    expect(result).toMatchObject({
+      outcome: "COMPLETED_VERIFIED",
+      pass: true,
+      automaticRetry: false,
+      providerModel: "fal-ai/flux/schnell",
+      ledger: { reserved: 20, committed: 20, released: 0 },
+      problems: [],
     });
-    expect(problems.join("|")).toMatch(/status FAILED/);
-    expect(problems.join("|")).toMatch(/ledger/);
   });
-  it("flags a double charge in the ledger", () => {
-    const problems = evaluateOutcome({
+
+  it("regression: a row whose model column is 'default' still passes via the provider metadata", () => {
+    const withDefaultModel = {
+      ...completed,
+      model: "default",
+    } as GenerationRecord;
+    expect(classifyOutcome({ ...good, generations: [withDefaultModel] }).pass).toBe(true);
+  });
+
+  it("fails when the provider metadata names a different fal endpoint", () => {
+    const other = {
+      ...completed,
+      providerRequestIdRaw: JSON.stringify({
+        requestId: "r",
+        model: "fal-ai/flux-pro/v1.1-ultra",
+      }),
+    };
+    const result = classifyOutcome({ ...good, generations: [other] });
+    expect(result.pass).toBe(false);
+    expect(result.problems.join("|")).toMatch(/fal endpoint fal-ai\/flux-pro/);
+  });
+
+  it("distinguishes 'not attempted' from 'claimed but no generation'", () => {
+    expect(classifyOutcome({ ...good, claimPresent: false, generations: [] }).outcome).toBe(
+      "NOT_ATTEMPTED",
+    );
+    const claimed = classifyOutcome({ ...good, generations: [] });
+    expect(claimed.outcome).toBe("CLAIMED_NO_GENERATION");
+    expect(claimed.pass).toBe(false);
+    expect(claimed.billing).toMatch(/before the provider call/);
+  });
+
+  it("marks a generation without provider metadata as ambiguous (may be billed)", () => {
+    const result = classifyOutcome({
+      ...good,
+      generations: [{ ...completed, status: "GENERATING", providerRequestIdRaw: null }],
+    });
+    expect(result.outcome).toBe("NO_PROVIDER_REQUEST_ID");
+    expect(result.billing).toMatch(/AMBIGUOUS.*may be billed/);
+    expect(result.automaticRetry).toBe(false);
+  });
+
+  it("marks malformed provider metadata as ambiguous, never as success", () => {
+    const result = classifyOutcome({
+      ...good,
+      generations: [{ ...completed, providerRequestIdRaw: "{broken" }],
+    });
+    expect(result).toMatchObject({
+      outcome: "NO_PROVIDER_REQUEST_ID",
+      pass: false,
+    });
+    expect(result.problems.join("|")).toMatch(/malformed/);
+  });
+
+  it("recognizes a reservation failure (provider never called) separately", () => {
+    const result = classifyOutcome({
+      ...good,
+      generations: [
+        {
+          ...completed,
+          status: "FAILED",
+          errorCode: "insufficient_credits",
+          providerRequestIdRaw: null,
+        },
+      ],
+    });
+    expect(result.outcome).toBe("NO_PROVIDER_REQUEST_ID");
+    expect(result.billing).toMatch(/provider was not called/);
+  });
+
+  it("reports an accepted job that has not finished as pending", () => {
+    const result = classifyOutcome({
+      ...good,
+      generations: [{ ...completed, status: "GENERATING" }],
+    });
+    expect(result).toMatchObject({
+      outcome: "PROVIDER_JOB_PENDING",
+      pass: false,
+    });
+  });
+
+  it("reports a failed accepted job without assuming a refund", () => {
+    const refunded = classifyOutcome({
+      ...good,
+      generations: [
+        {
+          ...completed,
+          status: "FAILED",
+          errorCode: "provider_error",
+          outputAssetIds: [],
+        },
+      ],
+      ledger: failedLedger,
+      balance: { available: 20, reserved: 0 },
+    });
+    expect(refunded).toMatchObject({
+      outcome: "GENERATION_FAILED",
+      ledger: { reserved: 20, committed: 0, released: 20 },
+    });
+    const notRefunded = classifyOutcome({
+      ...good,
+      generations: [
+        {
+          ...completed,
+          status: "FAILED",
+          errorCode: "provider_error",
+          outputAssetIds: [],
+        },
+      ],
+      ledger: [{ generationId: "g1", type: "RESERVE", amount: 20 }],
+    });
+    expect(notRefunded.ledger).toEqual({
+      reserved: 20,
+      committed: 0,
+      released: 0,
+    });
+    expect(notRefunded.billing).toMatch(/not assumed/);
+  });
+
+  it("flags duplicates, double charges and missing stored images", () => {
+    expect(
+      classifyOutcome({
+        ...good,
+        generations: [completed, { ...completed, id: "g2" }],
+      }).outcome,
+    ).toBe("MULTIPLE_GENERATIONS");
+    const doubled = classifyOutcome({
       ...good,
       ledger: [...good.ledger, { generationId: "g1", type: "COMMIT", amount: 20 }],
     });
-    expect(problems.join("|")).toMatch(/ledger for the generation/);
-  });
-  it("flags a missing or non-image stored output", () => {
-    expect(evaluateOutcome({ ...good, storedImageFormat: null, storedImageBytes: 0 }).length).toBe(
-      2,
-    );
+    expect(doubled).toMatchObject({
+      outcome: "COMPLETED_UNVERIFIED",
+      pass: false,
+    });
+    const noImage = classifyOutcome({
+      ...good,
+      storedImageFormat: null,
+      storedImageBytes: 0,
+    });
+    expect(noImage.outcome).toBe("COMPLETED_UNVERIFIED");
+    expect(noImage.problems).toHaveLength(2);
   });
 });

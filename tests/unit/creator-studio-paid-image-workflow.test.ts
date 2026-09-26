@@ -68,7 +68,13 @@ describe("staging paid image workflow: order of safety checks", () => {
     expect(index("Verify the deployed staging build before any mutation")).toBeLessThan(
       index("Prepare the dedicated fixture"),
     );
-    expect(index("Preflight")).toBeLessThan(index("Re-verify the deployed staging build"));
+    expect(index("Preflight")).toBeLessThan(index("Fetch the deployment serving staging"));
+    expect(index("Fetch the deployment serving staging")).toBeLessThan(
+      index("Check the serving deployment's build and runtime env names"),
+    );
+    expect(index("Check the serving deployment's build and runtime env names")).toBeLessThan(
+      index("Re-verify the deployed staging build"),
+    );
     expect(index("Re-verify the deployed staging build")).toBeLessThan(index("Claim"));
     expect(index("Claim")).toBeLessThan(index("Submit exactly one image"));
     for (const name of ["Verify the deployed staging build before any mutation", "Re-verify"]) {
@@ -102,15 +108,42 @@ describe("staging paid image workflow: order of safety checks", () => {
       'CREATOR_STUDIO_PAID_IMAGE_SUBMIT: "1"',
     );
     expect(step("Preflight").text).not.toContain("CREATOR_STUDIO_PAID_IMAGE_SUBMIT");
+    expect(step("Submit exactly one image").text).toContain(
+      "EXPECTED_BUILD_SHA: ${{ inputs.expected_build_sha }}",
+    );
   });
 });
 
 describe("staging paid image workflow: secrets and side effects", () => {
   it("uploads nothing and never deploys or changes Vercel/Supabase configuration", () => {
     expect(workflow).not.toMatch(
-      /upload-artifact|actions\/cache@|vercel@|\bvercel (deploy|env|pull|promote|link)|VERCEL_(TOKEN|ORG_ID|PROJECT_ID)|supabase (link|db|functions|secrets)|prisma (migrate|db push)/i,
+      /upload-artifact|actions\/cache@|vercel@|\bvercel (deploy|env|pull|promote|link)|supabase (link|db|functions|secrets)|prisma (migrate|db push)/i,
     );
     expect(workflow).not.toContain("GITHUB_OUTPUT");
+  });
+
+  it("uses the Vercel credential only in one read-only curl/jq step", () => {
+    const withToken = steps.filter((s) => /STAGING_VERCEL_TOKEN|VERCEL_ORG_ID/.test(s.text));
+    expect(withToken.map((s) => s.name)).toEqual([
+      "Fetch the deployment serving staging (read-only; Vercel credentials)",
+    ]);
+    const run = withToken[0]!.run;
+    // No repository or dependency code while the credential is present.
+    expect(run).not.toMatch(/\b(npm|npx|node|tsx|playwright|prisma|psql)\b/);
+    // GET only, and only the alias and deployment lookups.
+    expect(run).not.toMatch(/\s(-X|--request|-d|--data[a-z-]*|-F|--form|-T|--upload-file)\b/);
+    const paths = [...run.matchAll(/\bapi "([^"]+)"/g)].map((m) => m[1]);
+    expect(paths).toEqual([
+      "/v4/aliases/${STAGING_STABLE_URL#https://}",
+      "/v13/deployments/$deployment_id",
+    ]);
+    // Never prints responses; project identity checked for both.
+    expect(run).not.toMatch(/\bcat\b|echo "\$\(|tee\b/);
+    expect(run.match(/!= "\$STAGING_VERCEL_PROJECT_ID"/g)).toHaveLength(2);
+    expect(run).toContain('[ "$STAGING_VERCEL_PROJECT_ID" = "$PRODUCTION_VERCEL_PROJECT_ID" ]');
+    const check = step("Check the serving deployment's build and runtime env names");
+    expect(check.text).not.toContain("secrets.");
+    expect(check.run).toContain("creator-studio-paid-image-fixture.ts check-deployment");
   });
 
   it("exposes database/service-role secrets only to the identity and fixture steps", () => {
@@ -160,6 +193,32 @@ describe("paid image spec gating (never runs in ordinary CI or staging smoke)", 
     expect(spec.match(/generate\.click\(\)/g)).toHaveLength(1);
     expect(spec).toMatch(
       /\.waitFor\(\{ timeout: GENERATION_WAIT_MS \}\)\s*\.catch\(\(\) => undefined\)/,
+    );
+  });
+
+  it("pins No template + 1:1 and re-checks the served build immediately before the click", () => {
+    const submitBody = spec.slice(spec.indexOf('test("@submit'));
+    const click = submitBody.indexOf("generate.click()");
+    expect(submitBody.indexOf("pinNoTemplateSquareImage(page)")).toBeLessThan(click);
+    const shaCheck = submitBody.indexOf("assertServingExpectedBuild(page.request)");
+    expect(shaCheck).toBeGreaterThan(submitBody.indexOf("toBeEnabled()"));
+    expect(shaCheck).toBeLessThan(click);
+    expect(spec).toContain('await template.selectOption("");');
+    expect(spec).toContain('await expect(template).toHaveValue("");');
+    expect(spec).toContain('await ratio("1:1").click();');
+  });
+
+  it("verifies the fal endpoint from provider metadata, never the row's model field", () => {
+    expect(spec).toContain("parseProviderSubmission(g.providerRequestId)");
+    expect(spec).not.toMatch(/g\.model\b|model: PAID_IMAGE_TEST\.model/);
+    // No whole-object assertions that would print raw provider metadata.
+    expect(spec).not.toMatch(/expect\(g\)|toMatchObject\(/);
+  });
+
+  it("sends every creator-studio HTTP call through the sanitizer", () => {
+    expect(spec).toMatch(/sanitizedCall\("reference upload", \(\) =>\s+api\.put\(signedUrl/);
+    expect(spec.match(/\bapi\.(get|post|put)\(/g)?.length).toBe(
+      spec.match(/sanitizedCall\([^)]*\(\) =>\s+api\.(get|post|put)\(/g)?.length,
     );
   });
 
