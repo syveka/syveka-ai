@@ -16,5 +16,15 @@ export function getEmailChannelAdapter(): EmailChannelAdapter {
   return shouldUseMockProvider() ? mockEmailChannelAdapter : resendEmailChannelAdapter;
 }
 
+/**
+ * Whether real inbound email can reach this app at all: a domain to
+ * provision org mailboxes under (`getOrCreateMailbox`) and the signing
+ * secret the Resend inbound webhook fails closed without. Presence only —
+ * never exposes the values.
+ */
+export function isInboundEmailConfigured(): boolean {
+  return Boolean(process.env.INBOX_EMAIL_DOMAIN && process.env.RESEND_INBOUND_WEBHOOK_SECRET);
+}
+
 export type { EmailChannelAdapter, OutboundEmail, SentEmail } from "./types";
 export { EmailChannelError } from "./types";

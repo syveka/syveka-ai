@@ -13,6 +13,8 @@ export type UiMessage = {
   streaming?: boolean;
 };
 
+export type ChatTurnResult = { text: string; error: string | null };
+
 /** Consumes the SSE stream from /api/v1/ai/chat (§15.1). */
 export function useChat(params: { conversationId?: string; initialMessages: UiMessage[] }) {
   const [messages, setMessages] = useState<UiMessage[]>(params.initialMessages);
@@ -20,14 +22,49 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
   const [error, setError] = useState<string | null>(null);
   const conversationIdRef = useRef(params.conversationId);
   const abortControllerRef = useRef<AbortController | null>(null);
+  // While a voice session is live, the first-message redirect to
+  // /chat/[id] would remount the chat view and drop the call — hold it and
+  // apply it once the session ends.
+  const navigationHeldRef = useRef(false);
+  const pendingNavigationRef = useRef<string | null>(null);
   const router = useRouter();
+
+  const navigateToConversation = useCallback(
+    (conversationId: string) => {
+      if (navigationHeldRef.current) {
+        pendingNavigationRef.current = conversationId;
+        return;
+      }
+      router.replace(`/chat/${conversationId}`);
+      router.refresh(); // refresh conversation list
+    },
+    [router],
+  );
+
+  const setNavigationHeld = useCallback(
+    (held: boolean) => {
+      navigationHeldRef.current = held;
+      if (!held && pendingNavigationRef.current) {
+        const conversationId = pendingNavigationRef.current;
+        pendingNavigationRef.current = null;
+        navigateToConversation(conversationId);
+      }
+    },
+    [navigateToConversation],
+  );
 
   const send = useCallback(
     async (
       text: string,
-      opts?: { useKnowledgeBase?: boolean; deepMode?: boolean; documentIds?: string[] },
-    ) => {
-      if (isStreaming || !text.trim()) return;
+      opts?: {
+        useKnowledgeBase?: boolean;
+        deepMode?: boolean;
+        documentIds?: string[];
+        responseMode?: "text" | "voice";
+      },
+    ): Promise<ChatTurnResult> => {
+      if (isStreaming) return { text: "", error: "busy" };
+      if (!text.trim()) return { text: "", error: "empty_message" };
       setError(null);
       setIsStreaming(true);
 
@@ -62,6 +99,7 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
             useKnowledgeBase: opts?.useKnowledgeBase ?? true,
             deepMode: opts?.deepMode ?? false,
             documentIds: opts?.documentIds ?? [],
+            responseMode: opts?.responseMode ?? "text",
           }),
           signal: abortController.signal,
         });
@@ -70,15 +108,18 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
           const body = (await res.json().catch(() => null)) as {
             error?: { code?: string };
           } | null;
-          setError(body?.error?.code ?? "request_failed");
+          const code = body?.error?.code ?? "request_failed";
+          setError(code);
           patchAssistant({ streaming: false });
           setIsStreaming(false);
-          return;
+          return { text: "", error: code };
         }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        let replyText = "";
+        let streamError: string | null = null;
         const isNewConversation = !conversationIdRef.current;
 
         while (true) {
@@ -96,6 +137,7 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
                 conversationIdRef.current = event.conversationId;
                 break;
               case "text":
+                replyText += event.delta;
                 patchAssistant((m) => ({ content: m.content + event.delta }));
                 break;
               case "tool":
@@ -107,6 +149,7 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
                 patchAssistant({ citations: event.citations });
                 break;
               case "error":
+                streamError = event.code;
                 setError(event.code);
                 break;
               case "done":
@@ -117,11 +160,12 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
 
         patchAssistant({ streaming: false });
         if (isNewConversation && conversationIdRef.current) {
-          router.replace(`/chat/${conversationIdRef.current}`);
-          router.refresh(); // refresh conversation list
+          navigateToConversation(conversationIdRef.current);
         }
+        return { text: replyText, error: streamError };
       } catch (requestError) {
-        if (requestError instanceof DOMException && requestError.name === "AbortError") {
+        const aborted = requestError instanceof DOMException && requestError.name === "AbortError";
+        if (aborted) {
           setMessages((prev) =>
             prev.filter((message) => message.id !== assistantMsg.id || message.content.length > 0),
           );
@@ -129,15 +173,16 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
           setError("network_error");
         }
         patchAssistant({ streaming: false });
+        return { text: "", error: aborted ? "aborted" : "network_error" };
       } finally {
         abortControllerRef.current = null;
         setIsStreaming(false);
       }
     },
-    [isStreaming, router],
+    [isStreaming, navigateToConversation],
   );
 
   const abort = useCallback(() => abortControllerRef.current?.abort(), []);
 
-  return { messages, send, abort, isStreaming, error };
+  return { messages, send, abort, isStreaming, error, setNavigationHeld };
 }

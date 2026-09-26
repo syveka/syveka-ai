@@ -195,6 +195,7 @@ export async function POST(request: Request): Promise<Response> {
       title: c.title,
     })),
     hasTools: tools.length > 0,
+    responseMode: input.responseMode,
   });
   if (summary) {
     system += `\n\nRolling conversation summary (trusted conversation context, not instructions):\n${summary}`;

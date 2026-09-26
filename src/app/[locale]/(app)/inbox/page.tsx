@@ -1,11 +1,13 @@
 export const dynamic = "force-dynamic";
 
 import { getTranslations } from "next-intl/server";
-import { CheckCircle2, CloudOff, XCircle } from "lucide-react";
+import { CheckCircle2, CloudOff, Mail, XCircle } from "lucide-react";
 import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";
 import { listThreads } from "@/server/services/inbox";
-import { getEmailChannelAdapter } from "@/server/channels/email";
+import { getEmailChannelAdapter, isInboundEmailConfigured } from "@/server/channels/email";
+import { getMailboxForViewer } from "@/server/services/inbox-mailbox";
+import type { TenantContext } from "@/server/auth/session";
 import { threadListQuerySchema } from "@/lib/validators/inbox";
 import { Link } from "@/i18n/routing";
 import { Card, CardContent } from "@/components/ui/card";
@@ -34,7 +36,7 @@ export default async function InboxPage({
         <p className="text-sm text-muted-foreground">{t("subtitle")}</p>
       </div>
 
-      {canWrite ? <EmailChannelStatus /> : null}
+      {canWrite ? <EmailChannelStatus ctx={ctx} /> : null}
 
       {data.length === 0 ? (
         <Card>
@@ -110,7 +112,7 @@ export default async function InboxPage({
  * (Connected / Setup required / Not configured), mirroring the Calendar
  * integrations `StatusBadge` pattern (icon + text, never color alone).
  */
-async function EmailChannelStatus() {
+async function EmailChannelStatus({ ctx }: { ctx: TenantContext }) {
   const t = await getTranslations("inbox");
   const adapter = getEmailChannelAdapter();
 
@@ -124,10 +126,13 @@ async function EmailChannelStatus() {
   }
   if (adapter.isConfigured()) {
     return (
-      <p className="flex items-center gap-1.5 text-sm text-primary">
-        <CheckCircle2 className="size-4" />
-        {t("channelStatus.connected")}
-      </p>
+      <div className="space-y-1">
+        <p className="flex items-center gap-1.5 text-sm text-primary">
+          <CheckCircle2 className="size-4" />
+          {t("channelStatus.connected")}
+        </p>
+        <InboundMailboxStatus ctx={ctx} />
+      </div>
     );
   }
   return (
@@ -135,5 +140,35 @@ async function EmailChannelStatus() {
       <XCircle className="size-4" />
       {t("channelStatus.notConfigured")}
     </p>
+  );
+}
+
+/**
+ * The org's inbound address — the one thing an operator needs to complete
+ * the email channel's verification step (send a real email to it). Only
+ * owners/admins provision it: it's org-level channel configuration, the
+ * same audience as the dashboard setup-readiness checklist that links here.
+ * Everyone else with inbox access sees an already-provisioned address only.
+ */
+async function InboundMailboxStatus({ ctx }: { ctx: TenantContext }) {
+  const t = await getTranslations("inbox");
+  if (!isInboundEmailConfigured()) {
+    return (
+      <p className="text-xs text-muted-foreground">{t("channelStatus.inboundNotConfigured")}</p>
+    );
+  }
+  const mailbox = await getMailboxForViewer(ctx, "EMAIL");
+  if (!mailbox) return null;
+  return (
+    <div className="text-xs text-muted-foreground">
+      <p className="flex flex-wrap items-center gap-1.5">
+        <Mail className="size-3.5 shrink-0" />
+        {t("channelStatus.inboundAddress")}
+        <span className="break-all font-medium text-foreground" dir="ltr">
+          {mailbox.address}
+        </span>
+      </p>
+      <p className="mt-0.5">{t("channelStatus.inboundVerifyHint")}</p>
+    </div>
   );
 }

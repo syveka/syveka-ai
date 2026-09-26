@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useTranslations } from "next-intl";
-import { SendHorizonal, BookOpen, Paperclip, Square, X } from "lucide-react";
+import { SendHorizonal, BookOpen, Paperclip, Square, X, AudioLines } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { MAX_UPLOAD_BYTES } from "@/lib/validators/documents";
@@ -13,10 +13,15 @@ export function Composer({
   onSend,
   onAbort,
   disabled,
+  onStartVoice,
+  voiceSupported = false,
 }: {
   onSend: (text: string, opts: { useKnowledgeBase: boolean; documentIds: string[] }) => void;
   onAbort: () => void;
   disabled: boolean;
+  /** Starts a hands-free voice conversation; omitted = no voice control. */
+  onStartVoice?: () => void;
+  voiceSupported?: boolean;
 }) {
   const t = useTranslations("chat");
   const [text, setText] = useState("");
@@ -162,6 +167,19 @@ export function Composer({
         >
           <BookOpen className="size-4" />
         </button>
+        {onStartVoice ? (
+          <button
+            type="button"
+            onClick={onStartVoice}
+            disabled={disabled || !voiceSupported}
+            aria-label={voiceSupported ? t("voice.start") : t("voice.errors.unsupported")}
+            title={voiceSupported ? t("voice.start") : t("voice.errors.unsupported")}
+            data-testid="start-voice"
+            className="rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50"
+          >
+            <AudioLines className="size-4" />
+          </button>
+        ) : null}
         <Button
           size="icon"
           onClick={disabled ? onAbort : submit}
