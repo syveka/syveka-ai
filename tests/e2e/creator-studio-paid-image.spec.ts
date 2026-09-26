@@ -250,11 +250,15 @@ test.describe("Creator Studio paid image (single approved fal request)", () => {
     expect(g.generationType, "generation type").toBe("IMAGE");
     expect(g.status, "generation status").toBe("COMPLETED");
     expect(g.provider, "provider").toBe(PAID_IMAGE_TEST.provider);
-    // A COMPLETED row holds the final output URL, not the submission record
-    // (claimGenerationCompleted overwrites it), so the endpoint is proven by
-    // this run's pre-submission deployment check instead.
+    // Completion now keeps the submission record (with the endpoint actually
+    // submitted); rows completed before that change hold the output URL.
+    // Either way the endpoint must also be proven by this run's
+    // pre-submission deployment check.
     const reference = parseProviderReference(g.providerRequestId);
-    expect(reference.kind, "completed result reference").toBe("result-url");
+    expect(["submission", "result-url"], "completed provider reference").toContain(reference.kind);
+    if (reference.kind === "submission") {
+      expect(reference.model, "recorded fal endpoint").toBe(PAID_IMAGE_TEST.model);
+    }
     expect(process.env.VERIFIED_FAL_ENDPOINT, "fal endpoint verified before submission").toBe(
       PAID_IMAGE_TEST.model,
     );

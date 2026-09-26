@@ -117,12 +117,14 @@ type ProviderRequestRecord = {
 };
 
 /**
- * providerRequestId holds one of two shapes depending on when it's read:
- * a JSON-encoded ProviderRequestRecord (written early, before polling — see
- * persistProviderRequestIdentity in creator-generations.ts) while the
- * generation is still GENERATING, or a plain final output URL string once
- * COMPLETED. A non-JSON value here means either the generation already
- * completed (expected — not an error) or no identity was ever recorded.
+ * providerRequestId holds a JSON-encoded ProviderRequestRecord once a real
+ * provider accepts the job (written early, before polling — see
+ * persistProviderRequestIdentity in creator-generations.ts). Since the
+ * durable-metadata change, completion keeps that record. Legacy rows
+ * completed before it hold a plain final output URL instead, and providers
+ * that never record a submission (mock, caption) hold their own id. A
+ * non-JSON value here therefore means a legacy completed row, a
+ * non-submitting provider, or that no identity was ever recorded.
  */
 function parseProviderRequestRecord(raw: string | null): ProviderRequestRecord | null {
   if (!raw) return null;
