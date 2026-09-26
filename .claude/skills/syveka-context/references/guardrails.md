@@ -45,9 +45,10 @@ as a `PreToolUse` hook for the rest of the session. It pattern-matches direct co
 deploy/alias/env/migration/write-SQL/merge/dispatch/force-push and secret dumps. It does **not**
 see indirect execution (`bash -c`, `node -e`, scripts), the Read tool, or every SQL/CLI form. So
 a command it allows is not thereby safe, and the rules above still apply in full. It has **no
-override**: if a blocked action is authorized, the human runs it (or, if Claude is explicitly
-authorized to execute, a separate session without guarded skills). A block is a signal to stop
-and report, never to find an alternate command path. Limitations: `docs/claude-skills.md`.
+override**: if a blocked action is authorized, the human runs it. Execution by Claude requires an
+explicitly approved execution policy and the normal permission/environment gates; changing
+sessions is not authorization. A block is a signal to stop and report, never to find an
+alternate command path. Limitations: `docs/claude-skills.md`.
 
 ## Parallelism
 

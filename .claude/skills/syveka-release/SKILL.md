@@ -21,8 +21,9 @@ reports**; humans perform every gated action. Stop at the first failed step.
 
 It deliberately arms the prod-guard hook, which stays registered for the **rest of this session**.
 Claude therefore cannot run merge, dispatch, migration, or deploy commands later in the same
-session, even if authorized. The human runs them, or an explicitly authorized execution happens
-in a separate session. Do not try to get past a block.
+session, even if authorized. The human runs them. Release execution by Claude requires an
+explicitly approved execution policy and the normal permission/environment gates; changing
+sessions is not authorization. Do not try to get past a block.
 
 ## Checklist
 

@@ -111,13 +111,11 @@ are **not** on the `config-protection` list yet; adding them is a separate, auth
   every gated action (merge, workflow dispatch, Environment approval, migration, deploy, rollback).
 - Because the guard lasts for the rest of the session, invoking any guarded skill (including by
   auto-load) means Claude cannot run blocked commands later in that session, even with explicit
-  authorization. For an authorized action:
-  1. The human runs it themselves (terminal or GitHub Actions UI). This is the preferred path.
-  2. If Claude is explicitly authorized to execute a specific staging or production step, do it in
-     a **separate session** where no `syveka-*` guarded skill has been invoked. Environment
-     approvals and permissions still apply there.
-- Do not disable the guard, edit the skill frontmatter, or reroute commands mid-session to get
-  past a block.
+  authorization. An authorized action is run by the human (terminal or GitHub Actions UI).
+- Release execution by Claude requires an explicitly approved execution policy plus the normal
+  permission and GitHub Environment gates. Starting a new session is not authorization and must not
+  be used to get around the guard or any other restriction.
+- Do not disable the guard, edit the skill frontmatter, or reroute commands to get past a block.
 
 ## Human approval gates
 
