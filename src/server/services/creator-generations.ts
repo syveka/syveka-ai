@@ -277,26 +277,32 @@ export async function claimGenerationCompleted(
 ): Promise<{ claimed: boolean }> {
   const db = tenantDb(ctx.orgId);
   // Never overwrite a recorded submission identity (persistProviderRequestIdentity)
-  // with the output reference. Only a provider that records none (mock,
-  // caption) gets its completion id. The identity is written before polling
-  // and never changes afterwards, so reading it here is stable; the COMPLETED
-  // transition itself stays one atomic, status-guarded claim.
-  const current = await db.creatorGeneration.findUniqueOrThrow({
-    where: { id: generationId },
-    select: { providerRequestId: true },
+  // with the output reference, even if one is written concurrently. Two
+  // compare-and-set claims, each a single atomic statement guarded on
+  // status GENERATING, so at most one of them can claim:
+  //   A. still no identity -> claim and store this completion's id (mock,
+  //      caption and any provider that never records a submission);
+  //   B. otherwise -> claim without touching providerRequestId.
+  // A stores the fallback only if the column is null at the instant it
+  // executes; B never writes the column. No read-then-write window.
+  const completion = {
+    status: "COMPLETED" as const,
+    outputAssetIds: result.outputAssetIds,
+    output: result.output,
+    latencyMs: result.latencyMs,
+    creditsConsumed: creditCost,
+    completedAt: new Date(),
+  };
+  let claim = await db.creatorGeneration.updateMany({
+    where: { id: generationId, status: "GENERATING", providerRequestId: null },
+    data: { ...completion, providerRequestId: result.providerRequestId },
   });
-  const claim = await db.creatorGeneration.updateMany({
-    where: { id: generationId, status: "GENERATING" },
-    data: {
-      status: "COMPLETED",
-      outputAssetIds: result.outputAssetIds,
-      output: result.output,
-      ...(current.providerRequestId == null ? { providerRequestId: result.providerRequestId } : {}),
-      latencyMs: result.latencyMs,
-      creditsConsumed: creditCost,
-      completedAt: new Date(),
-    },
-  });
+  if (claim.count !== 1) {
+    claim = await db.creatorGeneration.updateMany({
+      where: { id: generationId, status: "GENERATING" },
+      data: completion,
+    });
+  }
   if (claim.count !== 1) return { claimed: false };
   // COMPLETED is now claimed and terminal — the real provider output,
   // asset, and Storage object all genuinely exist. Everything past this

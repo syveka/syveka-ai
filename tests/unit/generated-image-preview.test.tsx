@@ -43,7 +43,12 @@ describe("GeneratedImagePreview", () => {
     expect(img.getAttribute("src")).toBe(`/api/v1/creator-studio/generations/${GEN}/image`);
     expect(img.getAttribute("referrerpolicy")).toBe("no-referrer");
     expect(screen.getByText("Loading image…")).toBeTruthy();
-    expect(screen.getByRole("link", { name: "Open generated image in a new tab" })).toBeTruthy();
+    // Full size opens the same authenticated application route (never a
+    // storage URL) in a new tab without opener access or a referrer.
+    const link = screen.getByRole("link", { name: "Open generated image in a new tab" });
+    expect(link.getAttribute("href")).toBe(`/api/v1/creator-studio/generations/${GEN}/image`);
+    expect(link.getAttribute("target")).toBe("_blank");
+    expect(link.getAttribute("rel")?.split(" ").sort()).toEqual(["noopener", "noreferrer"]);
     fireEvent.load(img);
     expect(screen.queryByText("Loading image…")).toBeNull();
   });

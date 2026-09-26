@@ -56,6 +56,7 @@ vi.mock("@/server/ai/creator", () => ({
 import {
   claimGenerationCompleted,
   isRecordableModel,
+  persistProviderRequestIdentity,
   requestCharacterImageGeneration,
 } from "@/server/services/creator-generations";
 
@@ -630,6 +631,72 @@ describe("durable provider metadata", () => {
     expect(db.generation.model).toBe("default");
     expect(commitMock).not.toHaveBeenCalled();
   });
+
+  /**
+   * Interleaving regression: a concurrent persistProviderRequestIdentity
+   * commits either before completion's first statement or immediately after
+   * it. Invariant: a submission identity that landed is never overwritten by
+   * the completion fallback; otherwise the fallback is stored. The previous
+   * read-then-update implementation failed the "after-first-statement" case.
+   */
+  it.each(["before-first-statement", "after-first-statement"] as const)(
+    "never overwrites a submission identity written concurrently (%s)",
+    async (when) => {
+      const db = makeDb();
+      tenantDbMock.mockReturnValue(db);
+      Object.assign(db.generation, {
+        id: "gen-1",
+        status: "GENERATING",
+        model: "default",
+        providerRequestId: null,
+      });
+      let writer: "pending" | "won" | "lost" = "pending";
+      const runWriter = async () => {
+        try {
+          await persistProviderRequestIdentity(ctx(), "gen-1", submission);
+          writer = "won";
+        } catch {
+          writer = "lost";
+        }
+      };
+      if (when === "before-first-statement") await runWriter();
+
+      let first = when === "after-first-statement";
+      const hook = <A extends unknown[], R>(fn: (...args: A) => Promise<R>) =>
+        vi.fn(async (...args: A) => {
+          // Like a real database read, return a point-in-time copy, not a live
+          // reference to the harness row (which would hide the interleaving).
+          const raw = await fn(...args);
+          const result = (raw && typeof raw === "object" ? { ...raw } : raw) as R;
+          if (first) {
+            first = false;
+            await runWriter();
+          }
+          return result;
+        });
+      db.creatorGeneration.updateMany = hook(db.creatorGeneration.updateMany);
+      db.creatorGeneration.findUniqueOrThrow = hook(db.creatorGeneration.findUniqueOrThrow);
+
+      const claim = await claimGenerationCompleted(ctx(), "gen-1", "IMAGE", 20, {
+        outputAssetIds: ["out-1"],
+        providerRequestId: "mock_fallback",
+        latencyMs: 1,
+      });
+
+      // Assigned inside closures, so read it through an explicit widening.
+      const outcome = writer as "pending" | "won" | "lost";
+      expect(outcome).not.toBe("pending");
+      expect(claim).toEqual({ claimed: true });
+      expect(db.generation.status).toBe("COMPLETED");
+      if (outcome === "won") {
+        expect(JSON.parse(db.generation.providerRequestId as string)).toEqual(submission);
+      } else {
+        expect(db.generation.providerRequestId).toBe("mock_fallback");
+      }
+      expect(commitMock).toHaveBeenCalledTimes(1);
+      expect(releaseMock).not.toHaveBeenCalled();
+    },
+  );
 
   it("accepts only plausible endpoint ids", () => {
     expect(isRecordableModel("fal-ai/flux/schnell")).toBe(true);
