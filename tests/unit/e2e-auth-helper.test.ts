@@ -16,6 +16,11 @@ type LoginDestination = {
    * that exercises it explicitly.
    */
   pageLevelAnnouncerPresent?: boolean;
+  /**
+   * Where `goto("/login")` actually lands. Defaults to the requested staging
+   * origin; set to another origin to simulate an off-host redirect.
+   */
+  loginLandsOn?: string;
 };
 
 function pageFor(
@@ -39,9 +44,16 @@ function pageFor(
   const passwordFieldFill = vi.fn(async () => {});
 
   return {
+    // A real /login navigation always yields a response whose (first) request
+    // is the origin the harness asked for, even if it then redirected.
     goto: vi.fn(async () => {
-      currentUrl = "https://staging.example.test/login";
-      return null;
+      currentUrl = destination.loginLandsOn ?? "https://staging.example.test/login";
+      return {
+        request: () => ({
+          url: () => "https://staging.example.test/login",
+          redirectedFrom: () => null,
+        }),
+      };
     }),
     fill: vi.fn(async () => {}),
     getByRole: vi.fn((role: string) =>
@@ -67,6 +79,16 @@ describe("loginAsE2EUser", () => {
     process.env.E2E_USER_EMAIL = "e2e@example.test";
     process.env.E2E_USER_PASSWORD = "test-password";
   });
+
+  it.each(["https://syveka.com/login", "https://other-deployment.example.test/login"])(
+    "refuses to type any credential when /login lands on another origin (%s)",
+    async (landed) => {
+      const page = pageFor({ url: "https://staging.example.test/dashboard", loginLandsOn: landed });
+      await expect(loginAsE2EUser(page)).rejects.toThrow(/E2E login refused/);
+      expect(page.fill).not.toHaveBeenCalled();
+      expect(page.passwordFieldFill).not.toHaveBeenCalled();
+    },
+  );
 
   it.each(["/dashboard", "/fi/dashboard", "/en/dashboard", "/ar/dashboard"])(
     "accepts the authenticated dashboard route %s",
