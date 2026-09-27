@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
 import { Link, usePathname } from "@/i18n/routing";
 import { cn } from "@/lib/utils";
@@ -16,10 +17,32 @@ export function SettingsNav({ permissions }: { permissions: Permission[] }) {
   const t = useTranslations("settingsNav");
   const pathname = usePathname();
   const items = visibleSettingsNavItems(permissions);
+  const listRef = useRef<HTMLUListElement>(null);
+
+  // On phones the tab row scrolls horizontally, and later pages (Billing,
+  // Audit log, ...) start off-screen, hiding which page is active. Scroll only
+  // the row itself by the active tab's measured overflow. Deliberately not
+  // scrollIntoView(): browsers move the keyboard "focus navigation starting
+  // point" to that element, so the next Tab would skip the header controls.
+  // Physical deltas from getBoundingClientRect work the same in LTR and RTL.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || list.scrollWidth <= list.clientWidth) return;
+    const active = list.querySelector<HTMLElement>('[aria-current="page"]');
+    if (!active) return;
+    const row = list.getBoundingClientRect();
+    const tab = active.getBoundingClientRect();
+    const margin = 8;
+    if (tab.left < row.left) list.scrollBy({ left: tab.left - row.left - margin });
+    else if (tab.right > row.right) list.scrollBy({ left: tab.right - row.right + margin });
+  }, [pathname]);
 
   return (
     <nav aria-label={t("label")} className="md:w-48 md:shrink-0">
-      <ul className="-mx-1 flex gap-1 overflow-x-auto border-b pb-px md:mx-0 md:flex-col md:overflow-visible md:border-b-0 md:pb-0">
+      <ul
+        ref={listRef}
+        className="-mx-1 flex gap-1 overflow-x-auto border-b pb-px md:mx-0 md:flex-col md:overflow-visible md:border-b-0 md:pb-0"
+      >
         {items.map((item) => {
           const active = isActiveSettingsHref(pathname, item.href);
           return (

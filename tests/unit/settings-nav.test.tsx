@@ -92,6 +92,94 @@ describe("SettingsNav", () => {
   });
 });
 
+describe("SettingsNav keeps the active tab visible on phones", () => {
+  const rect = (left: number, right: number) =>
+    ({
+      left,
+      right,
+      top: 0,
+      bottom: 40,
+      width: right - left,
+      height: 40,
+      x: left,
+      y: 0,
+    }) as DOMRect;
+
+  function setup(opts: { scrollable: boolean; tab: [number, number] }) {
+    const scrollBy = vi.fn();
+    const scrollIntoView = vi.fn();
+    const restore = [
+      vi.spyOn(HTMLElement.prototype, "scrollWidth", "get").mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        return this.tagName === "UL" && opts.scrollable ? 900 : 0;
+      }),
+      vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        return this.tagName === "UL" ? 300 : 0;
+      }),
+      vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+        this: HTMLElement,
+      ) {
+        if (this.tagName === "UL") return rect(10, 310);
+        if (this.getAttribute("aria-current") === "page") return rect(...opts.tab);
+        return rect(0, 0);
+      }),
+    ];
+    Object.defineProperty(HTMLElement.prototype, "scrollBy", {
+      value: scrollBy,
+      configurable: true,
+    });
+    Object.defineProperty(HTMLElement.prototype, "scrollIntoView", {
+      value: scrollIntoView,
+      configurable: true,
+    });
+    return { scrollBy, scrollIntoView, restore: () => restore.forEach((r) => r.mockRestore()) };
+  }
+
+  afterEach(() => {
+    cleanup();
+    pathname.current = "/settings/members";
+  });
+
+  it("scrolls only the tab row (never scrollIntoView) when the active tab is past the end", () => {
+    pathname.current = "/settings/audit-log";
+    const s = setup({ scrollable: true, tab: [400, 480] });
+    renderNav("en", "OWNER");
+    // 480 - 310 + 8 px margin, as a physical delta on the row itself.
+    expect(s.scrollBy).toHaveBeenCalledWith({ left: 178 });
+    // scrollIntoView would move the keyboard focus-navigation starting point.
+    expect(s.scrollIntoView).not.toHaveBeenCalled();
+    s.restore();
+  });
+
+  it("scrolls the other way when the active tab is before the start (RTL rows)", () => {
+    pathname.current = "/settings/audit-log";
+    const s = setup({ scrollable: true, tab: [-150, -70] });
+    renderNav("ar", "OWNER");
+    expect(s.scrollBy).toHaveBeenCalledWith({ left: -168 });
+    expect(s.scrollIntoView).not.toHaveBeenCalled();
+    s.restore();
+  });
+
+  it("does nothing when the active tab is already visible", () => {
+    pathname.current = "/settings/profile";
+    const s = setup({ scrollable: true, tab: [20, 100] });
+    renderNav("en", "OWNER");
+    expect(s.scrollBy).not.toHaveBeenCalled();
+    s.restore();
+  });
+
+  it("does nothing when the row does not scroll (desktop column)", () => {
+    pathname.current = "/settings/audit-log";
+    const s = setup({ scrollable: false, tab: [400, 480] });
+    renderNav("en", "OWNER");
+    expect(s.scrollBy).not.toHaveBeenCalled();
+    s.restore();
+  });
+});
+
 describe("settings navigation translations", () => {
   it.each(["fi", "ar"] as const)(
     "%s translates every new label (not left in English)",
