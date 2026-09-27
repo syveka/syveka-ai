@@ -16,6 +16,29 @@ export function classifyE2ELoginPathname(pathname: string): LoginRoute {
   return "unexpected";
 }
 
+/**
+ * The login helper types the shared staging E2E credentials into whatever page
+ * `/login` ends up on. Route classification above is pathname-only, so an
+ * off-host redirect (e.g. to a production domain's own /login) would look like
+ * a normal login page. Credentials may only be entered on the exact origin the
+ * navigation was requested against. Only origins are ever reported.
+ */
+export function credentialEntryOriginError(requestedUrl: string, landedUrl: string): string | null {
+  let requested: URL;
+  let landed: URL;
+  try {
+    requested = new URL(requestedUrl);
+    landed = new URL(landedUrl);
+  } catch {
+    return "E2E login refused: could not parse the login navigation URLs";
+  }
+  if (requested.origin === landed.origin) return null;
+  return (
+    `E2E login refused: /login was requested on ${requested.origin} but landed on ` +
+    `${landed.origin}; credentials are never entered on a different origin`
+  );
+}
+
 export function requireE2EUserCredentials(): void {
   if (!process.env.E2E_USER_EMAIL || !process.env.E2E_USER_PASSWORD) {
     throw new Error("This spec requires E2E_USER_EMAIL and E2E_USER_PASSWORD.");
@@ -109,7 +132,12 @@ export async function loginAsE2EUser(
   page: Page,
   options: { timeoutMs?: number } = {},
 ): Promise<void> {
-  await page.goto("/login");
+  const navigation = await page.goto("/login");
+  // The first request of the redirect chain is the origin the harness asked for.
+  let firstRequest = navigation?.request();
+  while (firstRequest?.redirectedFrom()) firstRequest = firstRequest.redirectedFrom()!;
+  const originError = credentialEntryOriginError(firstRequest?.url() ?? "", page.url());
+  if (originError) throw new Error(originError);
   await page.fill("#email", process.env.E2E_USER_EMAIL!);
   await page.fill("#password", process.env.E2E_USER_PASSWORD!);
   const initialUrl = page.url();
