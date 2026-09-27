@@ -1102,5 +1102,12 @@
     "enterprise": "Suuryrityksille:",
     "footerPrivacy": "Tietosuoja",
     "footerTerms": "Käyttöehdot"
+  },
+  "onboarding": {
+    "title": "Luo organisaatiosi",
+    "description": "Tämä on työtilasi Syvekassa — voit kutsua tiimisi seuraavaksi.",
+    "companyName": "Yrityksen nimi",
+    "businessId": "Y-tunnus (valinnainen)",
+    "industry": "Toimiala"
   }
 }

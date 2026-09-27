@@ -1102,5 +1102,12 @@
     "enterprise": "للمؤسسات:",
     "footerPrivacy": "الخصوصية",
     "footerTerms": "الشروط"
+  },
+  "onboarding": {
+    "title": "أنشئ مؤسستك",
+    "description": "هذه مساحة عملك في Syveka — يمكنك دعوة فريقك بعد ذلك.",
+    "companyName": "اسم الشركة",
+    "businessId": "رقم السجل التجاري / Y-tunnus (اختياري)",
+    "industry": "المجال"
   }
 }
