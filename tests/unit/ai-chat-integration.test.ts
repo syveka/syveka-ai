@@ -211,3 +211,65 @@ describe("AI chat stream failure logging", () => {
     consoleError.mockRestore();
   });
 });
+
+describe("AI chat tool execution after client disconnect", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.moderation.mockResolvedValue(false);
+    mocks.limitAiChat.mockResolvedValue({
+      success: true,
+      reset: Date.now() + 60_000,
+      limit: 30,
+      remaining: 29,
+    });
+  });
+
+  function toolRequest(signal: AbortSignal) {
+    return new Request("http://localhost/api/v1/ai/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversationId: "33333333-3333-4333-8333-333333333333",
+        message: "Book a meeting with Acme",
+      }),
+      signal,
+    });
+  }
+
+  it("never starts a (possibly writing) tool once the client has disconnected", async () => {
+    const { executeTool } = await import("@/server/ai/tools");
+    const controller = new AbortController();
+    mocks.streamClaude.mockImplementation(async ({ callbacks }) => {
+      // The user leaves (closes the page / ends the voice call) while the
+      // model is still deciding; it then requests a data-changing tool.
+      controller.abort();
+      await callbacks.onToolUse("createBooking", { contactId: "c-1" }, "tool-1");
+      return { tokensIn: 10, tokensOut: 5, stopReason: "end_turn" };
+    });
+
+    const response = await POST(toolRequest(controller.signal));
+    const body = await response.text();
+
+    expect(executeTool).not.toHaveBeenCalled();
+    expect(body).not.toContain('"type":"tool"');
+    expect(mocks.messageCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ role: "ASSISTANT" }) }),
+    );
+  });
+
+  it("still executes tools normally for a connected client", async () => {
+    const { executeTool } = await import("@/server/ai/tools");
+    vi.mocked(executeTool).mockResolvedValue('{"ok":true}');
+    mocks.streamClaude.mockImplementation(async ({ callbacks }) => {
+      await callbacks.onToolUse("createBooking", { contactId: "c-1" }, "tool-1");
+      callbacks.onText("Booked.");
+      return { tokensIn: 10, tokensOut: 5, stopReason: "end_turn" };
+    });
+
+    const response = await POST(toolRequest(new AbortController().signal));
+    const body = await response.text();
+
+    expect(executeTool).toHaveBeenCalledTimes(1);
+    expect(body).toContain('"type":"tool","name":"createBooking","status":"start"');
+  });
+});

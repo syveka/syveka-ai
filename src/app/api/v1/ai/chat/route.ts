@@ -240,6 +240,12 @@ export async function POST(request: Request): Promise<Response> {
               fullText += delta;
             },
             onToolUse: async (name, toolInput) => {
+              // The model can request a tool after the user has already left
+              // (closed the page, ended a voice call). Tools can write CRM or
+              // calendar data, so never start one for a disconnected client.
+              if (request.signal.aborted) {
+                throw new DOMException("Request aborted", "AbortError");
+              }
               send({ type: "tool", name, status: "start" });
               const result = await executeTool(identity, name, toolInput);
               toolCallLog.push({ name, ok: !result.includes('"error"') });
