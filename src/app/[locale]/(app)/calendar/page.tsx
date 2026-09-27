@@ -89,6 +89,11 @@ export default async function CalendarPage({
               </Link>
             </>
           ) : null}
+          {can(ctx.role, "integrations:manage") ? (
+            <Link href="/settings/integrations" className="text-primary hover:underline">
+              {t("connectCalendarLink")}
+            </Link>
+          ) : null}
         </div>
       </div>
       <CalendarView

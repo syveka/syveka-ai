@@ -34,6 +34,16 @@
     "businessDna": "Business DNA",
     "creatorStudio": "Creator Studio"
   },
+  "settingsNav": {
+    "label": "Settings sections",
+    "profile": "Profile",
+    "organization": "Organization",
+    "members": "Members",
+    "businessDna": "Business DNA",
+    "integrations": "Integrations",
+    "billing": "Billing",
+    "auditLog": "Audit log"
+  },
   "auth": {
     "login": "Log in",
     "register": "Create account",
@@ -472,7 +482,8 @@
       "collectCompany": "Ask for company",
       "confirmationMessage": "Confirmation message",
       "slugTaken": "This URL slug is already in use"
-    }
+    },
+    "connectCalendarLink": "Connect calendar"
   },
   "notifications": {
     "title": "Notifications",

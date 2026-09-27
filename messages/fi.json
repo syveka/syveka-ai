@@ -34,6 +34,16 @@
     "businessDna": "Yrityksen DNA",
     "creatorStudio": "Creator Studio"
   },
+  "settingsNav": {
+    "label": "Asetusten osiot",
+    "profile": "Profiili",
+    "organization": "Organisaatio",
+    "members": "Jäsenet",
+    "businessDna": "Yrityksen DNA",
+    "integrations": "Integraatiot",
+    "billing": "Laskutus",
+    "auditLog": "Tapahtumaloki"
+  },
   "auth": {
     "login": "Kirjaudu sisään",
     "register": "Luo tili",
@@ -472,7 +482,8 @@
       "collectCompany": "Kysy yritys",
       "confirmationMessage": "Vahvistusviesti",
       "slugTaken": "URL-tunnus on jo käytössä"
-    }
+    },
+    "connectCalendarLink": "Yhdistä kalenteri"
   },
   "notifications": {
     "title": "Ilmoitukset",

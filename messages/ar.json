@@ -34,6 +34,16 @@
     "businessDna": "الهوية التجارية",
     "creatorStudio": "استوديو المبدع"
   },
+  "settingsNav": {
+    "label": "أقسام الإعدادات",
+    "profile": "الملف الشخصي",
+    "organization": "المؤسسة",
+    "members": "الأعضاء",
+    "businessDna": "الهوية التجارية",
+    "integrations": "التكاملات",
+    "billing": "الفوترة",
+    "auditLog": "سجل التدقيق"
+  },
   "auth": {
     "login": "تسجيل الدخول",
     "register": "إنشاء حساب",
@@ -472,7 +482,8 @@
       "collectCompany": "طلب اسم الشركة",
       "confirmationMessage": "رسالة التأكيد",
       "slugTaken": "معرّف الرابط مستخدم بالفعل"
-    }
+    },
+    "connectCalendarLink": "ربط التقويم"
   },
   "notifications": {
     "title": "الإشعارات",
