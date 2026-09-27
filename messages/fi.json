@@ -9,6 +9,8 @@
     "search": "Hae",
     "loading": "Ladataan…",
     "error": "Jokin meni pieleen",
+    "errorDescription": "Tätä sivua ei voitu ladata. Yritä hetken kuluttua uudelleen.",
+    "retry": "Yritä uudelleen",
     "confirm": "Vahvista",
     "back": "Takaisin",
     "next": "Seuraava",
