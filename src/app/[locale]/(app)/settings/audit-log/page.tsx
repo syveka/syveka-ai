@@ -4,7 +4,7 @@ import { getLocale } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { Card, CardContent } from "@/components/ui/card";
-import { formatDate } from "@/lib/utils";
+import { formatDateTimeInTimeZone, resolveDisplayTimeZone } from "@/lib/date-time";
 
 export default async function AuditLogPage({
   searchParams,
@@ -16,6 +16,12 @@ export default async function AuditLogPage({
   const { action } = await searchParams;
 
   const db = tenantDb(ctx.orgId);
+  // Times are shown in the viewer's own profile timezone (see src/lib/date-time.ts).
+  const viewer = await unscopedPrisma.user.findUnique({
+    where: { id: ctx.userId },
+    select: { timezone: true },
+  });
+  const timeZone = resolveDisplayTimeZone(viewer?.timezone);
   const logs = await db.auditLog.findMany({
     where: action ? { action: { contains: action } } : {},
     orderBy: { createdAt: "desc" },
@@ -56,8 +62,12 @@ export default async function AuditLogPage({
               <div key={log.id} className="p-4 text-sm">
                 <div className="flex items-baseline justify-between gap-2">
                   <code className="text-xs font-medium">{log.action}</code>
-                  <time className="shrink-0 text-xs text-muted-foreground">
-                    {formatDate(log.createdAt, locale, { dateStyle: "short", timeStyle: "medium" })}
+                  <time
+                    dateTime={log.createdAt.toISOString()}
+                    title={timeZone}
+                    className="shrink-0 text-xs text-muted-foreground"
+                  >
+                    {formatDateTimeInTimeZone(log.createdAt, locale, timeZone)}
                   </time>
                 </div>
                 <p className="mt-0.5 text-xs text-muted-foreground">

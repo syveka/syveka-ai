@@ -1,5 +1,6 @@
 import { getRequestConfig } from "next-intl/server";
 import { routing, type AppLocale } from "./routing";
+import { DEFAULT_TIME_ZONE } from "@/lib/date-time";
 
 export default getRequestConfig(async ({ requestLocale }) => {
   const requested = await requestLocale;
@@ -11,6 +12,6 @@ export default getRequestConfig(async ({ requestLocale }) => {
   return {
     locale,
     messages: (await import(`../../messages/${locale}.json`)).default,
-    timeZone: "Europe/Helsinki",
+    timeZone: DEFAULT_TIME_ZONE,
   };
 });
