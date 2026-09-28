@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { CalendarClock } from "lucide-react";
-import { Link } from "@/i18n/routing";
+import { Link, RTL_LOCALES } from "@/i18n/routing";
 import { moveDealAction } from "@/actions/deals";
 import { formatCents, formatDate, cn } from "@/lib/utils";
 
@@ -56,6 +56,10 @@ export function DealBoard({
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [, startTransition] = useTransition();
   const now = Date.now();
+  // Columns always flow left to right (the board is dir="ltr"), but each
+  // column's text follows the page direction so Arabic dates and totals
+  // read correctly instead of being reordered by the LTR context.
+  const columnDir = RTL_LOCALES.has(locale) ? "rtl" : "ltr";
 
   const onDrop = (toStageId: string, index?: number) => {
     const current = dragged;
@@ -99,7 +103,9 @@ export function DealBoard({
   };
 
   return (
-    <div className="flex gap-3 overflow-x-auto pb-4" dir="ltr">
+    // The board is the only horizontal scroller on the page; overscroll is
+    // contained so a swipe past its end doesn't move the page or navigate.
+    <div className="flex gap-3 overflow-x-auto overscroll-x-contain pb-4" dir="ltr">
       {stages.map((stage) => {
         const open = stage.deals.filter((d) => !d.isClosed);
         const totalCents = open.reduce((sum, d) => sum + d.valueCents, 0);
@@ -110,6 +116,7 @@ export function DealBoard({
         return (
           <div
             key={stage.id}
+            dir={columnDir}
             onDragOver={(e) => {
               e.preventDefault();
               setDropTarget(stage.id);
