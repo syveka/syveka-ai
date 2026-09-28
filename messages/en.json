@@ -44,6 +44,61 @@
     "billing": "Billing",
     "auditLog": "Audit log"
   },
+  "roles": {
+    "OWNER": "Owner",
+    "ADMIN": "Admin",
+    "MANAGER": "Manager",
+    "MEMBER": "Member",
+    "VIEWER": "Viewer"
+  },
+  "settingsProfile": {
+    "title": "Profile",
+    "email": "Email",
+    "name": "Name",
+    "language": "Language",
+    "timezone": "Timezone",
+    "saved": "Saved."
+  },
+  "settingsOrganization": {
+    "title": "Organization",
+    "workspace": "Workspace: {slug}",
+    "companyName": "Company name",
+    "businessId": "Business ID (Y-tunnus)",
+    "vatId": "VAT ID",
+    "aiInstructionsTitle": "AI instructions",
+    "aiInstructionsHelp": "Extra context every AI answer follows: tone of voice, key facts, dos and don'ts.",
+    "aiInstructionsPlaceholder": "We are a plumbing company in Tampere. Always mention our 24h emergency line…",
+    "saved": "Saved."
+  },
+  "settingsMembers": {
+    "title": "Team",
+    "inviteTitle": "Invite a team member",
+    "emailLabel": "Email address",
+    "emailPlaceholder": "colleague@company.fi",
+    "roleLabel": "Role",
+    "send": "Send invite",
+    "sending": "Sending…",
+    "invited": "Invitation sent.",
+    "remove": "Remove",
+    "removeLabel": "Remove {name}",
+    "changeRoleLabel": "Role for {name}",
+    "pending": "Invitation pending",
+    "errors": {
+      "invalid_input": "Check the email address and role.",
+      "already_member": "This person is already a member of the organization.",
+      "plan_limit": "Your plan doesn't allow more members right now: all seats are in use or the subscription needs attention. See Billing.",
+      "invite_failed": "The invitation could not be sent. Please try again."
+    }
+  },
+  "settingsAuditLog": {
+    "title": "Audit log",
+    "description": "Every sensitive change in this organization, retained per your plan.",
+    "filterLabel": "Filter by action",
+    "filterPlaceholder": "Filter by action (e.g. member.role_change)…",
+    "empty": "No entries.",
+    "timesShownIn": "Times are shown in {timeZone}.",
+    "details": "Changes"
+  },
   "auth": {
     "login": "Log in",
     "register": "Create account",
@@ -601,6 +656,15 @@
       "contacts": "Contacts",
       "storage": "Knowledge base (MB)",
       "seats": "Seats"
+    },
+    "features": {
+      "aiMessagesPerUser": "{count} AI messages per user/mo",
+      "voice": "{assistants, plural, one {{assistantsText} voice assistant} other {{assistantsText} voice assistants}} · {minutes} min",
+      "knowledgeBase": "{gb} GB knowledge base",
+      "workflows": "{count} workflows",
+      "contacts": "{count} contacts",
+      "apiWebhooks": "API + webhooks",
+      "auditRetention": "{years, plural, one {{yearsText} year} other {{yearsText} years}} of audit log history"
     }
   },
   "booking": {

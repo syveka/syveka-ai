@@ -44,6 +44,61 @@
     "billing": "الفوترة",
     "auditLog": "سجل التدقيق"
   },
+  "roles": {
+    "OWNER": "المالك",
+    "ADMIN": "مسؤول",
+    "MANAGER": "مدير",
+    "MEMBER": "عضو",
+    "VIEWER": "مشاهد"
+  },
+  "settingsProfile": {
+    "title": "الملف الشخصي",
+    "email": "البريد الإلكتروني",
+    "name": "الاسم",
+    "language": "اللغة",
+    "timezone": "المنطقة الزمنية",
+    "saved": "تم الحفظ."
+  },
+  "settingsOrganization": {
+    "title": "المؤسسة",
+    "workspace": "مساحة العمل: {slug}",
+    "companyName": "اسم الشركة",
+    "businessId": "رقم السجل التجاري (Y-tunnus)",
+    "vatId": "رقم ضريبة القيمة المضافة",
+    "aiInstructionsTitle": "تعليمات الذكاء الاصطناعي",
+    "aiInstructionsHelp": "سياق إضافي تلتزم به كل إجابة من الذكاء الاصطناعي: نبرة الصوت، والحقائق الأساسية، وما يجب فعله وتجنبه.",
+    "aiInstructionsPlaceholder": "نحن شركة سباكة في تامبيري. اذكر دائمًا خط الطوارئ لدينا على مدار 24 ساعة…",
+    "saved": "تم الحفظ."
+  },
+  "settingsMembers": {
+    "title": "الفريق",
+    "inviteTitle": "دعوة عضو إلى الفريق",
+    "emailLabel": "البريد الإلكتروني",
+    "emailPlaceholder": "colleague@company.fi",
+    "roleLabel": "الدور",
+    "send": "إرسال الدعوة",
+    "sending": "جارٍ الإرسال…",
+    "invited": "تم إرسال الدعوة.",
+    "remove": "إزالة",
+    "removeLabel": "إزالة {name}",
+    "changeRoleLabel": "دور {name}",
+    "pending": "الدعوة قيد الانتظار",
+    "errors": {
+      "invalid_input": "تحقق من البريد الإلكتروني والدور.",
+      "already_member": "هذا الشخص عضو في المؤسسة بالفعل.",
+      "plan_limit": "لا تسمح خطتك بإضافة أعضاء آخرين حاليًا: جميع المقاعد مستخدمة أو أن الاشتراك يحتاج إلى إجراء. راجع صفحة الفوترة.",
+      "invite_failed": "تعذر إرسال الدعوة. يرجى المحاولة مرة أخرى."
+    }
+  },
+  "settingsAuditLog": {
+    "title": "سجل التدقيق",
+    "description": "كل تغيير حساس في هذه المؤسسة، ويُحتفظ به وفق خطتك.",
+    "filterLabel": "التصفية حسب الإجراء",
+    "filterPlaceholder": "التصفية حسب الإجراء (مثل member.role_change)…",
+    "empty": "لا توجد إدخالات.",
+    "timesShownIn": "تُعرض الأوقات بتوقيت {timeZone}.",
+    "details": "التغييرات"
+  },
   "auth": {
     "login": "تسجيل الدخول",
     "register": "إنشاء حساب",
@@ -601,6 +656,15 @@
       "contacts": "جهات الاتصال",
       "storage": "قاعدة المعرفة (م.ب)",
       "seats": "المقاعد"
+    },
+    "features": {
+      "aiMessagesPerUser": "{count} رسالة ذكاء اصطناعي لكل مستخدم شهريًا",
+      "voice": "{assistants, plural, zero {لا مساعدات صوتية} one {مساعد صوتي واحد} two {مساعدان صوتيان} few {{assistantsText} مساعدين صوتيين} many {{assistantsText} مساعدًا صوتيًا} other {{assistantsText} مساعد صوتي}} · {minutes} دقيقة",
+      "knowledgeBase": "قاعدة معرفة بسعة {gb} غيغابايت",
+      "workflows": "{count} مسارات عمل",
+      "contacts": "{count} جهة اتصال",
+      "apiWebhooks": "API + Webhooks",
+      "auditRetention": "سجل تدقيق لمدة {years, plural, one {سنة واحدة} two {سنتين} few {{yearsText} سنوات} many {{yearsText} سنة} other {{yearsText} سنة}}"
     }
   },
   "booking": {

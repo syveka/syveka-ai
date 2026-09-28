@@ -12,6 +12,17 @@ import { getAppUrlEnv } from "@/env";
 
 const INVITE_EXPIRY_DAYS = 7;
 
+/** A member-management rule the operator can act on; `code` is shown translated. */
+export class MemberError extends Error {
+  constructor(
+    message: string,
+    public readonly code: "already_member",
+  ) {
+    super(message);
+    this.name = "MemberError";
+  }
+}
+
 export async function inviteMember(
   ctx: TenantContext,
   input: { email: string; role: Role },
@@ -26,7 +37,7 @@ export async function inviteMember(
     const existingMember = await db.organizationMember.findFirst({
       where: { userId: existingUser.id },
     });
-    if (existingMember) throw new Error("Already a member");
+    if (existingMember) throw new MemberError("Already a member", "already_member");
   }
 
   const org = await unscopedPrisma.organization.findUniqueOrThrow({

@@ -1,9 +1,10 @@
 import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { formatCount } from "./plan-display";
 
 type Meter = { label: string; used: number; limit: number };
 
-export function UsageMeters({ items }: { items: Meter[] }) {
+export function UsageMeters({ items, locale }: { items: Meter[]; locale: string }) {
   return (
     <Card>
       <CardContent className="space-y-4 pt-6">
@@ -17,7 +18,7 @@ export function UsageMeters({ items }: { items: Meter[] }) {
               <div className="mb-1 flex justify-between text-sm">
                 <span>{m.label}</span>
                 <span className="text-muted-foreground">
-                  {m.used.toLocaleString()} / {unlimited ? "∞" : m.limit.toLocaleString()}
+                  {formatCount(locale, m.used)} / {unlimited ? "∞" : formatCount(locale, m.limit)}
                 </span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-muted">

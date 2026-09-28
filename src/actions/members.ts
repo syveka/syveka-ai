@@ -10,11 +10,34 @@ import {
   acceptInvitation,
   changeMemberRole,
   removeMember,
+  MemberError,
 } from "@/server/services/members";
+import { EntitlementError } from "@/server/services/billing/entitlements";
 import { inviteMemberSchema, changeRoleSchema } from "@/lib/validators/members";
 import { createSupabaseServer } from "@/server/supabase/server";
 
 export type MemberActionState = { error?: string; message?: string };
+
+/**
+ * Stable, translatable invite outcomes (settingsMembers.errors.*). Raw
+ * exception text is never returned to the form: it is untranslated and may
+ * carry internal detail.
+ */
+type InviteErrorCode = "invalid_input" | "already_member" | "plan_limit" | "invite_failed";
+
+function inviteErrorCode(error: unknown): InviteErrorCode {
+  if (error instanceof MemberError) return error.code;
+  // Seat limit reached, or a past-due (read-only) subscription: both come from
+  // assertWithinLimit and both mean "the plan does not allow this right now".
+  if (error instanceof EntitlementError) return "plan_limit";
+  console.error(
+    JSON.stringify({
+      event: "invite_member_failed",
+      name: error instanceof Error ? error.name : "unknown",
+    }),
+  );
+  return "invite_failed";
+}
 
 export async function inviteMemberAction(
   _prev: MemberActionState,
@@ -28,7 +51,7 @@ export async function inviteMemberAction(
   try {
     await inviteMember(ctx, { email: parsed.data.email, role: parsed.data.role as Role });
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "invite_failed" };
+    return { error: inviteErrorCode(e) };
   }
 
   revalidatePath("/settings/members");
