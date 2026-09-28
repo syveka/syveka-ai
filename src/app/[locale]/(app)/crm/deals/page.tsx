@@ -48,15 +48,17 @@ export default async function DealsPage() {
 
   return (
     <div className="space-y-4">
+      {/* Title and actions wrap instead of widening the page: long translated
+          labels (e.g. Finnish) must never push the layout past the viewport. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">{t("deals")}</h1>
+        <div className="min-w-0">
+          <h1 className="hyphens-auto break-words text-2xl font-semibold">{t("deals")}</h1>
           <p className="text-sm text-muted-foreground">
             {t("openPipeline")}: <strong>{formatCents(openValue, locale)}</strong> · {t("forecast")}
             : <strong>{formatCents(forecastValue, locale)}</strong>
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           {canManagePipeline ? (
             <PipelineManager
               stages={pipeline.stages.map((s) => ({
