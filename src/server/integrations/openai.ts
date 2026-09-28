@@ -57,23 +57,22 @@ export async function embedOne(text: string, signal?: AbortSignal): Promise<numb
  * Speech-to-text for chat voice input. The audio is sent in memory only and
  * never written anywhere; `extension` must come from server-side format
  * detection (the provider infers the codec from it).
+ *
+ * Exactly one provider attempt: no withAiRetry and the client has
+ * maxRetries 0, so a failure never turns into hidden extra paid attempts.
  */
 export async function transcribeAudio(
   audio: Uint8Array,
   extension: string,
   signal?: AbortSignal,
 ): Promise<string> {
-  const res = await withAiRetry(
-    async () =>
-      getOpenAI().audio.transcriptions.create(
-        {
-          file: await toFile(audio, `recording.${extension}`),
-          model: TRANSCRIPTION_MODEL,
-          response_format: "json",
-        },
-        { signal },
-      ),
-    retryOptions(signal),
+  const res = await getOpenAI().audio.transcriptions.create(
+    {
+      file: await toFile(audio, `recording.${extension}`),
+      model: TRANSCRIPTION_MODEL,
+      response_format: "json",
+    },
+    { signal, maxRetries: 0 },
   );
   return res.text.trim();
 }

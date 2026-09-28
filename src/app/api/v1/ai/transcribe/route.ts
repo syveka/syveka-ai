@@ -11,12 +11,10 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-/** Upper bound on provider work per request (retries included). */
+/** Upper bound on the single provider attempt. */
 const TRANSCRIPTION_TIMEOUT_MS = 30_000;
 /** gpt-4o-mini-transcribe list price, USD per audio minute (cost estimate only). */
 const TRANSCRIPTION_USD_PER_MINUTE = 0.003;
-/** Slack over the recorder's auto-stop (timer tick + encoder flush). */
-const DURATION_TOLERANCE_SECONDS = 3;
 const CONTAINER_MIME = { webm: "audio/webm", mp4: "audio/mp4" } as const;
 
 function error(code: string, status: number, headers?: HeadersInit) {
@@ -54,10 +52,11 @@ export async function POST(request: Request): Promise<Response> {
   const [
     { getTenantContext },
     { can },
-    { limitAiTranscription },
+    { limitAiTranscription, redis },
     { transcribeAudio, TRANSCRIPTION_MODEL },
     { assertWithinLimit, getMonthUsage, recordUsage, EntitlementError },
     { isChatTranscriptionEnabled },
+    { isTranscriptionPilotMember, reserveDailyTranscriptionAttempt },
   ] = await Promise.all([
     import("@/server/auth/session"),
     import("@/server/auth/permissions"),
@@ -65,6 +64,7 @@ export async function POST(request: Request): Promise<Response> {
     import("@/server/integrations/openai"),
     import("@/server/services/billing/entitlements"),
     import("@/env"),
+    import("@/server/ai/transcription-pilot"),
   ]);
 
   // ── Guardrails: origin → auth → permission → availability → rate limit → entitlement ──
@@ -77,6 +77,8 @@ export async function POST(request: Request): Promise<Response> {
   }
   if (!can(ctx.role, "chat:use")) return error("permission_denied", 403);
   if (!isChatTranscriptionEnabled()) return error("transcription_unavailable", 503);
+  // Staging pilot: only allowlisted (organization, user) pairs, by server-verified IDs.
+  if (!isTranscriptionPilotMember(ctx)) return error("voice_not_enabled", 403);
 
   const rateLimit = await limitAiTranscription(ctx.orgId, ctx.userId);
   if (rateLimit.unavailable) return error("transcription_unavailable", 503);
@@ -117,13 +119,30 @@ export async function POST(request: Request): Promise<Response> {
   // browser's 60 s auto-stop is not trusted. Unmeasurable input is refused.
   const measured = measureAudioDuration(bytes);
   if (!measured) return error("unsupported_audio_format", 415);
-  if (measured.seconds > MAX_RECORDING_SECONDS + DURATION_TOLERANCE_SECONDS) {
+  if (measured.seconds > MAX_RECORDING_SECONDS) {
     return error("audio_too_long", 422);
   }
   if (measured.seconds * 1000 < MIN_RECORDING_MS) return error("audio_too_short", 422);
   const container = measured.container;
 
-  // ── Provider call, bounded ──
+  // ── Daily pilot attempt: reserved atomically, only after every check above
+  // passed, and never refunded (a started provider attempt is paid for even
+  // if it fails, times out or the user cancels). Fail closed on store errors.
+  let reservation;
+  try {
+    reservation = await reserveDailyTranscriptionAttempt(redis, ctx);
+  } catch (e) {
+    console.error(
+      JSON.stringify({
+        event: "transcription_limit_store_unavailable",
+        name: e instanceof Error ? e.name : "unknown",
+      }),
+    );
+    return error("transcription_unavailable", 503);
+  }
+  if (!reservation.ok) return error("daily_limit_reached", 429);
+
+  // ── Provider call: one attempt, bounded ──
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(TRANSCRIPTION_TIMEOUT_MS)]);
   const startedAt = Date.now();
   let text: string;

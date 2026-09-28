@@ -3,8 +3,18 @@
  * recorder and the transcription endpoint so both enforce the same numbers.
  */
 
-/** Recording stops automatically at this length (shown in the UI). */
+/** Longest accepted recording; the server refuses anything longer (shown in the UI). */
 export const MAX_RECORDING_SECONDS = 60;
+
+/**
+ * The browser stops recording this much earlier, so timer granularity and
+ * the encoder's final frames never push an honest recording past the
+ * server's hard 60 s limit.
+ */
+/** Staging voice pilot: provider attempts per user per Helsinki day (server-enforced). */
+export const PILOT_DAILY_ATTEMPTS = 10;
+
+export const RECORDING_AUTO_STOP_MS = MAX_RECORDING_SECONDS * 1000 - 750;
 
 /** Anything shorter is treated as an accidental tap, not sent for transcription. */
 export const MIN_RECORDING_MS = 700;

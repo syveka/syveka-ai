@@ -239,7 +239,8 @@
         "unavailable": "Voice input is currently unavailable. You can still type your message.",
         "timeout": "Transcription took too long. Please try again.",
         "network_error": "Connection lost while transcribing. Please try again.",
-        "transcription_failed": "The recording couldn't be transcribed. Please try again."
+        "transcription_failed": "The recording couldn't be transcribed. Please try again.",
+        "daily_limit": "You've used today's {limit} voice transcriptions for this pilot. Try again tomorrow (Helsinki time) or type your message."
       }
     }
   },

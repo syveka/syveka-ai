@@ -1,15 +1,29 @@
 /**
- * Server-side audio duration for chat voice uploads, measured from the audio
- * frames themselves — the same frames the transcription provider decodes and
- * bills — never from container headers or timestamps, which the client
- * controls. A small file can still hold a long recording at a low bitrate, so
+ * Server-side duration estimate for chat voice uploads, computed from the
+ * per-packet/per-frame metadata a decoder uses -- NOT by decoding audio.
+ *
+ * - Opus: each packet's TOC byte fixes its duration exactly (RFC 6716 §3.1);
+ *   every packet the container references is counted.
+ * - AAC: every frame decodes to 1024 samples at the AudioSpecificConfig
+ *   rate; frames are counted, their contents are not validated.
+ * - MP4 timeline claims (sample durations, a single edit) are also taken
+ *   into account, and the longest figure wins.
+ *
+ * Header timestamps and duration fields are never trusted to shorten the
+ * result. A small file can still hold a long recording at a low bitrate, so
  * the upload size cap alone does not bound duration.
  *
- * Supported: what MediaRecorder produces for the chat client — WebM with
- * Opus (Chrome, Edge, Firefox, Android) and fragmented or plain MP4 with Opus
- * or AAC (Safari; Chrome's audio/mp4). Anything that can't be measured
- * (other codecs, laced blocks, several tracks, truncated structure) returns
- * null so the caller can refuse it before any paid processing.
+ * Accepted: what MediaRecorder produces for the chat client -- WebM with Opus
+ * and plain or fragmented MP4 with Opus or AAC. Everything else, and anything
+ * ambiguous (laced blocks, deprecated block types, extra tracks, multi-entry
+ * or empty edit lists, trailing data, truncation), returns null so the caller
+ * refuses it before paid processing. Work is linear in the input size: every
+ * loop is bounded by the bytes that back it.
+ *
+ * Limits: this does not prove the payload is valid audio, and a provider's
+ * decoder could differ in edge cases (e.g. corrupt packets, which can only
+ * make real output shorter). Cross-checked against Chromium's own decoder in
+ * the manual browser harness.
  */
 
 class Unmeasurable extends Error {}
@@ -51,6 +65,10 @@ const CODEC_ID = 0x86;
 const SIMPLE_BLOCK = 0xa3;
 const BLOCK_GROUP = 0xa0;
 const BLOCK = 0xa1;
+// Deprecated Matroska elements that can also carry frames; refused outright.
+const BLOCK_VIRTUAL = 0xa2;
+const ENCRYPTED_BLOCK = 0xaf;
+const MAX_DEPTH = 6;
 
 function readVint(b: Uint8Array, at: number, keepMarker: boolean) {
   if (at >= b.length) fail();
@@ -102,6 +120,7 @@ function webmOpusSeconds(b: Uint8Array): number {
             for (let i = 0; i < csize.value; i++) number = number * 256 + b[cbody + i]!;
           }
           if (cid.value === CODEC_ID) {
+            if (csize.value > 32) fail();
             codec = String.fromCharCode(...b.subarray(cbody, cbody + csize.value));
           }
           p = cbody + csize.value;
@@ -114,7 +133,8 @@ function webmOpusSeconds(b: Uint8Array): number {
 
   // Walks a level. Segment and Cluster may have unknown size (streamed by
   // MediaRecorder): their content then runs to the end of the parent.
-  const walk = (start: number, end: number) => {
+  const walk = (start: number, end: number, depth: number) => {
+    if (depth > MAX_DEPTH) fail();
     let at = start;
     while (at < end) {
       const id = readVint(b, at, true);
@@ -125,7 +145,7 @@ function webmOpusSeconds(b: Uint8Array): number {
       if (id.value === SEGMENT) {
         // Nothing may follow the (single) segment: a decoder could read it.
         if (bodyEnd !== end) fail();
-        walk(body, bodyEnd);
+        walk(body, bodyEnd, depth + 1);
         return;
       }
       if (id.value === CLUSTER) {
@@ -135,16 +155,18 @@ function webmOpusSeconds(b: Uint8Array): number {
           at = body;
           continue;
         }
-        walk(body, bodyEnd);
+        walk(body, bodyEnd, depth + 1);
       } else if (id.value === TRACKS) {
         readTracks(body, bodyEnd);
         if (tracks !== 1 || opusTrack === null) fail();
       } else if (id.value === SIMPLE_BLOCK) {
         block(body, bodyEnd);
       } else if (id.value === BLOCK_GROUP) {
-        walk(body, bodyEnd);
+        walk(body, bodyEnd, depth + 1);
       } else if (id.value === BLOCK) {
         block(body, bodyEnd);
+      } else if (id.value === BLOCK_VIRTUAL || id.value === ENCRYPTED_BLOCK) {
+        fail();
       } else if (size.unknown) {
         fail(); // only Segment/Cluster may stream with unknown size
       }
@@ -153,7 +175,7 @@ function webmOpusSeconds(b: Uint8Array): number {
   };
 
   if (readVint(b, 0, true).value !== EBML) fail();
-  walk(0, b.length);
+  walk(0, b.length, 0);
   if (opusTrack === null) fail();
   return totalMs / 1000;
 }
@@ -236,6 +258,25 @@ function mp4Seconds(b: Uint8Array): number {
   if (moov.length !== 1) fail();
   const traks = child(b, moov[0]!, "trak");
   if (traks.length !== 1) fail();
+  // Edit lists: only a single plain edit (as encoders write for priming) is
+  // accepted; multi-entry or empty edits can reshape the timeline.
+  let editSeconds = 0;
+  const edts = child(b, traks[0]!, "edts")[0];
+  if (edts) {
+    const elst = child(b, edts, "elst")[0] ?? fail();
+    const v1 = b[elst.body] === 1;
+    if (view.getUint32(elst.body + 4) !== 1) fail();
+    const e = elst.body + 8;
+    if (e + (v1 ? 20 : 12) > elst.end) fail();
+    const segment = v1 ? Number(view.getBigUint64(e)) : view.getUint32(e);
+    const mediaTime = v1 ? Number(view.getBigInt64(e + 8)) : view.getInt32(e + 4);
+    const rate = view.getInt16(e + (v1 ? 16 : 8));
+    if (mediaTime < 0 || rate !== 1) fail();
+    const mvhd = child(b, moov[0]!, "mvhd")[0] ?? fail();
+    const movieScale = view.getUint32(mvhd.body + (b[mvhd.body] === 1 ? 20 : 12));
+    if (!movieScale) fail();
+    editSeconds = segment / movieScale;
+  }
   const mdia = child(b, traks[0]!, "mdia")[0] ?? fail();
   const mdhd = child(b, mdia, "mdhd")[0] ?? fail();
   const timescale = view.getUint32(mdhd.body + (b[mdhd.body] === 1 ? 20 : 12));
@@ -282,6 +323,8 @@ function mp4Seconds(b: Uint8Array): number {
       for (const trun of child(b, traf, "trun")) {
         const rf = view.getUint32(trun.body) & 0xffffff;
         const count = view.getUint32(trun.body + 4);
+        // Every sample occupies at least one byte of this file.
+        if (samples.length + count > b.length) fail();
         let q = trun.body + 8;
         if (rf & 0x1) {
           dataAt = base + view.getInt32(q);
@@ -303,13 +346,16 @@ function mp4Seconds(b: Uint8Array): number {
     }
   }
 
-  if (samples.length === 0) {
-    // Non-fragmented: stsz sizes + stco/co64 chunk offsets via stsc, stts durations.
+  {
+    // Sample table (plain MP4; empty in fragmented recordings). Always read:
+    // a demuxer plays these samples as well as any fragments.
     const stsz = child(b, stbl, "stsz")[0] ?? fail();
     const fixed = view.getUint32(stsz.body + 4);
     const count = view.getUint32(stsz.body + 8);
     // Every sample occupies at least one byte of this file.
-    if (count > b.length || (!fixed && stsz.body + 12 + count * 4 > stsz.end)) fail();
+    if (samples.length + count > b.length || (!fixed && stsz.body + 12 + count * 4 > stsz.end)) {
+      fail();
+    }
     const sizes = Array.from(
       { length: count },
       (_, i) => fixed || view.getUint32(stsz.body + 12 + i * 4),
@@ -318,15 +364,19 @@ function mp4Seconds(b: Uint8Array): number {
     const co64 = child(b, stbl, "co64")[0];
     const chunkBox = stco ?? co64 ?? fail();
     const chunks = view.getUint32(chunkBox.body + 4);
+    if (chunkBox.body + 8 + chunks * (stco ? 4 : 8) > chunkBox.end) fail();
     const chunkOffset = (i: number) =>
       stco
         ? view.getUint32(chunkBox.body + 8 + i * 4)
         : Number(view.getBigUint64(chunkBox.body + 8 + i * 8));
     const stsc = child(b, stbl, "stsc")[0] ?? fail();
     const runs = view.getUint32(stsc.body + 4);
+    if (stsc.body + 8 + runs * 12 > stsc.end) fail();
     const stts = child(b, stbl, "stts")[0] ?? fail();
+    const sttsEntries = view.getUint32(stts.body + 4);
+    if (stts.body + 8 + sttsEntries * 8 > stts.end) fail();
     const durations: number[] = [];
-    for (let i = 0; i < view.getUint32(stts.body + 4); i++) {
+    for (let i = 0; i < sttsEntries; i++) {
       const n = view.getUint32(stts.body + 8 + i * 8);
       const d = view.getUint32(stts.body + 12 + i * 8);
       if (durations.length + n > count) fail();
@@ -337,6 +387,8 @@ function mp4Seconds(b: Uint8Array): number {
       const first = view.getUint32(stsc.body + 8 + r * 12) - 1;
       const perChunk = view.getUint32(stsc.body + 12 + r * 12);
       const last = r + 1 < runs ? view.getUint32(stsc.body + 8 + (r + 1) * 12) - 1 : chunks;
+      // Each chunk must add samples and exist: no zero-progress loops.
+      if (perChunk < 1 || first < 0 || first > last || last > chunks) fail();
       for (let c = first; c < last && sample < count; c++) {
         let at = chunkOffset(c);
         for (let k = 0; k < perChunk && sample < count; k++) {
@@ -359,13 +411,14 @@ function mp4Seconds(b: Uint8Array): number {
         ? opusPacketMs(b.subarray(s.offset, s.offset + s.size)) / 1000
         : 1024 / aacRate; // one AAC frame decodes to 1024 samples per channel
   }
-  // Report the longer of what the frames decode to and what the file claims.
-  return Math.max(frameSeconds, declared / timescale);
+  // Longest of: what the frames decode to, what the samples claim, and what
+  // the (single) edit presents.
+  return Math.max(frameSeconds, declared / timescale, editSeconds);
 }
 
 export type MeasuredAudio = { container: "webm" | "mp4"; seconds: number };
 
-/** Decoded duration of a chat voice upload, or null when it can't be verified. */
+/** Duration of a chat voice upload from packet/frame metadata, or null if unverifiable. */
 export function measureAudioDuration(bytes: Uint8Array): MeasuredAudio | null {
   try {
     if (bytes[0] === 0x1a && bytes[1] === 0x45 && bytes[2] === 0xdf && bytes[3] === 0xa3) {

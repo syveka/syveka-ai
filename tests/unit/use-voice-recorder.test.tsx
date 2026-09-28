@@ -116,7 +116,7 @@ describe("useVoiceRecorder lifecycle", () => {
     const media = installFakeMedia();
     const transcribe = vi.fn(async () => "long message");
     const onTranscript = vi.fn();
-    const hook = renderHook(() => useVoiceRecorder({ onTranscript, transcribe, maxSeconds: 5 }));
+    const hook = renderHook(() => useVoiceRecorder({ onTranscript, transcribe, autoStopMs: 5000 }));
     await act(async () => {
       await hook.result.current.start();
     });

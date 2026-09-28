@@ -5,7 +5,7 @@ import { requirePermission } from "@/server/auth/guard";
 import { listConversations, getConversationWithMessages } from "@/server/services/conversations";
 import { ConversationList } from "@/components/chat/conversation-list";
 import { ChatView } from "@/components/chat/chat-view";
-import { isChatTranscriptionEnabled } from "@/env";
+import { isTranscriptionPilotMember } from "@/server/ai/transcription-pilot";
 import type { UiMessage } from "@/hooks/use-chat";
 
 export default async function ConversationPage({
@@ -45,7 +45,7 @@ export default async function ConversationPage({
         <ChatView
           conversationId={conversationId}
           initialMessages={initialMessages}
-          voiceInputEnabled={isChatTranscriptionEnabled()}
+          voiceInputEnabled={isTranscriptionPilotMember(ctx)}
         />
       </div>
     </>

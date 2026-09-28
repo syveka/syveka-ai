@@ -2,7 +2,7 @@
 
 import { useTranslations } from "next-intl";
 import { Loader2, Mic, Square, X } from "lucide-react";
-import { MAX_RECORDING_SECONDS } from "@/lib/voice/audio";
+import { MAX_RECORDING_SECONDS, PILOT_DAILY_ATTEMPTS } from "@/lib/voice/audio";
 import type { VoiceRecorderError, VoiceRecorderStatus } from "@/hooks/use-voice-recorder";
 import { cn } from "@/lib/utils";
 
@@ -139,7 +139,10 @@ export function VoiceStatusBar({
       {error && !busy ? (
         <div className="mb-2 flex items-start gap-2 rounded-lg border border-destructive/30 p-2 text-sm">
           <p role="alert" className="min-w-0 flex-1 text-destructive">
-            {t(`errors.${error}`, { seconds: MAX_RECORDING_SECONDS })}
+            {t(`errors.${error}`, {
+              seconds: MAX_RECORDING_SECONDS,
+              limit: PILOT_DAILY_ATTEMPTS,
+            })}
           </p>
           <button
             type="button"

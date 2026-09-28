@@ -6,6 +6,7 @@ import {
   MAX_RECORDING_SECONDS,
   MIN_AUDIO_BYTES,
   MIN_RECORDING_MS,
+  RECORDING_AUTO_STOP_MS,
   pickRecordingMimeType,
 } from "@/lib/voice/audio";
 
@@ -23,6 +24,7 @@ export type VoiceRecorderError =
   | "empty_transcript"
   | "rate_limited"
   | "quota_exceeded"
+  | "daily_limit"
   | "not_allowed"
   | "session_expired"
   | "unavailable"
@@ -47,6 +49,8 @@ const HTTP_ERRORS: Record<string, VoiceRecorderError> = {
   entitlement_exceeded: "quota_exceeded",
   audio_too_large: "too_large",
   audio_too_long: "too_large",
+  daily_limit_reached: "daily_limit",
+  voice_not_enabled: "unavailable",
   cross_origin_request: "not_allowed",
   audio_too_short: "too_short",
   unsupported_audio_format: "unsupported_format",
@@ -102,11 +106,12 @@ async function microphoneError(e: unknown): Promise<VoiceRecorderError> {
 export function useVoiceRecorder({
   onTranscript,
   transcribe = transcribeViaApi,
-  maxSeconds = MAX_RECORDING_SECONDS,
+  autoStopMs = RECORDING_AUTO_STOP_MS,
 }: {
   onTranscript: (text: string) => void;
   transcribe?: Transcribe;
-  maxSeconds?: number;
+  /** Recording stops by itself after this long (kept under the server cap). */
+  autoStopMs?: number;
 }) {
   const [status, setStatusState] = useState<VoiceRecorderStatus>("idle");
   // Mirrors `status` synchronously so a second tap in the same tick can't
@@ -282,10 +287,10 @@ export function useVoiceRecorder({
     setStatus("recording");
     timerRef.current = setInterval(() => {
       const elapsed = Date.now() - startedAtRef.current;
-      setElapsedMs(Math.min(elapsed, maxSeconds * 1000));
-      if (elapsed >= maxSeconds * 1000) stop();
+      setElapsedMs(Math.min(elapsed, MAX_RECORDING_SECONDS * 1000));
+      if (elapsed >= autoStopMs) stop();
     }, 250);
-  }, [maxSeconds, setStatus, stop, supported]);
+  }, [autoStopMs, setStatus, stop, supported]);
 
   // Leaving the page (unmount) or the tab closing ends any session and frees the mic.
   useEffect(() => {

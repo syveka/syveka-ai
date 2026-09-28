@@ -44,6 +44,9 @@ const serverSchema = z.object({
   // transcription is a paid provider call. Deliberately lenient: any other
   // value just leaves voice input off instead of failing unrelated config.
   AI_TRANSCRIPTION_ENABLED: z.string().optional(),
+  // Temporary staging voice pilot: comma-separated "<organizationId>:<userId>"
+  // pairs allowed to use voice input. Empty or malformed allows no one.
+  AI_TRANSCRIPTION_PILOT_ALLOWLIST: z.string().optional(),
   QSTASH_TOKEN: z.string().min(1),
   QSTASH_CURRENT_SIGNING_KEY: z.string().min(1),
   QSTASH_NEXT_SIGNING_KEY: z.string().min(1),

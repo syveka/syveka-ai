@@ -18,6 +18,9 @@ const m = vi.hoisted(() => ({
   transcribe: vi.fn(),
   recordUsage: vi.fn(async () => {}),
   limit: vi.fn(),
+  member: true,
+  reserve: vi.fn(),
+  order: [] as string[],
 }));
 
 vi.mock("@/server/auth/session", () => ({
@@ -29,6 +32,11 @@ vi.mock("@/server/auth/session", () => ({
 vi.mock("@/env", () => ({ isChatTranscriptionEnabled: () => m.enabled }));
 vi.mock("@/server/integrations/redis", () => ({
   limitAiTranscription: m.limit,
+  redis: { eval: vi.fn() },
+}));
+vi.mock("@/server/ai/transcription-pilot", () => ({
+  isTranscriptionPilotMember: () => m.member,
+  reserveDailyTranscriptionAttempt: m.reserve,
 }));
 vi.mock("@/server/integrations/openai", () => ({
   transcribeAudio: m.transcribe,
@@ -125,7 +133,16 @@ beforeEach(() => {
   m.quotaExceeded = false;
   m.rate = { success: true, reset: Date.now() + 1000, limit: 20, remaining: 19 };
   m.limit.mockReset().mockImplementation(async () => m.rate);
-  m.transcribe.mockReset().mockResolvedValue("Hei, varaa aika huomiselle");
+  m.member = true;
+  m.order = [];
+  m.reserve.mockReset().mockImplementation(async () => {
+    m.order.push("reserve");
+    return { ok: true, used: 1 };
+  });
+  m.transcribe.mockReset().mockImplementation(async () => {
+    m.order.push("provider");
+    return "Hei, varaa aika huomiselle";
+  });
   m.recordUsage.mockClear();
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
@@ -241,9 +258,10 @@ describe("audio validation (server-side, before the provider)", () => {
     expect(m.recordUsage).not.toHaveBeenCalled();
   });
 
-  it("accepts audio just under the limit (60 s + tolerance)", async () => {
-    const res = await call(request(longWebm(1050))); // 63 s
-    expect(res.status).toBe(200);
+  it("accepts exactly 60 s and refuses 60.06 s (hard server cap, no tolerance)", async () => {
+    expect((await call(request(longWebm(1000)))).status).toBe(200); // 60.00 s
+    const over = await call(request(longWebm(1001))); // 60.06 s
+    expect(over.body.error.code).toBe("audio_too_long");
   });
 
   it("415 when the audio can't be measured (container magic alone isn't enough)", async () => {
@@ -256,6 +274,77 @@ describe("audio validation (server-side, before the provider)", () => {
     const res = await call(request(new TextEncoder().encode("%PDF-1.7 ".repeat(200))));
     expect(res).toEqual({ status: 415, body: { error: { code: "unsupported_audio_format" } } });
     expect(m.transcribe).not.toHaveBeenCalled();
+  });
+});
+
+describe("staging pilot: allowlist and daily attempts", () => {
+  it("403 for a user outside the pilot allowlist, before any limit or reservation", async () => {
+    m.member = false;
+    const res = await call(request(webm()));
+    expect(res).toEqual({ status: 403, body: { error: { code: "voice_not_enabled" } } });
+    expect(m.limit).not.toHaveBeenCalled();
+    expect(m.reserve).not.toHaveBeenCalled();
+    expect(m.transcribe).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["unauthenticated", () => (m.ctx = null)],
+    ["role without chat:use", () => (m.ctx = { orgId: ORG, userId: USER, role: "VIEWER" })],
+    ["feature disabled", () => (m.enabled = false)],
+    [
+      "short-window rate limit",
+      () => (m.rate = { success: false, reset: 0, limit: 20, remaining: 0 }),
+    ],
+    ["quota exhausted", () => (m.quotaExceeded = true)],
+  ])("never reserves an attempt when refused for: %s", async (_label, arrange) => {
+    arrange();
+    await call(request(webm()));
+    expect(m.reserve).not.toHaveBeenCalled();
+    expect(m.transcribe).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing audio", () => request(null)],
+    ["oversized upload", () => request(webm(2 * 1024 * 1024 + 1))],
+    ["unmeasurable audio", () => request(webm(4096))],
+    ["over-duration audio", () => request(longWebm(2000))],
+  ])("never reserves an attempt for %s", async (_label, build) => {
+    await call(build());
+    expect(m.reserve).not.toHaveBeenCalled();
+  });
+
+  it("reserves exactly one attempt, immediately before the single provider call", async () => {
+    const res = await call(request(webm()));
+    expect(res.status).toBe(200);
+    expect(m.order).toEqual(["reserve", "provider"]);
+    expect(m.reserve).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ orgId: ORG, userId: USER }),
+    );
+  });
+
+  it("429 daily_limit_reached when the day's attempts are used, without calling the provider", async () => {
+    m.reserve.mockResolvedValue({ ok: false, used: 10 });
+    const res = await call(request(webm()));
+    expect(res).toEqual({ status: 429, body: { error: { code: "daily_limit_reached" } } });
+    expect(m.transcribe).not.toHaveBeenCalled();
+  });
+
+  it("503 (fails closed) when the limit store is unavailable", async () => {
+    m.reserve.mockRejectedValue(new Error("ECONNREFUSED"));
+    const res = await call(request(webm()));
+    expect(res).toEqual({ status: 503, body: { error: { code: "transcription_unavailable" } } });
+    expect(m.transcribe).not.toHaveBeenCalled();
+  });
+
+  it("a failed provider attempt still consumed its reservation and is not retried", async () => {
+    m.transcribe.mockImplementation(async () => {
+      m.order.push("provider");
+      throw Object.assign(new Error("upstream 500"), { status: 500 });
+    });
+    const res = await call(request(webm()));
+    expect(res.status).toBe(502);
+    expect(m.order).toEqual(["reserve", "provider"]); // one attempt, no refund step
   });
 });
 

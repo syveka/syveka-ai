@@ -239,7 +239,8 @@
         "unavailable": "Puhesyöte ei ole juuri nyt käytettävissä. Voit silti kirjoittaa viestisi.",
         "timeout": "Litterointi kesti liian kauan. Yritä uudelleen.",
         "network_error": "Yhteys katkesi litteroinnin aikana. Yritä uudelleen.",
-        "transcription_failed": "Nauhoitusta ei voitu litteroida. Yritä uudelleen."
+        "transcription_failed": "Nauhoitusta ei voitu litteroida. Yritä uudelleen.",
+        "daily_limit": "Tämän pilotin {limit} päivittäistä puheen litterointia on käytetty. Yritä huomenna uudelleen (Suomen aikaa) tai kirjoita viestisi."
       }
     }
   },
