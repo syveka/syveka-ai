@@ -201,6 +201,46 @@
       "unsupported_file": "Use a PDF, DOCX or TXT file.",
       "file_too_large": "The file must be 25 MB or smaller.",
       "invalid_document": "One of the attached files is unavailable."
+    },
+    "voice": {
+      "record": "Record a voice message",
+      "stopRecording": "Stop and transcribe",
+      "cancel": "Cancel",
+      "recording": "Recording…",
+      "requesting": "Waiting for microphone permission…",
+      "transcribing": "Transcribing…",
+      "maxDuration": "Recording stops automatically after {seconds} seconds.",
+      "privacy": "Your recording is sent to our speech-to-text provider (OpenAI) only to create the text, and is not stored.",
+      "transcriptAdded": "Transcript added to the message box. Review it, then press Send.",
+      "recordingStarted": "Recording started.",
+      "recordingCancelled": "Recording cancelled.",
+      "dismiss": "Dismiss",
+      "listen": "Listen",
+      "stopListening": "Stop reading aloud",
+      "listenLabel": "Read this reply aloud",
+      "playbackErrors": {
+        "unsupported": "This browser can't read replies aloud.",
+        "no_voice": "This device has no voice for this language.",
+        "playback_failed": "The reply couldn't be read aloud."
+      },
+      "errors": {
+        "unsupported": "Voice input isn't supported in this browser. You can still type your message.",
+        "unsupported_format": "This browser can't record audio in a supported format. You can still type your message.",
+        "permission_denied": "Microphone access is blocked. Allow it in your browser's site settings, then try again.",
+        "no_microphone": "No microphone was found.",
+        "microphone_busy": "The microphone is in use by another app or unavailable. Try again.",
+        "too_short": "The recording was too short. Hold on a moment longer and try again.",
+        "too_large": "The recording is too large. Keep it under {seconds} seconds.",
+        "empty_transcript": "No speech was recognised. Try again closer to the microphone.",
+        "rate_limited": "Too many recordings in a short time. Wait a moment and try again.",
+        "quota_exceeded": "Monthly AI quota reached — upgrade your plan to continue.",
+        "not_allowed": "Your role can't use the AI chat.",
+        "session_expired": "Your session has expired. Sign in again.",
+        "unavailable": "Voice input is currently unavailable. You can still type your message.",
+        "timeout": "Transcription took too long. Please try again.",
+        "network_error": "Connection lost while transcribing. Please try again.",
+        "transcription_failed": "The recording couldn't be transcribed. Please try again."
+      }
     }
   },
   "publicAssistant": {

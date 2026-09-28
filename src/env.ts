@@ -39,6 +39,11 @@ const serverSchema = z.object({
   AI_CHAT_RATE_WINDOW_SECONDS: z.coerce.number().int().min(1).max(86_400).default(60),
   AI_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(6).default(3),
   AI_RETRY_BASE_DELAY_MS: z.coerce.number().int().min(10).max(10_000).default(250),
+  // Chat voice input: server speech-to-text through the existing OpenAI
+  // provider (OPENAI_API_KEY). Only exactly "1" enables it, because every
+  // transcription is a paid provider call. Deliberately lenient: any other
+  // value just leaves voice input off instead of failing unrelated config.
+  AI_TRANSCRIPTION_ENABLED: z.string().optional(),
   QSTASH_TOKEN: z.string().min(1),
   QSTASH_CURRENT_SIGNING_KEY: z.string().min(1),
   QSTASH_NEXT_SIGNING_KEY: z.string().min(1),
@@ -170,6 +175,21 @@ export function getOpenAIEnv(): z.infer<typeof openAIEnvSchema> {
     throw providerEnvError("OpenAI", Object.keys(parsed.error.flatten().fieldErrors));
   }
   return parsed.data;
+}
+
+/**
+ * Chat voice transcription is available only when explicitly enabled and the
+ * OpenAI provider it uses is configured. Never throws: an unconfigured
+ * deployment simply doesn't offer voice input.
+ */
+export function isChatTranscriptionEnabled(): boolean {
+  if (process.env.AI_TRANSCRIPTION_ENABLED !== "1") return false;
+  try {
+    getOpenAIEnv();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const anthropicEnvSchema = serverSchema.pick({

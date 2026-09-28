@@ -201,6 +201,46 @@
       "unsupported_file": "Käytä PDF-, DOCX- tai TXT-tiedostoa.",
       "file_too_large": "Tiedoston enimmäiskoko on 25 Mt.",
       "invalid_document": "Yksi liitetyistä tiedostoista ei ole käytettävissä."
+    },
+    "voice": {
+      "record": "Nauhoita ääniviesti",
+      "stopRecording": "Lopeta ja litteroi",
+      "cancel": "Peruuta",
+      "recording": "Nauhoitetaan…",
+      "requesting": "Odotetaan mikrofonin käyttölupaa…",
+      "transcribing": "Litteroidaan…",
+      "maxDuration": "Nauhoitus päättyy automaattisesti {seconds} sekunnin kohdalla.",
+      "privacy": "Nauhoitus lähetetään puheentunnistuspalvelullemme (OpenAI) vain tekstin luomista varten, eikä sitä tallenneta.",
+      "transcriptAdded": "Teksti lisättiin viestikenttään. Tarkista se ja paina Lähetä.",
+      "recordingStarted": "Nauhoitus alkoi.",
+      "recordingCancelled": "Nauhoitus peruttiin.",
+      "dismiss": "Sulje",
+      "listen": "Kuuntele",
+      "stopListening": "Lopeta ääneen lukeminen",
+      "listenLabel": "Lue vastaus ääneen",
+      "playbackErrors": {
+        "unsupported": "Tämä selain ei osaa lukea vastauksia ääneen.",
+        "no_voice": "Tässä laitteessa ei ole puheääntä tälle kielelle.",
+        "playback_failed": "Vastausta ei voitu lukea ääneen."
+      },
+      "errors": {
+        "unsupported": "Tämä selain ei tue puhesyötettä. Voit silti kirjoittaa viestisi.",
+        "unsupported_format": "Tämä selain ei pysty nauhoittamaan tuettua äänimuotoa. Voit silti kirjoittaa viestisi.",
+        "permission_denied": "Mikrofonin käyttö on estetty. Salli se selaimen sivustoasetuksista ja yritä uudelleen.",
+        "no_microphone": "Mikrofonia ei löytynyt.",
+        "microphone_busy": "Mikrofoni on toisen sovelluksen käytössä tai ei käytettävissä. Yritä uudelleen.",
+        "too_short": "Nauhoitus oli liian lyhyt. Puhu hetki pidempään ja yritä uudelleen.",
+        "too_large": "Nauhoitus on liian suuri. Pidä se alle {seconds} sekunnin mittaisena.",
+        "empty_transcript": "Puhetta ei tunnistettu. Yritä uudelleen lähempänä mikrofonia.",
+        "rate_limited": "Liian monta nauhoitusta lyhyessä ajassa. Odota hetki ja yritä uudelleen.",
+        "quota_exceeded": "Kuukauden AI-kiintiö on käytetty — päivitä tilaus jatkaaksesi.",
+        "not_allowed": "Roolisi ei voi käyttää AI-keskustelua.",
+        "session_expired": "Istuntosi on vanhentunut. Kirjaudu uudelleen.",
+        "unavailable": "Puhesyöte ei ole juuri nyt käytettävissä. Voit silti kirjoittaa viestisi.",
+        "timeout": "Litterointi kesti liian kauan. Yritä uudelleen.",
+        "network_error": "Yhteys katkesi litteroinnin aikana. Yritä uudelleen.",
+        "transcription_failed": "Nauhoitusta ei voitu litteroida. Yritä uudelleen."
+      }
     }
   },
   "publicAssistant": {

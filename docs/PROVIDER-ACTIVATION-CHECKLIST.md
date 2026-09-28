@@ -54,6 +54,32 @@ Stripe key cannot break Redis, and vice versa.
 - [ ] **Manual verification required**: confirm a document ingestion / embedding job actually
       completes against the real API (not a mocked/skipped path).
 
+### AI Chat voice input (optional, off by default)
+
+**Enable with:** `AI_TRANSCRIPTION_ENABLED=1` (plus the `OPENAI_API_KEY` above). When unset,
+`"0"`, or when the OpenAI configuration is invalid, the chat shows no microphone and
+`POST /api/v1/ai/transcribe` returns `503 transcription_unavailable`, so no provider calls happen.
+
+- **Model:** `gpt-4o-mini-transcribe` (`TRANSCRIPTION_MODEL` in `src/server/integrations/openai.ts`),
+  language auto-detected (FI/EN/AR).
+- **Cost basis:** billed per audio minute (list price used for the estimate: $0.003/min; verify
+  current OpenAI pricing). The app stops recording at 60 s, so a normal request costs at most
+  about $0.003. The server can't decode duration; its enforceable bound is the 2 MiB upload cap,
+  which limits even a deliberately low-bitrate upload to a few minutes of audio (≈ $0.03).
+  `estimatedCostUsd` is derived from upload size at a typical ~128 kbps browser bitrate, so it
+  is an estimate, not an invoice figure.
+- **Limits, checked before any provider call:** `chat:use` permission, 20 recordings / 10 min per
+  user and 200 / 10 min per organization (Redis), and the organization's existing monthly AI
+  message quota (dictation is refused once chat is out of quota). No plan allowance changes:
+  transcription does not count as an AI message.
+- **Accounting:** each paid call is recorded as one `API_CALLS` usage record with
+  `metadata.kind = "ai_transcription"`, audio size/format and `estimatedCostUsd`. No transcript or
+  audio is stored or logged; audio is held in memory for the request only.
+- **Privacy:** audio is sent to OpenAI to produce the text (disclosed in the recording UI).
+- [ ] **Manual verification required**: on staging with the flag on, record one short FI, EN and
+      AR message on a real phone and confirm the transcript appears in the message box, is not
+      sent automatically, and one `API_CALLS` usage record is written per recording.
+
 ## 4. Resend (transactional + inbound email)
 
 **Required:** `RESEND_API_KEY`, `EMAIL_FROM`; **for real inbound mail:** `INBOX_EMAIL_DOMAIN`,
