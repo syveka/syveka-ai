@@ -7,6 +7,12 @@ export const chatRequestSchema = z
     useKnowledgeBase: z.boolean().default(true),
     deepMode: z.boolean().default(false),
     documentIds: z.array(z.string().uuid()).max(10).default([]),
+    /**
+     * "voice" = a turn of a live voice conversation: a short, speakable reply
+     * and read-only tools (no record changes, bookings or messages), because
+     * an automatically submitted spoken turn is not a confirmation.
+     */
+    responseMode: z.enum(["text", "voice"]).default("text"),
   })
   .strict();
 

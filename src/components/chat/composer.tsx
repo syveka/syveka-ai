@@ -17,6 +17,7 @@ export function Composer({
   disabled,
   voiceInputEnabled = false,
   onRecordingStart,
+  onVoiceBusyChange,
 }: {
   onSend: (text: string, opts: { useKnowledgeBase: boolean; documentIds: string[] }) => void;
   onAbort: () => void;
@@ -25,6 +26,8 @@ export function Composer({
   voiceInputEnabled?: boolean;
   /** Called when a recording starts (e.g. to stop reply playback). */
   onRecordingStart?: () => void;
+  /** Reports whether dictation currently owns the microphone. */
+  onVoiceBusyChange?: (busy: boolean) => void;
 }) {
   const t = useTranslations("chat");
   const tVoice = useTranslations("chat.voice");
@@ -65,6 +68,9 @@ export function Composer({
     },
   });
   const voiceBusy = voice.status !== "idle";
+  useEffect(() => {
+    onVoiceBusyChange?.(voiceBusy);
+  }, [voiceBusy, onVoiceBusyChange]);
 
   const startRecording = () => {
     onRecordingStart?.();

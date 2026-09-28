@@ -25,9 +25,15 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
   const send = useCallback(
     async (
       text: string,
-      opts?: { useKnowledgeBase?: boolean; deepMode?: boolean; documentIds?: string[] },
-    ) => {
-      if (isStreaming || !text.trim()) return;
+      opts?: {
+        useKnowledgeBase?: boolean;
+        deepMode?: boolean;
+        documentIds?: string[];
+        /** "voice": a live voice turn (short spoken reply, read-only tools). */
+        responseMode?: "text" | "voice";
+      },
+    ): Promise<string | null> => {
+      if (isStreaming || !text.trim()) return null;
       setError(null);
       setIsStreaming(true);
 
@@ -62,6 +68,7 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
             useKnowledgeBase: opts?.useKnowledgeBase ?? true,
             deepMode: opts?.deepMode ?? false,
             documentIds: opts?.documentIds ?? [],
+            ...(opts?.responseMode === "voice" ? { responseMode: "voice" } : {}),
           }),
           signal: abortController.signal,
         });
@@ -73,13 +80,15 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
           setError(body?.error?.code ?? "request_failed");
           patchAssistant({ streaming: false });
           setIsStreaming(false);
-          return;
+          return null;
         }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
         const isNewConversation = !conversationIdRef.current;
+        let replyText = "";
+        let failed = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -96,6 +105,7 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
                 conversationIdRef.current = event.conversationId;
                 break;
               case "text":
+                replyText += event.delta;
                 patchAssistant((m) => ({ content: m.content + event.delta }));
                 break;
               case "tool":
@@ -107,6 +117,7 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
                 patchAssistant({ citations: event.citations });
                 break;
               case "error":
+                failed = true;
                 setError(event.code);
                 break;
               case "done":
@@ -120,6 +131,7 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
           router.replace(`/chat/${conversationIdRef.current}`);
           router.refresh(); // refresh conversation list
         }
+        return failed ? null : replyText;
       } catch (requestError) {
         if (requestError instanceof DOMException && requestError.name === "AbortError") {
           setMessages((prev) =>
@@ -129,6 +141,7 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
           setError("network_error");
         }
         patchAssistant({ streaming: false });
+        return null;
       } finally {
         abortControllerRef.current = null;
         setIsStreaming(false);

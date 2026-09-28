@@ -7,6 +7,7 @@ import { vi } from "vitest";
  */
 export class FakeTrack {
   stopped = false;
+  enabled = true;
   stop() {
     this.stopped = true;
   }
@@ -15,6 +16,9 @@ export class FakeTrack {
 export class FakeStream {
   tracks = [new FakeTrack()];
   getTracks() {
+    return this.tracks;
+  }
+  getAudioTracks() {
     return this.tracks;
   }
 }

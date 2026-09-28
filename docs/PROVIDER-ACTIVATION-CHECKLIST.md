@@ -104,6 +104,71 @@ provider call. Production stays disabled.
       automatically, one `API_CALLS` usage record is written per attempt, and the 11th attempt
       of the day shows the localized daily-limit message.
 
+### AI Chat live voice conversation (separate pilot; off by default)
+
+A hands-free **sequential** pipeline, not native speech-to-speech. The browser detects end of
+speech and uploads each finished turn. The server transcribes it (`gpt-4o-mini-transcribe`, one
+attempt). The client submits the text through the normal `/api/v1/ai/chat` route with
+`responseMode: "voice"`, which uses the same session, permissions, moderation, Business DNA and RAG
+as typed chat, with **read-only tools** enforced in code. The reply is read aloud with the device's
+speech voices. It is independent of dictation: it has its own flag, allowlist, keys and budgets,
+and never consumes the dictation 10-attempts-per-day cap.
+
+**Enable with (staging only, after review):** `AI_VOICE_CONVERSATION_ENABLED=1`,
+`AI_VOICE_CONVERSATION_PILOT_ALLOWLIST="<organizationId>:<userId>"`, plus `OPENAI_API_KEY`. The flag
+or allowlist being missing or malformed, or any limit being invalid or out of range, disables it.
+
+| Variable                                        | Default | Allowed range | Meaning                                                                |
+| ----------------------------------------------- | ------- | ------------- | ---------------------------------------------------------------------- |
+| `AI_VOICE_CONVERSATION_SESSION_SECONDS`         | 300     | 60–1800       | Hard session lifetime (server refuses turns after it)                  |
+| `AI_VOICE_CONVERSATION_MAX_TURN_SECONDS`        | 30      | 5–60          | Longest accepted turn (measured server-side)                           |
+| `AI_VOICE_CONVERSATION_MAX_TURNS_PER_SESSION`   | 20      | 1–200         | Turns per session                                                      |
+| `AI_VOICE_CONVERSATION_DAILY_ORG_AUDIO_SECONDS` | 600     | 60–36000      | Audio per organization per Europe/Helsinki day, reserved per turn      |
+| `AI_VOICE_CONVERSATION_MAX_CONCURRENT_PER_ORG`  | 1       | 1–20          | Active sessions per organization (one per user; a new tab replaces it) |
+
+**What the server enforces (before any paid call):**
+
+- same-origin request, session, `chat:use`, flag and allowlist
+- short-window limit (40 turns / 5 min per user, failing closed)
+- the organization's monthly AI-message quota (read only)
+- size ≤ 2 MiB, measured duration ≤ the turn cap
+- one atomic Redis reservation (Lua) that checks, in one step:
+  - session owner and expiry
+  - turn cap and duplicate turn id
+  - daily audio budget, then adds the measured seconds
+
+Reservations are never refunded. A store error returns 503.
+
+**Why no realtime provider session:** the browser holds no provider credential and no open
+provider stream. Every paid unit is a separate server request, so an ended or expired session
+cannot be kept alive by a modified client.
+
+**Cost (verified list prices, 2026-09):**
+
+- **Transcription** (`gpt-4o-mini-transcribe`) costs $0.003 per audio minute. With the defaults this
+  is hard-bounded at 600 s per organization per day ≈ **$0.03/day**.
+- **Chat replies** are a separate cost: one normal chat message per turn on the chat model (e.g.
+  `claude-sonnet-4-5`, $3 / $15 per 1M input/output tokens). Voice replies are short, but the
+  prompt includes context. At an assumed ~6k input / ~150 output tokens per turn that is ≈ $0.02 per
+  turn. Across 20 turns/session, and the audio budget allowing a few sessions a day, the estimate is
+  ≈ **$0.40–$1.50/day for one pilot organization**.
+- The chat part is bounded by the per-session turn cap, the audio budget (every turn needs audio)
+  and the existing chat quota and rate limits. It is **estimated, not a hard dollar cap**.
+- Reply speech uses device voices and costs nothing.
+
+**Privacy:**
+
+- Audio is held in memory for the request and sent to OpenAI for transcription.
+- Neither audio nor transcripts are logged.
+- The conversation text is saved in the chat like typed messages.
+- The intro screen discloses this. OpenAI's own retention is governed by its API data policy; it is
+  not promised here.
+
+- [ ] **Manual verification required** (pilot account, real phone): start and end a conversation;
+      confirm turns are answered aloud, that talking interrupts a reply, that mute stops turns,
+      that ending stops the microphone indicator, and that asking for a booking gets a spoken
+      refusal pointing to typed chat.
+
 ## 4. Resend (transactional + inbound email)
 
 **Required:** `RESEND_API_KEY`, `EMAIL_FROM`; **for real inbound mail:** `INBOX_EMAIL_DOMAIN`,

@@ -6,6 +6,7 @@ import { listConversations, getConversationWithMessages } from "@/server/service
 import { ConversationList } from "@/components/chat/conversation-list";
 import { ChatView } from "@/components/chat/chat-view";
 import { isTranscriptionPilotMember } from "@/server/ai/transcription-pilot";
+import { liveVoiceFor } from "@/server/ai/voice-conversation-page";
 import type { UiMessage } from "@/hooks/use-chat";
 
 export default async function ConversationPage({
@@ -46,6 +47,7 @@ export default async function ConversationPage({
           conversationId={conversationId}
           initialMessages={initialMessages}
           voiceInputEnabled={isTranscriptionPilotMember(ctx)}
+          voiceConversation={liveVoiceFor(ctx)}
         />
       </div>
     </>

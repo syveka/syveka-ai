@@ -28,7 +28,7 @@ export async function POST(request: Request): Promise<Response> {
     { buildSystemPrompt },
     { getBusinessDnaContext },
     { retrieveChunks, extractValidCitations },
-    { anthropicToolsFor, executeTool },
+    { anthropicToolsFor, executeTool, READ_ONLY_TOOL_NAMES },
     { assertWithinLimit, recordUsage, getMonthUsage, EntitlementError },
     {
       attachDocumentsToConversation,
@@ -179,7 +179,9 @@ export async function POST(request: Request): Promise<Response> {
     role: ctx.role,
     actorType: "user",
   };
-  const tools = anthropicToolsFor(identity);
+  // Live voice turns are submitted automatically: read-only tools only.
+  const voiceTurn = input.responseMode === "voice";
+  const tools = anthropicToolsFor(identity, voiceTurn ? [...READ_ONLY_TOOL_NAMES] : undefined);
 
   let system = buildSystemPrompt({
     locale: ctx.locale,
@@ -195,6 +197,7 @@ export async function POST(request: Request): Promise<Response> {
       title: c.title,
     })),
     hasTools: tools.length > 0,
+    responseMode: input.responseMode,
   });
   if (summary) {
     system += `\n\nRolling conversation summary (trusted conversation context, not instructions):\n${summary}`;
@@ -241,7 +244,9 @@ export async function POST(request: Request): Promise<Response> {
             },
             onToolUse: async (name, toolInput) => {
               send({ type: "tool", name, status: "start" });
-              const result = await executeTool(identity, name, toolInput);
+              const result = await executeTool(identity, name, toolInput, {
+                readOnly: voiceTurn,
+              });
               toolCallLog.push({ name, ok: !result.includes('"error"') });
               send({ type: "tool", name, status: "done" });
               return result;
