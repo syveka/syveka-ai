@@ -43,6 +43,11 @@ export function useChat(params: {
         documentIds?: string[];
         /** Single-use grant for one live voice turn (server derives voice mode from it). */
         voiceGrant?: string;
+        /**
+         * The live session's conversation (the grant is bound to it). In a new
+         * chat this is the id the server reserved when the session started.
+         */
+        conversationId?: string;
       },
     ): Promise<string | null> => {
       if (isStreaming || !text.trim()) return null;
@@ -75,7 +80,7 @@ export function useChat(params: {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            conversationId: conversationIdRef.current,
+            conversationId: opts?.conversationId ?? conversationIdRef.current,
             message: text,
             useKnowledgeBase: opts?.useKnowledgeBase ?? true,
             deepMode: opts?.deepMode ?? false,
@@ -177,5 +182,8 @@ export function useChat(params: {
     router.refresh();
   }, [router]);
 
-  return { messages, send, abort, isStreaming, error, flushNavigation };
+  /** The current conversation, once known (also after a new chat's first reply). */
+  const getConversationId = useCallback(() => conversationIdRef.current, []);
+
+  return { messages, send, abort, isStreaming, error, flushNavigation, getConversationId };
 }

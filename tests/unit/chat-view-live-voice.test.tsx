@@ -28,7 +28,8 @@ const live = vi.hoisted(() => ({
   replace: vi.fn(),
 }));
 type LiveOptions = {
-  onUserTurn: (t: string, grant: string) => Promise<string | null>;
+  onUserTurn: (t: string, grant: string, conversationId: string) => Promise<string | null>;
+  getConversationId?: () => string | undefined;
   speakReplies?: boolean;
 };
 
@@ -56,6 +57,10 @@ const ar = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../messages/ar
 let fetchBodies: Array<Record<string, unknown>>;
 let deviceVoices: Array<{ lang: string; localService: boolean; name: string }>;
 const GRANT = "55555555-5555-4555-8555-555555555555";
+/** Created by the chat route for a typed first message in a new chat. */
+const NEW_CHAT_ID = "66666666-6666-4666-8666-666666666666";
+/** Reserved by the session route when live mode starts in a new chat. */
+const RESERVED_ID = "77777777-7777-4777-8777-777777777777";
 
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
@@ -75,9 +80,11 @@ beforeEach(() => {
   vi.stubGlobal(
     "fetch",
     vi.fn(async (_url: string, init?: RequestInit) => {
-      fetchBodies.push(JSON.parse(String(init?.body)));
+      const body = JSON.parse(String(init?.body));
+      fetchBodies.push(body);
       const frames = [
-        { type: "meta", conversationId: "66666666-6666-4666-8666-666666666666" },
+        // Like the server: an existing / reserved conversation is echoed back.
+        { type: "meta", conversationId: body.conversationId ?? NEW_CHAT_ID },
         { type: "text", delta: "Huomenna on kaksi tapaamista." },
         { type: "done", tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 },
       ];
@@ -124,6 +131,7 @@ describe("ChatView live voice", () => {
     expect(document.body.textContent).toContain(en.chat.live.introMic);
     expect(document.body.textContent).toContain(en.chat.live.introAuto);
     expect(document.body.textContent).toContain(en.chat.live.introActions);
+    expect(document.body.textContent).toContain(en.chat.live.introDailyLimit);
     fireEvent.click(screen.getByRole("button", { name: new RegExp(en.chat.live.confirm) }));
     expect(live.start).toHaveBeenCalledTimes(1);
     expect(live.lastOptions!.speakReplies).toBe(true);
@@ -190,7 +198,11 @@ describe("ChatView live voice", () => {
     renderView();
     let reply: string | null = null;
     await act(async () => {
-      reply = await live.lastOptions!.onUserTurn("Mitä huomenna?", GRANT);
+      reply = await live.lastOptions!.onUserTurn(
+        "Mitä huomenna?",
+        GRANT,
+        "33333333-3333-4333-8333-333333333333",
+      );
     });
     expect(fetchBodies).toHaveLength(1);
     expect(fetchBodies[0]).toMatchObject({
@@ -205,12 +217,24 @@ describe("ChatView live voice", () => {
     expect(document.body.textContent).toContain("Mitä huomenna?");
   });
 
-  it("in a new chat, the redirect waits until the live conversation ends (no remount mid-session)", async () => {
+  it("gives the live session the current conversation (none yet in a new chat)", () => {
+    renderView();
+    expect(live.lastOptions!.getConversationId!()).toBe("33333333-3333-4333-8333-333333333333");
+    cleanup();
+    renderView(en, { conversationId: undefined });
+    expect(live.lastOptions!.getConversationId!()).toBeUndefined();
+  });
+
+  it("in a new chat, turns go to the server-reserved conversation and the redirect waits until the end", async () => {
     live.state = { ...live.state, phase: "listening", active: true };
     const view = renderView(en, { conversationId: undefined });
     await act(async () => {
-      await live.lastOptions!.onUserTurn("Mitä huomenna?", GRANT);
+      await live.lastOptions!.onUserTurn("Mitä huomenna?", GRANT, RESERVED_ID);
     });
+    await act(async () => {
+      await live.lastOptions!.onUserTurn("Entä perjantaina?", GRANT, RESERVED_ID);
+    });
+    expect(fetchBodies.map((b) => b.conversationId)).toEqual([RESERVED_ID, RESERVED_ID]);
     expect(live.replace).not.toHaveBeenCalled();
 
     live.state = { ...live.state, phase: "ended", active: false };
@@ -224,7 +248,7 @@ describe("ChatView live voice", () => {
       </NextIntlClientProvider>,
     );
     expect(live.replace).toHaveBeenCalledTimes(1);
-    expect(live.replace).toHaveBeenCalledWith("/chat/66666666-6666-4666-8666-666666666666");
+    expect(live.replace).toHaveBeenCalledWith(`/chat/${RESERVED_ID}`);
   });
 
   it("typed chat in a new conversation still redirects immediately", async () => {
@@ -234,7 +258,7 @@ describe("ChatView live voice", () => {
     await act(async () => {
       fireEvent.keyDown(box, { key: "Enter" });
     });
-    expect(live.replace).toHaveBeenCalledWith("/chat/66666666-6666-4666-8666-666666666666");
+    expect(live.replace).toHaveBeenCalledWith(`/chat/${NEW_CHAT_ID}`);
   });
 
   it("typed chat still sends without responseMode", async () => {

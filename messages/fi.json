@@ -255,6 +255,7 @@
       "introControl": "Voit mykistää mikrofonin, keskeyttää vastauksen tai lopettaa keskustelun milloin tahansa.",
       "introActions": "Puhekeskustelussa Syveka voi hakea tietoja, mutta ei luo, muuta, varaa tai lähetä mitään. Lopeta silloin keskustelu ja pyydä sitä chatissa.",
       "introLimit": "Keskustelu kestää enintään {minutes} minuuttia.",
+      "introDailyLimit": "Keskustelun aloittaminen käyttää tämän päivän puhekeskustelukiintiön, vaikka lopettaisit sen aikaisin.",
       "introPrivacy": "Puheesi lähetetään puheentunnistuspalvelullemme (OpenAI) vain tekstin luomista varten, eikä Syveka tallenna sitä. Vastaukset luetaan laitteesi puheäänillä; keskustelun teksti tallentuu chattiin kuten kirjoitetut viestit.",
       "confirm": "Aloita keskustelu",
       "cancel": "Peruuta",

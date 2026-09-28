@@ -96,18 +96,25 @@ export function useVoiceConversation({
   onUserTurn,
   onAbortReply,
   speakReplies = true,
+  getConversationId,
   deps = { fetch: (...a) => fetch(...a), now: () => Date.now() },
 }: {
   locale: string;
   /**
    * Submits the transcript with its single-use server grant through the
-   * normal chat pipeline; resolves with the reply text (null on failure).
+   * normal chat pipeline, in the session's conversation; resolves with the
+   * reply text (null on failure).
    */
-  onUserTurn: (text: string, grant: string) => Promise<string | null>;
+  onUserTurn: (text: string, grant: string, conversationId: string) => Promise<string | null>;
   /** Aborts an in-flight chat reply (ending mid-reply). */
   onAbortReply?: () => void;
   /** False: replies are shown as text only (e.g. no device voice for the language). */
   speakReplies?: boolean;
+  /**
+   * The conversation the session is for, if it already exists. Without one
+   * the server reserves a conversation id for the new chat.
+   */
+  getConversationId?: () => string | undefined;
   deps?: Deps;
 }) {
   const [phase, setPhaseState] = useState<ConversationPhase>("idle");
@@ -121,7 +128,7 @@ export function useVoiceConversation({
   const phaseRef = useRef<ConversationPhase>("idle");
   const epochRef = useRef(0);
   const mutedRef = useRef(false);
-  const sessionRef = useRef<{ id: string; maxTurnMs: number } | null>(null);
+  const sessionRef = useRef<{ id: string; conversationId: string; maxTurnMs: number } | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioCtxRef = useRef<AudioContext | null>(null);
   const analyserRef = useRef<AnalyserNode | null>(null);
@@ -138,6 +145,8 @@ export function useVoiceConversation({
   const tabIdRef = useRef(Math.random().toString(36).slice(2));
   const onUserTurnRef = useRef(onUserTurn);
   onUserTurnRef.current = onUserTurn;
+  const getConversationIdRef = useRef(getConversationId);
+  getConversationIdRef.current = getConversationId;
   const onAbortReplyRef = useRef(onAbortReply);
   onAbortReplyRef.current = onAbortReply;
   const depsRef = useRef(deps);
@@ -362,7 +371,7 @@ export function useVoiceConversation({
       }
       setNotice(null);
       setPhase("thinking");
-      const reply = await onUserTurnRef.current(text, grant);
+      const reply = await onUserTurnRef.current(text, grant, session.conversationId);
       if (epoch !== epochRef.current) return;
       if (reply === null) {
         setError("reply_failed");
@@ -490,8 +499,11 @@ export function useVoiceConversation({
 
     let res: Response;
     try {
+      const conversationId = getConversationIdRef.current?.();
       res = await depsRef.current.fetch("/api/v1/ai/voice-conversation/session", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(conversationId ? { conversationId } : {}),
       });
     } catch {
       if (epoch !== epochRef.current) return;
@@ -499,7 +511,12 @@ export function useVoiceConversation({
       return;
     }
     const body = (await res.json().catch(() => null)) as {
-      data?: { sessionId: string; expiresAt: number; maxTurnSeconds: number };
+      data?: {
+        sessionId: string;
+        conversationId: string;
+        expiresAt: number;
+        maxTurnSeconds: number;
+      };
       error?: { code?: string };
     } | null;
     if (epoch !== epochRef.current) {
@@ -514,12 +531,17 @@ export function useVoiceConversation({
       }
       return;
     }
-    if (!res.ok || !body?.data) {
+    if (!res.ok || !body?.data?.conversationId) {
       end("error", SESSION_ERRORS[body?.error?.code ?? ""] ?? "unavailable");
       return;
     }
-    const { sessionId, expiresAt: serverExpiry, maxTurnSeconds } = body.data;
-    sessionRef.current = { id: sessionId, maxTurnMs: maxTurnSeconds * 1000 };
+    const { sessionId, conversationId: boundConversation, expiresAt: serverExpiry } = body.data;
+    const { maxTurnSeconds } = body.data;
+    sessionRef.current = {
+      id: sessionId,
+      conversationId: boundConversation,
+      maxTurnMs: maxTurnSeconds * 1000,
+    };
 
     const Ctx =
       window.AudioContext ??

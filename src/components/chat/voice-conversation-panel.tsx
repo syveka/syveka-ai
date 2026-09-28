@@ -59,6 +59,7 @@ export function VoiceConversationIntro({
         <li>{t("introControl")}</li>
         <li>{t("introActions")}</li>
         <li>{t("introLimit", { minutes: sessionMinutes })}</li>
+        <li>{t("introDailyLimit")}</li>
       </ul>
       <p className="mt-2 text-xs text-muted-foreground">{t("introPrivacy")}</p>
       {deviceVoice === "unavailable" ? (

@@ -60,14 +60,14 @@ const synth = {
   getVoices: () => voices,
 };
 
-type Call = { url: string; method: string; body?: FormData };
+type Call = { url: string; method: string; body?: FormData | string };
 let calls: Call[];
 let turnText: string | (() => Promise<Response>);
 let sessionResponse: () => Response;
 
 function fakeFetch(url: string, init?: RequestInit): Promise<Response> {
   const method = init?.method ?? "GET";
-  calls.push({ url, method, body: init?.body as FormData | undefined });
+  calls.push({ url, method, body: init?.body as FormData | string | undefined });
   if (url.endsWith("/session") && method === "POST") return Promise.resolve(sessionResponse());
   if (url.includes("/session?sessionId=")) {
     return Promise.resolve(new Response(JSON.stringify({ data: { ended: true } })));
@@ -82,12 +82,15 @@ function fakeFetch(url: string, init?: RequestInit): Promise<Response> {
 }
 
 const GRANT = "55555555-5555-4555-8555-555555555555";
+/** The conversation the server bound the session to. */
+const CONVERSATION = "66666666-6666-4666-8666-666666666666";
 const turnCalls = () => calls.filter((c) => c.url.endsWith("/turn"));
 const okSession = () =>
   new Response(
     JSON.stringify({
       data: {
         sessionId: "11111111-1111-4111-8111-111111111111",
+        conversationId: CONVERSATION,
         expiresAt: clock + 300_000,
         maxTurnSeconds: 30,
         sessionSeconds: 300,
@@ -129,7 +132,11 @@ afterEach(() => {
   uninstallFakeMedia();
 });
 
-function setup(reply: string | null = "Huomenna on kaksi tapaamista.", speakReplies = true) {
+function setup(
+  reply: string | null = "Huomenna on kaksi tapaamista.",
+  speakReplies = true,
+  getConversationId?: () => string | undefined,
+) {
   const onUserTurn = vi.fn(async () => reply);
   const onAbortReply = vi.fn();
   const hook = renderHook(
@@ -139,6 +146,7 @@ function setup(reply: string | null = "Huomenna on kaksi tapaamista.", speakRepl
         onUserTurn,
         onAbortReply,
         speakReplies,
+        getConversationId,
         deps: { fetch: fakeFetch as typeof fetch, now: () => clock },
       }),
     { initialProps: { locale: "fi" } },
@@ -169,7 +177,7 @@ describe("useVoiceConversation", () => {
     await speakTurn();
     expect(turnCalls()).toHaveLength(1);
     expect(onUserTurn).toHaveBeenCalledTimes(1);
-    expect(onUserTurn).toHaveBeenCalledWith("Mitä kalenterissa on huomenna?", GRANT);
+    expect(onUserTurn).toHaveBeenCalledWith("Mitä kalenterissa on huomenna?", GRANT, CONVERSATION);
     expect(hook.result.current.phase).toBe("speaking");
     expect(spoken.at(-1)?.lang).toBe("fi-FI");
     expect(spoken.at(-1)?.text).toBe("Huomenna on kaksi tapaamista.");
@@ -180,9 +188,9 @@ describe("useVoiceConversation", () => {
     turnText = "Entä perjantaina?";
     await speakTurn();
     expect(turnCalls()).toHaveLength(2);
-    expect(onUserTurn).toHaveBeenLastCalledWith("Entä perjantaina?", GRANT);
+    expect(onUserTurn).toHaveBeenLastCalledWith("Entä perjantaina?", GRANT, CONVERSATION);
     // Each turn has its own id.
-    const ids = turnCalls().map((c) => c.body!.get("turnId"));
+    const ids = turnCalls().map((c) => (c.body as FormData).get("turnId"));
     expect(new Set(ids).size).toBe(2);
   });
 
@@ -215,7 +223,7 @@ describe("useVoiceConversation", () => {
     await advance(600, VOICE);
     await advance(1200, QUIET);
     expect(turnCalls()).toHaveLength(2);
-    expect(onUserTurn).toHaveBeenLastCalledWith("Ei, tarkoitin torstaita.", GRANT);
+    expect(onUserTurn).toHaveBeenLastCalledWith("Ei, tarkoitin torstaita.", GRANT, CONVERSATION);
   });
 
   it("muting disables the track, drops a turn in progress and submits nothing", async () => {
@@ -395,6 +403,29 @@ describe("useVoiceConversation", () => {
     expect(hook.result.current.phase).toBe("ended");
     expect(hook.result.current.error).toBe("unavailable");
     expect(media.streams.at(-1)!.tracks.every((t) => t.stopped)).toBe(true);
+  });
+
+  it("starts the session for the current conversation, or asks the server to reserve one", async () => {
+    const existing = setup(undefined, true, () => "77777777-7777-4777-8777-777777777777");
+    await startSession(existing.hook);
+    const first = calls.find((c) => c.url.endsWith("/session") && c.method === "POST")!;
+    expect(JSON.parse(first.body as string)).toEqual({
+      conversationId: "77777777-7777-4777-8777-777777777777",
+    });
+    existing.hook.unmount();
+
+    calls = [];
+    const fresh = setup(undefined, true, () => undefined);
+    await startSession(fresh.hook);
+    const second = calls.find((c) => c.url.endsWith("/session") && c.method === "POST")!;
+    expect(JSON.parse(second.body as string)).toEqual({});
+    // Turns go to the conversation the server bound the session to.
+    await speakTurn();
+    expect(fresh.onUserTurn).toHaveBeenCalledWith(
+      "Mitä kalenterissa on huomenna?",
+      GRANT,
+      CONVERSATION,
+    );
   });
 
   it("ends when the page is hidden, when the language changes, and on unmount", async () => {

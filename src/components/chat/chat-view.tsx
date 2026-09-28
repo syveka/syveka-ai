@@ -26,12 +26,14 @@ export function ChatView({
   const t = useTranslations("chat");
   const locale = useLocale();
   const liveActiveRef = useRef(false);
-  const { messages, send, abort, isStreaming, error, flushNavigation } = useChat({
-    conversationId,
-    initialMessages,
-    // A new chat's redirect would remount this view and end a live session.
-    deferNavigation: () => liveActiveRef.current,
-  });
+  const { messages, send, abort, isStreaming, error, flushNavigation, getConversationId } = useChat(
+    {
+      conversationId,
+      initialMessages,
+      // A new chat's redirect would remount this view and end a live session.
+      deferNavigation: () => liveActiveRef.current,
+    },
+  );
   // One player for the whole thread: starting a reply stops any other.
   const playback = useSpeechPlayback(locale);
   const [dictating, setDictating] = useState(false);
@@ -40,10 +42,16 @@ export function ChatView({
   const deviceVoice = useDeviceVoice(locale, introOpen);
 
   // Each finished spoken turn goes through the normal chat pipeline with its
-  // single-use server grant; the server derives voice mode from the grant.
+  // single-use server grant, in the conversation the session is bound to; the
+  // server derives voice mode from the grant.
   const onUserTurn = useCallback(
-    (text: string, grant: string) =>
-      send(text, { useKnowledgeBase: true, documentIds: [], voiceGrant: grant }),
+    (text: string, grant: string, boundConversationId: string) =>
+      send(text, {
+        useKnowledgeBase: true,
+        documentIds: [],
+        voiceGrant: grant,
+        conversationId: boundConversationId,
+      }),
     [send],
   );
   const live = useVoiceConversation({
@@ -51,6 +59,7 @@ export function ChatView({
     onUserTurn,
     onAbortReply: abort,
     speakReplies,
+    getConversationId,
   });
   liveActiveRef.current = live.active;
   const liveVisible = live.active || live.phase === "ended" || live.error !== null;
