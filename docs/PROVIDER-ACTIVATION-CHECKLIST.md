@@ -106,55 +106,93 @@ provider call. Production stays disabled.
 
 ### AI Chat live voice conversation (separate pilot; off by default)
 
-A hands-free **sequential** pipeline, not native speech-to-speech. The browser detects end of
-speech and uploads each finished turn. The server transcribes it (`gpt-4o-mini-transcribe`, one
-attempt). The client submits the text through the normal `/api/v1/ai/chat` route with
-`responseMode: "voice"`, which uses the same session, permissions, moderation, Business DNA and RAG
-as typed chat, with **read-only tools** enforced in code. The reply is read aloud with the device's
-speech voices. It is independent of dictation: it has its own flag, allowlist, keys and budgets,
-and never consumes the dictation 10-attempts-per-day cap.
+A hands-free **sequential** pipeline, not native speech-to-speech:
 
-**Enable with (staging only, after review):** `AI_VOICE_CONVERSATION_ENABLED=1`,
-`AI_VOICE_CONVERSATION_PILOT_ALLOWLIST="<organizationId>:<userId>"`, plus `OPENAI_API_KEY`. The flag
-or allowlist being missing or malformed, or any limit being invalid or out of range, disables it.
+1. The browser detects the end of speech and uploads each finished turn.
+2. The server reserves the turn, transcribes it (`gpt-4o-mini-transcribe`, one attempt) and returns the
+   text with a **single-use grant**.
+3. The client submits the text and grant to the normal `/api/v1/ai/chat` route. That route consumes
+   the grant atomically, so **one accepted turn allows at most one chat generation**. It uses the same
+   session, permissions, moderation, Business DNA and RAG as typed chat, in a bounded voice mode.
+4. The reply is read aloud with the device's speech voices. If the device has no voice for the
+   interface language, the start screen offers text-only replies or dictation instead. It never uses
+   another language's voice.
+
+Live voice is independent of dictation. It has its own flag, allowlist, keys and budgets, and it never
+consumes the dictation cap of 10 attempts per day.
+
+**Enable with (staging only, after review):**
+
+- `AI_VOICE_CONVERSATION_ENABLED=1`
+- `AI_VOICE_CONVERSATION_PILOT_ALLOWLIST="<organizationId>:<userId>"`
+- `OPENAI_API_KEY`
+
+If the flag or allowlist is missing or malformed, or any limit is invalid or out of range, the
+feature is disabled.
 
 | Variable                                        | Default | Allowed range | Meaning                                                                |
 | ----------------------------------------------- | ------- | ------------- | ---------------------------------------------------------------------- |
 | `AI_VOICE_CONVERSATION_SESSION_SECONDS`         | 300     | 60–1800       | Hard session lifetime (server refuses turns after it)                  |
 | `AI_VOICE_CONVERSATION_MAX_TURN_SECONDS`        | 30      | 5–60          | Longest accepted turn (measured server-side)                           |
 | `AI_VOICE_CONVERSATION_MAX_TURNS_PER_SESSION`   | 20      | 1–200         | Turns per session                                                      |
+| `AI_VOICE_CONVERSATION_DAILY_ORG_TURNS`         | 30      | 1–2000        | Turns per organization per Europe/Helsinki day, across all sessions    |
 | `AI_VOICE_CONVERSATION_DAILY_ORG_AUDIO_SECONDS` | 600     | 60–36000      | Audio per organization per Europe/Helsinki day, reserved per turn      |
 | `AI_VOICE_CONVERSATION_MAX_CONCURRENT_PER_ORG`  | 1       | 1–20          | Active sessions per organization (one per user; a new tab replaces it) |
 
 **What the server enforces (before any paid call):**
 
-- same-origin request, session, `chat:use`, flag and allowlist
-- short-window limit (40 turns / 5 min per user, failing closed)
-- the organization's monthly AI-message quota (read only)
-- size ≤ 2 MiB, measured duration ≤ the turn cap
-- one atomic Redis reservation (Lua) that checks, in one step:
-  - session owner and expiry
-  - turn cap and duplicate turn id
-  - daily audio budget, then adds the measured seconds
+- **Turn route**, all before transcription:
+  - same-origin request, session, `chat:use`, flag and allowlist;
+  - short-window limit (40 turns / 5 min per user, fails closed);
+  - the organization's monthly AI-message quota (read only);
+  - size ≤ 2 MiB and measured duration ≤ the turn cap;
+  - one atomic Redis reservation (Lua) that checks, in one step: session owner and expiry, the
+    per-session turn cap, a duplicate turn id, and **both** daily budgets (audio seconds and turns).
+    Only then does it add to them. A refused turn reserves nothing.
+- **Session start:** refused when the organization's daily audio or turn budget is already used up,
+  or it is at its concurrency limit. A new session or tab can't reset a daily budget: the budgets are
+  keyed by organization and Helsinki day, not by session.
+- **Grant:** issued only for a non-empty transcript, only while the session is still live, and valid
+  for 120 s. It is bound to the organization, user, session, turn and exact transcript text.
+- **Chat route with a grant:**
+  - atomically consumes the grant (owner, exact text, session still live) before generating;
+  - a replay, a changed message, or an ended, expired or replaced session gets 409 and no generation;
+  - `documentIds` can't be combined with a grant;
+  - voice mode is derived **only** from the grant; a client-sent `responseMode` is rejected (400).
+- **Chat route without a grant** while the user has a live session: refused with 409
+  `live_voice_session_active`, so the typed route can't be used to get around the voice limits.
+  With the flag off, typed chat never touches the voice store.
+- **Voice-mode bounds:**
+  - the standard chat model (pinned and deep models are ignored);
+  - ≤ 400 output tokens and ≤ 2 model/tool rounds;
+  - no provider retries;
+  - the last 12 messages of history and ≤ 3 RAG chunks;
+  - **read-only tools** (`searchKnowledgeBase`, `searchContacts`, `getCalendarAvailability`),
+    enforced in `executeTool` as well as in the tool list.
+- **Failure:** any store error returns 503 (fail closed).
 
-Reservations are never refunded. A store error returns 503.
+**What counts as used:**
+
+- A turn (its audio seconds, one daily turn and one session turn) is consumed as soon as its
+  reservation succeeds. It is not refunded on provider failure, timeout, cancel or an empty
+  transcript.
+- A grant is consumed when the chat route accepts it. If the request fails before that (for example
+  on moderation), the grant expires unused after 120 s.
+- Ending the conversation while Syveka is "thinking" aborts the reply in the browser. A generation
+  already running on the server may still finish and be saved.
 
 **Why no realtime provider session:** the browser holds no provider credential and no open
-provider stream. Every paid unit is a separate server request, so an ended or expired session
-cannot be kept alive by a modified client.
+provider stream. Every paid unit is a separate server request, so a modified client can't keep an
+ended or expired session alive.
 
-**Cost (verified list prices, 2026-09):**
+**Cost:** see `docs/live-voice-cost-report.md` for sources, assumptions and scenarios. In summary:
 
-- **Transcription** (`gpt-4o-mini-transcribe`) costs $0.003 per audio minute. With the defaults this
-  is hard-bounded at 600 s per organization per day ≈ **$0.03/day**.
-- **Chat replies** are a separate cost: one normal chat message per turn on the chat model (e.g.
-  `claude-sonnet-4-5`, $3 / $15 per 1M input/output tokens). Voice replies are short, but the
-  prompt includes context. At an assumed ~6k input / ~150 output tokens per turn that is ≈ $0.02 per
-  turn. Across 20 turns/session, and the audio budget allowing a few sessions a day, the estimate is
-  ≈ **$0.40–$1.50/day for one pilot organization**.
-- The chat part is bounded by the per-session turn cap, the audio budget (every turn needs audio)
-  and the existing chat quota and rate limits. It is **estimated, not a hard dollar cap**.
-- Reply speech uses device voices and costs nothing.
+- Transcription is hard-capped at 600 s per organization per day (≤ $0.03/day).
+- Chat replies (`claude-sonnet-4-5`) are the main cost: roughly $0.009–$0.05 per turn, ≈ $0.20 per
+  5-minute conversation.
+- A realistic heavy pilot day (30 turns) is ≈ $1.70 per organization.
+- The chat part is bounded by turns, tokens, rounds, history and RAG, but it is **not a hard dollar
+  cap**. The theoretical ceiling is ≈ $8.80 per organization per day.
 
 **Privacy:**
 
@@ -164,10 +202,18 @@ cannot be kept alive by a modified client.
 - The intro screen discloses this. OpenAI's own retention is governed by its API data policy; it is
   not promised here.
 
-- [ ] **Manual verification required** (pilot account, real phone): start and end a conversation;
-      confirm turns are answered aloud, that talking interrupts a reply, that mute stops turns,
-      that ending stops the microphone indicator, and that asking for a booking gets a spoken
-      refusal pointing to typed chat.
+**Known limitation (separate follow-up):** in typed chat, confirmation for write tools is prompt-only.
+See `docs/ai-tool-confirmation-followup.md`. Live voice doesn't depend on it, because it is read-only.
+
+- [ ] **Manual verification required** (pilot account, real phone, in FI, EN and AR):
+  - start and end a conversation;
+  - confirm turns are answered aloud;
+  - check that talking interrupts a reply and that mute stops turns;
+  - check that ending stops the microphone indicator;
+  - check that asking for a booking gets a spoken refusal pointing to typed chat;
+  - check that a device without a voice for the language offers text-only replies or dictation;
+  - check that a second tab replaces the first session;
+  - check that the daily limit message appears after 30 turns.
 
 ## 4. Resend (transactional + inbound email)
 
