@@ -204,6 +204,7 @@
       "live_voice_session_active": "Puhekeskustelu on käynnissä. Lopeta se ennen kirjoittamista.",
       "voice_session_ended": "Puhekeskustelu on päättynyt.",
       "voice_turn_invalid": "Puheenvuoroon ei voitu vastata. Sano se uudelleen.",
+      "voice_context_too_large": "Tähän kysymykseen tarvitaan enemmän taustatietoa kuin puhekeskustelussa voidaan käyttää. Lopeta puhekeskustelu ja kysy kirjoittamalla.",
       "service_unavailable": "Palvelu ei ole tilapäisesti käytettävissä. Yritä uudelleen."
     },
     "voice": {

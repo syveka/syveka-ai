@@ -48,6 +48,15 @@ export async function streamClaude(params: {
   maxToolRounds?: number;
   /** Attempts per round on transient errors (default AI_RETRY_MAX_ATTEMPTS). */
   maxAttempts?: number;
+  /**
+   * Called with the full request before every model call; throwing prevents
+   * the call (e.g. an input budget).
+   */
+  beforeModelCall?: (request: {
+    system: string;
+    messages: Anthropic.MessageParam[];
+    tools?: Anthropic.Tool[];
+  }) => void;
 }): Promise<{ tokensIn: number; tokensOut: number; stopReason: string | null }> {
   const env = getAnthropicEnv();
   const AI_RETRY_MAX_ATTEMPTS = params.maxAttempts ?? env.AI_RETRY_MAX_ATTEMPTS;
@@ -66,6 +75,7 @@ export async function streamClaude(params: {
   for (let round = 0; round < maxToolRounds; round++) {
     // Once cancellation is observed, no new model call or tool round starts.
     throwIfAborted(params.signal);
+    params.beforeModelCall?.({ system: params.system, messages, tools: params.tools });
     let final: Anthropic.Message | null = null;
     for (let attempt = 1; attempt <= AI_RETRY_MAX_ATTEMPTS; attempt++) {
       let emittedText = false;

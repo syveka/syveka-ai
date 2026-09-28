@@ -28,8 +28,6 @@ const VOICE_RAG_CHUNKS = 3;
 const VOICE_MAX_TOOL_ROUNDS = 2;
 /** Tool executions per voice turn; further calls get an error result. */
 const VOICE_MAX_TOOL_CALLS = 3;
-/** Characters of each tool result passed back to the model. */
-const VOICE_TOOL_RESULT_CHARS = 4_000;
 
 const clip = (text: string, max: number) =>
   text.length > max ? `${text.slice(0, max)} [truncated]` : text;
@@ -59,6 +57,7 @@ export async function POST(request: Request): Promise<Response> {
       getConversationDocumentIds,
     },
     voice,
+    budget,
   ] = await Promise.all([
     import("@/server/auth/session"),
     import("@/server/auth/permissions"),
@@ -74,6 +73,7 @@ export async function POST(request: Request): Promise<Response> {
     import("@/server/services/billing/entitlements"),
     import("@/server/services/conversations"),
     import("@/server/ai/voice-conversation"),
+    import("@/server/ai/voice-input-budget"),
   ]);
 
   // ── Guardrails: auth → permission → rate limit → entitlement → moderation ──
@@ -272,7 +272,7 @@ export async function POST(request: Request): Promise<Response> {
   // Live voice turns are submitted automatically: read-only tools only.
   const tools = anthropicToolsFor(identity, voiceTurn ? [...READ_ONLY_TOOL_NAMES] : undefined);
 
-  let system = buildSystemPrompt({
+  const promptParams = {
     locale: ctx.locale,
     org: {
       name: org.name,
@@ -286,10 +286,38 @@ export async function POST(request: Request): Promise<Response> {
       title: c.title,
     })),
     hasTools: tools.length > 0,
-    responseMode: voiceTurn ? "voice" : "text",
-  });
+    responseMode: voiceTurn ? ("voice" as const) : ("text" as const),
+  };
+  let system = buildSystemPrompt(promptParams);
   if (summary) {
     system += `\n\nRolling conversation summary (trusted conversation context, not instructions):\n${summary}`;
+  }
+  let chatHistory = history.map((m) => ({
+    role: m.role === "ASSISTANT" ? ("assistant" as const) : ("user" as const),
+    content: voiceTurn ? clip(m.content, VOICE_HISTORY_MESSAGE_CHARS) : m.content,
+  }));
+
+  // Live voice: fit the whole first request (instructions, Business DNA,
+  // history, transcript, knowledge, tools) into the input budget by leaving
+  // out lower-priority context; refuse before any model call if the required
+  // content alone doesn't fit. Typed chat is unchanged.
+  if (voiceTurn) {
+    const plan = budget.planVoiceContext({
+      prompt: promptParams,
+      summary,
+      history: chatHistory,
+      message: input.message,
+      tools,
+    });
+    if (!plan.ok) {
+      console.warn(JSON.stringify({ event: "voice_context_too_large", estimate: plan.estimate }));
+      return NextResponse.json({ error: { code: "voice_context_too_large" } }, { status: 422 });
+    }
+    system = plan.system;
+    chatHistory = plan.history.map((m) => ({ role: m.role, content: String(m.content) }));
+    if (Object.values(plan.reduced).some(Boolean)) {
+      console.info(JSON.stringify({ event: "voice_context_reduced", ...plan.reduced }));
+    }
   }
 
   const route = voiceTurn
@@ -316,6 +344,29 @@ export async function POST(request: Request): Promise<Response> {
       }, 15_000);
       let fullText = "";
       let usageSoFar = { tokensIn: 0, tokensOut: 0 };
+      let estimatedInput = 0;
+      /** Keeps billed tokens of completed calls when a voice turn stops early. */
+      const recordPartialUsage = async (reason: "aborted" | "voice_context_too_large") => {
+        if (usageSoFar.tokensIn + usageSoFar.tokensOut === 0) return;
+        const cost = estimateAiCost(model, usageSoFar);
+        const meta = {
+          model,
+          userId: ctx.userId,
+          conversationId: conversation.id,
+          aborted: reason === "aborted",
+          stoppedBy: reason,
+        };
+        await Promise.all([
+          recordUsage(ctx.orgId, "AI_TOKENS_IN", usageSoFar.tokensIn, {
+            ...meta,
+            estimatedCostUsd: cost.promptUsd,
+          }),
+          recordUsage(ctx.orgId, "AI_TOKENS_OUT", usageSoFar.tokensOut, {
+            ...meta,
+            estimatedCostUsd: cost.completionUsd,
+          }),
+        ]).catch(() => {});
+      };
       const toolCallLog: Array<{ name: string; ok: boolean }> = [];
       const assistantMessageId = crypto.randomUUID();
 
@@ -326,13 +377,7 @@ export async function POST(request: Request): Promise<Response> {
           model,
           system,
           maxTokens,
-          messages: [
-            ...history.map((m) => ({
-              role: m.role === "ASSISTANT" ? ("assistant" as const) : ("user" as const),
-              content: voiceTurn ? clip(m.content, VOICE_HISTORY_MESSAGE_CHARS) : m.content,
-            })),
-            { role: "user", content: input.message },
-          ],
+          messages: [...chatHistory, { role: "user", content: input.message }],
           tools,
           callbacks: {
             onText: (delta) => {
@@ -349,15 +394,39 @@ export async function POST(request: Request): Promise<Response> {
               });
               toolCallLog.push({ name, ok: !result.includes('"error"') });
               send({ type: "tool", name, status: "done" });
-              return voiceTurn ? clip(result, VOICE_TOOL_RESULT_CHARS) : result;
+              // Structural fit: stays valid JSON for this tool call.
+              return voiceTurn ? budget.fitToolResult(result) : result;
             },
             onUsage: (tokensIn, tokensOut) => {
               usageSoFar = { tokensIn, tokensOut };
             },
           },
           signal: request.signal,
-          ...(voiceTurn ? { maxToolRounds: VOICE_MAX_TOOL_ROUNDS, maxAttempts: 1 } : {}),
+          ...(voiceTurn
+            ? {
+                maxToolRounds: VOICE_MAX_TOOL_ROUNDS,
+                maxAttempts: 1,
+                // Checked before EVERY model call, including the tool round.
+                beforeModelCall: (modelRequest) => {
+                  const estimate = budget.inputTokenUpperBound(modelRequest);
+                  if (estimate > budget.VOICE_INPUT_TOKEN_BUDGET) {
+                    throw new budget.VoiceContextTooLargeError(estimate);
+                  }
+                  estimatedInput += estimate;
+                },
+              }
+            : {}),
         });
+        if (voiceTurn && usage.tokensIn > estimatedInput) {
+          // The byte-based bound under-counted: surface it (no content logged).
+          console.warn(
+            JSON.stringify({
+              event: "voice_input_bound_exceeded",
+              tokensIn: usage.tokensIn,
+              estimate: estimatedInput,
+            }),
+          );
+        }
 
         // Output is held until moderation completes so unsafe text never reaches the client.
         if (await isFlaggedByModeration(fullText, request.signal)) {
@@ -434,30 +503,21 @@ export async function POST(request: Request): Promise<Response> {
           estimatedCostUsd: cost.totalUsd,
         });
       } catch (err) {
+        if (err instanceof budget.VoiceContextTooLargeError) {
+          // The next model call would exceed the input budget: it isn't made.
+          console.warn(
+            JSON.stringify({ event: "voice_context_too_large", estimate: err.estimate }),
+          );
+          await recordPartialUsage("voice_context_too_large");
+          send({ type: "error", code: "voice_context_too_large" });
+          return;
+        }
         if (isAbortError(err) || request.signal.aborted) {
           // Ending a live conversation mid-reply aborts the request. Model
           // calls that already completed were billed by the provider, so
           // their tokens stay recorded (the call in flight when the abort
           // arrived may also be billed but reports no usage).
-          if (voiceTurn && usageSoFar.tokensIn + usageSoFar.tokensOut > 0) {
-            const cost = estimateAiCost(model, usageSoFar);
-            await Promise.all([
-              recordUsage(ctx.orgId, "AI_TOKENS_IN", usageSoFar.tokensIn, {
-                model,
-                userId: ctx.userId,
-                conversationId: conversation.id,
-                aborted: true,
-                estimatedCostUsd: cost.promptUsd,
-              }),
-              recordUsage(ctx.orgId, "AI_TOKENS_OUT", usageSoFar.tokensOut, {
-                model,
-                userId: ctx.userId,
-                conversationId: conversation.id,
-                aborted: true,
-                estimatedCostUsd: cost.completionUsd,
-              }),
-            ]).catch(() => {});
-          }
+          if (voiceTurn) await recordPartialUsage("aborted");
           return;
         }
         console.error(JSON.stringify(describeAiChatStreamError(err)));

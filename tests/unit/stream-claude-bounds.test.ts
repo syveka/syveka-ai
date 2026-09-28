@@ -99,6 +99,29 @@ describe("streamClaude bounds", () => {
     expect(onUsage).toHaveBeenCalledWith(100, 10); // the billed first call is reported
   });
 
+  it("beforeModelCall sees the full request before EVERY call; throwing prevents that call", async () => {
+    m.stream.mockImplementation(() => ok(toolUseMessage));
+    const seen: number[] = [];
+    const beforeModelCall = vi.fn((request: { messages: unknown[] }) => {
+      seen.push(request.messages.length);
+      if (seen.length === 2) throw new Error("over budget");
+    });
+    await expect(
+      streamClaude({
+        model: "claude-sonnet-4-5",
+        system: "s",
+        messages: [{ role: "user", content: "hi" }],
+        maxTokens: 400,
+        callbacks: { onText: vi.fn(), onToolUse: vi.fn(async () => "{}") },
+        maxToolRounds: 2,
+        beforeModelCall,
+      }),
+    ).rejects.toThrow("over budget");
+    // Call 1: the user message; call 2 would add the tool request and its result.
+    expect(seen).toEqual([1, 3]);
+    expect(m.stream).toHaveBeenCalledTimes(1);
+  });
+
   it("an already-cancelled request makes no model call", async () => {
     const controller = new AbortController();
     controller.abort();

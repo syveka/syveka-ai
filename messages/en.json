@@ -204,6 +204,7 @@
       "live_voice_session_active": "A voice conversation is active in this chat. End it before typing.",
       "voice_session_ended": "The voice conversation has ended.",
       "voice_turn_invalid": "That voice turn could not be answered. Please say it again.",
+      "voice_context_too_large": "This question needs more context than a voice conversation can use. End the voice conversation and ask it in the typed chat.",
       "service_unavailable": "The service is temporarily unavailable. Please try again."
     },
     "voice": {

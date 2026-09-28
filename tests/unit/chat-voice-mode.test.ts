@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   consume: 1,
   active: 0,
   consumeArgs: [] as string[],
+  dna: null as unknown,
+  org: { name: "Acme Oy", settings: {} as Record<string, unknown> },
   history: [] as Array<{ role: string; content: string }>,
 }));
 
@@ -59,7 +61,7 @@ vi.mock("@/server/db/tenant", () => ({
   })),
   unscopedPrisma: {
     message: { findMany: vi.fn(async () => mocks.history), create: vi.fn(async () => ({})) },
-    organization: { findUniqueOrThrow: vi.fn(async () => ({ name: "Acme Oy", settings: {} })) },
+    organization: { findUniqueOrThrow: vi.fn(async () => mocks.org) },
     conversation: { update: vi.fn(async () => ({})) },
     $transaction: vi.fn(),
   },
@@ -68,7 +70,7 @@ vi.mock("@/server/ai/router", () => ({
   routeModel: vi.fn(() => ({ model: "claude-sonnet-4-5", maxTokens: 4096 })),
 }));
 vi.mock("@/server/business-dna/context", () => ({
-  getBusinessDnaContext: vi.fn(async () => null),
+  getBusinessDnaContext: vi.fn(async () => mocks.dna),
 }));
 vi.mock("@/server/ai/rag", () => ({
   retrieveChunks: vi.fn(async () => []),
@@ -113,6 +115,8 @@ beforeEach(() => {
   mocks.consume = 1;
   mocks.active = 0;
   mocks.history = [];
+  mocks.dna = null;
+  mocks.org = { name: "Acme Oy", settings: {} };
   toolResults = [];
   // The model "tries" to book a meeting and create a contact.
   mocks.streamClaude.mockImplementation(async ({ callbacks }) => {
@@ -256,7 +260,8 @@ describe("chat route voice mode", () => {
       return { tokensIn: 10, tokensOut: 5, stopReason: "end_turn" };
     });
     await (await chat({ message: "x", voiceGrant: GRANT })).text();
-    expect(results.slice(0, 3).every((r) => r.length <= 4_000 + " [truncated]".length)).toBe(true);
+    expect(results.slice(0, 3).every((r) => Buffer.byteLength(r) <= 4_000)).toBe(true);
+    expect(results.slice(0, 3).every((r) => JSON.parse(r))).toBe(true); // still valid JSON
     expect(results.slice(3)).toEqual([
       JSON.stringify({ error: "tool_limit_reached" }),
       JSON.stringify({ error: "tool_limit_reached" }),
@@ -280,6 +285,129 @@ describe("chat route voice mode", () => {
     ]);
     // Only the user's message was stored; no assistant reply.
     expect(vi.mocked(unscopedPrisma.message.create)).toHaveBeenCalledTimes(1);
+  });
+
+  describe("aggregate input budget (live mode only)", () => {
+    const bigDna = () => ({
+      displayName: "Acme",
+      description: "Kuvaus ".repeat(140),
+      supportedLocales: [],
+      keyFacts: [],
+      openingHours: null,
+      services: Array.from({ length: 400 }, (_, i) => ({
+        name: `Palvelu ${i}`,
+        description: "Pitkä palvelukuvaus äöå. ".repeat(80),
+        priceCents: 5000,
+        priceNote: null,
+        durationMinutes: 30,
+      })),
+    });
+
+    it("many services and oversized instructions: the call fits the budget, rules intact, typed chat untouched", async () => {
+      const { inputTokenUpperBound, VOICE_FIRST_CALL_TOKEN_TARGET } =
+        await import("@/server/ai/voice-input-budget");
+      mocks.dna = bigDna();
+      mocks.org = { name: "Acme Oy", settings: { aiInstructions: "Ohje. ".repeat(4_000) } };
+      mocks.streamClaude.mockImplementation(async (params) => {
+        params.beforeModelCall?.({
+          system: params.system,
+          messages: params.messages,
+          tools: params.tools,
+        });
+        params.callbacks.onText("Selvä.");
+        return { tokensIn: 10, tokensOut: 5, stopReason: "end_turn" };
+      });
+      const res = await chat({ message: "Mitä palveluita teillä on?", voiceGrant: GRANT });
+      expect(await res.text()).not.toContain('"type":"error"');
+      const call = mocks.streamClaude.mock.calls[0]![0];
+      const estimate = inputTokenUpperBound({
+        system: call.system,
+        messages: call.messages,
+        tools: call.tools,
+      });
+      expect(estimate).toBeLessThanOrEqual(VOICE_FIRST_CALL_TOKEN_TARGET);
+      expect(call.system).toContain("## Live voice conversation");
+      expect(call.system).toContain("cannot create or change records");
+      expect(call.system).toContain("## Rules");
+      expect(call.system).not.toContain("Palvelu 399");
+
+      // Typed chat with the same organization data is unchanged (no budget).
+      await (await chat({ message: "typed" })).text();
+      expect(mocks.streamClaude.mock.calls[1]![0].system).toContain("Palvelu 399");
+      expect(mocks.streamClaude.mock.calls[1]![0].beforeModelCall).toBeUndefined();
+    });
+
+    it("rejects with a localized error BEFORE any model call when required content can't fit", async () => {
+      // The organization name is part of the required instructions.
+      mocks.org = { name: "A".repeat(60_000), settings: {} };
+      const res = await chat({ message: "Hei", voiceGrant: GRANT });
+      expect(res.status).toBe(422);
+      expect(await res.json()).toEqual({ error: { code: "voice_context_too_large" } });
+      expect(mocks.streamClaude).not.toHaveBeenCalled();
+    });
+
+    it("checks the accumulated request again before the second call and stops if it's too large", async () => {
+      const { recordUsage } = await import("@/server/services/billing/entitlements");
+      const calls: number[] = [];
+      mocks.streamClaude.mockImplementation(async (params) => {
+        const request = {
+          system: params.system,
+          messages: [...params.messages],
+          tools: params.tools,
+        };
+        params.beforeModelCall(request); // call 1 fits
+        calls.push(1);
+        params.callbacks.onUsage(9_000, 60);
+        const result = await params.callbacks.onToolUse("searchKnowledgeBase", { query: "hinnat" });
+        // Content added before call 2: the tool request and its (fitted) result,
+        // plus — to force the overflow here — an oversized block.
+        request.messages.push(
+          { role: "assistant", content: [{ type: "tool_use", id: "t1", name: "x", input: {} }] },
+          {
+            role: "user",
+            content: [
+              { type: "tool_result", tool_use_id: "t1", content: result },
+              { type: "text", text: "ä".repeat(30_000) },
+            ],
+          },
+        );
+        params.beforeModelCall(request); // call 2 would exceed the budget
+        calls.push(2);
+        return { tokensIn: 0, tokensOut: 0, stopReason: "end_turn" };
+      });
+      const body = await (await chat({ message: "Hinnat?", voiceGrant: GRANT })).text();
+      expect(calls).toEqual([1]); // the second call was never made
+      expect(body).toContain('"type":"error","code":"voice_context_too_large"');
+      // The completed first call stays recorded.
+      const rows = vi.mocked(recordUsage).mock.calls.map((c) => [c[1], c[2], c[3]?.stoppedBy]);
+      expect(rows).toEqual([
+        ["AI_TOKENS_IN", 9_000, "voice_context_too_large"],
+        ["AI_TOKENS_OUT", 60, "voice_context_too_large"],
+      ]);
+    });
+
+    it("tool results are fitted structurally (valid JSON), not cut mid-string", async () => {
+      const { retrieveChunks } = await import("@/server/ai/rag");
+      vi.mocked(retrieveChunks).mockResolvedValue(
+        Array.from({ length: 5 }, (_, i) => ({
+          chunkId: `c${i}`,
+          documentId: `d${i}`,
+          title: `t${i}`,
+          content: "ö".repeat(3_000),
+          similarity: 1,
+        })),
+      );
+      let result = "";
+      mocks.streamClaude.mockImplementation(async ({ callbacks }) => {
+        result = await callbacks.onToolUse("searchKnowledgeBase", { query: "hinnat" });
+        return { tokensIn: 1, tokensOut: 1, stopReason: "end_turn" };
+      });
+      await (await chat({ message: "x", voiceGrant: GRANT })).text();
+      expect(Buffer.byteLength(result)).toBeLessThanOrEqual(4_000);
+      const parsed = JSON.parse(result);
+      expect(parsed.results.length + parsed.omittedForLength).toBe(5);
+      vi.mocked(retrieveChunks).mockResolvedValue([]);
+    });
   });
 
   it("with live voice disabled, typed chat never touches the voice store", async () => {
