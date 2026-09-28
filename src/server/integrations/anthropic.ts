@@ -38,8 +38,15 @@ export async function streamClaude(params: {
   tools?: Anthropic.Tool[];
   callbacks: StreamCallbacks;
   signal?: AbortSignal;
+  /** Model/tool rounds (default 5). Each round re-sends the whole context. */
+  maxToolRounds?: number;
+  /** Attempts per round on transient errors (default AI_RETRY_MAX_ATTEMPTS). */
+  maxAttempts?: number;
 }): Promise<{ tokensIn: number; tokensOut: number; stopReason: string | null }> {
-  const { AI_RETRY_MAX_ATTEMPTS, AI_RETRY_BASE_DELAY_MS } = getAnthropicEnv();
+  const env = getAnthropicEnv();
+  const AI_RETRY_MAX_ATTEMPTS = params.maxAttempts ?? env.AI_RETRY_MAX_ATTEMPTS;
+  const { AI_RETRY_BASE_DELAY_MS } = env;
+  const maxToolRounds = params.maxToolRounds ?? 5;
   let tokensIn = 0;
   let tokensOut = 0;
   let stopReason: string | null = null;
@@ -49,8 +56,8 @@ export async function streamClaude(params: {
     content: m.content,
   }));
 
-  // Tool-use loop: max 5 rounds to bound cost (§15.6)
-  for (let round = 0; round < 5; round++) {
+  // Tool-use loop: bounded rounds (default 5) to bound cost (§15.6)
+  for (let round = 0; round < maxToolRounds; round++) {
     let final: Anthropic.Message | null = null;
     for (let attempt = 1; attempt <= AI_RETRY_MAX_ATTEMPTS; attempt++) {
       let emittedText = false;

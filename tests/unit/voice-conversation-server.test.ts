@@ -9,14 +9,15 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * The Lua scripts themselves were executed separately against real Lua
  * (fakeredis) — see the PR.
  */
-const ORG = "89d7fa73-fc5e-4236-aee1-c13d4dfeadb9";
-const USER = "b9d7db81-cbaf-447a-b4ab-d5b9809a338d";
-const SESSION = "11111111-1111-4111-8111-111111111111";
+const ORG = "11111111-1111-4111-8111-111111111111";
+const USER = "22222222-2222-4222-8222-222222222222";
+const SESSION = "44444444-4444-4444-8444-444444444444";
 
 const m = vi.hoisted(() => ({
   ctx: null as null | { orgId: string; userId: string; role: string },
   rate: { success: true } as Record<string, unknown>,
   evalResult: 1 as unknown,
+  grantResult: 1 as unknown,
   evalError: null as Error | null,
   evalCalls: [] as Array<{ script: string; keys: string[]; args: string[] }>,
   order: [] as string[],
@@ -38,6 +39,10 @@ vi.mock("@/server/integrations/redis", () => ({
       m.evalCalls.push({ script, keys, args });
       m.order.push("reserve");
       if (m.evalError) throw m.evalError;
+      if (script.includes('"session", ARGV[3]')) {
+        m.order.push("grant");
+        return m.grantResult;
+      }
       return m.evalResult;
     }),
   },
@@ -100,6 +105,7 @@ beforeEach(() => {
   m.ctx = { orgId: ORG, userId: USER, role: "MEMBER" };
   m.rate = { success: true };
   m.evalResult = 1;
+  m.grantResult = 1;
   m.evalError = null;
   m.evalCalls = [];
   m.order = [];
@@ -122,6 +128,7 @@ describe("configuration and gating", () => {
       sessionSeconds: 300,
       maxTurnSeconds: 30,
       maxTurnsPerSession: 20,
+      dailyOrgTurns: 30,
       dailyOrgAudioSeconds: 600,
       maxConcurrentPerOrg: 1,
     });
@@ -186,12 +193,15 @@ describe("POST/DELETE /api/v1/ai/voice-conversation/session", () => {
     expect(call.keys).toContain(`voice:conv:user:${ORG}:${USER}`);
     expect(call.args.slice(1, 3)).toEqual([ORG, USER]);
     expect(call.args[6]).toBe("1"); // max concurrent per org
-    expect(call.args[7]).toBe("600000"); // daily org budget (ms)
+    expect(call.args[7]).toBe("600000"); // daily org audio budget (ms)
+    expect(call.args[8]).toBe("30"); // daily org turns
+    expect(call.keys).toContain(`voice:conv:org:${ORG}:turns:${call.keys[4]!.split(":").pop()}`);
   });
 
   it.each([
     [-2, "voice_capacity_reached"],
     [-3, "voice_daily_limit_reached"],
+    [-7, "voice_daily_limit_reached"],
   ])("maps store result %s to 429 %s", async (result, code) => {
     m.evalResult = result;
     expect(await json(await start())).toEqual({ status: 429, body: { error: { code } } });
@@ -283,11 +293,13 @@ describe("POST /api/v1/ai/voice-conversation/turn", () => {
     m.evalResult = 12_000;
     const { status, body } = await json(await postTurn(turnRequest()));
     expect(status).toBe(200);
-    expect(body.data).toEqual({
+    expect(body.data).toMatchObject({
       text: "Mitä kalenterissa on huomenna?",
       dailyRemainingSeconds: 588,
     });
-    expect(m.order).toEqual(["reserve", "provider"]);
+    expect(body.data.grant).toMatch(/^[0-9a-f-]{36}$/);
+    // Reserve → one provider call → one grant for one chat generation.
+    expect(m.order).toEqual(["reserve", "provider", "reserve", "grant"]);
     const reserve = m.evalCalls[0]!;
     expect(reserve.keys[0]).toBe(`voice:conv:session:${SESSION}`);
     expect(reserve.keys[1]).toMatch(new RegExp(`^voice:conv:org:${ORG}:day:\\d{4}-\\d{2}-\\d{2}$`));
@@ -311,6 +323,7 @@ describe("POST /api/v1/ai/voice-conversation/turn", () => {
     [-5, 429, "turn_limit"],
     [-6, 409, "duplicate_turn"],
     [-3, 429, "voice_daily_limit_reached"],
+    [-7, 429, "voice_daily_limit_reached"],
   ])("store result %s → %s %s, no provider call", async (result, status, code) => {
     m.evalResult = result;
     expect(await json(await postTurn(turnRequest()))).toEqual({
@@ -318,6 +331,24 @@ describe("POST /api/v1/ai/voice-conversation/turn", () => {
       body: { error: { code } },
     });
     expect(m.transcribe).not.toHaveBeenCalled();
+  });
+
+  it("an empty transcript issues no grant (no chat generation can follow)", async () => {
+    m.transcribe.mockImplementation(async () => {
+      m.order.push("provider");
+      return "   ";
+    });
+    const { status, body } = await json(await postTurn(turnRequest()));
+    expect(status).toBe(200);
+    expect(body.data.text).toBe("");
+    expect(body.data.grant).toBeUndefined();
+    expect(m.order).not.toContain("grant");
+  });
+
+  it("a session that ended during transcription gets no grant (409)", async () => {
+    m.grantResult = -1;
+    const res = await postTurn(turnRequest());
+    expect(await json(res)).toEqual({ status: 409, body: { error: { code: "session_expired" } } });
   });
 
   it("fails closed when the reservation store errors", async () => {

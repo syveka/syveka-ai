@@ -21,14 +21,17 @@ function error(code: string, status: number) {
 }
 
 /**
- * One finished spoken turn of a live voice conversation → text. The text is
- * returned to the client, which submits it through the normal chat pipeline
- * (same session, permissions, moderation, Business DNA, RAG, accounting).
+ * One finished spoken turn of a live voice conversation → text plus a
+ * single-use grant. The client submits the text with the grant through the
+ * normal chat pipeline (same session, permissions, moderation, Business DNA,
+ * RAG, accounting); the chat route consumes the grant atomically, so one
+ * accepted turn allows at most one chat generation, in bounded voice mode.
  *
  * Paid work happens only after every check passes and the turn is reserved
  * atomically against the session (owner, expiry, turn cap, idempotent turn
- * id) and the organization's daily audio budget. The reservation is never
- * refunded, and there is exactly one provider attempt (no retries).
+ * id) and the organization's daily audio and turn budgets. The reservation is
+ * never refunded, and there is exactly one provider attempt (no retries).
+ * An empty transcript gets no grant.
  */
 export async function POST(request: Request): Promise<Response> {
   const [
@@ -118,11 +121,9 @@ export async function POST(request: Request): Promise<Response> {
     return error("voice_conversation_unavailable", 503);
   }
   if (!reservation.ok) {
-    const status =
-      reservation.reason === "daily_budget" || reservation.reason === "turn_limit" ? 429 : 409;
-    const code =
-      reservation.reason === "daily_budget" ? "voice_daily_limit_reached" : reservation.reason;
-    return error(code, status);
+    const daily = reservation.reason === "daily_budget" || reservation.reason === "daily_turns";
+    const status = daily || reservation.reason === "turn_limit" ? 429 : 409;
+    return error(daily ? "voice_daily_limit_reached" : reservation.reason, status);
   }
 
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(TRANSCRIPTION_TIMEOUT_MS)]);
@@ -160,5 +161,35 @@ export async function POST(request: Request): Promise<Response> {
     0,
     Math.floor((config.dailyOrgAudioSeconds * 1000 - reservation.usedMs) / 1000),
   );
-  return NextResponse.json({ data: { text, dailyRemainingSeconds: remainingSeconds } });
+  const trimmed = text.trim();
+  if (!trimmed) {
+    // Nothing to answer: no grant, so no chat generation can follow.
+    return NextResponse.json({ data: { text: "", dailyRemainingSeconds: remainingSeconds } });
+  }
+
+  // One accepted turn → one single-use grant for exactly one chat generation,
+  // bound to this user, organization, session, turn and transcript.
+  let grant: string | null;
+  try {
+    grant = await conversation.issueVoiceGrant(
+      redis,
+      ctx,
+      fields.data.sessionId,
+      fields.data.turnId,
+      trimmed,
+    );
+  } catch (e) {
+    console.error(
+      JSON.stringify({
+        event: "voice_conversation_store_unavailable",
+        op: "grant",
+        name: e instanceof Error ? e.name : "unknown",
+      }),
+    );
+    return error("voice_conversation_unavailable", 503);
+  }
+  if (!grant) return error("session_expired", 409);
+  return NextResponse.json({
+    data: { text: trimmed, grant, dailyRemainingSeconds: remainingSeconds },
+  });
 }

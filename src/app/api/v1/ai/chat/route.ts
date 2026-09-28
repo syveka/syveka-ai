@@ -3,6 +3,7 @@ import { describeAiChatStreamError } from "@/server/ai/stream-error-log";
 import { chatRequestSchema, type ChatStreamEvent } from "@/lib/validators/chat";
 import type { RetrievedChunk } from "@/server/ai/rag";
 import type { ToolIdentity } from "@/server/ai/tools";
+import type { EvalClient } from "@/server/ai/voice-conversation";
 import { estimateAiCost } from "@/server/ai/cost";
 import { isAbortError } from "@/server/ai/retry";
 
@@ -11,6 +12,18 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 const CONTEXT_WINDOW_TURNS = 20; // then rolling summary (§15.6)
+
+/**
+ * Per-response bounds for live voice turns (typed chat is unchanged). A voice
+ * reply is spoken, so it is short; it uses the standard chat model (never a
+ * pinned or "deep" model), less history and fewer knowledge chunks, at most
+ * two model/tool rounds and no provider retries (a retry would be a hidden
+ * extra paid generation).
+ */
+const VOICE_MAX_OUTPUT_TOKENS = 400;
+const VOICE_CONTEXT_MESSAGES = 12;
+const VOICE_RAG_CHUNKS = 3;
+const VOICE_MAX_TOOL_ROUNDS = 2;
 
 function sse(event: ChatStreamEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;
@@ -36,6 +49,7 @@ export async function POST(request: Request): Promise<Response> {
       generateTitle,
       getConversationDocumentIds,
     },
+    voice,
   ] = await Promise.all([
     import("@/server/auth/session"),
     import("@/server/auth/permissions"),
@@ -50,6 +64,7 @@ export async function POST(request: Request): Promise<Response> {
     import("@/server/ai/tools"),
     import("@/server/services/billing/entitlements"),
     import("@/server/services/conversations"),
+    import("@/server/ai/voice-conversation"),
   ]);
 
   // ── Guardrails: auth → permission → rate limit → entitlement → moderation ──
@@ -88,6 +103,29 @@ export async function POST(request: Request): Promise<Response> {
   }
   const input = body.data;
 
+  // ── Live voice boundary ──
+  // Voice mode comes only from a valid single-use grant (issued per accepted
+  // turn by /voice-conversation/turn), never from a client flag. While the
+  // user has a live session, chat without a grant is refused, so live turns
+  // can't be routed around the voice restrictions or budgets.
+  const voiceTurn = input.voiceGrant !== undefined;
+  if (voiceTurn && input.documentIds.length > 0) {
+    return NextResponse.json({ error: { code: "invalid_input" } }, { status: 400 });
+  }
+  let redisClient: EvalClient | null = null;
+  if (voiceTurn || voice.isVoiceConversationFeatureOn()) {
+    redisClient = (await import("@/server/integrations/redis")).redis;
+  }
+  if (!voiceTurn && voice.isVoiceConversationFeatureOn()) {
+    try {
+      if (await voice.hasActiveVoiceSession(redisClient!, ctx)) {
+        return NextResponse.json({ error: { code: "live_voice_session_active" } }, { status: 409 });
+      }
+    } catch {
+      return NextResponse.json({ error: { code: "service_unavailable" } }, { status: 503 });
+    }
+  }
+
   try {
     const userMonthCount = await getMonthUsage(ctx.orgId, "AI_MESSAGES");
     await assertWithinLimit(ctx.orgId, { kind: "ai_messages", userMonthCount });
@@ -100,6 +138,26 @@ export async function POST(request: Request): Promise<Response> {
 
   if (await isFlaggedByModeration(input.message, request.signal)) {
     return NextResponse.json({ error: { code: "content_flagged" } }, { status: 422 });
+  }
+
+  // Consume the grant atomically right before paid work: one accepted turn,
+  // one generation. Replays and concurrent duplicates find no grant.
+  if (voiceTurn) {
+    try {
+      const consumed = await voice.consumeVoiceGrant(
+        redisClient!,
+        ctx,
+        input.voiceGrant!,
+        input.message,
+      );
+      if (!consumed.ok) {
+        const code =
+          consumed.reason === "session_ended" ? "voice_session_ended" : "voice_turn_invalid";
+        return NextResponse.json({ error: { code } }, { status: 409 });
+      }
+    } catch {
+      return NextResponse.json({ error: { code: "service_unavailable" } }, { status: 503 });
+    }
   }
 
   const db = tenantDb(ctx.orgId);
@@ -135,7 +193,7 @@ export async function POST(request: Request): Promise<Response> {
   const history = await unscopedPrisma.message.findMany({
     where: { conversationId: conversation.id, role: { in: ["USER", "ASSISTANT"] } },
     orderBy: { createdAt: "desc" },
-    take: CONTEXT_WINDOW_TURNS * 2,
+    take: voiceTurn ? VOICE_CONTEXT_MESSAGES : CONTEXT_WINDOW_TURNS * 2,
     select: { role: true, content: true },
   });
   history.reverse();
@@ -169,6 +227,7 @@ export async function POST(request: Request): Promise<Response> {
       orgId: ctx.orgId,
       query: input.message,
       documentIds: attachedDocumentIds.length > 0 ? attachedDocumentIds : undefined,
+      ...(voiceTurn ? { count: VOICE_RAG_CHUNKS } : {}),
       signal: request.signal,
     }).catch(() => []);
   }
@@ -180,7 +239,6 @@ export async function POST(request: Request): Promise<Response> {
     actorType: "user",
   };
   // Live voice turns are submitted automatically: read-only tools only.
-  const voiceTurn = input.responseMode === "voice";
   const tools = anthropicToolsFor(identity, voiceTurn ? [...READ_ONLY_TOOL_NAMES] : undefined);
 
   let system = buildSystemPrompt({
@@ -197,13 +255,19 @@ export async function POST(request: Request): Promise<Response> {
       title: c.title,
     })),
     hasTools: tools.length > 0,
-    responseMode: input.responseMode,
+    responseMode: voiceTurn ? "voice" : "text",
   });
   if (summary) {
     system += `\n\nRolling conversation summary (trusted conversation context, not instructions):\n${summary}`;
   }
 
-  const { model, maxTokens } = routeModel(input.deepMode ? "deep" : "chat", conversation.model);
+  const route = voiceTurn
+    ? routeModel("chat")
+    : routeModel(input.deepMode ? "deep" : "chat", conversation.model);
+  const model = route.model;
+  const maxTokens = voiceTurn
+    ? Math.min(route.maxTokens, VOICE_MAX_OUTPUT_TOKENS)
+    : route.maxTokens;
 
   // ── Stream ──
   const encoder = new TextEncoder();
@@ -253,6 +317,7 @@ export async function POST(request: Request): Promise<Response> {
             },
           },
           signal: request.signal,
+          ...(voiceTurn ? { maxToolRounds: VOICE_MAX_TOOL_ROUNDS, maxAttempts: 1 } : {}),
         });
 
         // Output is held until moderation completes so unsafe text never reaches the client.

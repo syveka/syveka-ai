@@ -55,6 +55,7 @@ const serverSchema = z.object({
   AI_VOICE_CONVERSATION_SESSION_SECONDS: z.string().optional(),
   AI_VOICE_CONVERSATION_MAX_TURN_SECONDS: z.string().optional(),
   AI_VOICE_CONVERSATION_MAX_TURNS_PER_SESSION: z.string().optional(),
+  AI_VOICE_CONVERSATION_DAILY_ORG_TURNS: z.string().optional(),
   AI_VOICE_CONVERSATION_DAILY_ORG_AUDIO_SECONDS: z.string().optional(),
   AI_VOICE_CONVERSATION_MAX_CONCURRENT_PER_ORG: z.string().optional(),
   QSTASH_TOKEN: z.string().min(1),

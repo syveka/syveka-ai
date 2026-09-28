@@ -8,11 +8,11 @@ export const chatRequestSchema = z
     deepMode: z.boolean().default(false),
     documentIds: z.array(z.string().uuid()).max(10).default([]),
     /**
-     * "voice" = a turn of a live voice conversation: a short, speakable reply
-     * and read-only tools (no record changes, bookings or messages), because
-     * an automatically submitted spoken turn is not a confirmation.
+     * Single-use grant issued by POST /api/v1/ai/voice-conversation/turn for
+     * one live voice turn. The server derives voice mode (read-only tools,
+     * bounded reply) from a valid grant — there is no client-controlled mode.
      */
-    responseMode: z.enum(["text", "voice"]).default("text"),
+    voiceGrant: z.string().uuid().optional(),
   })
   .strict();
 

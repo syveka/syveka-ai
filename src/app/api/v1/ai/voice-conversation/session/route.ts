@@ -60,7 +60,7 @@ export async function POST(request: Request): Promise<Response> {
     );
     if (!result.ok) {
       return error(
-        result.reason === "daily_budget" ? "voice_daily_limit_reached" : "voice_capacity_reached",
+        result.reason === "org_capacity" ? "voice_capacity_reached" : "voice_daily_limit_reached",
         429,
       );
     }
