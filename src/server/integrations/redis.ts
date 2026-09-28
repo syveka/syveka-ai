@@ -174,15 +174,24 @@ export async function limitAiChat(
   };
 }
 
-/** Per-user and per-organization limits for chat voice transcription. */
+/**
+ * Per-user and per-organization limits for chat voice transcription.
+ *
+ * Fails closed: Upstash's Ratelimit *allows* a request when Redis doesn't
+ * answer within its timeout (`reason: "timeout"`). This endpoint pays a
+ * provider per request, so an unverifiable limit is treated as unavailable.
+ */
 export async function limitAiTranscription(
   organizationId: string,
   userId: string,
-): Promise<AiChatRateLimitResult> {
+): Promise<AiChatRateLimitResult & { unavailable?: true }> {
   const [user, organization] = await Promise.all([
     rateLimiters.aiTranscriptionUser.limit(`${organizationId}:${userId}`),
     rateLimiters.aiTranscriptionOrg.limit(organizationId),
   ]);
+  if (user.reason === "timeout" || organization.reason === "timeout") {
+    return { success: false, unavailable: true, reset: 0, limit: 0, remaining: 0 };
+  }
   if (!user.success) return { ...user, scope: "user" };
   if (!organization.success) return { ...organization, scope: "organization" };
   return {

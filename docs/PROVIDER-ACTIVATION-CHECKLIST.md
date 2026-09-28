@@ -62,19 +62,29 @@ Stripe key cannot break Redis, and vice versa.
 
 - **Model:** `gpt-4o-mini-transcribe` (`TRANSCRIPTION_MODEL` in `src/server/integrations/openai.ts`),
   language auto-detected (FI/EN/AR).
-- **Cost basis:** billed per audio minute (list price used for the estimate: $0.003/min; verify
-  current OpenAI pricing). The app stops recording at 60 s, so a normal request costs at most
-  about $0.003. The server can't decode duration; its enforceable bound is the 2 MiB upload cap,
-  which limits even a deliberately low-bitrate upload to a few minutes of audio (≈ $0.03).
-  `estimatedCostUsd` is derived from upload size at a typical ~128 kbps browser bitrate, so it
-  is an estimate, not an invoice figure.
-- **Limits, checked before any provider call:** `chat:use` permission, 20 recordings / 10 min per
-  user and 200 / 10 min per organization (Redis), and the organization's existing monthly AI
-  message quota (dictation is refused once chat is out of quota). No plan allowance changes:
-  transcription does not count as an AI message.
-- **Accounting:** each paid call is recorded as one `API_CALLS` usage record with
-  `metadata.kind = "ai_transcription"`, audio size/format and `estimatedCostUsd`. No transcript or
-  audio is stored or logged; audio is held in memory for the request only.
+- **Server-side limits, all checked before the provider call:** same-origin browser request
+  (`Sec-Fetch-Site`/`Origin`), session, `chat:use`, the flag, rate limits (20 per 10 min per
+  user, 200 per 10 min per organization), the organization's monthly AI-message quota, upload
+  size ≤ 2 MiB, and **decoded audio duration ≤ 63 s** (60 s + 3 s tolerance). Duration is
+  measured from the audio frames the provider decodes (`src/lib/voice/audio-duration.ts`:
+  Opus packet TOCs, AAC frame counts, and the larger of those and any declared MP4
+  durations); only WebM/Opus and MP4 (Opus/AAC) are accepted, and anything unmeasurable is
+  refused. The browser's 60 s auto-stop is a UX limit only and is not trusted.
+- **Cost basis:** billed per audio minute (list price used for estimates: $0.003/min; verify
+  current OpenAI pricing). Per request ≤ 63 s ≈ $0.0032. Failed provider attempts may be
+  retried (`AI_RETRY_MAX_ATTEMPTS`, default 3) within a 30 s bound.
+- **Maximum exposure (list price, rate limits fully used):** per user 120 requests/h ≈ 126
+  audio-minutes ≈ $0.38/h; per organization 1 200 requests/h ≈ 1 260 audio-minutes ≈ $3.8/h
+  (≈ $91/day). If failed attempts were ever billed, up to 3× those figures. Concurrent
+  requests don't raise this: each request is counted by the rate limiter when it arrives.
+  The limiter fails closed: a Redis error, or Upstash's 5 s timeout (which Upstash itself
+  treats as "allow"), returns 503 before any provider call.
+- **Not a spending cap:** the AI-message quota check only _reads_ this month's chat-message
+  count; transcription neither consumes nor reserves from it, and there is no monthly
+  transcription allowance. The `API_CALLS` usage record (`metadata.kind = "ai_transcription"`,
+  measured `audioSeconds`, `estimatedCostUsd`) is observability only. **Product decision
+  needed** if spend must be capped: a per-organization monthly transcription budget (minutes
+  or requests), whether it varies by plan, and what users see when it's reached.
 - **Privacy:** audio is sent to OpenAI to produce the text (disclosed in the recording UI).
 - [ ] **Manual verification required**: on staging with the flag on, record one short FI, EN and
       AR message on a real phone and confirm the transcript appears in the message box, is not

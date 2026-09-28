@@ -1,10 +1,11 @@
 import { NextResponse } from "next/server";
 import {
-  AUDIO_CONTAINER_MIME,
   MAX_AUDIO_BYTES,
+  MAX_RECORDING_SECONDS,
   MIN_AUDIO_BYTES,
-  detectAudioContainer,
+  MIN_RECORDING_MS,
 } from "@/lib/voice/audio";
+import { measureAudioDuration } from "@/lib/voice/audio-duration";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,9 +15,33 @@ export const maxDuration = 60;
 const TRANSCRIPTION_TIMEOUT_MS = 30_000;
 /** gpt-4o-mini-transcribe list price, USD per audio minute (cost estimate only). */
 const TRANSCRIPTION_USD_PER_MINUTE = 0.003;
+/** Slack over the recorder's auto-stop (timer tick + encoder flush). */
+const DURATION_TOLERANCE_SECONDS = 3;
+const CONTAINER_MIME = { webm: "audio/webm", mp4: "audio/mp4" } as const;
 
 function error(code: string, status: number, headers?: HeadersInit) {
   return NextResponse.json({ error: { code } }, { status, headers });
+}
+
+/**
+ * Defense in depth against cross-site requests. The session cookie is
+ * SameSite=Lax (not sent on cross-site POSTs), but this endpoint accepts
+ * multipart form data — a request any site can send without a CORS
+ * preflight — and triggers paid work, so it also requires a same-origin
+ * browser request. Non-browser clients sending neither header still need a
+ * valid session.
+ */
+function isCrossOrigin(request: Request): boolean {
+  const site = request.headers.get("sec-fetch-site");
+  if (site) return site !== "same-origin";
+  const origin = request.headers.get("origin");
+  if (!origin) return false;
+  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  try {
+    return new URL(origin).host !== host;
+  } catch {
+    return true;
+  }
 }
 
 /**
@@ -42,7 +67,8 @@ export async function POST(request: Request): Promise<Response> {
     import("@/env"),
   ]);
 
-  // ── Guardrails: auth → permission → availability → rate limit → entitlement ──
+  // ── Guardrails: origin → auth → permission → availability → rate limit → entitlement ──
+  if (isCrossOrigin(request)) return error("cross_origin_request", 403);
   let ctx;
   try {
     ctx = await getTenantContext();
@@ -53,6 +79,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!isChatTranscriptionEnabled()) return error("transcription_unavailable", 503);
 
   const rateLimit = await limitAiTranscription(ctx.orgId, ctx.userId);
+  if (rateLimit.unavailable) return error("transcription_unavailable", 503);
   if (!rateLimit.success) {
     return error("rate_limited", 429, {
       "Retry-After": String(Math.max(1, Math.ceil((rateLimit.reset - Date.now()) / 1000))),
@@ -86,8 +113,15 @@ export async function POST(request: Request): Promise<Response> {
   if (audio.size < MIN_AUDIO_BYTES) return error("audio_too_short", 422);
 
   const bytes = new Uint8Array(await audio.arrayBuffer());
-  const container = detectAudioContainer(bytes);
-  if (!container) return error("unsupported_audio_format", 415);
+  // Duration is measured from the audio frames the provider will decode; the
+  // browser's 60 s auto-stop is not trusted. Unmeasurable input is refused.
+  const measured = measureAudioDuration(bytes);
+  if (!measured) return error("unsupported_audio_format", 415);
+  if (measured.seconds > MAX_RECORDING_SECONDS + DURATION_TOLERANCE_SECONDS) {
+    return error("audio_too_long", 422);
+  }
+  if (measured.seconds * 1000 < MIN_RECORDING_MS) return error("audio_too_short", 422);
+  const container = measured.container;
 
   // ── Provider call, bounded ──
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(TRANSCRIPTION_TIMEOUT_MS)]);
@@ -110,17 +144,16 @@ export async function POST(request: Request): Promise<Response> {
     return timedOut ? error("transcription_timeout", 504) : error("transcription_failed", 502);
   }
 
-  // Estimated from size (no server-side decoding): ~16 kB/s is a typical
-  // browser Opus/AAC voice bitrate. Recorded for cost visibility only.
-  const estimatedSeconds = Math.max(1, Math.round(bytes.length / 16_000));
+  // Observability only — not an enforced spending allowance.
+  const audioSeconds = Number(measured.seconds.toFixed(2));
   await recordUsage(ctx.orgId, "API_CALLS", 1, {
     kind: "ai_transcription",
     model: TRANSCRIPTION_MODEL,
     userId: ctx.userId,
     audioBytes: bytes.length,
-    audioFormat: AUDIO_CONTAINER_MIME[container],
-    estimatedSeconds,
-    estimatedCostUsd: Number(((estimatedSeconds / 60) * TRANSCRIPTION_USD_PER_MINUTE).toFixed(6)),
+    audioFormat: CONTAINER_MIME[container],
+    audioSeconds,
+    estimatedCostUsd: Number(((audioSeconds / 60) * TRANSCRIPTION_USD_PER_MINUTE).toFixed(6)),
     latencyMs: Date.now() - startedAt,
   });
 

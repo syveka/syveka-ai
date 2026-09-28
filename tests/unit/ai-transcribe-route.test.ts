@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
@@ -53,17 +55,60 @@ import { POST } from "@/app/api/v1/ai/transcribe/route";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const USER = "22222222-2222-4222-8222-222222222222";
-const webm = (size = 4096) => {
+/** Real ~2 s Chromium MediaRecorder output (synthetic audio source). */
+const REAL_WEBM = new Uint8Array(
+  fs.readFileSync(path.join(__dirname, "fixtures/audio/chrome-opus-2s.webm")),
+);
+const webm = (size?: number) => {
+  if (size === undefined) return REAL_WEBM.slice();
   const bytes = new Uint8Array(size);
   bytes.set([0x1a, 0x45, 0xdf, 0xa3]);
   return bytes;
 };
+/** A valid WebM/Opus file holding `packets` × 60 ms of audio in very few bytes. */
+function longWebm(packets: number) {
+  const el = (id: number[], body: number[], size?: number[]) => [
+    ...id,
+    ...(size ??
+      (body.length < 0x7f
+        ? [0x80 | body.length]
+        : [0x40 | (body.length >> 8), body.length & 0xff])),
+    ...body,
+  ];
+  const unknown = [0x01, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff];
+  const track = el(
+    [0xae],
+    [
+      ...el([0xd7], [1]),
+      ...el(
+        [0x86],
+        Array.from("A_OPUS", (c) => c.charCodeAt(0)),
+      ),
+    ],
+  );
+  const blocks = Array.from({ length: packets }, () => el([0xa3], [0x81, 0, 0, 0x80, 0x18]));
+  return new Uint8Array([
+    ...el([0x1a, 0x45, 0xdf, 0xa3], []),
+    ...el([0x18, 0x53, 0x80, 0x67], [], unknown),
+    ...el([0x16, 0x54, 0xae, 0x6b], track),
+    ...el([0x1f, 0x43, 0xb6, 0x75], [], unknown),
+    ...blocks.flat(),
+  ]);
+}
 
-function request(body?: Uint8Array<ArrayBuffer> | null, extra: Record<string, string> = {}) {
+function request(
+  body?: Uint8Array<ArrayBuffer> | null,
+  extra: Record<string, string> = {},
+  headers: Record<string, string> = { "sec-fetch-site": "same-origin" },
+) {
   const form = new FormData();
   if (body) form.append("audio", new Blob([body], { type: "audio/webm" }), "recording");
   for (const [k, v] of Object.entries(extra)) form.append(k, v);
-  return new Request("http://localhost/api/v1/ai/transcribe", { method: "POST", body: form });
+  return new Request("http://localhost/api/v1/ai/transcribe", {
+    method: "POST",
+    body: form,
+    headers,
+  });
 }
 
 async function call(req: Request) {
@@ -86,6 +131,27 @@ beforeEach(() => {
 });
 
 describe("POST /api/v1/ai/transcribe guardrails (checked before any paid call)", () => {
+  it.each([
+    ["Sec-Fetch-Site cross-site", { "sec-fetch-site": "cross-site" }],
+    ["Sec-Fetch-Site same-site (sibling subdomain)", { "sec-fetch-site": "same-site" }],
+    ["a foreign Origin", { origin: "https://evil.example", host: "localhost" }],
+  ])(
+    "403 for a cross-origin browser request (%s), before auth or any cost",
+    async (_l, headers) => {
+      const res = await call(request(webm(), {}, headers));
+      expect(res).toEqual({ status: 403, body: { error: { code: "cross_origin_request" } } });
+      expect(m.limit).not.toHaveBeenCalled();
+      expect(m.transcribe).not.toHaveBeenCalled();
+    },
+  );
+
+  it("allows same-origin requests by Origin/Host when Sec-Fetch-Site is absent", async () => {
+    const res = await call(
+      request(webm(), {}, { origin: "https://app.example", host: "app.example" }),
+    );
+    expect(res.status).toBe(200);
+  });
+
   it("401 without a session", async () => {
     m.ctx = null;
     expect((await call(request(webm()))).status).toBe(401);
@@ -113,6 +179,13 @@ describe("POST /api/v1/ai/transcribe guardrails (checked before any paid call)",
     const res = await call(request(webm()));
     expect(res.status).toBe(429);
     expect(m.limit).toHaveBeenCalledWith(ORG, USER);
+    expect(m.transcribe).not.toHaveBeenCalled();
+  });
+
+  it("503 (fails closed) when the rate limiter couldn't reach Redis in time", async () => {
+    m.rate = { success: false, unavailable: true, reset: 0, limit: 0, remaining: 0 };
+    const res = await call(request(webm()));
+    expect(res).toEqual({ status: 503, body: { error: { code: "transcription_unavailable" } } });
     expect(m.transcribe).not.toHaveBeenCalled();
   });
 
@@ -159,6 +232,26 @@ describe("audio validation (server-side, before the provider)", () => {
     expect((await call(request(webm(200)))).body.error.code).toBe("audio_too_short");
   });
 
+  it("422 when the decoded audio is longer than the recording limit (small file, long audio)", async () => {
+    const file = longWebm(2000); // 2000 × 60 ms = 120 s, only ~20 kB
+    expect(file.length).toBeLessThan(25_000);
+    const res = await call(request(file));
+    expect(res).toEqual({ status: 422, body: { error: { code: "audio_too_long" } } });
+    expect(m.transcribe).not.toHaveBeenCalled();
+    expect(m.recordUsage).not.toHaveBeenCalled();
+  });
+
+  it("accepts audio just under the limit (60 s + tolerance)", async () => {
+    const res = await call(request(longWebm(1050))); // 63 s
+    expect(res.status).toBe(200);
+  });
+
+  it("415 when the audio can't be measured (container magic alone isn't enough)", async () => {
+    const res = await call(request(webm(4096)));
+    expect(res.body.error.code).toBe("unsupported_audio_format");
+    expect(m.transcribe).not.toHaveBeenCalled();
+  });
+
   it("415 when the bytes are not a supported audio container (declared type ignored)", async () => {
     const res = await call(request(new TextEncoder().encode("%PDF-1.7 ".repeat(200))));
     expect(res).toEqual({ status: 415, body: { error: { code: "unsupported_audio_format" } } });
@@ -172,6 +265,10 @@ describe("provider outcomes", () => {
     expect(res).toEqual({ status: 200, body: { data: { text: "Hei, varaa aika huomiselle" } } });
     expect(m.transcribe.mock.calls[0]![1]).toBe("webm");
     expect(m.recordUsage).toHaveBeenCalledTimes(1);
+    // Accounting uses the measured duration (observability, not a spending cap).
+    const meta = (m.recordUsage.mock.calls[0] as unknown[])[3] as { audioSeconds: number };
+    expect(meta.audioSeconds).toBeGreaterThan(1.7);
+    expect(meta.audioSeconds).toBeLessThan(2.3);
   });
 
   it("422 for an empty transcript, still accounted (the provider was paid)", async () => {

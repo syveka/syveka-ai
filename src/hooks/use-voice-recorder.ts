@@ -46,6 +46,8 @@ const HTTP_ERRORS: Record<string, VoiceRecorderError> = {
   rate_limited: "rate_limited",
   entitlement_exceeded: "quota_exceeded",
   audio_too_large: "too_large",
+  audio_too_long: "too_large",
+  cross_origin_request: "not_allowed",
   audio_too_short: "too_short",
   unsupported_audio_format: "unsupported_format",
   empty_transcript: "empty_transcript",
