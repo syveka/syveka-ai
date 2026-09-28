@@ -17,7 +17,10 @@ export function UsageMeters({ items, locale }: { items: Meter[]; locale: string 
             <div key={m.label}>
               <div className="mb-1 flex justify-between text-sm">
                 <span>{m.label}</span>
-                <span className="text-muted-foreground">
+                {/* "used / limit" is a numeric ratio: isolate it as LTR so an RTL page
+                    doesn't reorder it into "limit / used". The row itself still follows
+                    the page direction. */}
+                <span dir="ltr" className="text-muted-foreground">
                   {formatCount(locale, m.used)} / {unlimited ? "∞" : formatCount(locale, m.limit)}
                 </span>
               </div>
