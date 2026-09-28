@@ -1,202 +1,204 @@
 # Live voice conversation — cost report (first staging pilot)
 
-Status: estimates for the first limited staging trial of PR #215. No paid provider call was made to
-produce this report, and none of it is a hard dollar cap. What is enforced in code is **counts and
-sizes** (turns, seconds, model calls, output tokens, characters). Dollar amounts follow from
-those limits plus the assumptions stated below. Replace the estimates with measured usage after
-the trial (section 9).
+Estimates for the first limited staging trial of PR #215. No paid provider call was made to produce
+this report.
 
-Prices were verified on **2026-09-28** against:
+Prices were verified on **2026-09-28** against the official pages:
 
 - Anthropic: <https://platform.claude.com/docs/en/about-claude/pricing>
 - OpenAI: <https://developers.openai.com/api/docs/pricing>
 
-## 1. The pilot limits used here
+This report uses three kinds of number. Only the first two exist today.
 
-These are temporary staging pilot limits. They are not customer pricing or plan allowances.
+| Kind                             | Meaning                                                                                                                               |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- |
+| **Typical estimate**             | Expected usage, from measured prompt sizes and assumed conversation patterns.                                                         |
+| **Conservative calculated cost** | The most the code allows under its enforced limits, plus the stated assumptions (section 5). This is arithmetic, not an enforced cap. |
+| **Enforced monetary budget**     | A hard dollar limit checked at runtime. **This implementation has none.** The code enforces counts and sizes only.                    |
 
-| Limit (per organization, per Europe/Helsinki day unless noted) | Value                             |
-| -------------------------------------------------------------- | --------------------------------- |
-| Started live sessions                                          | 1 (not refunded when ended early) |
-| Session length                                                 | 5 min                             |
-| Accepted turns                                                 | 10 (per session and per day)      |
-| Audio per turn                                                 | 30 s                              |
-| Accepted audio                                                 | 300 s (5 min)                     |
-| Concurrent sessions                                            | 1                                 |
+## 1. Pilot limits (defaults; temporary; not plan allowances)
 
-## 2. What one accepted turn can call (audited in the code)
+Per organization, per Europe/Helsinki day:
 
-| Operation                     | Model / provider         | Per turn                                                               | Retries                                                       | Bound type                                                |
-| ----------------------------- | ------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------- | --------------------------------------------------------- |
-| Transcription                 | `gpt-4o-mini-transcribe` | 1 call                                                                 | none (SDK `maxRetries: 0`, no app retry)                      | **strict**: ≤ 30 s of audio                               |
-| Chat reply                    | `claude-sonnet-4-5`      | **≤ 2 model calls**                                                    | none (`maxAttempts: 1`, SDK `maxRetries: 0`)                  | **strict**: ≤ 400 output tokens per call → ≤ 800 per turn |
-| Tool executions (read-only)   | —                        | ≤ 3                                                                    | —                                                             | **strict** count                                          |
-| Query embeddings              | `text-embedding-3-small` | 1 for context retrieval + 1 per knowledge-base tool search (≤ 4)       | up to `AI_RETRY_MAX_ATTEMPTS` (default 3) on transient errors | count strict; cost negligible                             |
-| Moderation (input and output) | `omni-moderation-latest` | 2                                                                      | as above                                                      | free                                                      |
-| Conversation title            | `claude-haiku-4-5`       | once per **new** conversation                                          | as above                                                      | ≤ 64 output tokens; input ≤ 500 characters                |
-| Rolling summary               | —                        | **none**: a voice turn uses the stored summary and never generates one | —                                                             | —                                                         |
-| Reply speech                  | device speech synthesis  | —                                                                      | —                                                             | free                                                      |
+- 1 started session (not refunded if ended early);
+- 5 minutes per session;
+- 10 accepted turns;
+- 30 s per turn;
+- 300 s of accepted audio;
+- 1 concurrent session.
 
-Model resolution (verified in `src/server/ai/router.ts` and the chat route):
+Only the approved QA organization and user are on the allowlist.
 
-- A voice turn always uses `routeModel("chat")` = `claude-sonnet-4-5`.
-- The conversation's pinned model and "deep" mode (`claude-opus-4-8`) are ignored for voice turns.
-- There are no environment overrides.
-- The router's OpenAI `fallbackModel()` is not used by the chat route (`src/server/ai/fallback.ts`
-  is not imported anywhere).
+## 2. Every paid operation reachable from a live session
 
-Two model calls, exactly:
+| Operation                                               | When                                                                                 | Requests per occurrence                                  | Retries                                                                                                   | Continues after End?                                                                                        |
+| ------------------------------------------------------- | ------------------------------------------------------------------------------------ | -------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- |
+| Transcription (`gpt-4o-mini-transcribe`)                | once per accepted turn                                                               | **exactly 1**                                            | **none**: SDK `maxRetries: 0`, no application retry; 30 s timeout                                         | Aborted with the request, but a request already sent may still be billed. The turn stays reserved.          |
+| Chat reply (`claude-sonnet-4-5`)                        | once per accepted turn (single-use grant)                                            | **≤ 2 model calls**                                      | **none**: SDK `maxRetries: 0` and `maxAttempts: 1`                                                        | The HTTP stream is aborted and no further call or tool starts, but a call already sent may still be billed. |
+| Retrieval embedding (`text-embedding-3-small`)          | once per chat reply (the transcript is the query)                                    | 1                                                        | **yes**: up to `AI_RETRY_MAX_ATTEMPTS` on transient errors (default 3; the environment schema allows 1–6) | Aborted with the request                                                                                    |
+| Knowledge-base tool embedding                           | per `searchKnowledgeBase` execution (≤ 3 tool executions per reply)                  | 1                                                        | **yes**: same setting                                                                                     | A search already running finishes (no abort signal); no new tool starts                                     |
+| Conversation title (`claude-haiku-4-5`)                 | once per **new** conversation, **after** its first reply completes (fire-and-forget) | 1                                                        | **yes**: up to `AI_RETRY_MAX_ATTEMPTS`                                                                    | Runs to completion (no abort signal); only starts after a completed reply                                   |
+| Moderation (`omni-moderation-latest`), input and output | per chat reply                                                                       | 2                                                        | yes                                                                                                       | free                                                                                                        |
+| Rolling summary                                         | —                                                                                    | **never** in a voice turn (the stored summary is reused) | —                                                                                                         | —                                                                                                           |
+| Reply speech                                            | device speech synthesis                                                              | —                                                        | —                                                                                                         | free                                                                                                        |
 
-- The tool loop allows `maxToolRounds = 2` model calls.
-- Tools requested by the **second** call are not executed; the loop ends.
-- The **400-token limit applies per model call**, so one turn can produce up to 800 output tokens.
-- Once cancellation is observed, no new model call or tool execution starts (see section 8).
+Work after a reply finishes streaming:
 
-## 3. Input size: what is strictly bounded and what isn't
+- output moderation (free);
+- database writes and usage recording;
+- for a new conversation only, title generation.
 
-Output tokens are strictly bounded by the provider (`max_tokens`). Input is bounded in
-**characters or counts**, not tokens. The token count per character depends on language and
-content: about 4 characters/token for English, about 2.5–3 for Finnish and Arabic, and
-pathological text can come close to 1 character/token. So the token figures below are estimates
-at a stated ratio, not guarantees.
+Nothing else is triggered.
 
-| Part of each model call                            | Bound in code                                                                | Kind                           |
-| -------------------------------------------------- | ---------------------------------------------------------------------------- | ------------------------------ |
-| Voice system prompt (fi/en/ar), 3 tool definitions | measured 1,438–1,498 + 1,075 characters                                      | measured                       |
-| Anthropic tool-use system prompt (Sonnet 4.5)      | 496 tokens                                                                   | provider fact                  |
-| Organization instructions                          | ≤ 2,000 characters (settings validator)                                      | strict                         |
-| Business DNA profile                               | ≤ ~33,700 characters across all fields (validators)                          | strict per field               |
-| Business DNA services                              | ≤ ~2,400 characters each; **the number of services is not limited**          | not strictly bounded           |
-| Knowledge-base context                             | ≤ 3 chunks, chunker target ~3,200 characters each                            | count strict; size is a target |
-| History                                            | ≤ 12 messages × ≤ 2,000 characters (longer messages are cut)                 | strict                         |
-| Stored rolling summary                             | ≤ 1,024 tokens (generated by Haiku with `max_tokens` 1024)                   | strict                         |
-| Spoken message                                     | the exact transcript of ≤ 30 s speech (validator hard cap: 8,000 characters) | strict                         |
-| Second call only: tool results                     | ≤ 3 × 4,000 characters (longer results are cut)                              | strict                         |
+**End pressed while a request is in flight.** That request is not an extra request. It is one of the
+≤ 2 model calls of an accepted turn (or that turn's one transcription), and it is already counted
+below. Completed model calls of an aborted reply are recorded in usage with `aborted: true`.
 
-## 4. Per-turn scenarios (Sonnet 4.5: $3 / $15 per 1M input/output tokens)
+## 3. The enforced aggregate input budget (live mode only)
 
-**Typical scenarios** (Finnish at ~3 characters/token):
+Before **every** live-voice model call (the first call and the tool round), the server computes an
+**upper-bound estimate** of the whole request:
 
-| Turn type                                  | Input tokens | Output tokens | Input $ | Output $ | Total $   |
-| ------------------------------------------ | ------------ | ------------- | ------- | -------- | --------- |
-| Light: no knowledge-base hit, no tool      | ~2,400       | ~100          | 0.0072  | 0.0015   | **0.009** |
-| Typical: 3 knowledge chunks, no tool       | ~4,800       | ~120          | 0.0144  | 0.0018   | **0.016** |
-| Heavy: knowledge + one tool call (2 calls) | ~12,400      | ~460          | 0.0372  | 0.0069   | **0.044** |
+- the system instructions, organization instructions and Business DNA, including all services;
+- the knowledge-base content and the rolling summary;
+- the history and the current transcript;
+- the tool definitions, and in the second call the tool requests and tool results;
+- 496 tokens for Anthropic's tool-use system prompt, plus framing overheads.
 
-**Conservative bound for the pilot organization.** Every capped input is at its cap, the
-estimate uses a pessimistic 2.5 characters/token, and both model calls are used at 400 output
-tokens. Business DNA and instructions are assumed to total 14,000 characters (a fully written
-profile). A 30-second transcript is taken as ≤ 1,000 characters.
+How the estimate works:
 
-- Call 1: 51,400 characters ≈ 20,600 tokens + 496 (tool prompt) + 1,024 (summary) ≈ **22,100
-  input tokens**.
-- Call 2: call 1 + ≤ 400 tokens of tool requests + 12,000 characters of tool results (≈ 4,800
-  tokens) ≈ **27,300 input tokens**.
-- Per turn: ≈ **49,400 input + 800 output tokens ≈ $0.148 + $0.012 = $0.16**. Add transcription
-  ≤ $0.0015.
+- Every UTF-8 byte counts as one token. This assumes at most one token per byte, as byte-level BPE
+  tokenizers give. It is **not an exact token count**, and Anthropic doesn't publish its tokenizer,
+  so the route logs `voice_input_bound_exceeded` whenever the provider-reported input tokens are
+  higher.
+- In practice the estimate over-counts about 3–4× for English and Finnish, and less for Arabic.
 
-Sensitivity:
+The limits:
 
-- Each additional 10,000 characters of Business DNA adds ≈ 4,000 input tokens to **each** call,
-  i.e. ≈ +$0.024 per turn.
-- At the Business DNA schema maximum (all profile fields full plus the 2,000-character
-  instructions) the bound is ≈ **$0.21 per turn**, plus ≈ $0.006 per fully written service.
+- **No call may exceed 48,000 estimated tokens.** A call that would exceed it is not made.
+- The first call is planned to 30,000 so the tool round fits.
 
-## 5. A representative 5-minute pilot conversation
+To fit, the server leaves out optional context **whole**, in this fixed order:
 
-About 24 s per turn cycle (speech, end-of-turn silence, transcription, generation, spoken reply)
-allows up to about 12 turns, but the pilot caps the session at **10 turns**. Mix: 7 typical, 2
-light, 1 heavy.
+1. oldest history (the kept history starts with a user turn);
+2. the rolling summary;
+3. the lowest-ranked knowledge chunks;
+4. Business DNA services, last first;
+5. the rest of Business DNA;
+6. organization instructions.
 
-| Line                                  | Quantity          | Cost        |
-| ------------------------------------- | ----------------- | ----------- |
-| Transcription                         | 10 × ~9 s = ~90 s | $0.0045     |
-| Chat input (Sonnet 4.5)               | ~50,800 tokens    | $0.152      |
-| Chat output (Sonnet 4.5)              | ~1,500 tokens     | $0.023      |
-| Title (new chat only)                 | 1 Haiku call      | < $0.001    |
-| Embeddings, moderation, device speech | —                 | ≈ $0        |
-| **Total**                             |                   | **≈ $0.18** |
+Content that is never reduced: the persona and rules, the organization name, the tool section, the
+live-voice rules, the tool definitions and the transcript. Tool results are fitted **structurally**
+to ≤ 4,000 bytes. They stay valid JSON: trailing items are left out with a count, and over-long text
+fields are shortened. Tool requests and their results are never split.
 
-## 6. Pilot maximum day (one organization)
+If the required content alone can't fit, the turn is refused **before the model call** with
+`voice_context_too_large`. The message is localized (EN/FI/AR) and suggests the typed chat. Typed
+chat and all stored data are unchanged.
 
-| Line                    | Typical (10 typical turns) | Realistic heavy (10 heavy turns) | Conservative bound (section 4)                          |
-| ----------------------- | -------------------------- | -------------------------------- | ------------------------------------------------------- |
-| Transcription (≤ 300 s) | $0.005                     | $0.005                           | ≤ $0.015                                                |
-| Chat input              | 48,000 tokens → $0.144     | 124,000 → $0.372                 | 494,000 → $1.48                                         |
-| Chat output             | 1,430 tokens → $0.021      | 4,600 → $0.069                   | 8,000 → $0.12                                           |
-| Title                   | < $0.001                   | < $0.001                         | < $0.001                                                |
-| **Total per day**       | **≈ $0.17**                | **≈ $0.45**                      | **≈ $1.62** (≈ $2.1 at the Business DNA schema maximum) |
+## 4. Typical estimate (Sonnet 4.5: $3 / $15 per 1M input/output tokens)
 
-## 7. Monthly scenarios (one pilot organization; at most one session per day)
+Assumes about 3 characters per token for Finnish.
 
-Blended typical turn ≈ 4,800 input + 143 output tokens + 9 s audio ≈ $0.017.
+| Turn type                             | Input tokens | Output tokens | Cost   |
+| ------------------------------------- | ------------ | ------------- | ------ |
+| Light (no knowledge hit, no tool)     | ~2,400       | ~100          | $0.009 |
+| Typical (3 knowledge chunks)          | ~4,800       | ~120          | $0.016 |
+| Heavy (knowledge + one tool, 2 calls) | ~12,400      | ~460          | $0.044 |
 
-| Scenario              | Usage                             | Turns | Transcription | Chat input | Chat output | **Month**   |
-| --------------------- | --------------------------------- | ----- | ------------- | ---------- | ----------- | ----------- |
-| Light                 | 2 sessions/week × 5 turns         | ~43   | $0.02         | $0.62      | $0.09       | **≈ $0.73** |
-| Moderate              | 1 session per workday × 8 turns   | ~176  | $0.08         | $2.53      | $0.37       | **≈ $2.99** |
-| Heavy (typical turns) | the daily cap every day (30 × 10) | 300   | $0.14         | $4.32      | $0.64       | **≈ $5.10** |
-| Heavy (heavy turns)   | 30 × 10 heavy turns               | 300   | $0.14         | $11.16     | $2.07       | **≈ $13.4** |
-| Conservative bound    | 30 × the conservative day         | 300   | $0.45         | $44.5      | $3.60       | **≈ $48.5** |
+**A full pilot day** is 10 turns: 7 typical, 2 light and 1 heavy.
 
-### Why the earlier heavy-month and maximum-day figures looked inconsistent
+| Line                                     | Quantity       | Cost                |
+| ---------------------------------------- | -------------- | ------------------- |
+| Transcription                            | ~90 s          | ≈ $0.0045           |
+| Chat input                               | ~50,800 tokens | $0.152              |
+| Chat output                              | ~1,500 tokens  | $0.023              |
+| Embeddings, moderation, title (new chat) | —              | < $0.001            |
+| **Total**                                |                | **≈ $0.18 per day** |
 
-The previous version of this report showed a heavy month of ≈ $11.22 but a maximum day of
-≈ $8.78. They were different quantities, not a contradiction:
+**Monthly:**
 
-- **Heavy month:** the _typical_ per-turn cost ($0.017) × 30 turns × 22 workdays.
-- **Maximum day:** a _theoretical ceiling_ per turn ($0.29) × 30 turns. That ceiling assumed
-  12 history messages at their unclipped maximum (8,000-character user messages and
-  4,096-token typed replies) and unclipped tool results.
+| Usage                                     | Cost    |
+| ----------------------------------------- | ------- |
+| Light (2 sessions/week, 5 turns)          | ≈ $0.73 |
+| Moderate (1 session per workday, 8 turns) | ≈ $2.99 |
+| Heavy (every day at the cap)              | ≈ $5.10 |
 
-Multiplying that ceiling day by 30 would have given ≈ $263 per month. Since then:
+Transcription uses OpenAI's published estimate of $0.003 per minute. It is **billed per token**
+($1.25 per 1M input, $5 per 1M output), so the per-minute figure is an estimate, not a billing
+guarantee.
 
-- history is clipped to 2,000 characters per message, tool results to 4,000 characters, and tool
-  executions to 3;
-- voice turns never trigger a paid summary;
-- the pilot allows 10 turns and one session per day.
+## 5. Conservative calculated cost (not an enforced cap)
 
-The conservative bound is now ≈ $0.16 per turn and ≈ $1.62 per day for the pilot organization.
+Assumptions:
 
-### Pricing worksheet — scenarios only
+- the byte-based token bound holds;
+- `AI_RETRY_MAX_ATTEMPTS` is at its schema maximum of 6;
+- every retryable call fails transiently until its last attempt, and every failed attempt is billed;
+- prices don't change.
 
-This worksheet is not a pricing proposal. It changes no Stripe product, published price or
-customer plan. Price = cost / (1 − margin).
+Per accepted turn:
 
-| Monthly cost scenario        | 60% margin | 70% margin | 80% margin |
-| ---------------------------- | ---------- | ---------- | ---------- |
-| Light ($0.73)                | $1.83      | $2.43      | $3.65      |
-| Moderate ($2.99)             | $7.48      | $9.97      | $14.95     |
-| Heavy, typical turns ($5.10) | $12.75     | $17.00     | $25.50     |
-| Heavy, heavy turns ($13.4)   | $33.50     | $44.67     | $67.00     |
+| Line          | Calculation                                                                                                                                                                           | Cost      |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- |
+| Chat input    | 2 calls × 48,000 = 96,000 tokens × $3/1M                                                                                                                                              | $0.288    |
+| Chat output   | 2 calls × 400 = 800 tokens × $15/1M                                                                                                                                                   | $0.012    |
+| Transcription | ≤ 30 s at ≈ $0.003/min (estimate; see section 4)                                                                                                                                      | ≈ $0.0015 |
+| Embeddings    | 4 operations × 6 attempts. Retrieval query ≤ 8,000 characters ≤ 32,000 bytes; each tool query ≤ 500 characters ≤ 2,000 bytes. So 6 × (32,000 + 3 × 2,000) = 228,000 tokens × $0.02/1M | $0.0046   |
+| Moderation    | 2 × 6 attempts                                                                                                                                                                        | $0        |
 
-## 8. Not included
+Per pilot day (10 turns, 1 session):
 
-- VAT, payment fees, and infrastructure: Vercel, Supabase, Upstash Redis commands.
-- Provider work billed but not reported back. A model call that was **in flight when the user
-  pressed End** may still be billed by Anthropic: cancellation stops further calls and tool
-  executions, but cannot reverse a call already processing. Completed calls are recorded, with
-  `aborted: true`.
-- Retries of embeddings, moderation (free) and title generation on transient errors. These are
-  small and are not modelled.
-- Typed chat usage, dictation, and other product AI usage.
-- Tokenizer variance beyond the stated characters/token ratios, and any future price changes.
-- Prompt caching: not used by the code. It would lower chat input cost.
+| Line                                                                                      | Cost                                 |
+| ----------------------------------------------------------------------------------------- | ------------------------------------ |
+| Chat: 10 × $0.300                                                                         | $3.00                                |
+| Transcription (≤ 300 s, estimate)                                                         | ≈ $0.015                             |
+| Embeddings: 10 × $0.0046                                                                  | $0.046                               |
+| Title: ≤ 1 new conversation × 6 attempts × (≤ 2,200 tokens in at $1/1M + 64 out at $5/1M) | $0.015                               |
+| **Conservative total**                                                                    | **≈ $3.08 per organization per day** |
 
-## 9. How to validate on staging
+Over 30 days that is ≈ $92 per month.
 
-1. After activation (a separate, approved step), run the pilot for a few days.
-2. Compare the recorded `AI_TOKENS_IN` / `AI_TOKENS_OUT` usage rows for voice turns (and the
-   `aborted: true` rows) with section 4, and the reserved audio seconds with section 6.
-3. Replace the character-based estimates with the measured per-turn averages.
+The call in flight when End is pressed is already inside these figures, because each accepted turn
+is counted with both model calls at full size.
+
+The earlier "$1.62 per day" figure was lower because it assumed a fully written Business DNA of
+14,000 characters. It didn't bound the number of services, and it didn't count ancillary retries.
+The enforced budget now makes the bound independent of organization data.
+
+## 6. Not included
+
+- VAT, payment fees, and infrastructure (Vercel, Supabase, Upstash Redis commands).
+- Typed chat, dictation and other product AI usage. That includes any summary a later typed message
+  triggers in a conversation that started in voice.
+- Price changes after 2026-09-28.
+- If the byte-per-token assumption were ever wrong, the input bound would be too. That case is
+  logged (`voice_input_bound_exceeded`), not prevented.
+
+## 7. Pricing worksheet — scenarios only
+
+Not a pricing proposal; no Stripe, price or plan changes. Price = monthly cost / (1 − margin).
+
+| Monthly cost     | 60% margin | 70% margin | 80% margin |
+| ---------------- | ---------- | ---------- | ---------- |
+| Light ($0.73)    | $1.83      | $2.43      | $3.65      |
+| Moderate ($2.99) | $7.48      | $9.97      | $14.95     |
+| Heavy ($5.10)    | $12.75     | $17.00     | $25.50     |
+
+## 8. How to validate on staging
+
+After activation (a separate, approved step):
+
+1. Compare the `AI_TOKENS_IN` / `AI_TOKENS_OUT` rows for voice turns (including the `aborted` and
+   `stoppedBy` rows) with section 4.
+2. Look for any `voice_context_reduced`, `voice_context_too_large` or `voice_input_bound_exceeded`
+   log events. They carry counts only, never content.
 
 ## Alternatives (documentation only; nothing enabled)
 
 - **Provider TTS for devices without a voice in the language:**
   - `gpt-4o-mini-tts`: $0.60 per 1M text tokens in, $12 per 1M audio tokens out.
-  - `tts-1`: $15 per 1M characters. That is ≈ $0.0075 per 500-character reply, ≈ $0.075 per
-    10-turn session.
+  - `tts-1`: $15 per 1M characters. That is ≈ $0.075 per 10-turn session at 500 characters per
+    reply.
   - Either one adds a paid service and needs separate approval.
-- **Realtime speech-to-speech:** not recommended for this pilot. It needs a browser-held
-  provider stream. The pricing is per audio token, and the per-minute conversion was not verified,
-  so no per-minute figure is claimed.
+- **Realtime speech-to-speech:** not recommended for this pilot. No per-minute figure is claimed.

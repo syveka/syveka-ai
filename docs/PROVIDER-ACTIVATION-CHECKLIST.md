@@ -187,21 +187,34 @@ Europe/Helsinki midnight. The start screen tells the user this before the microp
 - the standard chat model only;
 - ≤ 400 output tokens **per model call** and ≤ 2 model calls per turn (tools requested by the
   second call are not run);
-- no provider retries;
-- ≤ 3 read-only tool executions, each result cut to 4,000 characters;
+- no retries for chat or transcription;
+- ≤ 3 read-only tool executions, each result fitted structurally to ≤ 4,000 bytes (valid JSON);
 - the last 12 history messages, each cut to 2,000 characters;
 - ≤ 3 knowledge chunks;
 - the stored summary is used, never generated;
-- write tools are refused both in the tool list and in `executeTool`.
+- write tools are refused both in the tool list and in `executeTool`;
+- **aggregate input budget**, checked before **every** model call:
+  - an upper-bound estimate (1 token per UTF-8 byte, plus the tool prompt; not an exact count) of
+    everything sent, including instructions, Business DNA with all services, history, the
+    transcript, knowledge, tool definitions, and the tool requests and results added before the
+    second call;
+  - ≤ 48,000 per call, with the first call planned to 30,000;
+  - optional context is left out whole, in a fixed order: oldest history, the summary, the
+    lowest-ranked knowledge, services, the rest of Business DNA, organization instructions;
+  - rules, the transcript and the tool structure are never cut;
+  - if required content can't fit, the turn is refused before the call with the localized
+    `voice_context_too_large` message. Stored data is not changed.
 
 **Ending and cancellation:**
 
 - End, page hide, a language change or unmount releases the microphone and ends the session.
 - The in-flight chat request is aborted. The server then starts no new model call or tool execution
   (checked before each call and each tool).
-- A model call already in progress when End arrives may still complete at the provider and be
-  billed. Cancellation can't reverse it. Tokens from completed calls are still recorded, with
-  `aborted: true`.
+- A model call or transcription already sent when End arrives may still be billed. Cancellation
+  can't reverse it. It is one of the turn's already-counted calls, not an extra one.
+- Tokens from completed calls are still recorded, with `aborted: true`.
+- A knowledge-base search already running finishes.
+- A new conversation's title generation (Haiku, after its first completed reply) runs to completion.
 - Late responses can't restart speech or the microphone.
 - The grant and the turn stay consumed.
 
@@ -213,10 +226,12 @@ be closed. Sessions also expire on their own after their lifetime.
 
 **Cost** (see `docs/live-voice-cost-report.md`):
 
-- Typical: ≈ $0.017 per turn, ≈ $0.17 for a full pilot day (10 turns).
-- Conservative bound for the pilot organization: ≈ $1.62 per day.
-- Transcription is ≤ 300 s/day (≈ ≤ $0.015).
-- None of these is a hard dollar cap: the code bounds counts and sizes, not dollars.
+- **Typical estimate:** ≈ $0.18 per full pilot day (10 turns).
+- **Conservative calculated cost:** ≈ $3.08 per organization per day (≈ $92 per 30 days). It assumes
+  every call is at the enforced input budget and output limit, and that retryable ancillary calls
+  (embeddings, title) use the maximum `AI_RETRY_MAX_ATTEMPTS` = 6.
+- **Enforced monetary budget:** none. The code enforces counts and sizes, not dollars.
+- Transcription per-minute figures are OpenAI's estimate; transcription is billed per token.
 
 **Privacy:**
 
@@ -240,16 +255,28 @@ it, because it is read-only.
 - A real-browser harness.
 - Real phones: not yet tested (see below).
 
-- [ ] **Manual verification required** (approved QA account, real phones; FI, EN and AR):
-  - Start → speak several turns → answers are spoken (or text-only, where the phone has no voice
-    for the language).
-  - Talk over a reply → it stops. Stop reply works. Mute stops turns.
-  - Ask for a booking → a spoken refusal pointing to typed chat; nothing is created.
-  - Start from a **new chat** → turns land in one conversation; after End, the page shows it.
-  - End while "thinking" → the microphone indicator goes off and nothing is spoken afterwards.
-  - Open a second tab and start → refused; the first tab keeps working.
-  - After ending, start again the same day → refused with the daily-limit message.
-  - A typed draft survives the conversation, and dictation still works.
+- [ ] **Manual verification required** (approved QA account, real phones).
+
+  With one started session per organization per Helsinki day, **test one language per day**:
+  day 1 Finnish, day 2 English, day 3 Arabic. The interface language is fixed for the session, and
+  changing it ends the session. Do not reset counters or raise the limits to test faster; that needs
+  a separate, explicit authorization. The daily-limit checks (a second tab, a restart after ending)
+  use that day's already-used session, so they add no extra session.
+
+  Each day, in that day's language, as **one session of at most 10 turns**, in this order:
+  1. Open a **new chat**, type a draft in the composer (don't send it) and press Start. Confirm the
+     start screen (spoken, or text-only where the phone has no voice for the language).
+  2. Speak 2–3 questions → answers are spoken (or shown as text only). Talk over one reply → it
+     stops. Stop reply works.
+  3. Mute → speaking produces no turn. Unmute → turns resume.
+  4. Ask for a booking → a spoken refusal pointing to the typed chat; nothing is created.
+  5. Open a second tab and press Start → refused with the daily-limit message; the first tab keeps
+     working.
+  6. Ask one more question and press End while it shows "thinking" → the microphone indicator goes
+     off, and nothing is spoken afterwards.
+  7. All turns are in one conversation, which opens after End. The draft is back. Dictation still
+     works.
+  8. Press Start again → refused with the daily-limit message (the day's session is used).
 
 ## 4. Resend (transactional + inbound email)
 
