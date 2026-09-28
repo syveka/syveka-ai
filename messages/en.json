@@ -646,6 +646,7 @@
     "current": "Current plan",
     "choosePlan": "Choose plan",
     "perUserMonth": "user/mo",
+    "intervalLabel": "Billing interval",
     "interval": {
       "monthly": "Monthly",
       "annual": "Annual (2 months free)"

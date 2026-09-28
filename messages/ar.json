@@ -646,6 +646,7 @@
     "current": "الخطة الحالية",
     "choosePlan": "اختر الخطة",
     "perUserMonth": "مستخدم/شهر",
+    "intervalLabel": "فترة الفوترة",
     "interval": {
       "monthly": "شهرياً",
       "annual": "سنوياً (شهران مجاناً)"

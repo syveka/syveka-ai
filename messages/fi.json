@@ -646,6 +646,7 @@
     "current": "Nykyinen tilaus",
     "choosePlan": "Valitse tilaus",
     "perUserMonth": "käyttäjä/kk",
+    "intervalLabel": "Laskutusväli",
     "interval": {
       "monthly": "Kuukausittain",
       "annual": "Vuosittain (2 kk ilmaiseksi)"

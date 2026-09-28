@@ -75,15 +75,22 @@ export function PlanCards({ currentPlan }: { currentPlan: Plan }) {
 
   return (
     <div className="space-y-3">
-      <div className="flex items-center gap-2">
-        <h2 className="flex-1 text-lg font-semibold">{t("plans")}</h2>
-        <div className="flex rounded-md border p-0.5 text-sm">
+      {/* Stacked on narrow screens so long labels (e.g. Finnish) get the full row. */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <h2 className="text-lg font-semibold">{t("plans")}</h2>
+        <div
+          role="group"
+          aria-label={t("intervalLabel")}
+          className="grid grid-cols-2 gap-1 rounded-md border p-1 text-sm"
+        >
           {(["monthly", "annual"] as const).map((i) => (
             <button
               key={i}
+              type="button"
+              aria-pressed={interval === i}
               onClick={() => setInterval(i)}
               className={cn(
-                "rounded px-3 py-1",
+                "min-h-11 rounded px-3 py-1.5 text-center leading-snug focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring sm:min-h-9",
                 interval === i ? "bg-primary text-primary-foreground" : "text-muted-foreground",
               )}
             >
