@@ -1,5 +1,6 @@
 "use client";
 
+import { useTranslations } from "next-intl";
 import { changeRoleAction, removeMemberAction } from "@/actions/members";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -8,6 +9,7 @@ type Member = { id: string; userId: string; email: string; name: string | null; 
 type Invite = { id: string; email: string; role: string };
 
 const ASSIGNABLE = ["ADMIN", "MANAGER", "MEMBER", "VIEWER"] as const;
+const ROLE_CODES = new Set(["OWNER", ...ASSIGNABLE]);
 
 export function MembersTable({
   members,
@@ -20,6 +22,10 @@ export function MembersTable({
   currentUserId: string;
   canManage: boolean;
 }) {
+  const t = useTranslations("settingsMembers");
+  const tRoles = useTranslations("roles");
+  // Canonical role codes stay the stored/submitted values; only labels translate.
+  const roleLabel = (role: string) => (ROLE_CODES.has(role) ? tRoles(role as never) : role);
   return (
     <Card>
       <CardContent className="divide-y p-0">
@@ -39,24 +45,33 @@ export function MembersTable({
                 >
                   <select
                     name="role"
+                    aria-label={t("changeRoleLabel", { name: m.name ?? m.email })}
                     defaultValue={m.role}
                     onChange={(e) => e.currentTarget.form?.requestSubmit()}
                     className="h-8 rounded-md border border-input bg-transparent px-2 text-xs"
                   >
                     {ASSIGNABLE.map((r) => (
                       <option key={r} value={r}>
-                        {r}
+                        {roleLabel(r)}
                       </option>
                     ))}
                   </select>
                 </form>
               ) : (
-                <span className="rounded-full bg-secondary px-2 py-1 text-xs">{m.role}</span>
+                <span className="rounded-full bg-secondary px-2 py-1 text-xs">
+                  {roleLabel(m.role)}
+                </span>
               )}
               {canManage && m.role !== "OWNER" && m.userId !== currentUserId ? (
                 <form action={removeMemberAction.bind(null, m.id)}>
-                  <Button variant="ghost" size="sm" type="submit" className="text-destructive">
-                    Remove
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    type="submit"
+                    className="text-destructive"
+                    aria-label={t("removeLabel", { name: m.name ?? m.email })}
+                  >
+                    {t("remove")}
                   </Button>
                 </form>
               ) : null}
@@ -65,9 +80,11 @@ export function MembersTable({
         ))}
         {pendingInvites.map((i) => (
           <div key={i.id} className="flex items-center justify-between gap-3 p-4 opacity-60">
-            <div>
-              <p className="text-sm">{i.email}</p>
-              <p className="text-xs text-muted-foreground">Pending · {i.role}</p>
+            <div className="min-w-0">
+              <p className="truncate text-sm">{i.email}</p>
+              <p className="text-xs text-muted-foreground">
+                {t("pending")} · {roleLabel(i.role)}
+              </p>
             </div>
           </div>
         ))}

@@ -1,5 +1,6 @@
 export const dynamic = "force-dynamic";
 
+import { getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { can } from "@/server/auth/permissions";
@@ -8,6 +9,7 @@ import { InviteForm } from "./invite-form";
 
 export default async function MembersPage() {
   const ctx = await requirePermission("members:invite");
+  const t = await getTranslations("settingsMembers");
   const db = tenantDb(ctx.orgId);
 
   const [members, invitations] = await Promise.all([
@@ -23,7 +25,7 @@ export default async function MembersPage() {
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Team</h1>
+      <h1 className="text-2xl font-semibold">{t("title")}</h1>
       <InviteForm />
       <MembersTable
         currentUserId={ctx.userId}

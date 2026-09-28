@@ -44,6 +44,61 @@
     "billing": "Laskutus",
     "auditLog": "Tapahtumaloki"
   },
+  "roles": {
+    "OWNER": "Omistaja",
+    "ADMIN": "Ylläpitäjä",
+    "MANAGER": "Esihenkilö",
+    "MEMBER": "Jäsen",
+    "VIEWER": "Katselija"
+  },
+  "settingsProfile": {
+    "title": "Profiili",
+    "email": "Sähköposti",
+    "name": "Nimi",
+    "language": "Kieli",
+    "timezone": "Aikavyöhyke",
+    "saved": "Tallennettu."
+  },
+  "settingsOrganization": {
+    "title": "Organisaatio",
+    "workspace": "Työtila: {slug}",
+    "companyName": "Yrityksen nimi",
+    "businessId": "Y-tunnus",
+    "vatId": "ALV-tunniste",
+    "aiInstructionsTitle": "Tekoälyn ohjeet",
+    "aiInstructionsHelp": "Lisätietoa, jota jokainen tekoälyn vastaus noudattaa: äänensävy, keskeiset faktat sekä tehtävät ja kiellot.",
+    "aiInstructionsPlaceholder": "Olemme LVI-yritys Tampereella. Mainitse aina 24h-päivystysnumeromme…",
+    "saved": "Tallennettu."
+  },
+  "settingsMembers": {
+    "title": "Tiimi",
+    "inviteTitle": "Kutsu tiimin jäsen",
+    "emailLabel": "Sähköpostiosoite",
+    "emailPlaceholder": "kollega@yritys.fi",
+    "roleLabel": "Rooli",
+    "send": "Lähetä kutsu",
+    "sending": "Lähetetään…",
+    "invited": "Kutsu lähetetty.",
+    "remove": "Poista",
+    "removeLabel": "Poista {name}",
+    "changeRoleLabel": "Käyttäjän {name} rooli",
+    "pending": "Kutsu odottaa",
+    "errors": {
+      "invalid_input": "Tarkista sähköpostiosoite ja rooli.",
+      "already_member": "Henkilö on jo organisaation jäsen.",
+      "plan_limit": "Tilauksesi ei salli lisää jäseniä juuri nyt: kaikki käyttäjäpaikat ovat käytössä tai tilaus vaatii toimenpiteitä. Katso Laskutus.",
+      "invite_failed": "Kutsua ei voitu lähettää. Yritä uudelleen."
+    }
+  },
+  "settingsAuditLog": {
+    "title": "Tapahtumaloki",
+    "description": "Kaikki organisaation arkaluonteiset muutokset, säilytetään tilauksesi mukaisesti.",
+    "filterLabel": "Suodata toiminnon mukaan",
+    "filterPlaceholder": "Suodata toiminnon mukaan (esim. member.role_change)…",
+    "empty": "Ei merkintöjä.",
+    "timesShownIn": "Ajat näytetään aikavyöhykkeellä {timeZone}.",
+    "details": "Muutokset"
+  },
   "auth": {
     "login": "Kirjaudu sisään",
     "register": "Luo tili",
@@ -591,6 +646,7 @@
     "current": "Nykyinen tilaus",
     "choosePlan": "Valitse tilaus",
     "perUserMonth": "käyttäjä/kk",
+    "intervalLabel": "Laskutusväli",
     "interval": {
       "monthly": "Kuukausittain",
       "annual": "Vuosittain (2 kk ilmaiseksi)"
@@ -601,6 +657,15 @@
       "contacts": "Kontaktit",
       "storage": "Tietopankki (Mt)",
       "seats": "Käyttäjäpaikat"
+    },
+    "features": {
+      "aiMessagesPerUser": "{count} tekoälyviestiä / käyttäjä / kk",
+      "voice": "{assistants, plural, one {{assistantsText} puheavustaja} other {{assistantsText} puheavustajaa}} · {minutes} min",
+      "knowledgeBase": "{gb} Gt tietopankki",
+      "workflows": "{count} työnkulkua",
+      "contacts": "{count} kontaktia",
+      "apiWebhooks": "API + webhookit",
+      "auditRetention": "Tapahtumaloki {yearsText} vuoden ajalta"
     }
   },
   "booking": {
