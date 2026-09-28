@@ -22,8 +22,17 @@ const CONTEXT_WINDOW_TURNS = 20; // then rolling summary (§15.6)
  */
 const VOICE_MAX_OUTPUT_TOKENS = 400;
 const VOICE_CONTEXT_MESSAGES = 12;
+/** Characters kept per history message (a long typed message is cut, not dropped). */
+const VOICE_HISTORY_MESSAGE_CHARS = 2_000;
 const VOICE_RAG_CHUNKS = 3;
 const VOICE_MAX_TOOL_ROUNDS = 2;
+/** Tool executions per voice turn; further calls get an error result. */
+const VOICE_MAX_TOOL_CALLS = 3;
+/** Characters of each tool result passed back to the model. */
+const VOICE_TOOL_RESULT_CHARS = 4_000;
+
+const clip = (text: string, max: number) =>
+  text.length > max ? `${text.slice(0, max)} [truncated]` : text;
 
 function sse(event: ChatStreamEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;
@@ -109,7 +118,8 @@ export async function POST(request: Request): Promise<Response> {
   // user has a live session, chat without a grant is refused, so live turns
   // can't be routed around the voice restrictions or budgets.
   const voiceTurn = input.voiceGrant !== undefined;
-  if (voiceTurn && input.documentIds.length > 0) {
+  // A grant is bound to one conversation, so a voice turn must name it.
+  if (voiceTurn && (input.documentIds.length > 0 || !input.conversationId)) {
     return NextResponse.json({ error: { code: "invalid_input" } }, { status: 400 });
   }
   let redisClient: EvalClient | null = null;
@@ -141,7 +151,9 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // Consume the grant atomically right before paid work: one accepted turn,
-  // one generation. Replays and concurrent duplicates find no grant.
+  // one generation, in the grant's own conversation. Replays and concurrent
+  // duplicates find no grant; another conversation is refused.
+  let voiceNewConversation = false;
   if (voiceTurn) {
     try {
       const consumed = await voice.consumeVoiceGrant(
@@ -149,12 +161,14 @@ export async function POST(request: Request): Promise<Response> {
         ctx,
         input.voiceGrant!,
         input.message,
+        input.conversationId!,
       );
       if (!consumed.ok) {
         const code =
           consumed.reason === "session_ended" ? "voice_session_ended" : "voice_turn_invalid";
         return NextResponse.json({ error: { code } }, { status: 409 });
       }
+      voiceNewConversation = consumed.newConversation;
     } catch {
       return NextResponse.json({ error: { code: "service_unavailable" } }, { status: 503 });
     }
@@ -163,16 +177,29 @@ export async function POST(request: Request): Promise<Response> {
   const db = tenantDb(ctx.orgId);
 
   // ── Conversation + history ──
-  const conversation = input.conversationId
+  let conversation = input.conversationId
     ? await db.conversation.findFirst({
         where: { id: input.conversationId, userId: ctx.userId, deletedAt: null },
       })
     : await db.conversation.create({ data: { organizationId: ctx.orgId, userId: ctx.userId } });
+  let createdForVoice = false;
+  if (!conversation && voiceNewConversation) {
+    // A live session in a new chat: the id was reserved by the server when the
+    // session started (never chosen by the client); the first turn creates it.
+    try {
+      conversation = await db.conversation.create({
+        data: { id: input.conversationId!, organizationId: ctx.orgId, userId: ctx.userId },
+      });
+      createdForVoice = true;
+    } catch {
+      conversation = null; // e.g. the id exists but isn't accessible (deleted)
+    }
+  }
 
   if (!conversation) {
     return NextResponse.json({ error: { code: "resource_not_found" } }, { status: 404 });
   }
-  const isFirstMessage = !input.conversationId;
+  const isFirstMessage = !input.conversationId || createdForVoice;
 
   try {
     await attachDocumentsToConversation({
@@ -184,11 +211,15 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: { code: "invalid_document" } }, { status: 400 });
   }
 
-  const summary = await ensureConversationSummary({
-    organizationId: ctx.orgId,
-    conversationId: conversation.id,
-    signal: request.signal,
-  });
+  // A voice turn uses the stored rolling summary but never generates one (no
+  // extra paid summarization call inside a live turn).
+  const summary = voiceTurn
+    ? conversation.summary
+    : await ensureConversationSummary({
+        organizationId: ctx.orgId,
+        conversationId: conversation.id,
+        signal: request.signal,
+      });
 
   const history = await unscopedPrisma.message.findMany({
     where: { conversationId: conversation.id, role: { in: ["USER", "ASSISTANT"] } },
@@ -284,6 +315,7 @@ export async function POST(request: Request): Promise<Response> {
         }
       }, 15_000);
       let fullText = "";
+      let usageSoFar = { tokensIn: 0, tokensOut: 0 };
       const toolCallLog: Array<{ name: string; ok: boolean }> = [];
       const assistantMessageId = crypto.randomUUID();
 
@@ -297,7 +329,7 @@ export async function POST(request: Request): Promise<Response> {
           messages: [
             ...history.map((m) => ({
               role: m.role === "ASSISTANT" ? ("assistant" as const) : ("user" as const),
-              content: m.content,
+              content: voiceTurn ? clip(m.content, VOICE_HISTORY_MESSAGE_CHARS) : m.content,
             })),
             { role: "user", content: input.message },
           ],
@@ -307,13 +339,20 @@ export async function POST(request: Request): Promise<Response> {
               fullText += delta;
             },
             onToolUse: async (name, toolInput) => {
+              if (voiceTurn && toolCallLog.length >= VOICE_MAX_TOOL_CALLS) {
+                toolCallLog.push({ name, ok: false });
+                return JSON.stringify({ error: "tool_limit_reached" });
+              }
               send({ type: "tool", name, status: "start" });
               const result = await executeTool(identity, name, toolInput, {
                 readOnly: voiceTurn,
               });
               toolCallLog.push({ name, ok: !result.includes('"error"') });
               send({ type: "tool", name, status: "done" });
-              return result;
+              return voiceTurn ? clip(result, VOICE_TOOL_RESULT_CHARS) : result;
+            },
+            onUsage: (tokensIn, tokensOut) => {
+              usageSoFar = { tokensIn, tokensOut };
             },
           },
           signal: request.signal,
@@ -395,7 +434,32 @@ export async function POST(request: Request): Promise<Response> {
           estimatedCostUsd: cost.totalUsd,
         });
       } catch (err) {
-        if (isAbortError(err) || request.signal.aborted) return;
+        if (isAbortError(err) || request.signal.aborted) {
+          // Ending a live conversation mid-reply aborts the request. Model
+          // calls that already completed were billed by the provider, so
+          // their tokens stay recorded (the call in flight when the abort
+          // arrived may also be billed but reports no usage).
+          if (voiceTurn && usageSoFar.tokensIn + usageSoFar.tokensOut > 0) {
+            const cost = estimateAiCost(model, usageSoFar);
+            await Promise.all([
+              recordUsage(ctx.orgId, "AI_TOKENS_IN", usageSoFar.tokensIn, {
+                model,
+                userId: ctx.userId,
+                conversationId: conversation.id,
+                aborted: true,
+                estimatedCostUsd: cost.promptUsd,
+              }),
+              recordUsage(ctx.orgId, "AI_TOKENS_OUT", usageSoFar.tokensOut, {
+                model,
+                userId: ctx.userId,
+                conversationId: conversation.id,
+                aborted: true,
+                estimatedCostUsd: cost.completionUsd,
+              }),
+            ]).catch(() => {});
+          }
+          return;
+        }
         console.error(JSON.stringify(describeAiChatStreamError(err)));
         send({ type: "error", code: "generation_failed" });
       } finally {

@@ -16,6 +16,8 @@ const mocks = vi.hoisted(() => ({
   contactCreate: vi.fn(),
   consume: 1,
   active: 0,
+  consumeArgs: [] as string[],
+  history: [] as Array<{ role: string; content: string }>,
 }));
 
 vi.mock("@/server/auth/session", () => ({
@@ -31,8 +33,11 @@ vi.mock("@/server/integrations/redis", async () => {
   return {
     limitAiChat: vi.fn(async () => ({ success: true, reset: 0, limit: 30, remaining: 29 })),
     redis: {
-      eval: vi.fn(async (script: string) => {
-        if (script === voice.CONSUME_GRANT_SCRIPT) return mocks.consume;
+      eval: vi.fn(async (script: string, _keys: string[], args: string[]) => {
+        if (script === voice.CONSUME_GRANT_SCRIPT) {
+          mocks.consumeArgs = args;
+          return mocks.consume;
+        }
         if (script === voice.ACTIVE_SESSION_SCRIPT) return mocks.active;
         throw new Error("unexpected script");
       }),
@@ -53,7 +58,7 @@ vi.mock("@/server/db/tenant", () => ({
     calendarEvent: { create: mocks.eventCreate },
   })),
   unscopedPrisma: {
-    message: { findMany: vi.fn(async () => []), create: vi.fn(async () => ({})) },
+    message: { findMany: vi.fn(async () => mocks.history), create: vi.fn(async () => ({})) },
     organization: { findUniqueOrThrow: vi.fn(async () => ({ name: "Acme Oy", settings: {} })) },
     conversation: { update: vi.fn(async () => ({})) },
     $transaction: vi.fn(),
@@ -103,9 +108,11 @@ const GRANT = "44444444-4444-4444-8444-444444444444";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mocks.consumeArgs = [];
   vi.stubEnv("AI_VOICE_CONVERSATION_ENABLED", "1");
   mocks.consume = 1;
   mocks.active = 0;
+  mocks.history = [];
   toolResults = [];
   // The model "tries" to book a meeting and create a contact.
   mocks.streamClaude.mockImplementation(async ({ callbacks }) => {
@@ -195,6 +202,84 @@ describe("chat route voice mode", () => {
     expect(res.status).toBe(409);
     expect(await res.json()).toEqual({ error: { code: "live_voice_session_active" } });
     expect(mocks.streamClaude).not.toHaveBeenCalled();
+  });
+
+  it("a grant is checked against the conversation named in the request", async () => {
+    await (await chat({ message: "x", voiceGrant: GRANT })).text();
+    expect(mocks.consumeArgs[4]).toBe("33333333-3333-4333-8333-333333333333");
+    mocks.consume = -4; // the grant belongs to another conversation
+    const res = await chat({ message: "x", voiceGrant: GRANT });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: { code: "voice_turn_invalid" } });
+  });
+
+  it("a grant without a conversation id is rejected (400) before consumption", async () => {
+    const res = await POST(
+      new Request("http://localhost/api/v1/ai/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: "x", voiceGrant: GRANT }),
+      }),
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.consumeArgs).toEqual([]);
+    expect(mocks.streamClaude).not.toHaveBeenCalled();
+  });
+
+  it("a voice turn never triggers a paid summary; typed chat still does", async () => {
+    const { ensureConversationSummary } = await import("@/server/services/conversations");
+    await (await chat({ message: "x", voiceGrant: GRANT })).text();
+    expect(ensureConversationSummary).not.toHaveBeenCalled();
+    await (await chat({ message: "typed" })).text();
+    expect(ensureConversationSummary).toHaveBeenCalledTimes(1);
+  });
+
+  it("voice history messages are clipped to 2,000 characters; typed chat is not", async () => {
+    mocks.history = [{ role: "USER", content: "a".repeat(9_000) }];
+    await (await chat({ message: "x", voiceGrant: GRANT })).text();
+    const voiceCall = mocks.streamClaude.mock.calls[0]![0];
+    expect(voiceCall.messages[0].content.length).toBeLessThanOrEqual(2_000 + " [truncated]".length);
+    await (await chat({ message: "typed" })).text();
+    expect(mocks.streamClaude.mock.calls[1]![0].messages[0].content).toHaveLength(9_000);
+  });
+
+  it("voice: at most 3 tool executions per turn, each result clipped to 4,000 characters", async () => {
+    const { retrieveChunks } = await import("@/server/ai/rag");
+    vi.mocked(retrieveChunks).mockResolvedValue([
+      { chunkId: "c", documentId: "d", title: "t", content: "x".repeat(20_000), similarity: 1 },
+    ]);
+    const results: string[] = [];
+    mocks.streamClaude.mockImplementation(async ({ callbacks }) => {
+      for (let i = 0; i < 5; i++) {
+        results.push(await callbacks.onToolUse("searchKnowledgeBase", { query: `q${i}` }));
+      }
+      return { tokensIn: 10, tokensOut: 5, stopReason: "end_turn" };
+    });
+    await (await chat({ message: "x", voiceGrant: GRANT })).text();
+    expect(results.slice(0, 3).every((r) => r.length <= 4_000 + " [truncated]".length)).toBe(true);
+    expect(results.slice(3)).toEqual([
+      JSON.stringify({ error: "tool_limit_reached" }),
+      JSON.stringify({ error: "tool_limit_reached" }),
+    ]);
+    // Only 3 searches ran (the embedding call inside each one is paid).
+    expect(vi.mocked(retrieveChunks).mock.calls.filter((c) => c[0].count === 5)).toHaveLength(3);
+  });
+
+  it("ending mid-reply: completed model calls stay recorded; no reply is saved", async () => {
+    const { recordUsage } = await import("@/server/services/billing/entitlements");
+    const { unscopedPrisma } = await import("@/server/db/tenant");
+    mocks.streamClaude.mockImplementation(async ({ callbacks }) => {
+      callbacks.onUsage(1_200, 40); // round 1 completed (billed)
+      throw new DOMException("Request aborted", "AbortError"); // End pressed during round 2
+    });
+    await (await chat({ message: "x", voiceGrant: GRANT })).text();
+    const metrics = vi.mocked(recordUsage).mock.calls.map((c) => [c[1], c[2], c[3]?.aborted]);
+    expect(metrics).toEqual([
+      ["AI_TOKENS_IN", 1_200, true],
+      ["AI_TOKENS_OUT", 40, true],
+    ]);
+    // Only the user's message was stored; no assistant reply.
+    expect(vi.mocked(unscopedPrisma.message.create)).toHaveBeenCalledTimes(1);
   });
 
   it("with live voice disabled, typed chat never touches the voice store", async () => {

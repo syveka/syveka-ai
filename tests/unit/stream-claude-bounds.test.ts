@@ -68,6 +68,54 @@ describe("streamClaude bounds", () => {
     expect(m.stream).toHaveBeenCalledTimes(1);
   });
 
+  it("after cancellation no new model call or tool call starts; completed usage is reported", async () => {
+    const controller = new AbortController();
+    const twoTools = {
+      ...toolUseMessage,
+      content: [
+        { type: "tool_use", id: "t1", name: "searchContacts", input: {} },
+        { type: "tool_use", id: "t2", name: "searchContacts", input: {} },
+      ],
+    };
+    m.stream.mockImplementation(() => ok(twoTools));
+    const onUsage = vi.fn();
+    const onToolUse = vi.fn(async () => {
+      controller.abort(); // the user presses End while the first tool runs
+      return "{}";
+    });
+    await expect(
+      streamClaude({
+        model: "claude-sonnet-4-5",
+        system: "s",
+        messages: [{ role: "user", content: "hi" }],
+        maxTokens: 400,
+        callbacks: { onText: vi.fn(), onToolUse, onUsage },
+        signal: controller.signal,
+        maxToolRounds: 2,
+      }),
+    ).rejects.toThrow(/abort/i);
+    expect(m.stream).toHaveBeenCalledTimes(1); // no second model call
+    expect(onToolUse).toHaveBeenCalledTimes(1); // the second tool never ran
+    expect(onUsage).toHaveBeenCalledWith(100, 10); // the billed first call is reported
+  });
+
+  it("an already-cancelled request makes no model call", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    m.stream.mockImplementation(() => ok(toolUseMessage));
+    await expect(
+      streamClaude({
+        model: "claude-sonnet-4-5",
+        system: "s",
+        messages: [{ role: "user", content: "hi" }],
+        maxTokens: 400,
+        callbacks: { onText: vi.fn() },
+        signal: controller.signal,
+      }),
+    ).rejects.toThrow(/abort/i);
+    expect(m.stream).not.toHaveBeenCalled();
+  });
+
   it("without maxAttempts, the configured retries still apply (typed chat unchanged)", async () => {
     m.stream.mockImplementation(fail);
     await expect(run()).rejects.toThrow("overloaded");

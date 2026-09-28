@@ -24,7 +24,13 @@ export type ChatMessage = { role: "user" | "assistant"; content: string };
 export type StreamCallbacks = {
   onText: (delta: string) => void | Promise<void>;
   onToolUse?: (name: string, input: unknown, id: string) => Promise<string>;
+  /** Cumulative usage after each completed model call (billed even if a later call is aborted). */
+  onUsage?: (tokensIn: number, tokensOut: number) => void;
 };
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw new DOMException("Request aborted", "AbortError");
+}
 
 /**
  * Streaming completion with tool-use loop. Providers are wrapped behind this
@@ -58,6 +64,8 @@ export async function streamClaude(params: {
 
   // Tool-use loop: bounded rounds (default 5) to bound cost (§15.6)
   for (let round = 0; round < maxToolRounds; round++) {
+    // Once cancellation is observed, no new model call or tool round starts.
+    throwIfAborted(params.signal);
     let final: Anthropic.Message | null = null;
     for (let attempt = 1; attempt <= AI_RETRY_MAX_ATTEMPTS; attempt++) {
       let emittedText = false;
@@ -89,6 +97,7 @@ export async function streamClaude(params: {
     tokensIn += final.usage.input_tokens;
     tokensOut += final.usage.output_tokens;
     stopReason = final.stop_reason;
+    params.callbacks.onUsage?.(tokensIn, tokensOut);
 
     if (final.stop_reason !== "tool_use" || !params.callbacks.onToolUse) {
       return { tokensIn, tokensOut, stopReason };
@@ -98,6 +107,7 @@ export async function streamClaude(params: {
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const block of final.content) {
       if (block.type === "tool_use") {
+        throwIfAborted(params.signal);
         const result = await params.callbacks.onToolUse(block.name, block.input, block.id);
         toolResults.push({ type: "tool_result", tool_use_id: block.id, content: result });
       }

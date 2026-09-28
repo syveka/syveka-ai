@@ -24,6 +24,8 @@ const m = vi.hoisted(() => ({
   transcribe: vi.fn(),
   recordUsage: vi.fn(async () => {}),
   quotaExceeded: false,
+  conversation: null as null | { id: string },
+  findConversation: vi.fn(),
 }));
 
 vi.mock("@/server/auth/session", () => ({
@@ -46,6 +48,9 @@ vi.mock("@/server/integrations/redis", () => ({
       return m.evalResult;
     }),
   },
+}));
+vi.mock("@/server/db/tenant", () => ({
+  tenantDb: vi.fn(() => ({ conversation: { findFirst: m.findConversation } })),
 }));
 vi.mock("@/server/integrations/openai", () => ({
   transcribeAudio: m.transcribe,
@@ -115,6 +120,8 @@ beforeEach(() => {
     return "Mitä kalenterissa on huomenna?";
   });
   m.recordUsage.mockClear();
+  m.conversation = null;
+  m.findConversation.mockReset().mockImplementation(async () => m.conversation);
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 afterEach(() => {
@@ -127,9 +134,10 @@ describe("configuration and gating", () => {
     expect(readVoiceConversationConfig({})).toEqual({
       sessionSeconds: 300,
       maxTurnSeconds: 30,
-      maxTurnsPerSession: 20,
-      dailyOrgTurns: 30,
-      dailyOrgAudioSeconds: 600,
+      maxTurnsPerSession: 10,
+      dailyOrgSessions: 1,
+      dailyOrgTurns: 10,
+      dailyOrgAudioSeconds: 300,
       maxConcurrentPerOrg: 1,
     });
     expect(
@@ -159,8 +167,14 @@ describe("configuration and gating", () => {
 });
 
 describe("POST/DELETE /api/v1/ai/voice-conversation/session", () => {
-  const start = () =>
-    startSession(new Request("http://localhost/x", { method: "POST", headers: sameOrigin }));
+  const start = (body?: Record<string, unknown>) =>
+    startSession(
+      new Request("http://localhost/x", {
+        method: "POST",
+        headers: sameOrigin,
+        ...(body ? { body: JSON.stringify(body) } : {}),
+      }),
+    );
 
   it.each([
     ["cross-origin", () => undefined, { "sec-fetch-site": "cross-site" }, 403],
@@ -193,15 +207,71 @@ describe("POST/DELETE /api/v1/ai/voice-conversation/session", () => {
     expect(call.keys).toContain(`voice:conv:user:${ORG}:${USER}`);
     expect(call.args.slice(1, 3)).toEqual([ORG, USER]);
     expect(call.args[6]).toBe("1"); // max concurrent per org
-    expect(call.args[7]).toBe("600000"); // daily org audio budget (ms)
-    expect(call.args[8]).toBe("30"); // daily org turns
-    expect(call.keys).toContain(`voice:conv:org:${ORG}:turns:${call.keys[4]!.split(":").pop()}`);
+    expect(call.args[7]).toBe("300000"); // daily org audio budget (ms)
+    expect(call.args[8]).toBe("10"); // daily org turns
+    expect(call.args[9]).toBe("1"); // daily org sessions
+    const day = call.keys[4]!.split(":").pop();
+    expect(call.keys).toContain(`voice:conv:org:${ORG}:turns:${day}`);
+    expect(call.keys).toContain(`voice:conv:org:${ORG}:sessions:${day}`);
+    // A new chat: the server reserves the conversation id (never the client).
+    expect(call.args[10]).toBe(body.data.conversationId);
+    expect(body.data.conversationId).toMatch(/^[0-9a-f-]{36}$/);
+    expect(call.args[11]).toBe("1");
+    expect(m.findConversation).not.toHaveBeenCalled();
+  });
+
+  it("binds the session to an existing conversation only after the access check", async () => {
+    const CONV = "77777777-7777-4777-8777-777777777777";
+    m.conversation = { id: CONV };
+    const { status, body } = await json(await start({ conversationId: CONV }));
+    expect(status).toBe(200);
+    expect(body.data.conversationId).toBe(CONV);
+    // Same rule as the chat route: this user's, in this organization, not deleted.
+    expect(m.findConversation).toHaveBeenCalledWith({
+      where: { id: CONV, userId: USER, deletedAt: null },
+      select: { id: true },
+    });
+    const { tenantDb } = await import("@/server/db/tenant");
+    expect(tenantDb).toHaveBeenLastCalledWith(ORG);
+    expect(m.evalCalls[0]!.args.slice(10, 12)).toEqual([CONV, "0"]);
+  });
+
+  it("refuses another user's / another organization's conversation before using a slot", async () => {
+    m.conversation = null; // not found under this org + user
+    const res = await start({ conversationId: "88888888-8888-4888-8888-888888888888" });
+    expect(await json(res)).toEqual({
+      status: 404,
+      body: { error: { code: "resource_not_found" } },
+    });
+    expect(m.evalCalls).toHaveLength(0);
+  });
+
+  it.each([
+    ["malformed JSON", "{"],
+    ["not a uuid", JSON.stringify({ conversationId: "x" })],
+    ["unknown field", JSON.stringify({ conversationId: undefined, sessionSeconds: 9999 })],
+  ])("rejects a malformed start (%s) before using a slot", async (_l, raw) => {
+    const res = await startSession(
+      new Request("http://localhost/x", { method: "POST", headers: sameOrigin, body: raw }),
+    );
+    expect(res.status).toBe(400);
+    expect(m.evalCalls).toHaveLength(0);
+  });
+
+  it.each([
+    ["rate limited", { success: false }, 429],
+    ["limiter timeout (fail closed)", { success: false, unavailable: true }, 503],
+  ])("start is rate-limited (%s) before using a slot", async (_l, rate, status) => {
+    m.rate = rate;
+    expect((await start()).status).toBe(status);
+    expect(m.evalCalls).toHaveLength(0);
   });
 
   it.each([
     [-2, "voice_capacity_reached"],
     [-3, "voice_daily_limit_reached"],
     [-7, "voice_daily_limit_reached"],
+    [-8, "voice_daily_limit_reached"],
   ])("maps store result %s to 429 %s", async (result, code) => {
     m.evalResult = result;
     expect(await json(await start())).toEqual({ status: 429, body: { error: { code } } });
@@ -295,7 +365,7 @@ describe("POST /api/v1/ai/voice-conversation/turn", () => {
     expect(status).toBe(200);
     expect(body.data).toMatchObject({
       text: "Mitä kalenterissa on huomenna?",
-      dailyRemainingSeconds: 588,
+      dailyRemainingSeconds: 288,
     });
     expect(body.data.grant).toMatch(/^[0-9a-f-]{36}$/);
     // Reserve → one provider call → one grant for one chat generation.

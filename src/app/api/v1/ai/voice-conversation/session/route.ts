@@ -39,17 +39,63 @@ async function guard(request: Request, { requireMember }: { requireMember: boole
   return { ok: true as const, ctx, config, conversation };
 }
 
+const startSchema = z.object({ conversationId: z.string().uuid().optional() }).strict();
+
 /**
- * Starts a live voice session: one per user (a new start replaces the user's
- * own previous session, e.g. from another tab), capped per organization,
- * refused once the organization's daily audio budget is used. No provider
- * work happens here; every paid turn is reserved separately.
+ * Starts a live voice session bound to one conversation.
+ *
+ * - An existing conversation must belong to the signed-in user in their
+ *   organization (the same rule as the chat route); a client-supplied id is
+ *   never trusted without that check.
+ * - A new chat gets a conversation id reserved here by the server; the row is
+ *   created by the first accepted turn, so ending without speaking leaves no
+ *   empty conversation.
+ *
+ * Everything that can refuse the request (auth, pilot membership, limits,
+ * rate limit, conversation access, capacity, daily budgets) is checked before
+ * the organization's daily session slot is consumed. A successful start uses
+ * the slot for the Helsinki day; it is not refunded when the session ends
+ * early. No provider work happens here; every paid turn is reserved
+ * separately.
  */
 export async function POST(request: Request): Promise<Response> {
   const g = await guard(request, { requireMember: true });
   if (!g.ok) return g.response;
   if (!g.config) return error("voice_conversation_unavailable", 503);
-  const { redis } = await import("@/server/integrations/redis");
+  let raw: unknown = {};
+  try {
+    const text = await request.text();
+    if (text.trim()) raw = JSON.parse(text);
+  } catch {
+    return error("invalid_input", 400);
+  }
+  const body = startSchema.safeParse(raw);
+  if (!body.success) return error("invalid_input", 400);
+
+  const [{ redis, limitAiVoiceTurn }, { tenantDb }] = await Promise.all([
+    import("@/server/integrations/redis"),
+    import("@/server/db/tenant"),
+  ]);
+  const limit = await limitAiVoiceTurn(g.ctx.orgId, g.ctx.userId);
+  if (!limit.success) {
+    return error(
+      limit.unavailable ? "voice_conversation_unavailable" : "rate_limited",
+      limit.unavailable ? 503 : 429,
+    );
+  }
+
+  let conversation: { id: string; isNew: boolean };
+  if (body.data.conversationId) {
+    const found = await tenantDb(g.ctx.orgId).conversation.findFirst({
+      where: { id: body.data.conversationId, userId: g.ctx.userId, deletedAt: null },
+      select: { id: true },
+    });
+    if (!found) return error("resource_not_found", 404);
+    conversation = { id: found.id, isNew: false };
+  } else {
+    conversation = { id: crypto.randomUUID(), isNew: true };
+  }
+
   try {
     const config = g.config;
     const result = await g.conversation.startVoiceSession(
@@ -57,6 +103,7 @@ export async function POST(request: Request): Promise<Response> {
       g.ctx,
       config,
       crypto.randomUUID(),
+      conversation,
     );
     if (!result.ok) {
       return error(
@@ -67,6 +114,7 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({
       data: {
         sessionId: result.sessionId,
+        conversationId: conversation.id,
         expiresAt: result.expiresAt,
         maxTurnSeconds: config.maxTurnSeconds,
         sessionSeconds: config.sessionSeconds,
