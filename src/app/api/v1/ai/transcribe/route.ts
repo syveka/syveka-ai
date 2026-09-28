@@ -6,6 +6,7 @@ import {
   MIN_RECORDING_MS,
 } from "@/lib/voice/audio";
 import { measureAudioDuration } from "@/lib/voice/audio-duration";
+import { isCrossOrigin } from "@/server/security/same-origin";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -19,27 +20,6 @@ const CONTAINER_MIME = { webm: "audio/webm", mp4: "audio/mp4" } as const;
 
 function error(code: string, status: number, headers?: HeadersInit) {
   return NextResponse.json({ error: { code } }, { status, headers });
-}
-
-/**
- * Defense in depth against cross-site requests. The session cookie is
- * SameSite=Lax (not sent on cross-site POSTs), but this endpoint accepts
- * multipart form data — a request any site can send without a CORS
- * preflight — and triggers paid work, so it also requires a same-origin
- * browser request. Non-browser clients sending neither header still need a
- * valid session.
- */
-function isCrossOrigin(request: Request): boolean {
-  const site = request.headers.get("sec-fetch-site");
-  if (site) return site !== "same-origin";
-  const origin = request.headers.get("origin");
-  if (!origin) return false;
-  const host = request.headers.get("x-forwarded-host") ?? request.headers.get("host");
-  try {
-    return new URL(origin).host !== host;
-  } catch {
-    return true;
-  }
 }
 
 /**

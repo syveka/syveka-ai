@@ -5,6 +5,7 @@ import { listConversations } from "@/server/services/conversations";
 import { ConversationList } from "@/components/chat/conversation-list";
 import { ChatView } from "@/components/chat/chat-view";
 import { isTranscriptionPilotMember } from "@/server/ai/transcription-pilot";
+import { liveVoiceFor } from "@/server/ai/voice-conversation-page";
 
 export default async function ChatPage() {
   const ctx = await requirePermission("chat:use");
@@ -20,7 +21,11 @@ export default async function ChatPage() {
         }))}
       />
       <div className="min-w-0 flex-1">
-        <ChatView initialMessages={[]} voiceInputEnabled={isTranscriptionPilotMember(ctx)} />
+        <ChatView
+          initialMessages={[]}
+          voiceInputEnabled={isTranscriptionPilotMember(ctx)}
+          voiceConversation={liveVoiceFor(ctx)}
+        />
       </div>
     </>
   );

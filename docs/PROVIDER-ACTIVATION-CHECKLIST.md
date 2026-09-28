@@ -104,6 +104,180 @@ provider call. Production stays disabled.
       automatically, one `API_CALLS` usage record is written per attempt, and the 11th attempt
       of the day shows the localized daily-limit message.
 
+### AI Chat live voice conversation (separate pilot; off by default)
+
+A hands-free **sequential** pipeline, not native speech-to-speech:
+
+1. The browser detects the end of speech and uploads each finished turn.
+2. The server reserves the turn, transcribes it (`gpt-4o-mini-transcribe`, one attempt) and returns
+   the text with a **single-use grant**.
+3. The client submits the text and grant to the normal `/api/v1/ai/chat` route. That route consumes
+   the grant atomically — **one accepted turn allows at most one chat generation** — and answers in
+   a bounded, read-only voice mode.
+4. The device speaks the reply. Without a device voice for the interface language, the start
+   screen offers text-only replies or dictation; it never uses another language's voice. Text-only
+   is not a spoken conversation.
+
+Live voice is independent of dictation: it has its own flag, allowlist, keys and budgets. The
+dictation pilot and its 10-attempt daily cap are unchanged.
+
+**Enable with (staging only, after separate approval):**
+
+- `AI_VOICE_CONVERSATION_ENABLED=1`
+- `AI_VOICE_CONVERSATION_PILOT_ALLOWLIST="<organizationId>:<userId>"` (the approved QA pair only)
+- `OPENAI_API_KEY`
+
+The limits below default to the first-trial values, so no limit variable needs to be set. A missing
+or malformed flag or allowlist, or any invalid or out-of-range limit, disables the feature.
+
+| Variable                                        | Default | Allowed range | Meaning (per organization, per Europe/Helsinki day unless noted) |
+| ----------------------------------------------- | ------- | ------------- | ---------------------------------------------------------------- |
+| `AI_VOICE_CONVERSATION_DAILY_ORG_SESSIONS`      | 1       | 1–200         | Successfully started sessions; not refunded                      |
+| `AI_VOICE_CONVERSATION_SESSION_SECONDS`         | 300     | 60–1800       | Hard session lifetime                                            |
+| `AI_VOICE_CONVERSATION_MAX_TURNS_PER_SESSION`   | 10      | 1–200         | Accepted turns per session                                       |
+| `AI_VOICE_CONVERSATION_DAILY_ORG_TURNS`         | 10      | 1–2000        | Accepted turns per day, across all sessions                      |
+| `AI_VOICE_CONVERSATION_MAX_TURN_SECONDS`        | 30      | 5–60          | Longest accepted turn (measured server-side)                     |
+| `AI_VOICE_CONVERSATION_DAILY_ORG_AUDIO_SECONDS` | 300     | 60–36000      | Accepted audio per day                                           |
+| `AI_VOICE_CONVERSATION_MAX_CONCURRENT_PER_ORG`  | 1       | 1–20          | Concurrent live sessions (not per day)                           |
+
+These are temporary pilot limits, not customer pricing or plan allowances.
+
+**Session start** (`POST /api/v1/ai/voice-conversation/session`). Everything that can refuse the
+request is checked before the day's session slot is used:
+
+- same-origin, session, `chat:use`, flag and allowlist, valid limits;
+- the shared voice rate limit (fails closed);
+- **conversation access**: an existing conversation must be the user's own, in their organization
+  and not deleted — the same rule as the chat route. A client-supplied id is never trusted without
+  this check. For a new chat, the server reserves a random conversation id; the first accepted turn
+  creates the conversation with that id. Ending without speaking leaves no empty conversation.
+- then one atomic Lua script checks the daily sessions, audio and turns and the concurrency limit
+  **before changing anything**, and only then takes the slot and creates the session. A refused
+  start (for example from a second tab) leaves the user's running session untouched.
+
+**When the daily session slot is used:** at a successful start. It is **not refunded** if the
+session ends early, the page is reloaded or closed, the connection drops, or the user opens another
+tab. With the pilot defaults, an interrupted session therefore uses up that day's live
+conversation. Its accepted turns and audio also stay counted. The next session is possible after
+Europe/Helsinki midnight. The start screen tells the user this before the microphone opens.
+
+**Each turn** (`POST /api/v1/ai/voice-conversation/turn`), before any paid call:
+
+- same-origin, session, permission, flag, allowlist, the rate limit, and the monthly AI-message
+  quota (read only);
+- size ≤ 2 MiB and measured duration ≤ 30 s;
+- one atomic Lua reservation: session owner and expiry, the per-session turn cap, a duplicate turn
+  id, and **both** daily budgets (turns and audio). Nothing is reserved on refusal. A retried request
+  whose response was lost is refused as a duplicate, not reserved twice.
+- A turn is **used** once reserved. It is not refunded on provider failure, timeout, cancel or an
+  empty transcript.
+
+**Grant** (issued only for a non-empty transcript while the session is live; TTL 120 s):
+
+- It is bound to the organization, user, session, turn, **conversation** and exact transcript.
+- The chat route requires the conversation id and consumes the grant atomically before generating.
+  Replays, concurrent duplicates, another conversation (including the same user's other
+  conversations), another user or organization, and ended, replaced or expired sessions all get 409
+  and no generation.
+- A client-sent `responseMode` is rejected (400). Voice mode comes only from the grant.
+- While the user has a live session, chat without a grant is refused (409).
+
+**Voice-mode bounds** (typed chat unchanged):
+
+- the standard chat model only;
+- ≤ 400 output tokens **per model call** and ≤ 2 model calls per turn (tools requested by the
+  second call are not run);
+- no retries for chat or transcription;
+- ≤ 3 read-only tool executions, each result fitted structurally to ≤ 4,000 bytes (valid JSON);
+- the last 12 history messages, each cut to 2,000 characters;
+- ≤ 3 knowledge chunks;
+- the stored summary is used, never generated;
+- write tools are refused both in the tool list and in `executeTool`;
+- **aggregate input budget**, checked before **every** model call:
+  - an upper-bound estimate (1 token per UTF-8 byte, plus the tool prompt; not an exact count) of
+    everything sent, including instructions, Business DNA with all services, history, the
+    transcript, knowledge, tool definitions, and the tool requests and results added before the
+    second call;
+  - ≤ 48,000 per call, with the first call planned to 30,000;
+  - optional context is left out whole, in a fixed order: oldest history, the summary, the
+    lowest-ranked knowledge, services, the rest of Business DNA, organization instructions;
+  - rules, the transcript and the tool structure are never cut;
+  - if required content can't fit, the turn is refused before the call with the localized
+    `voice_context_too_large` message. Stored data is not changed.
+
+**Ending and cancellation:**
+
+- End, page hide, a language change or unmount releases the microphone and ends the session.
+- The in-flight chat request is aborted. The server then starts no new model call or tool execution
+  (checked before each call and each tool).
+- A model call or transcription already sent when End arrives may still be billed. Cancellation
+  can't reverse it. It is one of the turn's already-counted calls, not an extra one.
+- Tokens from completed calls are still recorded, with `aborted: true`.
+- A knowledge-base search already running finishes.
+- A new conversation's title generation (Haiku, after its first completed reply) runs to completion.
+- Late responses can't restart speech or the microphone.
+- The grant and the turn stay consumed.
+
+**Cleanup after configuration changes:** ending a session needs no flag, allowlist or valid limits
+(the end script uses no configuration). Switching the feature off never leaves a session that can't
+be closed. Sessions also expire on their own after their lifetime.
+
+**Failure:** every store error returns 503 (fail closed).
+
+**Cost** (see `docs/live-voice-cost-report.md`):
+
+- **Typical estimate:** ≈ $0.18 per full pilot day (10 turns).
+- **Conservative calculated cost:** ≈ $3.08 per organization per day (≈ $92 per 30 days). It assumes
+  every call is at the enforced input budget and output limit, and that retryable ancillary calls
+  (embeddings, title) use the maximum `AI_RETRY_MAX_ATTEMPTS` = 6.
+- **Enforced monetary budget:** none. The code enforces counts and sizes, not dollars.
+- Transcription per-minute figures are OpenAI's estimate; transcription is billed per token.
+
+**Privacy:**
+
+- Audio is held in memory for the request and sent to OpenAI for transcription.
+- Neither audio nor transcripts are logged.
+- The conversation text is saved in the chat like typed messages.
+- The intro screen discloses this. OpenAI's own retention is governed by its API data policy; it is
+  not promised here.
+
+**Known limitation (separate follow-up):** in typed chat and the phone assistant, confirmation for
+write tools is prompt-only. See `docs/ai-tool-confirmation-followup.md`. Live voice doesn't depend on
+it, because it is read-only.
+
+**Test evidence:**
+
+- Route integration (mocked providers; in-memory emulation of the scripts).
+- The Lua scripts against a **real Redis server**:
+  `VOICE_REDIS_TEST_URL=redis://127.0.0.1:<port> npx vitest run tests/unit/voice-conversation-redis.test.ts`.
+  Opt-in and skipped in CI. Use only an isolated, disposable local Redis — never a shared, staging
+  or production instance.
+- A real-browser harness.
+- Real phones: not yet tested (see below).
+
+- [ ] **Manual verification required** (approved QA account, real phones).
+
+  With one started session per organization per Helsinki day, **test one language per day**:
+  day 1 Finnish, day 2 English, day 3 Arabic. The interface language is fixed for the session, and
+  changing it ends the session. Do not reset counters or raise the limits to test faster; that needs
+  a separate, explicit authorization. The daily-limit checks (a second tab, a restart after ending)
+  use that day's already-used session, so they add no extra session.
+
+  Each day, in that day's language, as **one session of at most 10 turns**, in this order:
+  1. Open a **new chat**, type a draft in the composer (don't send it) and press Start. Confirm the
+     start screen (spoken, or text-only where the phone has no voice for the language).
+  2. Speak 2–3 questions → answers are spoken (or shown as text only). Talk over one reply → it
+     stops. Stop reply works.
+  3. Mute → speaking produces no turn. Unmute → turns resume.
+  4. Ask for a booking → a spoken refusal pointing to the typed chat; nothing is created.
+  5. Open a second tab and press Start → refused with the daily-limit message; the first tab keeps
+     working.
+  6. Ask one more question and press End while it shows "thinking" → the microphone indicator goes
+     off, and nothing is spoken afterwards.
+  7. All turns are in one conversation, which opens after End. The draft is back. Dictation still
+     works.
+  8. Press Start again → refused with the daily-limit message (the day's session is used).
+
 ## 4. Resend (transactional + inbound email)
 
 **Required:** `RESEND_API_KEY`, `EMAIL_FROM`; **for real inbound mail:** `INBOX_EMAIL_DOMAIN`,

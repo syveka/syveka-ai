@@ -7,6 +7,12 @@ export const chatRequestSchema = z
     useKnowledgeBase: z.boolean().default(true),
     deepMode: z.boolean().default(false),
     documentIds: z.array(z.string().uuid()).max(10).default([]),
+    /**
+     * Single-use grant issued by POST /api/v1/ai/voice-conversation/turn for
+     * one live voice turn. The server derives voice mode (read-only tools,
+     * bounded reply) from a valid grant — there is no client-controlled mode.
+     */
+    voiceGrant: z.string().uuid().optional(),
   })
   .strict();
 

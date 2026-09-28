@@ -376,6 +376,16 @@ export const TOOL_REGISTRY = [
 ] as Array<ToolDef<any>>;
 
 /** Tools the acting identity may use, in Anthropic tool format. */
+/**
+ * Tools that only read (permission ending in ":read"). Live voice turns are
+ * limited to these: an automatically submitted spoken turn — possibly
+ * background speech or an ambiguous "yes" — must never create, change, book
+ * or send anything.
+ */
+export const READ_ONLY_TOOL_NAMES: readonly string[] = TOOL_REGISTRY.filter((t) =>
+  t.permission.endsWith(":read"),
+).map((t) => t.name);
+
 export function anthropicToolsFor(
   identity: ToolIdentity,
   enabledNames?: string[],
@@ -394,9 +404,13 @@ export async function executeTool(
   identity: ToolIdentity,
   name: string,
   rawInput: unknown,
+  options: { readOnly?: boolean } = {},
 ): Promise<string> {
   const tool = TOOL_REGISTRY.find((t) => t.name === name);
   if (!tool) return JSON.stringify({ error: "unknown_tool" });
+  if (options.readOnly && !READ_ONLY_TOOL_NAMES.includes(tool.name)) {
+    return JSON.stringify({ error: "not_available_in_voice_conversation" });
+  }
   if (!can(identity.role, tool.permission)) {
     return JSON.stringify({ error: "permission_denied" });
   }

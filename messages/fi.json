@@ -200,7 +200,12 @@
       "upload_failed": "Tiedoston lataaminen epäonnistui.",
       "unsupported_file": "Käytä PDF-, DOCX- tai TXT-tiedostoa.",
       "file_too_large": "Tiedoston enimmäiskoko on 25 Mt.",
-      "invalid_document": "Yksi liitetyistä tiedostoista ei ole käytettävissä."
+      "invalid_document": "Yksi liitetyistä tiedostoista ei ole käytettävissä.",
+      "live_voice_session_active": "Puhekeskustelu on käynnissä. Lopeta se ennen kirjoittamista.",
+      "voice_session_ended": "Puhekeskustelu on päättynyt.",
+      "voice_turn_invalid": "Puheenvuoroon ei voitu vastata. Sano se uudelleen.",
+      "voice_context_too_large": "Tähän kysymykseen tarvitaan enemmän taustatietoa kuin puhekeskustelussa voidaan käyttää. Lopeta puhekeskustelu ja kysy kirjoittamalla.",
+      "service_unavailable": "Palvelu ei ole tilapäisesti käytettävissä. Yritä uudelleen."
     },
     "voice": {
       "record": "Nauhoita ääniviesti",
@@ -242,6 +247,62 @@
         "transcription_failed": "Nauhoitusta ei voitu litteroida. Yritä uudelleen.",
         "daily_limit": "Tämän pilotin {limit} päivittäistä puheen litterointia on käytetty. Yritä huomenna uudelleen (Suomen aikaa) tai kirjoita viestisi."
       }
+    },
+    "live": {
+      "start": "Aloita puhekeskustelu",
+      "introTitle": "Keskustele Syvekan kanssa",
+      "introMic": "Mikrofoni on päällä koko keskustelun ajan.",
+      "introAuto": "Kun lopetat puhumisen, puheesi lähetetään automaattisesti ja Syveka vastaa ääneen.",
+      "introControl": "Voit mykistää mikrofonin, keskeyttää vastauksen tai lopettaa keskustelun milloin tahansa.",
+      "introActions": "Puhekeskustelussa Syveka voi hakea tietoja, mutta ei luo, muuta, varaa tai lähetä mitään. Lopeta silloin keskustelu ja pyydä sitä chatissa.",
+      "introLimit": "Keskustelu kestää enintään {minutes} minuuttia.",
+      "introDailyLimit": "Keskustelun aloittaminen käyttää tämän päivän puhekeskustelukiintiön, vaikka lopettaisit sen aikaisin.",
+      "introPrivacy": "Puheesi lähetetään puheentunnistuspalvelullemme (OpenAI) vain tekstin luomista varten, eikä Syveka tallenna sitä. Vastaukset luetaan laitteesi puheäänillä; keskustelun teksti tallentuu chattiin kuten kirjoitetut viestit.",
+      "confirm": "Aloita keskustelu",
+      "cancel": "Peruuta",
+      "panelLabel": "Puhekeskustelu",
+      "elapsed": "Aika",
+      "remaining": "Jäljellä",
+      "mute": "Mykistä mikrofoni",
+      "unmute": "Poista mikrofonin mykistys",
+      "stopReply": "Keskeytä vastaus",
+      "end": "Lopeta keskustelu",
+      "dismiss": "Sulje",
+      "state": {
+        "connecting": "Yhdistetään…",
+        "listening": "Kuunnellaan…",
+        "userSpeaking": "Puhut…",
+        "processing": "Litteroidaan…",
+        "thinking": "Syveka miettii…",
+        "speaking": "Syveka puhuu…",
+        "muted": "Mikrofoni mykistetty",
+        "ended": "Puhekeskustelu päättyi."
+      },
+      "notices": {
+        "not_heard": "En saanut selvää. Sano se uudelleen.",
+        "no_voice": "Tässä laitteessa ei ole puheääntä tälle kielelle, joten vastaukset näytetään vain tekstinä.",
+        "turn_too_long": "Puheenvuoro oli liian pitkä. Sano asia lyhyemmissä osissa."
+      },
+      "errors": {
+        "unsupported": "Tämä selain ei tue puhekeskustelua. Voit jatkaa kirjoittamalla.",
+        "permission_denied": "Mikrofonin käyttö on estetty. Salli se selaimen sivustoasetuksista ja yritä uudelleen.",
+        "no_microphone": "Mikrofonia ei löytynyt.",
+        "microphone_busy": "Mikrofoni on toisen sovelluksen käytössä tai ei käytettävissä. Yritä uudelleen.",
+        "not_enabled": "Puhekeskustelu ei ole käytettävissä tilillesi.",
+        "limit_reached": "Päivän puhekeskusteluraja on täynnä. Voit jatkaa kirjoittamalla.",
+        "capacity_reached": "Organisaatiossasi on jo käynnissä toinen puhekeskustelu. Yritä myöhemmin uudelleen.",
+        "session_expired": "Puhekeskustelu saavutti aikarajansa ja päättyi.",
+        "unavailable": "Puhekeskustelu ei ole juuri nyt käytettävissä. Voit jatkaa kirjoittamalla.",
+        "network_error": "Yhteys katkesi, joten puhekeskustelu päättyi. Aloita uudelleen, kun olet valmis.",
+        "ended_elsewhere": "Puhekeskustelu jatkui toisessa välilehdessä.",
+        "reply_failed": "Syveka ei pystynyt vastaamaan. Jatka puhumista tai lopeta keskustelu."
+      },
+      "voiceChecking": "Tarkistetaan puheääniä…",
+      "voiceUnavailable": "Tässä laitteessa ei ole puheääntä tälle kielelle, joten Syveka ei voi vastata ääneen. Voit puhua ja lukea vastaukset tai käyttää sanelua.",
+      "voiceUnknown": "Laitteesi ei vielä kertonut puheääniään. Jos et kuule vastauksia, lopeta keskustelu ja aloita uudelleen tekstivastauksin.",
+      "startTextOnly": "Aloita tekstivastauksin",
+      "useDictation": "Käytä sanelua",
+      "textOnlyHint": "Vastaukset näytetään vain tekstinä."
     }
   },
   "publicAssistant": {

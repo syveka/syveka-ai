@@ -24,7 +24,13 @@ export type ChatMessage = { role: "user" | "assistant"; content: string };
 export type StreamCallbacks = {
   onText: (delta: string) => void | Promise<void>;
   onToolUse?: (name: string, input: unknown, id: string) => Promise<string>;
+  /** Cumulative usage after each completed model call (billed even if a later call is aborted). */
+  onUsage?: (tokensIn: number, tokensOut: number) => void;
 };
+
+function throwIfAborted(signal?: AbortSignal) {
+  if (signal?.aborted) throw new DOMException("Request aborted", "AbortError");
+}
 
 /**
  * Streaming completion with tool-use loop. Providers are wrapped behind this
@@ -38,8 +44,24 @@ export async function streamClaude(params: {
   tools?: Anthropic.Tool[];
   callbacks: StreamCallbacks;
   signal?: AbortSignal;
+  /** Model/tool rounds (default 5). Each round re-sends the whole context. */
+  maxToolRounds?: number;
+  /** Attempts per round on transient errors (default AI_RETRY_MAX_ATTEMPTS). */
+  maxAttempts?: number;
+  /**
+   * Called with the full request before every model call; throwing prevents
+   * the call (e.g. an input budget).
+   */
+  beforeModelCall?: (request: {
+    system: string;
+    messages: Anthropic.MessageParam[];
+    tools?: Anthropic.Tool[];
+  }) => void;
 }): Promise<{ tokensIn: number; tokensOut: number; stopReason: string | null }> {
-  const { AI_RETRY_MAX_ATTEMPTS, AI_RETRY_BASE_DELAY_MS } = getAnthropicEnv();
+  const env = getAnthropicEnv();
+  const AI_RETRY_MAX_ATTEMPTS = params.maxAttempts ?? env.AI_RETRY_MAX_ATTEMPTS;
+  const { AI_RETRY_BASE_DELAY_MS } = env;
+  const maxToolRounds = params.maxToolRounds ?? 5;
   let tokensIn = 0;
   let tokensOut = 0;
   let stopReason: string | null = null;
@@ -49,8 +71,11 @@ export async function streamClaude(params: {
     content: m.content,
   }));
 
-  // Tool-use loop: max 5 rounds to bound cost (§15.6)
-  for (let round = 0; round < 5; round++) {
+  // Tool-use loop: bounded rounds (default 5) to bound cost (§15.6)
+  for (let round = 0; round < maxToolRounds; round++) {
+    // Once cancellation is observed, no new model call or tool round starts.
+    throwIfAborted(params.signal);
+    params.beforeModelCall?.({ system: params.system, messages, tools: params.tools });
     let final: Anthropic.Message | null = null;
     for (let attempt = 1; attempt <= AI_RETRY_MAX_ATTEMPTS; attempt++) {
       let emittedText = false;
@@ -82,6 +107,7 @@ export async function streamClaude(params: {
     tokensIn += final.usage.input_tokens;
     tokensOut += final.usage.output_tokens;
     stopReason = final.stop_reason;
+    params.callbacks.onUsage?.(tokensIn, tokensOut);
 
     if (final.stop_reason !== "tool_use" || !params.callbacks.onToolUse) {
       return { tokensIn, tokensOut, stopReason };
@@ -91,6 +117,7 @@ export async function streamClaude(params: {
     const toolResults: Anthropic.ToolResultBlockParam[] = [];
     for (const block of final.content) {
       if (block.type === "tool_use") {
+        throwIfAborted(params.signal);
         const result = await params.callbacks.onToolUse(block.name, block.input, block.id);
         toolResults.push({ type: "tool_result", tool_use_id: block.id, content: result });
       }

@@ -47,6 +47,18 @@ const serverSchema = z.object({
   // Temporary staging voice pilot: comma-separated "<organizationId>:<userId>"
   // pairs allowed to use voice input. Empty or malformed allows no one.
   AI_TRANSCRIPTION_PILOT_ALLOWLIST: z.string().optional(),
+  // Live voice conversation (separate from dictation; off unless exactly "1").
+  // Limits are validated in src/server/ai/voice-conversation.ts; an invalid
+  // value disables the feature instead of failing unrelated configuration.
+  AI_VOICE_CONVERSATION_ENABLED: z.string().optional(),
+  AI_VOICE_CONVERSATION_PILOT_ALLOWLIST: z.string().optional(),
+  AI_VOICE_CONVERSATION_SESSION_SECONDS: z.string().optional(),
+  AI_VOICE_CONVERSATION_MAX_TURN_SECONDS: z.string().optional(),
+  AI_VOICE_CONVERSATION_MAX_TURNS_PER_SESSION: z.string().optional(),
+  AI_VOICE_CONVERSATION_DAILY_ORG_SESSIONS: z.string().optional(),
+  AI_VOICE_CONVERSATION_DAILY_ORG_TURNS: z.string().optional(),
+  AI_VOICE_CONVERSATION_DAILY_ORG_AUDIO_SECONDS: z.string().optional(),
+  AI_VOICE_CONVERSATION_MAX_CONCURRENT_PER_ORG: z.string().optional(),
   QSTASH_TOKEN: z.string().min(1),
   QSTASH_CURRENT_SIGNING_KEY: z.string().min(1),
   QSTASH_NEXT_SIGNING_KEY: z.string().min(1),

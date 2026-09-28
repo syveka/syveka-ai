@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { speechLangFor, splitForSpeech, toSpokenText } from "@/lib/voice/spoken-text";
+import { splitForSpeech, toSpokenText } from "@/lib/voice/spoken-text";
+import { chooseVoice } from "@/lib/voice/voices";
 
 export type PlaybackError = "unsupported" | "no_voice" | "playback_failed";
 
@@ -45,17 +46,12 @@ export function useSpeechPlayback(locale: string) {
         setError({ id, code: "unsupported" });
         return;
       }
-      const lang = speechLangFor(locale);
-      const prefix = lang.split("-")[0]!.toLowerCase();
-      const voices = window.speechSynthesis.getVoices();
-      const matching = voices.filter((v) => v.lang.toLowerCase().startsWith(prefix));
-      // An empty list often just means voices haven't loaded yet (Android);
-      // only a loaded list without this language is a definite "no voice".
-      if (voices.length > 0 && matching.length === 0) {
+      const choice = chooseVoice(locale, window.speechSynthesis.getVoices());
+      if (!choice.ok) {
         setError({ id, code: "no_voice" });
         return;
       }
-      const voice = matching.find((v) => v.localService) ?? matching[0];
+      const { lang, voice } = choice;
       const chunks = splitForSpeech(toSpokenText(text));
       if (chunks.length === 0) return;
 

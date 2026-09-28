@@ -200,7 +200,12 @@
       "upload_failed": "The file could not be uploaded.",
       "unsupported_file": "Use a PDF, DOCX or TXT file.",
       "file_too_large": "The file must be 25 MB or smaller.",
-      "invalid_document": "One of the attached files is unavailable."
+      "invalid_document": "One of the attached files is unavailable.",
+      "live_voice_session_active": "A voice conversation is active in this chat. End it before typing.",
+      "voice_session_ended": "The voice conversation has ended.",
+      "voice_turn_invalid": "That voice turn could not be answered. Please say it again.",
+      "voice_context_too_large": "This question needs more context than a voice conversation can use. End the voice conversation and ask it in the typed chat.",
+      "service_unavailable": "The service is temporarily unavailable. Please try again."
     },
     "voice": {
       "record": "Record a voice message",
@@ -242,6 +247,62 @@
         "transcription_failed": "The recording couldn't be transcribed. Please try again.",
         "daily_limit": "You've used today's {limit} voice transcriptions for this pilot. Try again tomorrow (Helsinki time) or type your message."
       }
+    },
+    "live": {
+      "start": "Start voice conversation",
+      "introTitle": "Talk with Syveka",
+      "introMic": "Your microphone stays on while the conversation is active.",
+      "introAuto": "When you stop speaking, what you said is sent automatically and Syveka answers aloud.",
+      "introControl": "You can mute the microphone, stop a reply or end the conversation at any time.",
+      "introActions": "In a voice conversation Syveka can look things up, but won't create, change, book or send anything. For that, end the conversation and ask in the chat.",
+      "introLimit": "A conversation lasts up to {minutes} minutes.",
+      "introDailyLimit": "Starting a conversation uses today's live conversation allowance, even if you end it early.",
+      "introPrivacy": "Your speech is sent to our speech-to-text provider (OpenAI) only to create the text and is not stored by Syveka. Replies are read aloud by your device's voices; the text of the conversation is saved in the chat like typed messages.",
+      "confirm": "Start conversation",
+      "cancel": "Cancel",
+      "panelLabel": "Voice conversation",
+      "elapsed": "Time",
+      "remaining": "Left",
+      "mute": "Mute microphone",
+      "unmute": "Unmute microphone",
+      "stopReply": "Stop reply",
+      "end": "End conversation",
+      "dismiss": "Dismiss",
+      "state": {
+        "connecting": "Connecting…",
+        "listening": "Listening…",
+        "userSpeaking": "You're speaking…",
+        "processing": "Transcribing…",
+        "thinking": "Syveka is thinking…",
+        "speaking": "Syveka is speaking…",
+        "muted": "Microphone muted",
+        "ended": "Voice conversation ended."
+      },
+      "notices": {
+        "not_heard": "Didn't catch that. Please say it again.",
+        "no_voice": "This device has no voice for this language, so replies are shown as text only.",
+        "turn_too_long": "That was too long for one turn. Please say it in shorter parts."
+      },
+      "errors": {
+        "unsupported": "Voice conversation isn't supported in this browser. You can keep typing.",
+        "permission_denied": "Microphone access is blocked. Allow it in your browser's site settings, then try again.",
+        "no_microphone": "No microphone was found.",
+        "microphone_busy": "The microphone is in use by another app or unavailable. Try again.",
+        "not_enabled": "Voice conversation isn't available for your account.",
+        "limit_reached": "Today's voice conversation limit has been reached. You can keep typing.",
+        "capacity_reached": "Another voice conversation is already running in your organization. Try again later.",
+        "session_expired": "The voice conversation reached its time limit and ended.",
+        "unavailable": "Voice conversation is currently unavailable. You can keep typing.",
+        "network_error": "The connection was lost, so the voice conversation ended. Start again when you're ready.",
+        "ended_elsewhere": "The voice conversation continued in another tab.",
+        "reply_failed": "Syveka couldn't answer that. Keep talking or end the conversation."
+      },
+      "voiceChecking": "Checking voices…",
+      "voiceUnavailable": "This device has no voice for this language, so Syveka can't answer aloud. You can talk and read the replies, or use dictation instead.",
+      "voiceUnknown": "Your device didn't list its voices yet. If you don't hear replies, end the conversation and start again with text replies.",
+      "startTextOnly": "Start with text replies",
+      "useDictation": "Use dictation instead",
+      "textOnlyHint": "Replies are shown as text only."
     }
   },
   "publicAssistant": {
