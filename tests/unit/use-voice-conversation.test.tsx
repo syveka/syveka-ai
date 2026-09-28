@@ -74,11 +74,14 @@ function fakeFetch(url: string, init?: RequestInit): Promise<Response> {
   }
   if (url.endsWith("/turn")) {
     if (typeof turnText === "function") return turnText();
-    return Promise.resolve(new Response(JSON.stringify({ data: { text: turnText } })));
+    // Like the server: a non-empty transcript comes with a single-use grant.
+    const data = turnText.trim() ? { text: turnText, grant: GRANT } : { text: "" };
+    return Promise.resolve(new Response(JSON.stringify({ data })));
   }
   return Promise.reject(new Error(`unexpected ${url}`));
 }
 
+const GRANT = "55555555-5555-4555-8555-555555555555";
 const turnCalls = () => calls.filter((c) => c.url.endsWith("/turn"));
 const okSession = () =>
   new Response(
@@ -126,7 +129,7 @@ afterEach(() => {
   uninstallFakeMedia();
 });
 
-function setup(reply: string | null = "Huomenna on kaksi tapaamista.") {
+function setup(reply: string | null = "Huomenna on kaksi tapaamista.", speakReplies = true) {
   const onUserTurn = vi.fn(async () => reply);
   const onAbortReply = vi.fn();
   const hook = renderHook(
@@ -135,6 +138,7 @@ function setup(reply: string | null = "Huomenna on kaksi tapaamista.") {
         locale,
         onUserTurn,
         onAbortReply,
+        speakReplies,
         deps: { fetch: fakeFetch as typeof fetch, now: () => clock },
       }),
     { initialProps: { locale: "fi" } },
@@ -165,7 +169,7 @@ describe("useVoiceConversation", () => {
     await speakTurn();
     expect(turnCalls()).toHaveLength(1);
     expect(onUserTurn).toHaveBeenCalledTimes(1);
-    expect(onUserTurn).toHaveBeenCalledWith("Mitä kalenterissa on huomenna?");
+    expect(onUserTurn).toHaveBeenCalledWith("Mitä kalenterissa on huomenna?", GRANT);
     expect(hook.result.current.phase).toBe("speaking");
     expect(spoken.at(-1)?.lang).toBe("fi-FI");
     expect(spoken.at(-1)?.text).toBe("Huomenna on kaksi tapaamista.");
@@ -176,7 +180,7 @@ describe("useVoiceConversation", () => {
     turnText = "Entä perjantaina?";
     await speakTurn();
     expect(turnCalls()).toHaveLength(2);
-    expect(onUserTurn).toHaveBeenLastCalledWith("Entä perjantaina?");
+    expect(onUserTurn).toHaveBeenLastCalledWith("Entä perjantaina?", GRANT);
     // Each turn has its own id.
     const ids = turnCalls().map((c) => c.body!.get("turnId"));
     expect(new Set(ids).size).toBe(2);
@@ -211,7 +215,7 @@ describe("useVoiceConversation", () => {
     await advance(600, VOICE);
     await advance(1200, QUIET);
     expect(turnCalls()).toHaveLength(2);
-    expect(onUserTurn).toHaveBeenLastCalledWith("Ei, tarkoitin torstaita.");
+    expect(onUserTurn).toHaveBeenLastCalledWith("Ei, tarkoitin torstaita.", GRANT);
   });
 
   it("muting disables the track, drops a turn in progress and submits nothing", async () => {
@@ -262,7 +266,9 @@ describe("useVoiceConversation", () => {
     await speakTurn();
     expect(hook.result.current.phase).toBe("processing");
     act(() => hook.result.current.end());
-    await act(async () => resolveTurn(new Response(JSON.stringify({ data: { text: "late" } }))));
+    await act(async () =>
+      resolveTurn(new Response(JSON.stringify({ data: { text: "late", grant: GRANT } }))),
+    );
     expect(onUserTurn).not.toHaveBeenCalled();
     expect(hook.result.current.phase).toBe("ended");
   });
@@ -367,6 +373,28 @@ describe("useVoiceConversation", () => {
     expect(spoken).toHaveLength(0);
     expect(hook.result.current.notice).toBe("no_voice");
     expect(hook.result.current.phase).toBe("listening");
+  });
+
+  it("text-only mode (no device voice) shows replies without speaking and keeps listening", async () => {
+    const { hook, onUserTurn } = setup("Huomenna on kaksi tapaamista.", false);
+    await startSession(hook);
+    await speakTurn();
+    expect(onUserTurn).toHaveBeenCalledTimes(1);
+    expect(spoken).toHaveLength(0);
+    expect(synth.speak).not.toHaveBeenCalled();
+    expect(hook.result.current.phase).toBe("listening");
+  });
+
+  it("a transcript without a server grant is never submitted (fails closed)", async () => {
+    turnText = () =>
+      Promise.resolve(new Response(JSON.stringify({ data: { text: "Varaa tapaaminen" } })));
+    const { hook, onUserTurn } = setup();
+    await startSession(hook);
+    await speakTurn();
+    expect(onUserTurn).not.toHaveBeenCalled();
+    expect(hook.result.current.phase).toBe("ended");
+    expect(hook.result.current.error).toBe("unavailable");
+    expect(media.streams.at(-1)!.tracks.every((t) => t.stopped)).toBe(true);
   });
 
   it("ends when the page is hidden, when the language changes, and on unmount", async () => {

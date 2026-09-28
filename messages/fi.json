@@ -200,7 +200,11 @@
       "upload_failed": "Tiedoston lataaminen epäonnistui.",
       "unsupported_file": "Käytä PDF-, DOCX- tai TXT-tiedostoa.",
       "file_too_large": "Tiedoston enimmäiskoko on 25 Mt.",
-      "invalid_document": "Yksi liitetyistä tiedostoista ei ole käytettävissä."
+      "invalid_document": "Yksi liitetyistä tiedostoista ei ole käytettävissä.",
+      "live_voice_session_active": "Puhekeskustelu on käynnissä. Lopeta se ennen kirjoittamista.",
+      "voice_session_ended": "Puhekeskustelu on päättynyt.",
+      "voice_turn_invalid": "Puheenvuoroon ei voitu vastata. Sano se uudelleen.",
+      "service_unavailable": "Palvelu ei ole tilapäisesti käytettävissä. Yritä uudelleen."
     },
     "voice": {
       "record": "Nauhoita ääniviesti",
@@ -290,7 +294,13 @@
         "network_error": "Yhteys katkesi, joten puhekeskustelu päättyi. Aloita uudelleen, kun olet valmis.",
         "ended_elsewhere": "Puhekeskustelu jatkui toisessa välilehdessä.",
         "reply_failed": "Syveka ei pystynyt vastaamaan. Jatka puhumista tai lopeta keskustelu."
-      }
+      },
+      "voiceChecking": "Tarkistetaan puheääniä…",
+      "voiceUnavailable": "Tässä laitteessa ei ole puheääntä tälle kielelle, joten Syveka ei voi vastata ääneen. Voit puhua ja lukea vastaukset tai käyttää sanelua.",
+      "voiceUnknown": "Laitteesi ei vielä kertonut puheääniään. Jos et kuule vastauksia, lopeta keskustelu ja aloita uudelleen tekstivastauksin.",
+      "startTextOnly": "Aloita tekstivastauksin",
+      "useDictation": "Käytä sanelua",
+      "textOnlyHint": "Vastaukset näytetään vain tekstinä."
     }
   },
   "publicAssistant": {

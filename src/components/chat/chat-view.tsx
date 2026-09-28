@@ -1,11 +1,12 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { AudioLines } from "lucide-react";
 import { useChat, type UiMessage } from "@/hooks/use-chat";
 import { useSpeechPlayback } from "@/hooks/use-speech-playback";
 import { useVoiceConversation } from "@/hooks/use-voice-conversation";
+import { useDeviceVoice } from "@/hooks/use-device-voice";
 import { ChatThread } from "./chat-thread";
 import { Composer } from "./composer";
 import { VoiceConversationIntro, VoiceConversationPanel } from "./voice-conversation-panel";
@@ -24,27 +25,50 @@ export function ChatView({
 }) {
   const t = useTranslations("chat");
   const locale = useLocale();
-  const { messages, send, abort, isStreaming, error } = useChat({
+  const liveActiveRef = useRef(false);
+  const { messages, send, abort, isStreaming, error, flushNavigation } = useChat({
     conversationId,
     initialMessages,
+    // A new chat's redirect would remount this view and end a live session.
+    deferNavigation: () => liveActiveRef.current,
   });
   // One player for the whole thread: starting a reply stops any other.
   const playback = useSpeechPlayback(locale);
   const [dictating, setDictating] = useState(false);
   const [introOpen, setIntroOpen] = useState(false);
+  const [speakReplies, setSpeakReplies] = useState(true);
+  const deviceVoice = useDeviceVoice(locale, introOpen);
 
-  // Each finished spoken turn goes through the normal chat pipeline, in voice
-  // mode (short spoken replies, read-only tools). Attachments are not sent.
+  // Each finished spoken turn goes through the normal chat pipeline with its
+  // single-use server grant; the server derives voice mode from the grant.
   const onUserTurn = useCallback(
-    (text: string) =>
-      send(text, { useKnowledgeBase: true, documentIds: [], responseMode: "voice" }),
+    (text: string, grant: string) =>
+      send(text, { useKnowledgeBase: true, documentIds: [], voiceGrant: grant }),
     [send],
   );
-  const live = useVoiceConversation({ locale, onUserTurn, onAbortReply: abort });
+  const live = useVoiceConversation({
+    locale,
+    onUserTurn,
+    onAbortReply: abort,
+    speakReplies,
+  });
+  liveActiveRef.current = live.active;
   const liveVisible = live.active || live.phase === "ended" || live.error !== null;
+
+  // When the conversation ends, perform any redirect that was held.
+  useEffect(() => {
+    if (!live.active) flushNavigation();
+  }, [live.active, flushNavigation]);
 
   // Only one audio owner at a time: live mode, dictation or reply playback.
   const canStartLive = voiceConversation !== null && !dictating && !isStreaming && !live.active;
+
+  const startLive = (spoken: boolean) => {
+    setIntroOpen(false);
+    setSpeakReplies(spoken);
+    playback.stop();
+    void live.start();
+  };
 
   return (
     <div className="flex h-[calc(100vh-3rem)] flex-col md:h-[calc(100vh-4.5rem)]">
@@ -59,12 +83,10 @@ export function ChatView({
           {introOpen && !live.active ? (
             <VoiceConversationIntro
               sessionMinutes={voiceConversation.sessionMinutes}
+              deviceVoice={deviceVoice}
               onCancel={() => setIntroOpen(false)}
-              onConfirm={() => {
-                setIntroOpen(false);
-                playback.stop();
-                void live.start();
-              }}
+              onConfirm={() => startLive(true)}
+              onConfirmTextOnly={() => startLive(false)}
             />
           ) : null}
           {liveVisible ? (
@@ -73,6 +95,7 @@ export function ChatView({
               muted={live.muted}
               notice={live.notice}
               error={live.error}
+              textOnly={!speakReplies}
               elapsedMs={live.elapsedMs}
               remainingMs={live.remainingMs}
               onToggleMute={live.toggleMute}

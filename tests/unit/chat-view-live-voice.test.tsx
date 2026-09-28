@@ -24,11 +24,16 @@ const live = vi.hoisted(() => ({
   end: vi.fn(),
   toggleMute: vi.fn(),
   stopReply: vi.fn(),
-  lastOptions: null as null | { onUserTurn: (t: string) => Promise<string | null> },
+  lastOptions: null as null | LiveOptions,
+  replace: vi.fn(),
 }));
+type LiveOptions = {
+  onUserTurn: (t: string, grant: string) => Promise<string | null>;
+  speakReplies?: boolean;
+};
 
 vi.mock("@/hooks/use-voice-conversation", () => ({
-  useVoiceConversation: (options: { onUserTurn: (t: string) => Promise<string | null> }) => {
+  useVoiceConversation: (options: LiveOptions) => {
     live.lastOptions = options;
     return {
       ...live.state,
@@ -41,7 +46,7 @@ vi.mock("@/hooks/use-voice-conversation", () => ({
   },
 }));
 vi.mock("@/i18n/routing", () => ({
-  useRouter: () => ({ replace: vi.fn(), refresh: vi.fn(), push: vi.fn() }),
+  useRouter: () => ({ replace: live.replace, refresh: vi.fn(), push: vi.fn() }),
 }));
 
 import { ChatView } from "@/components/chat/chat-view";
@@ -49,6 +54,8 @@ import { ChatView } from "@/components/chat/chat-view";
 const en = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../messages/en.json"), "utf8"));
 const ar = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../messages/ar.json"), "utf8"));
 let fetchBodies: Array<Record<string, unknown>>;
+let deviceVoices: Array<{ lang: string; localService: boolean; name: string }>;
+const GRANT = "55555555-5555-4555-8555-555555555555";
 
 beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
@@ -62,19 +69,28 @@ beforeEach(() => {
     remainingMs: null,
   };
   live.start.mockClear();
+  live.replace.mockClear();
   fetchBodies = [];
+  deviceVoices = [{ lang: "en-US", localService: true, name: "en" }];
   vi.stubGlobal(
     "fetch",
     vi.fn(async (_url: string, init?: RequestInit) => {
       fetchBodies.push(JSON.parse(String(init?.body)));
       const frames = [
+        { type: "meta", conversationId: "66666666-6666-4666-8666-666666666666" },
         { type: "text", delta: "Huomenna on kaksi tapaamista." },
         { type: "done", tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 },
       ];
       return new Response(frames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join(""));
     }),
   );
-  vi.stubGlobal("speechSynthesis", { speak: vi.fn(), cancel: vi.fn(), getVoices: () => [] });
+  vi.stubGlobal("speechSynthesis", {
+    speak: vi.fn(),
+    cancel: vi.fn(),
+    getVoices: () => deviceVoices,
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+  });
 });
 afterEach(() => {
   cleanup();
@@ -110,6 +126,27 @@ describe("ChatView live voice", () => {
     expect(document.body.textContent).toContain(en.chat.live.introActions);
     fireEvent.click(screen.getByRole("button", { name: new RegExp(en.chat.live.confirm) }));
     expect(live.start).toHaveBeenCalledTimes(1);
+    expect(live.lastOptions!.speakReplies).toBe(true);
+  });
+
+  it("without a device voice for the language: offers text-only replies or dictation, never another language", () => {
+    deviceVoices = [{ lang: "fi-FI", localService: true, name: "fi" }]; // no English voice
+    renderView();
+    fireEvent.click(screen.getByRole("button", { name: en.chat.live.start }));
+    expect(screen.getByRole("status").textContent).toBe(en.chat.live.voiceUnavailable);
+    expect(
+      screen.queryByRole("button", { name: new RegExp(`^${en.chat.live.confirm}$`) }),
+    ).toBeNull();
+
+    // "Use dictation" closes the dialog without opening a live session.
+    fireEvent.click(screen.getByRole("button", { name: en.chat.live.useDictation }));
+    expect(live.start).not.toHaveBeenCalled();
+    expect(screen.getByPlaceholderText(en.chat.placeholder)).toBeTruthy();
+
+    fireEvent.click(screen.getByRole("button", { name: en.chat.live.start }));
+    fireEvent.click(screen.getByRole("button", { name: new RegExp(en.chat.live.startTextOnly) }));
+    expect(live.start).toHaveBeenCalledTimes(1);
+    expect(live.lastOptions!.speakReplies).toBe(false);
   });
 
   it("never sends the typed draft and keeps it after the conversation", () => {
@@ -153,18 +190,51 @@ describe("ChatView live voice", () => {
     renderView();
     let reply: string | null = null;
     await act(async () => {
-      reply = await live.lastOptions!.onUserTurn("Mitä huomenna?");
+      reply = await live.lastOptions!.onUserTurn("Mitä huomenna?", GRANT);
     });
     expect(fetchBodies).toHaveLength(1);
     expect(fetchBodies[0]).toMatchObject({
       message: "Mitä huomenna?",
-      responseMode: "voice",
+      voiceGrant: GRANT,
       documentIds: [],
       conversationId: "33333333-3333-4333-8333-333333333333",
     });
+    expect(fetchBodies[0]).not.toHaveProperty("responseMode");
     expect(reply).toBe("Huomenna on kaksi tapaamista.");
     // The committed turn is visible in the thread.
     expect(document.body.textContent).toContain("Mitä huomenna?");
+  });
+
+  it("in a new chat, the redirect waits until the live conversation ends (no remount mid-session)", async () => {
+    live.state = { ...live.state, phase: "listening", active: true };
+    const view = renderView(en, { conversationId: undefined });
+    await act(async () => {
+      await live.lastOptions!.onUserTurn("Mitä huomenna?", GRANT);
+    });
+    expect(live.replace).not.toHaveBeenCalled();
+
+    live.state = { ...live.state, phase: "ended", active: false };
+    view.rerender(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <ChatView
+          initialMessages={[{ id: "a1", role: "assistant", content: "Hei!" }]}
+          voiceInputEnabled
+          voiceConversation={{ sessionMinutes: 5 }}
+        />
+      </NextIntlClientProvider>,
+    );
+    expect(live.replace).toHaveBeenCalledTimes(1);
+    expect(live.replace).toHaveBeenCalledWith("/chat/66666666-6666-4666-8666-666666666666");
+  });
+
+  it("typed chat in a new conversation still redirects immediately", async () => {
+    renderView(en, { conversationId: undefined });
+    const box = screen.getByPlaceholderText(en.chat.placeholder);
+    fireEvent.change(box, { target: { value: "typed" } });
+    await act(async () => {
+      fireEvent.keyDown(box, { key: "Enter" });
+    });
+    expect(live.replace).toHaveBeenCalledWith("/chat/66666666-6666-4666-8666-666666666666");
   });
 
   it("typed chat still sends without responseMode", async () => {
@@ -175,6 +245,7 @@ describe("ChatView live voice", () => {
       fireEvent.keyDown(box, { key: "Enter" });
     });
     expect(fetchBodies[0]).not.toHaveProperty("responseMode");
+    expect(fetchBodies[0]).not.toHaveProperty("voiceGrant");
   });
 
   it("renders Arabic states with LTR-isolated timers", () => {

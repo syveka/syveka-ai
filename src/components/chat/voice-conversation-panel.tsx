@@ -7,6 +7,7 @@ import type {
   ConversationNotice,
   ConversationPhase,
 } from "@/hooks/use-voice-conversation";
+import type { DeviceVoice } from "@/hooks/use-device-voice";
 import { cn } from "@/lib/utils";
 
 const clock = (ms: number) => {
@@ -31,11 +32,16 @@ const button =
 /** Deliberate start: explains what live mode does before the microphone opens. */
 export function VoiceConversationIntro({
   sessionMinutes,
+  deviceVoice,
   onConfirm,
+  onConfirmTextOnly,
   onCancel,
 }: {
   sessionMinutes: number;
+  /** Whether this device can speak replies in the interface language. */
+  deviceVoice: DeviceVoice;
   onConfirm: () => void;
+  onConfirmTextOnly: () => void;
   onCancel: () => void;
 }) {
   const t = useTranslations("chat.live");
@@ -55,18 +61,46 @@ export function VoiceConversationIntro({
         <li>{t("introLimit", { minutes: sessionMinutes })}</li>
       </ul>
       <p className="mt-2 text-xs text-muted-foreground">{t("introPrivacy")}</p>
+      {deviceVoice === "unavailable" ? (
+        <p role="status" className="mt-2 font-medium">
+          {t("voiceUnavailable")}
+        </p>
+      ) : deviceVoice === "unknown" ? (
+        <p role="status" className="mt-2 text-muted-foreground">
+          {t("voiceUnknown")}
+        </p>
+      ) : null}
       <div className="mt-3 flex flex-wrap gap-2">
-        <button
-          type="button"
-          onClick={onConfirm}
-          className={cn(button, "bg-primary text-primary-foreground")}
-        >
-          <AudioLines aria-hidden className="size-4" />
-          {t("confirm")}
-        </button>
-        <button type="button" onClick={onCancel} className={cn(button, "border bg-background")}>
-          {t("cancel")}
-        </button>
+        {deviceVoice === "unavailable" ? (
+          <>
+            <button
+              type="button"
+              onClick={onConfirmTextOnly}
+              className={cn(button, "bg-primary text-primary-foreground")}
+            >
+              <AudioLines aria-hidden className="size-4" />
+              {t("startTextOnly")}
+            </button>
+            <button type="button" onClick={onCancel} className={cn(button, "border bg-background")}>
+              {t("useDictation")}
+            </button>
+          </>
+        ) : (
+          <>
+            <button
+              type="button"
+              onClick={onConfirm}
+              disabled={deviceVoice === "checking"}
+              className={cn(button, "bg-primary text-primary-foreground")}
+            >
+              <AudioLines aria-hidden className="size-4" />
+              {deviceVoice === "checking" ? t("voiceChecking") : t("confirm")}
+            </button>
+            <button type="button" onClick={onCancel} className={cn(button, "border bg-background")}>
+              {t("cancel")}
+            </button>
+          </>
+        )}
       </div>
     </section>
   );
@@ -78,6 +112,7 @@ export function VoiceConversationPanel({
   muted,
   notice,
   error,
+  textOnly = false,
   elapsedMs,
   remainingMs,
   onToggleMute,
@@ -89,6 +124,8 @@ export function VoiceConversationPanel({
   muted: boolean;
   notice: ConversationNotice;
   error: ConversationError | null;
+  /** Replies are shown as text only (no device voice for the language). */
+  textOnly?: boolean;
   elapsedMs: number;
   remainingMs: number | null;
   onToggleMute: () => void;
@@ -182,6 +219,9 @@ export function VoiceConversationPanel({
               {t("end")}
             </button>
           </div>
+          {textOnly ? (
+            <p className="mt-2 text-xs text-muted-foreground">{t("textOnlyHint")}</p>
+          ) : null}
           {notice ? (
             <p role="status" className="mt-2 text-xs text-muted-foreground">
               {t(`notices.${notice}`)}

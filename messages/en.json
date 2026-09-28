@@ -200,7 +200,11 @@
       "upload_failed": "The file could not be uploaded.",
       "unsupported_file": "Use a PDF, DOCX or TXT file.",
       "file_too_large": "The file must be 25 MB or smaller.",
-      "invalid_document": "One of the attached files is unavailable."
+      "invalid_document": "One of the attached files is unavailable.",
+      "live_voice_session_active": "A voice conversation is active in this chat. End it before typing.",
+      "voice_session_ended": "The voice conversation has ended.",
+      "voice_turn_invalid": "That voice turn could not be answered. Please say it again.",
+      "service_unavailable": "The service is temporarily unavailable. Please try again."
     },
     "voice": {
       "record": "Record a voice message",
@@ -290,7 +294,13 @@
         "network_error": "The connection was lost, so the voice conversation ended. Start again when you're ready.",
         "ended_elsewhere": "The voice conversation continued in another tab.",
         "reply_failed": "Syveka couldn't answer that. Keep talking or end the conversation."
-      }
+      },
+      "voiceChecking": "Checking voices…",
+      "voiceUnavailable": "This device has no voice for this language, so Syveka can't answer aloud. You can talk and read the replies, or use dictation instead.",
+      "voiceUnknown": "Your device didn't list its voices yet. If you don't hear replies, end the conversation and start again with text replies.",
+      "startTextOnly": "Start with text replies",
+      "useDictation": "Use dictation instead",
+      "textOnlyHint": "Replies are shown as text only."
     }
   },
   "publicAssistant": {

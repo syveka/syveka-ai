@@ -73,6 +73,7 @@ const SESSION_ERRORS: Record<string, ConversationError> = {
   voice_daily_limit_reached: "limit_reached",
   voice_capacity_reached: "capacity_reached",
   session_expired: "session_expired",
+  voice_session_ended: "session_expired",
   session_not_found: "session_expired",
   turn_limit: "limit_reached",
   voice_conversation_unavailable: "unavailable",
@@ -94,13 +95,19 @@ export function useVoiceConversation({
   locale,
   onUserTurn,
   onAbortReply,
+  speakReplies = true,
   deps = { fetch: (...a) => fetch(...a), now: () => Date.now() },
 }: {
   locale: string;
-  /** Submits the transcript through the normal chat pipeline; resolves with the reply text. */
-  onUserTurn: (text: string) => Promise<string | null>;
+  /**
+   * Submits the transcript with its single-use server grant through the
+   * normal chat pipeline; resolves with the reply text (null on failure).
+   */
+  onUserTurn: (text: string, grant: string) => Promise<string | null>;
   /** Aborts an in-flight chat reply (ending mid-reply). */
   onAbortReply?: () => void;
+  /** False: replies are shown as text only (e.g. no device voice for the language). */
+  speakReplies?: boolean;
   deps?: Deps;
 }) {
   const [phase, setPhaseState] = useState<ConversationPhase>("idle");
@@ -136,6 +143,8 @@ export function useVoiceConversation({
   const depsRef = useRef(deps);
   depsRef.current = deps;
   const localeRef = useRef(locale);
+  const speakRepliesRef = useRef(speakReplies);
+  speakRepliesRef.current = speakReplies;
 
   const setPhase = useCallback((next: ConversationPhase) => {
     phaseRef.current = next;
@@ -251,6 +260,10 @@ export function useVoiceConversation({
         "speechSynthesis" in window &&
         typeof window.SpeechSynthesisUtterance !== "undefined";
       const chunks = splitForSpeech(toSpokenText(text));
+      if (!speakRepliesRef.current) {
+        resumeListening();
+        return;
+      }
       const choice = synthOk
         ? chooseVoice(localeRef.current, window.speechSynthesis.getVoices())
         : null;
@@ -300,6 +313,7 @@ export function useVoiceConversation({
       form.append("turnId", crypto.randomUUID());
       form.append("audio", audio, "turn");
       let text: string;
+      let grant: string | null = null;
       try {
         const res = await depsRef.current.fetch("/api/v1/ai/voice-conversation/turn", {
           method: "POST",
@@ -308,7 +322,7 @@ export function useVoiceConversation({
         });
         if (epoch !== epochRef.current) return;
         const body = (await res.json().catch(() => null)) as {
-          data?: { text?: string };
+          data?: { text?: string; grant?: string };
           error?: { code?: string };
         } | null;
         if (epoch !== epochRef.current) return;
@@ -328,6 +342,7 @@ export function useVoiceConversation({
           return;
         }
         text = body.data.text.trim();
+        grant = body.data.grant ?? null;
       } catch {
         if (epoch !== epochRef.current) return;
         // No automatic retry: the turn may already have been paid for.
@@ -341,9 +356,13 @@ export function useVoiceConversation({
         resumeListening();
         return;
       }
+      if (!grant) {
+        end("error", "unavailable");
+        return;
+      }
       setNotice(null);
       setPhase("thinking");
-      const reply = await onUserTurnRef.current(text);
+      const reply = await onUserTurnRef.current(text, grant);
       if (epoch !== epochRef.current) return;
       if (reply === null) {
         setError("reply_failed");

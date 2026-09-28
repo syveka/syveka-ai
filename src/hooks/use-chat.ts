@@ -14,13 +14,25 @@ export type UiMessage = {
 };
 
 /** Consumes the SSE stream from /api/v1/ai/chat (§15.1). */
-export function useChat(params: { conversationId?: string; initialMessages: UiMessage[] }) {
+export function useChat(params: {
+  conversationId?: string;
+  initialMessages: UiMessage[];
+  /**
+   * When true, the redirect to /chat/[id] after a new conversation's first
+   * message is held (e.g. while a live voice session runs: navigating would
+   * remount the view and end the session) until flushNavigation().
+   */
+  deferNavigation?: () => boolean;
+}) {
   const [messages, setMessages] = useState<UiMessage[]>(params.initialMessages);
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const conversationIdRef = useRef(params.conversationId);
   const abortControllerRef = useRef<AbortController | null>(null);
   const router = useRouter();
+  const pendingRouteRef = useRef<string | null>(null);
+  const deferRef = useRef(params.deferNavigation);
+  deferRef.current = params.deferNavigation;
 
   const send = useCallback(
     async (
@@ -29,8 +41,8 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
         useKnowledgeBase?: boolean;
         deepMode?: boolean;
         documentIds?: string[];
-        /** "voice": a live voice turn (short spoken reply, read-only tools). */
-        responseMode?: "text" | "voice";
+        /** Single-use grant for one live voice turn (server derives voice mode from it). */
+        voiceGrant?: string;
       },
     ): Promise<string | null> => {
       if (isStreaming || !text.trim()) return null;
@@ -68,7 +80,7 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
             useKnowledgeBase: opts?.useKnowledgeBase ?? true,
             deepMode: opts?.deepMode ?? false,
             documentIds: opts?.documentIds ?? [],
-            ...(opts?.responseMode === "voice" ? { responseMode: "voice" } : {}),
+            ...(opts?.voiceGrant ? { voiceGrant: opts.voiceGrant } : {}),
           }),
           signal: abortController.signal,
         });
@@ -128,8 +140,12 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
 
         patchAssistant({ streaming: false });
         if (isNewConversation && conversationIdRef.current) {
-          router.replace(`/chat/${conversationIdRef.current}`);
-          router.refresh(); // refresh conversation list
+          if (deferRef.current?.()) {
+            pendingRouteRef.current = `/chat/${conversationIdRef.current}`;
+          } else {
+            router.replace(`/chat/${conversationIdRef.current}`);
+            router.refresh(); // refresh conversation list
+          }
         }
         return failed ? null : replyText;
       } catch (requestError) {
@@ -152,5 +168,14 @@ export function useChat(params: { conversationId?: string; initialMessages: UiMe
 
   const abort = useCallback(() => abortControllerRef.current?.abort(), []);
 
-  return { messages, send, abort, isStreaming, error };
+  /** Performs a redirect that was held by deferNavigation. */
+  const flushNavigation = useCallback(() => {
+    const route = pendingRouteRef.current;
+    if (!route) return;
+    pendingRouteRef.current = null;
+    router.replace(route);
+    router.refresh();
+  }, [router]);
+
+  return { messages, send, abort, isStreaming, error, flushNavigation };
 }
