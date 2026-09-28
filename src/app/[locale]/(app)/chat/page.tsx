@@ -4,6 +4,7 @@ import { requirePermission } from "@/server/auth/guard";
 import { listConversations } from "@/server/services/conversations";
 import { ConversationList } from "@/components/chat/conversation-list";
 import { ChatView } from "@/components/chat/chat-view";
+import { isTranscriptionPilotMember } from "@/server/ai/transcription-pilot";
 
 export default async function ChatPage() {
   const ctx = await requirePermission("chat:use");
@@ -18,8 +19,8 @@ export default async function ChatPage() {
           isPinned: c.isPinned,
         }))}
       />
-      <div className="flex-1">
-        <ChatView initialMessages={[]} />
+      <div className="min-w-0 flex-1">
+        <ChatView initialMessages={[]} voiceInputEnabled={isTranscriptionPilotMember(ctx)} />
       </div>
     </>
   );

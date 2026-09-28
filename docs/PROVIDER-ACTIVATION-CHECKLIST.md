@@ -54,6 +54,56 @@ Stripe key cannot break Redis, and vice versa.
 - [ ] **Manual verification required**: confirm a document ingestion / embedding job actually
       completes against the real API (not a mocked/skipped path).
 
+### AI Chat voice input (staging pilot only; off by default)
+
+**Enable with (staging only):** `AI_TRANSCRIPTION_ENABLED=1` **and**
+`AI_TRANSCRIPTION_PILOT_ALLOWLIST="<organizationId>:<userId>"` (comma-separated UUID pairs), plus
+the `OPENAI_API_KEY` above. Without the flag, with an empty or malformed allowlist, or with
+invalid OpenAI configuration, nobody sees a microphone and `POST /api/v1/ai/transcribe` makes no
+provider call. Production stays disabled.
+
+- **Model:** `gpt-4o-mini-transcribe` (`TRANSCRIPTION_MODEL` in `src/server/integrations/openai.ts`),
+  language auto-detected (FI/EN/AR). **One provider attempt per request:** no app-level retry and
+  SDK `maxRetries: 0`.
+- **Server-side checks, in order, all before the provider call:**
+  1. same-origin browser request (`Sec-Fetch-Site`/`Origin`) → 403
+  2. session → 401; `chat:use` → 403
+  3. flag → 503; **pilot allowlist** (server-verified organization and user IDs) → 403
+  4. short-window rate limits (20 / 10 min per user, 200 / 10 min per organization; fail closed,
+     including Upstash's timeout-means-allow) → 429 / 503
+  5. organization's monthly AI-message quota (read only) → 402
+  6. upload ≤ 2 MiB → 413; accepted format and measurable duration → 415; **duration ≤ 60.0 s**
+     → 422 `audio_too_long`
+  7. **daily pilot attempt**: 10 per user and organization per Europe/Helsinki calendar day,
+     reserved atomically in Redis (one Lua script: check, increment, expire) → 429
+     `daily_limit_reached`; store error → 503. The reservation happens only after 1–6 pass and is
+     never refunded: a started attempt counts even if it fails, times out or is cancelled.
+- **Duration measurement** (`src/lib/voice/audio-duration.ts`) reads packet/frame metadata; it
+  does **not** decode audio. Opus: each packet's TOC byte fixes its duration (RFC 6716). AAC:
+  frames × 1024 samples at the AudioSpecificConfig rate. MP4 sample durations and a single edit
+  are also considered; the longest figure wins, and header timestamps are never trusted to
+  shorten it. Only WebM/Opus and MP4 (Opus/AAC) are accepted; laced or deprecated block types,
+  extra tracks, multi-entry/empty edit lists, trailing data and truncation are refused. Every
+  loop is bounded by the bytes behind it. Cross-checked against Chromium's decoder
+  (`decodeAudioData`): identical or slightly higher on real recordings and on crafted files
+  (e.g. 30 min of audio in 120 kB). OpenAI's own decoder was not available to test; corrupt
+  packets could only make its output shorter than the estimate.
+- **The browser** stops recording 0.75 s before 60 s so honest recordings stay under the server cap.
+- **Cost bound for the pilot** (list price $0.003/min; verify current pricing): ≤ 10 attempts ×
+  60 s = 10 audio-minutes ≈ **$0.03 per pilot user per Helsinki day**. The short-window rate
+  limits and quota remain as additional guards.
+- **Not a plan allowance:** the pilot cap is a temporary staging guard. It does not change
+  customer plans, prices or production billing. The `API_CALLS` usage record
+  (`metadata.kind = "ai_transcription"`, measured `audioSeconds`, `estimatedCostUsd`) is
+  observability only. A general-availability spending policy (per-organization monthly budget,
+  plan dependence, user message) is still a product decision.
+- **Privacy:** audio is sent to OpenAI to produce the text (disclosed in the recording UI); audio
+  and transcripts are not stored or logged by Syveka.
+- [ ] **Manual verification required** (pilot account on a real phone): record one short FI, EN
+      and AR message; confirm the transcript appears in the message box, is not sent
+      automatically, one `API_CALLS` usage record is written per attempt, and the 11th attempt
+      of the day shows the localized daily-limit message.
+
 ## 4. Resend (transactional + inbound email)
 
 **Required:** `RESEND_API_KEY`, `EMAIL_FROM`; **for real inbound mail:** `INBOX_EMAIL_DOMAIN`,

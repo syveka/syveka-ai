@@ -32,6 +32,8 @@ type RateLimiters = {
   inboxEmailWebhook: Ratelimit;
   creatorGenerate: Ratelimit;
   publicAssistant: Ratelimit;
+  aiTranscriptionUser: Ratelimit;
+  aiTranscriptionOrg: Ratelimit;
 };
 
 let rateLimitersClient: RateLimiters | null = null;
@@ -93,6 +95,18 @@ function getRateLimiters(): RateLimiters {
       limiter: Ratelimit.slidingWindow(10, "1 h"),
       prefix: "rl:public-assistant",
     }),
+    // Chat voice input: each call is a paid speech-to-text request, limited
+    // separately from chat messages so dictation can't drain the chat budget.
+    aiTranscriptionUser: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(20, "10 m"),
+      prefix: "rl:ai:transcribe:user",
+    }),
+    aiTranscriptionOrg: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(200, "10 m"),
+      prefix: "rl:ai:transcribe:org",
+    }),
   };
   return rateLimitersClient;
 }
@@ -125,6 +139,12 @@ export const rateLimiters = {
   get publicAssistant() {
     return getRateLimiters().publicAssistant;
   },
+  get aiTranscriptionUser() {
+    return getRateLimiters().aiTranscriptionUser;
+  },
+  get aiTranscriptionOrg() {
+    return getRateLimiters().aiTranscriptionOrg;
+  },
 } satisfies RateLimiters;
 
 export type AiChatRateLimitResult = {
@@ -144,6 +164,34 @@ export async function limitAiChat(
     rateLimiters.aiChatUser.limit(`${organizationId}:${userId}`),
     rateLimiters.aiChatOrg.limit(organizationId),
   ]);
+  if (!user.success) return { ...user, scope: "user" };
+  if (!organization.success) return { ...organization, scope: "organization" };
+  return {
+    success: true,
+    reset: Math.max(user.reset, organization.reset),
+    limit: Math.min(user.limit, organization.limit),
+    remaining: Math.min(user.remaining, organization.remaining),
+  };
+}
+
+/**
+ * Per-user and per-organization limits for chat voice transcription.
+ *
+ * Fails closed: Upstash's Ratelimit *allows* a request when Redis doesn't
+ * answer within its timeout (`reason: "timeout"`). This endpoint pays a
+ * provider per request, so an unverifiable limit is treated as unavailable.
+ */
+export async function limitAiTranscription(
+  organizationId: string,
+  userId: string,
+): Promise<AiChatRateLimitResult & { unavailable?: true }> {
+  const [user, organization] = await Promise.all([
+    rateLimiters.aiTranscriptionUser.limit(`${organizationId}:${userId}`),
+    rateLimiters.aiTranscriptionOrg.limit(organizationId),
+  ]);
+  if (user.reason === "timeout" || organization.reason === "timeout") {
+    return { success: false, unavailable: true, reset: 0, limit: 0, remaining: 0 };
+  }
   if (!user.success) return { ...user, scope: "user" };
   if (!organization.success) return { ...organization, scope: "organization" };
   return {

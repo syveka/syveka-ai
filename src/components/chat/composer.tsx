@@ -6,6 +6,8 @@ import { SendHorizonal, BookOpen, Paperclip, Square, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { MAX_UPLOAD_BYTES } from "@/lib/validators/documents";
+import { useVoiceRecorder } from "@/hooks/use-voice-recorder";
+import { MicrophoneButton, VoiceStatusBar } from "./voice-input";
 
 type Attachment = { id: string; title: string };
 
@@ -13,12 +15,19 @@ export function Composer({
   onSend,
   onAbort,
   disabled,
+  voiceInputEnabled = false,
+  onRecordingStart,
 }: {
   onSend: (text: string, opts: { useKnowledgeBase: boolean; documentIds: string[] }) => void;
   onAbort: () => void;
   disabled: boolean;
+  /** Server-side speech-to-text is configured for this deployment. */
+  voiceInputEnabled?: boolean;
+  /** Called when a recording starts (e.g. to stop reply playback). */
+  onRecordingStart?: () => void;
 }) {
   const t = useTranslations("chat");
+  const tVoice = useTranslations("chat.voice");
   const [text, setText] = useState("");
   const [useKb, setUseKb] = useState(true);
   const [attachments, setAttachments] = useState<Attachment[]>([]);
@@ -35,8 +44,36 @@ export function Composer({
   }, []);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // Voice input only fills the draft: the transcript is appended after any
+  // text already typed (never replacing it) and is sent only when the user
+  // presses Send.
+  const [voiceAnnouncement, setVoiceAnnouncement] = useState("");
+  const voice = useVoiceRecorder({
+    onTranscript: (transcript) => {
+      setText((current) => {
+        if (!current.trim()) return transcript;
+        const trimmed = current.replace(/[ \t]+$/, "");
+        return trimmed.endsWith("\n") ? `${trimmed}${transcript}` : `${trimmed} ${transcript}`;
+      });
+      setVoiceAnnouncement(tVoice("transcriptAdded"));
+      requestAnimationFrame(() => {
+        const el = textareaRef.current;
+        if (!el) return;
+        el.focus();
+        el.setSelectionRange(el.value.length, el.value.length);
+      });
+    },
+  });
+  const voiceBusy = voice.status !== "idle";
+
+  const startRecording = () => {
+    onRecordingStart?.();
+    setVoiceAnnouncement(tVoice("recordingStarted"));
+    void voice.start();
+  };
+
   const submit = () => {
-    if (!text.trim() || disabled) return;
+    if (!text.trim() || disabled || voiceBusy) return;
     onSend(text, { useKnowledgeBase: useKb, documentIds: attachments.map((file) => file.id) });
     setText("");
     textareaRef.current?.focus();
@@ -95,6 +132,22 @@ export function Composer({
 
   return (
     <div className="border-t p-4">
+      {voiceInputEnabled ? (
+        <VoiceStatusBar
+          status={voice.status}
+          elapsedMs={voice.elapsedMs}
+          error={voice.error}
+          announcement={
+            voice.status === "transcribing" ? tVoice("transcribing") : voiceAnnouncement
+          }
+          onStop={voice.stop}
+          onCancel={() => {
+            voice.cancel();
+            setVoiceAnnouncement(tVoice("recordingCancelled"));
+          }}
+          onDismissError={voice.clearError}
+        />
+      ) : null}
       {attachments.length > 0 ? (
         <div className="mb-2 flex flex-wrap gap-2">
           {attachments.map((file) => (
@@ -129,7 +182,7 @@ export function Composer({
           }}
           placeholder={t("placeholder")}
           rows={Math.min(6, Math.max(1, text.split("\n").length))}
-          className="max-h-40 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
+          className="max-h-40 min-w-0 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
         />
         <label
           title={t("attachFile")}
@@ -162,10 +215,13 @@ export function Composer({
         >
           <BookOpen className="size-4" />
         </button>
+        {voiceInputEnabled ? (
+          <MicrophoneButton status={voice.status} onStart={startRecording} />
+        ) : null}
         <Button
           size="icon"
           onClick={disabled ? onAbort : submit}
-          disabled={!disabled && (!text.trim() || uploading)}
+          disabled={!disabled && (!text.trim() || uploading || voiceBusy)}
           aria-label={disabled ? t("stopGenerating") : t("send")}
         >
           {disabled ? <Square className="size-4" /> : <SendHorizonal className="size-4" />}

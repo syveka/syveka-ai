@@ -1,6 +1,6 @@
 import "server-only";
 
-import OpenAI from "openai";
+import OpenAI, { toFile } from "openai";
 import { getOpenAIEnv } from "@/env";
 import { withAiRetry } from "@/server/ai/retry";
 
@@ -20,6 +20,8 @@ export const openai = new Proxy({} as OpenAI, {
 });
 
 export const EMBEDDING_MODEL = "text-embedding-3-small";
+/** Chat voice input. Multilingual (FI/EN/AR); language is auto-detected. */
+export const TRANSCRIPTION_MODEL = "gpt-4o-mini-transcribe";
 export const EMBEDDING_DIMENSIONS = 1536;
 
 /** Batch-embed texts. Multilingual — FI docs answer EN queries (§15.5). */
@@ -49,6 +51,30 @@ export async function embedOne(text: string, signal?: AbortSignal): Promise<numb
   const [e] = await embed([text], signal);
   if (!e) throw new Error("Embedding failed");
   return e;
+}
+
+/**
+ * Speech-to-text for chat voice input. The audio is sent in memory only and
+ * never written anywhere; `extension` must come from server-side format
+ * detection (the provider infers the codec from it).
+ *
+ * Exactly one provider attempt: no withAiRetry and the client has
+ * maxRetries 0, so a failure never turns into hidden extra paid attempts.
+ */
+export async function transcribeAudio(
+  audio: Uint8Array,
+  extension: string,
+  signal?: AbortSignal,
+): Promise<string> {
+  const res = await getOpenAI().audio.transcriptions.create(
+    {
+      file: await toFile(audio, `recording.${extension}`),
+      model: TRANSCRIPTION_MODEL,
+      response_format: "json",
+    },
+    { signal, maxRetries: 0 },
+  );
+  return res.text.trim();
 }
 
 /** Input guardrail (§15.6). Returns true when content is flagged. */
