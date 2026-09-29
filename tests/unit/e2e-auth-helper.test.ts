@@ -16,6 +16,12 @@ type LoginDestination = {
    * that exercises it explicitly.
    */
   pageLevelAnnouncerPresent?: boolean;
+  /**
+   * Simulates the login navigation completing while the helper is awaiting
+   * the form alert check: the URL is still `url` when the helper first reads
+   * it, and becomes this URL during that first (async) alert check.
+   */
+  navigateDuringAlertCheck?: string;
 };
 
 function pageFor(
@@ -26,8 +32,15 @@ function pageFor(
   // The real, form-scoped login error alert -- reachable only via
   // page.locator("form").getByRole("alert"), never via an unscoped
   // page.getByRole("alert").
+  let pendingNavigation = destination.navigateDuringAlertCheck;
   const formAlert = {
-    isVisible: vi.fn(async () => Boolean(destination.alert)),
+    isVisible: vi.fn(async () => {
+      if (pendingNavigation) {
+        currentUrl = pendingNavigation;
+        pendingNavigation = undefined;
+      }
+      return Boolean(destination.alert);
+    }),
     textContent: vi.fn(async () => destination.alert ?? null),
   };
   // The page-level Next.js route announcer -- always visible-per-Playwright,
@@ -155,6 +168,32 @@ describe("loginAsE2EUser", () => {
    * clear #password first, or a failed staging E2E run would leak the real
    * account password in a downloadable artifact.
    */
+  /**
+   * Regression test for staging release run 36543391760: the Server Action's
+   * redirect to /fi/dashboard completed while the helper awaited the form
+   * alert check. The helper classified the URL read BEFORE that await (still
+   * the login page) but compared the live URL AFTER it against the initial
+   * URL, so a successful login was reported as "login redirected back to the
+   * login route" -- with pathname="/fi/dashboard" in the same diagnostic.
+   */
+  it("a login that completes during the alert check succeeds (no stale-URL misclassification)", async () => {
+    const page = pageFor({
+      url: "https://staging.example.test/fi/login",
+      navigateDuringAlertCheck: "https://staging.example.test/fi/dashboard",
+    });
+    await expect(loginAsE2EUser(page)).resolves.toBeUndefined();
+  });
+
+  it("still rejects a genuine redirect back to login that happens during the alert check", async () => {
+    const page = pageFor({
+      url: "https://staging.example.test/fi/login",
+      navigateDuringAlertCheck: "https://staging.example.test/fi/login?error=session",
+    });
+    await expect(loginAsE2EUser(page)).rejects.toThrow(
+      /login redirected back to the login route.*pathname="\/fi\/login\?error=session".*route=login/,
+    );
+  });
+
   it("clears the password field before throwing, on every failure path", async () => {
     const page = pageFor({ url: "https://staging.example.test/login", alert: "Invalid" });
     await expect(loginAsE2EUser(page)).rejects.toThrow();

@@ -123,11 +123,16 @@ export async function loginAsE2EUser(
   const timeoutMs = options.timeoutMs ?? LOGIN_OUTCOME_TIMEOUT_MS;
   const deadline = Date.now() + timeoutMs;
   while (Date.now() <= deadline) {
-    const url = new URL(page.url());
-    const route = classifyE2ELoginPathname(url.pathname);
     const alertVisible = await loginFormAlert(page)
       .isVisible()
       .catch(() => false);
+    // One URL snapshot per iteration, read AFTER the async alert check and
+    // used for every decision below: the login redirect can complete during
+    // that await, and classifying a URL read before it while comparing the
+    // live URL afterwards reported a successful login as "redirected back to
+    // the login route" (staging release run 36543391760).
+    const href = page.url();
+    const route = classifyE2ELoginPathname(new URL(href).pathname);
 
     if (route === "dashboard") {
       await page
@@ -150,7 +155,7 @@ export async function loginAsE2EUser(
     if (route === "unexpected") {
       throw await loginDiagnostic(page, "login reached an unexpected route");
     }
-    if (page.url() !== initialUrl) {
+    if (href !== initialUrl) {
       throw await loginDiagnostic(page, "login redirected back to the login route");
     }
 
