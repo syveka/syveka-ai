@@ -102,6 +102,51 @@ describe("resolveReplyLanguage (short replies use turn and session context)", ()
     expect(resolveReplyLanguage({ reply: "Päivi Mäkelä." })).toBeNull(); // no context → text
   });
 
+  describe("unsupported-language replies never inherit a voice from context", () => {
+    const SWEDISH = "Ja, vi har två lediga tider i morgon, klockan tio och klockan två.";
+    const GERMAN = "Ja, wir haben morgen zwei freie Termine, das ist möglich.";
+    const FI_TURN = "Mitä vapaita aikoja on huomenna?";
+    const EN_TURN = "What free times are there tomorrow?";
+
+    it.each([
+      ["Swedish after a Finnish turn", SWEDISH, FI_TURN, "fi"],
+      ["Swedish after an English turn", SWEDISH, EN_TURN, "en"],
+      ["German after a Finnish turn", GERMAN, FI_TURN, "fi"],
+      ["German after an English turn", GERMAN, EN_TURN, "en"],
+    ] as const)("%s → text (no Finnish/English voice)", (_label, reply, turn, previous) => {
+      expect(resolveReplyLanguage({ reply, turn, previous })).toBeNull();
+      expect(resolveReplyLanguage({ reply, previous })).toBeNull();
+      expect(chooseReplyVoice(reply, voices("fi-FI", "en-US"), { turn, previous })).toEqual({
+        ok: false,
+        reason: "unknown_language",
+        language: null,
+      });
+    });
+
+    it("Finnish and English replies with Swedish/German-looking names keep their language", () => {
+      expect(
+        resolveReplyLanguage({
+          reply: "Jörg Möller ja Päivi Mäkelä ovat mukana huomenna, joten voit aloittaa.",
+          previous: "en",
+        }),
+      ).toBe("fi");
+      expect(
+        resolveReplyLanguage({
+          reply: "Jörg Möller and Päivi Mäkelä will join tomorrow, so you can start at ten.",
+          previous: "fi",
+        }),
+      ).toBe("en");
+      // Names alone still inherit the current turn's language.
+      expect(resolveReplyLanguage({ reply: "Jörg Möller.", turn: EN_TURN })).toBe("en");
+      expect(resolveReplyLanguage({ reply: "Päivi Mäkelä.", turn: FI_TURN })).toBe("fi");
+    });
+
+    it("ambiguous short replies still inherit turn and session context", () => {
+      expect(resolveReplyLanguage({ reply: "OK.", turn: FI_TURN })).toBe("fi");
+      expect(resolveReplyLanguage({ reply: "10:30.", previous: "en" })).toBe("en");
+    });
+  });
+
   it("…then the session's last language", () => {
     expect(resolveReplyLanguage({ reply: "OK.", turn: "Hmm", previous: "en" })).toBe("en");
   });

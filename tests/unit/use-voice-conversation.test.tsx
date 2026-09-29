@@ -530,6 +530,27 @@ describe("useVoiceConversation", () => {
     expect(hook.result.current.active).toBe(true);
   });
 
+  it("an unsupported-language (Swedish) reply after a Finnish turn is shown as text, and listening continues", async () => {
+    voices = [
+      { lang: "en-US", localService: true, name: "en" },
+      { lang: "fi-FI", localService: true, name: "fi" },
+    ];
+    const { hook, onUserTurn } = setup(null, true, undefined, "fi");
+    onUserTurn
+      .mockResolvedValueOnce("Huomenna kello kymmenen on vapaa aika. Voit varata sen chatissa.")
+      .mockResolvedValueOnce("Ja, vi har två lediga tider i morgon, klockan tio och klockan två.");
+    await startSession(hook);
+    turnText = "Mitä kalenterissa on huomenna?";
+    await speakTurn();
+    turnText = "Hej, vilka tider är lediga i morgon?";
+    await advance(3000, QUIET);
+    await speakTurn();
+    expect(spoken.map((u) => u.lang)).toEqual(["fi-FI"]); // the Swedish reply isn't read
+    expect(hook.result.current.notice).toBe("language_unknown");
+    expect(hook.result.current.phase).toBe("listening");
+    expect(hook.result.current.active).toBe(true);
+  });
+
   it("a short reply with no language evidence is shown as text (no interface-language guess)", async () => {
     voices = [
       { lang: "en-US", localService: true, name: "en" },

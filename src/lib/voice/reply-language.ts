@@ -133,7 +133,20 @@ const OTHER_LATIN_WORDS = new Set([
   "mit",
   "sie",
   "auch",
+  "wir",
+  "haben",
+  "sind",
+  "vi",
 ]);
+
+/**
+ * Whether the text contains Swedish/German marker words, i.e. it is at least
+ * partly in a language this app doesn't speak (fi / en / ar only).
+ */
+export function hasUnsupportedLanguageMarkers(text: string): boolean {
+  const words = text.toLowerCase().match(/\p{L}+/gu) ?? [];
+  return words.some((word) => OTHER_LATIN_WORDS.has(word));
+}
 
 const LONG_TEXT_LETTERS = 20;
 
@@ -200,6 +213,9 @@ function fitsScript(language: ReplyLanguage, reply: string): boolean {
  * Latin-script reply is never read by the Arabic voice or vice versa. The
  * interface language is deliberately not a fallback: users may speak any of
  * the supported languages regardless of it.
+ * A reply that isn't itself Finnish/English/Arabic and contains Swedish or
+ * German marker words is in an unsupported language: it never inherits a
+ * voice from context and is shown as text.
  */
 export function resolveReplyLanguage(input: {
   reply: string;
@@ -208,6 +224,7 @@ export function resolveReplyLanguage(input: {
 }): ReplyLanguage | null {
   const own = detectReplyLanguage(input.reply);
   if (own) return own;
+  if (hasUnsupportedLanguageMarkers(input.reply)) return null;
   const candidates = [input.turn ? detectReplyLanguage(input.turn) : null, input.previous ?? null];
   return candidates.find((c): c is ReplyLanguage => !!c && fitsScript(c, input.reply)) ?? null;
 }

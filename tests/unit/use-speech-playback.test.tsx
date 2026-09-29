@@ -111,6 +111,19 @@ describe("useSpeechPlayback", () => {
     expect(result.current.error).toEqual({ id: "m1", code: "unknown_language" });
   });
 
+  it("Listen shows a German reply as text even after an English question", () => {
+    const { result } = renderHook(() => useSpeechPlayback());
+    act(() =>
+      result.current.play(
+        "m1",
+        "Ja, wir haben morgen zwei freie Termine, das ist möglich.",
+        EN_TURN,
+      ),
+    );
+    expect(synth.speak).not.toHaveBeenCalled();
+    expect(result.current.error).toEqual({ id: "m1", code: "unknown_language" });
+  });
+
   it("still tries when the voice list hasn't loaded yet (lang set, engine picks)", () => {
     voices = [];
     const { result } = renderHook(() => useSpeechPlayback());
