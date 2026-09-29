@@ -78,6 +78,11 @@ export async function createOrganization(params: {
   return org;
 }
 
+/** Number of organization memberships the user holds (any role, any org state). */
+export async function countMemberships(userId: string): Promise<number> {
+  return unscopedPrisma.organizationMember.count({ where: { userId } });
+}
+
 /** Verifies membership, then switches the active org claim (§11.3). */
 export async function switchOrganization(userId: string, orgId: string): Promise<void> {
   const membership = await unscopedPrisma.organizationMember.findUnique({
