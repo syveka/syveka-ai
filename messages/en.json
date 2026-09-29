@@ -1285,5 +1285,12 @@
     "enterprise": "Enterprise:",
     "footerPrivacy": "Privacy",
     "footerTerms": "Terms"
+  },
+  "onboarding": {
+    "title": "Create your organization",
+    "description": "This is your workspace in Syveka — you can invite your team next.",
+    "companyName": "Company name",
+    "businessId": "Business ID / Y-tunnus (optional)",
+    "industry": "Industry"
   }
 }
