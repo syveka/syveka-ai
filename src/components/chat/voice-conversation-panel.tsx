@@ -1,6 +1,6 @@
 "use client";
 
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { AudioLines, Loader2, Mic, MicOff, PhoneOff, Square, Volume2, X } from "lucide-react";
 import type {
   ConversationError,
@@ -9,11 +9,73 @@ import type {
 } from "@/hooks/use-voice-conversation";
 import type { DeviceVoice } from "@/hooks/use-device-voice";
 import { cn } from "@/lib/utils";
+import {
+  clock,
+  exhaustedReason,
+  helsinkiTime,
+  type LimitReason,
+  type VoiceAllowance,
+} from "@/lib/voice/allowance";
 
-const clock = (ms: number) => {
-  const s = Math.floor(ms / 1000);
-  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+const LIMIT_ERROR: Record<LimitReason, ConversationError> = {
+  daily_sessions: "daily_sessions_used",
+  daily_turns: "daily_turns_used",
+  daily_audio: "daily_audio_used",
+  session_turns: "session_turns_used",
 };
+
+/** Midnight in Helsinki (DST-correct: the server computes renewsAt). */
+const renewal = (allowance: VoiceAllowance | null | undefined, locale: string) =>
+  allowance ? helsinkiTime(allowance.renewsAt, locale) : "00:00";
+
+/** Today's allowance before starting (server reading; never a local guess). */
+function AllowanceSummary({
+  allowance,
+  sessionMinutes,
+}: {
+  allowance: VoiceAllowance | null | undefined;
+  sessionMinutes: number;
+}) {
+  const t = useTranslations("chat.live");
+  const locale = useLocale();
+  const blocked =
+    allowance &&
+    (allowance.startsToday.remaining === 0 ? "daily_sessions" : exhaustedReason(allowance));
+  return (
+    <div className="mt-2 rounded-md border bg-background/60 p-2">
+      <p className="font-medium">{t("allowanceTitle")}</p>
+      {allowance === undefined ? (
+        <p className="mt-1 text-muted-foreground">{t("allowanceLoading")}</p>
+      ) : allowance === null ? (
+        <p className="mt-1 text-muted-foreground">{t("allowanceUnknown")}</p>
+      ) : (
+        <>
+          <ul className="mt-1 space-y-0.5 text-muted-foreground">
+            <li>{t("allowanceStarts", { count: allowance.startsToday.remaining })}</li>
+            <li>{t("allowanceTurns", { count: allowance.turnsToday.remaining })}</li>
+            <li>
+              {t("allowanceAudio")}{" "}
+              <span dir="ltr" className="tabular-nums">
+                {clock(allowance.audioMsToday.remaining)}
+              </span>
+            </li>
+          </ul>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t("allowanceRenews", { time: renewal(allowance, locale) })}
+          </p>
+          {blocked ? (
+            <p role="alert" className="mt-1 font-medium text-destructive">
+              {t(`errors.${LIMIT_ERROR[blocked]}`, { time: renewal(allowance, locale) })}
+            </p>
+          ) : null}
+        </>
+      )}
+      <p className="mt-1 text-xs text-muted-foreground">
+        {t("introLimit", { minutes: sessionMinutes })}
+      </p>
+    </div>
+  );
+}
 
 const PHASE_LABEL: Record<ConversationPhase, string> = {
   idle: "listening",
@@ -32,12 +94,15 @@ const button =
 /** Deliberate start: explains what live mode does before the microphone opens. */
 export function VoiceConversationIntro({
   sessionMinutes,
+  allowance,
   deviceVoice,
   onConfirm,
   onConfirmTextOnly,
   onCancel,
 }: {
   sessionMinutes: number;
+  /** Today's allowance: undefined while loading, null when it can't be read. */
+  allowance?: VoiceAllowance | null;
   /** Whether this device can speak replies in the interface language. */
   deviceVoice: DeviceVoice;
   onConfirm: () => void;
@@ -45,6 +110,10 @@ export function VoiceConversationIntro({
   onCancel: () => void;
 }) {
   const t = useTranslations("chat.live");
+  // Nothing could be accepted today: don't use a start on it. Unknown never blocks
+  // (the server still enforces every limit).
+  const noAllowance =
+    !!allowance && (allowance.startsToday.remaining === 0 || allowance.turnsAvailable === 0);
   return (
     <section
       aria-labelledby="live-voice-intro-title"
@@ -59,9 +128,9 @@ export function VoiceConversationIntro({
         <li>{t("introControl")}</li>
         <li>{t("introActions")}</li>
         <li>{t("introLanguage")}</li>
-        <li>{t("introLimit", { minutes: sessionMinutes })}</li>
         <li>{t("introDailyLimit")}</li>
       </ul>
+      <AllowanceSummary allowance={allowance} sessionMinutes={sessionMinutes} />
       <p className="mt-2 text-xs text-muted-foreground">{t("introPrivacy")}</p>
       {deviceVoice === "unavailable" ? (
         <p role="status" className="mt-2 font-medium">
@@ -78,6 +147,7 @@ export function VoiceConversationIntro({
             <button
               type="button"
               onClick={onConfirmTextOnly}
+              disabled={noAllowance}
               className={cn(button, "bg-primary text-primary-foreground")}
             >
               <AudioLines aria-hidden className="size-4" />
@@ -92,7 +162,7 @@ export function VoiceConversationIntro({
             <button
               type="button"
               onClick={onConfirm}
-              disabled={deviceVoice === "checking"}
+              disabled={deviceVoice === "checking" || noAllowance}
               className={cn(button, "bg-primary text-primary-foreground")}
             >
               <AudioLines aria-hidden className="size-4" />
@@ -115,6 +185,7 @@ export function VoiceConversationPanel({
   notice,
   error,
   textOnly = false,
+  allowance = null,
   elapsedMs,
   remainingMs,
   onToggleMute,
@@ -129,6 +200,8 @@ export function VoiceConversationPanel({
   error: ConversationError | null;
   /** Replies are shown as text only (no device voice for the language). */
   textOnly?: boolean;
+  /** The server's latest allowance reading (null: unknown). */
+  allowance?: VoiceAllowance | null;
   elapsedMs: number;
   remainingMs: number | null;
   onToggleMute: () => void;
@@ -139,6 +212,7 @@ export function VoiceConversationPanel({
   onDismiss: () => void;
 }) {
   const t = useTranslations("chat.live");
+  const locale = useLocale();
   const active = phase !== "idle" && phase !== "ended";
   const stateLabel = muted && active ? t("state.muted") : t(`state.${PHASE_LABEL[phase]}`);
   const offerSpeech =
@@ -192,6 +266,21 @@ export function VoiceConversationPanel({
               ) : null}
             </span>
           </div>
+          {/* What can still be used, from the server's latest reading. */}
+          <p className="mt-1 flex flex-wrap gap-x-3 text-xs text-muted-foreground">
+            <span>
+              {t("turnsLeft")}{" "}
+              <span className="tabular-nums" data-testid="live-turns-left">
+                {allowance ? allowance.turnsAvailable : t("unknown")}
+              </span>
+            </span>
+            <span>
+              {t("audioLeft")}{" "}
+              <span dir="ltr" className="tabular-nums" data-testid="live-audio-left">
+                {allowance ? clock(allowance.audioMsToday.remaining) : t("unknown")}
+              </span>
+            </span>
+          </p>
           <div className="mt-2 flex flex-wrap gap-2">
             <button
               type="button"
@@ -249,7 +338,7 @@ export function VoiceConversationPanel({
       {error ? (
         <div className={cn("flex items-start gap-2", active && "mt-2")}>
           <p role="alert" className="min-w-0 flex-1 text-destructive">
-            {t(`errors.${error}`)}
+            {t(`errors.${error}`, { time: renewal(allowance, locale) })}
           </p>
           <button
             type="button"

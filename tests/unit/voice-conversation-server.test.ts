@@ -20,6 +20,9 @@ const m = vi.hoisted(() => ({
   grantResult: 1 as unknown,
   evalError: null as Error | null,
   evalCalls: [] as Array<{ script: string; keys: string[]; args: string[] }>,
+  /** Read-only allowance reads (not counted as store writes in evalCalls/order). */
+  allowanceCalls: [] as Array<{ keys: string[]; args: string[] }>,
+  allowanceResult: [0, 0, 0, -1, -1] as unknown,
   order: [] as string[],
   transcribe: vi.fn(),
   recordUsage: vi.fn(async () => {}),
@@ -38,6 +41,11 @@ vi.mock("@/server/integrations/redis", () => ({
   limitAiVoiceTurn: vi.fn(async () => m.rate),
   redis: {
     eval: vi.fn(async (script: string, keys: string[], args: string[]) => {
+      if (script.includes("local sessionTurns")) {
+        m.allowanceCalls.push({ keys, args });
+        if (m.evalError) throw m.evalError;
+        return m.allowanceResult;
+      }
       m.evalCalls.push({ script, keys, args });
       m.order.push("reserve");
       if (m.evalError) throw m.evalError;
@@ -75,6 +83,7 @@ import {
   isVoiceConversationMember,
 } from "@/server/ai/voice-conversation";
 import {
+  GET as readAllowance,
   POST as startSession,
   DELETE as endSession,
 } from "@/app/api/v1/ai/voice-conversation/session/route";
@@ -113,6 +122,8 @@ beforeEach(() => {
   m.grantResult = 1;
   m.evalError = null;
   m.evalCalls = [];
+  m.allowanceCalls = [];
+  m.allowanceResult = [0, 0, 0, -1, -1];
   m.order = [];
   m.quotaExceeded = false;
   m.transcribe.mockReset().mockImplementation(async () => {
@@ -268,13 +279,20 @@ describe("POST/DELETE /api/v1/ai/voice-conversation/session", () => {
   });
 
   it.each([
-    [-2, "voice_capacity_reached"],
-    [-3, "voice_daily_limit_reached"],
-    [-7, "voice_daily_limit_reached"],
-    [-8, "voice_daily_limit_reached"],
-  ])("maps store result %s to 429 %s", async (result, code) => {
+    [-2, "voice_capacity_reached", undefined],
+    [-3, "voice_daily_limit_reached", "daily_audio"],
+    [-7, "voice_daily_limit_reached", "daily_turns"],
+    [-8, "voice_daily_limit_reached", "daily_sessions"],
+  ])("maps store result %s to 429 %s (%s)", async (result, code, reason) => {
     m.evalResult = result;
-    expect(await json(await start())).toEqual({ status: 429, body: { error: { code } } });
+    expect(await json(await start())).toEqual({
+      status: 429,
+      body: {
+        error: reason
+          ? { code, reason, allowance: expect.objectContaining({ turnsAvailable: 10 }) }
+          : { code },
+      },
+    });
   });
 
   it("fails closed (503) when the limit store is unavailable", async () => {
@@ -388,17 +406,19 @@ describe("POST /api/v1/ai/voice-conversation/turn", () => {
   });
 
   it.each([
-    [-1, 409, "session_not_found"],
-    [-4, 409, "session_expired"],
-    [-5, 429, "turn_limit"],
-    [-6, 409, "duplicate_turn"],
-    [-3, 429, "voice_daily_limit_reached"],
-    [-7, 429, "voice_daily_limit_reached"],
-  ])("store result %s → %s %s, no provider call", async (result, status, code) => {
+    [-1, 409, "session_not_found", undefined],
+    [-4, 409, "session_expired", undefined],
+    [-5, 429, "turn_limit", "session_turns"],
+    [-6, 409, "duplicate_turn", undefined],
+    [-3, 429, "voice_daily_limit_reached", "daily_audio"],
+    [-7, 429, "voice_daily_limit_reached", "daily_turns"],
+  ])("store result %s → %s %s (%s), no provider call", async (result, status, code, reason) => {
     m.evalResult = result;
     expect(await json(await postTurn(turnRequest()))).toEqual({
       status,
-      body: { error: { code } },
+      body: {
+        error: reason ? { code, reason, allowance: expect.objectContaining({}) } : { code },
+      },
     });
     expect(m.transcribe).not.toHaveBeenCalled();
   });
@@ -439,5 +459,179 @@ describe("POST /api/v1/ai/voice-conversation/turn", () => {
     expect(JSON.stringify(vi.mocked(console.error).mock.calls)).not.toContain(
       "secret upstream detail",
     );
+  });
+});
+
+describe("GET /api/v1/ai/voice-conversation/session (today's allowance)", () => {
+  const get = (
+    url = "http://localhost/api/v1/ai/voice-conversation/session",
+    headers = sameOrigin,
+  ) => readAllowance(new Request(url, { headers }));
+
+  it("reports what the signed-in organization has left today, read-only", async () => {
+    m.allowanceResult = [1, 6, 31_740, -1, -1];
+    const { status, body } = await json(await get());
+    expect(status).toBe(200);
+    expect(body.data).toMatchObject({
+      startsToday: { used: 1, limit: 1, remaining: 0 },
+      turnsToday: { used: 6, limit: 10, remaining: 4 },
+      audioMsToday: { used: 31_740, limit: 300_000, remaining: 268_260 },
+      sessionSeconds: 300,
+      turnsAvailable: 4,
+      session: null,
+    });
+    expect(body.data.renewsAt).toBeGreaterThan(Date.now());
+    // Reading never starts a session, reserves a turn or writes anything.
+    expect(m.evalCalls).toHaveLength(0);
+    expect(m.allowanceCalls).toHaveLength(1);
+    expect(m.allowanceCalls[0]!.keys.every((k) => k.includes(ORG))).toBe(true);
+    expect(m.allowanceCalls[0]!.args).toEqual([ORG, USER]);
+  });
+
+  it("accepts no identifiers: another organization's allowance can't be requested", async () => {
+    const other = "99999999-9999-4999-8999-999999999999";
+    for (const q of [`?orgId=${other}`, `?sessionId=${SESSION}`, "?x=1"]) {
+      const res = await get(`http://localhost/api/v1/ai/voice-conversation/session${q}`);
+      expect(await json(res)).toEqual({ status: 400, body: { error: { code: "invalid_input" } } });
+    }
+    expect(m.allowanceCalls).toHaveLength(0);
+  });
+
+  it.each([
+    ["cross-origin", () => undefined, { "sec-fetch-site": "cross-site" }, 403],
+    ["unauthenticated", () => (m.ctx = null), sameOrigin, 401],
+    [
+      "not in the pilot",
+      () => vi.stubEnv("AI_VOICE_CONVERSATION_PILOT_ALLOWLIST", ""),
+      sameOrigin,
+      403,
+    ],
+    ["rate limited", () => (m.rate = { success: false }), sameOrigin, 429],
+  ])("refused: %s (nothing read)", async (_l, arrange, headers, status) => {
+    arrange();
+    const res = await get(undefined, headers);
+    expect(res.status).toBe(status);
+    expect(m.allowanceCalls).toHaveLength(0);
+  });
+
+  it("the store failing gives 'unavailable' (503), never an invented balance", async () => {
+    m.evalError = new Error("ECONNREFUSED");
+    expect(await json(await get())).toEqual({
+      status: 503,
+      body: { error: { code: "voice_conversation_unavailable" } },
+    });
+  });
+});
+
+describe("allowance in start and turn responses (server readings, not client counts)", () => {
+  it("a newly granted session after 6 used turns reports 4 turns, not the session's 10", async () => {
+    m.allowanceResult = [2, 6, 31_740, 0, Date.now() + 300_000];
+    const res = await startSession(
+      new Request("http://localhost/x", { method: "POST", headers: sameOrigin }),
+    );
+    const { body } = await json(res);
+    expect(body.data.allowance).toMatchObject({
+      turnsToday: { remaining: 4 },
+      session: { turns: { used: 0, remaining: 10 } },
+      turnsAvailable: 4,
+    });
+    // The session's own id is read, after the start.
+    expect(m.allowanceCalls[0]!.keys[3]).toBe(`voice:conv:session:${body.data.sessionId}`);
+  });
+
+  it("each accepted turn returns the reading right after its reservation", async () => {
+    m.evalResult = 33_800;
+    m.allowanceResult = [2, 7, 33_800, 1, Date.now() + 200_000];
+    const { body } = await json(await postTurn(turnRequest()));
+    expect(body.data.allowance).toMatchObject({ turnsAvailable: 3, turnsToday: { remaining: 3 } });
+    expect(m.order).toEqual(["reserve", "provider", "reserve", "grant"]);
+  });
+
+  it("the tenth daily turn is accepted and says no further turn can follow", async () => {
+    m.evalResult = 60_000;
+    m.allowanceResult = [2, 10, 60_000, 4, Date.now() + 100_000];
+    const { status, body } = await json(await postTurn(turnRequest()));
+    expect(status).toBe(200);
+    expect(body.data.grant).toBeTruthy(); // its reply is still generated
+    expect(body.data.allowance.turnsAvailable).toBe(0);
+  });
+
+  it("the eleventh is refused before any paid work, naming the daily turn limit", async () => {
+    m.evalResult = -7;
+    m.allowanceResult = [2, 10, 60_000, 4, Date.now() + 100_000];
+    const { status, body } = await json(await postTurn(turnRequest()));
+    expect(status).toBe(429);
+    expect(body.error).toMatchObject({
+      code: "voice_daily_limit_reached",
+      reason: "daily_turns",
+      allowance: { turnsAvailable: 0 },
+    });
+    expect(m.transcribe).not.toHaveBeenCalled();
+    expect(m.recordUsage).not.toHaveBeenCalled();
+  });
+
+  it("an unreadable allowance never blocks an accepted turn (shown as unknown)", async () => {
+    m.evalResult = 12_000;
+    m.allowanceResult = "garbage";
+    const { status, body } = await json(await postTurn(turnRequest()));
+    expect(status).toBe(200);
+    expect(body.data.allowance).toBeNull();
+    expect(body.data.grant).toBeTruthy();
+  });
+});
+
+describe("turn diagnostics (no content)", () => {
+  const turnLogs = (spy: ReturnType<typeof vi.spyOn>) =>
+    spy.mock.calls
+      .map((c) => JSON.parse(String(c[0])))
+      .filter((l: { event?: string }) => l.event === "voice_conversation_turn");
+
+  it("logs each outcome with the device's speech length and trigger, never the transcript", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    m.evalResult = 12_000;
+    m.allowanceResult = [1, 3, 12_000, 3, Date.now() + 100_000];
+    const turnId = crypto.randomUUID();
+    await postTurn(
+      turnRequest({ sessionId: SESSION, turnId, speechMs: "1350", trigger: "speech_end" }),
+    );
+    const logs = turnLogs(info);
+    expect(logs.map((l: { outcome: string }) => l.outcome)).toEqual(["reserved", "transcribed"]);
+    expect(logs[0]).toMatchObject({
+      turnId,
+      speechMs: 1350,
+      trigger: "speech_end",
+      turnsAvailable: 7,
+    });
+    expect(logs[1]).toMatchObject({ transcriptLanguage: "fi", transcriptChars: 30 });
+    expect(JSON.stringify(info.mock.calls)).not.toContain("kalenterissa");
+  });
+
+  it("logs a refused and an empty-transcript turn", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    m.evalResult = -7;
+    await postTurn(
+      turnRequest({ sessionId: SESSION, turnId: crypto.randomUUID(), trigger: "interrupt" }),
+    );
+    m.evalResult = 12_000;
+    m.transcribe.mockResolvedValueOnce("   ");
+    await postTurn(turnRequest());
+    expect(
+      turnLogs(info).map((l: { outcome: string; reason?: string }) => [l.outcome, l.reason]),
+    ).toEqual([
+      ["refused", "daily_turns"],
+      ["reserved", undefined],
+      ["empty_transcript", undefined],
+    ]);
+  });
+
+  it.each([
+    ["an unknown trigger", { trigger: "echo" }],
+    ["a non-numeric speech length", { speechMs: "12ms" }],
+  ])("rejects %s before reserving", async (_l, extra) => {
+    const res = await postTurn(
+      turnRequest({ sessionId: SESSION, turnId: crypto.randomUUID(), ...extra }),
+    );
+    expect(res.status).toBe(400);
+    expect(m.evalCalls).toHaveLength(0);
   });
 });

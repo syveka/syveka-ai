@@ -6,6 +6,7 @@ import type { ToolIdentity } from "@/server/ai/tools";
 import type { EvalClient } from "@/server/ai/voice-conversation";
 import { estimateAiCost } from "@/server/ai/cost";
 import { isAbortError } from "@/server/ai/retry";
+import { detectReplyLanguage } from "@/lib/voice/reply-language";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -287,6 +288,9 @@ export async function POST(request: Request): Promise<Response> {
     })),
     hasTools: tools.length > 0,
     responseMode: voiceTurn ? ("voice" as const) : ("text" as const),
+    // The transcript's own language, only when clear: history (earlier turns
+    // in other languages) and the interface language must not decide it.
+    voiceTurnLanguage: voiceTurn ? detectReplyLanguage(input.message) : null,
   };
   let system = buildSystemPrompt(promptParams);
   if (summary) {
@@ -456,6 +460,17 @@ export async function POST(request: Request): Promise<Response> {
 
         const citations = extractValidCitations(fullText, retrieved);
         if (citations.length > 0) send({ type: "citations", citations });
+        if (voiceTurn) {
+          // Language pairing diagnostics (codes only, never content).
+          console.info(
+            JSON.stringify({
+              event: "voice_conversation_reply",
+              conversationId: conversation.id,
+              turnLanguage: promptParams.voiceTurnLanguage,
+              replyLanguage: detectReplyLanguage(fullText),
+            }),
+          );
+        }
 
         await unscopedPrisma.message.create({
           data: {

@@ -104,6 +104,11 @@ export class VoiceActivityDetector {
     return Math.max(this.noise * this.config.speechFactor, this.config.minThreshold);
   }
 
+  /** Longest turn before it is cut (see VadConfig.maxTurnMs). */
+  get maxTurnMs(): number {
+    return this.config.maxTurnMs;
+  }
+
   get speaking(): boolean {
     return this.speechStart !== null;
   }

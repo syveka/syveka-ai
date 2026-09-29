@@ -5,9 +5,16 @@ import { isCrossOrigin } from "@/server/security/same-origin";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-function error(code: string, status: number) {
-  return NextResponse.json({ error: { code } }, { status });
+function error(code: string, status: number, extra: Record<string, unknown> = {}) {
+  return NextResponse.json({ error: { code, ...extra } }, { status });
 }
+
+/** Which daily limit refused a start (the code stays voice_daily_limit_reached). */
+const START_REASONS = {
+  daily_sessions: "daily_sessions",
+  daily_turns: "daily_turns",
+  daily_budget: "daily_audio",
+} as const;
 
 const endSchema = z.object({ sessionId: z.string().uuid() }).strict();
 
@@ -106,10 +113,11 @@ export async function POST(request: Request): Promise<Response> {
       conversation,
     );
     if (!result.ok) {
-      return error(
-        result.reason === "org_capacity" ? "voice_capacity_reached" : "voice_daily_limit_reached",
-        429,
-      );
+      if (result.reason === "org_capacity") return error("voice_capacity_reached", 429);
+      return error("voice_daily_limit_reached", 429, {
+        reason: START_REASONS[result.reason],
+        allowance: await g.conversation.tryReadVoiceAllowance(redis, g.ctx, config),
+      });
     }
     return NextResponse.json({
       data: {
@@ -118,6 +126,13 @@ export async function POST(request: Request): Promise<Response> {
         expiresAt: result.expiresAt,
         maxTurnSeconds: config.maxTurnSeconds,
         sessionSeconds: config.sessionSeconds,
+        // Read after the start, from the server's counters (null: unknown).
+        allowance: await g.conversation.tryReadVoiceAllowance(
+          redis,
+          g.ctx,
+          config,
+          result.sessionId,
+        ),
       },
     });
   } catch (e) {
@@ -130,6 +145,27 @@ export async function POST(request: Request): Promise<Response> {
     );
     return error("voice_conversation_unavailable", 503);
   }
+}
+
+/**
+ * Today's live-voice allowance for the signed-in user's organization, before
+ * starting: starts, turns and audio left, when they renew (Helsinki
+ * midnight), and the session's maximum duration. Read-only: it never starts
+ * a session, reserves a turn or changes a counter. The organization comes
+ * only from the server-verified session; no identifier is accepted.
+ */
+export async function GET(request: Request): Promise<Response> {
+  const g = await guard(request, { requireMember: true });
+  if (!g.ok) return g.response;
+  if (!g.config) return error("voice_conversation_unavailable", 503);
+  if (new URL(request.url).search) return error("invalid_input", 400);
+  const { redis, limitAiVoiceTurn } = await import("@/server/integrations/redis");
+  const limit = await limitAiVoiceTurn(g.ctx.orgId, g.ctx.userId).catch(() => null);
+  if (!limit || limit.unavailable) return error("voice_conversation_unavailable", 503);
+  if (!limit.success) return error("rate_limited", 429);
+  const allowance = await g.conversation.tryReadVoiceAllowance(redis, g.ctx, g.config);
+  if (!allowance) return error("voice_conversation_unavailable", 503);
+  return NextResponse.json({ data: allowance });
 }
 
 /**

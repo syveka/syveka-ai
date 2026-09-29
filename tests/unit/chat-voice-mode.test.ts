@@ -419,3 +419,53 @@ describe("chat route voice mode", () => {
     expect(redis.eval).not.toHaveBeenCalled();
   });
 });
+
+describe("chat route voice mode: the reply language follows this turn", () => {
+  const systemOf = async (message: string) => {
+    mocks.streamClaude.mockClear();
+    await (await chat({ message, voiceGrant: GRANT })).text();
+    return (mocks.streamClaude.mock.calls[0]![0] as { system: string }).system;
+  };
+
+  it("a clearly English turn in a Finnish interface, after Finnish history, is answered in English", async () => {
+    mocks.history = [
+      { role: "USER", content: "Mitä kalenterissa on huomenna?" },
+      { role: "ASSISTANT", content: "Huomenna on kaksi tapaamista." },
+    ];
+    const system = await systemOf("What about Friday afternoon, do I have any free time?");
+    expect(system).toContain("This turn: the user's current message is in English");
+    expect(system).toContain("Answer this turn in English");
+  });
+
+  it.each([
+    ["Mitä kalenterissa on huomenna?", "Finnish"],
+    ["ما هي مواعيدي غدًا؟", "Arabic"],
+  ])("%s → answered in %s", async (message, language) => {
+    expect(await systemOf(message)).toContain(`Answer this turn in ${language}`);
+  });
+
+  it("an undecided short transcript gets no guessed language (the general rule applies)", async () => {
+    const system = await systemOf("OK");
+    expect(system).not.toContain("This turn:");
+    expect(system).toContain("answer in the language of the user's current message");
+  });
+
+  it("typed chat gets no per-turn language instruction", async () => {
+    mocks.streamClaude.mockClear();
+    await (await chat({ message: "What about Friday afternoon, do I have any free time?" })).text();
+    const system = (mocks.streamClaude.mock.calls[0]![0] as { system: string }).system;
+    expect(system).not.toContain("This turn:");
+  });
+
+  it("logs the turn and reply languages (codes only) for diagnosis", async () => {
+    const info = vi.spyOn(console, "info").mockImplementation(() => {});
+    await systemOf("What about Friday afternoon, do I have any free time?");
+    const log = info.mock.calls
+      .map((c) => JSON.parse(String(c[0])))
+      .find((l: { event?: string }) => l.event === "voice_conversation_reply");
+    // The mocked model answers "Selvä." (Finnish): exactly the mismatch the log reveals.
+    expect(log).toMatchObject({ turnLanguage: "en", replyLanguage: "fi" });
+    expect(JSON.stringify(info.mock.calls)).not.toContain("Friday");
+    info.mockRestore();
+  });
+});

@@ -172,6 +172,30 @@ Europe/Helsinki midnight. The start screen tells the user this before the microp
 - A turn is **used** once reserved. It is not refunded on provider failure, timeout, cancel or an
   empty transcript.
 
+**Allowance** (`GET /api/v1/ai/voice-conversation/session`, read-only). It reports the signed-in
+organization's starts, turns and audio left for the Helsinki day, when they renew (next Helsinki
+midnight, DST-aware), and the maximum session length. It accepts no identifiers: any query parameter
+is refused (400), and the organization comes only from the server-verified session. Reading never
+starts a session, reserves a turn or changes a counter or expiry. Start and turn responses carry the
+same reading (for the turn: right after its reservation, including the session's own turn count),
+and so do limit refusals. A reading that fails is returned as `null`, and the UI shows "unknown".
+
+- **Refusals name their limit.** The code is unchanged for compatibility (`voice_daily_limit_reached`
+  or `turn_limit`); `reason` is `daily_sessions`, `daily_turns`, `daily_audio` or `session_turns`.
+  The UI shows a distinct message and, for daily limits, the Helsinki renewal time.
+- **Last permitted turn.** When a reading shows no further turn can be accepted, the client lets
+  that turn's reply finish. It doesn't interrupt the reply or record another turn, and then ends the
+  session with the reason. No upload is made that the server would refuse.
+- **Self-echo guard.** While the device is still speaking, and for 400 ms after a reply, the
+  microphone can't start a turn. Recordings shorter than 700 ms are never uploaded.
+- **Diagnostics** (content-free structured logs):
+  - `voice_conversation_turn` records each outcome (`rejected`, `refused` with its reason,
+    `reserved`, `transcribed`, `empty_transcript`, `transcription_failed`/`aborted`). It includes
+    the measured audio, the device's speech length and trigger (`speech_end`, `max_turn`,
+    `interrupt`), the turns left, the transcript's length and its detected language (`fi`/`en`/`ar`
+    or null).
+  - `voice_conversation_reply` records the turn and reply languages. It never includes audio or text.
+
 **Grant** (issued only for a non-empty transcript while the session is live; TTL 120 s):
 
 - It is bound to the organization, user, session, turn, **conversation** and exact transcript.

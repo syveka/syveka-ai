@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { MIN_AUDIO_BYTES, pickRecordingMimeType } from "@/lib/voice/audio";
+import { MIN_AUDIO_BYTES, MIN_RECORDING_MS, pickRecordingMimeType } from "@/lib/voice/audio";
+import {
+  exhaustedReason,
+  newerAllowance,
+  type LimitReason,
+  type VoiceAllowance,
+} from "@/lib/voice/allowance";
 import { splitForSpeech, toSpokenText } from "@/lib/voice/spoken-text";
 import { DEFAULT_VAD_CONFIG, VoiceActivityDetector, rmsLevel, type VadMode } from "@/lib/voice/vad";
 import { chooseReplyVoice } from "@/lib/voice/voices";
@@ -46,7 +52,13 @@ export type ConversationError =
   | "unavailable"
   | "network_error"
   | "ended_elsewhere"
-  | "reply_failed";
+  | "reply_failed"
+  /** Distinct limits (pilot allowances, see VoiceAllowance). */
+  | "daily_sessions_used"
+  | "daily_turns_used"
+  | "daily_audio_used"
+  | "session_turns_used"
+  | "rate_limited";
 
 export type ConversationNotice =
   | "not_heard"
@@ -66,7 +78,9 @@ export type EndReason =
   | "locale_changed"
   | "session_expired"
   | "error"
-  | "ended_elsewhere";
+  | "ended_elsewhere"
+  /** No further turn can be accepted (after the last permitted reply). */
+  | "limit";
 
 type Deps = {
   fetch: typeof fetch;
@@ -77,6 +91,12 @@ const TICK_MS = 50;
 /** Discard and re-arm the recorder after this much silence, bounding leading silence. */
 const IDLE_REARM_MS = 3_000;
 const CHANNEL = "syveka-voice-conversation";
+/**
+ * After Syveka's speech ends (or while the device is still speaking),
+ * nothing the microphone hears starts a turn for this long: the end of the
+ * device's own audio must never become a paid "user" turn.
+ */
+const ECHO_TAIL_MS = 400;
 /** A reply that hasn't started speaking by then has failed (it never plays). */
 const SPEECH_START_TIMEOUT_MS = 6_000;
 /** Rough upper bound for one chunk: ~12 chars/s plus slack (as in useSpeechPlayback). */
@@ -89,13 +109,32 @@ const SESSION_ERRORS: Record<string, ConversationError> = {
   session_expired: "session_expired",
   voice_session_ended: "session_expired",
   session_not_found: "session_expired",
-  turn_limit: "limit_reached",
+  turn_limit: "session_turns_used",
   voice_conversation_unavailable: "unavailable",
-  rate_limited: "limit_reached",
+  rate_limited: "rate_limited",
   entitlement_exceeded: "limit_reached",
   permission_denied: "not_enabled",
   unauthenticated: "unavailable",
 };
+
+const LIMIT_ERRORS: Record<LimitReason, ConversationError> = {
+  daily_sessions: "daily_sessions_used",
+  daily_turns: "daily_turns_used",
+  daily_audio: "daily_audio_used",
+  session_turns: "session_turns_used",
+};
+
+/** The error for a refusal: its specific limit when the server names one. */
+function refusalError(code: string, reason: unknown, fallback: ConversationError) {
+  if (typeof reason === "string" && reason in LIMIT_ERRORS) {
+    return LIMIT_ERRORS[reason as LimitReason];
+  }
+  return SESSION_ERRORS[code] ?? fallback;
+}
+
+type RefusalBody = {
+  error?: { code?: string; reason?: string; allowance?: VoiceAllowance | null };
+} | null;
 
 function micError(e: unknown): ConversationError {
   const name = e instanceof Error || e instanceof DOMException ? e.name : "";
@@ -140,6 +179,8 @@ export function useVoiceConversation({
   const [now, setNow] = useState(() => deps.now());
   /** Spoken replies turned on during this session (enableSpeech). */
   const [speechEnabledInSession, setSpeechEnabledInSession] = useState(false);
+  /** Latest allowance from the server (null: not known). */
+  const [allowance, setAllowanceState] = useState<VoiceAllowance | null>(null);
 
   const phaseRef = useRef<ConversationPhase>("idle");
   const epochRef = useRef(0);
@@ -176,6 +217,28 @@ export function useVoiceConversation({
   /** The last reply that wasn't spoken (text-only, blocked or failed), for enableSpeech. */
   const unspokenReplyRef = useRef<{ text: string; turn?: string } | null>(null);
   const speechTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const allowanceRef = useRef<VoiceAllowance | null>(null);
+  /**
+   * Set when the server says no further turn can be accepted: the current
+   * reply still finishes (no interruption, no new recording), then the
+   * session ends with this reason.
+   */
+  const finalReasonRef = useRef<LimitReason | null>(null);
+  /** Until then, the microphone can't start a turn (the device's own audio). */
+  const echoHoldUntilRef = useRef(0);
+  const echoHeldRef = useRef(false);
+  /** The recording in progress started by interrupting Syveka. */
+  const interruptTurnRef = useRef(false);
+
+  /** Keeps the newest server reading; a stale response never overwrites it. */
+  const updateAllowance = useCallback((next: VoiceAllowance | null | undefined) => {
+    const newest = newerAllowance(allowanceRef.current, next);
+    if (newest === allowanceRef.current) return;
+    allowanceRef.current = newest;
+    setAllowanceState(newest);
+    const reason = newest ? exhaustedReason(newest) : null;
+    if (reason) finalReasonRef.current = reason;
+  }, []);
 
   const setPhase = useCallback((next: ConversationPhase) => {
     phaseRef.current = next;
@@ -281,10 +344,19 @@ export function useVoiceConversation({
 
   const resumeListening = useCallback(() => {
     if (phaseRef.current === "ended" || phaseRef.current === "idle") return;
+    const reason = finalReasonRef.current;
+    if (reason) {
+      // The last permitted turn has been answered: end instead of recording
+      // a turn the server would refuse.
+      end("limit", LIMIT_ERRORS[reason]);
+      return;
+    }
+    const now = depsRef.current.now();
+    if (phaseRef.current === "speaking") echoHoldUntilRef.current = now + ECHO_TAIL_MS;
     setPhase("listening");
-    vadRef.current?.reset(depsRef.current.now());
+    vadRef.current?.reset(now);
     armRecorder();
-  }, [armRecorder, setPhase]);
+  }, [armRecorder, end, setPhase]);
 
   const speak = useCallback(
     /** `turn`: the transcript this reply answers (its language context). */
@@ -384,7 +456,11 @@ export function useVoiceConversation({
   );
 
   const submitTurn = useCallback(
-    async (audio: Blob, epoch: number) => {
+    async (
+      audio: Blob,
+      epoch: number,
+      diagnostics: { speechMs: number; trigger: "speech_end" | "max_turn" | "interrupt" },
+    ) => {
       const session = sessionRef.current;
       if (!session) return;
       setPhase("processing");
@@ -394,6 +470,11 @@ export function useVoiceConversation({
       form.append("sessionId", session.id);
       form.append("turnId", crypto.randomUUID());
       form.append("audio", audio, "turn");
+      form.append(
+        "speechMs",
+        String(Math.min(999_999, Math.max(0, Math.round(diagnostics.speechMs)))),
+      );
+      form.append("trigger", diagnostics.trigger);
       let text: string;
       let grant: string | null = null;
       try {
@@ -403,11 +484,13 @@ export function useVoiceConversation({
           signal: controller.signal,
         });
         if (epoch !== epochRef.current) return;
-        const body = (await res.json().catch(() => null)) as {
-          data?: { text?: string; grant?: string };
-          error?: { code?: string };
-        } | null;
+        const body = (await res.json().catch(() => null)) as
+          | ({
+              data?: { text?: string; grant?: string; allowance?: VoiceAllowance | null };
+            } & RefusalBody)
+          | null;
         if (epoch !== epochRef.current) return;
+        updateAllowance(body?.data?.allowance ?? body?.error?.allowance);
         if (!res.ok || typeof body?.data?.text !== "string") {
           const code = body?.error?.code ?? "";
           if (code === "audio_too_long") {
@@ -420,7 +503,7 @@ export function useVoiceConversation({
             resumeListening();
             return;
           }
-          end("error", SESSION_ERRORS[code] ?? "network_error");
+          end("error", refusalError(code, body?.error?.reason, "network_error"));
           return;
         }
         text = body.data.text.trim();
@@ -454,15 +537,18 @@ export function useVoiceConversation({
       setError(null);
       speak(reply, epoch, text);
     },
-    [end, resumeListening, setPhase, speak],
+    [end, resumeListening, setPhase, speak, updateAllowance],
   );
 
   /** Stops the current recorder and submits it as one turn (exactly once). */
   const finishTurn = useCallback(
-    (epoch: number) => {
+    (epoch: number, speechMs: number, ended: "speech_end" | "max_turn") => {
       const recorder = recorderRef.current;
       if (!recorder || recorder.state === "inactive") return;
       recorderRef.current = null;
+      const trigger = interruptTurnRef.current ? "interrupt" : ended;
+      interruptTurnRef.current = false;
+      const recordedMs = depsRef.current.now() - recorderArmedAtRef.current;
       recorder.onstop = () => {
         const audio = new Blob(
           chunksRef.current,
@@ -470,12 +556,13 @@ export function useVoiceConversation({
         );
         chunksRef.current = [];
         if (epoch !== epochRef.current) return;
-        if (audio.size < MIN_AUDIO_BYTES) {
+        // Too little to be a turn: never uploaded (the server would refuse it).
+        if (audio.size < MIN_AUDIO_BYTES || recordedMs < MIN_RECORDING_MS) {
           setNotice("not_heard");
           resumeListening();
           return;
         }
-        void submitTurn(audio, epoch);
+        void submitTurn(audio, epoch, { speechMs, trigger });
       };
       setPhase("processing");
       recorder.stop();
@@ -494,6 +581,28 @@ export function useVoiceConversation({
       const phaseNow = phaseRef.current;
       if (phaseNow !== "listening" && phaseNow !== "user_speaking" && phaseNow !== "speaking")
         return;
+      // The last permitted reply is never interrupted (no turn could follow).
+      if (phaseNow === "speaking" && finalReasonRef.current) return;
+      if (phaseNow === "listening") {
+        // While the device is still speaking, and briefly after, what the
+        // microphone hears is Syveka, not the user: no turn starts.
+        const synth =
+          typeof window !== "undefined" && "speechSynthesis" in window
+            ? window.speechSynthesis
+            : null;
+        if (synth?.speaking) echoHoldUntilRef.current = t + ECHO_TAIL_MS;
+        if (t < echoHoldUntilRef.current) {
+          echoHeldRef.current = true;
+          return;
+        }
+        if (echoHeldRef.current) {
+          // Start the next recording after the echo, not during it.
+          echoHeldRef.current = false;
+          vad.reset(t);
+          armRecorder();
+          return;
+        }
+      }
       const frame = new Float32Array(analyser.fftSize);
       analyser.getFloatTimeDomainData(frame);
       const mode: VadMode = phaseNow === "speaking" ? "assistant_speaking" : "listening";
@@ -515,8 +624,10 @@ export function useVoiceConversation({
           setPhase("user_speaking");
           break;
         case "speech_end":
+          finishTurn(epoch, event.durationMs, "speech_end");
+          break;
         case "max_turn":
-          finishTurn(epoch);
+          finishTurn(epoch, vad.maxTurnMs, "max_turn");
           break;
         case "speech_discarded":
           setPhase("listening");
@@ -527,6 +638,7 @@ export function useVoiceConversation({
           cancelSpeech();
           setPhase("user_speaking");
           armRecorder();
+          interruptTurnRef.current = true;
           vad.beginSpeech(t);
           break;
       }
@@ -540,6 +652,10 @@ export function useVoiceConversation({
     setNotice(null);
     lastLanguageRef.current = null;
     unspokenReplyRef.current = null;
+    finalReasonRef.current = null;
+    echoHoldUntilRef.current = 0;
+    echoHeldRef.current = false;
+    interruptTurnRef.current = false;
     speechEnabledInSessionRef.current = false;
     setSpeechEnabledInSession(false);
     const supported =
@@ -587,15 +703,17 @@ export function useVoiceConversation({
       end("error", "network_error");
       return;
     }
-    const body = (await res.json().catch(() => null)) as {
-      data?: {
-        sessionId: string;
-        conversationId: string;
-        expiresAt: number;
-        maxTurnSeconds: number;
-      };
-      error?: { code?: string };
-    } | null;
+    const body = (await res.json().catch(() => null)) as
+      | ({
+          data?: {
+            sessionId: string;
+            conversationId: string;
+            expiresAt: number;
+            maxTurnSeconds: number;
+            allowance?: VoiceAllowance | null;
+          };
+        } & RefusalBody)
+      | null;
     if (epoch !== epochRef.current) {
       // Ended before the server answered: release the session it may have created.
       if (body?.data?.sessionId) {
@@ -608,8 +726,14 @@ export function useVoiceConversation({
       }
       return;
     }
+    // A new session never restores the day's turns or audio: the server's
+    // reading (not a client count) is what is left.
+    allowanceRef.current = null;
+    finalReasonRef.current = null;
+    setAllowanceState(null);
+    updateAllowance(body?.data?.allowance ?? body?.error?.allowance);
     if (!res.ok || !body?.data?.conversationId) {
-      end("error", SESSION_ERRORS[body?.error?.code ?? ""] ?? "unavailable");
+      end("error", refusalError(body?.error?.code ?? "", body?.error?.reason, "unavailable"));
       return;
     }
     const { sessionId, conversationId: boundConversation, expiresAt: serverExpiry } = body.data;
@@ -659,8 +783,8 @@ export function useVoiceConversation({
       Math.max(0, serverExpiry - depsRef.current.now()),
     );
     tickRef.current = setInterval(() => tick(epoch), TICK_MS);
-    resumeListening();
-  }, [end, resumeListening, setPhase, tick]);
+    resumeListening(); // ends at once if no turn can be accepted
+  }, [end, resumeListening, setPhase, tick, updateAllowance]);
 
   const toggleMute = useCallback(() => {
     const phaseNow = phaseRef.current;
@@ -744,6 +868,8 @@ export function useVoiceConversation({
     stopReply,
     enableSpeech,
     speechEnabledInSession,
+    /** The server's latest allowance reading (null: unknown). */
+    allowance,
     clearError: () => setError(null),
   };
 }
