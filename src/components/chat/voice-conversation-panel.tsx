@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { AudioLines, Loader2, Mic, MicOff, PhoneOff, Square, X } from "lucide-react";
+import { AudioLines, Loader2, Mic, MicOff, PhoneOff, Square, Volume2, X } from "lucide-react";
 import type {
   ConversationError,
   ConversationNotice,
@@ -119,6 +119,7 @@ export function VoiceConversationPanel({
   remainingMs,
   onToggleMute,
   onStopReply,
+  onEnableSpeech,
   onEnd,
   onDismiss,
 }: {
@@ -132,12 +133,16 @@ export function VoiceConversationPanel({
   remainingMs: number | null;
   onToggleMute: () => void;
   onStopReply: () => void;
+  /** Turns spoken replies on within this session (a tap the browser may require). */
+  onEnableSpeech?: () => void;
   onEnd: () => void;
   onDismiss: () => void;
 }) {
   const t = useTranslations("chat.live");
   const active = phase !== "idle" && phase !== "ended";
   const stateLabel = muted && active ? t("state.muted") : t(`state.${PHASE_LABEL[phase]}`);
+  const offerSpeech =
+    !!onEnableSpeech && (textOnly || notice === "speech_blocked" || notice === "speech_failed");
 
   return (
     <section
@@ -210,6 +215,16 @@ export function VoiceConversationPanel({
               >
                 <Square aria-hidden className="size-3.5" />
                 {t("stopReply")}
+              </button>
+            ) : null}
+            {offerSpeech ? (
+              <button
+                type="button"
+                onClick={onEnableSpeech}
+                className={cn(button, "border bg-background")}
+              >
+                <Volume2 aria-hidden className="size-4" />
+                {t("enableSpeech")}
               </button>
             ) : null}
             <button

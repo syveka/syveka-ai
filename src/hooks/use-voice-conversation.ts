@@ -49,7 +49,15 @@ export type ConversationError =
   | "reply_failed";
 
 export type ConversationNotice =
-  "not_heard" | "no_voice" | "language_unknown" | "turn_too_long" | null;
+  | "not_heard"
+  | "no_voice"
+  | "language_unknown"
+  | "turn_too_long"
+  /** The browser refused to speak (needs a tap: see enableSpeech). */
+  | "speech_blocked"
+  /** Speaking failed or never started. */
+  | "speech_failed"
+  | null;
 
 export type EndReason =
   | "user"
@@ -69,6 +77,10 @@ const TICK_MS = 50;
 /** Discard and re-arm the recorder after this much silence, bounding leading silence. */
 const IDLE_REARM_MS = 3_000;
 const CHANNEL = "syveka-voice-conversation";
+/** A reply that hasn't started speaking by then has failed (it never plays). */
+const SPEECH_START_TIMEOUT_MS = 6_000;
+/** Rough upper bound for one chunk: ~12 chars/s plus slack (as in useSpeechPlayback). */
+const chunkWatchdogMs = (text: string) => 5_000 + text.length * 90;
 
 const SESSION_ERRORS: Record<string, ConversationError> = {
   voice_conversation_not_enabled: "not_enabled",
@@ -126,6 +138,8 @@ export function useVoiceConversation({
   const [startedAt, setStartedAt] = useState<number | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const [now, setNow] = useState(() => deps.now());
+  /** Spoken replies turned on during this session (enableSpeech). */
+  const [speechEnabledInSession, setSpeechEnabledInSession] = useState(false);
 
   const phaseRef = useRef<ConversationPhase>("idle");
   const epochRef = useRef(0);
@@ -158,6 +172,10 @@ export function useVoiceConversation({
   const localeRef = useRef(locale);
   const speakRepliesRef = useRef(speakReplies);
   speakRepliesRef.current = speakReplies;
+  const speechEnabledInSessionRef = useRef(false);
+  /** The last reply that wasn't spoken (text-only, blocked or failed), for enableSpeech. */
+  const unspokenReplyRef = useRef<{ text: string; turn?: string } | null>(null);
+  const speechTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const setPhase = useCallback((next: ConversationPhase) => {
     phaseRef.current = next;
@@ -167,6 +185,8 @@ export function useVoiceConversation({
   const cancelSpeech = useCallback(() => {
     speakTokenRef.current += 1;
     utterancesRef.current = [];
+    if (speechTimerRef.current) clearTimeout(speechTimerRef.current);
+    speechTimerRef.current = null;
     if (typeof window !== "undefined" && "speechSynthesis" in window) {
       window.speechSynthesis.cancel();
     }
@@ -274,7 +294,8 @@ export function useVoiceConversation({
         "speechSynthesis" in window &&
         typeof window.SpeechSynthesisUtterance !== "undefined";
       const chunks = splitForSpeech(toSpokenText(text));
-      if (!speakRepliesRef.current) {
+      if (!speakRepliesRef.current && !speechEnabledInSessionRef.current) {
+        unspokenReplyRef.current = { text, turn };
         resumeListening();
         return;
       }
@@ -300,10 +321,23 @@ export function useVoiceConversation({
         return;
       }
       const token = ++speakTokenRef.current;
+      const current = () => token === speakTokenRef.current && epoch === epochRef.current;
+      /** The reply couldn't be spoken: say so, keep its text for enableSpeech, listen again. */
+      const fail = (reason: "speech_blocked" | "speech_failed") => {
+        if (!current()) return;
+        cancelSpeech();
+        unspokenReplyRef.current = { text, turn };
+        setNotice(reason);
+        resumeListening();
+      };
+      let started = false;
+      setNotice(null);
       setPhase("speaking");
       vadRef.current?.reset(depsRef.current.now());
       const next = (i: number) => {
-        if (token !== speakTokenRef.current || epoch !== epochRef.current) return;
+        if (!current()) return;
+        if (speechTimerRef.current) clearTimeout(speechTimerRef.current);
+        speechTimerRef.current = null;
         if (i >= chunks.length) {
           utterancesRef.current = [];
           resumeListening();
@@ -318,14 +352,35 @@ export function useVoiceConversation({
           done = true;
           next(i + 1);
         };
+        u.onstart = () => {
+          if (!current() || done) return;
+          if (speechTimerRef.current) clearTimeout(speechTimerRef.current);
+          speechTimerRef.current = setTimeout(advance, chunkWatchdogMs(chunks[i]!));
+          if (started) return;
+          started = true;
+          unspokenReplyRef.current = null;
+          // Syveka is now audible: learn its level at the microphone before
+          // accepting an interruption, so its own voice can't cut it off.
+          vadRef.current?.beginAssistantAudio(depsRef.current.now());
+        };
         u.onend = advance;
-        u.onerror = advance;
+        u.onerror = (event) => {
+          // Our own cancel (Stop reply, interruption, End) is not a failure.
+          const code = (event as SpeechSynthesisErrorEvent | undefined)?.error;
+          if (code === "interrupted" || code === "canceled") return advance();
+          fail(code === "not-allowed" ? "speech_blocked" : "speech_failed");
+        };
         utterancesRef.current.push(u);
+        // Never hang in "speaking": a reply that doesn't start fails visibly,
+        // and a chunk whose end event is lost moves on.
+        speechTimerRef.current = started
+          ? setTimeout(advance, chunkWatchdogMs(chunks[i]!))
+          : setTimeout(() => fail("speech_failed"), SPEECH_START_TIMEOUT_MS);
         window.speechSynthesis.speak(u);
       };
       next(0);
     },
-    [resumeListening, setPhase],
+    [cancelSpeech, resumeListening, setPhase],
   );
 
   const submitTurn = useCallback(
@@ -484,6 +539,9 @@ export function useVoiceConversation({
     setError(null);
     setNotice(null);
     lastLanguageRef.current = null;
+    unspokenReplyRef.current = null;
+    speechEnabledInSessionRef.current = false;
+    setSpeechEnabledInSession(false);
     const supported =
       typeof navigator !== "undefined" &&
       !!navigator.mediaDevices?.getUserMedia &&
@@ -620,6 +678,25 @@ export function useVoiceConversation({
     }
   }, [discardRecorder, resumeListening, setPhase]);
 
+  /**
+   * Turns spoken replies on within the running session, from a tap -- which
+   * also gives the browser any user activation it requires -- and reads the
+   * last reply that wasn't spoken. Offered after "speech_blocked" /
+   * "speech_failed", or when the session started with text replies.
+   */
+  const enableSpeech = useCallback(() => {
+    const phaseNow = phaseRef.current;
+    if (phaseNow === "idle" || phaseNow === "ended" || phaseNow === "connecting") return;
+    speechEnabledInSessionRef.current = true;
+    setSpeechEnabledInSession(true);
+    setNotice(null);
+    const pending = unspokenReplyRef.current;
+    if (!pending || phaseNow !== "listening") return;
+    unspokenReplyRef.current = null;
+    discardRecorder();
+    speak(pending.text, epochRef.current, pending.turn);
+  }, [discardRecorder, speak]);
+
   /** Stops the spoken reply (the text stays in the chat) and listens again. */
   const stopReply = useCallback(() => {
     if (phaseRef.current !== "speaking") return;
@@ -665,6 +742,8 @@ export function useVoiceConversation({
     end: () => end("user"),
     toggleMute,
     stopReply,
+    enableSpeech,
+    speechEnabledInSession,
     clearError: () => setError(null),
   };
 }

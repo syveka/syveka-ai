@@ -286,7 +286,9 @@
         "not_heard": "Didn't catch that. Please say it again.",
         "no_voice": "This device has no voice for this reply's language, so it's shown as text. You can keep talking.",
         "language_unknown": "This reply is shown as text because its language couldn't be matched to a voice. You can keep talking.",
-        "turn_too_long": "That was too long for one turn. Please say it in shorter parts."
+        "turn_too_long": "That was too long for one turn. Please say it in shorter parts.",
+        "speech_blocked": "Your browser didn't allow Syveka to speak. Tap \"Enable spoken replies\" to hear the reply; the conversation continues.",
+        "speech_failed": "The reply couldn't be played aloud; it is shown as text. Tap \"Enable spoken replies\" to try again."
       },
       "errors": {
         "unsupported": "Voice conversation isn't supported in this browser. You can keep typing.",
@@ -307,7 +309,8 @@
       "voiceUnknown": "Your device didn't list its voices yet. If you don't hear replies, end the conversation and start again with text replies.",
       "startTextOnly": "Start with text replies",
       "useDictation": "Use dictation instead",
-      "textOnlyHint": "Replies are shown as text only."
+      "textOnlyHint": "Replies are shown as text only.",
+      "enableSpeech": "Enable spoken replies"
     }
   },
   "publicAssistant": {

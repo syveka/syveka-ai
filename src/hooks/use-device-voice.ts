@@ -11,7 +11,9 @@ import { chooseVoice } from "@/lib/voice/voices";
  * - "unknown": the device didn't list any voices within the wait (some
  *   Android browsers load them late); speaking may or may not work;
  * - "checking": still waiting.
- * Only checked while `active` (the start dialog is open).
+ * Only checked while `active` (the start dialog is open). Voices can arrive
+ * in several updates (Android lists them late), so every later update is
+ * re-evaluated: an early partial list never settles the answer.
  */
 export type DeviceVoice = "checking" | "available" | "unavailable" | "unknown";
 
@@ -27,18 +29,14 @@ export function useDeviceVoice(locale: string, active: boolean): DeviceVoice {
       return;
     }
     const synth = window.speechSynthesis;
-    let settled = false;
+    let stopped = false;
     const evaluate = (final: boolean) => {
-      if (settled) return;
+      if (stopped) return;
       const voices = synth.getVoices();
       if (voices.length === 0) {
-        if (final) {
-          settled = true;
-          setState("unknown");
-        }
+        if (final) setState((s) => (s === "checking" ? "unknown" : s));
         return;
       }
-      settled = true;
       setState(chooseVoice(locale, voices).ok ? "available" : "unavailable");
     };
     setState("checking");
@@ -47,7 +45,7 @@ export function useDeviceVoice(locale: string, active: boolean): DeviceVoice {
     synth.addEventListener?.("voiceschanged", onChange);
     const timer = setTimeout(() => evaluate(true), WAIT_MS);
     return () => {
-      settled = true;
+      stopped = true;
       clearTimeout(timer);
       synth.removeEventListener?.("voiceschanged", onChange);
     };

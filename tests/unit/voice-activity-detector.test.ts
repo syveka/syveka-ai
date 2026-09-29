@@ -29,6 +29,29 @@ const QUIET = 0.003;
 const VOICE = 0.08;
 
 describe("VoiceActivityDetector", () => {
+  it("its own voice at the microphone doesn't interrupt the assistant; a louder user still does", () => {
+    const vad = new VoiceActivityDetector();
+    vad.reset(0);
+    let { t } = run(vad, [[QUIET, 600]]);
+    vad.reset(t);
+    vad.beginAssistantAudio(t);
+    const ECHO = 0.06; // above the plain barge-in bar (2 × 0.012)
+    ({ t } = run(vad, [[ECHO, 4000]], "assistant_speaking", t));
+    const echoOnly = run(vad, [[ECHO * 1.3, 2000]], "assistant_speaking", t);
+    expect(echoOnly.events).toEqual([]);
+    const user = run(vad, [[0.3, 500]], "assistant_speaking", echoOnly.t);
+    expect(user.events.map((e) => e.type)).toEqual(["barge_in"]);
+  });
+
+  it("before the assistant's audio starts, the plain barge-in bar applies", () => {
+    const vad = new VoiceActivityDetector();
+    vad.reset(0);
+    const { t } = run(vad, [[QUIET, 600]]);
+    vad.reset(t);
+    const { events } = run(vad, [[0.06, 500]], "assistant_speaking", t);
+    expect(events.map((e) => e.type)).toEqual(["barge_in"]);
+  });
+
   it("detects one utterance and ends it after the silence gap", () => {
     const vad = new VoiceActivityDetector();
     vad.reset(0);
