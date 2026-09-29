@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { MIN_AUDIO_BYTES, pickRecordingMimeType } from "@/lib/voice/audio";
 import { splitForSpeech, toSpokenText } from "@/lib/voice/spoken-text";
 import { DEFAULT_VAD_CONFIG, VoiceActivityDetector, rmsLevel, type VadMode } from "@/lib/voice/vad";
-import { chooseVoice } from "@/lib/voice/voices";
+import { chooseReplyVoice } from "@/lib/voice/voices";
 
 /**
  * Live voice conversation in AI Chat (hands-free, sequential pipeline):
@@ -274,7 +274,7 @@ export function useVoiceConversation({
         return;
       }
       const choice = synthOk
-        ? chooseVoice(localeRef.current, window.speechSynthesis.getVoices())
+        ? chooseReplyVoice(localeRef.current, text, window.speechSynthesis.getVoices())
         : null;
       if (!synthOk || !choice || !choice.ok || chunks.length === 0) {
         if (chunks.length > 0) setNotice("no_voice");

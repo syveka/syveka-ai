@@ -85,6 +85,19 @@ describe("useSpeechPlayback", () => {
     expect(result.current.error).toEqual({ id: "m1", code: "no_voice" });
   });
 
+  it("Listen reads a reply in its own language, never with the interface voice", () => {
+    const finnish = "Huomenna kello kymmenen on vapaa aika. Voit varata sen chatissa, jos haluat.";
+    const { result } = renderHook(() => useSpeechPlayback("en"));
+    act(() => result.current.play("m1", finnish));
+    expect(spoken[0]!.lang).toBe("fi-FI");
+    expect((spoken[0]!.voice as { name: string }).name).toBe("fi-local");
+
+    voices = [{ lang: "en-US", localService: true, name: "en" }];
+    act(() => result.current.play("m2", finnish));
+    expect(spoken).toHaveLength(1); // not read with the English voice
+    expect(result.current.error).toEqual({ id: "m2", code: "no_voice" });
+  });
+
   it("still tries when the voice list hasn't loaded yet (lang set, engine picks)", () => {
     voices = [];
     const { result } = renderHook(() => useSpeechPlayback("ar"));

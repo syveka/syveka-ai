@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { splitForSpeech, toSpokenText } from "@/lib/voice/spoken-text";
-import { chooseVoice } from "@/lib/voice/voices";
+import { chooseReplyVoice } from "@/lib/voice/voices";
 
 export type PlaybackError = "unsupported" | "no_voice" | "playback_failed";
 
@@ -46,7 +46,7 @@ export function useSpeechPlayback(locale: string) {
         setError({ id, code: "unsupported" });
         return;
       }
-      const choice = chooseVoice(locale, window.speechSynthesis.getVoices());
+      const choice = chooseReplyVoice(locale, text, window.speechSynthesis.getVoices());
       if (!choice.ok) {
         setError({ id, code: "no_voice" });
         return;

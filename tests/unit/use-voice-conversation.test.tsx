@@ -136,6 +136,7 @@ function setup(
   reply: string | null = "Huomenna on kaksi tapaamista.",
   speakReplies = true,
   getConversationId?: () => string | undefined,
+  locale = "fi",
 ) {
   const onUserTurn = vi.fn(async () => reply);
   const onAbortReply = vi.fn();
@@ -149,7 +150,7 @@ function setup(
         getConversationId,
         deps: { fetch: fakeFetch as typeof fetch, now: () => clock },
       }),
-    { initialProps: { locale: "fi" } },
+    { initialProps: { locale } },
   );
   return { hook, onUserTurn, onAbortReply };
 }
@@ -426,6 +427,55 @@ describe("useVoiceConversation", () => {
       GRANT,
       CONVERSATION,
     );
+  });
+
+  it("reads a reply in its own language: a Finnish reply in an English session uses a Finnish voice", async () => {
+    voices = [
+      { lang: "en-US", localService: true, name: "en" },
+      { lang: "fi-FI", localService: true, name: "fi" },
+    ];
+    const { hook } = setup(
+      "Huomenna kello kymmenen on vapaa aika. Voit varata sen chatissa, jos haluat.",
+      true,
+      undefined,
+      "en",
+    );
+    await startSession(hook);
+    await speakTurn();
+    expect(spoken).toHaveLength(1);
+    expect(spoken[0]!.lang).toBe("fi-FI");
+    expect((spoken[0]!.voice as { name: string }).name).toBe("fi");
+  });
+
+  it("never reads a Finnish reply with the English voice when the device has no Finnish voice", async () => {
+    voices = [{ lang: "en-US", localService: true, name: "en" }];
+    const { hook } = setup(
+      "Huomenna kello kymmenen on vapaa aika. Voit varata sen chatissa, jos haluat.",
+      true,
+      undefined,
+      "en",
+    );
+    await startSession(hook);
+    await speakTurn();
+    expect(spoken).toHaveLength(0);
+    expect(hook.result.current.notice).toBe("no_voice");
+    expect(hook.result.current.phase).toBe("listening");
+  });
+
+  it("an English reply in an English session still uses the English voice", async () => {
+    voices = [
+      { lang: "en-US", localService: true, name: "en" },
+      { lang: "fi-FI", localService: true, name: "fi" },
+    ];
+    const { hook } = setup(
+      "Tomorrow at ten there is a free slot. You can book it in the chat if you want.",
+      true,
+      undefined,
+      "en",
+    );
+    await startSession(hook);
+    await speakTurn();
+    expect(spoken[0]!.lang).toBe("en-US");
   });
 
   it("ends when the page is hidden, when the language changes, and on unmount", async () => {

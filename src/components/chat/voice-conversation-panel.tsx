@@ -58,6 +58,7 @@ export function VoiceConversationIntro({
         <li>{t("introAuto")}</li>
         <li>{t("introControl")}</li>
         <li>{t("introActions")}</li>
+        <li>{t("introLanguage")}</li>
         <li>{t("introLimit", { minutes: sessionMinutes })}</li>
         <li>{t("introDailyLimit")}</li>
       </ul>
