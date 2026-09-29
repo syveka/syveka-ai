@@ -9,6 +9,8 @@
     "search": "Search",
     "loading": "Loading…",
     "error": "Something went wrong",
+    "errorDescription": "This page could not be loaded. Please try again in a moment.",
+    "retry": "Try again",
     "confirm": "Confirm",
     "back": "Back",
     "next": "Next",
