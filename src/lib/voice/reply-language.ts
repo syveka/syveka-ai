@@ -136,7 +136,6 @@ const OTHER_LATIN_WORDS = new Set([
   "wir",
   "haben",
   "sind",
-  "vi",
 ]);
 
 /**
