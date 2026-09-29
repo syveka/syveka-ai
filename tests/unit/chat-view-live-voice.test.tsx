@@ -132,6 +132,7 @@ describe("ChatView live voice", () => {
     expect(document.body.textContent).toContain(en.chat.live.introAuto);
     expect(document.body.textContent).toContain(en.chat.live.introActions);
     expect(document.body.textContent).toContain(en.chat.live.introDailyLimit);
+    expect(document.body.textContent).toContain(en.chat.live.introLanguage);
     fireEvent.click(screen.getByRole("button", { name: new RegExp(en.chat.live.confirm) }));
     expect(live.start).toHaveBeenCalledTimes(1);
     expect(live.lastOptions!.speakReplies).toBe(true);

@@ -12,7 +12,8 @@ export type ReplyPlayback = {
   supported: boolean;
   playingId: string | null;
   error: { id: string; code: PlaybackError } | null;
-  play: (id: string, text: string) => void;
+  /** `turn`: the user message the reply answers (its language context). */
+  play: (id: string, text: string, turn?: string) => void;
   stop: () => void;
 };
 
@@ -41,15 +42,36 @@ export function ChatThread({
 
   return (
     <div className="flex-1 space-y-4 overflow-y-auto p-4">
-      {messages.map((m) => (
-        <MessageBubble key={m.id} message={m} playback={playback} />
+      {messages.map((m, i) => (
+        <MessageBubble
+          key={m.id}
+          message={m}
+          playback={playback}
+          turn={m.role === "assistant" ? precedingUserText(messages, i) : undefined}
+        />
       ))}
       <div ref={bottomRef} />
     </div>
   );
 }
 
-function MessageBubble({ message, playback }: { message: UiMessage; playback?: ReplyPlayback }) {
+/** The user message an assistant reply answers. */
+function precedingUserText(messages: UiMessage[], index: number): string | undefined {
+  for (let i = index - 1; i >= 0; i--) {
+    if (messages[i]!.role === "user") return messages[i]!.content;
+  }
+  return undefined;
+}
+
+function MessageBubble({
+  message,
+  playback,
+  turn,
+}: {
+  message: UiMessage;
+  playback?: ReplyPlayback;
+  turn?: string;
+}) {
   const isUser = message.role === "user";
   return (
     <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
@@ -93,14 +115,22 @@ function MessageBubble({ message, playback }: { message: UiMessage; playback?: R
         ) : null}
 
         {!isUser && playback?.supported && !message.streaming && message.content.trim() ? (
-          <ListenControl message={message} playback={playback} />
+          <ListenControl message={message} playback={playback} turn={turn} />
         ) : null}
       </div>
     </div>
   );
 }
 
-function ListenControl({ message, playback }: { message: UiMessage; playback: ReplyPlayback }) {
+function ListenControl({
+  message,
+  playback,
+  turn,
+}: {
+  message: UiMessage;
+  playback: ReplyPlayback;
+  turn?: string;
+}) {
   const t = useTranslations("chat.voice");
   const playing = playback.playingId === message.id;
   const error = playback.error?.id === message.id ? playback.error.code : null;
@@ -108,7 +138,9 @@ function ListenControl({ message, playback }: { message: UiMessage; playback: Re
     <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border/50 pt-2">
       <button
         type="button"
-        onClick={() => (playing ? playback.stop() : playback.play(message.id, message.content))}
+        onClick={() =>
+          playing ? playback.stop() : playback.play(message.id, message.content, turn)
+        }
         aria-label={playing ? t("stopListening") : t("listenLabel")}
         className="inline-flex min-h-10 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-background/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
       >

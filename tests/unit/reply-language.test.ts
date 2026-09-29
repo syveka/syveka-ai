@@ -1,13 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { detectReplyLanguage } from "@/lib/voice/reply-language";
+import { detectReplyLanguage, resolveReplyLanguage } from "@/lib/voice/reply-language";
 import { chooseReplyVoice } from "@/lib/voice/voices";
 import { buildSystemPrompt } from "@/server/ai/prompts/system";
 
 /**
- * Spoken replies must be read by a voice for the reply's own language.
- * Before this fix, live mode and Listen always used the interface language,
- * while the model answered "in the language of the user's message" -- so a
- * Finnish reply in an English session was read with an English voice.
+ * Spoken replies are read by a voice for each reply's own language; users may
+ * switch between Finnish, English and Arabic within one session. Before this
+ * fix, live mode and Listen always used the interface language's voice, so a
+ * Finnish reply in an English session was read by the English voice.
  */
 const voices = (...langs: string[]) =>
   langs.map((lang) => ({ lang, localService: true, name: lang }) as SpeechSynthesisVoice);
@@ -25,16 +25,22 @@ describe("detectReplyLanguage (conservative)", () => {
     expect(detectReplyLanguage(text)).toBe(lang);
   });
 
-  it("stays undecided on short replies", () => {
-    expect(detectReplyLanguage("Kyllä.")).toBeNull();
-    expect(detectReplyLanguage("Yes, sure.")).toBeNull();
+  it("short text: script and ä/ö decide; two function words of one language decide", () => {
+    expect(detectReplyLanguage("نعم")).toBe("ar");
+    expect(detectReplyLanguage("Selvä!")).toBe("fi");
+    expect(detectReplyLanguage("Kyllä, huomenna.")).toBe("fi");
+    expect(detectReplyLanguage("Yes, tomorrow.")).toBe("en");
+  });
+
+  it("stays undecided on short text without such evidence", () => {
+    expect(detectReplyLanguage("OK.")).toBeNull();
+    expect(detectReplyLanguage("Auki klo 9–17")).toBeNull();
+    expect(detectReplyLanguage("10:30")).toBeNull();
   });
 
   it("names and places don't flip the language", () => {
     expect(
-      detectReplyLanguage(
-        "Your meeting with Päivi in Hämeenlinna is at ten tomorrow, and it is free.",
-      ),
+      detectReplyLanguage("Your meeting with Paavo in Espoo is at ten tomorrow, and it is free."),
     ).toBe("en");
     expect(detectReplyLanguage("Sinun Microsoft Teams -kokous on huomenna, ja se on vapaa.")).toBe(
       "fi",
@@ -43,42 +49,75 @@ describe("detectReplyLanguage (conservative)", () => {
 
   it("stays undecided when the evidence is mixed", () => {
     expect(
-      detectReplyLanguage("Hei and the ja is kello to meeting huomenna with Päivi"),
+      detectReplyLanguage("Hei and the ja is kello to meeting huomenna with Paavo"),
     ).toBeNull();
   });
 });
 
-describe("chooseReplyVoice", () => {
-  it("a Finnish reply in an English session uses the Finnish voice when the device has one", () => {
-    const choice = chooseReplyVoice("en", FI, voices("en-US", "fi-FI"));
-    expect(choice).toMatchObject({ ok: true, lang: "fi-FI" });
-    expect(choice.ok && choice.voice?.lang).toBe("fi-FI");
+describe("resolveReplyLanguage (short replies use turn and session context)", () => {
+  it("the reply's own language wins", () => {
+    expect(resolveReplyLanguage({ reply: EN, turn: "Mitä huomenna?", previous: "fi" })).toBe("en");
   });
 
-  it("…and is NOT read with the English voice when there is no Finnish voice", () => {
-    expect(chooseReplyVoice("en", FI, voices("en-US", "ar-SA"))).toEqual({
+  it("an undecided reply uses the language of the user's turn", () => {
+    expect(resolveReplyLanguage({ reply: "OK.", turn: "Mitä kalenterissa on tänään?" })).toBe("fi");
+    expect(resolveReplyLanguage({ reply: "OK.", turn: "What is on the calendar today?" })).toBe(
+      "en",
+    );
+  });
+
+  it("…then the session's last language", () => {
+    expect(resolveReplyLanguage({ reply: "OK.", turn: "Hmm", previous: "en" })).toBe("en");
+  });
+
+  it("context must fit the reply's script: a Latin reply is never read by the Arabic voice", () => {
+    expect(resolveReplyLanguage({ reply: "OK.", turn: "ما هي مواعيدي غدًا؟" })).toBeNull();
+    expect(resolveReplyLanguage({ reply: "OK.", previous: "ar" })).toBeNull();
+    expect(
+      resolveReplyLanguage({ reply: "OK.", turn: "ما هي مواعيدي غدًا؟", previous: "en" }),
+    ).toBe("en");
+  });
+
+  it("no evidence at all → undecided (no default to the interface language)", () => {
+    expect(resolveReplyLanguage({ reply: "OK." })).toBeNull();
+  });
+});
+
+describe("chooseReplyVoice", () => {
+  it("uses the voice for the reply's language, whatever the interface language", () => {
+    const choice = chooseReplyVoice(FI, voices("en-US", "fi-FI", "ar-SA"));
+    expect(choice).toMatchObject({ ok: true, language: "fi", lang: "fi-FI" });
+    expect(choice.ok && choice.voice?.lang).toBe("fi-FI");
+    expect(chooseReplyVoice(AR, voices("en-US", "fi-FI", "ar-SA"))).toMatchObject({
+      lang: "ar-SA",
+    });
+  });
+
+  it("no device voice for the language → no_voice (text), never another language's voice", () => {
+    expect(chooseReplyVoice(FI, voices("en-US", "ar-SA"))).toEqual({
       ok: false,
       reason: "no_voice",
+      language: "fi",
+    });
+  });
+
+  it("unmatched language → unknown_language (text)", () => {
+    expect(chooseReplyVoice("OK.", voices("en-US", "fi-FI"))).toEqual({
+      ok: false,
+      reason: "unknown_language",
+      language: null,
     });
   });
 
   it("Android lists voices as fi_FI too", () => {
-    expect(chooseReplyVoice("en", FI, voices("en_US", "fi_FI"))).toMatchObject({
+    expect(chooseReplyVoice(FI, voices("en_US", "fi_FI"))).toMatchObject({
       ok: true,
       lang: "fi-FI",
     });
   });
-
-  it("a reply in the session language, or an undecided one, uses the session voice", () => {
-    expect(chooseReplyVoice("fi", FI, voices("fi-FI", "en-US"))).toMatchObject({ lang: "fi-FI" });
-    expect(chooseReplyVoice("fi", "OK.", voices("fi-FI", "en-US"))).toMatchObject({
-      lang: "fi-FI",
-    });
-    expect(chooseReplyVoice("ar", AR, voices("ar-SA", "en-US"))).toMatchObject({ lang: "ar-SA" });
-  });
 });
 
-describe("live voice prompt: session language and capabilities", () => {
+describe("live voice prompt: multilingual, read-only", () => {
   const prompt = (locale: string, responseMode: "text" | "voice") =>
     buildSystemPrompt({
       locale,
@@ -88,18 +127,17 @@ describe("live voice prompt: session language and capabilities", () => {
       responseMode,
     });
 
-  it.each([
-    ["fi", "Finnish"],
-    ["en", "English"],
-    ["ar", "Arabic"],
-  ])("a %s session answers only in %s, overriding the user's-language rule", (locale, language) => {
-    const system = prompt(locale, "voice");
-    expect(system).toContain(`answer only in ${language}`);
-    expect(system).toContain(`read aloud by a ${language} voice`);
-    expect(system).toContain(
-      "This overrides the rule of answering in the language of the user's message",
-    );
-  });
+  it.each(["fi", "en", "ar"])(
+    "a %s-interface session answers in the language of the current turn and may switch",
+    (locale) => {
+      const system = prompt(locale, "voice");
+      expect(system).toContain("answer in the language of the user's current message");
+      expect(system).toContain(
+        "The user may switch languages between turns; follow the latest turn",
+      );
+      expect(system).not.toContain("answer only in");
+    },
+  );
 
   it("explains that availability can be checked but meetings can't be booked", () => {
     const system = prompt("en", "voice");
@@ -109,9 +147,9 @@ describe("live voice prompt: session language and capabilities", () => {
     expect(system).toContain("book in the typed chat");
   });
 
-  it("typed chat keeps answering in the user's language (unchanged)", () => {
+  it("typed chat is unchanged", () => {
     const system = prompt("en", "text");
     expect(system).toContain("You answer in the language of the user's message.");
-    expect(system).not.toContain("answer only in");
+    expect(system).not.toContain("## Live voice conversation");
   });
 });

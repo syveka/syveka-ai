@@ -1,4 +1,4 @@
-import { detectReplyLanguage } from "@/lib/voice/reply-language";
+import { resolveReplyLanguage, type ReplyLanguage } from "@/lib/voice/reply-language";
 import { speechLangFor } from "@/lib/voice/spoken-text";
 
 export type VoiceChoice =
@@ -20,19 +20,26 @@ export function chooseVoice(locale: string, voices: SpeechSynthesisVoice[]): Voi
   return { ok: true, lang, voice: matching.find((v) => v.localService) ?? matching[0] };
 }
 
+export type ReplyVoiceChoice =
+  | { ok: true; language: ReplyLanguage; lang: string; voice: SpeechSynthesisVoice | undefined }
+  | { ok: false; reason: "no_voice"; language: ReplyLanguage }
+  | { ok: false; reason: "unknown_language"; language: null };
+
 /**
- * Picks the voice for a reply in the reply's own language. Replies usually
- * match the interface language, but when a reply is confidently in another
- * supported language (e.g. Finnish text in an English session), reading it
- * with the interface voice would mispronounce it. Undetected or ambiguous
- * text uses the interface language; a detected language without a device
- * voice is a definite "no voice" (shown as text) -- never another
- * language's voice.
+ * Picks the voice for a reply in the reply's own language, which may differ
+ * from turn to turn (see resolveReplyLanguage for how short or ambiguous
+ * replies use the user's turn and the session's last language). A language
+ * without a device voice, or a reply whose language can't be matched, is
+ * shown as text -- never read by another language's voice, and never by the
+ * interface language's voice by default.
  */
 export function chooseReplyVoice(
-  locale: string,
   text: string,
   voices: SpeechSynthesisVoice[],
-): VoiceChoice {
-  return chooseVoice(detectReplyLanguage(text) ?? locale, voices);
+  context: { turn?: string; previous?: ReplyLanguage | null } = {},
+): ReplyVoiceChoice {
+  const language = resolveReplyLanguage({ reply: text, ...context });
+  if (!language) return { ok: false, reason: "unknown_language", language: null };
+  const choice = chooseVoice(language, voices);
+  return choice.ok ? { ...choice, language } : { ok: false, reason: "no_voice", language };
 }
