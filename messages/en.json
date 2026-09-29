@@ -226,6 +226,7 @@
       "playbackErrors": {
         "unsupported": "This browser can't read replies aloud.",
         "no_voice": "This device has no voice for this language.",
+        "unknown_language": "The language of this reply couldn't be matched to a voice.",
         "playback_failed": "The reply couldn't be read aloud."
       },
       "errors": {
@@ -254,7 +255,8 @@
       "introMic": "Your microphone stays on while the conversation is active.",
       "introAuto": "When you stop speaking, what you said is sent automatically and Syveka answers aloud.",
       "introControl": "You can mute the microphone, stop a reply or end the conversation at any time.",
-      "introActions": "In a voice conversation Syveka can look things up, but won't create, change, book or send anything. For that, end the conversation and ask in the chat.",
+      "introActions": "In a voice conversation Syveka can look things up and check calendar availability, but won't create, change, book or send anything. For that, end the conversation and ask in the chat.",
+      "introLanguage": "You can speak Finnish, English or Arabic, and switch between them. Syveka answers in the language you speak, read by this device's voice for that language; if there isn't one, that reply is shown as text.",
       "introLimit": "A conversation lasts up to {minutes} minutes.",
       "introDailyLimit": "Starting a conversation uses today's live conversation allowance, even if you end it early.",
       "introPrivacy": "Your speech is sent to our speech-to-text provider (OpenAI) only to create the text and is not stored by Syveka. Replies are read aloud by your device's voices; the text of the conversation is saved in the chat like typed messages.",
@@ -280,7 +282,8 @@
       },
       "notices": {
         "not_heard": "Didn't catch that. Please say it again.",
-        "no_voice": "This device has no voice for this language, so replies are shown as text only.",
+        "no_voice": "This device has no voice for this reply's language, so it's shown as text. You can keep talking.",
+        "language_unknown": "This reply is shown as text because its language couldn't be matched to a voice. You can keep talking.",
         "turn_too_long": "That was too long for one turn. Please say it in shorter parts."
       },
       "errors": {

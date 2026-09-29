@@ -136,6 +136,7 @@ function setup(
   reply: string | null = "Huomenna on kaksi tapaamista.",
   speakReplies = true,
   getConversationId?: () => string | undefined,
+  locale = "fi",
 ) {
   const onUserTurn = vi.fn(async () => reply);
   const onAbortReply = vi.fn();
@@ -149,7 +150,7 @@ function setup(
         getConversationId,
         deps: { fetch: fakeFetch as typeof fetch, now: () => clock },
       }),
-    { initialProps: { locale: "fi" } },
+    { initialProps: { locale } },
   );
   return { hook, onUserTurn, onAbortReply };
 }
@@ -426,6 +427,142 @@ describe("useVoiceConversation", () => {
       GRANT,
       CONVERSATION,
     );
+  });
+
+  it("reads a reply in its own language: a Finnish reply in an English session uses a Finnish voice", async () => {
+    voices = [
+      { lang: "en-US", localService: true, name: "en" },
+      { lang: "fi-FI", localService: true, name: "fi" },
+    ];
+    const { hook } = setup(
+      "Huomenna kello kymmenen on vapaa aika. Voit varata sen chatissa, jos haluat.",
+      true,
+      undefined,
+      "en",
+    );
+    await startSession(hook);
+    await speakTurn();
+    expect(spoken).toHaveLength(1);
+    expect(spoken[0]!.lang).toBe("fi-FI");
+    expect((spoken[0]!.voice as { name: string }).name).toBe("fi");
+  });
+
+  it("never reads a Finnish reply with the English voice when the device has no Finnish voice", async () => {
+    voices = [{ lang: "en-US", localService: true, name: "en" }];
+    const { hook } = setup(
+      "Huomenna kello kymmenen on vapaa aika. Voit varata sen chatissa, jos haluat.",
+      true,
+      undefined,
+      "en",
+    );
+    await startSession(hook);
+    await speakTurn();
+    expect(spoken).toHaveLength(0);
+    expect(hook.result.current.notice).toBe("no_voice");
+    expect(hook.result.current.phase).toBe("listening");
+  });
+
+  it("an English reply in an English session still uses the English voice", async () => {
+    voices = [
+      { lang: "en-US", localService: true, name: "en" },
+      { lang: "fi-FI", localService: true, name: "fi" },
+    ];
+    const { hook } = setup(
+      "Tomorrow at ten there is a free slot. You can book it in the chat if you want.",
+      true,
+      undefined,
+      "en",
+    );
+    await startSession(hook);
+    await speakTurn();
+    expect(spoken[0]!.lang).toBe("en-US");
+  });
+
+  it("switching languages within one session: each reply is read by its own language's voice", async () => {
+    voices = [
+      { lang: "en-US", localService: true, name: "en" },
+      { lang: "fi-FI", localService: true, name: "fi" },
+      { lang: "ar-SA", localService: true, name: "ar" },
+    ];
+    const { hook, onUserTurn } = setup(null, true, undefined, "en"); // English interface
+    onUserTurn
+      .mockResolvedValueOnce("Huomenna kello kymmenen on vapaa aika. Voit varata sen chatissa.")
+      .mockResolvedValueOnce("On Friday afternoon there are two free slots, at two and at four.")
+      .mockResolvedValueOnce("غدًا في الساعة العاشرة يوجد موعد متاح.")
+      .mockResolvedValueOnce("OK."); // short: language from the user's turn
+    await startSession(hook);
+    turnText = "Mitä kalenterissa on huomenna?";
+    await speakTurn();
+    turnText = "What about Friday afternoon?";
+    await advance(3000, QUIET);
+    await speakTurn();
+    turnText = "ما هي مواعيدي غدًا؟";
+    await advance(3000, QUIET);
+    await speakTurn();
+    turnText = "Thanks, that is all for today.";
+    await advance(3000, QUIET);
+    await speakTurn();
+    expect(onUserTurn).toHaveBeenCalledTimes(4);
+    expect(spoken.map((u) => u.lang)).toEqual(["fi-FI", "en-US", "ar-SA", "en-US"]);
+    expect(hook.result.current.active).toBe(true);
+  });
+
+  it("a language without a device voice mid-session shows that reply as text and keeps listening", async () => {
+    voices = [
+      { lang: "en-US", localService: true, name: "en" },
+      { lang: "fi-FI", localService: true, name: "fi" },
+    ];
+    const { hook, onUserTurn } = setup(null, true, undefined, "en");
+    onUserTurn
+      .mockResolvedValueOnce("غدًا في الساعة العاشرة يوجد موعد متاح.")
+      .mockResolvedValueOnce(
+        "Tomorrow at ten there is a free slot, and you can book it in the chat.",
+      );
+    await startSession(hook);
+    turnText = "ما هي مواعيدي غدًا؟";
+    await speakTurn();
+    expect(spoken).toHaveLength(0); // not read by the English or Finnish voice
+    expect(hook.result.current.notice).toBe("no_voice");
+    expect(hook.result.current.phase).toBe("listening");
+    turnText = "What about tomorrow?";
+    await speakTurn();
+    expect(spoken.map((u) => u.lang)).toEqual(["en-US"]);
+    expect(hook.result.current.active).toBe(true);
+  });
+
+  it("an unsupported-language (Swedish) reply after a Finnish turn is shown as text, and listening continues", async () => {
+    voices = [
+      { lang: "en-US", localService: true, name: "en" },
+      { lang: "fi-FI", localService: true, name: "fi" },
+    ];
+    const { hook, onUserTurn } = setup(null, true, undefined, "fi");
+    onUserTurn
+      .mockResolvedValueOnce("Huomenna kello kymmenen on vapaa aika. Voit varata sen chatissa.")
+      .mockResolvedValueOnce("Ja, vi har två lediga tider i morgon, klockan tio och klockan två.");
+    await startSession(hook);
+    turnText = "Mitä kalenterissa on huomenna?";
+    await speakTurn();
+    turnText = "Hej, vilka tider är lediga i morgon?";
+    await advance(3000, QUIET);
+    await speakTurn();
+    expect(spoken.map((u) => u.lang)).toEqual(["fi-FI"]); // the Swedish reply isn't read
+    expect(hook.result.current.notice).toBe("language_unknown");
+    expect(hook.result.current.phase).toBe("listening");
+    expect(hook.result.current.active).toBe(true);
+  });
+
+  it("a short reply with no language evidence is shown as text (no interface-language guess)", async () => {
+    voices = [
+      { lang: "en-US", localService: true, name: "en" },
+      { lang: "fi-FI", localService: true, name: "fi" },
+    ];
+    const { hook } = setup("OK.", true, undefined, "en");
+    turnText = "Hmm";
+    await startSession(hook);
+    await speakTurn();
+    expect(spoken).toHaveLength(0);
+    expect(hook.result.current.notice).toBe("language_unknown");
+    expect(hook.result.current.phase).toBe("listening");
   });
 
   it("ends when the page is hidden, when the language changes, and on unmount", async () => {

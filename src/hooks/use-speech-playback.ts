@@ -2,9 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { splitForSpeech, toSpokenText } from "@/lib/voice/spoken-text";
-import { chooseVoice } from "@/lib/voice/voices";
+import { chooseReplyVoice } from "@/lib/voice/voices";
 
-export type PlaybackError = "unsupported" | "no_voice" | "playback_failed";
+export type PlaybackError = "unsupported" | "no_voice" | "unknown_language" | "playback_failed";
 
 /** Rough upper bound for one chunk: ~12 chars/s plus slack. */
 const chunkWatchdogMs = (text: string) => 5_000 + text.length * 90;
@@ -15,7 +15,7 @@ const chunkWatchdogMs = (text: string) => 5_000 + text.length * 90;
  * playing stops on `stop()`, on another `play()`, and when the page unmounts
  * or is hidden. Never autoplays: `play` is only called from a user tap.
  */
-export function useSpeechPlayback(locale: string) {
+export function useSpeechPlayback() {
   const [playingId, setPlayingId] = useState<string | null>(null);
   const [error, setError] = useState<{ id: string; code: PlaybackError } | null>(null);
   const tokenRef = useRef(0);
@@ -39,16 +39,17 @@ export function useSpeechPlayback(locale: string) {
   }, [supported]);
 
   const play = useCallback(
-    (id: string, text: string) => {
+    /** `turn`: the user message this reply answers (language context for short replies). */
+    (id: string, text: string, turn?: string) => {
       stop();
       setError(null);
       if (!supported) {
         setError({ id, code: "unsupported" });
         return;
       }
-      const choice = chooseVoice(locale, window.speechSynthesis.getVoices());
+      const choice = chooseReplyVoice(text, window.speechSynthesis.getVoices(), { turn });
       if (!choice.ok) {
-        setError({ id, code: "no_voice" });
+        setError({ id, code: choice.reason });
         return;
       }
       const { lang, voice } = choice;
@@ -88,7 +89,7 @@ export function useSpeechPlayback(locale: string) {
       setPlayingId(id);
       speakChunk(0);
     },
-    [locale, stop, supported],
+    [stop, supported],
   );
 
   useEffect(() => {

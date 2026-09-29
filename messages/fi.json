@@ -226,6 +226,7 @@
       "playbackErrors": {
         "unsupported": "Tämä selain ei osaa lukea vastauksia ääneen.",
         "no_voice": "Tässä laitteessa ei ole puheääntä tälle kielelle.",
+        "unknown_language": "Tämän vastauksen kieltä ei voitu yhdistää puheääneen.",
         "playback_failed": "Vastausta ei voitu lukea ääneen."
       },
       "errors": {
@@ -254,7 +255,8 @@
       "introMic": "Mikrofoni on päällä koko keskustelun ajan.",
       "introAuto": "Kun lopetat puhumisen, puheesi lähetetään automaattisesti ja Syveka vastaa ääneen.",
       "introControl": "Voit mykistää mikrofonin, keskeyttää vastauksen tai lopettaa keskustelun milloin tahansa.",
-      "introActions": "Puhekeskustelussa Syveka voi hakea tietoja, mutta ei luo, muuta, varaa tai lähetä mitään. Lopeta silloin keskustelu ja pyydä sitä chatissa.",
+      "introActions": "Puhekeskustelussa Syveka voi hakea tietoja ja tarkistaa kalenterin vapaat ajat, mutta ei luo, muuta, varaa tai lähetä mitään. Lopeta silloin keskustelu ja pyydä sitä chatissa.",
+      "introLanguage": "Voit puhua suomea, englantia tai arabiaa ja vaihtaa kieltä kesken keskustelun. Syveka vastaa puhumallasi kielellä, ja vastauksen lukee laitteen puheääni kyseiselle kielelle; jos ääntä ei ole, vastaus näytetään tekstinä.",
       "introLimit": "Keskustelu kestää enintään {minutes} minuuttia.",
       "introDailyLimit": "Keskustelun aloittaminen käyttää tämän päivän puhekeskustelukiintiön, vaikka lopettaisit sen aikaisin.",
       "introPrivacy": "Puheesi lähetetään puheentunnistuspalvelullemme (OpenAI) vain tekstin luomista varten, eikä Syveka tallenna sitä. Vastaukset luetaan laitteesi puheäänillä; keskustelun teksti tallentuu chattiin kuten kirjoitetut viestit.",
@@ -280,7 +282,8 @@
       },
       "notices": {
         "not_heard": "En saanut selvää. Sano se uudelleen.",
-        "no_voice": "Tässä laitteessa ei ole puheääntä tälle kielelle, joten vastaukset näytetään vain tekstinä.",
+        "no_voice": "Tässä laitteessa ei ole puheääntä tämän vastauksen kielelle, joten se näytetään tekstinä. Voit jatkaa puhumista.",
+        "language_unknown": "Tämä vastaus näytetään tekstinä, koska sen kieltä ei voitu yhdistää puheääneen. Voit jatkaa puhumista.",
         "turn_too_long": "Puheenvuoro oli liian pitkä. Sano asia lyhyemmissä osissa."
       },
       "errors": {

@@ -4,7 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { MIN_AUDIO_BYTES, pickRecordingMimeType } from "@/lib/voice/audio";
 import { splitForSpeech, toSpokenText } from "@/lib/voice/spoken-text";
 import { DEFAULT_VAD_CONFIG, VoiceActivityDetector, rmsLevel, type VadMode } from "@/lib/voice/vad";
-import { chooseVoice } from "@/lib/voice/voices";
+import { chooseReplyVoice } from "@/lib/voice/voices";
+import type { ReplyLanguage } from "@/lib/voice/reply-language";
 
 /**
  * Live voice conversation in AI Chat (hands-free, sequential pipeline):
@@ -47,7 +48,8 @@ export type ConversationError =
   | "ended_elsewhere"
   | "reply_failed";
 
-export type ConversationNotice = "not_heard" | "no_voice" | "turn_too_long" | null;
+export type ConversationNotice =
+  "not_heard" | "no_voice" | "language_unknown" | "turn_too_long" | null;
 
 export type EndReason =
   | "user"
@@ -140,6 +142,8 @@ export function useVoiceConversation({
   const expiryRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const uploadRef = useRef<AbortController | null>(null);
   const speakTokenRef = useRef(0);
+  /** Last reply language used in this session: context for short replies. */
+  const lastLanguageRef = useRef<ReplyLanguage | null>(null);
   const utterancesRef = useRef<SpeechSynthesisUtterance[]>([]);
   const channelRef = useRef<BroadcastChannel | null>(null);
   const tabIdRef = useRef(Math.random().toString(36).slice(2));
@@ -263,7 +267,8 @@ export function useVoiceConversation({
   }, [armRecorder, setPhase]);
 
   const speak = useCallback(
-    (text: string, epoch: number) => {
+    /** `turn`: the transcript this reply answers (its language context). */
+    (text: string, epoch: number, turn?: string) => {
       const synthOk =
         typeof window !== "undefined" &&
         "speechSynthesis" in window &&
@@ -273,11 +278,24 @@ export function useVoiceConversation({
         resumeListening();
         return;
       }
+      // The reply's own language (users may switch languages between turns);
+      // the UI language only drives the controls.
       const choice = synthOk
-        ? chooseVoice(localeRef.current, window.speechSynthesis.getVoices())
+        ? chooseReplyVoice(text, window.speechSynthesis.getVoices(), {
+            turn,
+            previous: lastLanguageRef.current,
+          })
         : null;
+      if (choice?.language) lastLanguageRef.current = choice.language;
       if (!synthOk || !choice || !choice.ok || chunks.length === 0) {
-        if (chunks.length > 0) setNotice("no_voice");
+        // This reply stays as text; the conversation continues.
+        if (chunks.length > 0) {
+          setNotice(
+            choice?.ok === false && choice.reason === "unknown_language"
+              ? "language_unknown"
+              : "no_voice",
+          );
+        }
         resumeListening();
         return;
       }
@@ -379,7 +397,7 @@ export function useVoiceConversation({
         return;
       }
       setError(null);
-      speak(reply, epoch);
+      speak(reply, epoch, text);
     },
     [end, resumeListening, setPhase, speak],
   );
@@ -465,6 +483,7 @@ export function useVoiceConversation({
     if (phaseRef.current !== "idle" && phaseRef.current !== "ended") return; // no double start
     setError(null);
     setNotice(null);
+    lastLanguageRef.current = null;
     const supported =
       typeof navigator !== "undefined" &&
       !!navigator.mediaDevices?.getUserMedia &&

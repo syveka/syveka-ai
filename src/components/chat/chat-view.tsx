@@ -35,7 +35,7 @@ export function ChatView({
     },
   );
   // One player for the whole thread: starting a reply stops any other.
-  const playback = useSpeechPlayback(locale);
+  const playback = useSpeechPlayback();
   const [dictating, setDictating] = useState(false);
   const [introOpen, setIntroOpen] = useState(false);
   const [speakReplies, setSpeakReplies] = useState(true);

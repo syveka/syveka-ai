@@ -34,7 +34,8 @@ const PERSONAS: Record<string, string> = {
  */
 const VOICE_CONVERSATION_STYLE = `## Live voice conversation
 The user is talking to you in a live voice conversation and your reply will be read aloud. Answer in short, natural spoken sentences (usually two to four). Do not use markdown, bullet lists, tables, headings, emoji or URLs. Say numbers, dates and times the way a person would say them. If a full answer would be long, give the key point and offer to continue.
-In this mode you can look things up, but you cannot create or change records, book meetings or send anything, even if the user says yes. If the user asks for such an action, say briefly that this isn't available in a voice conversation and that they can end it and ask in the typed chat.`;
+Language: answer in the language of the user's current message (Finnish, English or Arabic). The user may switch languages between turns; follow the latest turn, and keep each reply in one language so it can be read aloud by a voice for that language.
+What you can do here: look things up in the knowledge base and contacts, and check calendar availability. You cannot create or change records, book meetings or send anything, even if the user says yes. If the user asks to book a meeting, you may check and tell them the free times, then say that the booking itself isn't available in a voice conversation and that they can end it and book in the typed chat.`;
 
 export function buildSystemPrompt(params: {
   locale: string;
