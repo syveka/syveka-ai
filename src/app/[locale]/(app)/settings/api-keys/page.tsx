@@ -1,28 +1,18 @@
 export const dynamic = "force-dynamic";
 
-import { requirePermission } from "@/server/auth/guard";
-import { listApiKeys } from "@/server/services/api-keys";
-import { ApiKeysManager } from "./api-keys-manager";
+import { notFound } from "next/navigation";
 
-export default async function ApiKeysPage() {
-  const ctx = await requirePermission("api-keys:manage");
-  const keys = await listApiKeys(ctx);
-
-  return (
-    <div className="mx-auto max-w-2xl space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">API keys</h1>
-        <p className="text-sm text-muted-foreground">
-          Server-to-server access to the Syveka API. Keys are shown once — store them securely.
-        </p>
-      </div>
-      <ApiKeysManager
-        keys={keys.map((k) => ({
-          ...k,
-          createdAt: k.createdAt.toISOString(),
-          lastUsedAt: k.lastUsedAt?.toISOString() ?? null,
-        }))}
-      />
-    </div>
-  );
+/**
+ * API keys are not offered to customers yet: no public Syveka API accepts
+ * them (`resolveApiKey` in src/server/services/api-keys.ts has no callers),
+ * so the page would promise access that doesn't exist. The page is not found
+ * for every user; it isn't linked anywhere (see settings-nav-items.ts).
+ *
+ * Kept intact for when the public API ships: the ApiKey model and any stored
+ * (hashed) keys, the service, the `api-keys:manage` permission, and
+ * ./api-keys-manager.tsx with src/actions/api-keys.ts (unreferenced while
+ * this page is disabled). Restore the page body from git history then.
+ */
+export default function ApiKeysPage(): never {
+  notFound();
 }
