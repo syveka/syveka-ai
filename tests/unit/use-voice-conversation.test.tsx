@@ -48,8 +48,9 @@ class FakeAudioContext {
 class FakeUtterance {
   lang = "";
   voice: unknown = null;
+  onstart: (() => void) | null = null;
   onend: (() => void) | null = null;
-  onerror: (() => void) | null = null;
+  onerror: ((event?: { error: string }) => void) | null = null;
   constructor(public text: string) {}
 }
 let spoken: FakeUtterance[] = [];
@@ -595,5 +596,172 @@ describe("useVoiceConversation", () => {
     await advance(10_000, QUIET);
     expect(hook.result.current.elapsedMs).toBeGreaterThanOrEqual(10_000);
     expect(hook.result.current.remainingMs).toBeLessThanOrEqual(290_000);
+  });
+
+  describe("automatic spoken replies", () => {
+    /** Syveka's own voice picked up by the microphone (above the plain barge-in bar). */
+    const ECHO = 0.06;
+    const start = async (u: FakeUtterance) => act(async () => u.onstart?.());
+
+    it("Syveka's own voice at the microphone doesn't cut its reply off", async () => {
+      const { hook } = setup();
+      await startSession(hook);
+      await speakTurn();
+      expect(hook.result.current.phase).toBe("speaking");
+      const reply = spoken.at(-1)!;
+      synth.cancel.mockClear(); // (hooks left mounted by earlier tests end on this session's start)
+      await start(reply);
+      await advance(3000, ECHO); // the loudspeaker, heard by the microphone
+      expect(synth.cancel).not.toHaveBeenCalled();
+      expect(hook.result.current.phase).toBe("speaking");
+      await act(async () => reply.onend?.());
+      await advance(1500, QUIET);
+      expect(hook.result.current.phase).toBe("listening");
+      expect(synth.speak).toHaveBeenCalledTimes(1); // one playback per reply
+      expect(turnCalls()).toHaveLength(1); // its own voice never became a turn
+    });
+
+    it("a genuine interruption over Syveka's voice still stops the reply and records the turn once", async () => {
+      const { hook, onUserTurn } = setup();
+      await startSession(hook);
+      await speakTurn();
+      const reply = spoken.at(-1)!;
+      await start(reply);
+      await advance(1200, ECHO);
+      await advance(500, LOUD); // the user talks over the reply
+      expect(synth.cancel).toHaveBeenCalled();
+      expect(hook.result.current.phase).toBe("user_speaking");
+      await act(async () => reply.onend?.()); // late event from the cancelled reply
+      expect(hook.result.current.phase).toBe("user_speaking");
+      turnText = "Ei, tarkoitin torstaita.";
+      await advance(600, VOICE);
+      await advance(1200, QUIET);
+      expect(turnCalls()).toHaveLength(2);
+      expect(onUserTurn).toHaveBeenLastCalledWith("Ei, tarkoitin torstaita.", GRANT, CONVERSATION);
+    });
+
+    it("a blocked reply is reported; Enable spoken replies plays it within the same session", async () => {
+      const { hook } = setup();
+      await startSession(hook);
+      await speakTurn();
+      await act(async () => spoken.at(-1)!.onerror?.({ error: "not-allowed" }));
+      expect(hook.result.current.notice).toBe("speech_blocked");
+      expect(hook.result.current.phase).toBe("listening");
+      expect(hook.result.current.active).toBe(true);
+
+      act(() => hook.result.current.enableSpeech());
+      expect(hook.result.current.notice).toBeNull();
+      expect(hook.result.current.phase).toBe("speaking");
+      expect(spoken).toHaveLength(2);
+      expect(spoken.at(-1)!.text).toBe("Huomenna on kaksi tapaamista.");
+      expect(spoken.at(-1)!.lang).toBe("fi-FI");
+      await start(spoken.at(-1)!);
+      await act(async () => spoken.at(-1)!.onend?.());
+      expect(hook.result.current.phase).toBe("listening");
+
+      // The next reply is spoken automatically again.
+      await speakTurn();
+      expect(spoken).toHaveLength(3);
+      expect(media.gum).toHaveBeenCalledTimes(1); // same session, no restart
+    });
+
+    it("a failed reply is reported instead of silently skipped, and listening continues", async () => {
+      const { hook } = setup();
+      await startSession(hook);
+      await speakTurn();
+      await act(async () => spoken.at(-1)!.onerror?.({ error: "synthesis-failed" }));
+      expect(hook.result.current.notice).toBe("speech_failed");
+      expect(hook.result.current.phase).toBe("listening");
+    });
+
+    it("a reply that never starts playing is reported instead of hanging in 'speaking'", async () => {
+      const { hook } = setup();
+      await startSession(hook);
+      await speakTurn();
+      expect(hook.result.current.phase).toBe("speaking");
+      await advance(6500, QUIET);
+      expect(hook.result.current.notice).toBe("speech_failed");
+      expect(hook.result.current.phase).toBe("listening");
+      expect(synth.cancel).toHaveBeenCalled();
+    });
+
+    it("text-only mode is respected; Enable spoken replies turns speech on in the same session", async () => {
+      const { hook } = setup("Huomenna on kaksi tapaamista.", false);
+      await startSession(hook);
+      await speakTurn();
+      expect(synth.speak).not.toHaveBeenCalled();
+      expect(hook.result.current.notice).toBeNull();
+      expect(hook.result.current.speechEnabledInSession).toBe(false);
+
+      act(() => hook.result.current.enableSpeech()); // a tap: reads the last reply
+      expect(hook.result.current.speechEnabledInSession).toBe(true);
+      expect(spoken.map((u) => u.text)).toEqual(["Huomenna on kaksi tapaamista."]);
+      await start(spoken[0]!);
+      await act(async () => spoken[0]!.onend?.());
+      await speakTurn();
+      expect(spoken).toHaveLength(2);
+      expect(media.gum).toHaveBeenCalledTimes(1);
+    });
+
+    it("a new session starts from the mode chosen for it, not the previous session's", async () => {
+      const { hook } = setup("Huomenna on kaksi tapaamista.", false);
+      await startSession(hook);
+      act(() => hook.result.current.enableSpeech());
+      act(() => hook.result.current.end());
+      await startSession(hook);
+      expect(hook.result.current.speechEnabledInSession).toBe(false);
+      await speakTurn();
+      expect(synth.speak).not.toHaveBeenCalled();
+    });
+
+    it("spoken replies across Finnish, English and Arabic: each plays once, in its own voice", async () => {
+      voices = [
+        { lang: "en-US", localService: true, name: "en" },
+        { lang: "fi-FI", localService: true, name: "fi" },
+        { lang: "ar-SA", localService: true, name: "ar" },
+      ];
+      const { hook, onUserTurn } = setup(null, true, undefined, "en");
+      onUserTurn
+        .mockResolvedValueOnce("Huomenna kello kymmenen on vapaa aika.")
+        .mockResolvedValueOnce("On Friday afternoon there are two free slots.")
+        .mockResolvedValueOnce("غدًا في الساعة العاشرة يوجد موعد متاح.");
+      await startSession(hook);
+      synth.cancel.mockClear(); // (hooks left mounted by earlier tests end on this session's start)
+      for (const turn of [
+        "Mitä huomenna?",
+        "What about Friday afternoon?",
+        "ما هي مواعيدي غدًا؟",
+      ]) {
+        turnText = turn;
+        await speakTurn();
+        const reply = spoken.at(-1)!;
+        await start(reply);
+        await advance(2000, ECHO); // its own voice doesn't interrupt it
+        await act(async () => reply.onend?.());
+        await advance(1500, QUIET);
+      }
+      expect(spoken.map((u) => u.lang)).toEqual(["fi-FI", "en-US", "ar-SA"]);
+      expect(synth.cancel).not.toHaveBeenCalled();
+      expect(hook.result.current.notice).toBeNull();
+    });
+
+    it("after End, late speech events and timers never speak or report anything", async () => {
+      const { hook } = setup();
+      await startSession(hook);
+      await speakTurn();
+      const reply = spoken.at(-1)!;
+      act(() => hook.result.current.end());
+      expect(synth.cancel).toHaveBeenCalled();
+      await act(async () => {
+        reply.onstart?.();
+        reply.onerror?.({ error: "not-allowed" });
+        reply.onend?.();
+      });
+      await advance(8000, QUIET);
+      act(() => hook.result.current.enableSpeech());
+      expect(spoken).toHaveLength(1);
+      expect(hook.result.current.notice).toBeNull();
+      expect(hook.result.current.phase).toBe("ended");
+    });
   });
 });

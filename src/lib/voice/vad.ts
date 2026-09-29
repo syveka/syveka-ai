@@ -23,6 +23,15 @@ export type VadConfig = {
   /** Interrupting the assistant needs threshold × this, held for bargeInMs. */
   bargeInFactor: number;
   bargeInMs: number;
+  /**
+   * The assistant's own voice reaches the microphone too: device speech
+   * synthesis is played by the operating system, outside the page's audio,
+   * so browser echo cancellation may not remove it. For this long after the
+   * assistant's audio starts, its level is measured (no interruption is
+   * possible); afterwards interrupting needs `echoFactor` × that level.
+   */
+  echoLearnMs: number;
+  echoFactor: number;
   /** A turn is cut here even if the user keeps talking. */
   maxTurnMs: number;
 };
@@ -36,6 +45,8 @@ export const DEFAULT_VAD_CONFIG: VadConfig = {
   minSpeechMs: 400,
   bargeInFactor: 2,
   bargeInMs: 350,
+  echoLearnMs: 1_000,
+  echoFactor: 1.5,
   maxTurnMs: 29_000,
 };
 
@@ -54,6 +65,8 @@ export class VoiceActivityDetector {
   private aboveSince: number | null = null;
   private speechStart: number | null = null;
   private lastVoiceAt = 0;
+  private echoUntil: number | null = null;
+  private echoLevel = 0;
 
   constructor(private readonly config: VadConfig = DEFAULT_VAD_CONFIG) {}
 
@@ -66,6 +79,18 @@ export class VoiceActivityDetector {
     }
     this.aboveSince = null;
     this.speechStart = null;
+    this.echoUntil = null;
+    this.echoLevel = 0;
+  }
+
+  /**
+   * The assistant's speech has become audible (the utterance started): learn
+   * its level at the microphone before accepting an interruption.
+   */
+  beginAssistantAudio(now: number): void {
+    this.echoUntil = now + this.config.echoLearnMs;
+    this.echoLevel = 0;
+    this.aboveSince = null;
   }
 
   /** The user is already talking (e.g. after interrupting the assistant). */
@@ -92,7 +117,12 @@ export class VoiceActivityDetector {
     }
 
     if (mode === "assistant_speaking") {
-      if (level > this.threshold * c.bargeInFactor) {
+      if (this.echoUntil !== null && now < this.echoUntil) {
+        this.echoLevel = Math.max(this.echoLevel, level);
+        return null;
+      }
+      const bar = Math.max(this.threshold * c.bargeInFactor, this.echoLevel * c.echoFactor);
+      if (level > bar) {
         this.aboveSince ??= now;
         if (now - this.aboveSince >= c.bargeInMs) {
           this.aboveSince = null;

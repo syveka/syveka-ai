@@ -104,11 +104,12 @@ export function ChatView({
               muted={live.muted}
               notice={live.notice}
               error={live.error}
-              textOnly={!speakReplies}
+              textOnly={!speakReplies && !live.speechEnabledInSession}
               elapsedMs={live.elapsedMs}
               remainingMs={live.remainingMs}
               onToggleMute={live.toggleMute}
               onStopReply={live.stopReply}
+              onEnableSpeech={live.enableSpeech}
               onEnd={live.end}
               onDismiss={live.clearError}
             />

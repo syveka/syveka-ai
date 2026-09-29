@@ -24,6 +24,8 @@ const live = vi.hoisted(() => ({
   end: vi.fn(),
   toggleMute: vi.fn(),
   stopReply: vi.fn(),
+  enableSpeech: vi.fn(),
+  speechEnabledInSession: false,
   lastOptions: null as null | LiveOptions,
   replace: vi.fn(),
 }));
@@ -42,6 +44,8 @@ vi.mock("@/hooks/use-voice-conversation", () => ({
       end: live.end,
       toggleMute: live.toggleMute,
       stopReply: live.stopReply,
+      enableSpeech: live.enableSpeech,
+      speechEnabledInSession: live.speechEnabledInSession,
       clearError: vi.fn(),
     };
   },
@@ -74,6 +78,8 @@ beforeEach(() => {
     remainingMs: null,
   };
   live.start.mockClear();
+  live.enableSpeech.mockClear();
+  live.speechEnabledInSession = false;
   live.replace.mockClear();
   fetchBodies = [];
   deviceVoices = [{ lang: "en-US", localService: true, name: "en" }];
@@ -286,5 +292,75 @@ describe("ChatView live voice", () => {
     const timers = [...document.querySelectorAll("span[dir=ltr]")].map((e) => e.textContent);
     expect(timers).toEqual(expect.arrayContaining(["1:05", "3:55"]));
     expect(screen.getByRole("button", { name: new RegExp(ar.chat.live.stopReply) })).toBeTruthy();
+  });
+
+  describe("spoken replies inside a running session", () => {
+    const active = (notice: string | null = null) => {
+      live.state = {
+        ...live.state,
+        phase: "listening",
+        active: true,
+        notice,
+        remainingMs: 290_000,
+      };
+    };
+    const rerender = (view: ReturnType<typeof renderView>, messages = en) =>
+      view.rerender(
+        <NextIntlClientProvider locale={messages === ar ? "ar" : "en"} messages={messages}>
+          <ChatView
+            conversationId="33333333-3333-4333-8333-333333333333"
+            initialMessages={[{ id: "a1", role: "assistant", content: "Hei!" }]}
+            voiceInputEnabled
+            voiceConversation={{ sessionMinutes: 5 }}
+          />
+        </NextIntlClientProvider>,
+      );
+
+    it("after a blocked reply: says so and offers Enable spoken replies without ending the session", () => {
+      active("speech_blocked");
+      renderView();
+      expect(document.body.textContent).toContain(en.chat.live.notices.speech_blocked);
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(en.chat.live.enableSpeech) }));
+      expect(live.enableSpeech).toHaveBeenCalledTimes(1);
+      expect(live.end).not.toHaveBeenCalled();
+    });
+
+    it("is localized (Arabic) after a failed reply", () => {
+      active("speech_failed");
+      renderView(ar);
+      expect(document.body.textContent).toContain(ar.chat.live.notices.speech_failed);
+      expect(
+        screen.getByRole("button", { name: new RegExp(ar.chat.live.enableSpeech) }),
+      ).toBeTruthy();
+    });
+
+    it("is not offered while replies are spoken normally", () => {
+      active();
+      renderView();
+      expect(
+        screen.queryByRole("button", { name: new RegExp(en.chat.live.enableSpeech) }),
+      ).toBeNull();
+    });
+
+    it("a text-only session keeps the choice, and can turn speech on in the same session", () => {
+      deviceVoices = [{ lang: "fi-FI", localService: true, name: "fi" }]; // no English voice
+      const view = renderView();
+      fireEvent.click(screen.getByRole("button", { name: en.chat.live.start }));
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(en.chat.live.startTextOnly) }));
+      expect(live.lastOptions!.speakReplies).toBe(false);
+      active();
+      rerender(view);
+      expect(document.body.textContent).toContain(en.chat.live.textOnlyHint);
+      fireEvent.click(screen.getByRole("button", { name: new RegExp(en.chat.live.enableSpeech) }));
+      expect(live.enableSpeech).toHaveBeenCalledTimes(1);
+      expect(live.start).toHaveBeenCalledTimes(1); // no restart
+
+      live.speechEnabledInSession = true;
+      rerender(view);
+      expect(document.body.textContent).not.toContain(en.chat.live.textOnlyHint);
+      expect(
+        screen.queryByRole("button", { name: new RegExp(en.chat.live.enableSpeech) }),
+      ).toBeNull();
+    });
   });
 });

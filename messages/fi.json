@@ -286,7 +286,9 @@
         "not_heard": "En saanut selvää. Sano se uudelleen.",
         "no_voice": "Tässä laitteessa ei ole puheääntä tämän vastauksen kielelle, joten se näytetään tekstinä. Voit jatkaa puhumista.",
         "language_unknown": "Tämä vastaus näytetään tekstinä, koska sen kieltä ei voitu yhdistää puheääneen. Voit jatkaa puhumista.",
-        "turn_too_long": "Puheenvuoro oli liian pitkä. Sano asia lyhyemmissä osissa."
+        "turn_too_long": "Puheenvuoro oli liian pitkä. Sano asia lyhyemmissä osissa.",
+        "speech_blocked": "Selain ei sallinut Syvekan puhua. Kuule vastaus napauttamalla ”Ota puhutut vastaukset käyttöön”; keskustelu jatkuu.",
+        "speech_failed": "Vastausta ei voitu toistaa ääneen, joten se näytetään tekstinä. Yritä uudelleen napauttamalla ”Ota puhutut vastaukset käyttöön”."
       },
       "errors": {
         "unsupported": "Tämä selain ei tue puhekeskustelua. Voit jatkaa kirjoittamalla.",
@@ -307,7 +309,8 @@
       "voiceUnknown": "Laitteesi ei vielä kertonut puheääniään. Jos et kuule vastauksia, lopeta keskustelu ja aloita uudelleen tekstivastauksin.",
       "startTextOnly": "Aloita tekstivastauksin",
       "useDictation": "Käytä sanelua",
-      "textOnlyHint": "Vastaukset näytetään vain tekstinä."
+      "textOnlyHint": "Vastaukset näytetään vain tekstinä.",
+      "enableSpeech": "Ota puhutut vastaukset käyttöön"
     }
   },
   "publicAssistant": {
