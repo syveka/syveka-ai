@@ -4,10 +4,15 @@
  *
  * Detection returns a language only on strong evidence, otherwise null:
  * - Arabic vs Latin script is decided by the letters themselves;
- * - Latin text containing ä or ö is Finnish (English never uses them);
- * - otherwise Finnish vs English by common function words -- one side must
- *   clearly dominate, and short text needs at least two such words with
- *   none from the other language. Names and places don't count.
+ * - Finnish vs English by common function words. ä/ö only SUPPORT Finnish
+ *   (one point): they also occur in Swedish, German and names, so they never
+ *   decide on their own. A decision needs at least one function word of the
+ *   winning language, at least two points, and none (short text) or clearly
+ *   fewer (long text) for the other side.
+ * - Common Swedish/German words veto a Finnish/English decision (those
+ *   languages aren't supported; such text stays undecided and falls back to
+ *   the user's turn or session context, or to text).
+ * Names and places carry no evidence.
  */
 export type ReplyLanguage = "fi" | "en" | "ar";
 
@@ -106,6 +111,30 @@ const ENGLISH_WORDS = new Set([
   "yes",
 ]);
 
+// Frequent Swedish/German words (not Finnish or English words) whose presence
+// means the text isn't clearly Finnish or English. Not a language detector.
+const OTHER_LATIN_WORDS = new Set([
+  "och",
+  "jag",
+  "är",
+  "det",
+  "inte",
+  "har",
+  "för",
+  "med",
+  "också",
+  "und",
+  "ich",
+  "nicht",
+  "der",
+  "das",
+  "ist",
+  "für",
+  "mit",
+  "sie",
+  "auch",
+]);
+
 const LONG_TEXT_LETTERS = 20;
 
 type Script = "arabic" | "latin" | "none" | "mixed";
@@ -124,23 +153,30 @@ export function detectReplyLanguage(text: string): ReplyLanguage | null {
   const script = scriptOf(text);
   if (script === "arabic") return (text.match(/\p{L}/gu)?.length ?? 0) >= 2 ? "ar" : null;
   if (script !== "latin") return null;
-  if (/[äöÄÖ]/.test(text)) return "fi";
 
   const words = text.toLowerCase().match(/\p{L}+/gu) ?? [];
-  let fi = 0;
+  let fiWords = 0;
   let en = 0;
+  let other = 0;
   for (const word of words) {
-    if (FINNISH_WORDS.has(word)) fi++;
+    if (FINNISH_WORDS.has(word)) fiWords++;
     else if (ENGLISH_WORDS.has(word)) en++;
+    else if (OTHER_LATIN_WORDS.has(word)) other++;
   }
+  // ä/ö: supporting evidence only, never decisive.
+  const fi = fiWords + (/[äöÄÖ]/.test(text) ? 1 : 0);
   const letters = text.match(/\p{L}/gu)?.length ?? 0;
   if (letters < LONG_TEXT_LETTERS) {
-    if (fi >= 2 && en === 0) return "fi";
-    if (en >= 2 && fi === 0) return "en";
+    if (other > 0) return null;
+    if (fiWords >= 1 && fi >= 2 && en === 0) return "fi";
+    if (en >= 2 && fiWords === 0) return "en";
     return null;
   }
-  if (fi >= 3 && fi >= 3 * en) return "fi";
-  if (en >= 3 && en >= 3 * fi) return "en";
+  if (fiWords >= 1 && fi >= 2 && en === 0 && other === 0) return "fi";
+  // ä/ö in a name don't count against English: only Finnish words do.
+  if (en >= 2 && fiWords === 0 && other === 0) return "en";
+  if (fiWords >= 3 && fi >= 3 * (en + other)) return "fi";
+  if (en >= 3 && en >= 3 * (fiWords + other)) return "en";
   return null;
 }
 

@@ -25,7 +25,7 @@ describe("detectReplyLanguage (conservative)", () => {
     expect(detectReplyLanguage(text)).toBe(lang);
   });
 
-  it("short text: script and ä/ö decide; two function words of one language decide", () => {
+  it("short text: script decides Arabic; Finnish needs a Finnish word (ä/ö only support it)", () => {
     expect(detectReplyLanguage("نعم")).toBe("ar");
     expect(detectReplyLanguage("Selvä!")).toBe("fi");
     expect(detectReplyLanguage("Kyllä, huomenna.")).toBe("fi");
@@ -36,6 +36,29 @@ describe("detectReplyLanguage (conservative)", () => {
     expect(detectReplyLanguage("OK.")).toBeNull();
     expect(detectReplyLanguage("Auki klo 9–17")).toBeNull();
     expect(detectReplyLanguage("10:30")).toBeNull();
+  });
+
+  it("ä/ö alone never prove Finnish: Swedish, German and names stay undecided", () => {
+    expect(detectReplyLanguage("Hej, jag är här.")).toBeNull(); // Swedish
+    expect(detectReplyLanguage("Du kan se det här.")).toBeNull(); // Swedish, with Finnish-looking "se"
+    expect(detectReplyLanguage("Grüße aus München, Jörg")).toBeNull(); // German
+    expect(detectReplyLanguage("Jörg Möller")).toBeNull(); // a name
+    expect(detectReplyLanguage("Päivi Mäkelä")).toBeNull(); // a Finnish name is not Finnish text
+    expect(
+      detectReplyLanguage("Vi har två lediga tider i morgon för mötet med kunden."),
+    ).toBeNull(); // longer Swedish
+    expect(
+      detectReplyLanguage("Ich habe für Sie zwei freie Termine morgen, das ist möglich."),
+    ).toBeNull(); // longer German
+  });
+
+  it("English with Finnish or German names stays English", () => {
+    expect(
+      detectReplyLanguage(
+        "Your meeting with Päivi Mäkelä is at ten tomorrow, and it is confirmed.",
+      ),
+    ).toBe("en");
+    expect(detectReplyLanguage("Yes, Jörg can join at ten.")).toBe("en");
   });
 
   it("names and places don't flip the language", () => {
@@ -64,6 +87,19 @@ describe("resolveReplyLanguage (short replies use turn and session context)", ()
     expect(resolveReplyLanguage({ reply: "OK.", turn: "What is on the calendar today?" })).toBe(
       "en",
     );
+  });
+
+  it("ambiguous words and names use the current turn's language", () => {
+    expect(
+      resolveReplyLanguage({
+        reply: "Päivi Mäkelä.",
+        turn: "Who is the contact person for Espoo?",
+      }),
+    ).toBe("en");
+    expect(
+      resolveReplyLanguage({ reply: "Jörg Möller.", turn: "Kuka on yhteyshenkilö tänään?" }),
+    ).toBe("fi");
+    expect(resolveReplyLanguage({ reply: "Päivi Mäkelä." })).toBeNull(); // no context → text
   });
 
   it("…then the session's last language", () => {
