@@ -860,6 +860,80 @@ describe("useVoiceConversation", () => {
       expect(hook.result.current.error).toBeNull();
     });
 
+    it("Stop reply on the last permitted reply stops the audio at once, then ends with the reason", async () => {
+      sessionResponse = sessionWith(allowance(9, 3));
+      const { hook } = setup();
+      await startSession(hook);
+      turnAllowance = () => allowance(10, 4);
+      await speakTurn();
+      const reply = spoken.at(-1)!;
+      synth.speaking = true;
+      await act(async () => reply.onstart?.());
+      await advance(500, 0.06);
+      synth.cancel.mockClear();
+      act(() => hook.result.current.stopReply());
+      // Playback stops synchronously on the tap (ending the session cancels again; idempotent).
+      expect(synth.cancel).toHaveBeenCalled();
+      synth.speaking = false;
+      expect(hook.result.current.phase).toBe("ended");
+      expect(hook.result.current.error).toBe("daily_turns_used");
+      await speakTurn();
+      expect(turnCalls()).toHaveLength(1); // and no further paid turn
+    });
+
+    it("Mute still works during the last permitted reply", async () => {
+      sessionResponse = sessionWith(allowance(9, 3));
+      const { hook } = setup();
+      await startSession(hook);
+      turnAllowance = () => allowance(10, 4);
+      await speakTurn();
+      act(() => hook.result.current.toggleMute());
+      expect(hook.result.current.muted).toBe(true);
+      expect((media.streams[0] as FakeStream).tracks[0]!.enabled).toBe(false);
+      expect(hook.result.current.phase).toBe("speaking"); // the reply keeps playing
+    });
+
+    it("ordinary replies: a genuine interruption works while the device reports speaking (the echo guard doesn't apply)", async () => {
+      sessionResponse = sessionWith(allowance(2, 0));
+      turnAllowance = () => allowance(3, 1);
+      const { hook, onUserTurn } = setup();
+      await startSession(hook);
+      await speakTurn();
+      expect(hook.result.current.phase).toBe("speaking");
+      const reply = spoken.at(-1)!;
+      synth.speaking = true; // as in a real browser during playback
+      await act(async () => reply.onstart?.());
+      await advance(1200, 0.06); // Syveka's own voice at the microphone: no interruption
+      synth.cancel.mockClear();
+      expect(hook.result.current.phase).toBe("speaking");
+      await advance(500, LOUD); // the user talks over the reply
+      expect(synth.cancel).toHaveBeenCalledTimes(1);
+      expect(hook.result.current.phase).toBe("user_speaking");
+      synth.speaking = false; // cancelled
+      turnText = "Ei, tarkoitin torstaita.";
+      await advance(700, LOUD);
+      await advance(1200, QUIET);
+      expect(turnCalls()).toHaveLength(2);
+      expect((turnCalls()[1]!.body as FormData).get("trigger")).toBe("interrupt");
+      expect(onUserTurn).toHaveBeenLastCalledWith("Ei, tarkoitin torstaita.", GRANT, CONVERSATION);
+    });
+
+    it("the final-budget exception: on the last permitted reply, loud speech doesn't interrupt (Stop reply and End do)", async () => {
+      sessionResponse = sessionWith(allowance(9, 3));
+      const { hook } = setup();
+      await startSession(hook);
+      turnAllowance = () => allowance(10, 4);
+      await speakTurn();
+      synth.speaking = true;
+      await act(async () => spoken.at(-1)!.onstart?.());
+      await advance(1200, 0.06);
+      synth.cancel.mockClear();
+      await advance(1500, LOUD);
+      expect(synth.cancel).not.toHaveBeenCalled();
+      expect(hook.result.current.phase).toBe("speaking");
+      expect(FakeMediaRecorder.instances.filter((r) => r.state === "recording")).toHaveLength(0);
+    });
+
     it("the device still speaking is never recorded as a turn (self-echo)", async () => {
       const { hook } = setup();
       await startSession(hook);

@@ -92,9 +92,11 @@ const TICK_MS = 50;
 const IDLE_REARM_MS = 3_000;
 const CHANNEL = "syveka-voice-conversation";
 /**
- * After Syveka's speech ends (or while the device is still speaking),
- * nothing the microphone hears starts a turn for this long: the end of the
- * device's own audio must never become a paid "user" turn.
+ * Echo guard for the listening phase only (after a reply ended or was
+ * stopped): while the device still reports speaking, and for this long
+ * after, the microphone can't start a turn, so the tail of Syveka's own
+ * audio never becomes a paid "user" turn. During a reply ("speaking") it
+ * doesn't apply: the user interrupts through echo-aware barge-in.
  */
 const ECHO_TAIL_MS = 400;
 /** A reply that hasn't started speaking by then has failed (it never plays). */
@@ -581,7 +583,9 @@ export function useVoiceConversation({
       const phaseNow = phaseRef.current;
       if (phaseNow !== "listening" && phaseNow !== "user_speaking" && phaseNow !== "speaking")
         return;
-      // The last permitted reply is never interrupted (no turn could follow).
+      // Final-budget exception: the last permitted reply isn't interrupted by
+      // voice (no turn could follow; noise or echo must not cut it off).
+      // Stop reply, Mute and End still work.
       if (phaseNow === "speaking" && finalReasonRef.current) return;
       if (phaseNow === "listening") {
         // While the device is still speaking, and briefly after, what the
