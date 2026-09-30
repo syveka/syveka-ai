@@ -2,6 +2,9 @@ import "server-only";
 
 import { getOpenAIEnv } from "@/env";
 import { helsinkiDay, parsePilotAllowlist } from "@/server/ai/transcription-pilot";
+import type { AllowanceCount, VoiceAllowance } from "@/lib/voice/allowance";
+
+export type { VoiceAllowance };
 
 /**
  * Live voice conversation ("hands-free" mode in AI Chat): server-side gating,
@@ -508,4 +511,121 @@ export async function endVoiceSession(
     ),
   );
   return result === 1 ? "ended" : result === 0 ? "not_found" : "not_owner";
+}
+
+// ── Allowance (read-only) ────────────────────────────────────────────────────
+
+/**
+ * Reads the organization's daily counters and, if given, one session's turn
+ * count. Read-only: it never reserves, increments or extends anything.
+ * KEYS: orgDaySessions, orgDayTurns, orgDayAudio[, session]. ARGV: org, user.
+ * The session is reported only to its owner (otherwise -1, -1).
+ * Returns { sessionsUsed, turnsUsed, audioMsUsed, sessionTurns, sessionExpiresAt }.
+ */
+export const ALLOWANCE_SCRIPT = `
+local sessions = tonumber(redis.call("GET", KEYS[1]) or "0")
+local turns = tonumber(redis.call("GET", KEYS[2]) or "0")
+local audio = tonumber(redis.call("GET", KEYS[3]) or "0")
+local sessionTurns = -1
+local expiresAt = -1
+if KEYS[4] and redis.call("HGET", KEYS[4], "org") == ARGV[1]
+  and redis.call("HGET", KEYS[4], "user") == ARGV[2] then
+  sessionTurns = tonumber(redis.call("HGET", KEYS[4], "turns") or "0")
+  expiresAt = tonumber(redis.call("HGET", KEYS[4], "expiresAt") or "0")
+end
+return { sessions, turns, audio, sessionTurns, expiresAt }
+`;
+
+/**
+ * The next Europe/Helsinki midnight after `now` (when the daily limits
+ * renew). DST changes happen at 03:00/04:00 local time, never at midnight,
+ * so midnight is always UTC+2 (winter) or UTC+3 (summer); the zone rules
+ * decide which.
+ */
+export function nextHelsinkiMidnight(now: Date): number {
+  const today = helsinkiDay(now);
+  const [y, m, d] = today.split("-").map(Number) as [number, number, number];
+  for (const offsetHours of [3, 2]) {
+    const candidate = Date.UTC(y, m - 1, d + 1, 0, 0) - offsetHours * 3_600_000;
+    if (
+      candidate > now.getTime() &&
+      helsinkiDay(new Date(candidate)) !== today &&
+      helsinkiDay(new Date(candidate - 1)) === today
+    ) {
+      return candidate;
+    }
+  }
+  throw new Error("Cannot determine the next Helsinki midnight");
+}
+
+const count = (used: number, limit: number): AllowanceCount => ({
+  used,
+  limit,
+  remaining: Math.max(0, limit - used),
+});
+
+/** Below this much audio left, no turn can be accepted (see MIN_RECORDING_MS). */
+const MIN_TURN_AUDIO_MS = 700;
+
+export async function readVoiceAllowance(
+  redis: EvalClient,
+  ctx: Ctx,
+  config: VoiceConversationConfig,
+  sessionId: string | null = null,
+  now: Date = new Date(),
+): Promise<VoiceAllowance> {
+  const n = ns(redis);
+  const keys = [orgSessionsKey(n, ctx, now), orgTurnsKey(n, ctx, now), orgDayKey(n, ctx, now)];
+  if (sessionId) keys.push(sessionKey(n, sessionId));
+  const raw = await redis.eval(ALLOWANCE_SCRIPT, keys, [ctx.orgId, ctx.userId]);
+  if (!Array.isArray(raw) || raw.length !== 5) throw new Error("Unexpected limit store response");
+  const [sessionsUsed, turnsUsed, audioUsed, sessionTurns, expiresAt] = raw.map(integerResult) as [
+    number,
+    number,
+    number,
+    number,
+    number,
+  ];
+  const startsToday = count(sessionsUsed, config.dailyOrgSessions);
+  const turnsToday = count(turnsUsed, config.dailyOrgTurns);
+  const audioMsToday = count(audioUsed, config.dailyOrgAudioSeconds * 1000);
+  const session =
+    sessionTurns >= 0 ? { turns: count(sessionTurns, config.maxTurnsPerSession), expiresAt } : null;
+  const turnsAvailable =
+    audioMsToday.remaining < MIN_TURN_AUDIO_MS
+      ? 0
+      : Math.min(turnsToday.remaining, session ? session.turns.remaining : Infinity);
+  return {
+    day: helsinkiDay(now),
+    renewsAt: nextHelsinkiMidnight(now),
+    startsToday,
+    turnsToday,
+    audioMsToday,
+    sessionSeconds: config.sessionSeconds,
+    maxTurnSeconds: config.maxTurnSeconds,
+    maxTurnsPerSession: config.maxTurnsPerSession,
+    session,
+    turnsAvailable,
+  };
+}
+
+/**
+ * The allowance for a response, or null when it can't be read (the client
+ * then shows it as unknown rather than guessing). Never throws.
+ */
+export async function tryReadVoiceAllowance(
+  ...args: Parameters<typeof readVoiceAllowance>
+): Promise<VoiceAllowance | null> {
+  try {
+    return await readVoiceAllowance(...args);
+  } catch (e) {
+    console.error(
+      JSON.stringify({
+        event: "voice_conversation_store_unavailable",
+        op: "allowance",
+        name: e instanceof Error ? e.name : "unknown",
+      }),
+    );
+    return null;
+  }
 }

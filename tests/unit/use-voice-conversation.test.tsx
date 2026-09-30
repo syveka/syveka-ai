@@ -59,11 +59,15 @@ const synth = {
   speak: vi.fn((u: FakeUtterance) => spoken.push(u)),
   cancel: vi.fn(),
   getVoices: () => voices,
+  /** Whether the device is still producing speech audio. */
+  speaking: false,
 };
 
 type Call = { url: string; method: string; body?: FormData | string };
 let calls: Call[];
 let turnText: string | (() => Promise<Response>);
+/** Server allowance returned with each accepted turn (null: none reported). */
+let turnAllowance: (() => unknown) | null;
 let sessionResponse: () => Response;
 
 function fakeFetch(url: string, init?: RequestInit): Promise<Response> {
@@ -76,7 +80,10 @@ function fakeFetch(url: string, init?: RequestInit): Promise<Response> {
   if (url.endsWith("/turn")) {
     if (typeof turnText === "function") return turnText();
     // Like the server: a non-empty transcript comes with a single-use grant.
-    const data = turnText.trim() ? { text: turnText, grant: GRANT } : { text: "" };
+    const data = {
+      ...(turnText.trim() ? { text: turnText, grant: GRANT } : { text: "" }),
+      ...(turnAllowance ? { allowance: turnAllowance() } : {}),
+    };
     return Promise.resolve(new Response(JSON.stringify({ data })));
   }
   return Promise.reject(new Error(`unexpected ${url}`));
@@ -119,6 +126,8 @@ beforeEach(() => {
   voices = [{ lang: "fi-FI", localService: true, name: "fi" }];
   contexts.length = 0;
   turnText = "Mitä kalenterissa on huomenna?";
+  turnAllowance = null;
+  synth.speaking = false;
   sessionResponse = okSession;
   synth.speak.mockClear();
   synth.cancel.mockClear();
@@ -762,6 +771,262 @@ describe("useVoiceConversation", () => {
       expect(spoken).toHaveLength(1);
       expect(hook.result.current.notice).toBeNull();
       expect(hook.result.current.phase).toBe("ended");
+    });
+  });
+
+  describe("allowance and unintended turns", () => {
+    /** A server allowance reading (see VoiceAllowance). */
+    const allowance = (turnsUsed: number, sessionTurns: number, audioUsed = 31_740) => {
+      const turnsRemaining = Math.max(0, 10 - turnsUsed);
+      return {
+        day: "2026-09-30",
+        renewsAt: Date.UTC(2026, 8, 30, 21),
+        startsToday: { used: 2, limit: 1, remaining: 0 },
+        turnsToday: { used: turnsUsed, limit: 10, remaining: turnsRemaining },
+        audioMsToday: { used: audioUsed, limit: 300_000, remaining: 300_000 - audioUsed },
+        sessionSeconds: 300,
+        maxTurnSeconds: 30,
+        maxTurnsPerSession: 10,
+        session: {
+          turns: { used: sessionTurns, limit: 10, remaining: 10 - sessionTurns },
+          expiresAt: clock + 300_000,
+        },
+        turnsAvailable: Math.min(turnsRemaining, 10 - sessionTurns),
+      };
+    };
+    const sessionWith = (a: unknown) => () =>
+      new Response(
+        JSON.stringify({
+          data: {
+            sessionId: "11111111-1111-4111-8111-111111111111",
+            conversationId: CONVERSATION,
+            expiresAt: clock + 300_000,
+            maxTurnSeconds: 30,
+            sessionSeconds: 300,
+            allowance: a,
+          },
+        }),
+      );
+    const refusal = (code: string, reason?: string) => () =>
+      Promise.resolve(
+        new Response(JSON.stringify({ error: { code, ...(reason ? { reason } : {}) } }), {
+          status: 429,
+        }),
+      );
+
+    it("a new session after 6 used turns shows the server's 4, then each turn's reading", async () => {
+      sessionResponse = sessionWith(allowance(6, 0));
+      const { hook } = setup();
+      await startSession(hook);
+      expect(hook.result.current.allowance?.turnsAvailable).toBe(4);
+      turnAllowance = () => allowance(7, 1, 34_000);
+      await speakTurn();
+      expect(hook.result.current.allowance?.turnsAvailable).toBe(3);
+      expect(hook.result.current.allowance?.audioMsToday.remaining).toBe(266_000);
+    });
+
+    it("the last permitted turn's reply plays to the end (no interruption), then the session ends; nothing more is sent", async () => {
+      sessionResponse = sessionWith(allowance(9, 3));
+      const { hook, onUserTurn } = setup();
+      await startSession(hook);
+      turnAllowance = () => allowance(10, 4);
+      await speakTurn(); // the tenth turn of the day: accepted
+      expect(onUserTurn).toHaveBeenCalledTimes(1);
+      expect(hook.result.current.phase).toBe("speaking");
+      synth.cancel.mockClear(); // (hooks left mounted by earlier tests end on this session's start)
+      const reply = spoken.at(-1)!;
+      await act(async () => reply.onstart?.());
+      await advance(2000, LOUD); // loud room / talking over it: no turn could follow
+      expect(synth.cancel).not.toHaveBeenCalled();
+      expect(hook.result.current.phase).toBe("speaking");
+      await act(async () => reply.onend?.());
+      expect(hook.result.current.phase).toBe("ended");
+      expect(hook.result.current.error).toBe("daily_turns_used");
+      await speakTurn();
+      expect(turnCalls()).toHaveLength(1); // no eleventh upload
+      expect(FakeMediaRecorder.instances.filter((r) => r.state === "recording")).toHaveLength(0);
+    });
+
+    it("End during the last permitted reply stops the audio at once", async () => {
+      sessionResponse = sessionWith(allowance(9, 3));
+      const { hook } = setup();
+      await startSession(hook);
+      turnAllowance = () => allowance(10, 4);
+      await speakTurn();
+      synth.cancel.mockClear();
+      act(() => hook.result.current.end());
+      expect(synth.cancel).toHaveBeenCalledTimes(1);
+      expect(hook.result.current.phase).toBe("ended");
+      expect(hook.result.current.error).toBeNull();
+    });
+
+    it("Stop reply on the last permitted reply stops the audio at once, then ends with the reason", async () => {
+      sessionResponse = sessionWith(allowance(9, 3));
+      const { hook } = setup();
+      await startSession(hook);
+      turnAllowance = () => allowance(10, 4);
+      await speakTurn();
+      const reply = spoken.at(-1)!;
+      synth.speaking = true;
+      await act(async () => reply.onstart?.());
+      await advance(500, 0.06);
+      synth.cancel.mockClear();
+      act(() => hook.result.current.stopReply());
+      // Playback stops synchronously on the tap (ending the session cancels again; idempotent).
+      expect(synth.cancel).toHaveBeenCalled();
+      synth.speaking = false;
+      expect(hook.result.current.phase).toBe("ended");
+      expect(hook.result.current.error).toBe("daily_turns_used");
+      await speakTurn();
+      expect(turnCalls()).toHaveLength(1); // and no further paid turn
+    });
+
+    it("Mute still works during the last permitted reply", async () => {
+      sessionResponse = sessionWith(allowance(9, 3));
+      const { hook } = setup();
+      await startSession(hook);
+      turnAllowance = () => allowance(10, 4);
+      await speakTurn();
+      act(() => hook.result.current.toggleMute());
+      expect(hook.result.current.muted).toBe(true);
+      expect((media.streams[0] as FakeStream).tracks[0]!.enabled).toBe(false);
+      expect(hook.result.current.phase).toBe("speaking"); // the reply keeps playing
+    });
+
+    it("ordinary replies: a genuine interruption works while the device reports speaking (the echo guard doesn't apply)", async () => {
+      sessionResponse = sessionWith(allowance(2, 0));
+      turnAllowance = () => allowance(3, 1);
+      const { hook, onUserTurn } = setup();
+      await startSession(hook);
+      await speakTurn();
+      expect(hook.result.current.phase).toBe("speaking");
+      const reply = spoken.at(-1)!;
+      synth.speaking = true; // as in a real browser during playback
+      await act(async () => reply.onstart?.());
+      await advance(1200, 0.06); // Syveka's own voice at the microphone: no interruption
+      synth.cancel.mockClear();
+      expect(hook.result.current.phase).toBe("speaking");
+      await advance(500, LOUD); // the user talks over the reply
+      expect(synth.cancel).toHaveBeenCalledTimes(1);
+      expect(hook.result.current.phase).toBe("user_speaking");
+      synth.speaking = false; // cancelled
+      turnText = "Ei, tarkoitin torstaita.";
+      await advance(700, LOUD);
+      await advance(1200, QUIET);
+      expect(turnCalls()).toHaveLength(2);
+      expect((turnCalls()[1]!.body as FormData).get("trigger")).toBe("interrupt");
+      expect(onUserTurn).toHaveBeenLastCalledWith("Ei, tarkoitin torstaita.", GRANT, CONVERSATION);
+    });
+
+    it("the final-budget exception: on the last permitted reply, loud speech doesn't interrupt (Stop reply and End do)", async () => {
+      sessionResponse = sessionWith(allowance(9, 3));
+      const { hook } = setup();
+      await startSession(hook);
+      turnAllowance = () => allowance(10, 4);
+      await speakTurn();
+      synth.speaking = true;
+      await act(async () => spoken.at(-1)!.onstart?.());
+      await advance(1200, 0.06);
+      synth.cancel.mockClear();
+      await advance(1500, LOUD);
+      expect(synth.cancel).not.toHaveBeenCalled();
+      expect(hook.result.current.phase).toBe("speaking");
+      expect(FakeMediaRecorder.instances.filter((r) => r.state === "recording")).toHaveLength(0);
+    });
+
+    it("the device still speaking is never recorded as a turn (self-echo)", async () => {
+      const { hook } = setup();
+      await startSession(hook);
+      synth.speaking = true; // e.g. audio still playing after the reply "ended"
+      await advance(2500, VOICE);
+      await advance(1500, QUIET);
+      expect(turnCalls()).toHaveLength(0);
+      synth.speaking = false;
+      await advance(600, QUIET);
+      await speakTurn(); // the user, afterwards
+      expect(turnCalls()).toHaveLength(1);
+    });
+
+    it("the end of Syveka's audio right after a reply doesn't become a turn", async () => {
+      const { hook } = setup();
+      await startSession(hook);
+      await speakTurn();
+      const reply = spoken.at(-1)!;
+      await act(async () => reply.onstart?.());
+      await act(async () => reply.onend?.());
+      expect(hook.result.current.phase).toBe("listening");
+      await advance(600, VOICE); // the speaker's tail / room echo
+      await advance(1500, QUIET);
+      expect(turnCalls()).toHaveLength(1);
+      await speakTurn();
+      expect(turnCalls()).toHaveLength(2);
+    });
+
+    it.each([
+      ["voice_daily_limit_reached", "daily_sessions", "daily_sessions_used"],
+      ["voice_daily_limit_reached", "daily_turns", "daily_turns_used"],
+      ["voice_daily_limit_reached", "daily_audio", "daily_audio_used"],
+      ["rate_limited", undefined, "rate_limited"],
+    ])("a refused start (%s %s) shows its own reason: %s", async (code, reason, expected) => {
+      sessionResponse = () =>
+        new Response(JSON.stringify({ error: { code, ...(reason ? { reason } : {}) } }), {
+          status: 429,
+        });
+      const { hook } = setup();
+      await act(async () => {
+        await hook.result.current.start();
+      });
+      expect(hook.result.current.error).toBe(expected);
+      expect(hook.result.current.active).toBe(false);
+      const stream = media.streams[0] as FakeStream;
+      expect(stream.tracks.every((t) => t.stopped)).toBe(true);
+    });
+
+    it.each([
+      ["voice_daily_limit_reached", "daily_turns", "daily_turns_used"],
+      ["voice_daily_limit_reached", "daily_audio", "daily_audio_used"],
+      ["turn_limit", "session_turns", "session_turns_used"],
+      ["rate_limited", undefined, "rate_limited"],
+    ])("a refused turn (%s %s) ends with its own reason: %s", async (code, reason, expected) => {
+      turnText = refusal(code, reason);
+      const { hook, onUserTurn } = setup();
+      await startSession(hook);
+      await speakTurn();
+      expect(onUserTurn).not.toHaveBeenCalled();
+      expect(hook.result.current.error).toBe(expected);
+      expect(hook.result.current.phase).toBe("ended");
+    });
+
+    it("each upload carries the device's speech length and what ended it (diagnostics, no content)", async () => {
+      const { hook } = setup();
+      await startSession(hook);
+      await speakTurn(1200);
+      const first = turnCalls()[0]!.body as FormData;
+      expect(first.get("trigger")).toBe("speech_end");
+      expect(Number(first.get("speechMs"))).toBeGreaterThanOrEqual(1000);
+      expect(Number(first.get("speechMs"))).toBeLessThanOrEqual(1300);
+      // Interrupting a reply: that turn is marked as such.
+      const reply = spoken.at(-1)!;
+      await act(async () => reply.onstart?.());
+      await advance(1200, 0.02);
+      await advance(1200, LOUD); // interrupts, then keeps talking
+      await advance(1200, QUIET);
+      expect(turnCalls()).toHaveLength(2);
+      expect((turnCalls()[1]!.body as FormData).get("trigger")).toBe("interrupt");
+    });
+
+    it("a duplicate-turn response is not retried and charges nothing more", async () => {
+      turnText = () =>
+        Promise.resolve(
+          new Response(JSON.stringify({ error: { code: "duplicate_turn" } }), { status: 409 }),
+        );
+      const { hook, onUserTurn } = setup();
+      await startSession(hook);
+      await speakTurn();
+      expect(turnCalls()).toHaveLength(1);
+      expect(onUserTurn).not.toHaveBeenCalled();
+      expect(hook.result.current.notice).toBe("not_heard");
+      expect(hook.result.current.active).toBe(true);
     });
   });
 });

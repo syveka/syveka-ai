@@ -8,6 +8,7 @@ import {
   endVoiceSession,
   hasActiveVoiceSession,
   issueVoiceGrant,
+  readVoiceAllowance,
   reserveVoiceTurn,
   startVoiceSession,
   type EvalClient,
@@ -437,5 +438,141 @@ describe.skipIf(!URL_)("voice conversation scripts on a real Redis server", () =
     await expect(consumeVoiceGrant(r, me, crypto.randomUUID(), "x", CONV, now)).rejects.toThrow();
     await expect(hasActiveVoiceSession(r, me, now)).rejects.toThrow();
     dead.close();
+  });
+
+  // ── Allowance (read-only) and the reported incident ──
+
+  it("the reported sequence: 6 turns used, a session-only decrement, a new session → 4 turns left; the 5th is refused", async () => {
+    const r = store();
+    const now = at("2026-09-30T09:00:00Z");
+    const s1 = crypto.randomUUID();
+    expect((await startVoiceSession(r, me, PILOT, s1, { id: CONV, isNew: false }, now)).ok).toBe(
+      true,
+    );
+    for (let i = 0; i < 6; i++) {
+      expect((await reserveVoiceTurn(r, me, PILOT, s1, crypto.randomUUID(), 5_290, now)).ok).toBe(
+        true,
+      );
+    }
+    await endVoiceSession(r, me, s1);
+    const s2 = crypto.randomUUID();
+    expect(await startVoiceSession(r, me, PILOT, s2, { id: CONV, isNew: false }, now)).toEqual({
+      ok: false,
+      reason: "daily_sessions",
+    });
+    // The operator's manual, session-only adjustment (in this test's own namespace).
+    await admin.cmd("DECR", `${r.ns}:org:${ORG}:sessions:2026-09-30`);
+    expect((await startVoiceSession(r, me, PILOT, s2, { id: CONV, isNew: false }, now)).ok).toBe(
+      true,
+    );
+    const before = await readVoiceAllowance(r, me, PILOT, s2, now);
+    expect(before.turnsToday).toEqual({ used: 6, limit: 10, remaining: 4 });
+    expect(before.audioMsToday.used).toBe(31_740); // milliseconds
+    expect(before.session?.turns).toEqual({ used: 0, limit: 10, remaining: 10 });
+    expect(before.turnsAvailable).toBe(4); // not the session's 10
+    for (let i = 0; i < 4; i++) {
+      expect((await reserveVoiceTurn(r, me, PILOT, s2, crypto.randomUUID(), 3_000, now)).ok).toBe(
+        true,
+      );
+    }
+    expect(await reserveVoiceTurn(r, me, PILOT, s2, crypto.randomUUID(), 3_000, now)).toEqual({
+      ok: false,
+      reason: "daily_turns",
+    });
+    const after = await readVoiceAllowance(r, me, PILOT, s2, now);
+    expect(after.turnsToday.used).toBe(10);
+    expect(after.audioMsToday.used).toBe(31_740 + 4 * 3_000); // the refusal reserved nothing
+    expect(after.turnsAvailable).toBe(0);
+  });
+
+  it("reading the allowance changes nothing (no key, value or expiry)", async () => {
+    const r = store();
+    const now = at("2026-09-30T09:00:00Z");
+    const s = crypto.randomUUID();
+    await startVoiceSession(r, me, PILOT, s, { id: CONV, isNew: false }, now);
+    await reserveVoiceTurn(r, me, PILOT, s, crypto.randomUUID(), 4_000, now);
+    const snapshot = async () => {
+      const keys = (await keysOf(r.ns)).sort();
+      const rows: unknown[] = [];
+      for (const k of keys) {
+        rows.push([k, await admin.cmd("DUMP", k), await admin.cmd("PTTL", k)]);
+      }
+      return rows;
+    };
+    const before = await snapshot();
+    for (let i = 0; i < 5; i++) {
+      await readVoiceAllowance(r, me, PILOT, s, now);
+      await readVoiceAllowance(r, me, PILOT, null, now);
+    }
+    const after = await snapshot();
+    // PTTL counts down between snapshots; compare values exactly and expiries to within 5 s.
+    expect(after.map((row) => (row as unknown[]).slice(0, 2))).toEqual(
+      before.map((row) => (row as unknown[]).slice(0, 2)),
+    );
+    after.forEach((row, i) => {
+      const ttl = Number((row as unknown[])[2]);
+      const was = Number((before[i] as unknown[])[2]);
+      expect(ttl).toBeLessThanOrEqual(was);
+      expect(was - ttl).toBeLessThan(5_000);
+    });
+  });
+
+  it("another organization reads only its own counters and never another's session", async () => {
+    const r = store();
+    const now = at("2026-09-30T09:00:00Z");
+    const s = crypto.randomUUID();
+    await startVoiceSession(r, me, PILOT, s, { id: CONV, isNew: false }, now);
+    await reserveVoiceTurn(r, me, PILOT, s, crypto.randomUUID(), 4_000, now);
+    const other = await readVoiceAllowance(r, { orgId: OTHER_ORG, userId: USER }, PILOT, s, now);
+    expect(other.session).toBeNull();
+    expect(other.turnsToday.used).toBe(0);
+    expect(other.startsToday.used).toBe(0);
+    const colleague = await readVoiceAllowance(
+      r,
+      { orgId: ORG, userId: OTHER_USER },
+      PILOT,
+      s,
+      now,
+    );
+    expect(colleague.session).toBeNull(); // the session is its owner's
+    expect(colleague.turnsToday.used).toBe(1); // the organization's shared daily count
+  });
+
+  it("replays of one turn (same id), even concurrent, reserve it once", async () => {
+    const r = store();
+    const now = at("2026-09-30T09:00:00Z");
+    const s = crypto.randomUUID();
+    await startVoiceSession(r, me, PILOT, s, { id: CONV, isNew: false }, now);
+    const turnId = crypto.randomUUID();
+    const results = await Promise.all(
+      Array.from({ length: 12 }, () => reserveVoiceTurn(r, me, PILOT, s, turnId, 2_000, now)),
+    );
+    expect(results.filter((x) => x.ok)).toHaveLength(1);
+    expect(results.filter((x) => !x.ok && x.reason === "duplicate_turn")).toHaveLength(11);
+    const a = await readVoiceAllowance(r, me, PILOT, s, now);
+    expect([a.turnsToday.used, a.audioMsToday.used, a.session?.turns.used]).toEqual([1, 2_000, 1]);
+  });
+
+  it("the daily counts renew at Helsinki midnight (a session crossing it uses the new day)", async () => {
+    const r = store();
+    const late = at("2026-09-30T20:59:00Z"); // 23:59 in Helsinki
+    const s = crypto.randomUUID();
+    await startVoiceSession(r, me, PILOT, s, { id: CONV, isNew: false }, late);
+    for (let i = 0; i < 10; i++) {
+      await reserveVoiceTurn(r, me, PILOT, s, crypto.randomUUID(), 1_000, late);
+    }
+    const before = await readVoiceAllowance(r, me, PILOT, s, late);
+    expect(before.turnsAvailable).toBe(0);
+    expect(new Date(before.renewsAt).toISOString()).toBe("2026-09-30T21:00:00.000Z");
+    const next = at("2026-09-30T21:00:01Z"); // 00:00:01 on 1 October
+    const after = await readVoiceAllowance(r, me, PILOT, s, next);
+    expect(after.day).toBe("2026-10-01");
+    expect(after.turnsToday.remaining).toBe(10);
+    expect(after.startsToday.remaining).toBe(1);
+    // The session's own cap still applies (10 already used in it).
+    expect(after.turnsAvailable).toBe(0);
+    expect((await reserveVoiceTurn(r, me, PILOT, s, crypto.randomUUID(), 1_000, next)).ok).toBe(
+      false,
+    );
   });
 });

@@ -26,6 +26,7 @@ const live = vi.hoisted(() => ({
   stopReply: vi.fn(),
   enableSpeech: vi.fn(),
   speechEnabledInSession: false,
+  allowance: null as unknown,
   lastOptions: null as null | LiveOptions,
   replace: vi.fn(),
 }));
@@ -46,6 +47,7 @@ vi.mock("@/hooks/use-voice-conversation", () => ({
       stopReply: live.stopReply,
       enableSpeech: live.enableSpeech,
       speechEnabledInSession: live.speechEnabledInSession,
+      allowance: live.allowance,
       clearError: vi.fn(),
     };
   },
@@ -59,6 +61,9 @@ import { ChatView } from "@/components/chat/chat-view";
 const en = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../messages/en.json"), "utf8"));
 const ar = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../messages/ar.json"), "utf8"));
 let fetchBodies: Array<Record<string, unknown>>;
+/** GET /voice-conversation/session: today's allowance (null → the read fails). */
+let allowanceBody: unknown;
+let allowanceReads: number;
 let deviceVoices: Array<{ lang: string; localService: boolean; name: string }>;
 const GRANT = "55555555-5555-4555-8555-555555555555";
 /** Created by the chat route for a typed first message in a new chat. */
@@ -80,12 +85,23 @@ beforeEach(() => {
   live.start.mockClear();
   live.enableSpeech.mockClear();
   live.speechEnabledInSession = false;
+  live.allowance = null;
+  allowanceBody = null;
+  allowanceReads = 0;
   live.replace.mockClear();
   fetchBodies = [];
   deviceVoices = [{ lang: "en-US", localService: true, name: "en" }];
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (_url: string, init?: RequestInit) => {
+    vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).includes("/voice-conversation/session")) {
+        allowanceReads += 1;
+        return allowanceBody
+          ? new Response(JSON.stringify({ data: allowanceBody }))
+          : new Response(JSON.stringify({ error: { code: "voice_conversation_unavailable" } }), {
+              status: 503,
+            });
+      }
       const body = JSON.parse(String(init?.body));
       fetchBodies.push(body);
       const frames = [
@@ -361,6 +377,120 @@ describe("ChatView live voice", () => {
       expect(
         screen.queryByRole("button", { name: new RegExp(en.chat.live.enableSpeech) }),
       ).toBeNull();
+    });
+  });
+
+  describe("allowance: what is left today, and why it stops", () => {
+    const reading = (o: {
+      starts?: number;
+      turnsUsed?: number;
+      audioUsed?: number;
+      session?: number | null;
+    }) => {
+      const turnsUsed = o.turnsUsed ?? 6;
+      const audioUsed = o.audioUsed ?? 31_740;
+      const turnsRemaining = 10 - turnsUsed;
+      const session = o.session === undefined ? null : o.session;
+      return {
+        day: "2026-09-30",
+        renewsAt: Date.UTC(2026, 8, 30, 21), // 00:00 in Helsinki (UTC+3)
+        startsToday: { used: 1 - (o.starts ?? 1), limit: 1, remaining: o.starts ?? 1 },
+        turnsToday: { used: turnsUsed, limit: 10, remaining: turnsRemaining },
+        audioMsToday: { used: audioUsed, limit: 300_000, remaining: 300_000 - audioUsed },
+        sessionSeconds: 300,
+        maxTurnSeconds: 30,
+        maxTurnsPerSession: 10,
+        session:
+          session === null
+            ? null
+            : { turns: { used: session, limit: 10, remaining: 10 - session }, expiresAt: 0 },
+        turnsAvailable: Math.min(turnsRemaining, session === null ? 99 : 10 - session),
+      };
+    };
+    const openIntro = async (messages = en) => {
+      const view = renderView(messages);
+      fireEvent.click(screen.getByRole("button", { name: messages.chat.live.start }));
+      await act(async () => {});
+      return view;
+    };
+
+    it("before starting: today's starts, turns (4 after 6 used) and speaking time, separate from the session's maximum", async () => {
+      allowanceBody = reading({});
+      await openIntro();
+      const text = document.body.textContent!;
+      expect(allowanceReads).toBe(1);
+      expect(text).toContain("1 conversation start");
+      expect(text).toContain("4 turns");
+      expect(text).toContain(`${en.chat.live.allowanceAudio} 4:28`);
+      expect(text).toContain("Renews at 00:00 Helsinki time");
+      expect(text).toContain("A conversation lasts at most 5 minutes. It ends earlier");
+      expect(text).toContain(en.chat.live.introDailyLimit);
+      expect(live.start).not.toHaveBeenCalled(); // reading never starts anything
+      const confirm = screen.getByRole("button", { name: new RegExp(en.chat.live.confirm) });
+      expect((confirm as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("no starts left: says so with the renewal time and doesn't offer a start", async () => {
+      allowanceBody = reading({ starts: 0 });
+      await openIntro();
+      expect(screen.getByRole("alert").textContent).toBe(
+        en.chat.live.errors.daily_sessions_used.replace("{time}", "00:00"),
+      );
+      const confirm = screen.getByRole("button", { name: new RegExp(en.chat.live.confirm) });
+      expect((confirm as HTMLButtonElement).disabled).toBe(true);
+    });
+
+    it("no turns left today: names that limit, not a generic one", async () => {
+      allowanceBody = reading({ turnsUsed: 10 });
+      await openIntro();
+      expect(screen.getByRole("alert").textContent).toBe(
+        en.chat.live.errors.daily_turns_used.replace("{time}", "00:00"),
+      );
+    });
+
+    it("an unreadable allowance is shown as unknown, never as a balance, and doesn't block", async () => {
+      allowanceBody = null;
+      await openIntro();
+      expect(document.body.textContent).toContain(en.chat.live.allowanceUnknown);
+      const confirm = screen.getByRole("button", { name: new RegExp(en.chat.live.confirm) });
+      expect((confirm as HTMLButtonElement).disabled).toBe(false);
+    });
+
+    it("during the session: session time, turns and speaking time left, from the server's reading", () => {
+      live.state = { ...live.state, phase: "listening", active: true, remainingMs: 250_000 };
+      live.allowance = reading({ session: 1, turnsUsed: 7, audioUsed: 40_000 });
+      renderView();
+      const text = document.body.textContent!;
+      expect(text).toContain(`${en.chat.live.remaining} 4:10`);
+      expect(screen.getByTestId("live-turns-left").textContent).toBe("3");
+      expect(screen.getByTestId("live-audio-left").textContent).toBe("4:20");
+    });
+
+    it("during the session with no reading: 'unknown', not a guess", () => {
+      live.state = { ...live.state, phase: "listening", active: true, remainingMs: 250_000 };
+      renderView();
+      expect(screen.getByTestId("live-turns-left").textContent).toBe(en.chat.live.unknown);
+      expect(screen.getByTestId("live-audio-left").textContent).toBe(en.chat.live.unknown);
+    });
+
+    it.each([
+      ["daily_sessions_used"],
+      ["daily_turns_used"],
+      ["daily_audio_used"],
+      ["session_turns_used"],
+      ["session_expired"],
+    ])("ended by %s: its own message (EN and AR)", (error) => {
+      for (const messages of [en, ar]) {
+        cleanup();
+        live.state = { ...live.state, phase: "ended", active: false, error };
+        live.allowance = reading({});
+        renderView(messages);
+        const expected = (messages.chat.live.errors as Record<string, string>)[error]!.replace(
+          "{time}",
+          "00:00",
+        );
+        expect(screen.getByRole("alert").textContent).toBe(expected);
+      }
     });
   });
 });

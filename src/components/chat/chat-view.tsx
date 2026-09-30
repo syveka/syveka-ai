@@ -10,6 +10,43 @@ import { useDeviceVoice } from "@/hooks/use-device-voice";
 import { ChatThread } from "./chat-thread";
 import { Composer } from "./composer";
 import { VoiceConversationIntro, VoiceConversationPanel } from "./voice-conversation-panel";
+import type { VoiceAllowance } from "@/lib/voice/allowance";
+
+/**
+ * Today's allowance for the start dialog, read from the server while it is
+ * open (read-only: no session, no turn). Re-read after Helsinki midnight.
+ * undefined while loading, null when it can't be read.
+ */
+function useLiveAllowance(open: boolean): VoiceAllowance | null | undefined {
+  const [allowance, setAllowance] = useState<VoiceAllowance | null | undefined>(undefined);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    let renewTimer: ReturnType<typeof setTimeout> | null = null;
+    const load = () => {
+      setAllowance(undefined);
+      fetch("/api/v1/ai/voice-conversation/session", { cache: "no-store" })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((body: { data?: VoiceAllowance } | null) => {
+          if (cancelled) return;
+          const next = body?.data ?? null;
+          setAllowance(next);
+          if (next) {
+            renewTimer = setTimeout(load, Math.max(1_000, next.renewsAt - Date.now() + 1_000));
+          }
+        })
+        .catch(() => {
+          if (!cancelled) setAllowance(null);
+        });
+    };
+    load();
+    return () => {
+      cancelled = true;
+      if (renewTimer) clearTimeout(renewTimer);
+    };
+  }, [open]);
+  return allowance;
+}
 
 export function ChatView({
   conversationId,
@@ -40,6 +77,7 @@ export function ChatView({
   const [introOpen, setIntroOpen] = useState(false);
   const [speakReplies, setSpeakReplies] = useState(true);
   const deviceVoice = useDeviceVoice(locale, introOpen);
+  const introAllowance = useLiveAllowance(introOpen && voiceConversation !== null);
 
   // Each finished spoken turn goes through the normal chat pipeline with its
   // single-use server grant, in the conversation the session is bound to; the
@@ -92,6 +130,7 @@ export function ChatView({
           {introOpen && !live.active ? (
             <VoiceConversationIntro
               sessionMinutes={voiceConversation.sessionMinutes}
+              allowance={introAllowance}
               deviceVoice={deviceVoice}
               onCancel={() => setIntroOpen(false)}
               onConfirm={() => startLive(true)}
@@ -105,6 +144,7 @@ export function ChatView({
               notice={live.notice}
               error={live.error}
               textOnly={!speakReplies && !live.speechEnabledInSession}
+              allowance={live.allowance}
               elapsedMs={live.elapsedMs}
               remainingMs={live.remainingMs}
               onToggleMute={live.toggleMute}

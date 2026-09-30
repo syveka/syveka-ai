@@ -3,6 +3,7 @@ import { z } from "zod";
 import { MAX_AUDIO_BYTES, MIN_AUDIO_BYTES, MIN_RECORDING_MS } from "@/lib/voice/audio";
 import { measureAudioDuration } from "@/lib/voice/audio-duration";
 import { isCrossOrigin } from "@/server/security/same-origin";
+import { detectReplyLanguage } from "@/lib/voice/reply-language";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,9 +16,29 @@ const TRANSCRIPTION_USD_PER_MINUTE = 0.003;
 const CONTAINER_MIME = { webm: "audio/webm", mp4: "audio/mp4" } as const;
 
 const fieldsSchema = z.object({ sessionId: z.string().uuid(), turnId: z.string().uuid() }).strict();
+/**
+ * Optional client diagnostics for the turn log (no content): how long the
+ * device heard speech, and what ended the recording.
+ */
+const diagnosticsSchema = z.object({
+  speechMs: z
+    .string()
+    .regex(/^\d{1,6}$/)
+    .transform(Number)
+    .optional(),
+  trigger: z.enum(["speech_end", "max_turn", "interrupt"]).optional(),
+});
 
-function error(code: string, status: number) {
-  return NextResponse.json({ error: { code } }, { status });
+function error(code: string, status: number, extra: Record<string, unknown> = {}) {
+  return NextResponse.json({ error: { code, ...extra } }, { status });
+}
+
+/**
+ * One structured line per turn outcome, for diagnosing unexpected use (noise,
+ * echo, empty transcripts, wrong language). Never the audio or transcript.
+ */
+function logTurn(fields: Record<string, unknown>) {
+  console.info(JSON.stringify({ event: "voice_conversation_turn", ...fields }));
 }
 
 /**
@@ -91,14 +112,32 @@ export async function POST(request: Request): Promise<Response> {
   });
   const audio = form.get("audio");
   if (!fields.success || !(audio instanceof File)) return error("invalid_input", 400);
+  const diagnostics = diagnosticsSchema.safeParse({
+    speechMs: form.get("speechMs") ?? undefined,
+    trigger: form.get("trigger") ?? undefined,
+  });
+  if (!diagnostics.success) return error("invalid_input", 400);
+  const turnLog = {
+    sessionId: fields.data.sessionId,
+    turnId: fields.data.turnId,
+    speechMs: diagnostics.data.speechMs ?? null,
+    trigger: diagnostics.data.trigger ?? null,
+  };
   if (audio.size > MAX_AUDIO_BYTES) return error("audio_too_large", 413);
   if (audio.size < MIN_AUDIO_BYTES) return error("audio_too_short", 422);
 
   const bytes = new Uint8Array(await audio.arrayBuffer());
   const measured = measureAudioDuration(bytes);
   if (!measured) return error("unsupported_audio_format", 415);
-  if (measured.seconds > config.maxTurnSeconds) return error("audio_too_long", 422);
-  if (measured.seconds * 1000 < MIN_RECORDING_MS) return error("audio_too_short", 422);
+  if (measured.seconds > config.maxTurnSeconds) {
+    logTurn({ ...turnLog, outcome: "rejected", reason: "audio_too_long" });
+    return error("audio_too_long", 422);
+  }
+  if (measured.seconds * 1000 < MIN_RECORDING_MS) {
+    logTurn({ ...turnLog, outcome: "rejected", reason: "audio_too_short" });
+    return error("audio_too_short", 422);
+  }
+  const measuredMs = Math.ceil(measured.seconds * 1000);
 
   let reservation;
   try {
@@ -121,10 +160,46 @@ export async function POST(request: Request): Promise<Response> {
     return error("voice_conversation_unavailable", 503);
   }
   if (!reservation.ok) {
+    logTurn({ ...turnLog, measuredMs, outcome: "refused", reason: reservation.reason });
     const daily = reservation.reason === "daily_budget" || reservation.reason === "daily_turns";
-    const status = daily || reservation.reason === "turn_limit" ? 429 : 409;
-    return error(daily ? "voice_daily_limit_reached" : reservation.reason, status);
+    const limited = daily || reservation.reason === "turn_limit";
+    // The code is unchanged for compatibility; `reason` says which limit it was.
+    const reason =
+      reservation.reason === "daily_budget"
+        ? "daily_audio"
+        : reservation.reason === "turn_limit"
+          ? "session_turns"
+          : reservation.reason;
+    return error(
+      daily ? "voice_daily_limit_reached" : reservation.reason,
+      limited ? 429 : 409,
+      limited
+        ? {
+            reason,
+            allowance: await conversation.tryReadVoiceAllowance(
+              redis,
+              ctx,
+              config,
+              fields.data.sessionId,
+            ),
+          }
+        : {},
+    );
   }
+  // Read right after the reservation: what the session can still use.
+  const allowance = await conversation.tryReadVoiceAllowance(
+    redis,
+    ctx,
+    config,
+    fields.data.sessionId,
+  );
+  logTurn({
+    ...turnLog,
+    measuredMs,
+    outcome: "reserved",
+    turnsLeftToday: allowance?.turnsToday.remaining ?? null,
+    turnsAvailable: allowance?.turnsAvailable ?? null,
+  });
 
   const signal = AbortSignal.any([request.signal, AbortSignal.timeout(TRANSCRIPTION_TIMEOUT_MS)]);
   const startedAt = Date.now();
@@ -132,8 +207,12 @@ export async function POST(request: Request): Promise<Response> {
   try {
     text = await transcribeAudio(bytes, measured.container, signal);
   } catch (e) {
-    if (request.signal.aborted) return error("request_aborted", 499);
+    if (request.signal.aborted) {
+      logTurn({ ...turnLog, outcome: "transcription_aborted" });
+      return error("request_aborted", 499);
+    }
     const timedOut = signal.aborted;
+    logTurn({ ...turnLog, outcome: "transcription_failed" });
     console.error(
       JSON.stringify({
         event: "voice_conversation_transcription_failed",
@@ -162,9 +241,18 @@ export async function POST(request: Request): Promise<Response> {
     Math.floor((config.dailyOrgAudioSeconds * 1000 - reservation.usedMs) / 1000),
   );
   const trimmed = text.trim();
+  logTurn({
+    ...turnLog,
+    outcome: trimmed ? "transcribed" : "empty_transcript",
+    transcriptChars: trimmed.length,
+    transcriptLanguage: trimmed ? detectReplyLanguage(trimmed) : null,
+  });
   if (!trimmed) {
-    // Nothing to answer: no grant, so no chat generation can follow.
-    return NextResponse.json({ data: { text: "", dailyRemainingSeconds: remainingSeconds } });
+    // Nothing to answer: no grant, so no chat generation can follow. The
+    // reservation stands (the provider attempt was made).
+    return NextResponse.json({
+      data: { text: "", dailyRemainingSeconds: remainingSeconds, allowance },
+    });
   }
 
   // One accepted turn → one single-use grant for exactly one chat generation,
@@ -190,6 +278,6 @@ export async function POST(request: Request): Promise<Response> {
   }
   if (!grant) return error("session_expired", 409);
   return NextResponse.json({
-    data: { text: trimmed, grant, dailyRemainingSeconds: remainingSeconds },
+    data: { text: trimmed, grant, dailyRemainingSeconds: remainingSeconds, allowance },
   });
 }
