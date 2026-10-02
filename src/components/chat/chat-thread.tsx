@@ -6,6 +6,7 @@ import { Sparkles, Wrench, FileText, Volume2, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UiMessage } from "@/hooks/use-chat";
 import type { PlaybackError } from "@/hooks/use-speech-playback";
+import { ActionConfirmation } from "./action-confirmation";
 
 /** Optional read-aloud controls for assistant replies (never autoplays). */
 export type ReplyPlayback = {
@@ -113,6 +114,10 @@ function MessageBubble({
             ))}
           </div>
         ) : null}
+
+        {!isUser && message.actions?.length
+          ? message.actions.map((action) => <ActionConfirmation key={action.id} action={action} />)
+          : null}
 
         {!isUser && playback?.supported && !message.streaming && message.content.trim() ? (
           <ListenControl message={message} playback={playback} turn={turn} />

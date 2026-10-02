@@ -74,7 +74,7 @@ export function buildSystemPrompt(params: {
 
   if (params.hasTools) {
     parts.push(
-      `## Tools\nUse the provided tools to look up CRM data, calendar availability and the knowledge base instead of guessing. Confirm before any tool call that creates or modifies data. getCalendarAvailability's response includes "usingOrgConfiguredHours" — when it is false, the returned slots use a generic default schedule, not the organization's real hours; say so explicitly rather than presenting them as confirmed.`,
+      `## Tools\nUse the provided tools to look up CRM data, calendar availability and the knowledge base instead of guessing. Tools that create or change data never run directly: calling one prepares the action, and the user confirms or cancels it with a button under your reply. Call such a tool only when the user asks for that change, then say briefly what will happen when they confirm; never say it has been done before they confirm. getCalendarAvailability's response includes "usingOrgConfiguredHours" — when it is false, the returned slots use a generic default schedule, not the organization's real hours; say so explicitly rather than presenting them as confirmed.`,
     );
   }
 

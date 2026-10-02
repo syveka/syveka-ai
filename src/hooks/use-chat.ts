@@ -2,7 +2,7 @@
 
 import { useCallback, useRef, useState } from "react";
 import { useRouter } from "@/i18n/routing";
-import type { ChatStreamEvent } from "@/lib/validators/chat";
+import type { ChatStreamEvent, ProposedActionView } from "@/lib/validators/chat";
 
 export type UiMessage = {
   id: string;
@@ -10,6 +10,8 @@ export type UiMessage = {
   content: string;
   citations?: Array<{ documentId: string; title: string }>;
   tools?: string[];
+  /** Writes the assistant proposed; each runs only if the user confirms it. */
+  actions?: ProposedActionView[];
   streaming?: boolean;
 };
 
@@ -132,6 +134,9 @@ export function useChat(params: {
                 break;
               case "citations":
                 patchAssistant({ citations: event.citations });
+                break;
+              case "action":
+                patchAssistant((m) => ({ actions: [...(m.actions ?? []), event.action] }));
                 break;
               case "error":
                 failed = true;
