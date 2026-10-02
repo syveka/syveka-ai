@@ -326,6 +326,32 @@
       "turnsLeft": "Puheenvuoroja jäljellä:",
       "audioLeft": "Puheaikaa jäljellä tänään:",
       "unknown": "ei tiedossa"
+    },
+    "actions": {
+      "title": "Vahvista toiminto",
+      "createContact": "Luo yhteystieto {name}",
+      "logNote": "Lisää muistiinpano yhteystiedolle {contact}: {subject}",
+      "logTask": "Lisää tehtävä yhteystiedolle {contact}: {subject}",
+      "bookMeeting": "Varaa ”{title}” {when} ({minutes} min)",
+      "withContact": "Osallistuja: {contact}",
+      "email": "Sähköposti: {value}",
+      "phone": "Puhelin: {value}",
+      "dueAt": "Määräaika {when}",
+      "nothingYet": "Mitään ei luoda tai muuteta ennen kuin vahvistat.",
+      "confirm": "Vahvista",
+      "confirming": "Vahvistetaan…",
+      "cancel": "Peruuta",
+      "result": {
+        "done": "Valmis.",
+        "canceled": "Peruttu. Mitään ei muutettu.",
+        "slotTaken": "Aika ei ole enää vapaana. Mitään ei varattu.",
+        "expired": "Pyyntö vanheni. Pyydä Syvekaa uudelleen.",
+        "alreadyDecided": "Tämä toiminto on jo käsitelty.",
+        "permission": "Sinulla ei ole oikeutta tähän.",
+        "failed": "Toimintoa ei voitu suorittaa. Yritä uudelleen tai tee se itse.",
+        "pending": "Odottaa vahvistustasi.",
+        "submitting": "Vahvistetaan…"
+      }
     }
   },
   "publicAssistant": {

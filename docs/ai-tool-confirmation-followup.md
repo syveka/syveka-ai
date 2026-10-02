@@ -1,8 +1,12 @@
 # Follow-up: server-enforced confirmation for AI write tools
 
-Status: **open, not implemented**. Found during the review of PR #215 (live voice conversation). This
-is a separate security follow-up and is not part of #215. Nothing in #215 changes typed-chat tool
-behaviour.
+Status:
+
+- **Typed AI Chat: implemented** (server-enforced; see "Implemented for typed chat" below).
+- **Phone assistant (Vapi): open**. It still runs write tools on the model's call; this needs the
+  product decision below.
+
+Found during the review of PR #215 (live voice conversation). Live voice offers only read-only tools.
 
 ## Problem
 
@@ -82,3 +86,31 @@ Tests to add with the implementation:
 - Whether typed chat should always require a click to confirm writes. Recommended.
 - The phone-assistant option, (a) or (b).
 - The pending-action storage (Redis TTL or database table with an audit link).
+
+## Implemented for typed chat
+
+Code: `src/server/ai/tool-actions.ts`, `src/app/api/v1/ai/actions/[id]/route.ts`,
+`src/components/chat/action-confirmation.tsx`.
+
+1. **Proposal.** In typed chat, a write tool call (`createContact`, `logActivity`, `bookMeeting`) never
+   runs on the model's call. `describeWriteToolCall` validates it with the same checks as
+   `executeTool`: role permission and input schema. It also checks that any referenced contact
+   belongs to the organization, and resolves what would happen, such as a booking's duration and the
+   calendar timezone.
+2. **Pending action.** The action is stored in Redis with a TTL of 10 minutes. It is bound to the
+   organization, user and conversation, and carries a SHA-256 digest of the exact tool and
+   canonical input.
+3. **Client and model.** The client receives an SSE `action` event and shows a localized
+   Confirm/Cancel card (EN/FI/AR). The model is told that nothing has happened yet.
+4. **Decision endpoint.** `POST /api/v1/ai/actions/{id}` (same-origin, session, `chat:use`, chat
+   rate limit) takes `{decision, conversationId, digest}`. One atomic Lua script checks owner,
+   conversation, expiry, status and digest, and marks the action decided, so it can run only once.
+5. **Execution.** A confirmation runs exactly the stored input through `executeTool`, which checks
+   the permission and input again. Unknown, expired and other users' actions all return the same 404. A digest for another action, or for changed arguments, is refused. The decision is audited
+   as `ai_action.confirm` or `ai_action.cancel`, with the tool name and outcome but no arguments.
+6. **Diagnostics.** Structured `ai_tool_action` logs carry phase, tool, action id, organization id
+   and outcome, never the arguments.
+
+Read-only tools run as before. Live voice still refuses write tools. Pending actions are not
+persisted with the chat history: after a reload an unconfirmed card is gone and the action expires
+unused.

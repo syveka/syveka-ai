@@ -26,10 +26,48 @@ export const chatFileFinalizeSchema = z
 export type ChatRequest = z.infer<typeof chatRequestSchema>;
 
 /** SSE event contract shared by the route and the client hook. */
+/**
+ * A pending AI write action as the client shows it (see
+ * src/server/ai/tool-actions.ts). Details are structured fields, rendered
+ * and localized by the client; the model's text is never the confirmation.
+ */
+export type ProposedActionView = {
+  id: string;
+  tool: string;
+  digest: string;
+  conversationId: string;
+  expiresAt: number;
+  details:
+    | {
+        tool: "createContact";
+        firstName: string;
+        lastName?: string;
+        email?: string;
+        phone?: string;
+      }
+    | {
+        tool: "logActivity";
+        type: "NOTE" | "TASK";
+        subject: string;
+        contactName: string;
+        dueAt?: string;
+      }
+    | {
+        tool: "bookMeeting";
+        title: string;
+        startsAt: string;
+        durationMinutes: number;
+        timezone: string;
+        contactName?: string;
+      };
+};
+
 export type ChatStreamEvent =
   | { type: "meta"; conversationId: string; messageId: string }
   | { type: "text"; delta: string }
   | { type: "tool"; name: string; status: "start" | "done" }
   | { type: "citations"; citations: Array<{ documentId: string; title: string }> }
+  /** A write the model proposed; nothing happens until the user confirms it. */
+  | { type: "action"; action: ProposedActionView }
   | { type: "done"; tokensIn: number; tokensOut: number; estimatedCostUsd: number }
   | { type: "error"; code: string };

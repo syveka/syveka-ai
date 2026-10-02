@@ -55,6 +55,7 @@ vi.mock("@/server/ai/tools", () => ({
   anthropicToolsFor: vi.fn(() => []),
   executeTool: vi.fn(),
   READ_ONLY_TOOL_NAMES: [],
+  WRITE_TOOL_NAMES: [],
 }));
 vi.mock("@/server/services/billing/entitlements", () => ({
   assertWithinLimit: vi.fn(async () => undefined),

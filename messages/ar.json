@@ -326,6 +326,32 @@
       "turnsLeft": "الأدوار المتبقية:",
       "audioLeft": "وقت التحدث المتبقي اليوم:",
       "unknown": "غير معروف"
+    },
+    "actions": {
+      "title": "تأكيد هذا الإجراء",
+      "createContact": "إنشاء جهة الاتصال {name}",
+      "logNote": "إضافة ملاحظة إلى {contact}: {subject}",
+      "logTask": "إضافة مهمة لـ {contact}: {subject}",
+      "bookMeeting": "حجز «{title}» في {when} ({minutes} دقيقة)",
+      "withContact": "مع {contact}",
+      "email": "البريد الإلكتروني: {value}",
+      "phone": "الهاتف: {value}",
+      "dueAt": "الموعد النهائي {when}",
+      "nothingYet": "لن يُنشأ أو يُغيَّر أي شيء حتى تؤكد.",
+      "confirm": "تأكيد",
+      "confirming": "جارٍ التأكيد…",
+      "cancel": "إلغاء",
+      "result": {
+        "done": "تم.",
+        "canceled": "أُلغي. لم يتغير شيء.",
+        "slotTaken": "لم يعد هذا الوقت متاحًا. لم يُحجز شيء.",
+        "expired": "انتهت صلاحية هذا الطلب. اطلب من سيفيكا مرة أخرى.",
+        "alreadyDecided": "تمت معالجة هذا الإجراء بالفعل.",
+        "permission": "ليست لديك صلاحية للقيام بذلك.",
+        "failed": "تعذّر إكمال الإجراء. حاول مرة أخرى أو نفّذه يدويًا.",
+        "pending": "بانتظار تأكيدك.",
+        "submitting": "جارٍ التأكيد…"
+      }
     }
   },
   "publicAssistant": {

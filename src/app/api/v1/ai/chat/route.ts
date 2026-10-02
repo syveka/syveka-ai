@@ -49,7 +49,7 @@ export async function POST(request: Request): Promise<Response> {
     { buildSystemPrompt },
     { getBusinessDnaContext },
     { retrieveChunks, extractValidCitations },
-    { anthropicToolsFor, executeTool, READ_ONLY_TOOL_NAMES },
+    { anthropicToolsFor, executeTool, READ_ONLY_TOOL_NAMES, WRITE_TOOL_NAMES },
     { assertWithinLimit, recordUsage, getMonthUsage, EntitlementError },
     {
       attachDocumentsToConversation,
@@ -393,6 +393,25 @@ export async function POST(request: Request): Promise<Response> {
                 return JSON.stringify({ error: "tool_limit_reached" });
               }
               send({ type: "tool", name, status: "start" });
+              if (!voiceTurn && WRITE_TOOL_NAMES.includes(name)) {
+                // A write never runs on the model's call: it becomes a pending
+                // action the user must confirm (POST /api/v1/ai/actions/{id}).
+                const [{ proposeToolAction }, { redis }] = await Promise.all([
+                  import("@/server/ai/tool-actions"),
+                  import("@/server/integrations/redis"),
+                ]);
+                const proposal = await proposeToolAction(
+                  redis,
+                  identity,
+                  conversation.id,
+                  name,
+                  toolInput,
+                );
+                if (proposal.action) send({ type: "action", action: proposal.action });
+                toolCallLog.push({ name, ok: proposal.action !== null });
+                send({ type: "tool", name, status: "done" });
+                return proposal.modelResult;
+              }
               const result = await executeTool(identity, name, toolInput, {
                 readOnly: voiceTurn,
               });

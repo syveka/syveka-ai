@@ -10,6 +10,7 @@ import { audit } from "@/server/services/audit";
 import { computeAvailableSlots, type DateOverride, type WeeklyRule } from "@/server/calendar/slots";
 import { addDaysUtc, isValidTimezone, zonedTimeToUtc } from "@/server/calendar/timezone";
 import { lockOrgCalendar } from "@/server/calendar/locks";
+import type { ProposedActionView } from "@/lib/validators/chat";
 import { DEFAULT_WEEKLY_RULES } from "@/server/services/booking";
 
 /**
@@ -386,6 +387,15 @@ export const READ_ONLY_TOOL_NAMES: readonly string[] = TOOL_REGISTRY.filter((t) 
   t.permission.endsWith(":read"),
 ).map((t) => t.name);
 
+/**
+ * Tools that create or change data. In typed chat they never run directly:
+ * the call is stored as a pending action and runs only after the user
+ * confirms it (see src/server/ai/tool-actions.ts).
+ */
+export const WRITE_TOOL_NAMES: readonly string[] = TOOL_REGISTRY.filter(
+  (t) => !READ_ONLY_TOOL_NAMES.includes(t.name),
+).map((t) => t.name);
+
 export function anthropicToolsFor(
   identity: ToolIdentity,
   enabledNames?: string[],
@@ -399,6 +409,119 @@ export function anthropicToolsFor(
   }));
 }
 
+type PreparedTool =
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  { ok: true; tool: ToolDef<any>; input: Record<string, unknown> } | { ok: false; error: string };
+
+/** The checks every tool call passes: known tool, role permission, valid input. */
+function prepareToolCall(identity: ToolIdentity, name: string, rawInput: unknown): PreparedTool {
+  const tool = TOOL_REGISTRY.find((t) => t.name === name);
+  if (!tool) return { ok: false, error: JSON.stringify({ error: "unknown_tool" }) };
+  if (!can(identity.role, tool.permission)) {
+    return { ok: false, error: JSON.stringify({ error: "permission_denied" }) };
+  }
+  const parsed = tool.schema.safeParse(rawInput);
+  if (!parsed.success) {
+    return {
+      ok: false,
+      error: JSON.stringify({ error: "invalid_input", details: parsed.error.issues.slice(0, 3) }),
+    };
+  }
+  return { ok: true, tool, input: parsed.data as Record<string, unknown> };
+}
+
+/** What the user is asked to confirm (no free-form model text; rendered by the client). */
+export type WriteActionDetails = ProposedActionView["details"];
+
+const contactName = (c: { firstName: string; lastName: string | null }) =>
+  [c.firstName, c.lastName].filter(Boolean).join(" ");
+
+/**
+ * Validates a write tool call and resolves exactly what would happen, for
+ * the user to confirm: the final input (e.g. a booking's duration resolved
+ * now, so what runs is what was shown) and display details. Same checks as
+ * executeTool (permission, input) plus tenancy of any referenced contact.
+ */
+export async function describeWriteToolCall(
+  identity: ToolIdentity,
+  name: string,
+  rawInput: unknown,
+): Promise<
+  | { ok: true; tool: string; input: Record<string, unknown>; details: WriteActionDetails }
+  | { ok: false; error: string }
+> {
+  if (!WRITE_TOOL_NAMES.includes(name)) {
+    return { ok: false, error: JSON.stringify({ error: "unknown_tool" }) };
+  }
+  const prepared = prepareToolCall(identity, name, rawInput);
+  if (!prepared.ok) return prepared;
+  const db = tenantDb(identity.orgId);
+  const findContact = async (id: unknown) =>
+    typeof id === "string"
+      ? db.contact.findFirst({
+          where: { id, deletedAt: null },
+          select: { firstName: true, lastName: true },
+        })
+      : null;
+
+  if (name === "createContact") {
+    const input = prepared.input as z.infer<typeof createContact.schema>;
+    return {
+      ok: true,
+      tool: name,
+      input,
+      details: {
+        tool: name,
+        firstName: input.firstName,
+        lastName: input.lastName,
+        email: input.email,
+        phone: input.phone,
+      },
+    };
+  }
+  if (name === "logActivity") {
+    const input = prepared.input as z.infer<typeof logActivity.schema>;
+    const contact = await findContact(input.contactId);
+    if (!contact) return { ok: false, error: JSON.stringify({ error: "contact_not_found" }) };
+    return {
+      ok: true,
+      tool: name,
+      input,
+      details: {
+        tool: name,
+        type: input.type,
+        subject: input.subject,
+        contactName: contactName(contact),
+        dueAt: input.dueAt,
+      },
+    };
+  }
+  const input = prepared.input as z.infer<typeof bookMeeting.schema>;
+  const durationMinutes =
+    input.durationMinutes ??
+    (await resolveServiceDurationMinutes(identity.orgId, input.serviceName)) ??
+    30;
+  const contact = input.contactId ? await findContact(input.contactId) : null;
+  if (input.contactId && !contact) {
+    return { ok: false, error: JSON.stringify({ error: "contact_not_found" }) };
+  }
+  const { timezone } = await resolveOrgDefaultSchedule(identity.orgId);
+  return {
+    ok: true,
+    tool: name,
+    // The resolved duration is part of what the user confirms.
+    input: { ...input, durationMinutes },
+    details: {
+      tool: "bookMeeting",
+      title: input.title,
+      startsAt: input.startsAt,
+      durationMinutes,
+      timezone,
+      contactName: contact ? contactName(contact) : undefined,
+    },
+  };
+}
+
 /** Validated, permission-checked execution. Returns JSON string for the model. */
 export async function executeTool(
   identity: ToolIdentity,
@@ -406,20 +529,17 @@ export async function executeTool(
   rawInput: unknown,
   options: { readOnly?: boolean } = {},
 ): Promise<string> {
-  const tool = TOOL_REGISTRY.find((t) => t.name === name);
-  if (!tool) return JSON.stringify({ error: "unknown_tool" });
-  if (options.readOnly && !READ_ONLY_TOOL_NAMES.includes(tool.name)) {
-    return JSON.stringify({ error: "not_available_in_voice_conversation" });
+  if (options.readOnly && !READ_ONLY_TOOL_NAMES.includes(name)) {
+    const known = TOOL_REGISTRY.some((t) => t.name === name);
+    return JSON.stringify({
+      error: known ? "not_available_in_voice_conversation" : "unknown_tool",
+    });
   }
-  if (!can(identity.role, tool.permission)) {
-    return JSON.stringify({ error: "permission_denied" });
-  }
-  const parsed = tool.schema.safeParse(rawInput);
-  if (!parsed.success) {
-    return JSON.stringify({ error: "invalid_input", details: parsed.error.issues.slice(0, 3) });
-  }
+  const prepared = prepareToolCall(identity, name, rawInput);
+  if (!prepared.ok) return prepared.error;
+  const { tool } = prepared;
   try {
-    const result = await tool.execute(identity, parsed.data);
+    const result = await tool.execute(identity, prepared.input);
     return JSON.stringify(result);
   } catch (e) {
     return JSON.stringify({

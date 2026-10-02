@@ -326,6 +326,32 @@
       "turnsLeft": "Turns left:",
       "audioLeft": "Speaking time left today:",
       "unknown": "unknown"
+    },
+    "actions": {
+      "title": "Confirm this action",
+      "createContact": "Create contact {name}",
+      "logNote": "Add a note to {contact}: {subject}",
+      "logTask": "Add a task for {contact}: {subject}",
+      "bookMeeting": "Book “{title}” on {when} ({minutes} min)",
+      "withContact": "With {contact}",
+      "email": "Email: {value}",
+      "phone": "Phone: {value}",
+      "dueAt": "Due {when}",
+      "nothingYet": "Nothing is created or changed until you confirm.",
+      "confirm": "Confirm",
+      "confirming": "Confirming…",
+      "cancel": "Cancel",
+      "result": {
+        "done": "Done.",
+        "canceled": "Canceled. Nothing was changed.",
+        "slotTaken": "That time is no longer free. Nothing was booked.",
+        "expired": "This request expired. Ask Syveka again.",
+        "alreadyDecided": "This action was already handled.",
+        "permission": "You don't have permission to do this.",
+        "failed": "It couldn't be completed. Try again or do it manually.",
+        "pending": "Waiting for your confirmation.",
+        "submitting": "Confirming…"
+      }
     }
   },
   "publicAssistant": {
