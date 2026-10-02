@@ -204,6 +204,26 @@ const DECIDE_ERRORS = {
   [-4]: "mismatch",
 } as const;
 
+/**
+ * The stored input from the decide script's reply. It is stored as a JSON
+ * string, but the Upstash client deserializes JSON strings inside script
+ * results by default (automaticDeserialization), so it can also arrive
+ * already parsed. Anything other than a plain object is invalid.
+ */
+function storedInput(value: unknown): Record<string, unknown> | null {
+  let parsed = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  return parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)
+    ? (parsed as Record<string, unknown>)
+    : null;
+}
+
 /** Only these result fields go back to the client (never error messages). */
 const SAFE_RESULT_KEYS = ["id", "eventId", "created", "booked", "startsAt"];
 
@@ -244,12 +264,8 @@ export async function decideToolAction(
     logAction({ phase: "canceled", tool, actionId: request.id, orgId: identity.orgId });
     return { ok: true, tool, status: "canceled" };
   }
-  let input: unknown;
-  try {
-    input = JSON.parse(String(reply[2]));
-  } catch {
-    return { ok: false, reason: "invalid_action" };
-  }
+  const input = storedInput(reply[2]);
+  if (!input) return { ok: false, reason: "invalid_action" };
   const resultText = await executeTool(identity, tool, input);
   const result = JSON.parse(resultText) as Record<string, unknown>;
   let outcome: ActionOutcome;
