@@ -35,11 +35,21 @@ function formatWhen(iso: string, timeZone: string | undefined, locale: string) {
   }).format(new Date(iso));
 }
 
+/** Outcomes after which the action can't be decided again. */
+const SETTLED = new Set<State>(["done", "canceled", "slotTaken", "expired", "alreadyDecided"]);
+
 /**
  * A write the assistant proposed. Nothing happens until the user confirms
  * here; the server then runs exactly this action, once.
  */
-export function ActionConfirmation({ action }: { action: ProposedActionView }) {
+export function ActionConfirmation({
+  action,
+  onSettled,
+}: {
+  action: ProposedActionView;
+  /** Called once the action is decided for good (not after a failed request). */
+  onSettled?: (actionId: string) => void;
+}) {
   const t = useTranslations("chat.actions");
   const locale = useLocale();
   const [state, setState] = useState<State>(() =>
@@ -93,17 +103,16 @@ export function ActionConfirmation({ action }: { action: ProposedActionView }) {
         data?: { status?: string };
         error?: { code?: string };
       } | null;
-      if (res.ok && body?.data?.status) {
-        setState(
-          body.data.status === "canceled"
+      const next: State =
+        res.ok && body?.data?.status
+          ? body.data.status === "canceled"
             ? "canceled"
             : body.data.status === "not_done"
               ? "slotTaken"
-              : "done",
-        );
-        return;
-      }
-      setState(REFUSAL_STATE[body?.error?.code ?? ""] ?? "failed");
+              : "done"
+          : (REFUSAL_STATE[body?.error?.code ?? ""] ?? "failed");
+      setState(next);
+      if (SETTLED.has(next)) onSettled?.(action.id);
     } catch {
       setState("failed");
     }

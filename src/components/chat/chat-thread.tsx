@@ -21,9 +21,12 @@ export type ReplyPlayback = {
 export function ChatThread({
   messages,
   playback,
+  onActionSettled,
 }: {
   messages: UiMessage[];
   playback?: ReplyPlayback;
+  /** A proposed write action was decided for good. */
+  onActionSettled?: (actionId: string) => void;
 }) {
   const t = useTranslations("chat");
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -49,6 +52,7 @@ export function ChatThread({
           message={m}
           playback={playback}
           turn={m.role === "assistant" ? precedingUserText(messages, i) : undefined}
+          onActionSettled={onActionSettled}
         />
       ))}
       <div ref={bottomRef} />
@@ -68,10 +72,12 @@ function MessageBubble({
   message,
   playback,
   turn,
+  onActionSettled,
 }: {
   message: UiMessage;
   playback?: ReplyPlayback;
   turn?: string;
+  onActionSettled?: (actionId: string) => void;
 }) {
   const isUser = message.role === "user";
   return (
@@ -116,7 +122,9 @@ function MessageBubble({
         ) : null}
 
         {!isUser && message.actions?.length
-          ? message.actions.map((action) => <ActionConfirmation key={action.id} action={action} />)
+          ? message.actions.map((action) => (
+              <ActionConfirmation key={action.id} action={action} onSettled={onActionSettled} />
+            ))
           : null}
 
         {!isUser && playback?.supported && !message.streaming && message.content.trim() ? (

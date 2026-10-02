@@ -63,14 +63,21 @@ export function ChatView({
   const t = useTranslations("chat");
   const locale = useLocale();
   const liveActiveRef = useRef(false);
-  const { messages, send, abort, isStreaming, error, flushNavigation, getConversationId } = useChat(
-    {
-      conversationId,
-      initialMessages,
-      // A new chat's redirect would remount this view and end a live session.
-      deferNavigation: () => liveActiveRef.current,
-    },
-  );
+  const {
+    messages,
+    send,
+    abort,
+    isStreaming,
+    error,
+    flushNavigation,
+    settleAction,
+    getConversationId,
+  } = useChat({
+    conversationId,
+    initialMessages,
+    // A new chat's redirect would remount this view and end a live session.
+    deferNavigation: () => liveActiveRef.current,
+  });
   // One player for the whole thread: starting a reply stops any other.
   const playback = useSpeechPlayback();
   const [dictating, setDictating] = useState(false);
@@ -119,7 +126,11 @@ export function ChatView({
 
   return (
     <div className="flex h-[calc(100vh-3rem)] flex-col md:h-[calc(100vh-4.5rem)]">
-      <ChatThread messages={messages} playback={live.active ? undefined : playback} />
+      <ChatThread
+        messages={messages}
+        playback={live.active ? undefined : playback}
+        onActionSettled={settleAction}
+      />
       {error ? (
         <p role="alert" className="px-4 pb-1 text-sm text-destructive">
           {t(`errors.${error}` as never) ?? t("errors.generic")}
