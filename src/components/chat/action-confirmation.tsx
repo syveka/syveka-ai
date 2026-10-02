@@ -70,6 +70,10 @@ export function ActionConfirmation({ action }: { action: ProposedActionView }) {
       : null,
     d.tool === "bookMeeting" && d.contactName ? t("withContact", { contact: d.contactName }) : null,
   ].filter((x): x is string => !!x);
+  // Free-form text that will be saved is always shown in full (never only
+  // in the fingerprint): the user confirms exactly what is stored.
+  const content =
+    d.tool === "logActivity" ? d.body : d.tool === "bookMeeting" ? d.notes : undefined;
 
   const decide = async (decision: "confirm" | "cancel") => {
     if (state !== "pending" || sentRef.current) return;
@@ -121,6 +125,17 @@ export function ActionConfirmation({ action }: { action: ProposedActionView }) {
           {line}
         </p>
       ))}
+      {content ? (
+        <div className="mt-1">
+          <p className="text-xs text-muted-foreground">{t("content")}</p>
+          <p
+            data-testid="action-content"
+            className="mt-0.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words rounded border border-border/50 bg-muted/40 p-1.5 text-xs"
+          >
+            {content}
+          </p>
+        </div>
+      ) : null}
       {state === "pending" || busy ? (
         <>
           <p className="mt-1 text-xs text-muted-foreground">{t("nothingYet")}</p>

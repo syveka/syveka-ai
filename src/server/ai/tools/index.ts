@@ -493,6 +493,7 @@ export async function describeWriteToolCall(
         subject: input.subject,
         contactName: contactName(contact),
         dueAt: input.dueAt,
+        body: input.body,
       },
     };
   }
@@ -518,6 +519,7 @@ export async function describeWriteToolCall(
       durationMinutes,
       timezone,
       contactName: contact ? contactName(contact) : undefined,
+      notes: input.notes,
     },
   };
 }

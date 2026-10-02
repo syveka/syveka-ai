@@ -208,6 +208,44 @@ describe("proposing a write (what the model's tool call does)", () => {
     });
   });
 
+  it("every stored argument is shown to the user (free-form text in full), or accounted for", async () => {
+    const longNotes = "Agenda:\n" + "x".repeat(1_990);
+    const cases = [
+      ["bookMeeting", booking({ contactId: OTHER_CONV, notes: longNotes, serviceName: "Demo" })],
+      [
+        "logActivity",
+        {
+          contactId: OTHER_CONV,
+          type: "TASK",
+          subject: "Soita",
+          body: "Muista hinta",
+          dueAt: "2026-10-06T08:00:00.000Z",
+        },
+      ],
+      [
+        "createContact",
+        { firstName: "Maija", lastName: "M", email: "m@example.com", phone: "+358401" },
+      ],
+    ] as const;
+    // Stored but not displayed as-is: ids are shown as the contact's name; a
+    // service name is shown as its resolved duration; `source` is metadata.
+    const accounted = new Set(["contactId", "serviceName", "source"]);
+    for (const [name, input] of cases) {
+      const p = await propose(name, input);
+      const stored = JSON.parse(m.store.get(`ai:action:${p.action!.id}`)!.input!) as Record<
+        string,
+        unknown
+      >;
+      const shown = p.action!.details as Record<string, unknown>;
+      for (const [key, value] of Object.entries(stored)) {
+        if (accounted.has(key)) continue;
+        expect(shown[key], `${name}.${key}`).toEqual(value);
+      }
+    }
+    const notes = (await propose("bookMeeting", booking({ notes: longNotes }))).action!.details;
+    expect(notes).toMatchObject({ notes: longNotes });
+  });
+
   it("refuses before storing: invalid input, unknown tool, a read tool, a contact outside the org, no permission", async () => {
     expect(JSON.parse((await propose("bookMeeting", { title: "" })).modelResult).error).toBe(
       "invalid_input",

@@ -337,6 +337,7 @@
       "email": "Sähköposti: {value}",
       "phone": "Puhelin: {value}",
       "dueAt": "Määräaika {when}",
+      "content": "Tallennettava teksti:",
       "nothingYet": "Mitään ei luoda tai muuteta ennen kuin vahvistat.",
       "confirm": "Vahvista",
       "confirming": "Vahvistetaan…",

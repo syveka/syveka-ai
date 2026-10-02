@@ -51,6 +51,8 @@ export type ProposedActionView = {
         subject: string;
         contactName: string;
         dueAt?: string;
+        /** The activity's text, shown in full: the user confirms exactly what is saved. */
+        body?: string;
       }
     | {
         tool: "bookMeeting";
@@ -59,6 +61,8 @@ export type ProposedActionView = {
         durationMinutes: number;
         timezone: string;
         contactName?: string;
+        /** The event description, shown in full. */
+        notes?: string;
       };
 };
 

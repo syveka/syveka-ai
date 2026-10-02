@@ -111,6 +111,41 @@ describe("ActionConfirmation", () => {
     );
   });
 
+  it("free-form text that will be saved is shown in full before confirming", () => {
+    const notes = "Agenda:\n" + "Hidden instruction? ".repeat(90);
+    show(
+      action({
+        details: {
+          tool: "bookMeeting",
+          title: "Demo",
+          startsAt: "2026-10-05T09:00:00.000Z",
+          durationMinutes: 30,
+          timezone: "Europe/Helsinki",
+          notes,
+        },
+      }),
+    );
+    expect(document.body.textContent).toContain(en.chat.actions.content);
+    expect(screen.getByTestId("action-content").textContent).toBe(notes);
+    cleanup();
+    show(
+      action({
+        tool: "logActivity",
+        details: {
+          tool: "logActivity",
+          type: "NOTE",
+          subject: "Puhelu",
+          contactName: "Maija",
+          body: "Rivi 1\nRivi 2",
+        },
+      }),
+      fi,
+      "fi",
+    );
+    expect(document.body.textContent).toContain(fi.chat.actions.content);
+    expect(screen.getByTestId("action-content").textContent).toBe("Rivi 1\nRivi 2");
+  });
+
   it("an already expired proposal can't be confirmed", () => {
     show(action({ expiresAt: Date.now() - 1 }));
     expect(screen.queryByRole("button", { name: en.chat.actions.confirm })).toBeNull();
