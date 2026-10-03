@@ -44,7 +44,6 @@ export const ROUTE_TEMPLATES: readonly string[] = [
   "/[locale]/register",
   "/[locale]/reset-password",
   "/[locale]/settings",
-  "/[locale]/settings/api-keys",
   "/[locale]/settings/audit-log",
   "/[locale]/settings/billing",
   "/[locale]/settings/business-dna",

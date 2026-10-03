@@ -31,6 +31,7 @@ describe("route templates for error reports", () => {
     ["/[locale]/(app)/inbox/[threadId]", "/[locale]/inbox/[threadId]"], // Next route path
     ["/[locale]/(app)/inbox/[threadId]/page", "/[locale]/inbox/[threadId]"],
     ["/api/v1/inbox/[threadId]/route", "/api/v1/inbox/[threadId]"],
+    ["/en/settings/api-keys", undefined], // hidden page: never referenced, reported without a path
     ["/de/pricing", undefined], // not a supported locale
     ["/en/en/pricing", undefined],
     ["/api/v1/unknown", undefined],

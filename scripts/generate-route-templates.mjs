@@ -15,6 +15,13 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const appDir = path.join(root, "src", "app");
 const outFile = path.join(root, "src", "lib", "observability", "route-templates.ts");
 
+/**
+ * Pages hidden from customers (always not found). They're left out so the
+ * app, error reports included, never references them; a request to one is
+ * reported without a path.
+ */
+const HIDDEN_ROUTES = new Set(["/[locale]/settings/api-keys"]);
+
 export function collectRouteTemplates(dir = appDir) {
   const templates = new Set();
   const walk = (current, segments) => {
@@ -31,7 +38,7 @@ export function collectRouteTemplates(dir = appDir) {
     }
   };
   walk(dir, []);
-  return [...templates].sort();
+  return [...templates].filter((t) => !HIDDEN_ROUTES.has(t)).sort();
 }
 
 export function renderRouteTemplates(templates) {
