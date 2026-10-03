@@ -38,6 +38,14 @@ vi.mock("@/server/db/tenant", () => ({
     },
   },
 }));
+vi.mock("@/server/integrations/redis", () => ({
+  // Live store: action 5 still pending; action 6 already decided (no record).
+  redis: {
+    eval: vi.fn(async (_s: string, keys: string[]) =>
+      keys[0]!.endsWith("5") ? "pending" : keys[0]!.endsWith("6") ? "confirmed" : "",
+    ),
+  },
+}));
 vi.mock("@/components/chat/conversation-list", () => ({ ConversationList: () => null }));
 vi.mock("@/components/chat/chat-view", () => ({
   ChatView: (props: never) => {
@@ -84,7 +92,7 @@ async function open() {
 }
 
 describe("conversation page: saved actions come back with their recorded outcome", () => {
-  it("done, canceled, failed, expired-unrecorded and pending; legacy messages have none", async () => {
+  it("done, canceled, failed, expired, pending, consumed-unrecorded, gone; legacy has none", async () => {
     m.messages = [
       { id: "u1", role: "USER", content: "Create a contact", citations: null, toolCalls: null },
       assistant("a1", [{ name: "createContact", ok: true, action: action(1) }]),
@@ -92,6 +100,8 @@ describe("conversation page: saved actions come back with their recorded outcome
       assistant("a3", [{ name: "createContact", ok: true, action: action(3) }]),
       assistant("a4", [{ name: "createContact", ok: true, action: action(4, Date.now() - 1) }]),
       assistant("a5", [{ name: "createContact", ok: true, action: action(5) }]),
+      assistant("a6", [{ name: "createContact", ok: true, action: action(6) }]),
+      assistant("a7", [{ name: "createContact", ok: true, action: action(7) }]),
       assistant("legacy", [{ name: "createContact", ok: true }]),
     ];
     m.auditRows = [
@@ -134,7 +144,9 @@ describe("conversation page: saved actions come back with their recorded outcome
     expect(state("a2")).toEqual(["canceled"]);
     expect(state("a3")).toEqual(["failed"]);
     expect(state("a4")).toEqual(["unavailable"]);
-    expect(state("a5")).toEqual(["pending"]);
+    expect(state("a5")).toEqual(["pending"]); // still pending in the live store: actionable
+    expect(state("a6")).toEqual(["unknown"]); // consumed without a record: never executable
+    expect(state("a7")).toEqual(["unavailable"]); // gone from the live store
     expect(state("legacy")).toBeUndefined();
     expect(state("u1")).toBeUndefined();
   });

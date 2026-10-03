@@ -70,6 +70,39 @@ redis.call("HSET", KEYS[1], "status", ARGV[5])
 return {1, redis.call("HGET", KEYS[1], "tool"), redis.call("HGET", KEYS[1], "input")}
 `;
 
+/**
+ * Read-only: the action's status for its owner. KEYS: action. ARGV: org,
+ * user, conversation. Returns "pending", "confirmed", "canceled", or "" (no
+ * such action for this user -- expired, never existed, or someone else's).
+ */
+export const ACTION_STATUS_SCRIPT = `
+local org = redis.call("HGET", KEYS[1], "org")
+if not org or org ~= ARGV[1] or redis.call("HGET", KEYS[1], "user") ~= ARGV[2]
+  or redis.call("HGET", KEYS[1], "conversation") ~= ARGV[3] then return "" end
+return redis.call("HGET", KEYS[1], "status") or ""
+`;
+
+/**
+ * Whether the action can still be decided ("pending"), was already decided
+ * ("decided"), or is gone ("missing"). Throws when the store can't be read
+ * (callers fail closed).
+ */
+export async function liveActionStatus(
+  redis: EvalClient,
+  owner: { orgId: string; userId: string },
+  conversationId: string,
+  actionId: string,
+): Promise<"pending" | "decided" | "missing"> {
+  const status = await redis.eval(
+    ACTION_STATUS_SCRIPT,
+    [actionKey(redis, actionId)],
+    [owner.orgId, owner.userId, conversationId],
+  );
+  if (status === "pending") return "pending";
+  if (status === "confirmed" || status === "canceled") return "decided";
+  return "missing";
+}
+
 /** Stable JSON (sorted keys) of a flat tool input, so equal inputs give equal digests. */
 function canonical(input: Record<string, unknown>): string {
   return JSON.stringify(

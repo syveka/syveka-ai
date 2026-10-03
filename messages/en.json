@@ -352,7 +352,8 @@
         "failed": "It couldn't be completed. Try again or do it manually.",
         "pending": "Waiting for your confirmation.",
         "submitting": "Confirming…",
-        "unavailable": "This request is no longer available. No result was recorded for it."
+        "unavailable": "This request is no longer available. No result was recorded for it.",
+        "unknown": "The result couldn't be confirmed. Check your records before asking again."
       }
     }
   },

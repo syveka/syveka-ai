@@ -30,9 +30,11 @@ vi.mock("@/server/services/audit", () => ({ audit: m.audit }));
 vi.mock("@/server/ai/rag", () => ({ retrieveChunks: vi.fn(async () => []) }));
 
 import {
+  ACTION_STATUS_SCRIPT,
   DECIDE_ACTION_SCRIPT,
   PROPOSE_ACTION_SCRIPT,
   decideToolAction,
+  liveActionStatus,
   proposeToolAction,
 } from "@/server/ai/tool-actions";
 import type { ToolIdentity } from "@/server/ai/tools";
@@ -55,6 +57,12 @@ function runScript(script: string, key: string, args: string[]): Reply {
       status: "pending",
     });
     return 1;
+  }
+  if (script === ACTION_STATUS_SCRIPT) {
+    const [org, user, conversation] = args;
+    const a = m.store.get(key);
+    if (!a || a.org !== org || a.user !== user || a.conversation !== conversation) return "";
+    return a.status!;
   }
   if (script === DECIDE_ACTION_SCRIPT) {
     const [org, user, conversation, digest, decision, now] = args;
@@ -195,5 +203,23 @@ describe("pending actions through the real Upstash client (staging transport)", 
       }),
     ).toEqual({ ok: false, reason: "invalid_action" });
     expect(m.contactCreate).not.toHaveBeenCalled();
+  });
+
+  it("the live status reads correctly through the Upstash client (strings survive deserialization)", async () => {
+    const { action } = await proposeToolAction(redis, me, CONV, "createContact", {
+      firstName: "QA",
+    });
+    expect(await liveActionStatus(redis, me, CONV, action!.id)).toBe("pending");
+    await decideToolAction(redis, me, {
+      id: action!.id,
+      conversationId: CONV,
+      digest: action!.digest,
+      decision: "cancel",
+    });
+    expect(await liveActionStatus(redis, me, CONV, action!.id)).toBe("decided");
+    expect(await liveActionStatus(redis, me, CONV, crypto.randomUUID())).toBe("missing");
+    expect(await liveActionStatus(redis, { ...me, orgId: "other" }, CONV, action!.id)).toBe(
+      "missing",
+    );
   });
 });

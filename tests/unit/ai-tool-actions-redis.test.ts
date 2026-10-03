@@ -1,6 +1,10 @@
 import net from "node:net";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { DECIDE_ACTION_SCRIPT, PROPOSE_ACTION_SCRIPT } from "@/server/ai/tool-actions";
+import {
+  ACTION_STATUS_SCRIPT,
+  DECIDE_ACTION_SCRIPT,
+  PROPOSE_ACTION_SCRIPT,
+} from "@/server/ai/tool-actions";
 
 /**
  * The pending-action Lua scripts against a REAL Redis server. Opt-in: runs
@@ -166,5 +170,24 @@ describe.skipIf(!URL_)("pending-action scripts on a real Redis server", () => {
     await propose(key, "d1", NOW + 10);
     expect(await decide(key, { now: NOW + 10 })).toEqual([-1]);
     expect(await decide(`${ns}:missing`)).toEqual([-1]);
+  });
+
+  it("the read-only status script: owner sees pending, then the decision; others see nothing; nothing changes", async () => {
+    const key = `${ns}:a6`;
+    await propose(key);
+    const status = (o: { org?: string; user?: string; conv?: string } = {}) =>
+      evalOn(pool[0]!, ACTION_STATUS_SCRIPT, key, [o.org ?? ORG, o.user ?? USER, o.conv ?? CONV]);
+    expect(await status()).toBe("pending");
+    expect(await status({ org: "org-b" })).toBe("");
+    expect(await status({ user: "user-2" })).toBe("");
+    expect(await status({ conv: "conv-2" })).toBe("");
+    const ttl = Number(await pool[0]!.cmd("TTL", key));
+    expect(await status()).toBe("pending"); // reading doesn't decide or extend it
+    expect(Number(await pool[0]!.cmd("TTL", key))).toBeLessThanOrEqual(ttl);
+    await decide(key);
+    expect(await status()).toBe("confirmed");
+    expect(await evalOn(pool[0]!, ACTION_STATUS_SCRIPT, `${ns}:missing`, [ORG, USER, CONV])).toBe(
+      "",
+    );
   });
 });

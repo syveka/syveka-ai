@@ -28,6 +28,8 @@ const m = vi.hoisted(() => ({
     createdAt: Date;
   }>,
   ctx: null as null | { orgId: string; userId: string; role: string },
+  /** Make the next audit write of this action name throw (a failed record). */
+  failAudit: null as null | string,
   store: new Map<string, Record<string, string>>(),
   now: Date.now(),
 }));
@@ -72,6 +74,10 @@ vi.mock("@/server/services/audit", () => ({
       ctx: { orgId: string },
       input: { action: string; resourceType: string; resourceId?: string; after?: unknown },
     ) => {
+      if (m.failAudit === input.action) {
+        m.failAudit = null;
+        throw new Error("audit store unavailable");
+      }
       m.auditRows.push({
         organizationId: ctx.orgId,
         action: input.action,
@@ -92,6 +98,7 @@ vi.mock("@/server/auth/session", () => ({
 }));
 
 import {
+  ACTION_STATUS_SCRIPT,
   DECIDE_ACTION_SCRIPT,
   PROPOSE_ACTION_SCRIPT,
   decideToolAction,
@@ -99,6 +106,7 @@ import {
   type EvalClient,
 } from "@/server/ai/tool-actions";
 import {
+  liveStatuses,
   recordedActionOutcomes,
   restoredState,
   savedActions,
@@ -121,6 +129,12 @@ const store: EvalClient = {
         status: "pending",
       });
       return 1;
+    }
+    if (script === ACTION_STATUS_SCRIPT) {
+      const [org, user, conversation] = args as string[];
+      const a = m.store.get(key);
+      if (!a || a.org !== org || a.user !== user || a.conversation !== conversation) return "";
+      return a.status;
     }
     if (script === DECIDE_ACTION_SCRIPT) {
       const [org, user, conversation, digest, decision, now] = args as string[];
@@ -156,7 +170,9 @@ beforeEach(() => {
   m.store.clear();
   m.auditRows = [];
   m.ctx = { orgId: ORG, userId: USER, role: "MEMBER" };
+  m.failAudit = null;
   m.contactCreate.mockResolvedValue({ id: "contact-1" });
+  vi.spyOn(console, "error").mockImplementation(() => {});
   vi.spyOn(console, "info").mockImplementation(() => {});
 });
 afterEach(cleanup);
@@ -183,15 +199,21 @@ const decide = (
     { params: Promise.resolve({ id: a.id }) },
   );
 
-/** Reopening: what the chat page builds for the card. */
-async function reopen(savedToolCalls: unknown, orgId = ORG, now = Date.now()) {
+/** Reopening: what the chat page builds for the card (with the live store). */
+async function reopen(
+  savedToolCalls: unknown,
+  orgId = ORG,
+  now = Date.now(),
+  liveStore: EvalClient = store,
+) {
   const actions = savedActions(savedToolCalls);
   const recorded = await recordedActionOutcomes(
     orgId,
     actions.map((a) => a.id),
   );
+  const live = await liveStatuses(liveStore, { orgId, userId: USER }, actions, recorded, now);
   return actions.map((a) => {
-    const state = restoredState(a, recorded, now);
+    const state = restoredState(a, recorded, now, live.get(a.id));
     return state === "pending" ? a : { ...a, restored: state };
   });
 }
@@ -241,14 +263,16 @@ describe("reopening a conversation shows the recorded outcome", () => {
     expect(m.contactCreate).not.toHaveBeenCalled();
   });
 
-  it("a failed execution is recorded and shown as failed (not done, not canceled), and can't run again", async () => {
+  it("an error while the tool ran is recorded and shown as unknown (not failed), and can't run again", async () => {
     m.contactCreate.mockRejectedValueOnce(new Error("db down"));
     const { action, savedToolCalls } = await proposeAndSave();
-    expect((await decide(action, "confirm")).status).toBe(500);
+    const res = await decide(action, "confirm");
+    expect(res.status).toBe(500);
+    expect((await res.json()).error.code).toBe("action_failed");
     const [restored] = await reopen(savedToolCalls);
-    expect(restored).toMatchObject({ restored: "failed" });
+    expect(restored).toMatchObject({ restored: "unknown" });
     showCard(restored!);
-    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.failed);
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.unknown);
     expect(confirmButton()).toBeNull();
     expect((await decide(action, "confirm")).status).toBe(409);
     expect(m.contactCreate).toHaveBeenCalledTimes(1);
@@ -331,5 +355,104 @@ describe("tenant isolation and legacy data", () => {
     m.contactCreate.mockClear();
     const [restored] = await reopen(savedToolCalls, ORG, Date.now() + 11 * 60_000);
     expect(restored).toMatchObject({ restored: "unavailable" });
+  });
+});
+
+describe("a successful write whose result couldn't be recorded", () => {
+  it("contact created, outcome record fails: the response still says done; reopen shows unknown; never runs again", async () => {
+    const { action, savedToolCalls } = await proposeAndSave("QA Unrecorded");
+    m.failAudit = "ai_action.confirm";
+    const res = await decide(action, "confirm");
+    expect(res.status).toBe(200); // the write happened: never reported as failed
+    expect((await res.json()).data).toMatchObject({ status: "done" });
+    expect(m.contactCreate).toHaveBeenCalledTimes(1);
+    expect(m.auditRows.filter((r) => r.resourceId === action.id)).toHaveLength(0);
+    // Logged without content.
+    const logged = JSON.stringify(vi.mocked(console.error).mock.calls);
+    expect(logged).toContain("ai_tool_action_audit_failed");
+    expect(logged).not.toContain("QA Unrecorded");
+
+    // Reopened while the live store still holds it: decided, no record -> unknown.
+    const [soon] = await reopen(savedToolCalls);
+    expect(soon).toMatchObject({ restored: "unknown" });
+    showCard(soon!);
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.unknown);
+    expect(confirmButton()).toBeNull();
+    // Reopened after expiry: still no claim either way.
+    const [later] = await reopen(savedToolCalls, ORG, Date.now() + 11 * 60_000);
+    expect(later).toMatchObject({ restored: "unavailable" });
+    // A retry can't run it again.
+    expect((await decide(action, "confirm")).status).toBe(409);
+    expect(m.contactCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("contact created, the tool's own audit then fails: shown and recorded as unknown, not failed", async () => {
+    const { action, savedToolCalls } = await proposeAndSave("QA Tool Audit");
+    m.failAudit = "contact.create"; // after the row was created
+    const res = await decide(action, "confirm");
+    expect(res.status).toBe(500);
+    expect((await res.json()).error.code).toBe("action_failed");
+    expect(m.contactCreate).toHaveBeenCalledTimes(1);
+    expect(m.auditRows.find((r) => r.resourceId === action.id)?.after).toMatchObject({
+      outcome: "unknown",
+    });
+    expect((await reopen(savedToolCalls))[0]).toMatchObject({ restored: "unknown" });
+    expect((await decide(action, "confirm")).status).toBe(409);
+    expect(m.contactCreate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("reopened actions without a record: only a live pending action is actionable", () => {
+  it("still pending in the live store and unexpired: Confirm/Cancel stay, and Confirm runs once", async () => {
+    const { action, savedToolCalls } = await proposeAndSave();
+    const [restored] = await reopen(savedToolCalls);
+    expect(restored).not.toHaveProperty("restored");
+    showCard(restored!);
+    expect(confirmButton()).not.toBeNull();
+    expect(screen.getByRole("button", { name: en.chat.actions.cancel })).toBeTruthy();
+    expect((await decide(action, "confirm")).status).toBe(200);
+    expect((await decide(action, "confirm")).status).toBe(409);
+    expect(m.contactCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("consumed in the live store without a record: unknown, not executable", async () => {
+    const { action, savedToolCalls } = await proposeAndSave();
+    m.store.get(`ai:action:${action.id}`)!.status = "confirmed";
+    const [restored] = await reopen(savedToolCalls);
+    expect(restored).toMatchObject({ restored: "unknown" });
+    showCard(restored!);
+    expect(confirmButton()).toBeNull();
+  });
+
+  it("gone from the live store before expiry: no result recorded, not executable", async () => {
+    const { action, savedToolCalls } = await proposeAndSave();
+    m.store.delete(`ai:action:${action.id}`);
+    expect((await reopen(savedToolCalls))[0]).toMatchObject({ restored: "unavailable" });
+  });
+
+  it("the live store can't be read: fails closed (unknown, not executable)", async () => {
+    const { savedToolCalls } = await proposeAndSave();
+    const down: EvalClient = {
+      eval: async () => {
+        throw new Error("ECONNREFUSED");
+      },
+    };
+    const [restored] = await reopen(savedToolCalls, ORG, Date.now(), down);
+    expect(restored).toMatchObject({ restored: "unknown" });
+  });
+
+  it("another user's live action is never offered (owner-scoped read)", async () => {
+    const { action, savedToolCalls } = await proposeAndSave();
+    const actions = savedActions(savedToolCalls);
+    const live = await liveStatuses(
+      store,
+      { orgId: ORG, userId: "33333333-3333-4333-8333-333333333333" },
+      actions,
+      new Map(),
+    );
+    expect(live.get(action.id)).toBe("missing");
+    expect(restoredState(actions[0]!, new Map(), Date.now(), live.get(action.id))).toBe(
+      "unavailable",
+    );
   });
 });

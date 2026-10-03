@@ -352,7 +352,8 @@
         "failed": "Toimintoa ei voitu suorittaa. Yritä uudelleen tai tee se itse.",
         "pending": "Odottaa vahvistustasi.",
         "submitting": "Vahvistetaan…",
-        "unavailable": "Tämä pyyntö ei ole enää käytettävissä. Sille ei tallentunut tulosta."
+        "unavailable": "Tämä pyyntö ei ole enää käytettävissä. Sille ei tallentunut tulosta.",
+        "unknown": "Tulosta ei voitu vahvistaa. Tarkista tiedot ennen kuin pyydät uudelleen."
       }
     }
   },

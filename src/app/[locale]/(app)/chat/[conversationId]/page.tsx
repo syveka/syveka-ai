@@ -2,10 +2,12 @@ export const dynamic = "force-dynamic";
 
 import { notFound } from "next/navigation";
 import {
+  liveStatuses,
   recordedActionOutcomes,
   restoredState,
   savedActions,
 } from "@/server/ai/tool-action-history";
+import { redis } from "@/server/integrations/redis";
 import { requirePermission } from "@/server/auth/guard";
 import { listConversations, getConversationWithMessages } from "@/server/services/conversations";
 import { ConversationList } from "@/components/chat/conversation-list";
@@ -36,16 +38,19 @@ export default async function ConversationPage({
       m.role === "ASSISTANT" ? savedActions(m.toolCalls) : [],
     ]),
   );
+  const allSaved = [...saved.values()].flat();
   const recorded = await recordedActionOutcomes(
     ctx.orgId,
-    [...saved.values()].flat().map((a) => a.id),
+    allSaved.map((a) => a.id),
   );
   const now = Date.now();
+  // Only an action the live store still holds as pending is offered again.
+  const live = await liveStatuses(redis, ctx, allSaved, recorded, now);
   const initialMessages: UiMessage[] = conversation.messages
     .filter((m) => m.role === "USER" || m.role === "ASSISTANT")
     .map((m) => {
       const actions = (saved.get(m.id) ?? []).map((action) => {
-        const state = restoredState(action, recorded, now);
+        const state = restoredState(action, recorded, now, live.get(action.id));
         return state === "pending" ? action : { ...action, restored: state };
       });
       return {

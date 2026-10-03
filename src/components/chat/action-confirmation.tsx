@@ -16,12 +16,18 @@ type State =
   | "alreadyDecided"
   | "permission"
   | "failed"
+  | "unknown"
   | "unavailable";
 
 const REFUSAL_STATE: Record<string, State> = {
   not_found: "expired",
   already_decided: "alreadyDecided",
   mismatch: "failed",
+  // The tool ran into an error after the action was consumed: its write may
+  // or may not have happened -- never claim it failed.
+  action_failed: "unknown",
+  // The action store couldn't be reached: the tool only runs after it answers.
+  service_unavailable: "failed",
   permission_denied: "permission",
 };
 
@@ -113,11 +119,12 @@ export function ActionConfirmation({
             : body.data.status === "not_done"
               ? "slotTaken"
               : "done"
-          : (REFUSAL_STATE[body?.error?.code ?? ""] ?? "failed");
+          : (REFUSAL_STATE[body?.error?.code ?? ""] ?? (res.status >= 500 ? "unknown" : "failed"));
       setState(next);
       if (SETTLED.has(next)) onSettled?.(action.id);
     } catch {
-      setState("failed");
+      // No answer: the server may or may not have run it.
+      setState("unknown");
     }
   };
 
