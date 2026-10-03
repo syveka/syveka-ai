@@ -20,6 +20,7 @@ import { DealTasks } from "@/components/crm/deal-tasks";
 import { EntityActions } from "@/components/crm/entity-actions";
 import { NoteComposer } from "@/components/crm/note-composer";
 import { formatCents, formatDate } from "@/lib/utils";
+import { stageLabel } from "@/lib/crm/stage-labels";
 import { Link } from "@/i18n/routing";
 import { EntityMeetings } from "@/components/calendar/entity-meetings";
 
@@ -27,6 +28,8 @@ export default async function DealDetailPage({ params }: { params: Promise<{ dea
   const { dealId } = await params;
   const ctx = await requirePermission("crm:read");
   const t = await getTranslations("crm");
+  const stageName = (s: { name: string; order: number; isWon: boolean; isLost: boolean }) =>
+    stageLabel(s, (key) => t(`defaultStages.${key}`));
   const locale = await getLocale();
   const canWrite = can(ctx.role, "crm:write");
   const canDelete = can(ctx.role, "crm:delete");
@@ -65,7 +68,7 @@ export default async function DealDetailPage({ params }: { params: Promise<{ dea
             ) : null}
           </div>
           <p className="text-sm text-muted-foreground">
-            {formatCents(deal.valueCents, locale, deal.currency)} · {deal.stage.name} ·{" "}
+            {formatCents(deal.valueCents, locale, deal.currency)} · {stageName(deal.stage)} ·{" "}
             {probability}%
           </p>
         </div>
@@ -73,7 +76,7 @@ export default async function DealDetailPage({ params }: { params: Promise<{ dea
           {canWrite ? (
             <DealDialog
               mode="edit"
-              stages={deal.pipeline.stages.map((s) => ({ id: s.id, name: s.name }))}
+              stages={deal.pipeline.stages.map((s) => ({ id: s.id, name: stageName(s) }))}
               contacts={contacts}
               companies={companies}
               owners={owners}
@@ -117,7 +120,7 @@ export default async function DealDetailPage({ params }: { params: Promise<{ dea
                 label={t("dealFields.forecast")}
                 value={formatCents(forecast, locale, deal.currency)}
               />
-              <InfoRow label={t("dealFields.stage")} value={deal.stage.name} />
+              <InfoRow label={t("dealFields.stage")} value={stageName(deal.stage)} />
               <InfoRow label={t("dealFields.owner")} value={ownerName} />
               <div className="flex justify-between gap-4">
                 <span className="text-muted-foreground">{t("fields.contact")}</span>

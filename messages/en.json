@@ -505,7 +505,15 @@
     "lostBadge": "Lost",
     "closedLabel": "Closed",
     "generateInsights": "AI insights",
-    "generatingInsights": "Analyzing…"
+    "generatingInsights": "Analyzing…",
+    "defaultStages": {
+      "newLead": "New lead",
+      "contacted": "Contacted",
+      "proposal": "Proposal",
+      "negotiation": "Negotiation",
+      "won": "Won",
+      "lost": "Lost"
+    }
   },
   "voice": {
     "title": "Voice AI",

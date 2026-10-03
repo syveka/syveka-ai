@@ -36,6 +36,7 @@ export async function getSalesAnalytics(ctx: TenantContext) {
 
   const funnel = (pipeline?.stages ?? []).map((s) => ({
     stage: s.name,
+    order: s.order,
     isWon: s.isWon,
     isLost: s.isLost,
     count: s.deals.length,

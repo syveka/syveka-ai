@@ -39,9 +39,9 @@ export function FunnelChart({
     <div className="space-y-2">
       {data.map((d) => (
         <div key={d.stage}>
-          <div className="mb-0.5 flex justify-between text-sm">
-            <span>{d.stage}</span>
-            <span className="text-muted-foreground">
+          <div className="mb-0.5 flex justify-between gap-3 text-sm">
+            <span className="min-w-0 break-words">{d.stage}</span>
+            <span className="shrink-0 whitespace-nowrap text-muted-foreground">
               {d.count} · {d.value}
             </span>
           </div>
