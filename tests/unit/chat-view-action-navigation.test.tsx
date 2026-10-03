@@ -18,10 +18,12 @@ const nav = vi.hoisted(() => ({ replace: vi.fn(), refresh: vi.fn() }));
 vi.mock("@/i18n/routing", () => ({
   useRouter: () => ({ replace: nav.replace, refresh: nav.refresh, push: vi.fn() }),
 }));
+/** Whether a live voice session is running (switched by the live-voice tests). */
+const live = vi.hoisted(() => ({ active: false }));
 vi.mock("@/hooks/use-voice-conversation", () => ({
   useVoiceConversation: () => ({
-    phase: "idle",
-    active: false,
+    phase: live.active ? "listening" : "idle",
+    active: live.active,
     error: null,
     notice: null,
     muted: false,
@@ -63,6 +65,7 @@ beforeEach(() => {
   Element.prototype.scrollIntoView = vi.fn();
   nav.replace.mockClear();
   nav.refresh.mockClear();
+  live.active = false;
   withAction = true;
   decisions = 0;
   writes = 0;
@@ -229,6 +232,45 @@ describe("races and multiple actions", () => {
     });
     expect(nav.replace).toHaveBeenCalledTimes(1);
     expect(nav.refresh).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("interaction with live voice's navigation deferral", () => {
+  /** Re-renders the same new-chat view after switching the live session on or off. */
+  const setLive = (view: ReturnType<typeof renderChat>, active: boolean) => {
+    live.active = active;
+    view.rerender(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <ChatView initialMessages={[]} />
+      </NextIntlClientProvider>,
+    );
+  };
+
+  it("ending live voice doesn't redirect while an action is still pending", async () => {
+    const view = renderChat();
+    await sendFirstMessage();
+    setLive(view, true);
+    setLive(view, false); // live ended: its flush must not bypass the pending card
+    expect(card()).not.toBeNull();
+    expect(nav.replace).not.toHaveBeenCalled();
+    expect(nav.refresh).not.toHaveBeenCalled();
+    await click(en.chat.actions.cancel); // then settling it redirects once
+    expect(nav.replace).toHaveBeenCalledTimes(1);
+    expect(nav.replace).toHaveBeenCalledWith(`/chat/${NEW_CHAT}`);
+  });
+
+  it("settling the last pending action during live voice waits for voice to end, then redirects once", async () => {
+    const view = renderChat();
+    await sendFirstMessage();
+    setLive(view, true);
+    await click(en.chat.actions.cancel);
+    expect(nav.replace).not.toHaveBeenCalled(); // settled, but the live session holds it
+    setLive(view, false);
+    expect(nav.replace).toHaveBeenCalledTimes(1);
+    expect(nav.replace).toHaveBeenCalledWith(`/chat/${NEW_CHAT}`);
+    expect(nav.refresh).toHaveBeenCalledTimes(1);
+    setLive(view, false); // further renders never redirect again
+    expect(nav.replace).toHaveBeenCalledTimes(1);
   });
 });
 
