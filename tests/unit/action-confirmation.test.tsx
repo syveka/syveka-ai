@@ -95,7 +95,10 @@ describe("ActionConfirmation", () => {
     [404, { error: { code: "not_found" } }, "confirm", "expired"],
     [409, { error: { code: "already_decided" } }, "confirm", "alreadyDecided"],
     [403, { error: { code: "permission_denied" } }, "confirm", "permission"],
-    [500, { error: { code: "action_failed" } }, "confirm", "failed"],
+    // An error while the tool ran may come after its write: never "failed".
+    [500, { error: { code: "action_failed" } }, "confirm", "unknown"],
+    [503, { error: { code: "service_unavailable" } }, "confirm", "failed"],
+    [500, { notJson: true }, "confirm", "unknown"],
   ])("%s %j → %s shows '%s'", async (status, body, button, state) => {
     response = { status, body };
     show();
@@ -144,6 +147,16 @@ describe("ActionConfirmation", () => {
     );
     expect(document.body.textContent).toContain(fi.chat.actions.content);
     expect(screen.getByTestId("action-content").textContent).toBe("Rivi 1\nRivi 2");
+  });
+
+  it("no answer to Confirm (network loss) shows an unknown outcome, never 'failed'", async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    show();
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.chat.actions.confirm }));
+    });
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.unknown);
+    expect(screen.queryByRole("button", { name: en.chat.actions.confirm })).toBeNull();
   });
 
   it("an already expired proposal can't be confirmed", () => {

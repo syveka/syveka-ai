@@ -17,6 +17,18 @@ function error(code: string, status: number) {
   return NextResponse.json({ error: { code } }, { status });
 }
 
+/**
+ * Refusals that happen after the action was marked decided (see
+ * decideToolAction), with the outcome to record: permission and an invalid
+ * stored action are refused before the tool runs ("failed": nothing was
+ * done); an error while the tool ran may come after its write ("unknown").
+ */
+const CONSUMED_FAILURES: Record<string, "failed" | "unknown"> = {
+  permission_denied: "failed",
+  invalid_action: "failed",
+  action_failed: "unknown",
+};
+
 const REFUSALS = {
   not_found: 404,
   already_decided: 409,
@@ -45,6 +57,28 @@ export async function POST(
       import("@/server/ai/tool-actions"),
       import("@/server/services/audit"),
     ]);
+  /**
+   * Records the decision. Never changes the response: the action has already
+   * run (or not), and reporting a recording failure as an action failure
+   * would be false. A missing record shows as "unknown" when reopened.
+   */
+  const record = async (
+    owner: { orgId: string; userId: string },
+    input: Parameters<typeof audit>[1],
+  ) => {
+    try {
+      await audit(owner, input);
+    } catch (e) {
+      console.error(
+        JSON.stringify({
+          event: "ai_tool_action_audit_failed",
+          actionId: input.resourceId,
+          name: e instanceof Error ? e.name : "unknown",
+        }),
+      );
+    }
+  };
+
   let ctx;
   try {
     ctx = await getTenantContext();
@@ -77,9 +111,26 @@ export async function POST(
     );
     return error("service_unavailable", 503);
   }
-  if (!outcome.ok) return error(outcome.reason, REFUSALS[outcome.reason]);
+  if (!outcome.ok) {
+    // These happen after the action was marked decided (it can't run again):
+    // record them, so a reopened conversation shows "failed", not "unknown".
+    const recorded = CONSUMED_FAILURES[outcome.reason];
+    if (recorded) {
+      await record(
+        { orgId: ctx.orgId, userId: ctx.userId },
+        {
+          action: "ai_action.confirm",
+          resourceType: "ai_action",
+          resourceId: id,
+          actorType: "user",
+          after: { outcome: recorded, reason: outcome.reason },
+        },
+      );
+    }
+    return error(outcome.reason, REFUSALS[outcome.reason]);
+  }
 
-  await audit(
+  await record(
     { orgId: ctx.orgId, userId: ctx.userId },
     {
       action: outcome.status === "canceled" ? "ai_action.cancel" : "ai_action.confirm",

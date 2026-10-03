@@ -551,3 +551,56 @@ describe("typed chat: write tools need the user's confirmation (server-enforced)
     expect(toolResults[0]).toContain("not_available_in_voice_conversation");
   });
 });
+
+describe("typed chat: a proposed write is saved with the reply (for reopening)", () => {
+  it("the reply's tool log keeps the action view; reads keep the plain entry", async () => {
+    const { unscopedPrisma } = await import("@/server/db/tenant");
+    vi.mocked(unscopedPrisma.message.create).mockClear();
+    await (await chat({ message: "Varaa demo huomiseksi ja lisää Maija" })).text();
+    const saved = vi
+      .mocked(unscopedPrisma.message.create)
+      .mock.calls.map((c) => (c[0] as { data: { role: string; toolCalls?: unknown } }).data)
+      .find((d) => d.role === "ASSISTANT");
+    const log = saved?.toolCalls as Array<{
+      name: string;
+      ok: boolean;
+      action?: { id: string; tool: string };
+    }>;
+    expect(log.map((e) => [e.name, e.ok, e.action?.tool])).toEqual([
+      ["bookMeeting", true, "bookMeeting"],
+      ["createContact", true, "createContact"],
+    ]);
+    expect(log[0]!.action!.id).toMatch(/^[0-9a-f-]{36}$/);
+  });
+
+  it("live voice turns save no action (writes are refused there)", async () => {
+    const { unscopedPrisma } = await import("@/server/db/tenant");
+    vi.mocked(unscopedPrisma.message.create).mockClear();
+    await (await chat({ message: "Varaa tapaaminen", voiceGrant: GRANT })).text();
+    const saved = vi
+      .mocked(unscopedPrisma.message.create)
+      .mock.calls.map((c) => (c[0] as { data: { role: string; toolCalls?: unknown } }).data)
+      .find((d) => d.role === "ASSISTANT");
+    const log = (saved?.toolCalls ?? []) as Array<{ action?: unknown }>;
+    expect(log.some((e) => e.action)).toBe(false);
+  });
+});
+
+describe("typed chat: stream order of a proposed write", () => {
+  it("the action event always reaches the client before any reply text", async () => {
+    mocks.streamClaude.mockImplementation(async ({ callbacks }) => {
+      callbacks.onText("Selvä, ");
+      toolResults.push(await callbacks.onToolUse("createContact", { firstName: "QA Order" }));
+      callbacks.onText("vahvista alla.");
+      return { tokensIn: 10, tokensOut: 5, stopReason: "end_turn" };
+    });
+    const body = await (await chat({ message: "Lisää QA Order" })).text();
+    const types = body
+      .split("\n\n")
+      .filter((f) => f.startsWith("data: "))
+      .map((f) => (JSON.parse(f.slice(6)) as { type: string }).type);
+    expect(types).toContain("action");
+    // Text is held until output moderation passes, so it can't precede the card.
+    expect(types.indexOf("action")).toBeLessThan(types.indexOf("text"));
+  });
+});

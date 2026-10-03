@@ -1,6 +1,10 @@
 import { NextResponse } from "next/server";
 import { describeAiChatStreamError } from "@/server/ai/stream-error-log";
-import { chatRequestSchema, type ChatStreamEvent } from "@/lib/validators/chat";
+import {
+  chatRequestSchema,
+  type ChatStreamEvent,
+  type ProposedActionView,
+} from "@/lib/validators/chat";
 import type { RetrievedChunk } from "@/server/ai/rag";
 import type { ToolIdentity } from "@/server/ai/tools";
 import type { EvalClient } from "@/server/ai/voice-conversation";
@@ -371,7 +375,9 @@ export async function POST(request: Request): Promise<Response> {
           }),
         ]).catch(() => {});
       };
-      const toolCallLog: Array<{ name: string; ok: boolean }> = [];
+      // Saved with the reply. A proposed write keeps its action view, so a
+      // reopened conversation can show it with its recorded outcome.
+      const toolCallLog: Array<{ name: string; ok: boolean; action?: ProposedActionView }> = [];
       const assistantMessageId = crypto.randomUUID();
 
       send({ type: "meta", conversationId: conversation.id, messageId: assistantMessageId });
@@ -408,7 +414,11 @@ export async function POST(request: Request): Promise<Response> {
                   toolInput,
                 );
                 if (proposal.action) send({ type: "action", action: proposal.action });
-                toolCallLog.push({ name, ok: proposal.action !== null });
+                toolCallLog.push(
+                  proposal.action
+                    ? { name, ok: true, action: proposal.action }
+                    : { name, ok: false },
+                );
                 send({ type: "tool", name, status: "done" });
                 return proposal.modelResult;
               }
