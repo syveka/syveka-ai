@@ -248,6 +248,9 @@ function createFakeDb() {
     contact: { findFirst: vi.fn(async () => ({ id: "contact-1" })) },
     activity: { create: vi.fn(async () => ({})) },
     notification: { create: vi.fn(async () => ({})) },
+    // Recipients are current members (membership itself is covered by
+    // run-workflow-recipient-membership.test.ts).
+    organizationMember: { findFirst: vi.fn(async () => ({ id: "member-1" })) },
   };
 }
 

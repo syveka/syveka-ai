@@ -61,6 +61,9 @@ vi.mock("@/server/db/tenant", () => ({
     contact: { findFirst: mocks.contactFindFirst },
     activity: { create: mocks.activityCreate },
     notification: { create: mocks.notificationCreate },
+    // Recipients are current members (membership itself is covered by
+    // run-workflow-recipient-membership.test.ts).
+    organizationMember: { findFirst: vi.fn(async () => ({ id: "member-1" })) },
     // DB-local steps (crm.create_activity/notify.member) run their side
     // effect + step-completion update in one transaction; the same mocked
     // methods work fine as the `tx` client here since none of these tests
@@ -70,6 +73,7 @@ vi.mock("@/server/db/tenant", () => ({
       fn({
         activity: { create: mocks.activityCreate },
         notification: { create: mocks.notificationCreate },
+        organizationMember: { findFirst: vi.fn(async () => ({ id: "member-1" })) },
         workflowStepExecution: {
           update: mocks.stepExecUpdate,
           updateMany: mocks.stepExecUpdateMany,
