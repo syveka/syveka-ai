@@ -281,3 +281,100 @@ actually prevented it: `bookMeeting` now calls
 `tx.contact.findFirstOrThrow({ where: { id: input.contactId, organizationId: id.orgId } })`
 inside its transaction before attaching a supplied `contactId`, matching `logActivity`'s pattern.
 Covered by `tests/unit/ai-tools-book-meeting.test.ts`.
+
+### Addendum (2026-10-04): #73 residual findings, triaged on `main` at `63f8559`
+
+#73 stays open. This is a triage of its two documented residual risks on current `main`, made by
+reading code only. No product code was changed, and nothing ran against live data.
+
+#### Resolved separately: notification recipients rechecked at execution (#227)
+
+`src/app/api/v1/jobs/run-workflow/route.ts` (`isCurrentMember`, merged in `63f8559`) handles two
+notifications:
+
+- **`notify.member`:** written only if the recipient is a current member of the workflow's
+  organization, and that organization isn't soft-deleted. The check runs inside the step's
+  transaction, right before the write.
+- **`workflow.failed`:** written only while the creator is still a member.
+
+Covered by `tests/unit/run-workflow-recipient-membership.test.ts`. Retry and idempotency behavior is
+unchanged. This closes #73's run-time recipient item. **It doesn't cover the two findings below.**
+
+#### R1. Calendar OAuth: membership checked before the token exchange, not again before persisting
+
+- **Present on current `main`:** yes, with a wider window than #73 describes.
+  `completeConnection` (`src/server/services/calendar-connections.ts`) checks membership once,
+  with `integrations:manage` and an active organization. The sequence is:
+  1. that single membership check;
+  2. `adapter.exchangeCode()`, a network round-trip to the provider;
+  3. an unconditional `calendarConnection.upsert`;
+  4. `externalCalendar` upserts.
+     There's no second check, so the race spans the provider round-trip, not a few milliseconds.
+- **Impact:** a user removed or downgraded during that window still gets a connection persisted
+  for the organization. The same end state also arises **without** any race, because `removeMember`
+  (`src/server/services/members.ts`) deletes only the membership row.
+  - **Connections outlive membership:** `calendar_connections.user_id` has no FK, so a removed
+    member's connection stays.
+  - **Sync keeps running:** `jobs/calendar-sync` iterates every `syncEnabled` external calendar and
+    checks only that the organization isn't deleted. The removed user's calendar keeps syncing into
+    the organization, and their tokens stay stored.
+- **Existing protections:**
+  - The HMAC-signed `state` binds the org, user and provider, and expires after 10 minutes.
+  - Tokens are encrypted at rest.
+  - Soft-deleted organizations are excluded from both the callback and sync.
+- **Evidence limits:** this is from reading code. I haven't measured how often a membership is
+  removed during an OAuth flow, and I didn't inspect production for orphaned connections.
+- **Smallest fix:**
+  1. **Recheck before persisting.** After `exchangeCode`, run the membership check and the
+     connection upsert in one transaction, re-reading the membership row. If it's gone, discard the
+     tokens and make a best-effort revoke at the provider.
+  2. **Clean up on removal.** In `removeMember`, delete (or mark `REVOKED`) the removed user's
+     `calendar_connections` for that organization, in the same transaction.
+- **Acceptance tests:**
+  - A member removed between the exchange and persisting gets no connection, and the error is
+    `membership_revoked`.
+  - A downgraded member is refused the same way.
+  - The valid-member path still persists the connection and calendars.
+  - `removeMember` leaves no connection for the removed user, and sync then skips their calendars.
+  - Another organization's connections are untouched.
+
+#### R2. Queued non-workflow jobs still run after an organization is soft-deleted
+
+- **Present on current `main`:** yes. Jobs queued before `organizations.deleted_at` is set run
+  without checking it, and so do jobs enqueued afterwards by schedules:
+
+  | Job                                           | Lookup it uses                      | Effect for a deleted organization                              |
+  | --------------------------------------------- | ----------------------------------- | -------------------------------------------------------------- |
+  | `publish-creator-post` (`publishCreatorPost`) | `creatorPost` by id + org           | **Publishes to Meta**                                          |
+  | `send-reminder`                               | `reminder` by id, `SCHEDULED`       | **Emails booking attendees**                                   |
+  | `embed-document`                              | `document` by id + org, not deleted | **Paid embedding call**                                        |
+  | `post-call`                                   | `voiceCall` by Vapi call id + org   | **Paid AI summary**, contact writes                            |
+  | `reconcile-creator-generations`               | stale generations                   | Provider polling and credit release (low impact)               |
+  | `calendar-sync`                               | external calendars                  | **Protected**: the sync service excludes deleted organizations |
+  | `run-workflow`                                | workflow by id + org                | Steps still run. Notifications are suppressed by #227          |
+
+- **Impact:** after an organization asks to be deleted, external side effects can still happen
+  during the 30-day grace period: published posts, emails to third parties, and paid provider
+  calls. Deleting the organization takes a manual SQL `UPDATE` today (no UI or action exists), so
+  how often this happens depends on that operator procedure.
+- **Existing protections:**
+  - Provider ingress for deleted organizations is blocked (Vapi, inbox and calendar webhooks).
+  - Sign-in excludes deleted organizations.
+  - `calendar-sync` is guarded.
+  - QStash signatures are verified on every job.
+- **Evidence limits:** I didn't check the production queue state, and the per-job lookups above are
+  from reading code.
+- **Smallest fix:**
+  1. **Shared guard:** add `isOrganizationActive(orgId)`, reading `organizations.deleted_at` with
+     `unscopedPrisma`.
+  2. **Call it** at the start of `publish-creator-post`, `send-reminder`, `embed-document` and
+     `post-call` (resolving the org from the reminder's event for `send-reminder`).
+  3. **Return** `200 { skipped: "organization_deleted" }`, so QStash doesn't retry.
+  4. **Operational step:** stop scheduled side effects before the soft delete
+     (`docs/release-runbook.md` § "Data export and deletion requests", step 5.1).
+- **Acceptance tests (per job):**
+  - An active organization behaves exactly as before.
+  - A soft-deleted organization causes no provider call, no email and no publish, and returns a
+    200 skip.
+  - A missing organization is skipped the same way.
+  - Retry behavior is unchanged for active organizations: a transient failure still returns 500.

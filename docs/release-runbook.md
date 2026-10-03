@@ -186,7 +186,8 @@ and assertion SQL; tracked Prisma migrations remain one-time operations.
 ## Production preflight and backup
 
 Production requires a verified backup before approving the GitHub `production`
-Environment:
+Environment (current evidence status: `docs/CI-PRODUCTION-READINESS.md`, addendum
+2026-10-04):
 
 - Confirm Supabase PITR is enabled and the recovery window covers the release.
 - Create an on-demand logical backup using an approved encrypted destination.
@@ -327,3 +328,196 @@ Restore the database only for confirmed destructive/corrupting changes. That
 requires incident/change approval, a maintenance window, stopping application
 writes, restoring into an isolated project first, validating tenant/RLS
 invariants, and then following the organization's audited recovery procedure.
+
+## Data export and deletion requests (manual runbook)
+
+Status as of 2026-10-04: **operational preparation, not a compliance statement.**
+
+- **No export or deletion tooling exists in the app.** There's no export route or action, and no
+  UI or Server Action that deletes an organization or a user account.
+- **Every request is handled manually**, by an approved operator, under owner approval.
+- **Legal review is separate.** It covers which data must be exported or deleted, and which retention
+  exceptions apply; this runbook doesn't decide either.
+
+Placeholders used below: `<REQUEST_ID>`, `<ORG_ID>`, `<USER_ID>`, `<CONTACT_ID>`, `<REQUESTER_EMAIL>`,
+`<APPROVER>`. Never paste real values or customer content into the repository, PRs or issues.
+
+### 1. Intake and identity/authority verification
+
+1. **Log the request** in the private change record as `<REQUEST_ID>`. Record:
+   - the date received and the channel;
+   - the request type (export, deletion or both);
+   - the scope (individual user, CRM contact, or whole organization);
+   - the response deadline.
+2. **Verify identity out-of-band.** Use a reply to the account's verified email address, or a
+   confirmation from a signed-in session. Never act on an unauthenticated email alone.
+3. **Verify authority:**
+   - **Organization-wide request:** the requester must be the organization's current `OWNER`. Check
+     `organization_members.role` for `<ORG_ID>` and `<USER_ID>` with a read-only query. `org:delete`
+     is reserved for `OWNER` in `src/server/auth/permissions.ts`.
+   - **A user's own account data:** the requester must be that user.
+   - **A CRM contact (a customer's customer):** Syveka acts for the customer organization. Forward
+     the request to that organization's owner, and act only on their documented instruction.
+4. **Get owner approval** (`<APPROVER>`) before any production read beyond counts, and before any
+   write. Record it in the change record.
+
+### 2. What is in scope
+
+| Scope        | Where the data is                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Organization | Every table with `organization_id` (51 models). All of them cascade from `organizations` except `stripe_webhook_events`, which has `organization_id` with no FK and keeps billing event ids and types after deletion. Storage objects under `<ORG_ID>/` in all five private buckets: `documents`, `voice-recordings`, `exports`, `creator-reference-assets`, `creator-generated-media` (`prisma/sql/004_storage.sql`). |
+| User account | `users`, plus Supabase Auth's `auth.users`. Deleting the Auth user does **not** remove `public.users`: there's no delete trigger, by design (`prisma/migrations/20260902000000_handle_new_user_email_reconciliation`). See the user-reference table below.                                                                                                                                                             |
+| CRM contact  | `contacts`. `activities` and contact tags cascade with it. `deals`, `inbox_threads` and `event_attendees` keep the record but set the contact to null. `calendar_events.contact_id` and `voice_calls.contact_id` have **no FK** and must be handled explicitly. Free text in notes, inbox messages, transcripts and documents may also mention the person; finding those needs a scoped search approved by the owner.  |
+
+**How references to a user behave on deletion:**
+
+| Behavior                                 | Columns                                                                                                                                                                                                                                                                                                                                |
+| ---------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Cascade                                  | `organization_members`, `notifications`, `document_upload_intents`                                                                                                                                                                                                                                                                     |
+| Set to null                              | `activities.user_id`, `inbox_threads.assigned_to`, `inbox_messages.approved_by`, `messages.user_id`, `audit_logs.actor_id`, `entitlement_grants` issuer/revoker                                                                                                                                                                        |
+| **Plain columns, no FK** (they'd dangle) | `conversations.user_id`, `calendar_connections.user_id`, `availability_schedules.user_id`, `calendar_events.created_by_id`, `event_attendees.user_id`, `workflows.created_by_id`, `prompts.created_by_id`, `creator_profiles.owner_user_id`, and the creator generation, campaign, post and credit-transaction `created_by_id` columns |
+
+### 3. Export (tenant-scoped)
+
+There's no export tool, so this is a manual procedure:
+
+1. Use an approved operator session with a **read-only** database role. Never use the
+   service-role key from a laptop.
+2. For an organization, export each table with `organization_id = '<ORG_ID>'`. Then export the child
+   tables that have no `organization_id` through their parent:
+   - `pipeline_stages`, `tags_on_contacts`, `inbox_messages`, `event_attendees`,
+     `availability_rules`, `availability_overrides` and `messages`.
+   - **Exclude secrets:** encrypted OAuth tokens (`calendar_connections.*_enc`, social account
+     tokens), API key hashes, webhook endpoint secrets, `booking_tokens`.
+3. For a user, export their `users` row and memberships. Add the rows that reference `<USER_ID>`
+   from the table above, limited to the organizations the request covers.
+4. **Storage:** download every object under `<ORG_ID>/` in the five buckets. Paths are nested, for
+   example `<ORG_ID>/<uuid>/<file>`, so list them recursively.
+5. **Package:** use machine-readable files (CSV or JSON per table) plus a manifest of table names,
+   row counts and SHA-256 hashes. Encrypt the archive with AES-256 (`age`, or 7-Zip AES-256).
+6. **Deliver** through an expiring link. Send the passphrase through a separate channel.
+   - **Never store the archive** in the repository, GitHub artifacts, the `exports` bucket without an
+     expiry, or unencrypted developer folders.
+   - **Delete operator copies** after delivery is confirmed. Record that deletion.
+7. **Record** row counts, the archive hash, the delivery time and the copy deletion. Don't record
+   content.
+
+### 4. Data held by integrated providers
+
+| Provider                     | Data                                                                                      | Action for export or deletion                                                                                                                                               |
+| ---------------------------- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Supabase                     | Database, Storage, Auth users, backups/PITR                                               | Sections 3 and 5. Backups expire on the provider's schedule; see section 6                                                                                                  |
+| Vercel                       | Runtime and build logs (may include request paths and ids)                                | Expire under the plan's log retention; no per-record deletion                                                                                                               |
+| Upstash Redis                | Short-lived keys: AI action proposals (10 min), rate limits, Vapi tool-call claims (24 h) | Expire automatically                                                                                                                                                        |
+| Upstash QStash               | Job payloads (ids, trigger data) until delivered; failed messages in the DLQ              | Purge the DLQ messages for `<ORG_ID>`                                                                                                                                       |
+| Anthropic, OpenAI            | Prompts, completions, transcription and embedding inputs                                  | No per-record deletion through this app. Retention follows each provider's current API terms; check them at request time                                                    |
+| Vapi                         | Assistants, call logs, recordings, transcripts                                            | `deactivateAssistant` deletes the assistant. Recordings and call logs need deletion in Vapi (API or dashboard), per call                                                    |
+| Resend                       | Sent and received email logs                                                              | Per Resend's retention; request deletion through Resend if required                                                                                                         |
+| Stripe                       | Customer, subscriptions, invoices, payment methods                                        | Cancel the subscription. Invoices and tax records are usually retained under accounting law (owner and legal decision). Delete the customer object only after that decision |
+| Google, Microsoft calendars  | Events the app synced or created in the user's own calendar                               | Revoke the OAuth grant (disconnect). Events in the user's external calendar remain theirs                                                                                   |
+| Meta (social accounts)       | Posts already published                                                                   | Delete on Meta per post; disconnecting doesn't unpublish                                                                                                                    |
+| fal.ai                       | Creator Studio generation inputs and outputs                                              | Per fal.ai's retention terms                                                                                                                                                |
+| Sentry (only once activated) | Scrubbed error events: no messages, no identity                                           | Per the Sentry project's retention; can be deleted per project or issue                                                                                                     |
+
+### 5. Deletion order
+
+**Organization-wide** (after owner approval and any export):
+
+1. **Stop new external side effects.** Do this first: the jobs below still act for a soft-deleted
+   organization (see `docs/SECURITY-AUDIT.md`, addendum 2026-10-04).
+   - Set every workflow to `is_active = false`.
+   - Deactivate voice assistants.
+   - Cancel `SCHEDULED` reminders and scheduled creator posts.
+   - Disconnect calendars (this revokes the tokens) and social accounts.
+2. **Billing:** cancel the Stripe subscription, and decide invoice retention (section 4).
+3. **Soft delete:** set `organizations.deleted_at = now()` for `<ORG_ID>`. There's no UI or action
+   for this; an approved operator runs a single reviewed `UPDATE`. Sign-in membership lookups,
+   provider ingress and #227's notification checks then treat the org as gone.
+4. **Grace period:** 30 days (the `gdpr-erasure` function enforces it).
+5. **Hard delete.** Don't rely on `supabase/functions/gdpr-erasure` as it is. It has these gaps:
+   - **Storage misses most files:** it lists only the top level of `<ORG_ID>/`, up to 1,000
+     entries, without recursing, so nested files such as `<ORG_ID>/<uuid>/<file>` aren't removed.
+   - **Two buckets missing:** it skips the two Creator Studio buckets.
+   - **No error checks:** it ignores errors from both storage removal and row deletion.
+   - **Stripe ignored:** it never acts on the Stripe customer it selects.
+   - **Deployment unknown:** whether it is deployed to production isn't recorded.
+
+   Until it is fixed in a reviewed PR, do this instead:
+   1. **Purge storage manually** with a recursive listing of all five buckets. Record object counts
+      before and after.
+   2. **Delete the organization row.** In one transaction, an approved operator deletes
+      `organizations` where `id = '<ORG_ID>'`. Foreign-key cascades remove the tenant rows.
+   3. **Decide** what to do with `stripe_webhook_events` rows for `<ORG_ID>`.
+
+6. **Users:**
+   - **Shared users:** a user who belongs to other organizations keeps their account. Only the
+     membership was removed, by the cascade.
+   - **Account deletion requests:** delete the account only when the user asked for it, and only
+     after section 5's individual steps.
+7. **Providers:** complete section 4's deletions, and record any provider ticket ids.
+
+**Individual user account:**
+
+1. **Transfer ownership.** If the user is an `OWNER` anywhere, ownership must be transferred
+   first. Owners can't be removed (`removeMember`).
+2. **Delete or reassign the user's references.** These are the plain columns with no FK, listed in
+   section 2:
+   - **Delete:** their conversations, calendar connections (revoke tokens first) and availability.
+   - **Reassign** workflows and prompts they created, or accept that the creator id dangles. After
+     #227, a creator who isn't a member receives no workflow notifications.
+3. **Remove memberships.** Notifications cascade on the user delete, and activities, messages and
+   audit entries keep the record with a null actor.
+4. **Delete the user.** Delete the `public.users` row, then the Supabase Auth user (Auth admin, by
+   an approved operator).
+
+**CRM contact (on the customer's instruction):** archiving a contact soft-deletes it. The retention
+job `jobs/usage-rollup` hard-deletes soft-deleted contacts, documents and conversations after 30
+days. **Whether its QStash schedule is registered in each environment is unverified**; this runbook
+documents schedules only for `calendar-sync` and `reconcile-creator-generations`. Without the
+schedule, nothing is purged. Also handle `calendar_events` and `voice_calls` rows that reference
+`<CONTACT_ID>`, since they have no FK, and any Vapi recordings of those calls.
+
+### 6. Retention exceptions and backups
+
+- **Retention exceptions** (owner and legal decision; record each one):
+  - billing and tax records at Stripe;
+  - legally required audit evidence;
+  - data under a legal hold.
+- **Backups:** PITR and backups keep deleted data until their retention window passes.
+  - Record when the deleted data will have aged out of backups.
+  - Never selectively restore deleted data.
+  - If a restore happens for another reason, re-apply the deletion register: the ids deleted under
+    each `<REQUEST_ID>`.
+
+### 7. Audit evidence
+
+`audit_logs` cascade away with the organization. Keep the evidence **outside** the database, in the
+private change record:
+
+- `<REQUEST_ID>`, the dates, the verification method, and `<APPROVER>`;
+- the scope and the operator;
+- row and object counts before and after (counts only);
+- the export archive hash and the copy deletion;
+- provider ticket ids and retention-exception decisions;
+- the backup age-out date.
+
+### 8. Tooling gaps and owner approvals
+
+**Gaps, each a separate reviewed change:**
+
+1. An export tool: per-tenant and per-user, read-only, producing an encrypted archive.
+2. A fixed `gdpr-erasure`: recursive storage purge across all five buckets, error checks, an
+   explicit Stripe decision, and a recorded deployment.
+3. A soft-delete action that first stops external side effects (section 5, step 1), and the job
+   guards in `docs/SECURITY-AUDIT.md`.
+4. User-account deletion that handles the plain user-id columns.
+5. A confirmed `usage-rollup` QStash schedule in each environment.
+
+**Needs owner approval every time:**
+
+- any production read beyond counts;
+- every write or delete;
+- Stripe customer deletion;
+- each retention exception;
+- each provider deletion request;
+- running or deploying `gdpr-erasure`.
