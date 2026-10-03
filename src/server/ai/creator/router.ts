@@ -29,6 +29,20 @@ function resolveMediaProviderName(): CreatorMediaProviderName {
   return isFalConfigured() ? "fal" : "mock";
 }
 
+/**
+ * True when production would serve mock media only because FAL_API_KEY is
+ * missing, rather than an operator deliberately pinning
+ * CREATOR_MEDIA_PROVIDER=mock. Mock generations still reserve credits, so
+ * generation must fail closed in that state instead of charging for fake media.
+ */
+export function isUnconfiguredMockInProduction(): boolean {
+  return (
+    process.env.NODE_ENV === "production" &&
+    process.env.CREATOR_MEDIA_PROVIDER !== "mock" &&
+    resolveMediaProviderName() === "mock"
+  );
+}
+
 export function getRoutedCreatorMediaProvider(): CreatorMediaProvider {
   const name = resolveMediaProviderName();
   if (!mediaProviderSingleton || resolvedProviderName !== name) {
