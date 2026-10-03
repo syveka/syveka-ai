@@ -180,6 +180,58 @@ describe("a new chat whose first reply proposes a write", () => {
   });
 });
 
+describe("races and multiple actions", () => {
+  it("leaving the chat while a decision is in flight never redirects back to it", async () => {
+    let resolveDecision!: (r: Response) => void;
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      if (String(url).startsWith("/api/v1/ai/actions/")) {
+        return new Promise<Response>((r) => (resolveDecision = r));
+      }
+      return base(url as string, init);
+    });
+    const view = renderChat();
+    await sendFirstMessage();
+    await click(en.chat.actions.confirm);
+    view.unmount(); // the user navigated elsewhere
+    await act(async () => {
+      resolveDecision(
+        new Response(JSON.stringify({ data: { status: "done", tool: "createContact" } })),
+      );
+    });
+    await act(async () => {});
+    expect(nav.replace).not.toHaveBeenCalled();
+    expect(nav.refresh).not.toHaveBeenCalled();
+  });
+
+  it("two pending actions: settling one keeps the redirect held; the second releases it once", async () => {
+    const base = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (url, init) => {
+      if (String(url).startsWith("/api/v1/ai/actions/")) return base(url as string, init);
+      const frames = [
+        { type: "meta", conversationId: NEW_CHAT, messageId: "m1" },
+        { type: "action", action: { ...action(), id: "a1" } },
+        { type: "action", action: { ...action(), id: "a2" } },
+        { type: "text", delta: "Two things to confirm." },
+        { type: "done", tokensIn: 1, tokensOut: 1, estimatedCostUsd: 0 },
+      ];
+      return new Response(frames.map((f) => `data: ${JSON.stringify(f)}\n\n`).join(""));
+    });
+    renderChat();
+    await sendFirstMessage();
+    const cancels = screen.getAllByRole("button", { name: en.chat.actions.cancel });
+    await act(async () => {
+      fireEvent.click(cancels[0]!);
+    });
+    expect(nav.replace).not.toHaveBeenCalled();
+    await act(async () => {
+      fireEvent.click(cancels[1]!);
+    });
+    expect(nav.replace).toHaveBeenCalledTimes(1);
+    expect(nav.refresh).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("unchanged behaviour", () => {
   it("E. an existing chat never navigates (with or without a card)", async () => {
     renderChat(EXISTING);

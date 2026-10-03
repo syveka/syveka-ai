@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "@/i18n/routing";
 import type { ChatStreamEvent, ProposedActionView } from "@/lib/validators/chat";
 
@@ -43,6 +43,15 @@ export function useChat(params: {
    */
   const undecidedActionsRef = useRef(new Set<string>());
   const mustDefer = () => !!deferRef.current?.() || undecidedActionsRef.current.size > 0;
+
+  // Leaving the view drops a held redirect: a decision that completes after
+  // the user navigated elsewhere must never pull them back to this chat.
+  useEffect(
+    () => () => {
+      pendingRouteRef.current = null;
+    },
+    [],
+  );
 
   const send = useCallback(
     async (
