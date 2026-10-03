@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ErrorEvent } from "@sentry/nextjs";
 import { parseSentryDsn } from "@/lib/observability/dsn";
 import {
+  APP_ORIGIN,
+  CUSTOMER_HOST,
+  IDENTIFIER_SHAPED,
+  MODULE_SHAPED,
   ARABIC_CHAT,
   ARABIC_NAME,
   BOOKING_SLUG,
@@ -27,6 +31,13 @@ import {
  * What may leave the app in an error event. Pure functions; no SDK, no
  * network. None of the synthetic sensitive values may appear in the output.
  */
+
+beforeEach(() => {
+  vi.stubEnv("NEXT_PUBLIC_APP_URL", APP_ORIGIN);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+});
 
 describe("parseSentryDsn: off unless a valid DSN is configured", () => {
   it.each([
@@ -113,8 +124,14 @@ describe("safeUrl: app routes as templates, unknown paths omitted", () => {
     ],
     [
       `https://user:pw@api.example.com/v1/people/${encodeURIComponent(NAME)}`,
-      "https://api.example.com",
+      undefined, // not a trusted origin: neither origin nor path is kept
     ],
+    [`https://${CUSTOMER_HOST}/en/inbox/${ORG_ID}`, undefined], // customer subdomain
+    [`https://${CUSTOMER_HOST}/`, undefined],
+    [`https://evil.app.syveka.com/en/dashboard`, undefined], // no wildcard subdomains
+    [`http://app.syveka.com/en/dashboard`, undefined], // exact origin, scheme included
+    [`https://app.syveka.com.${CUSTOMER_HOST}/en/dashboard`, undefined],
+    [`${APP_ORIGIN}/`, APP_ORIGIN],
     [`javascript:alert('${NAME}')`, undefined],
     [NAME, undefined],
   ])("%j -> %j", (raw, expected) => {
@@ -206,7 +223,8 @@ describe("scrubEvent", () => {
             frames: [
               {
                 filename: `https://app.syveka.com/_next/static/chunks/app.js?token=${JWT}`,
-                function: "submitContact",
+                function: IDENTIFIER_SHAPED,
+                module: MODULE_SHAPED,
                 lineno: 10,
                 colno: 4,
                 in_app: true,
@@ -220,6 +238,17 @@ describe("scrubEvent", () => {
                 filename: `https://app.syveka.com/en/crm/contacts/${ORG_ID}?name=${NAME}`,
                 function: ARABIC_NAME,
                 lineno: 1,
+              },
+              {
+                // A build asset served from a customer subdomain: path only.
+                filename: `https://${CUSTOMER_HOST}/_next/static/chunks/crm.js?v=1`,
+                function: "Object.<anonymous>",
+                lineno: 5,
+              },
+              {
+                // "/_next/" after other segments isn't a build asset path.
+                filename: `https://${CUSTOMER_HOST}/${IDENTIFIER_SHAPED}/_next/x.js`,
+                lineno: 6,
               },
               {
                 filename: "/var/task/.next/server/app/[locale]/(app)/crm/page.js",
@@ -249,9 +278,9 @@ describe("scrubEvent", () => {
     expect(scrubEvent(once)).toEqual(once);
     const crumb = scrubBreadcrumb({
       category: "http",
-      data: { method: "GET", url: `https://api.example.com/v1/${NAME}` },
+      data: { method: "GET", url: `https://${CUSTOMER_HOST}/v1/${NAME}` },
     })!;
-    expect(crumb.data).toEqual({ method: "GET", url: "https://api.example.com" });
+    expect(crumb.data).toEqual({ method: "GET" });
     expect(scrubBreadcrumb(crumb)).toEqual(crumb);
   });
 
@@ -295,8 +324,6 @@ describe("scrubEvent", () => {
           {
             filename: "https://app.syveka.com/_next/static/chunks/app.js",
             abs_path: undefined,
-            module: undefined,
-            function: "submitContact",
             lineno: 10,
             colno: 4,
             in_app: true,
@@ -304,17 +331,27 @@ describe("scrubEvent", () => {
           {
             filename: "https://app.syveka.com/[locale]/crm/contacts/[contactId]",
             abs_path: undefined,
-            module: undefined,
-            function: undefined,
             lineno: 1,
+            colno: undefined,
+            in_app: undefined,
+          },
+          {
+            filename: "/_next/static/chunks/crm.js",
+            abs_path: undefined,
+            lineno: 5,
+            colno: undefined,
+            in_app: undefined,
+          },
+          {
+            filename: undefined,
+            abs_path: undefined,
+            lineno: 6,
             colno: undefined,
             in_app: undefined,
           },
           {
             filename: "/var/task/.next/server/app/[locale]/(app)/crm/page.js",
             abs_path: undefined,
-            module: "app.[locale].(app).crm.page",
-            function: "Object.<anonymous>",
             lineno: 2,
             colno: undefined,
             in_app: undefined,
@@ -323,5 +360,10 @@ describe("scrubEvent", () => {
       },
     });
     expect(second).toMatchObject({ type: "Error", value: "Error message withheld" });
+    // Function and module names are never sent, whatever they look like.
+    for (const frame of first!.stacktrace!.frames!) {
+      expect(frame).not.toHaveProperty("function");
+      expect(frame).not.toHaveProperty("module");
+    }
   });
 });

@@ -6,6 +6,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import * as Sentry from "@sentry/browser";
 import { sentryOptions } from "@/lib/observability/options";
 import {
+  CUSTOMER_HOST,
+  IDENTIFIER_SHAPED,
   ARABIC_CHAT,
   ARABIC_NAME,
   CHAT_TEXT,
@@ -29,6 +31,8 @@ const appFetch = vi.fn(async () => new Response("{}", { status: 500 }));
 
 beforeAll(() => {
   vi.stubGlobal("fetch", appFetch);
+  // The trusted app origin is exactly the page's origin in jsdom.
+  vi.stubEnv("NEXT_PUBLIC_APP_URL", "http://localhost:3000");
   window.history.replaceState({}, "", "/en/dashboard");
   Sentry.init({
     ...(sentryOptions(DSN) as Sentry.BrowserOptions),
@@ -44,6 +48,7 @@ beforeAll(() => {
 afterAll(async () => {
   await Sentry.close();
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
 });
 beforeEach(() => {
   sent.length = 0;
@@ -71,6 +76,7 @@ describe("real browser SDK, in-memory transport", () => {
       method: "POST",
       body: JSON.stringify({ text: ARABIC_CHAT, email: EMAIL }),
     });
+    await fetch(`https://${CUSTOMER_HOST}/en/inbox/${ORG_ID}`);
     window.history.pushState({}, "", `/ar/crm/contacts/${ORG_ID}?name=${encodeURIComponent(NAME)}`);
 
     Sentry.captureException(new Error(SENSITIVE_MESSAGE));
@@ -83,13 +89,15 @@ describe("real browser SDK, in-memory transport", () => {
       "Error message withheld",
     );
     const crumbs = event!.breadcrumbs as Array<{ category: string; data: unknown }>;
-    expect(crumbs.map((c) => c.category)).toEqual(["fetch", "navigation"]);
+    expect(crumbs.map((c) => c.category)).toEqual(["fetch", "fetch", "navigation"]);
     expect(crumbs[0]!.data).toEqual({
       method: "POST",
       url: "/api/v1/inbox/[threadId]",
       status_code: 500,
     });
-    expect(crumbs[1]!.data).toEqual({
+    // A customer subdomain is not a trusted origin: no URL at all.
+    expect(crumbs[1]!.data).toEqual({ method: "GET", status_code: 500 });
+    expect(crumbs[2]!.data).toEqual({
       from: "/[locale]/dashboard",
       to: "/[locale]/crm/contacts/[contactId]",
     });
@@ -119,12 +127,39 @@ describe("real browser SDK, in-memory transport", () => {
     expectClean(sent);
   });
 
+  it("a real stack frame named like sensitive text: the name never leaves", async () => {
+    const named = {
+      [IDENTIFIER_SHAPED]: () => {
+        throw new Error("boom");
+      },
+    }[IDENTIFIER_SHAPED]!;
+    let error: Error | undefined;
+    try {
+      named();
+    } catch (e) {
+      error = e as Error;
+    }
+    expect(error!.stack).toContain(IDENTIFIER_SHAPED);
+    Sentry.captureException(error);
+    await Sentry.flush(2000);
+
+    const [event] = events();
+    const frames = (event!.exception as { values: Array<{ stacktrace: { frames: object[] } }> })
+      .values[0]!.stacktrace.frames;
+    expect(frames.length).toBeGreaterThan(0);
+    for (const frame of frames) {
+      expect(frame).not.toHaveProperty("function");
+      expect(frame).not.toHaveProperty("module");
+    }
+    expectClean(sent);
+  });
+
   it("only error events are sent: no sessions, transactions, replays or client reports", async () => {
     Sentry.captureException(new Error("only this"));
     await Sentry.flush(2000);
     const types = sent.flatMap(([, entries]) => entries.map(([h]) => h.type));
     expect(types).toEqual(["event"]);
     // The app's fetch was used only by the test itself, never by the SDK.
-    expect(appFetch).toHaveBeenCalledTimes(1);
+    expect(appFetch).toHaveBeenCalledTimes(2);
   });
 });

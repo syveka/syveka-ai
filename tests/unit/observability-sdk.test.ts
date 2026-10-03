@@ -3,6 +3,9 @@ import * as Sentry from "@sentry/nextjs";
 import { sentryOptions } from "@/lib/observability/options";
 import { onRequestError } from "@/instrumentation";
 import {
+  APP_ORIGIN,
+  CUSTOMER_HOST,
+  IDENTIFIER_SHAPED,
   ARABIC_CHAT,
   ARABIC_NAME,
   CHAT_TEXT,
@@ -32,6 +35,7 @@ const fetchSpy = vi.fn();
 beforeAll(() => {
   vi.stubEnv("NEXT_RUNTIME", "nodejs");
   vi.stubEnv("SENTRY_DSN", DSN);
+  vi.stubEnv("NEXT_PUBLIC_APP_URL", APP_ORIGIN);
   vi.stubGlobal("fetch", fetchSpy);
   Sentry.init({
     ...sentryOptions(DSN, "test-release"),
@@ -68,7 +72,9 @@ describe("real server SDK, in-memory transport", () => {
           cookie: `sb-access-token=${JWT}`,
           authorization: `Bearer ${JWT}`,
           "x-org-id": ORG_ID,
-          referer: `https://app.syveka.com/en/invite/${INVITE_TOKEN}`,
+          referer: `https://${CUSTOMER_HOST}/en/invite/${INVITE_TOKEN}`,
+          host: CUSTOMER_HOST,
+          "x-forwarded-host": CUSTOMER_HOST,
         },
       },
       {
@@ -133,16 +139,51 @@ describe("real server SDK, in-memory transport", () => {
         status_code: 500,
       },
     });
+    Sentry.addBreadcrumb({
+      category: "http",
+      data: {
+        method: "POST",
+        url: `https://${CUSTOMER_HOST}/en/inbox/${ORG_ID}`,
+        status_code: 404,
+      },
+    });
     Sentry.captureException(new Error("boom"));
     await Sentry.flush(2000);
 
     const [event] = events();
     expect(event!.breadcrumbs).toEqual([
-      expect.objectContaining({
-        category: "http",
-        data: { method: "GET", url: "https://api.example.com", status_code: 500 },
-      }),
+      // Untrusted origins (third party, customer subdomain): no URL at all.
+      expect.objectContaining({ category: "http", data: { method: "GET", status_code: 500 } }),
+      expect.objectContaining({ category: "http", data: { method: "POST", status_code: 404 } }),
     ]);
+    expectClean(sent);
+  });
+
+  it("a real stack frame named like sensitive text: the name never leaves", async () => {
+    // A function whose (real, runtime) name is sensitive text shaped like an identifier.
+    const named = {
+      [IDENTIFIER_SHAPED]: () => {
+        throw new Error("boom");
+      },
+    }[IDENTIFIER_SHAPED]!;
+    let error: Error | undefined;
+    try {
+      named();
+    } catch (e) {
+      error = e as Error;
+    }
+    expect(error!.stack).toContain(IDENTIFIER_SHAPED); // the SDK sees it in the stack
+    Sentry.captureException(error);
+    await Sentry.flush(2000);
+
+    const [event] = events();
+    const frames = (event!.exception as { values: Array<{ stacktrace: { frames: object[] } }> })
+      .values[0]!.stacktrace.frames;
+    expect(frames.length).toBeGreaterThan(0);
+    for (const frame of frames) {
+      expect(frame).not.toHaveProperty("function");
+      expect(frame).not.toHaveProperty("module");
+    }
     expectClean(sent);
   });
 

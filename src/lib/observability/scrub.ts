@@ -12,7 +12,11 @@ import { routeTemplate } from "@/lib/observability/routes";
  * - exception messages become a fixed description chosen from a known list
  *   (the original text is only matched, never copied);
  * - paths become a known app route template, or are omitted;
- * - URLs keep their origin and, for app routes, the template;
+ * - URLs keep their origin only if it is a trusted origin (the app's own,
+ *   from configuration), plus the template for app routes; any other
+ *   origin (third parties, customer subdomains) and its path are omitted;
+ * - stack frames keep only their code location and position: function and
+ *   module names aren't sent, since nothing establishes they are code;
  * - everything not on an allowlist (user, extras, headers, cookies, bodies,
  *   variables, source lines, unknown contexts and tags) is dropped.
  * Nothing identifies the organization or user.
@@ -68,7 +72,21 @@ const WORD = /^[\w .-]{1,40}$/;
 /** Code locations (bundles, server chunks, packages), never page URLs. */
 const CODE_FILE =
   /^(node:|internal\/|webpack|app:\/\/\/)|\/_next\/|\/\.next\/|\/node_modules\/|\.(m?js|cjs|tsx?|jsx)$/;
-const FUNCTION_NAME = /^[\w$.<>[\]() :/-]{1,120}$/;
+
+/**
+ * Origins that may be reported: exactly the app's configured origin. No
+ * wildcards. Read on each call so it follows the runtime configuration.
+ */
+function trustedOrigins(): ReadonlySet<string> {
+  try {
+    const app = new URL(process.env.NEXT_PUBLIC_APP_URL ?? "");
+    return app.protocol === "http:" || app.protocol === "https:"
+      ? new Set([app.origin])
+      : new Set();
+  } catch {
+    return new Set();
+  }
+}
 
 const safeMethod = (method: unknown) =>
   typeof method === "string" && HTTP_METHODS.has(method.toUpperCase())
@@ -78,8 +96,9 @@ const safeWord = (value: unknown) =>
   typeof value === "string" && WORD.test(value) ? value : undefined;
 
 /**
- * An http(s) URL as origin plus route template (when it's an app route), a
- * relative path as its template; anything else is omitted.
+ * An http(s) URL on a trusted origin as origin plus route template (when
+ * it's an app route), a relative path as its template; anything else,
+ * including any other origin, is omitted.
  */
 export function safeUrl(raw: unknown): string | undefined {
   if (typeof raw !== "string") return undefined;
@@ -87,6 +106,7 @@ export function safeUrl(raw: unknown): string | undefined {
   try {
     const url = new URL(raw);
     if (url.protocol !== "http:" && url.protocol !== "https:") return undefined;
+    if (!trustedOrigins().has(url.origin)) return undefined;
     // An origin alone has path "/": not the app's root page (also keeps this idempotent).
     if (url.pathname === "/") return url.origin;
     return url.origin + (routeTemplate(url.pathname) ?? "");
@@ -103,7 +123,9 @@ function safeFrameFile(raw: unknown): string | undefined {
     try {
       const url = new URL(withoutQuery);
       if (url.protocol === "http:" || url.protocol === "https:") {
-        return /\/_next\//.test(url.pathname) ? url.origin + url.pathname : undefined;
+        if (!url.pathname.startsWith("/_next/")) return undefined;
+        // A build asset path is code; the origin only when trusted.
+        return (trustedOrigins().has(url.origin) ? url.origin : "") + url.pathname;
       }
     } catch {
       // A filesystem path or module specifier.
@@ -244,12 +266,6 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent {
                   frames: exception.stacktrace.frames?.map((frame) => ({
                     filename: safeFrameFile(frame.filename),
                     abs_path: safeFrameFile(frame.abs_path),
-                    module:
-                      frame.module && FUNCTION_NAME.test(frame.module) ? frame.module : undefined,
-                    function:
-                      frame.function && FUNCTION_NAME.test(frame.function)
-                        ? frame.function
-                        : undefined,
                     lineno: frame.lineno,
                     colno: frame.colno,
                     in_app: frame.in_app,

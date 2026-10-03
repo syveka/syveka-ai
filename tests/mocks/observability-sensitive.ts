@@ -14,6 +14,14 @@ export const CRM_DETAIL = "Nordic Oy deal 45000 EUR closes Friday";
 export const EMAIL = "maria.virtanen@example.fi";
 export const PHONE = "+358 40 123 4567";
 export const BOOKING_SLUG = "acme-oy";
+/** A customer identifier in a hostname, e.g. a customer-specific subdomain. */
+export const CUSTOMER_SUBDOMAIN = "virtanen-consulting";
+export const CUSTOMER_HOST = `${CUSTOMER_SUBDOMAIN}.syveka.com`;
+/** Sensitive text shaped like a function or module identifier. */
+export const IDENTIFIER_SHAPED = "renewMariaVirtanenNordicContract";
+export const MODULE_SHAPED = "crm.contacts.maria_virtanen_45000";
+/** The app's own origin, the only trusted origin in these tests. */
+export const APP_ORIGIN = "https://app.syveka.com";
 // Credentials are assembled at runtime so they never appear verbatim in the repository.
 export const JWT = ["eyJhbGciOiJIUzI1NiJ9", "eyJzdWIiOiI5YjJmIn0", "c2lnbmF0dXJl"].join(".");
 export const STRIPE_KEY = ["sk", "live", "51HxQ2rKj8xYzAbCdEfGh1234"].join("_");
@@ -37,6 +45,11 @@ export const NEVER_SENT = [
   BOOKING_SLUG,
   JWT,
   STRIPE_KEY,
+  CUSTOMER_SUBDOMAIN,
+  "virtanen",
+  IDENTIFIER_SHAPED,
+  MODULE_SHAPED,
+  "api.example.com",
   "hunter2",
   "sb-access-token",
 ];
