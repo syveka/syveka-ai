@@ -5,6 +5,7 @@ import { AlertCircle } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { reportBoundaryError } from "@/lib/observability/client";
 
 /**
  * Without this boundary, any client exception on this page (mount or
@@ -28,6 +29,7 @@ export default function BusinessDnaError({
 
   useEffect(() => {
     console.error(error);
+    reportBoundaryError(error);
   }, [error]);
 
   return (

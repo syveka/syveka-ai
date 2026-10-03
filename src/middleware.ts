@@ -2,6 +2,7 @@ import { type NextRequest, NextResponse } from "next/server";
 import createIntlMiddleware from "next-intl/middleware";
 import { routing } from "@/i18n/routing";
 import { createSupabaseMiddlewareClient } from "@/server/supabase/server";
+import { parseSentryDsn } from "@/lib/observability/dsn";
 
 const intlMiddleware = createIntlMiddleware(routing);
 
@@ -87,6 +88,9 @@ export function buildContentSecurityPolicy(nonce: string): string {
     imageOrigins.push(supabase.https);
     connectionOrigins.push(supabase.https, supabase.wss);
   }
+  // Browser error reports: only the configured ingest origin, only with a DSN.
+  const sentry = parseSentryDsn(process.env.NEXT_PUBLIC_SENTRY_DSN);
+  if (sentry) connectionOrigins.push(sentry.ingestOrigin);
 
   return [
     "default-src 'self'",

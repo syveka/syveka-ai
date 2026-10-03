@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { NextRequest, NextResponse } from "next/server";
 
 type SupabaseUser = { id: string; email?: string };
@@ -87,6 +87,32 @@ describe("middleware CSP", () => {
     const csp = buildContentSecurityPolicy("test-nonce");
     expect(csp).toContain("connect-src 'self'");
     expect(csp).not.toContain("supabase.co");
+  });
+
+  describe("error tracking origin", () => {
+    const connectSrc = (csp: string) => csp.split("; ").find((d) => d.startsWith("connect-src "));
+    const SUPABASE_ONLY =
+      "connect-src 'self' https://abcdefghijklmnop.supabase.co wss://abcdefghijklmnop.supabase.co";
+    afterEach(() => {
+      delete process.env.NEXT_PUBLIC_SENTRY_DSN;
+    });
+
+    it("without a DSN (unset, empty or malformed) connect-src is unchanged", () => {
+      for (const dsn of [undefined, "", "  ", "not-a-dsn", "http://key@o1.ingest.sentry.io/1"]) {
+        if (dsn === undefined) delete process.env.NEXT_PUBLIC_SENTRY_DSN;
+        else process.env.NEXT_PUBLIC_SENTRY_DSN = dsn;
+        expect(connectSrc(buildContentSecurityPolicy("n"))).toBe(SUPABASE_ONLY);
+      }
+    });
+
+    it("with a DSN, adds only its ingest origin (no key, no path, no wildcard)", () => {
+      process.env.NEXT_PUBLIC_SENTRY_DSN = "https://publickey@o123.ingest.de.sentry.io/456";
+      const csp = buildContentSecurityPolicy("n");
+      expect(connectSrc(csp)).toBe(`${SUPABASE_ONLY} https://o123.ingest.de.sentry.io`);
+      expect(csp).not.toContain("publickey");
+      expect(csp).not.toContain("*.sentry.io");
+      expect(csp).toContain(`script-src 'self' 'nonce-n' 'strict-dynamic'`);
+    });
   });
 
   it("sets a nonce-based Content-Security-Policy on a public page response", async () => {
