@@ -351,7 +351,8 @@
         "permission": "You don't have permission to do this.",
         "failed": "It couldn't be completed. Try again or do it manually.",
         "pending": "Waiting for your confirmation.",
-        "submitting": "Confirming…"
+        "submitting": "Confirming…",
+        "unavailable": "This request is no longer available. No result was recorded for it."
       }
     }
   },

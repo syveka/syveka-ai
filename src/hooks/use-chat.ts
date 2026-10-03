@@ -2,7 +2,11 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "@/i18n/routing";
-import type { ChatStreamEvent, ProposedActionView } from "@/lib/validators/chat";
+import type {
+  ChatStreamEvent,
+  ProposedActionView,
+  RestoredActionState,
+} from "@/lib/validators/chat";
 
 export type UiMessage = {
   id: string;
@@ -10,8 +14,11 @@ export type UiMessage = {
   content: string;
   citations?: Array<{ documentId: string; title: string }>;
   tools?: string[];
-  /** Writes the assistant proposed; each runs only if the user confirms it. */
-  actions?: ProposedActionView[];
+  /**
+   * Writes the assistant proposed; each runs only if the user confirms it.
+   * `restored`: its recorded outcome when the conversation is reopened.
+   */
+  actions?: Array<ProposedActionView & { restored?: RestoredActionState }>;
   streaming?: boolean;
 };
 

@@ -111,6 +111,71 @@ Code: `src/server/ai/tool-actions.ts`, `src/app/api/v1/ai/actions/[id]/route.ts`
 6. **Diagnostics.** Structured `ai_tool_action` logs carry phase, tool, action id, organization id
    and outcome, never the arguments.
 
-Read-only tools run as before. Live voice still refuses write tools. Pending actions are not
-persisted with the chat history: after a reload an unconfirmed card is gone and the action expires
-unused.
+Read-only tools run as before. Live voice still refuses write tools.
+
+**Reopening a conversation.** The proposed action view is saved with the assistant reply, in the
+message's tool-call log. When the conversation is opened again, each saved action shows its
+**recorded** outcome:
+
+- the outcome comes from the audit trail (`ai_action.confirm` / `ai_action.cancel`, this
+  organization only): done, canceled, slot taken or failed;
+- consumed failures are audited as `failed`;
+- with no record, the action is either still pending (the card can still be decided, and the server
+  enforces everything) or shown as "no result recorded" once it has expired.
+
+Nothing is inferred from the reply's wording or from matching records. Messages saved before this
+change have no action view and show none. A reply whose stream was aborted or blocked by output
+moderation is not saved, so its card can't come back.
+
+## Staging acceptance evidence
+
+### Android Chrome, staging release #120 (`e9a61b4`), QA organization
+
+**Date:** 2026-10-03, about 13:34–13:45 Helsinki (10:34–10:45 UTC).
+
+**Observed by the user:**
+
+1. "Create a contact named QA Cancel Test 2". One screenshot first showed only the reply text
+   ("When you confirm…"). A later screenshot showed the `createContact` badge and the card with
+   Confirm and Cancel.
+2. Cancel was tapped. "QA Cancel Test 2" was not found in Contacts. The older contact "QA Cancel
+   Test" (without "2") is a separate, earlier record.
+3. "Create a contact named QA Confirm Test 3", then Confirm. Contacts showed "QA Confirm Test 3"
+   once.
+4. Returning to Chat showed the empty new-chat screen. Going back showed the earlier conversation,
+   with both requests in one conversation. It had the "When you confirm…" text, but no card or
+   outcome.
+
+**Staging runtime logs** (paths, status codes and content-free events only; ids shortened to hashes):
+
+| UTC         | Request                           | Result                                                   |
+| ----------- | --------------------------------- | -------------------------------------------------------- |
+| 10:37:25    | `GET /en/chat`                    | new chat page                                            |
+| 10:37:32    | `POST /api/v1/ai/chat`            | `createContact` **proposed** (`#cff69a`)                 |
+| 10:37:47    | `POST /api/v1/ai/actions/#cff69a` | 200, **canceled**                                        |
+| 10:37:48–49 | `GET /en/chat/<1ea8a2>` ×2        | the new chat's held redirect, right **after** the Cancel |
+| 10:39:06    | `POST /api/v1/ai/chat`            | `createContact` **proposed** (`#0a16ce`)                 |
+| 10:39:19    | `POST /api/v1/ai/actions/#0a16ce` | 200, **confirmed, done**                                 |
+| 10:40:21    | `GET /en/chat`                    | the new-chat page (the "empty chat" screen)              |
+| 10:45:29    | `GET /en/chat/<1ea8a2>`           | the conversation reopened                                |
+
+**Supported by the evidence:**
+
+- The first request proposed the action, on the first call.
+- Cancel created nothing, and Confirm created exactly one contact.
+- The new chat's redirect happened only after the Cancel was decided, which is #223's behavior.
+- Earlier conversation text could be reopened.
+- The reopened conversation showed no card or outcome, because the action wasn't saved with the
+  message. The reopen change above addresses this.
+
+**Not proven:**
+
+- Exactly-once navigation on the phone. There are two page requests, consistent with the redirect
+  plus refresh.
+- Why the first screenshot had no card. Within one live reply the card can't arrive after the text:
+  a test locks this order, and text is held until output moderation. But the card is drawn **below**
+  the text in the bubble, and a reopened conversation had no card. Either could explain the
+  screenshot.
+- A Confirm as the first message of a genuinely new conversation (the Confirm test ran in an
+  existing conversation).
+- The remaining #223 edge cases on a phone.

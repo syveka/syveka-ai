@@ -17,6 +17,9 @@ function error(code: string, status: number) {
   return NextResponse.json({ error: { code } }, { status });
 }
 
+/** Refusals that happen after the action was marked decided (see decideToolAction). */
+const CONSUMED_FAILURES = new Set(["permission_denied", "invalid_action", "action_failed"]);
+
 const REFUSALS = {
   not_found: 404,
   already_decided: 409,
@@ -77,7 +80,23 @@ export async function POST(
     );
     return error("service_unavailable", 503);
   }
-  if (!outcome.ok) return error(outcome.reason, REFUSALS[outcome.reason]);
+  if (!outcome.ok) {
+    // These happen after the action was marked decided (it can't run again):
+    // record them, so a reopened conversation shows "failed", not "unknown".
+    if (CONSUMED_FAILURES.has(outcome.reason)) {
+      await audit(
+        { orgId: ctx.orgId, userId: ctx.userId },
+        {
+          action: "ai_action.confirm",
+          resourceType: "ai_action",
+          resourceId: id,
+          actorType: "user",
+          after: { outcome: "failed", reason: outcome.reason },
+        },
+      );
+    }
+    return error(outcome.reason, REFUSALS[outcome.reason]);
+  }
 
   await audit(
     { orgId: ctx.orgId, userId: ctx.userId },

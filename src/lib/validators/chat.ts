@@ -66,6 +66,13 @@ export type ProposedActionView = {
       };
 };
 
+/**
+ * The recorded outcome of a saved action, shown when a conversation is
+ * opened again (see src/server/ai/tool-action-history.ts). "unavailable":
+ * it expired without a recorded result; nothing is inferred.
+ */
+export type RestoredActionState = "done" | "canceled" | "slotTaken" | "failed" | "unavailable";
+
 export type ChatStreamEvent =
   | { type: "meta"; conversationId: string; messageId: string }
   | { type: "text"; delta: string }

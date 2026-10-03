@@ -4,7 +4,7 @@ import { useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Check, ShieldCheck, X } from "lucide-react";
 import { cn } from "@/lib/utils";
-import type { ProposedActionView } from "@/lib/validators/chat";
+import type { ProposedActionView, RestoredActionState } from "@/lib/validators/chat";
 
 type State =
   | "pending"
@@ -15,7 +15,8 @@ type State =
   | "expired"
   | "alreadyDecided"
   | "permission"
-  | "failed";
+  | "failed"
+  | "unavailable";
 
 const REFUSAL_STATE: Record<string, State> = {
   not_found: "expired",
@@ -46,14 +47,16 @@ export function ActionConfirmation({
   action,
   onSettled,
 }: {
-  action: ProposedActionView;
+  action: ProposedActionView & { restored?: RestoredActionState };
   /** Called once the action is decided for good (not after a failed request). */
   onSettled?: (actionId: string) => void;
 }) {
   const t = useTranslations("chat.actions");
   const locale = useLocale();
+  // A reopened conversation shows the recorded outcome (never executable);
+  // otherwise a pending card, or "expired" once it can't be decided any more.
   const [state, setState] = useState<State>(() =>
-    action.expiresAt <= Date.now() ? "expired" : "pending",
+    action.restored ? action.restored : action.expiresAt <= Date.now() ? "expired" : "pending",
   );
   const d = action.details;
   // One decision per card: a fast double click must not send a second request.

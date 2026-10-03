@@ -351,7 +351,8 @@
         "permission": "Sinulla ei ole oikeutta tähän.",
         "failed": "Toimintoa ei voitu suorittaa. Yritä uudelleen tai tee se itse.",
         "pending": "Odottaa vahvistustasi.",
-        "submitting": "Vahvistetaan…"
+        "submitting": "Vahvistetaan…",
+        "unavailable": "Tämä pyyntö ei ole enää käytettävissä. Sille ei tallentunut tulosta."
       }
     }
   },
