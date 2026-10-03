@@ -129,6 +129,32 @@ moderation is not saved, so its card can't come back.
 
 ## Staging acceptance evidence
 
+### Android Chrome, staging release #121 (`dd1e2c1`, includes #224 and #225), QA organization
+
+**Date:** 2026-10-03, after release #121 completed at about 16:18 UTC.
+
+**Evidence types:**
+
+- **Screenshot:** an image the user shared. These were reviewed in the user's QA session; the
+  release coordinator didn't have them in context.
+- **User report:** the user's statement, with no image.
+- **Logs:** staging runtime logs with paths, status codes and content-free events only.
+- **Automated:** tests in #224 and #225, which used mocked providers and desktop Chromium.
+
+| Check                                                                 | Result          | Evidence                                                                                                                                                                                                  | Limits                                                                                                                                         |
+| --------------------------------------------------------------------- | --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pipeline stage labels follow FI/EN/AR                                 | Pass            | User report                                                                                                                                                                                               | Custom-name preservation is covered by automated tests only                                                                                    |
+| Cancel, then reopen ("QA Reopen Test 7")                              | Pass            | Screenshot after reopening: "Canceled. Nothing was changed.", no Confirm/Cancel. Logs: `proposed` 16:24:13, `canceled` (200) 16:24:40, no record-write error, conversation reloaded 16:24:41 and 16:27:49 | The Contacts screenshot is a visual check, not a database query                                                                                |
+| Confirm, then reopen ("QA Reopen Test 8")                             | Partly verified | User report: completed. A later screenshot shows a preceding "Done." card, but the contact name is cropped                                                                                                | Persistence for this exact card, and exactly one contact, are not independently established                                                    |
+| Pending, expired, then reopen ("QA Reopen Test 9")                    | Pass            | Screenshot after about 30 minutes and a refresh: "This request is no longer available. No result was recorded for it.", no buttons                                                                        | None for the expired display                                                                                                                   |
+| Pending, then reopen within the validity window ("QA Reopen Test 10") | Partly verified | Screenshot: Confirm/Cancel still shown. User report: then canceled                                                                                                                                        | The refresh itself isn't visible in the screenshot. Showing the card again after a reload is covered by automated tests (live-store `pending`) |
+
+**Still unverified on a phone:**
+
+- Exactly one contact after a Confirm that is then reopened.
+- The "unknown" outcome display (automated tests only, by design: it needs a failed record write).
+- Confirm as the first message of a genuinely new chat.
+
 ### Android Chrome, staging release #120 (`e9a61b4`), QA organization
 
 **Date:** 2026-10-03, about 13:34–13:45 Helsinki (10:34–10:45 UTC).
