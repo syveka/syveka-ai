@@ -23,10 +23,28 @@ const PROVIDERS: Record<CreatorMediaProviderName, () => CreatorMediaProvider> = 
 let mediaProviderSingleton: CreatorMediaProvider | null = null;
 let resolvedProviderName: CreatorMediaProviderName | null = null;
 
+/**
+ * Fail closed in production: an explicit `CREATOR_MEDIA_PROVIDER=mock` pin is
+ * still honored (a deliberate operator choice, same escape valve
+ * src/server/social/index.ts's CREATOR_STUDIO_SOCIAL_MOCK_PROVIDER=1
+ * provides), but the *implicit* fallback below — silently serving mock media
+ * when FAL_API_KEY is simply missing/misconfigured — must never happen in
+ * production. Without this, a missing key would silently generate fake
+ * images/video for a real customer while still charging real credits,
+ * rather than surfacing a clear, fixable configuration error.
+ */
 function resolveMediaProviderName(): CreatorMediaProviderName {
   const pinned = process.env.CREATOR_MEDIA_PROVIDER as CreatorMediaProviderName | undefined;
   if (pinned && pinned in PROVIDERS) return pinned;
-  return isFalConfigured() ? "fal" : "mock";
+  if (isFalConfigured()) return "fal";
+  if (process.env.NODE_ENV === "production") {
+    throw new Error(
+      "Creator Studio media generation is not configured (FAL_API_KEY is unset) and cannot " +
+        "silently fall back to the mock provider in production. Set FAL_API_KEY, or explicitly " +
+        "pin CREATOR_MEDIA_PROVIDER=mock if serving mock media in production is intentional.",
+    );
+  }
+  return "mock";
 }
 
 export function getRoutedCreatorMediaProvider(): CreatorMediaProvider {
