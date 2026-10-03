@@ -175,6 +175,7 @@ export async function getCrmDashboard(ctx: TenantContext) {
       return {
         id: stage.id,
         name: stage.name,
+        order: stage.order,
         count: totals.count,
         valueCents: totals.valueCents,
         probability: stage.probability,

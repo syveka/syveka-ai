@@ -17,6 +17,7 @@ import { ContactDialog } from "@/components/crm/contact-dialog";
 import { EntityActions } from "@/components/crm/entity-actions";
 import { NoteComposer } from "@/components/crm/note-composer";
 import { formatCents, formatDate } from "@/lib/utils";
+import { stageLabel } from "@/lib/crm/stage-labels";
 import { Link } from "@/i18n/routing";
 import { EntityMeetings } from "@/components/calendar/entity-meetings";
 
@@ -134,7 +135,8 @@ export default async function ContactDetailPage({
                   <div key={d.id} className="flex items-center justify-between text-sm">
                     <span>{d.title}</span>
                     <span className="text-muted-foreground">
-                      {d.stage.name} · {formatCents(d.valueCents, locale)}
+                      {stageLabel(d.stage, (key) => t(`defaultStages.${key}`))} ·{" "}
+                      {formatCents(d.valueCents, locale)}
                     </span>
                   </div>
                 ))

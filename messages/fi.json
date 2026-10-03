@@ -505,7 +505,15 @@
     "lostBadge": "Hävitty",
     "closedLabel": "Suljettu",
     "generateInsights": "AI-analyysi",
-    "generatingInsights": "Analysoidaan…"
+    "generatingInsights": "Analysoidaan…",
+    "defaultStages": {
+      "newLead": "Uusi liidi",
+      "contacted": "Yhteydenotto",
+      "proposal": "Tarjous",
+      "negotiation": "Neuvottelu",
+      "won": "Voitettu",
+      "lost": "Hävitty"
+    }
   },
   "voice": {
     "title": "Puheavustaja",

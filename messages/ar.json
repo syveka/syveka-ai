@@ -505,7 +505,15 @@
     "lostBadge": "خاسرة",
     "closedLabel": "تاريخ الإغلاق",
     "generateInsights": "تحليلات الذكاء الاصطناعي",
-    "generatingInsights": "جارٍ التحليل…"
+    "generatingInsights": "جارٍ التحليل…",
+    "defaultStages": {
+      "newLead": "عميل محتمل جديد",
+      "contacted": "تم التواصل",
+      "proposal": "عرض سعر",
+      "negotiation": "تفاوض",
+      "won": "مكسوبة",
+      "lost": "خاسرة"
+    }
   },
   "voice": {
     "title": "المساعد الصوتي",

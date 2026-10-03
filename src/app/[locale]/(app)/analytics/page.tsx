@@ -6,10 +6,12 @@ import { getSalesAnalytics, getAiAnalytics, getVoiceAnalytics } from "@/server/s
 import { BarChart, FunnelChart, StatCard } from "@/components/analytics/charts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCents } from "@/lib/utils";
+import { stageLabel } from "@/lib/crm/stage-labels";
 
 export default async function AnalyticsPage() {
   const ctx = await requirePermission("analytics:view");
   const t = await getTranslations("analytics");
+  const tCrm = await getTranslations("crm");
   const locale = await getLocale();
 
   const [sales, ai, voice] = await Promise.all([
@@ -40,7 +42,10 @@ export default async function AnalyticsPage() {
           <CardContent>
             <FunnelChart
               data={sales.funnel.map((s) => ({
-                stage: s.stage,
+                stage: stageLabel(
+                  { name: s.stage, order: s.order, isWon: s.isWon, isLost: s.isLost },
+                  (key) => tCrm(`defaultStages.${key}`),
+                ),
                 count: s.count,
                 value: formatCents(s.valueCents, locale),
                 isWon: s.isWon,
