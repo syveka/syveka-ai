@@ -106,6 +106,18 @@ integration, add a new scoped getter rather than extending call sites to read fr
 directly. `SKIP_ENV_VALIDATION=1` bypasses validation only for CI/build-time compilation without
 real secrets — runtime always validates.
 
+Error tracking (Sentry) is the exception that reads no getter: `SENTRY_DSN` (server, Node.js
+runtime only) and `NEXT_PUBLIC_SENTRY_DSN` (browser, inlined at build) are parsed by
+`parseSentryDsn()` in `src/lib/observability/dsn.ts`. Unset, empty or malformed means off: the
+SDK isn't loaded, nothing is sent, and the CSP gains no origin. With a DSN, only error events are
+sent (no tracing, Session Replay, sessions or logs), with no user or organization identity.
+`src/lib/observability/scrub.ts` rebuilds every event from an allowlist before it leaves:
+exception messages become fixed descriptions (the original text is never forwarded), and paths
+become app route templates from `src/lib/observability/route-templates.ts`, or are omitted.
+After adding or moving a route, run `node scripts/generate-route-templates.mjs`
+(`observability-routes.test.ts` fails while the list is stale). Never add `setUser`/`setTag` calls
+with tenant or user identifiers without a privacy review.
+
 ## 8. AI provider routing
 
 `src/server/ai/router.ts` maps a small `AiTask` enum (`chat`, `deep`, `utility`, `title`,

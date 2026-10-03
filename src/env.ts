@@ -63,7 +63,10 @@ const serverSchema = z.object({
   QSTASH_CURRENT_SIGNING_KEY: z.string().min(1),
   QSTASH_NEXT_SIGNING_KEY: z.string().min(1),
 
-  SENTRY_DSN: z.string().url().optional(),
+  // Error tracking is off without a DSN; see src/lib/observability. A
+  // malformed value also leaves it off (never fails the app).
+  SENTRY_DSN: z.string().optional(),
+  NEXT_PUBLIC_SENTRY_DSN: z.string().optional(),
   LANGFUSE_PUBLIC_KEY: z.string().optional(),
   LANGFUSE_SECRET_KEY: z.string().optional(),
   LANGFUSE_HOST: z.string().url().optional(),

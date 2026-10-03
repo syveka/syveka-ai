@@ -1,9 +1,11 @@
 "use client";
 
+import { useEffect } from "react";
 import { AlertCircle } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { reportBoundaryError } from "@/lib/observability/client";
 
 /**
  * Fallback for any route under [locale] without its own error.tsx (onboarding,
@@ -11,8 +13,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
  * error showed Next.js's bare, untranslated "Application error" page. Never
  * renders `error.message`: server errors can carry internal details.
  */
-export default function LocaleError({ reset }: { error: Error; reset: () => void }) {
+export default function LocaleError({
+  error,
+  reset,
+}: {
+  error: Error & { digest?: string };
+  reset: () => void;
+}) {
   const t = useTranslations("common");
+
+  useEffect(() => reportBoundaryError(error), [error]);
 
   return (
     <div className="mx-auto flex min-h-[60vh] w-full max-w-lg flex-col justify-center p-4">
