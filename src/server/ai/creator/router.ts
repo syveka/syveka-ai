@@ -23,10 +23,35 @@ const PROVIDERS: Record<CreatorMediaProviderName, () => CreatorMediaProvider> = 
 let mediaProviderSingleton: CreatorMediaProvider | null = null;
 let resolvedProviderName: CreatorMediaProviderName | null = null;
 
+/**
+ * No real media provider can run. Thrown before any credit is reserved: every
+ * generation resolves its provider first, since the credit cost depends on it.
+ * The message is shown to customers, so it names no configuration.
+ */
+export class CreatorMediaProviderUnavailableError extends Error {
+  readonly code = "media_provider_not_configured";
+
+  constructor() {
+    super("Media generation is temporarily unavailable.");
+    this.name = "CreatorMediaProviderUnavailableError";
+  }
+}
+
+/**
+ * Fails closed in production: a missing FAL_API_KEY must never silently serve
+ * mock media (which still costs credits) to real customers. An explicit
+ * CREATOR_MEDIA_PROVIDER=mock pin is still honored as a deliberate operator
+ * choice, like CREATOR_STUDIO_SOCIAL_MOCK_PROVIDER=1. A `fal` pin without a
+ * key fails closed everywhere instead of failing after credits are reserved.
+ */
 function resolveMediaProviderName(): CreatorMediaProviderName {
   const pinned = process.env.CREATOR_MEDIA_PROVIDER as CreatorMediaProviderName | undefined;
-  if (pinned && pinned in PROVIDERS) return pinned;
-  return isFalConfigured() ? "fal" : "mock";
+  if (pinned === "mock") return "mock";
+  if (isFalConfigured()) return "fal";
+  if (pinned === "fal" || process.env.NODE_ENV === "production") {
+    throw new CreatorMediaProviderUnavailableError();
+  }
+  return "mock";
 }
 
 export function getRoutedCreatorMediaProvider(): CreatorMediaProvider {
