@@ -527,7 +527,7 @@
     "noNumber": "No number yet",
     "calls": "calls",
     "activate": "Activate & get number",
-    "activatePhoneNumberPending": "Assistant created. Phone number setup requires manual provisioning — contact support to add a Finnish number.",
+    "activatePhoneNumberPending": "Assistant created. Phone number setup requires manual provisioning — contact support to add a local number.",
     "activateFailed": "Something went wrong activating the assistant. Please try again.",
     "deactivate": "Deactivate",
     "deactivateSuccess": "Assistant deactivated. It will no longer answer calls or perform actions.",
@@ -576,7 +576,7 @@
     },
     "attachPhoneNumber": {
       "title": "Attach an existing number",
-      "description": "Vapi's automatic number provisioning only covers US/Canada. To use a Finnish +358 number, import one you already hold with Twilio (or another SIP-compatible carrier).",
+      "description": "Vapi’s automatic number provisioning only covers US/Canada. To use a number from another country (for example a Finnish +358 number), import one you already hold with Twilio (or another SIP-compatible carrier).",
       "provider": "Carrier",
       "providerTwilio": "Twilio",
       "providerByo": "Bring your own (SIP)",
@@ -1327,7 +1327,7 @@
   },
   "marketing": {
     "heroTitle": "The AI assistant that knows your business",
-    "heroSubtitle": "Chat, voice assistant, CRM and automations — one platform built for Finnish SMBs.",
+    "heroSubtitle": "Chat, voice assistant, CRM and automations — one platform built for small and growing businesses.",
     "startFree": "Start free",
     "pricing": "Pricing",
     "pricingTitle": "Pricing",
