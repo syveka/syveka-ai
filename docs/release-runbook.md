@@ -208,6 +208,252 @@ psql "$PROD_DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_pre
 npx prisma migrate status
 ```
 
+### Backup and recovery evidence (as of 2026-10-04)
+
+**Source.** These are the owner's dashboard observations of the production Supabase project
+"syveka" on 2026-10-04 (an owner-supplied summary of screenshots). They're observations, not proof
+that a restore works, and they don't establish which backup will be the latest at release time.
+
+| Item                   | Observation                                                                                              | Status                        |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| Daily backups          | Listed daily from 2026-09-27 to 2026-10-03; the latest visible is 2026-10-03 22:15:37 UTC, type PHYSICAL | Available (observed)          |
+| Point-in-time recovery | The "Point in time" tab shows "Enable add-on"                                                            | **Not enabled**               |
+| Storage objects        | The dashboard states that database backups exclude Storage objects; only their metadata is included      | **Not covered by any backup** |
+| Restore test           | None performed                                                                                           | **Pending**                   |
+
+**The recovery requirement is not met yet.** The gate above ("Confirm Supabase PITR is enabled") is
+**not satisfied**: PITR is off. No restore has been tested, and Storage files have no backup.
+
+The successful staging release #124 (`7a1a8fe`) is release-pipeline evidence, not backup or
+recovery evidence.
+
+**Options checked against Supabase's official documentation (2026-10-04):**
+
+| Option                                                                                    | Available for this project?                                                                                          | What it tests                                                                                               | Cost (official pricing)                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| A. **Restore the existing PHYSICAL backup to a new project** ("Restore to a New Project") | **Yes.** It needs a paid plan with physical backups enabled; the PHYSICAL daily backups show both.                   | The actual managed backup we would rely on                                                                  | The new project bills hourly, rounded up to the full hour, until deleted. It mirrors the source's compute and disk size. Example compute rates: Micro $0.01344/h, Small $0.0206/h, Medium $0.0822/h. Disk: 8 GB included, then $0.125 per GB-month. The org's $10 monthly compute credit may absorb part of it. Compute is **not** covered by the Spend Cap. |
+| B. **Logical export (`supabase db dump`) restored into an isolated local Postgres**       | Yes, on any plan, with the database password and the Supabase CLI, Docker and psql.                                  | Only that a **new logical dump** of today's data can be restored. It does **not** test the managed backups. | $0 infrastructure. It requires copying production data out of Supabase, which needs separate approval.                                                                                                                                                                                                                                                       |
+| C. **Enable PITR**                                                                        | Available on Pro, Team and Enterprise as an add-on, and the project "must also use at least a Small compute add-on". | Nothing by itself: it changes the recovery point. A restore still has to be tested.                         | 7-day retention: $0.137/h (about $100/month); 14 days: about $200/month; 28 days: about $400/month. Plus any compute upgrade to Small. Recurring.                                                                                                                                                                                                            |
+
+What the official documentation also says:
+
+- **Physical backups can't be downloaded.** "When PITR is disabled, you can still use physical
+  backups for restoration, but they are not available for direct download." The existing backup can
+  only be tested through a Supabase restore (option A); it can't be pulled into a local database.
+- **Restore in place takes the project offline.** "The project is inaccessible during this process."
+  It must never be used for a drill.
+- **What a new project receives:** schema, data, roles, Auth users with hashed passwords, and the
+  **encryption root key**, so Vault and encrypted columns stay readable.
+- **What it doesn't receive:** Storage objects and bucket settings, Edge Functions, Auth settings,
+  API keys, Realtime settings, extension settings and read replicas. It stays in the source's region.
+- **`pg_cron` and `pg_net` jobs run automatically when the restore completes** and can't be paused
+  beforehand.
+- A project created by restore can't itself be a clone source.
+- Daily backups "do not store passwords for custom roles".
+
+Sources (checked 2026-10-04):
+
+- https://supabase.com/docs/guides/platform/backups
+- https://supabase.com/docs/guides/platform/clone-project
+- https://supabase.com/docs/guides/platform/manage-your-usage/compute
+- https://supabase.com/docs/guides/platform/manage-your-usage/disk-size
+- https://supabase.com/docs/guides/platform/manage-your-usage/point-in-time-recovery
+- https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore
+
+### Recovery drill plan (proposed; not executed, needs owner approval)
+
+**Recommendation: option A, once.** It is the only option that tests the backups actually relied
+on, and its cost is bounded by deleting the project the same day. Option B is a complementary
+logical-export check and is not a substitute; it needs separate approval because it copies
+production data out. PITR (option C) is a business decision about the recovery point, covered
+below; it doesn't replace the drill.
+
+**Source and destination**
+
+- **Source:** the latest daily PHYSICAL backup of the production project "syveka", chosen on the day
+  of the drill. Record its exact timestamp.
+- **Destination:** a **new, temporary** project created by "Restore to a New Project", for example
+  `syveka-restore-drill-<date>`. It lands in the same organization and region.
+- **Never** restore in place on production, and never restore into the shared staging project.
+
+**Prerequisites and permissions**
+
+- An owner or admin of the production organization, with billing visibility.
+- Read the cost overview the dashboard shows before confirming. Stop if it exceeds the approved
+  ceiling.
+- **Read-only, beforehand, on production.** Confirm whether `pg_cron` jobs or `pg_net`-based
+  database webhooks exist:
+  - `select jobid, schedule, active from cron.job;` if the `cron` schema exists;
+  - `select count(*) from supabase_functions.hooks;` if it exists;
+  - the extension list in the dashboard.
+
+  This repository creates neither; its jobs run through QStash, outside the database. **If any
+  exist, stop and re-plan:** they would run in the restored project immediately.
+
+- The operator's `psql` (Postgres 17 or newer, matching the docs) and this repository's
+  `tests/staging/*.sql` read-only assertions.
+
+**Steps**
+
+1. **Record the starting point:** production project ref, the chosen backup timestamp, the start
+   time, and the operator.
+2. **Start the restore.** Dashboard: production project, Database, Backups, "Restore to a New
+   Project", select the backup. Review the cost and confirm.
+3. **Lock the new project down** as soon as it is ready:
+   - Settings, Network restrictions: allow only the operator's IP.
+   - Don't configure SMTP, Auth providers, hooks or webhooks.
+   - Don't deploy Edge Functions.
+   - Don't hand out its API keys.
+   - **Never point the application, a Vercel project, QStash, Stripe, Vapi, Resend, calendars or
+     Meta at it.**
+4. **Run validations** with no customer content. Every query is an aggregate or a structural check:
+   - **Migrations:** compare `select migration_name, checksum from _prisma_migrations order by 1`
+     with production and with this repository (`npm run migrations:check`). The expected result is
+     identical lists.
+   - **Schema:** compare `supabase db dump --schema-only` hashes, or `pg_dump --schema-only`
+     excluding volatile objects, between the copy and production.
+   - **Aggregate counts:** `count(*)` per tenant-owned table, plus `auth.users` and
+     `auth.identities`. Only counts are recorded. The production backup is a past snapshot, so expect
+     the copy's counts to be at or below today's production counts, with no table unexpectedly empty.
+   - **Relationships:** zero rows from orphan checks. Examples:
+     - `organization_members` without `organizations` or `users`;
+     - `public.users` without a matching `auth.users`;
+     - `bookings` without `booking_types`;
+     - `document_chunks` without `documents`.
+   - **RLS, policies and invariants:**
+     `psql "$DRILL_URL" -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql`, then
+     `-f tests/staging/storage-invariants.sql`. Both are read-only. Storage metadata is present even
+     though the objects aren't.
+   - **Encrypted data:** confirm that columns encrypted with application keys (calendar and social
+     tokens) are still ciphertext. The application keys aren't in the database and must **not** be
+     brought to the drill.
+5. **Measure** the elapsed time from confirmation to "ready" and to "validations done". That gives a
+   measured restore time for this database size, which we don't have today.
+6. **Clean up the same day.** Delete the temporary project (Settings, General, Delete project).
+   Billing stops at deletion, rounded up to the hour. Confirm the next invoice or usage page shows
+   only the drill hours. Delete any local outputs; only counts and hashes are kept.
+
+**Estimated cost.** Roughly a few hours of the production compute size plus disk above 8 GB:
+
+- Micro: a few cents.
+- Medium for 24 hours: about $2.
+
+The production compute size and disk size aren't known here; the dashboard cost screen shows the
+exact figure. **Proposed ceiling: $5, with deletion within 24 hours.**
+
+**Estimated duration.** Unknown. Per Supabase, it depends on database size. Plan about half a day,
+and measure the actual time.
+
+**Protecting the copied data.** The temporary project holds real production data:
+
+- Auth users with hashed passwords;
+- CRM data;
+- the **Vault root key**, so Vault-encrypted columns are readable;
+- application-encrypted provider tokens, unreadable without the application keys.
+
+Treat it as production:
+
+- owner-only access;
+- IP-restricted;
+- no extra dashboard members;
+- no exports, screenshots of rows, or copies to laptops;
+- deleted the same day.
+
+Its existence and deletion go in the private change record.
+
+**Pass criteria (all required):**
+
+- the restore completes;
+- migration lists match;
+- the schema matches, apart from documented volatile objects;
+- no table is unexpectedly empty, and Auth counts are plausible;
+- zero orphans;
+- both invariant scripts pass;
+- the project is deleted.
+
+Anything else is a **fail**. Record the reason and fix it before production.
+
+**Evidence to record** (in the private change record, not in this repository):
+
+- backup timestamp and type, start and end times, and the measured restore time;
+- the cost screen total;
+- migration and schema comparison results;
+- aggregate counts (numbers only);
+- orphan and invariant script results;
+- deletion time;
+- operator and approver.
+
+### Storage files: separate backup and restore plan
+
+**No database backup or restore covers Storage objects.** The private buckets `documents`,
+`voice-recordings`, `exports`, `creator-reference-assets` and `creator-generated-media` hold the only
+copy of those files.
+
+**Proposed (needs a separate owner decision):**
+
+1. Inventory object counts and total size per bucket, from metadata only (`storage.objects`
+   aggregates).
+2. Choose an encrypted destination outside Supabase, with access limited to the owner, and a
+   retention period.
+3. Copy the buckets using Supabase's documented approach: download and re-upload with a script, or
+   the S3-compatible API.
+   - S3 access keys are credentials: creating them is an owner action.
+4. Test a restore of a **sample** into a temporary bucket in the drill project (option A) or a local
+   Supabase stack. Verify checksums and sizes only, never contents.
+5. Decide a schedule (for example weekly, plus before each production release). Cost depends on
+   total size and the chosen destination, which are unknown today.
+
+**Until then:** losing a Storage object, whether by deletion, corruption or a project-level
+incident, is **unrecoverable**.
+
+### Release acceptance: data-loss window, rollback and the PITR gate
+
+- **Data-loss window today:** with daily physical backups only, an incident can lose everything
+  written since the last daily backup. That's up to about 24 hours: the latest one seen was
+  22:15 UTC. PITR would reduce that to seconds within its retention period.
+- **Before a release:** a fresh logical dump taken immediately before the release migrations limits
+  the loss **for a release-caused problem** to the minutes between that dump and the incident. The
+  runbook's existing step: "Create an on-demand logical backup using an approved encrypted
+  destination".
+
+  It doesn't improve the window for unrelated incidents. Restoring a logical dump is manual and
+  slower than a managed restore.
+
+- **Application rollback is not database recovery.**
+  - **Application rollback:** redeploy the previous immutable build (see Rollback), with no data
+    loss. It's the default response to a bad release.
+  - **Database recovery:** restore a backup. It loses data written after the backup point, so it's
+    for destructive or corrupting changes only, with incident approval.
+- **The current gate stands.** "Confirm Supabase PITR is enabled and the recovery window covers the
+  release" is a **mandatory** pre-approval step today. It is **not met**, and this document doesn't
+  remove it.
+
+**Proposed amendment (pending owner decision; not in effect).** Replace the PITR line with:
+
+- **either** PITR enabled, covering the release window;
+- **or all of the following:**
+  1. the latest daily PHYSICAL backup is under 24 hours old, verified on the day;
+  2. a passing option-A restore drill within the last 90 days (and after major schema changes);
+  3. a logical dump taken immediately before the release migrations, stored encrypted, with its
+     restore procedure written down;
+  4. the owner's written acceptance of a recovery point of up to about 24 hours for incidents
+     unrelated to a release;
+  5. a Storage backup in place, or the owner's written acceptance that Storage loss is
+     unrecoverable.
+
+**Owner decision required:** adopt this alternative (and accept that recovery point), **or**
+keep PITR mandatory and approve its recurring cost: at least about $100/month for 7 days, plus a
+Small compute minimum. Neither is assumed here.
+
+**Unknowns** (no figures are invented here):
+
+- restore time for this database;
+- production database and Storage sizes;
+- the compute size;
+- whether `pg_cron`/`pg_net` jobs exist in production;
+- how long a logical dump and restore would take;
+- the business's acceptable recovery point and recovery time.
+
 ## Production deployment order
 
 1. Freeze schema-changing writes and notify the release owner.
