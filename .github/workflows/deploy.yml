@@ -211,6 +211,7 @@ jobs:
           # Inlined into /api/health's `build` field so the promoted domains
           # can be proven to serve this exact commit.
           NEXT_PUBLIC_BUILD_SHA: ${{ needs.verify-release-chain.outputs.candidate_sha }}
+          NEXT_PUBLIC_EXPECTED_SUPABASE_PROJECT_REF: ${{ vars.PRODUCTION_SUPABASE_PROJECT_REF }}
 
       - name: Record the current production deployment (Vercel credentials)
         id: previous
