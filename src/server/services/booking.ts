@@ -12,7 +12,12 @@ import {
   type WeeklyRule,
 } from "@/server/calendar/slots";
 import { isValidTimezone } from "@/server/calendar/timezone";
-import { lockContactEmail, lockOwnerCalendar } from "@/server/calendar/locks";
+import {
+  lockBookableBookingType,
+  lockCalendarMember,
+  lockContactEmail,
+  lockOwnerCalendar,
+} from "@/server/calendar/locks";
 import type { TenantContext } from "@/server/auth/session";
 import type { BookingTypeInput, PublicBookingInput } from "@/lib/validators/booking";
 
@@ -30,7 +35,8 @@ export class BookingError extends Error {
       | "slot_taken"
       | "invalid_slot"
       | "too_late"
-      | "already_canceled",
+      | "already_canceled"
+      | "owner_not_member",
   ) {
     super(message);
     this.name = "BookingError";
@@ -81,6 +87,22 @@ export async function saveBookingType(
   bookingTypeId?: string,
 ) {
   const db = tenantDb(ctx.orgId);
+  // A booking type can be active only while its owner is a current member.
+  // Removal turns the owner's types off and nothing turns them back on by
+  // itself (rejoining doesn't); after a rejoin, an admin re-enables them here.
+  if (input.isActive) {
+    const ownerId = bookingTypeId
+      ? (
+          await db.bookingType.findFirst({
+            where: { id: bookingTypeId, deletedAt: null },
+            select: { ownerId: true },
+          })
+        )?.ownerId
+      : ctx.userId;
+    if (ownerId && !(await isActiveOwner(ctx.orgId, ownerId))) {
+      throw new BookingError("Booking type owner is not a member", "owner_not_member");
+    }
+  }
   if (input.scheduleId) {
     const schedule = await db.availabilitySchedule.findFirst({
       where: { id: input.scheduleId },
@@ -173,7 +195,23 @@ export async function listBookings(ctx: TenantContext, opts?: { upcomingOnly?: b
 
 type PublicBookingType = NonNullable<Awaited<ReturnType<typeof getPublicBookingType>>>;
 
-/** Public, unauthenticated: resolves an active booking type by org + slug. */
+/** Whether `userId` is a current member of the (non-deleted) organization. */
+async function isActiveOwner(orgId: string, userId: string): Promise<boolean> {
+  const member = await unscopedPrisma.organizationMember.findFirst({
+    where: { organizationId: orgId, userId, organization: { deletedAt: null } },
+    select: { id: true },
+  });
+  return Boolean(member);
+}
+
+/**
+ * Public, unauthenticated: resolves a bookable booking type by org + slug —
+ * active, not deleted, in a non-deleted organization, and owned by a current
+ * member. Anything else is null, which every public caller turns into the
+ * same not-found response as an unknown link (nothing about membership is
+ * revealed). The owner check also covers types whose owner was removed
+ * before removal started disabling them.
+ */
 export async function getPublicBookingType(orgSlug: string, typeSlug: string) {
   const bookingType = await unscopedPrisma.bookingType.findFirst({
     where: {
@@ -187,7 +225,29 @@ export async function getPublicBookingType(orgSlug: string, typeSlug: string) {
       schedule: { include: { rules: true, overrides: true } },
     },
   });
+  if (!bookingType) return null;
+  if (!(await isActiveOwner(bookingType.organizationId, bookingType.ownerId))) return null;
   return bookingType;
+}
+
+/**
+ * Inside a booking-creating transaction, before anything is written: locks
+ * the owner's membership (and organization) and the booking type, and throws
+ * the generic not-found error unless the type is still bookable. See
+ * lockBookableBookingType for the ordering against a concurrent removal.
+ */
+async function assertStillBookable(
+  tx: Prisma.TransactionClient,
+  bookingType: { id: string; organizationId: string; ownerId: string },
+): Promise<void> {
+  const bookable =
+    (await lockCalendarMember(tx, bookingType.organizationId, bookingType.ownerId)) !== null &&
+    (await lockBookableBookingType(tx, {
+      bookingTypeId: bookingType.id,
+      orgId: bookingType.organizationId,
+      ownerId: bookingType.ownerId,
+    }));
+  if (!bookable) throw new BookingError("Booking page not found", "not_found");
 }
 
 async function resolveScheduleParts(bookingType: PublicBookingType): Promise<{
@@ -366,6 +426,7 @@ export async function createPublicBooking(params: {
           : null;
 
   const created = await unscopedPrisma.$transaction(async (tx) => {
+    await assertStillBookable(tx, bookingType);
     await lockOwnerCalendar(tx, orgId, bookingType.ownerId);
     await assertSlotStillFree(
       tx,
@@ -712,6 +773,9 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
       throw new BookingError("Booking was canceled", "already_canceled");
     }
 
+    // Moving a booking creates a new one for this type: same eligibility as a
+    // new public booking (an existing booking can still be canceled).
+    await assertStillBookable(tx, bookingType);
     await lockOwnerCalendar(tx, orgId, bookingType.ownerId);
     await assertSlotStillFree(
       tx,

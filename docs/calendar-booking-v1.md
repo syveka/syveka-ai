@@ -107,25 +107,117 @@ imports nothing more, and in-flight work persists nothing after the removal.
   - `tests/integration/calendar-membership-race-concurrency.sh` proves the Postgres lock semantics
     on a scratch database. It's manual and not run in CI.
 
-**Already imported events and public booking (unchanged; needs a product decision):**
+**Already imported events (unchanged; still an open product decision):**
 
 - **Imported events stay.** Events imported before the removal remain in the organization's
   calendar, with title, description, location and up to 50 attendees. They're owned by the former
   member and visible wherever organization events are listed. This matches the existing behavior
   of a voluntary disconnect ("imported events stay as the record of past meetings"). No new events
   are added and existing ones aren't updated.
-- **Booking types stay public.** A booking type owned by the former member stays publicly
-  bookable: `getPublicBookingType` doesn't check the owner's membership. Its availability uses the
-  former member's frozen imported events as busy times. That's no longer a live view of their
-  calendar, but it is still derived from it.
-- **The options:**
-  1. **Keep** imported events (the current behavior).
-  2. **Delete or anonymize them on removal.** The rows have `source` `GOOGLE` or `OUTLOOK`, and
-     their `externalCalendarId` belongs to the invalidated connection. This loses the
-     organization's record of meetings that involved it.
-  3. Separately, **deactivate or reassign the former member's booking types.**
+- **The open options:** keep them (current), or delete or anonymize them on removal. The rows have
+  `source` `GOOGLE` or `OUTLOOK`, and their `externalCalendarId` belongs to the invalidated
+  connection; deleting them loses the organization's record of those meetings. Neither is
+  automatic.
 
-  None of these is done automatically, and no bulk deletion was added.
+### Public booking links of removed members
+
+Product decision: when a member is removed, their public booking types stop accepting new
+bookings. Existing bookings and imported events are unchanged. Types are not reassigned, and
+rejoining doesn't reactivate them.
+
+- **Removal** (`removeMember`): in the same transaction, after the membership `DELETE`, the member's
+  booking types in that organization are set to `isActive = false`. Other members' types, and the
+  same user's types in other organizations, are untouched. Nothing else changes: no booking,
+  calendar event, external calendar or guest message.
+- **Server-side eligibility.** `getPublicBookingType()` resolves a type only if it is active, not
+  deleted, in a non-deleted organization, **and** its owner is a current member. That lookup backs:
+  - the public page;
+  - the slots API;
+  - booking creation;
+  - rescheduling.
+
+  Anything else gets the same generic not-found response as an unknown link, so membership isn't
+  revealed. The owner check also blocks types whose owner was removed **before** this change. No
+  live backfill was run; their rows stay `isActive = true` until an admin edits them.
+
+- **Inside each booking-creating transaction** (`createPublicBooking`, and
+  `rescheduleBookingViaToken`, which creates a successor booking), before the existing slot lock or
+  any write: `lockCalendarMember()` takes `FOR SHARE OF` the membership and organization rows, then
+  `lockBookableBookingType()` takes `FOR SHARE` on the booking type, which must still be active.
+  Canceling an existing booking is unaffected.
+- **Ordering against a concurrent removal** (READ COMMITTED):
+  - **The booking holds the locks first:** the removal's `DELETE` waits; the booking commits, and
+    then the type is disabled.
+  - **The removal got there first:** the booking waits, then finds no membership row and books
+    nothing.
+  - **Organization soft-delete:** an `UPDATE` of the organization row conflicts with the
+    `FOR SHARE` on it the same way.
+- **Lock order:** membership and organization rows, then the booking type, the same order as the
+  removal (membership `DELETE`, then booking type `UPDATE`, then calendar connections).
+  - **Reversing it deadlocks.** The integration script shows that the reversed order (booking type,
+    then membership) deadlocks under the same timing, and Postgres aborts one transaction with
+    `40P01`. This is why the order matters.
+  - **Not every deadlock is ruled out.** This ordering removes that cycle, but other transactions
+    touching these rows could still form a cycle. If Postgres aborts one, the transaction rolls
+    back completely. A guest gets the existing generic failure response and can retry; a removal
+    returns an error to the admin and can be retried.
+- **Rejoining** (`acceptInvitation`, the only path that adds a user to an existing organization).
+  In the same transaction as the new membership, the joining user's booking types in that
+  organization are set inactive.
+  - **Why:** a member removed before removal-time deactivation existed still has their types
+    stored as active, and the owner check alone would make those links bookable again the moment
+    they rejoin.
+  - **Who it affects:** for a first-time member it matches nothing. Accepting an invitation as an
+    existing member still fails on the unique membership, and the whole transaction rolls back.
+    New organizations (`createOrganization`) can't have earlier types.
+- **Reactivation:** `saveBookingType()` refuses to save a type as active while its owner isn't a
+  current member (`owner_not_member`, shown in the booking-type form in EN/FI/AR). After the owner
+  rejoins, an admin with `booking:manage` can turn it back on explicitly. Saving it inactive is
+  always allowed.
+- **Evidence:**
+  - `tests/unit/booking-owner-removal.test.ts` (mocked sequencing). Its regression cases fail on the
+    previous implementation. That includes the legacy removal-then-rejoin case, where the type is
+    stored active as the old code left it.
+  - `tests/integration/booking-owner-removal-race-concurrency.sh`: real Postgres, manual, not in
+    CI. Scenarios: booking first, removal first, the unfixed race, the reversed-order deadlock, and
+    no deadlock with the code's order.
+
+**Historical cases the stored data can't distinguish:**
+
+- **Removed and rejoined before this change deploys.** A legacy-removed member who **rejoined
+  before this change is deployed** has their old types stored active **and** a current
+  membership, which looks exactly like a legitimately active type. Their links stay bookable. No
+  column records the earlier removal; only the audit log may. Here is a read-only query an owner
+  can run to find candidates. It depends on both audit entries having been written, so it doesn't
+  prove there are no such cases:
+
+  ```sql
+  select bt.organization_id, bt.id as booking_type_id, bt.owner_id
+  from booking_types bt
+  where bt.is_active and bt.deleted_at is null
+    and exists (
+      select 1 from audit_logs r
+      where r.organization_id = bt.organization_id and r.action = 'member.remove'
+        and r.before->>'userId' = bt.owner_id::text
+        and exists (
+          select 1 from audit_logs j
+          where j.organization_id = bt.organization_id and j.action = 'member.join'
+            and j.resource_id = bt.owner_id::text and j.created_at > r.created_at
+        )
+    );
+  ```
+
+- **Memberships ended outside `removeMember`** (direct database changes, user deletion
+  cascades). These are blocked while the user is absent, by the owner check, and deactivated if
+  they rejoin through an invitation. Any other way of re-creating a membership (scripts, manual
+  SQL) bypasses `acceptInvitation`, and the types stay as stored.
+
+**Remaining limitations:**
+
+- **Calendar view:** a removed owner's existing future bookings still appear on the organization's
+  calendar, and guests can still cancel them through their links.
+- **Ownership:** the booking types themselves stay owned by the former member, because nothing
+  reassigns them.
 
 ## Environment variables
 

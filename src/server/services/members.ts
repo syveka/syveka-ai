@@ -96,7 +96,7 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
     throw new Error("Invitation was sent to a different email address");
   }
 
-  await unscopedPrisma.$transaction([
+  const [, , rejoinDisabled] = await unscopedPrisma.$transaction([
     unscopedPrisma.organizationMember.create({
       data: {
         organizationId: invitation.organizationId,
@@ -108,6 +108,20 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
       where: { id: invitation.id },
       data: { status: "ACCEPTED" },
     }),
+    // A joining user's booking types in this organization can only be left
+    // over from an earlier membership. Removal disables them now, but a
+    // member removed before it did still has them stored as active; joining
+    // again must not make those public links bookable. An admin re-enables
+    // them explicitly. For a first-time member this matches nothing.
+    unscopedPrisma.bookingType.updateMany({
+      where: {
+        organizationId: invitation.organizationId,
+        ownerId: userId,
+        isActive: true,
+        deletedAt: null,
+      },
+      data: { isActive: false },
+    }),
   ]);
 
   const admin = createSupabaseAdmin();
@@ -117,7 +131,12 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
 
   await audit(
     { orgId: invitation.organizationId, userId },
-    { action: "member.join", resourceType: "organization_member", resourceId: userId },
+    {
+      action: "member.join",
+      resourceType: "organization_member",
+      resourceId: userId,
+      after: { bookingTypesDisabled: rejoinDisabled.count },
+    },
   );
 
   return invitation.organizationId;
@@ -157,16 +176,24 @@ export async function removeMember(ctx: TenantContext, memberId: string): Promis
   // invalidation after it then clears whatever that write committed. Local
   // credentials are removed; the grant at the provider is the user's own
   // and is not revoked here (it may serve their other organizations).
-  const invalidated = await unscopedPrisma.$transaction(async (tx) => {
+  const { invalidated, bookingTypesDisabled } = await unscopedPrisma.$transaction(async (tx) => {
     await tx.organizationMember.delete({
       where: { id: memberId, organizationId: ctx.orgId },
+    });
+    // Their public booking links stop taking bookings. Existing bookings and
+    // events are untouched; rejoining doesn't turn these back on.
+    const disabledTypes = await tx.bookingType.updateMany({
+      where: { organizationId: ctx.orgId, ownerId: member.userId, isActive: true, deletedAt: null },
+      data: { isActive: false },
     });
     const connections = await tx.calendarConnection.findMany({
       where: { organizationId: ctx.orgId, userId: member.userId },
       select: { id: true },
     });
     const connectionIds = connections.map((c) => c.id);
-    if (connectionIds.length === 0) return 0;
+    if (connectionIds.length === 0) {
+      return { invalidated: 0, bookingTypesDisabled: disabledTypes.count };
+    }
     await tx.calendarConnection.updateMany({
       where: { id: { in: connectionIds }, organizationId: ctx.orgId },
       data: {
@@ -185,7 +212,7 @@ export async function removeMember(ctx: TenantContext, memberId: string): Promis
     await tx.calendarSyncState.deleteMany({
       where: { organizationId: ctx.orgId, externalCalendar: calendars },
     });
-    return connectionIds.length;
+    return { invalidated: connectionIds.length, bookingTypesDisabled: disabledTypes.count };
   });
 
   await audit(ctx, {
@@ -193,6 +220,6 @@ export async function removeMember(ctx: TenantContext, memberId: string): Promis
     resourceType: "organization_member",
     resourceId: memberId,
     before: { userId: member.userId, role: member.role },
-    after: { calendarConnectionsDisabled: invalidated },
+    after: { calendarConnectionsDisabled: invalidated, bookingTypesDisabled },
   });
 }

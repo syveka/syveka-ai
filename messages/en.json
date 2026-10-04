@@ -698,7 +698,8 @@
       "collectPhone": "Ask for phone",
       "collectCompany": "Ask for company",
       "confirmationMessage": "Confirmation message",
-      "slugTaken": "This URL slug is already in use"
+      "slugTaken": "This URL slug is already in use",
+      "ownerNotMember": "This booking type's owner is no longer a member, so it can't be activated."
     },
     "connectCalendarLink": "Connect calendar"
   },
