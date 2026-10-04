@@ -151,12 +151,48 @@ export async function removeMember(ctx: TenantContext, memberId: string): Promis
 
   if (member.role === "OWNER") throw new Error("Cannot remove the owner");
 
-  await db.organizationMember.delete({ where: { id: memberId } });
+  // The membership and the member's calendar access in this organization end
+  // together. The DELETE runs first: it waits for any in-flight calendar
+  // write that holds the membership row (lockCalendarMember), and the
+  // invalidation after it then clears whatever that write committed. Local
+  // credentials are removed; the grant at the provider is the user's own
+  // and is not revoked here (it may serve their other organizations).
+  const invalidated = await unscopedPrisma.$transaction(async (tx) => {
+    await tx.organizationMember.delete({
+      where: { id: memberId, organizationId: ctx.orgId },
+    });
+    const connections = await tx.calendarConnection.findMany({
+      where: { organizationId: ctx.orgId, userId: member.userId },
+      select: { id: true },
+    });
+    const connectionIds = connections.map((c) => c.id);
+    if (connectionIds.length === 0) return 0;
+    await tx.calendarConnection.updateMany({
+      where: { id: { in: connectionIds }, organizationId: ctx.orgId },
+      data: {
+        status: "DISCONNECTED",
+        accessTokenEnc: null,
+        refreshTokenEnc: null,
+        tokenExpiresAt: null,
+        lastError: "membership_removed",
+        lastCheckedAt: new Date(),
+      },
+    });
+    // Same as turning sync off for a calendar: no further webhook renewal,
+    // and the stored webhook secret is dropped, so pings fail verification.
+    const calendars = { connectionId: { in: connectionIds }, organizationId: ctx.orgId };
+    await tx.externalCalendar.updateMany({ where: calendars, data: { syncEnabled: false } });
+    await tx.calendarSyncState.deleteMany({
+      where: { organizationId: ctx.orgId, externalCalendar: calendars },
+    });
+    return connectionIds.length;
+  });
 
   await audit(ctx, {
     action: "member.remove",
     resourceType: "organization_member",
     resourceId: memberId,
     before: { userId: member.userId, role: member.role },
+    after: { calendarConnectionsDisabled: invalidated },
   });
 }

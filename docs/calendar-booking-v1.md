@@ -54,6 +54,79 @@ New permissions: `calendar:delete`, `booking:manage`, `integrations:manage` (plu
 - OAuth `state` is HMAC-signed, tenant-bound and expires in 10 minutes; secrets (encrypted tokens, booking tokens, reminders, sync state) have **no client RLS policies** — server-only. No secrets are ever serialized to the client.
 - Audit log entries for event CRUD, availability changes, booking lifecycle, connect/disconnect/sync toggles.
 
+### Membership removal and calendar access
+
+This closes R1, a residual tenant-isolation finding from the earlier auth and tenant-isolation
+audit. Once a membership removal commits, that member's calendar connection in that organization
+imports nothing more, and in-flight work persists nothing after the removal.
+
+- **Removal** (`removeMember`, `src/server/services/members.ts`): one transaction deletes the
+  membership and then, for that user in that organization only:
+  - sets their `calendar_connections` to `DISCONNECTED` and nulls the access token, refresh token
+    and expiry (`lastError = membership_removed`);
+  - turns sync off on their calendars, and deletes their sync state, which holds the cursor and the
+    webhook secret hash, so webhook pings fail verification.
+- **What removal does and doesn't change:**
+  - Connections in other organizations, and other members' connections, are untouched.
+  - **Only local credentials are removed. Nothing is revoked at the provider:** the grant is the
+    user's own and may serve their other organizations. Provider webhook channels lapse on their
+    own; their pings no longer verify.
+- **Every write on the user's behalf is guarded:**
+  - OAuth connection persistence (after the token exchange);
+  - refreshed tokens;
+  - each imported page (events, deletions, cursor);
+  - webhook subscription state.
+
+  Each runs in a transaction that first takes `lockCalendarMember()`
+  (`src/server/calendar/locks.ts`), which locks the membership and organization rows with
+  `FOR SHARE OF m, o`. Sync and refresh also take `lockActiveCalendarConnection()` (`FOR SHARE`,
+  or `FOR UPDATE` for refresh). Under READ COMMITTED:
+  - **The writer locks first:** the removal's `DELETE` waits. The invalidation that follows it
+    then clears what the writer committed.
+  - **The removal reached the row first:** the writer waits, re-reads, finds no row, and writes
+    nothing.
+  - **Organization soft-delete:** an `UPDATE` of the organization row conflicts the same way, and
+    a deleted organization yields no row.
+  - **No deadlocks:** lock order is always membership or organization, then connection, matching
+    the removal's `DELETE`-then-`UPDATE` order.
+  - **No transaction during network calls:** provider calls (token exchange, calendar listing,
+    refresh, event fetch, subscribe) run before the transaction.
+
+- **Stale refresh:** refreshed tokens are stored only if the refresh token used is still the stored
+  one (a compare-and-swap on its ciphertext), so a stale refresh can't restore credentials or
+  overwrite a later re-connection. `markConnectionStatus()` never overwrites `DISCONNECTED`.
+- **Members removed before this change:** their connections were not invalidated. Token reads,
+  sync and subscription renewal refuse them (`getFreshTokens` checks membership, so sync stops
+  before any provider fetch), and no live data is changed retroactively. Their
+  encrypted tokens remain stored until the connections are cleaned up, which is an owner decision.
+- **Evidence:**
+  - `tests/unit/calendar-membership-revocation.test.ts` covers this with mocked provider
+    sequencing: removal during the OAuth exchange, after a sync fetch, during a refresh;
+    re-connection; webhooks and retries; cross-organization isolation; soft-deleted organizations.
+    Its 12 revocation cases fail against the previous implementation.
+  - `tests/integration/calendar-membership-race-concurrency.sh` proves the Postgres lock semantics
+    on a scratch database. It's manual and not run in CI.
+
+**Already imported events and public booking (unchanged; needs a product decision):**
+
+- **Imported events stay.** Events imported before the removal remain in the organization's
+  calendar, with title, description, location and up to 50 attendees. They're owned by the former
+  member and visible wherever organization events are listed. This matches the existing behavior
+  of a voluntary disconnect ("imported events stay as the record of past meetings"). No new events
+  are added and existing ones aren't updated.
+- **Booking types stay public.** A booking type owned by the former member stays publicly
+  bookable: `getPublicBookingType` doesn't check the owner's membership. Its availability uses the
+  former member's frozen imported events as busy times. That's no longer a live view of their
+  calendar, but it is still derived from it.
+- **The options:**
+  1. **Keep** imported events (the current behavior).
+  2. **Delete or anonymize them on removal.** The rows have `source` `GOOGLE` or `OUTLOOK`, and
+     their `externalCalendarId` belongs to the invalidated connection. This loses the
+     organization's record of meetings that involved it.
+  3. Separately, **deactivate or reassign the former member's booking types.**
+
+  None of these is done automatically, and no bulk deletion was added.
+
 ## Environment variables
 
 ```
