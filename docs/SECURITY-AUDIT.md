@@ -327,11 +327,18 @@ unchanged. This closes #73's run-time recipient item. **It doesn't cover the two
   - **No write-back found:** I found no code that writes to external calendars.
 - **Classification: pre-production assessment required.** Fix it, or have the owner accept it in
   writing, before production. Not deferred to after launch by default.
-- **Status (2026-10-04):** a fix is proposed in Draft #229. It invalidates connections in the
-  removal transaction; OAuth, refresh, sync and webhook writes run under membership row locks; and
-  refresh uses a compare-and-swap. It has unit regressions and a real-Postgres race script. R1
-  remains open until #229 is merged and released. Already-imported events and the former member's
-  public booking types are unchanged, and that needs an owner decision (#229).
+- **Status (2026-10-04):** fixes are proposed in Draft PRs, not merged or deployed.
+  - **Draft #229, calendar access.** Connections are invalidated in the removal transaction; OAuth,
+    refresh, sync and webhook writes run under membership row locks; refresh uses a
+    compare-and-swap.
+  - **Draft #230, public booking links** (stacked on #229). A removed member's booking types are
+    disabled; every public booking path requires a current-member owner; rejoining deactivates
+    leftover types.
+  - **Evidence:** both have unit regressions and real-Postgres race scripts.
+  - **Not covered.** Members who were removed **and** rejoined before #230 deploys still have
+    active types, and the stored data can't distinguish them. A candidate query is in #230's docs.
+    Retention of already-imported events is still an owner decision.
+  - **R1 remains open** until #229 and #230 are merged and released.
 - **Existing protections:**
   - The HMAC-signed `state` binds the org, user and provider, and expires after 10 minutes.
   - Tokens are encrypted at rest.
@@ -357,6 +364,16 @@ unchanged. This closes #73's run-time recipient item. **It doesn't cover the two
 **Classification: pre-production assessment required.** Fix it, or have the owner accept it in
 writing, before production. Not deferred to after launch by default. Until it's fixed, step 5.1 of
 the deletion runbook (stop scheduled side effects before soft deletion) is mandatory.
+
+**Status (2026-10-04):** a fix is proposed in Draft #231, not merged or deployed.
+
+- **What it does:** a shared organization guard in the four jobs, checked before any external
+  effect and before persisting results after provider calls. Skips are HTTP 200; guard database
+  errors are retried.
+- **What it can't cover:**
+  - a provider call already in flight when the organization is deleted;
+  - `run-workflow` steps.
+- **Runbook:** step 5.1 stays required.
 
 - **Present on current `main`:** yes. Jobs queued before `organizations.deleted_at` is set run
   without checking it, and so do jobs enqueued afterwards by schedules:
