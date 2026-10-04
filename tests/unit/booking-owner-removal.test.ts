@@ -106,8 +106,50 @@ const tx = {
   activity: { create: vi.fn(async () => ({})) },
 };
 
+const invitations: Array<Record<string, unknown>> = [];
+/**
+ * Like a PrismaPromise: the query runs only when awaited, so a batch
+ * $transaction([...]) can snapshot state first and roll back on failure.
+ */
+function lazyFn<A, T>(impl: (args: A) => T) {
+  return vi.fn((args: A) => {
+    let p: Promise<T> | undefined;
+    return {
+      then: <R1, R2>(ok?: (v: T) => R1, err?: (e: unknown) => R2) =>
+        (p ??= Promise.resolve().then(() => impl(args))).then(ok, err),
+    };
+  });
+}
 const db = {
+  invitation: {
+    findUnique: vi.fn(async ({ where }: { where: Row }) => {
+      return invitations.find((i) => i.token === where.token) ?? null;
+    }),
+    update: lazyFn(({ where, data }: { where: Row; data: Row }) =>
+      Object.assign(
+        invitations.find((i) => i.id === where.id)!,
+        data,
+      ),
+    ),
+  },
+  user: {
+    findUniqueOrThrow: vi.fn(async ({ where }: { where: Row }) => ({
+      id: where.id,
+      email: `${where.id as string}@example.test`,
+    })),
+  },
   bookingType: {
+    updateMany: lazyFn(({ where, data }: { where: Row; data: Row }) => {
+      const rows = s.types.filter(
+        (t) =>
+          t.organizationId === where.organizationId &&
+          t.ownerId === where.ownerId &&
+          t.isActive === where.isActive &&
+          !t.deletedAt,
+      );
+      for (const r of rows) Object.assign(r, data);
+      return { count: rows.length };
+    }),
     findFirst: vi.fn(async ({ where }: { where: Row }) => {
       const org = where.organization as { slug: string; deletedAt: null } | undefined;
       const t = s.types.find((x) => {
@@ -133,6 +175,16 @@ const db = {
       );
       return m && !orgDeleted(m.organizationId) ? { id: m.id } : null;
     }),
+    create: lazyFn(({ data }: { data: Row }) => {
+      if (
+        s.members.some((m) => m.organizationId === data.organizationId && m.userId === data.userId)
+      ) {
+        throw new Error("P2002");
+      }
+      const row = { id: nextId("m"), role: "MEMBER", ...data } as (typeof s.members)[number];
+      s.members.push(row);
+      return row;
+    }),
   },
   availabilitySchedule: { findFirst: vi.fn(async () => null) },
   calendarEvent: {
@@ -147,7 +199,21 @@ const db = {
       return [];
     }),
   },
-  $transaction: vi.fn(async (fn: (t: typeof tx) => unknown) => fn(tx)),
+  // Interactive (callback) and batch (array) forms. A failed batch rolls back,
+  // as a real transaction does.
+  $transaction: vi.fn(async (arg: unknown) => {
+    if (typeof arg === "function") return (arg as (t: typeof tx) => unknown)(tx);
+    const types = s.types.map((t) => ({ ...t }));
+    const members = s.members.map((m) => ({ ...m }));
+    const results = await Promise.allSettled(arg as unknown[]);
+    const failed = results.find((r) => r.status === "rejected");
+    if (failed) {
+      s.types.forEach((t, i) => Object.assign(t, types[i]));
+      s.members = members;
+      throw (failed as PromiseRejectedResult).reason;
+    }
+    return results.map((r) => (r as PromiseFulfilledResult<unknown>).value);
+  }),
 };
 
 vi.mock("@/server/db/tenant", () => ({
@@ -188,7 +254,9 @@ vi.mock("@/server/services/booking-tokens", () => ({
   resolveToken: vi.fn(),
   consumeTokenAtomic: vi.fn(async () => undefined),
 }));
-vi.mock("@/server/supabase/server", () => ({ createSupabaseAdmin: vi.fn() }));
+vi.mock("@/server/supabase/server", () => ({
+  createSupabaseAdmin: () => ({ auth: { admin: { updateUserById: vi.fn(async () => ({})) } } }),
+}));
 vi.mock("@/server/integrations/resend", () => ({ sendEmail: vi.fn() }));
 vi.mock("@/server/services/billing/entitlements", () => ({ assertWithinLimit: vi.fn() }));
 vi.mock("../../emails/invitation", () => ({ InvitationEmail: () => null }));
@@ -201,7 +269,7 @@ import {
   rescheduleBookingViaToken,
   saveBookingType,
 } from "@/server/services/booking";
-import { removeMember } from "@/server/services/members";
+import { acceptInvitation, removeMember } from "@/server/services/members";
 import { resolveToken } from "@/server/services/booking-tokens";
 
 // Monday 2026-02-02 09:00 Helsinki = 07:00Z; "now" is the day before.
@@ -298,7 +366,22 @@ beforeEach(() => {
     },
   ];
   s.contacts = [];
+  invitations.length = 0;
 });
+
+/** Rejoining through the only rejoin path: a fresh invitation, accepted. */
+async function rejoin(orgId: string, userId: string) {
+  invitations.push({
+    id: nextId("inv"),
+    token: `token-${s.seq}`,
+    organizationId: orgId,
+    email: `${userId}@example.test`,
+    role: "MEMBER",
+    status: "PENDING",
+    expiresAt: new Date("2030-01-01T00:00:00Z"),
+  });
+  return acceptInvitation(invitations.at(-1)!.token as string, userId);
+}
 afterEach(() => {
   vi.useRealTimers();
 });
@@ -407,6 +490,51 @@ describe("concurrent removal and booking creation (mocked sequencing)", () => {
     });
     await book("org-a", "owner-call");
     expect(order).toEqual(["member", "booking_type", "write"]);
+  });
+});
+
+describe("legacy removal (before removal-time deactivation), then rejoin", () => {
+  it("the stored-active booking type does not become bookable again when the owner rejoins", async () => {
+    // Exactly the legacy state: the old removeMember deleted only the
+    // membership row; the type is still stored as ACTIVE.
+    s.members = s.members.filter((m) => m.id !== "m-owner-a");
+    const legacy = s.types.find((t) => t.id === "bt-owner-a")!;
+    expect(legacy.isActive).toBe(true);
+    await expect(book("org-a", "owner-call")).rejects.toMatchObject(NOT_FOUND); // blocked while absent
+
+    await rejoin(ORG_A, OWNER);
+
+    expect(s.members.some((m) => m.organizationId === ORG_A && m.userId === OWNER)).toBe(true);
+    expect(legacy.isActive).toBe(false);
+    expect(await getPublicBookingType("org-a", "owner-call")).toBeNull();
+    await expect(slotsFor("org-a", "owner-call")).rejects.toMatchObject(NOT_FOUND);
+    await expect(book("org-a", "owner-call")).rejects.toMatchObject(NOT_FOUND);
+    expect(s.bookings).toHaveLength(1); // the pre-existing booking only, unchanged
+  });
+
+  it("after the rejoin, an admin can explicitly reactivate it", async () => {
+    s.members = s.members.filter((m) => m.id !== "m-owner-a");
+    await rejoin(ORG_A, OWNER);
+    await saveBookingType(adminCtx, typeInput("owner-call", true), "bt-owner-a");
+    expect((await book("org-a", "owner-call")).booking.bookingTypeId).toBe("bt-owner-a");
+  });
+
+  it("joining affects only the joining user's types in that organization", async () => {
+    s.members = s.members.filter((m) => m.id !== "m-owner-a");
+    await rejoin(ORG_A, OWNER);
+    expect(s.types.find((t) => t.id === "bt-other-a")!.isActive).toBe(true);
+    expect(s.types.find((t) => t.id === "bt-owner-b")!.isActive).toBe(true);
+    expect((await book("org-b", "owner-call")).booking.bookingTypeId).toBe("bt-owner-b");
+  });
+
+  it("a brand-new member (no earlier types) joins normally; accepting again for an existing member fails as before", async () => {
+    const NEW_USER = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    await rejoin(ORG_A, NEW_USER);
+    expect(s.members.some((m) => m.userId === NEW_USER)).toBe(true);
+    expect(s.types.every((t) => t.ownerId !== NEW_USER)).toBe(true);
+    // An existing member can't accept a second invitation (unique membership).
+    await expect(rejoin(ORG_A, OTHER)).rejects.toThrow();
+    expect(s.types.find((t) => t.id === "bt-other-a")!.isActive).toBe(true);
   });
 });
 

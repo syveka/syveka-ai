@@ -161,16 +161,56 @@ rejoining doesn't reactivate them.
     touching these rows could still form a cycle. If Postgres aborts one, the transaction rolls
     back completely. A guest gets the existing generic failure response and can retry; a removal
     returns an error to the admin and can be retried.
+- **Rejoining** (`acceptInvitation`, the only path that adds a user to an existing organization).
+  In the same transaction as the new membership, the joining user's booking types in that
+  organization are set inactive.
+  - **Why:** a member removed before removal-time deactivation existed still has their types
+    stored as active, and the owner check alone would make those links bookable again the moment
+    they rejoin.
+  - **Who it affects:** for a first-time member it matches nothing. Accepting an invitation as an
+    existing member still fails on the unique membership, and the whole transaction rolls back.
+    New organizations (`createOrganization`) can't have earlier types.
 - **Reactivation:** `saveBookingType()` refuses to save a type as active while its owner isn't a
   current member (`owner_not_member`, shown in the booking-type form in EN/FI/AR). After the owner
   rejoins, an admin with `booking:manage` can turn it back on explicitly. Saving it inactive is
   always allowed.
 - **Evidence:**
   - `tests/unit/booking-owner-removal.test.ts` (mocked sequencing). Its regression cases fail on the
-    previous implementation.
+    previous implementation. That includes the legacy removal-then-rejoin case, where the type is
+    stored active as the old code left it.
   - `tests/integration/booking-owner-removal-race-concurrency.sh`: real Postgres, manual, not in
     CI. Scenarios: booking first, removal first, the unfixed race, the reversed-order deadlock, and
     no deadlock with the code's order.
+
+**Historical cases the stored data can't distinguish:**
+
+- **Removed and rejoined before this change deploys.** A legacy-removed member who **rejoined
+  before this change is deployed** has their old types stored active **and** a current
+  membership, which looks exactly like a legitimately active type. Their links stay bookable. No
+  column records the earlier removal; only the audit log may. Here is a read-only query an owner
+  can run to find candidates. It depends on both audit entries having been written, so it doesn't
+  prove there are no such cases:
+
+  ```sql
+  select bt.organization_id, bt.id as booking_type_id, bt.owner_id
+  from booking_types bt
+  where bt.is_active and bt.deleted_at is null
+    and exists (
+      select 1 from audit_logs r
+      where r.organization_id = bt.organization_id and r.action = 'member.remove'
+        and r.before->>'userId' = bt.owner_id::text
+        and exists (
+          select 1 from audit_logs j
+          where j.organization_id = bt.organization_id and j.action = 'member.join'
+            and j.resource_id = bt.owner_id::text and j.created_at > r.created_at
+        )
+    );
+  ```
+
+- **Memberships ended outside `removeMember`** (direct database changes, user deletion
+  cascades). These are blocked while the user is absent, by the owner check, and deactivated if
+  they rejoin through an invitation. Any other way of re-creating a membership (scripts, manual
+  SQL) bypasses `acceptInvitation`, and the types stay as stored.
 
 **Remaining limitations:**
 

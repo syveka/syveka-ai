@@ -96,7 +96,7 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
     throw new Error("Invitation was sent to a different email address");
   }
 
-  await unscopedPrisma.$transaction([
+  const [, , rejoinDisabled] = await unscopedPrisma.$transaction([
     unscopedPrisma.organizationMember.create({
       data: {
         organizationId: invitation.organizationId,
@@ -108,6 +108,20 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
       where: { id: invitation.id },
       data: { status: "ACCEPTED" },
     }),
+    // A joining user's booking types in this organization can only be left
+    // over from an earlier membership. Removal disables them now, but a
+    // member removed before it did still has them stored as active; joining
+    // again must not make those public links bookable. An admin re-enables
+    // them explicitly. For a first-time member this matches nothing.
+    unscopedPrisma.bookingType.updateMany({
+      where: {
+        organizationId: invitation.organizationId,
+        ownerId: userId,
+        isActive: true,
+        deletedAt: null,
+      },
+      data: { isActive: false },
+    }),
   ]);
 
   const admin = createSupabaseAdmin();
@@ -117,7 +131,12 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
 
   await audit(
     { orgId: invitation.organizationId, userId },
-    { action: "member.join", resourceType: "organization_member", resourceId: userId },
+    {
+      action: "member.join",
+      resourceType: "organization_member",
+      resourceId: userId,
+      after: { bookingTypesDisabled: rejoinDisabled.count },
+    },
   );
 
   return invitation.organizationId;
