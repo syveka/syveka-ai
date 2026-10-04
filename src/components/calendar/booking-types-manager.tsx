@@ -367,7 +367,11 @@ function BookingTypeDialog({
 
             {state.error ? (
               <p role="alert" className="text-sm text-destructive">
-                {state.error === "slug_taken" ? t("bookingTypes.slugTaken") : tc("error")}
+                {state.error === "slug_taken"
+                  ? t("bookingTypes.slugTaken")
+                  : state.error === "owner_not_member"
+                    ? t("bookingTypes.ownerNotMember")
+                    : tc("error")}
               </p>
             ) : null}
 

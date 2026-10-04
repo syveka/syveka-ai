@@ -698,7 +698,8 @@
       "collectPhone": "Kysy puhelinnumero",
       "collectCompany": "Kysy yritys",
       "confirmationMessage": "Vahvistusviesti",
-      "slugTaken": "URL-tunnus on jo käytössä"
+      "slugTaken": "URL-tunnus on jo käytössä",
+      "ownerNotMember": "Tämän varaustyypin omistaja ei ole enää jäsen, joten sitä ei voi aktivoida."
     },
     "connectCalendarLink": "Yhdistä kalenteri"
   },

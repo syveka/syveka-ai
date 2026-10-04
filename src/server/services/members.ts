@@ -96,7 +96,7 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
     throw new Error("Invitation was sent to a different email address");
   }
 
-  await unscopedPrisma.$transaction([
+  const [, , rejoinDisabled] = await unscopedPrisma.$transaction([
     unscopedPrisma.organizationMember.create({
       data: {
         organizationId: invitation.organizationId,
@@ -108,6 +108,20 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
       where: { id: invitation.id },
       data: { status: "ACCEPTED" },
     }),
+    // A joining user's booking types in this organization can only be left
+    // over from an earlier membership. Removal disables them now, but a
+    // member removed before it did still has them stored as active; joining
+    // again must not make those public links bookable. An admin re-enables
+    // them explicitly. For a first-time member this matches nothing.
+    unscopedPrisma.bookingType.updateMany({
+      where: {
+        organizationId: invitation.organizationId,
+        ownerId: userId,
+        isActive: true,
+        deletedAt: null,
+      },
+      data: { isActive: false },
+    }),
   ]);
 
   const admin = createSupabaseAdmin();
@@ -117,7 +131,12 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
 
   await audit(
     { orgId: invitation.organizationId, userId },
-    { action: "member.join", resourceType: "organization_member", resourceId: userId },
+    {
+      action: "member.join",
+      resourceType: "organization_member",
+      resourceId: userId,
+      after: { bookingTypesDisabled: rejoinDisabled.count },
+    },
   );
 
   return invitation.organizationId;
@@ -151,12 +170,56 @@ export async function removeMember(ctx: TenantContext, memberId: string): Promis
 
   if (member.role === "OWNER") throw new Error("Cannot remove the owner");
 
-  await db.organizationMember.delete({ where: { id: memberId } });
+  // The membership and the member's calendar access in this organization end
+  // together. The DELETE runs first: it waits for any in-flight calendar
+  // write that holds the membership row (lockCalendarMember), and the
+  // invalidation after it then clears whatever that write committed. Local
+  // credentials are removed; the grant at the provider is the user's own
+  // and is not revoked here (it may serve their other organizations).
+  const { invalidated, bookingTypesDisabled } = await unscopedPrisma.$transaction(async (tx) => {
+    await tx.organizationMember.delete({
+      where: { id: memberId, organizationId: ctx.orgId },
+    });
+    // Their public booking links stop taking bookings. Existing bookings and
+    // events are untouched; rejoining doesn't turn these back on.
+    const disabledTypes = await tx.bookingType.updateMany({
+      where: { organizationId: ctx.orgId, ownerId: member.userId, isActive: true, deletedAt: null },
+      data: { isActive: false },
+    });
+    const connections = await tx.calendarConnection.findMany({
+      where: { organizationId: ctx.orgId, userId: member.userId },
+      select: { id: true },
+    });
+    const connectionIds = connections.map((c) => c.id);
+    if (connectionIds.length === 0) {
+      return { invalidated: 0, bookingTypesDisabled: disabledTypes.count };
+    }
+    await tx.calendarConnection.updateMany({
+      where: { id: { in: connectionIds }, organizationId: ctx.orgId },
+      data: {
+        status: "DISCONNECTED",
+        accessTokenEnc: null,
+        refreshTokenEnc: null,
+        tokenExpiresAt: null,
+        lastError: "membership_removed",
+        lastCheckedAt: new Date(),
+      },
+    });
+    // Same as turning sync off for a calendar: no further webhook renewal,
+    // and the stored webhook secret is dropped, so pings fail verification.
+    const calendars = { connectionId: { in: connectionIds }, organizationId: ctx.orgId };
+    await tx.externalCalendar.updateMany({ where: calendars, data: { syncEnabled: false } });
+    await tx.calendarSyncState.deleteMany({
+      where: { organizationId: ctx.orgId, externalCalendar: calendars },
+    });
+    return { invalidated: connectionIds.length, bookingTypesDisabled: disabledTypes.count };
+  });
 
   await audit(ctx, {
     action: "member.remove",
     resourceType: "organization_member",
     resourceId: memberId,
     before: { userId: member.userId, role: member.role },
+    after: { calendarConnectionsDisabled: invalidated, bookingTypesDisabled },
   });
 }

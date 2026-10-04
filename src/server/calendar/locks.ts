@@ -91,3 +91,103 @@ export async function lockPhoneNumber(
 ): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${phoneNumber}), 2)`;
 }
+
+/**
+ * Locks the (organization, user) membership row and the organization row
+ * FOR SHARE, and returns the member's role, or null when the user isn't a
+ * current member of a non-deleted organization.
+ *
+ * Calendar data persisted on a user's behalf (OAuth credentials, refreshed
+ * tokens, imported events), and new public bookings for a booking type the
+ * user owns (lockBookableBookingType), are written in the same transaction,
+ * after this call. Under READ COMMITTED, that makes the write and a concurrent removal
+ * mutually exclusive rather than merely checked:
+ * - removeMember()'s DELETE of the membership row conflicts with FOR SHARE,
+ *   so a removal waits until a writer that already holds the lock commits.
+ *   Its own invalidation of the user's connections runs after that DELETE,
+ *   so it sees, and clears, whatever the writer committed;
+ * - a writer that reaches this lock while the removal is uncommitted waits,
+ *   then re-reads the row; a committed DELETE leaves no row, so this returns
+ *   null and the writer persists nothing;
+ * - soft-deleting the organization (an UPDATE of its row) conflicts with
+ *   FOR SHARE the same way, and a deleted organization returns null.
+ * Lock order is always membership/organization, then calendar_connections
+ * (lockActiveCalendarConnection), matching removeMember()'s DELETE-then-
+ * UPDATE order, so the two can't deadlock.
+ */
+export async function lockCalendarMember(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+  userId: string,
+): Promise<string | null> {
+  const rows = await tx.$queryRaw<Array<{ role: string }>>`
+    SELECT m.role::text AS role
+    FROM organization_members m
+    JOIN organizations o ON o.id = m.organization_id
+    WHERE m.organization_id = ${orgId}::uuid
+      AND m.user_id = ${userId}::uuid
+      AND o.deleted_at IS NULL
+    FOR SHARE OF m, o`;
+  return rows[0]?.role ?? null;
+}
+
+/**
+ * Locks one of the user's calendar connections, which must still be usable
+ * (not DISCONNECTED, credentials present), and returns whether it is. Call
+ * after lockCalendarMember() in the same transaction. `forUpdate` is for
+ * transactions that then write the connection row itself (token refresh);
+ * FOR SHARE otherwise, so concurrent syncs of one connection don't block
+ * each other.
+ */
+export async function lockActiveCalendarConnection(
+  tx: Prisma.TransactionClient,
+  params: { connectionId: string; orgId: string; userId: string; forUpdate?: boolean },
+): Promise<boolean> {
+  const rows = params.forUpdate
+    ? await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM calendar_connections
+        WHERE id = ${params.connectionId}::uuid
+          AND organization_id = ${params.orgId}::uuid
+          AND user_id = ${params.userId}::uuid
+          AND status <> 'DISCONNECTED'
+          AND access_token_enc IS NOT NULL
+        FOR UPDATE`
+    : await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM calendar_connections
+        WHERE id = ${params.connectionId}::uuid
+          AND organization_id = ${params.orgId}::uuid
+          AND user_id = ${params.userId}::uuid
+          AND status <> 'DISCONNECTED'
+          AND access_token_enc IS NOT NULL
+        FOR SHARE`;
+  return rows.length > 0;
+}
+
+/**
+ * Locks a booking type FOR SHARE and returns whether it can take a new
+ * public booking: active, not deleted, in its organization, owned by
+ * `ownerId`. Call after lockCalendarMember(tx, orgId, ownerId) in the same
+ * transaction, which locks the owner's membership and the organization.
+ *
+ * removeMember() deletes the membership row and then disables the owner's
+ * booking types (an UPDATE of these rows) in one transaction. Both orders
+ * therefore serialize: a booking holding these locks makes the removal wait
+ * and commits first; a removal that got there first makes the booking wait,
+ * after which the membership row is gone and nothing is booked. The order
+ * here (membership/organization rows, then the booking type row) matches
+ * the removal's (membership DELETE, then booking type UPDATE).
+ */
+export async function lockBookableBookingType(
+  tx: Prisma.TransactionClient,
+  params: { bookingTypeId: string; orgId: string; ownerId: string },
+): Promise<boolean> {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM booking_types
+    WHERE id = ${params.bookingTypeId}::uuid
+      AND organization_id = ${params.orgId}::uuid
+      AND owner_id = ${params.ownerId}::uuid
+      AND is_active
+      AND deleted_at IS NULL
+    FOR SHARE`;
+  return rows.length > 0;
+}
