@@ -2,6 +2,7 @@ import "server-only";
 
 import { PrismaClient } from "@/generated/prisma/client/client";
 import { PrismaPg } from "@prisma/adapter-pg";
+import { logConnectionDiagnostic } from "./connection-diagnostic";
 import {
   ensurePgbouncerCompatibility,
   sanitizeConnectionString,
@@ -47,7 +48,9 @@ function resolveDatasourceUrl(): string | undefined {
 
 function getPrisma(): PrismaClient {
   if (!globalForPrisma.prisma) {
-    const adapter = new PrismaPg({ connectionString: resolveDatasourceUrl(), max: 1 });
+    const connectionString = resolveDatasourceUrl();
+    logConnectionDiagnostic(connectionString);
+    const adapter = new PrismaPg({ connectionString, max: 1 });
     globalForPrisma.prisma = new PrismaClient({
       adapter,
       log: process.env.NODE_ENV === "development" ? ["warn", "error"] : ["error"],
