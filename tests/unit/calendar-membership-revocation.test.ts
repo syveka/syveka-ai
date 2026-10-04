@@ -64,6 +64,8 @@ const db = {
       return s.members.splice(i, 1)[0];
     }),
   },
+  // Removal also disables the member's booking types (booking-owner-removal.test.ts).
+  bookingType: { updateMany: vi.fn(async () => ({ count: 0 })) },
   calendarConnection: {
     findFirst: vi.fn(async ({ where }: { where: Row }) => {
       return s.connections.find((c) => matches(c, where)) ?? null;

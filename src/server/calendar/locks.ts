@@ -98,8 +98,9 @@ export async function lockPhoneNumber(
  * current member of a non-deleted organization.
  *
  * Calendar data persisted on a user's behalf (OAuth credentials, refreshed
- * tokens, imported events) is written in the same transaction, after this
- * call. Under READ COMMITTED, that makes the write and a concurrent removal
+ * tokens, imported events), and new public bookings for a booking type the
+ * user owns (lockBookableBookingType), are written in the same transaction,
+ * after this call. Under READ COMMITTED, that makes the write and a concurrent removal
  * mutually exclusive rather than merely checked:
  * - removeMember()'s DELETE of the membership row conflicts with FOR SHARE,
  *   so a removal waits until a writer that already holds the lock commits.
@@ -159,5 +160,34 @@ export async function lockActiveCalendarConnection(
           AND status <> 'DISCONNECTED'
           AND access_token_enc IS NOT NULL
         FOR SHARE`;
+  return rows.length > 0;
+}
+
+/**
+ * Locks a booking type FOR SHARE and returns whether it can take a new
+ * public booking: active, not deleted, in its organization, owned by
+ * `ownerId`. Call after lockCalendarMember(tx, orgId, ownerId) in the same
+ * transaction, which locks the owner's membership and the organization.
+ *
+ * removeMember() deletes the membership row and then disables the owner's
+ * booking types (an UPDATE of these rows) in one transaction. Both orders
+ * therefore serialize: a booking holding these locks makes the removal wait
+ * and commits first; a removal that got there first makes the booking wait,
+ * after which the membership row is gone and nothing is booked. The order
+ * here (membership/organization rows, then the booking type row) matches
+ * the removal's (membership DELETE, then booking type UPDATE).
+ */
+export async function lockBookableBookingType(
+  tx: Prisma.TransactionClient,
+  params: { bookingTypeId: string; orgId: string; ownerId: string },
+): Promise<boolean> {
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT id FROM booking_types
+    WHERE id = ${params.bookingTypeId}::uuid
+      AND organization_id = ${params.orgId}::uuid
+      AND owner_id = ${params.ownerId}::uuid
+      AND is_active
+      AND deleted_at IS NULL
+    FOR SHARE`;
   return rows.length > 0;
 }
