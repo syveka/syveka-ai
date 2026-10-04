@@ -31,6 +31,12 @@ const {
   decryptSocialTokenMock: vi.fn(() => "plain-token"),
 }));
 
+// The organization is active (inactive/missing organizations are covered in
+// jobs-organization-guard.test.ts).
+vi.mock("@/server/jobs/organization-guard", () => ({
+  isOrganizationActive: vi.fn(async () => true),
+  ORGANIZATION_INACTIVE: { skipped: "organization_inactive" },
+}));
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: tenantDbMock,
   unscopedPrisma: unscopedPrismaMock,
@@ -127,6 +133,7 @@ describe("Creator Studio: approve -> schedule -> publish integration", () => {
         socialAccount: post.socialAccountId
           ? {
               id: "acct-1",
+              organizationId: "org-a",
               status: "CONNECTED",
               accessTokenEnc: "enc:token",
               externalAccountId: "ext-acct-1",
