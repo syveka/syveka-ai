@@ -327,6 +327,11 @@ unchanged. This closes #73's run-time recipient item. **It doesn't cover the two
   - **No write-back found:** I found no code that writes to external calendars.
 - **Classification: pre-production assessment required.** Fix it, or have the owner accept it in
   writing, before production. Not deferred to after launch by default.
+- **Status (2026-10-04):** a fix is proposed in Draft #229. It invalidates connections in the
+  removal transaction; OAuth, refresh, sync and webhook writes run under membership row locks; and
+  refresh uses a compare-and-swap. It has unit regressions and a real-Postgres race script. R1
+  remains open until #229 is merged and released. Already-imported events and the former member's
+  public booking types are unchanged, and that needs an owner decision (#229).
 - **Existing protections:**
   - The HMAC-signed `state` binds the org, user and provider, and expires after 10 minutes.
   - Tokens are encrypted at rest.
