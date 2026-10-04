@@ -304,8 +304,8 @@ objects, and nothing in the application points at it.
 prevent outbound effects before the restored copy can execute them. It stays blocked until one of
 these holds:
 
-1. **Supabase confirmation (preferred).** Supabase support confirms in writing, for the chosen
-   backup, one of:
+1. **Supabase confirmation (preferred; requested in ticket SU-494644, response pending).** Supabase
+   support confirms in writing, for the chosen backup, one of:
    - a supported way to restore with `pg_cron`, `pg_net` and other outbound extensions disabled;
    - that the backup contains none of `pg_cron`, `pg_net`, `http`, `dblink`, `postgres_fdw` and
      `wrappers`, and no enabled subscriptions.
@@ -640,7 +640,9 @@ tooling.
 - **One side of a bracket only.** This run postdates the 2026-10-03 backup, so it is one side of a
   bracket for a later backup, not for that one.
 - **No pass.** Neither the drill nor production readiness is passed.
-- **Next:** a Supabase support request about restore isolation has been drafted. It hasn't been sent.
+- **Support request:** Supabase support ticket SU-494644, about restore isolation, was submitted and
+  acknowledged. The technical response is **pending**. An acknowledgment isn't clearance: the drill
+  stays blocked until Supabase answers in writing, or the owner accepts the risk under path 2.
 
 ### Recovery drill plan (proposed; BLOCKED until outbound isolation is established; needs owner approval)
 
