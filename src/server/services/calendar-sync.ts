@@ -1,10 +1,17 @@
 import "server-only";
 
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import type { Prisma } from "@/generated/prisma/client/client";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { getProviderAdapter } from "@/server/integrations/calendar";
 import { ProviderError, type ExternalEvent } from "@/server/integrations/calendar/types";
-import { getFreshTokens, markConnectionStatus } from "./calendar-connections";
+import { lockActiveCalendarConnection, lockCalendarMember } from "@/server/calendar/locks";
+import {
+  ConnectionError,
+  getFreshTokens,
+  isCalendarMember,
+  markConnectionStatus,
+} from "./calendar-connections";
 import { getAppUrlEnv } from "@/env";
 
 /**
@@ -51,6 +58,12 @@ export function verifyWebhookSecret(
  *   never edited locally; etag mismatch bumps `lastSyncStatus` for audit.
  * - Cursor expiry (Google 410 / Graph delta expiry) → transparent full
  *   resync from a null cursor.
+ * - Membership: each fetched page is persisted (events, deletions, cursor) in
+ *   one transaction that first locks the connection owner's membership and
+ *   the connection (withCalendarImportAccess). Once a removal, an
+ *   organization deletion or a disconnect has committed, nothing fetched
+ *   before it is written; the provider fetch itself runs outside any
+ *   transaction.
  */
 
 export type SyncResult = {
@@ -59,16 +72,58 @@ export type SyncResult = {
   deleted: number;
   skippedConflicts: number;
   cursorReset: boolean;
+  /** Set when the sync stopped because the owner's access ended; nothing was written. */
+  accessRevoked?: true;
 };
 
+/** The connection owner lost access (removed, org deleted, disconnected). Not retryable. */
+class CalendarAccessRevoked extends Error {}
+
+/**
+ * Runs `write` in a transaction that first locks the connection owner's
+ * membership (and organization) and the connection itself, throwing
+ * CalendarAccessRevoked instead when either is gone. See lockCalendarMember
+ * for why this excludes a concurrent removal rather than just checking it.
+ */
+async function withCalendarImportAccess<T>(
+  calendar: { organizationId: string; connectionId: string; connection: { userId: string } },
+  write: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  return unscopedPrisma.$transaction(
+    async (tx) => {
+      const userId = calendar.connection.userId;
+      if (!(await lockCalendarMember(tx, calendar.organizationId, userId))) {
+        throw new CalendarAccessRevoked();
+      }
+      const usable = await lockActiveCalendarConnection(tx, {
+        connectionId: calendar.connectionId,
+        orgId: calendar.organizationId,
+        userId,
+      });
+      if (!usable) throw new CalendarAccessRevoked();
+      return write(tx);
+    },
+    // A page of events is applied in one transaction; give it room.
+    { timeout: 30_000 },
+  );
+}
+
+function isAccessRevoked(e: unknown): boolean {
+  return (
+    e instanceof CalendarAccessRevoked ||
+    (e instanceof ConnectionError && e.code === "membership_revoked")
+  );
+}
+
 async function applyRemoteEvent(
+  db: Prisma.TransactionClient,
   orgId: string,
   externalCalendarId: string,
   ownerUserId: string,
   remote: ExternalEvent,
   source: "GOOGLE" | "OUTLOOK",
 ): Promise<"created" | "updated" | "skipped"> {
-  const existing = await unscopedPrisma.calendarEvent.findUnique({
+  const existing = await db.calendarEvent.findUnique({
     where: {
       externalCalendarId_externalId: { externalCalendarId, externalId: remote.externalId },
     },
@@ -87,7 +142,7 @@ async function applyRemoteEvent(
   };
 
   if (!existing) {
-    const event = await unscopedPrisma.calendarEvent.create({
+    const event = await db.calendarEvent.create({
       data: {
         ...data,
         organizationId: orgId,
@@ -99,7 +154,7 @@ async function applyRemoteEvent(
       },
     });
     if (remote.attendees.length > 0) {
-      await unscopedPrisma.eventAttendee.createMany({
+      await db.eventAttendee.createMany({
         data: remote.attendees.slice(0, 50).map((a) => ({
           eventId: event.id,
           email: a.email ?? null,
@@ -115,7 +170,7 @@ async function applyRemoteEvent(
     return "skipped"; // no remote change
   }
 
-  await unscopedPrisma.calendarEvent.update({ where: { id: existing.id }, data });
+  await db.calendarEvent.update({ where: { id: existing.id }, data });
   return "updated";
 }
 
@@ -145,55 +200,75 @@ export async function syncExternalCalendar(externalCalendarId: string): Promise<
 
     while (pages < 20) {
       pages += 1;
+      // Provider fetch: outside any transaction.
       const page = await adapter.listEvents(tokens, calendar.externalId, cursor);
 
       if (page.cursorExpired) {
         result.cursorReset = true;
         cursor = null;
-        await persistCursor(calendar.id, calendar.organizationId, null, "cursor_reset");
+        await withCalendarImportAccess(calendar, (tx) =>
+          persistCursor(tx, calendar.id, calendar.organizationId, null, "cursor_reset"),
+        );
         continue;
       }
 
       const source = calendar.connection.provider === "MICROSOFT" ? "OUTLOOK" : "GOOGLE";
-      for (const remote of page.events) {
-        const outcome = await applyRemoteEvent(
-          calendar.organizationId,
-          calendar.id,
-          calendar.connection.userId,
-          remote,
-          source,
-        );
-        if (outcome === "created") result.imported += 1;
-        else if (outcome === "updated") result.updated += 1;
-        else result.skippedConflicts += 1;
-      }
+      // The page and its cursor are applied together, only while the owner
+      // still has access; counts are added once the transaction commits.
+      const applied = await withCalendarImportAccess(calendar, async (tx) => {
+        const counts = { imported: 0, updated: 0, deleted: 0, skippedConflicts: 0 };
+        for (const remote of page.events) {
+          const outcome = await applyRemoteEvent(
+            tx,
+            calendar.organizationId,
+            calendar.id,
+            calendar.connection.userId,
+            remote,
+            source,
+          );
+          if (outcome === "created") counts.imported += 1;
+          else if (outcome === "updated") counts.updated += 1;
+          else counts.skippedConflicts += 1;
+        }
 
-      if (page.deletedExternalIds.length > 0) {
-        const res = await unscopedPrisma.calendarEvent.updateMany({
-          where: {
-            externalCalendarId: calendar.id,
-            externalId: { in: page.deletedExternalIds },
-            deletedAt: null,
-          },
-          data: { status: "CANCELED", canceledAt: new Date(), deletedAt: new Date() },
-        });
-        result.deleted += res.count;
-      }
+        if (page.deletedExternalIds.length > 0) {
+          const res = await tx.calendarEvent.updateMany({
+            where: {
+              externalCalendarId: calendar.id,
+              externalId: { in: page.deletedExternalIds },
+              deletedAt: null,
+            },
+            data: { status: "CANCELED", canceledAt: new Date(), deletedAt: new Date() },
+          });
+          counts.deleted += res.count;
+        }
 
-      // Persist cursor after the page is fully applied.
-      await persistCursor(calendar.id, calendar.organizationId, page.nextCursor, "ok");
+        // Persist cursor after the page is fully applied (same transaction).
+        await persistCursor(tx, calendar.id, calendar.organizationId, page.nextCursor, "ok");
+        return counts;
+      });
+      result.imported += applied.imported;
+      result.updated += applied.updated;
+      result.deleted += applied.deleted;
+      result.skippedConflicts += applied.skippedConflicts;
+
       // `nextCursor` is the resume point for the NEXT run (providers return a
       // sync token even on the final page) — only `hasMore` continues the loop.
       if (!page.hasMore || !page.nextCursor) break;
       cursor = page.nextCursor;
     }
 
-    await unscopedPrisma.calendarSyncState.update({
+    // updateMany: the state row may be gone if sync was turned off meanwhile.
+    await unscopedPrisma.calendarSyncState.updateMany({
       where: { externalCalendarId: calendar.id },
       data: { lastSyncedAt: new Date(), lastSyncStatus: "ok", failureCount: 0 },
     });
     return result;
   } catch (e) {
+    // Access ended (removed member, deleted org, disconnected connection):
+    // nothing from the interrupted page was written, and nothing is recorded
+    // or retried for a calendar its owner no longer gives the org access to.
+    if (isAccessRevoked(e)) return { ...result, accessRevoked: true };
     const message = e instanceof Error ? e.message : "sync failed";
     await unscopedPrisma.calendarSyncState
       .upsert({
@@ -215,12 +290,13 @@ export async function syncExternalCalendar(externalCalendarId: string): Promise<
 }
 
 async function persistCursor(
+  db: Prisma.TransactionClient,
   externalCalendarId: string,
   orgId: string,
   cursor: string | null,
   status: string,
 ): Promise<void> {
-  await unscopedPrisma.calendarSyncState.upsert({
+  await db.calendarSyncState.upsert({
     where: { externalCalendarId },
     create: {
       organizationId: orgId,
@@ -263,6 +339,15 @@ export async function ensureWebhookSubscription(
     !!state.webhookVerificationSecretHash;
   if (stillValid) return "reused";
 
+  // No provider subscription on behalf of someone without access: a
+  // disconnected connection, or an owner who is no longer a member.
+  if (
+    calendar.connection.status === "DISCONNECTED" ||
+    !(await isCalendarMember(calendar.organizationId, calendar.connection.userId))
+  ) {
+    return "skipped";
+  }
+
   const adapter = getProviderAdapter(calendar.connection.provider);
   const tokens = await getFreshTokens(calendar.connectionId, calendar.organizationId);
   const callbackUrl = `${getAppUrlEnv().NEXT_PUBLIC_APP_URL}/api/v1/webhooks/calendar/${calendar.connection.provider.toLowerCase()}`;
@@ -277,24 +362,34 @@ export async function ensureWebhookSubscription(
 
   // Renewal replaces the subscription id/resource id/expiry and the secret hash
   // together, in one write — the previous secret is discarded, so notifications
-  // still using it fail verification from this point on.
-  await unscopedPrisma.calendarSyncState.upsert({
-    where: { externalCalendarId },
-    create: {
-      organizationId: calendar.organizationId,
-      externalCalendarId,
-      webhookSubscriptionId: sub.subscriptionId,
-      webhookResourceId: sub.resourceId ?? null,
-      webhookExpiresAt: sub.expiresAt ?? null,
-      webhookVerificationSecretHash: hashWebhookSecret(verificationSecret),
-    },
-    update: {
-      webhookSubscriptionId: sub.subscriptionId,
-      webhookResourceId: sub.resourceId ?? null,
-      webhookExpiresAt: sub.expiresAt ?? null,
-      webhookVerificationSecretHash: hashWebhookSecret(verificationSecret),
-    },
-  });
+  // still using it fail verification from this point on. Stored only while the
+  // owner still has access; otherwise the new provider subscription is left
+  // unverifiable (no secret stored), so its notifications never trigger a sync.
+  const subscription = sub;
+  try {
+    await withCalendarImportAccess(calendar, (tx) =>
+      tx.calendarSyncState.upsert({
+        where: { externalCalendarId },
+        create: {
+          organizationId: calendar.organizationId,
+          externalCalendarId,
+          webhookSubscriptionId: subscription.subscriptionId,
+          webhookResourceId: subscription.resourceId ?? null,
+          webhookExpiresAt: subscription.expiresAt ?? null,
+          webhookVerificationSecretHash: hashWebhookSecret(verificationSecret),
+        },
+        update: {
+          webhookSubscriptionId: subscription.subscriptionId,
+          webhookResourceId: subscription.resourceId ?? null,
+          webhookExpiresAt: subscription.expiresAt ?? null,
+          webhookVerificationSecretHash: hashWebhookSecret(verificationSecret),
+        },
+      }),
+    );
+  } catch (e) {
+    if (isAccessRevoked(e)) return "skipped";
+    throw e;
+  }
   return "renewed";
 }
 

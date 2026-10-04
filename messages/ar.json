@@ -698,7 +698,8 @@
       "collectPhone": "طلب رقم الهاتف",
       "collectCompany": "طلب اسم الشركة",
       "confirmationMessage": "رسالة التأكيد",
-      "slugTaken": "معرّف الرابط مستخدم بالفعل"
+      "slugTaken": "معرّف الرابط مستخدم بالفعل",
+      "ownerNotMember": "مالك نوع الحجز هذا لم يعد عضوًا، لذلك لا يمكن تفعيله."
     },
     "connectCalendarLink": "ربط التقويم"
   },
