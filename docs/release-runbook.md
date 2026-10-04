@@ -214,26 +214,27 @@ npx prisma migrate status
 "syveka" on 2026-10-04 (an owner-supplied summary of screenshots). They're observations, not proof
 that a restore works, and they don't establish which backup will be the latest at release time.
 
-| Item                   | Observation                                                                                              | Status                        |
-| ---------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------- |
-| Daily backups          | Listed daily from 2026-09-27 to 2026-10-03; the latest visible is 2026-10-03 22:15:37 UTC, type PHYSICAL | Available (observed)          |
-| Point-in-time recovery | The "Point in time" tab shows "Enable add-on"                                                            | **Not enabled**               |
-| Storage objects        | The dashboard states that database backups exclude Storage objects; only their metadata is included      | **Not covered by any backup** |
-| Restore test           | None performed                                                                                           | **Pending**                   |
+| Item                   | Observation                                                                                              | Status                                          |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------------------- |
+| Daily backups          | Listed daily from 2026-09-27 to 2026-10-03; the latest visible is 2026-10-03 22:15:37 UTC, type PHYSICAL | Available (observed)                            |
+| Point-in-time recovery | The "Point in time" tab shows "Enable add-on"                                                            | **Not enabled**                                 |
+| Storage objects        | The dashboard states that database backups exclude Storage objects; only their metadata is included      | **Separate Storage backup coverage unverified** |
+| Restore test           | None performed                                                                                           | **Pending; the physical drill is blocked**      |
 
 **The recovery requirement is not met yet.** The gate above ("Confirm Supabase PITR is enabled") is
-**not satisfied**: PITR is off. No restore has been tested, and Storage files have no backup.
+**not satisfied**: PITR is off. No restore has been tested. Storage objects are excluded from the
+observed database backups; separate Storage backup coverage is unverified.
 
 The successful staging release #124 (`7a1a8fe`) is release-pipeline evidence, not backup or
 recovery evidence.
 
 **Options checked against Supabase's official documentation (2026-10-04):**
 
-| Option                                                                                    | Available for this project?                                                                                          | What it tests                                                                                               | Cost (official pricing)                                                                                                                                                                                                                                                                                                                                      |
-| ----------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| A. **Restore the existing PHYSICAL backup to a new project** ("Restore to a New Project") | **Yes.** It needs a paid plan with physical backups enabled; the PHYSICAL daily backups show both.                   | The actual managed backup we would rely on                                                                  | The new project bills hourly, rounded up to the full hour, until deleted. It mirrors the source's compute and disk size. Example compute rates: Micro $0.01344/h, Small $0.0206/h, Medium $0.0822/h. Disk: 8 GB included, then $0.125 per GB-month. The org's $10 monthly compute credit may absorb part of it. Compute is **not** covered by the Spend Cap. |
-| B. **Logical export (`supabase db dump`) restored into an isolated local Postgres**       | Yes, on any plan, with the database password and the Supabase CLI, Docker and psql.                                  | Only that a **new logical dump** of today's data can be restored. It does **not** test the managed backups. | $0 infrastructure. It requires copying production data out of Supabase, which needs separate approval.                                                                                                                                                                                                                                                       |
-| C. **Enable PITR**                                                                        | Available on Pro, Team and Enterprise as an add-on, and the project "must also use at least a Small compute add-on". | Nothing by itself: it changes the recovery point. A restore still has to be tested.                         | 7-day retention: $0.137/h (about $100/month); 14 days: about $200/month; 28 days: about $400/month. Plus any compute upgrade to Small. Recurring.                                                                                                                                                                                                            |
+| Option                                                                                    | Available for this project?                                                                                                                                                               | What it tests                                                                                                                                       | Cost (official pricing)                                                                                                                           |
+| ----------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A. **Restore the existing PHYSICAL backup to a new project** ("Restore to a New Project") | Offered (it needs a paid plan with physical backups enabled; the PHYSICAL daily backups show both). **Blocked for now:** outbound isolation can't be guaranteed (see "Outbound effects"). | The actual managed backup we would rely on                                                                                                          | The new project mirrors the source's compute size and disk, billed hourly until deleted. Not covered by the Spend Cap. See "Estimated cost".      |
+| B. **Logical export (`supabase db dump`) restored into an isolated local Postgres**       | Yes, on any plan, with the database password and the Supabase CLI, Docker and psql.                                                                                                       | Only that a **new logical dump** of today's data can be restored. It does **not** validate the managed PHYSICAL backups or the Vault root key copy. | $0 infrastructure. It copies production data out of Supabase, which needs separate approval.                                                      |
+| C. **Enable PITR**                                                                        | Available on Pro, Team and Enterprise as an add-on, and the project "must also use at least a Small compute add-on".                                                                      | Nothing by itself: it changes the recovery point. A restore still has to be tested.                                                                 | 7-day retention: $0.137/h (about $100/month); 14 days: about $200/month; 28 days: about $400/month. Plus any compute upgrade to Small. Recurring. |
 
 What the official documentation also says:
 
@@ -243,11 +244,14 @@ What the official documentation also says:
 - **Restore in place takes the project offline.** "The project is inaccessible during this process."
   It must never be used for a drill.
 - **What a new project receives:** schema, data, roles, Auth users with hashed passwords, and the
-  **encryption root key**, so Vault and encrypted columns stay readable.
+  **encryption root key**, so Vault and encrypted columns stay readable. The restore also replicates
+  "the compute instance size, disk attributes, SSL enforcement settings, and network restrictions".
 - **What it doesn't receive:** Storage objects and bucket settings, Edge Functions, Auth settings,
   API keys, Realtime settings, extension settings and read replicas. It stays in the source's region.
-- **`pg_cron` and `pg_net` jobs run automatically when the restore completes** and can't be paused
-  beforehand.
+- **Outbound extensions run immediately:** "Restore to a new project is a binary restore: it copies
+  the entire database, including any enabled extensions that carry out external operations (for
+  example `pg_net`, `pg_cron`, wrappers). These jobs start running as soon as the restore completes.
+  There's no way to exclude or pause them going into the restore."
 - A project created by restore can't itself be a clone source.
 - Daily backups "do not store passwords for custom roles".
 
@@ -255,23 +259,235 @@ Sources (checked 2026-10-04):
 
 - https://supabase.com/docs/guides/platform/backups
 - https://supabase.com/docs/guides/platform/clone-project
+- https://supabase.com/docs/guides/platform/network-restrictions
+- https://supabase.com/docs/guides/database/extensions/pg_net
+- https://supabase.com/docs/guides/database/webhooks
 - https://supabase.com/docs/guides/platform/manage-your-usage/compute
 - https://supabase.com/docs/guides/platform/manage-your-usage/disk-size
 - https://supabase.com/docs/guides/platform/manage-your-usage/point-in-time-recovery
 - https://supabase.com/docs/guides/platform/migrating-within-supabase/backup-restore
 
-### Recovery drill plan (proposed; not executed, needs owner approval)
+### Outbound effects in a restored copy (why the physical drill is blocked)
 
-**Recommendation: option A, once.** It is the only option that tests the backups actually relied
-on, and its cost is bounded by deleting the project the same day. Option B is a complementary
-logical-export check and is not a substitute; it needs separate approval because it copies
-production data out. PITR (option C) is a business decision about the recovery point, covered
-below; it doesn't replace the drill.
+**What can act on its own in a restored copy**, before anyone connects to it:
+
+- **`pg_cron` jobs** start "as soon as the restore completes", per Supabase. A job can call out
+  (`pg_net`, `http`, `dblink`, foreign tables) or write rows that fire webhook triggers.
+- **Queued `pg_net` requests.** The `pg_net` docs say its request queue is an unlogged table, "not
+  preserved during a crash or unclean shutdown". Supabase doesn't document whether a physical
+  backup carries queued rows, so treat them as possible.
+- **Database webhooks** are triggers that call `pg_net` "after a row is changed". They fire on any
+  write: a cron job, or an operator's.
+- **Logical-replication subscriptions**, if any, connect out to their publisher while enabled.
+- `http`, `dblink`, `postgres_fdw` and `wrappers` act only when called: by a job, a trigger or a
+  query.
+
+Outside the database, the copy gets new API keys and no Auth settings, Edge Functions or Storage
+objects, and nothing in the application points at it.
+
+**Why the planned lockdown isn't outbound isolation:**
+
+- Network restrictions are copied from the source. They "apply to Postgres and the database pooler"
+  only, which is inbound. Supabase documents no outbound (egress) control.
+- Jobs start when the restore completes, before an operator can change anything.
+- Supabase states there is "no way to exclude or pause them going into the restore".
+
+**Why production counts alone aren't enough:**
+
+- The backup is a past snapshot. Objects created and later removed, or removed after it was taken,
+  don't show in today's counts. An older snapshot widens that gap.
+- `cron.job` has row-level security: a role sees only its own jobs.
+- A job or function can call out indirectly, for example through dynamic SQL, which a text match
+  can miss.
+
+**Status: the physical restore drill (option A) is BLOCKED.** No supported, documented way exists to
+prevent outbound effects before the restored copy can execute them. It stays blocked until one of
+these holds:
+
+1. **Supabase confirmation (preferred).** Supabase support confirms in writing, for the chosen
+   backup, one of:
+   - a supported way to restore with `pg_cron`, `pg_net` and other outbound extensions disabled;
+   - that the backup contains none of `pg_cron`, `pg_net`, `http`, `dblink`, `postgres_fdw` and
+     `wrappers`, and no enabled subscriptions.
+
+   The owner opens the request. It must not include customer data.
+
+2. **Owner risk acceptance on evidence.** This is an inference, not a guarantee. It needs all of:
+   - the preflight below shows none of those extensions and zero for every outbound count;
+   - the preflight is run both before and after the chosen backup's timestamp, so the two runs
+     bracket it;
+   - the owner attests that no extension, webhook or job was added or removed between the two runs.
+
+   The repository's migrations create only `pgcrypto`, `vector` and `pg_trgm`, and the
+   application's background jobs run through QStash, outside the database. That makes absence
+   likely, but doesn't prove it: extensions and webhooks can be enabled from the dashboard. If the
+   preflight finds anything outbound-capable, this path is closed.
+
+**Safely isolated alternative (needs separate approval; it does not validate the managed PHYSICAL
+backup):** option B in a local container with no network.
+
+- **Dump:** an approved operator takes `supabase db dump` (roles, schema, data) on an encrypted
+  disk.
+- **Restore:** into `docker run --network none` Postgres with pgvector, which has no `pg_cron` or
+  `pg_net`. Nothing in it can reach the network.
+- **Validate:** the same aggregate-only checks below.
+- **Clean up:** delete the container and dump the same day.
+
+It proves that today's logical data and schema restore. It proves nothing about Supabase's physical
+backups, the Vault root key copy or Supabase's restore time, and it copies production data out of
+Supabase.
+
+### Read-only production preflight
+
+**Run it** from an approved operator session as the `postgres` role. The script opens a read-only
+transaction and rolls it back. `default_transaction_read_only` adds a second guard.
+
+```sh
+PGOPTIONS='-c default_transaction_read_only=on' psql "$PROD_DIRECT_URL" -X -f restore-preflight.sql
+```
+
+**What it does:**
+
+- It prints counts, booleans and extension names only. It never selects job commands, URLs,
+  headers, request or response bodies, server options, connection strings or customer rows.
+- An absent schema is reported as `absent`; a table the role can't read, as `present, not readable
+by this role`. Neither is an error.
+
+**Tested (2026-10-04)** on a throwaway Postgres 17 container with no network, then deleted:
+
+- a database without any of these schemas;
+- mock `cron`, `net` and `supabase_functions` objects, run as a non-superuser that can't read the
+  queue.
+
+The output contained no URL, host or connection string.
+
+```sql
+-- Restore-drill preflight: read-only; prints counts and statuses only.
+-- Never selects job commands, URLs, headers, request or response bodies,
+-- server options, connection strings or customer rows.
+\set ON_ERROR_STOP on
+\pset footer off
+begin transaction read only;
+
+select current_setting('transaction_read_only') as read_only,
+       current_user as checked_as,
+       to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI "UTC"') as checked_at;
+
+-- 1. Extensions that can run work on their own or reach the network.
+select x.name as extension,
+       e.extname is not null as installed
+from (values ('pg_cron'), ('pg_net'), ('http'), ('dblink'),
+             ('postgres_fdw'), ('wrappers')) as x(name)
+left join pg_extension e on e.extname = x.name
+order by 1;
+
+select count(*) as extensions_installed_total from pg_extension;
+
+-- 2. Optional objects: absent, present, or present but not readable.
+select o.name as object,
+       case when to_regclass(o.name) is null then 'absent'
+            when has_table_privilege(to_regclass(o.name), 'select') then 'present'
+            else 'present, not readable by this role' end as state
+from (values ('cron.job'), ('cron.job_run_details'), ('net.http_request_queue'),
+             ('net._http_response'), ('supabase_functions.hooks')) as o(name);
+
+select coalesce(has_table_privilege(to_regclass('cron.job'), 'select'), false) as read_cron_job,
+       coalesce(has_table_privilege(to_regclass('cron.job_run_details'), 'select'), false) as read_cron_runs,
+       coalesce(has_table_privilege(to_regclass('net.http_request_queue'), 'select'), false) as read_net_queue,
+       coalesce(has_table_privilege(to_regclass('net._http_response'), 'select'), false) as read_net_responses,
+       coalesce(has_table_privilege(to_regclass('supabase_functions.hooks'), 'select'), false) as read_hooks
+\gset
+
+-- 3. Scheduled jobs (pg_cron). Row-level security shows only this role's jobs.
+\if :read_cron_job
+select count(*) as cron_jobs_visible,
+       count(*) filter (where active) as cron_jobs_active,
+       count(*) filter (where active and command ~* '(net\.http_|http_(get|post|put|patch|delete|request)\s*\(|dblink)')
+         as active_jobs_with_direct_http_call
+from cron.job;
+\endif
+\if :read_cron_runs
+select count(*) as cron_runs_last_7_days,
+       count(*) filter (where status = 'failed') as cron_runs_failed_last_7_days
+from cron.job_run_details
+where start_time > now() - interval '7 days';
+\endif
+
+-- 4. Queued and recent outbound HTTP (pg_net). Counts only.
+\if :read_net_queue
+select count(*) as pg_net_requests_pending from net.http_request_queue;
+\endif
+\if :read_net_responses
+select count(*) as pg_net_responses_retained,
+       count(*) filter (where created > now() - interval '24 hours') as pg_net_responses_last_24h
+from net._http_response;
+\endif
+
+-- 5. Database webhooks and other triggers that call out directly.
+\if :read_hooks
+select count(*) as webhook_hook_rows from supabase_functions.hooks;
+\endif
+
+select count(*) as outbound_triggers,
+       count(*) filter (where t.tgenabled <> 'D') as outbound_triggers_enabled
+from pg_trigger t
+join pg_proc p on p.oid = t.tgfoid
+join pg_namespace n on n.oid = p.pronamespace
+where not t.tgisinternal
+  and ((n.nspname = 'supabase_functions' and p.proname = 'http_request')
+       or p.prosrc ~* '(net\.http_|http_(get|post|put|patch|delete|request)\s*\(|dblink)');
+
+select count(*) as other_functions_with_direct_http_call
+from pg_proc p
+join pg_namespace n on n.oid = p.pronamespace
+where n.nspname not in ('pg_catalog', 'information_schema', 'net', 'cron', 'supabase_functions')
+  and not exists (select 1 from pg_depend d
+                  where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')
+  and p.prosrc ~* '(net\.http_|http_(get|post|put|patch|delete|request)\s*\(|dblink)';
+
+-- 6. Foreign servers and logical-replication subscriptions (both connect out).
+select (select count(*) from pg_foreign_data_wrapper) as foreign_data_wrappers,
+       (select count(*) from pg_foreign_server) as foreign_servers,
+       (select count(*) from pg_foreign_table) as foreign_tables;
+
+select count(*) as subscriptions,
+       count(*) filter (where subenabled) as subscriptions_enabled
+from pg_subscription;
+
+rollback;
+```
+
+**A clean result** has all of these:
+
+- every extension row is `f`;
+- every object is `absent`;
+- `outbound_triggers`, `other_functions_with_direct_http_call`, `foreign_servers` and
+  `subscriptions` are `0`.
+
+Anything else, including `present, not readable by this role`, stops the physical drill. Record the
+output (counts only) in the private change record.
+
+**What it can't establish:**
+
+- **State at the backup's timestamp.** It shows production now, not the historical snapshot.
+- **Jobs owned by other roles.** `cron.job`'s row-level security hides them. Compare with the
+  dashboard's cron view.
+- **Indirect outbound calls,** through dynamic SQL or helpers its text match doesn't catch.
+- **Queued rows in the backup.** Whether the physical backup carries `pg_net` queue rows.
+- **Restorability.** Anything about the backup's integrity or whether it can be restored.
+
+### Recovery drill plan (proposed; BLOCKED until outbound isolation is established; needs owner approval)
+
+**Recommendation: option A, once, after it's unblocked** (see "Outbound effects"). It is the only
+option that tests the backups actually relied on. Option B, isolated as described above, is the
+fallback if option A stays blocked. It is not a substitute for validating the managed backup. PITR
+(option C) is a business decision about the recovery point, covered below; it doesn't replace the
+drill.
 
 **Source and destination**
 
 - **Source:** the latest daily PHYSICAL backup of the production project "syveka", chosen on the day
-  of the drill. Record its exact timestamp.
+  of the drill. Record its exact timestamp. Prefer a backup that both preflight runs bracket.
 - **Destination:** a **new, temporary** project created by "Restore to a New Project", for example
   `syveka-restore-drill-<date>`. It lands in the same organization and region.
 - **Never** restore in place on production, and never restore into the shared staging project.
@@ -279,17 +495,10 @@ below; it doesn't replace the drill.
 **Prerequisites and permissions**
 
 - An owner or admin of the production organization, with billing visibility.
+- One of the two unblock conditions in "Outbound effects", recorded.
+- The production compute size and disk size and type, for the cost estimate below.
 - Read the cost overview the dashboard shows before confirming. Stop if it exceeds the approved
-  ceiling.
-- **Read-only, beforehand, on production.** Confirm whether `pg_cron` jobs or `pg_net`-based
-  database webhooks exist:
-  - `select jobid, schedule, active from cron.job;` if the `cron` schema exists;
-  - `select count(*) from supabase_functions.hooks;` if it exists;
-  - the extension list in the dashboard.
-
-  This repository creates neither; its jobs run through QStash, outside the database. **If any
-  exist, stop and re-plan:** they would run in the restored project immediately.
-
+  limit for the planned hours.
 - The operator's `psql` (Postgres 17 or newer, matching the docs) and this repository's
   `tests/staging/*.sql` read-only assertions.
 
@@ -299,14 +508,17 @@ below; it doesn't replace the drill.
    time, and the operator.
 2. **Start the restore.** Dashboard: production project, Database, Backups, "Restore to a New
    Project", select the backup. Review the cost and confirm.
-3. **Lock the new project down** as soon as it is ready:
-   - Settings, Network restrictions: allow only the operator's IP.
+3. **First, run the preflight against the copy.** Any outbound-capable item means: delete the
+   project immediately, record it as a fail, and report it.
+4. **Inbound lockdown.** This isn't outbound isolation.
+   - Network restrictions arrive copied from production; narrow them to the operator's IP.
    - Don't configure SMTP, Auth providers, hooks or webhooks.
    - Don't deploy Edge Functions.
    - Don't hand out its API keys.
    - **Never point the application, a Vercel project, QStash, Stripe, Vapi, Resend, calendars or
      Meta at it.**
-4. **Run validations** with no customer content. Every query is an aggregate or a structural check:
+   - Make no writes.
+5. **Run validations** with no customer content. Every query is an aggregate or a structural check:
    - **Migrations:** compare `select migration_name, checksum from _prisma_migrations order by 1`
      with production and with this repository (`npm run migrations:check`). The expected result is
      identical lists.
@@ -327,22 +539,57 @@ below; it doesn't replace the drill.
    - **Encrypted data:** confirm that columns encrypted with application keys (calendar and social
      tokens) are still ciphertext. The application keys aren't in the database and must **not** be
      brought to the drill.
-5. **Measure** the elapsed time from confirmation to "ready" and to "validations done". That gives a
+6. **Measure** the elapsed time from confirmation to "ready" and to "validations done". That gives a
    measured restore time for this database size, which we don't have today.
-6. **Clean up the same day.** Delete the temporary project (Settings, General, Delete project).
+7. **Clean up the same day.** Delete the temporary project (Settings, General, Delete project).
    Billing stops at deletion, rounded up to the hour. Confirm the next invoice or usage page shows
    only the drill hours. Delete any local outputs; only counts and hashes are kept.
 
-**Estimated cost.** Roughly a few hours of the production compute size plus disk above 8 GB:
+**Estimated cost (official billing rules, checked 2026-10-04).**
 
-- Micro: a few cents.
-- Medium for 24 hours: about $2.
+The restore copies the source's compute size and disk attributes, so the cost depends on the
+production configuration. That configuration (compute size, disk GB and disk type) **isn't in the
+evidence collected so far**. The owner reads it under Settings, Compute and Disk.
 
-The production compute size and disk size aren't known here; the dashboard cost screen shows the
-exact figure. **Proposed ceiling: $5, with deletion within 24 hours.**
+- **Compute:** billed per project, per hour; "if a project runs for part of an hour, you are still
+  charged for the full hour."
+- **Disk:**
+  - gp3: 8 GB included per project, then $0.000171 per GB-hour;
+  - io2: $0.000267 per GB-hour from the first GB.
+- **Credits:** the org's $10 monthly compute credit may absorb part of it. Don't count on it: it is
+  shared across the organization's projects.
+- **Spend Cap:** compute "is **not** covered by the Spend Cap".
 
-**Estimated duration.** Unknown. Per Supabase, it depends on database size. Plan about half a day,
-and measure the actual time.
+**Formula:** `hours × compute rate + hours × billable disk GB × disk rate`. "Hours" are whole hours
+from creation to deletion.
+
+| Source compute (hourly rate) | 4 hours | 24 hours |
+| ---------------------------- | ------- | -------- |
+| Micro ($0.01344)             | $0.05   | $0.32    |
+| Small ($0.0206)              | $0.08   | $0.49    |
+| Medium ($0.0822)             | $0.33   | $1.97    |
+| Large ($0.1517)              | $0.61   | $3.64    |
+| XL ($0.2877)                 | $1.15   | $6.90    |
+| 2XL ($0.562)                 | $2.25   | $13.49   |
+
+Add disk, per 100 GB billable:
+
+| Disk type | 4 hours | 24 hours |
+| --------- | ------- | -------- |
+| gp3       | $0.07   | $0.41    |
+| io2       | $0.11   | $0.64    |
+
+**$5 is an approval limit, not an enforced cap.** Nothing in Supabase enforces it for compute. It
+holds only if the operator:
+
+1. checks the dashboard's cost overview before confirming;
+2. stops if the planned hours would exceed it;
+3. deletes the project on time.
+
+At XL and above, 24 hours already exceeds $5. A project that isn't deleted keeps billing every hour.
+
+**Estimated duration.** Unknown. Per Supabase, it "can vary depending largely on the volume of data
+involved". Plan about half a day, and measure the actual time.
 
 **Protecting the copied data.** The temporary project holds real production data:
 
@@ -363,6 +610,7 @@ Its existence and deletion go in the private change record.
 
 **Pass criteria (all required):**
 
+- the copy's preflight is clean;
 - the restore completes;
 - migration lists match;
 - the schema matches, apart from documented volatile objects;
@@ -375,8 +623,11 @@ Anything else is a **fail**. Record the reason and fix it before production.
 
 **Evidence to record** (in the private change record, not in this repository):
 
+- the unblock condition used (the Supabase confirmation, or both preflight outputs and the owner's
+  attestation);
 - backup timestamp and type, start and end times, and the measured restore time;
 - the cost screen total;
+- the copy's preflight output (counts only);
 - migration and schema comparison results;
 - aggregate counts (numbers only);
 - orphan and invariant script results;
@@ -385,32 +636,41 @@ Anything else is a **fail**. Record the reason and fix it before production.
 
 ### Storage files: separate backup and restore plan
 
-**No database backup or restore covers Storage objects.** The private buckets `documents`,
-`voice-recordings`, `exports`, `creator-reference-assets` and `creator-generated-media` hold the only
-copy of those files.
+**Storage objects are excluded from the observed database backups; separate Storage backup coverage
+is unverified.** If no separate copy exists, the private buckets `documents`, `voice-recordings`,
+`exports`, `creator-reference-assets` and `creator-generated-media` hold the only copy of those
+files.
 
 **Proposed (needs a separate owner decision):**
 
-1. Inventory object counts and total size per bucket, from metadata only (`storage.objects`
+1. Confirm whether any separate Storage backup already exists (owner), and record its scope, schedule
+   and the last verified restore.
+2. Inventory object counts and total size per bucket, from metadata only (`storage.objects`
    aggregates).
-2. Choose an encrypted destination outside Supabase, with access limited to the owner, and a
-   retention period.
-3. Copy the buckets using Supabase's documented approach: download and re-upload with a script, or
+3. If none exists, choose an encrypted destination outside Supabase, with access limited to the
+   owner, and a retention period.
+4. Copy the buckets using Supabase's documented approach: download and re-upload with a script, or
    the S3-compatible API.
    - S3 access keys are credentials: creating them is an owner action.
-4. Test a restore of a **sample** into a temporary bucket in the drill project (option A) or a local
-   Supabase stack. Verify checksums and sizes only, never contents.
-5. Decide a schedule (for example weekly, plus before each production release). Cost depends on
+5. Test a restore of a **sample** into a temporary bucket in the drill project or a local Supabase
+   stack. Verify checksums and sizes only, never contents.
+6. Decide a schedule (for example weekly, plus before each production release). Cost depends on
    total size and the chosen destination, which are unknown today.
 
-**Until then:** losing a Storage object, whether by deletion, corruption or a project-level
-incident, is **unrecoverable**.
+**Until coverage is verified:** if no separate backup exists, losing a Storage object, whether by
+deletion, corruption or a project-level incident, would be unrecoverable.
 
 ### Release acceptance: data-loss window, rollback and the PITR gate
 
-- **Data-loss window today:** with daily physical backups only, an incident can lose everything
-  written since the last daily backup. That's up to about 24 hours: the latest one seen was
-  22:15 UTC. PITR would reduce that to seconds within its retention period.
+- **Data-loss window today.** Recovery goes back to the **latest usable** backup.
+  - **Normally:** up to about 24 hours with daily backups. The latest seen was taken at 22:15 UTC.
+  - **If backups fail or one turns out unusable:** the window reaches back to the last usable one.
+    That can exceed 24 hours, up to the retained history: 7 days on Pro, 14 on Team. The plan tier
+    isn't verified here.
+  - **If none is usable:** the data is lost.
+  - **Monitoring:** nothing in this repository alerts on a missed backup. Backup age must be
+    checked on the day.
+  - **With PITR:** seconds, within its retention period.
 - **Before a release:** a fresh logical dump taken immediately before the release migrations limits
   the loss **for a release-caused problem** to the minutes between that dump and the incident. The
   runbook's existing step: "Create an on-demand logical backup using an approved encrypted
@@ -433,12 +693,14 @@ incident, is **unrecoverable**.
 - **either** PITR enabled, covering the release window;
 - **or all of the following:**
   1. the latest daily PHYSICAL backup is under 24 hours old, verified on the day;
-  2. a passing option-A restore drill within the last 90 days (and after major schema changes);
+  2. a passing restore drill within the last 90 days (and after major schema changes): option A once
+     unblocked. An isolated option B drill doesn't validate the managed backup and counts only if
+     the owner accepts that gap in writing;
   3. a logical dump taken immediately before the release migrations, stored encrypted, with its
      restore procedure written down;
   4. the owner's written acceptance of a recovery point of up to about 24 hours for incidents
-     unrelated to a release;
-  5. a Storage backup in place, or the owner's written acceptance that Storage loss is
+     unrelated to a release, or longer if a backup fails;
+  5. Storage backup coverage verified, or the owner's written acceptance that Storage loss is
      unrecoverable.
 
 **Owner decision required:** adopt this alternative (and accept that recovery point), **or**
@@ -448,9 +710,13 @@ Small compute minimum. Neither is assumed here.
 **Unknowns** (no figures are invented here):
 
 - restore time for this database;
-- production database and Storage sizes;
-- the compute size;
-- whether `pg_cron`/`pg_net` jobs exist in production;
+- production database and Storage sizes, and the disk type;
+- the compute size, and so the drill's cost;
+- the plan tier, and so the backup retention;
+- whether `pg_cron`, `pg_net` or other outbound-capable objects exist in production now, or existed
+  at the backup's timestamp;
+- whether a separate Storage backup exists;
+- whether anyone is alerted when a daily backup fails;
 - how long a logical dump and restore would take;
 - the business's acceptable recovery point and recovery time.
 
