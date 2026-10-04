@@ -24,6 +24,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     { embed },
     { recordUsage },
     { assertExtractionLimits, assertTenantStoragePath, verifyUploadObject },
+    { isOrganizationActive, ORGANIZATION_INACTIVE },
   ] = await Promise.all([
     import("@/generated/prisma/client/client"),
     import("@/server/jobs/verify"),
@@ -34,6 +35,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/integrations/openai"),
     import("@/server/services/billing/entitlements"),
     import("@/server/security/document-ingestion"),
+    import("@/server/jobs/organization-guard"),
   ]);
 
   const rawBody = await verifyJobRequest(request);
@@ -44,6 +46,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   const parsed = payloadSchema.safeParse(JSON.parse(rawBody));
   if (!parsed.success) return NextResponse.json({ error: "invalid payload" }, { status: 400 });
   const { documentId, orgId, inlineContent } = parsed.data;
+
+  // Nothing is fetched, embedded (a paid call) or stored for a missing or
+  // soft-deleted organization; the document's status is left as it is.
+  if (!(await isOrganizationActive(orgId))) return NextResponse.json(ORGANIZATION_INACTIVE);
 
   const document = await unscopedPrisma.document.findFirst({
     where: { id: documentId, organizationId: orgId, deletedAt: null },
@@ -91,7 +97,11 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     for (let i = 0; i < chunks.length; i += EMBED_BATCH) {
       const batch = chunks.slice(i, i + EMBED_BATCH);
+      // Before each paid call, and before storing its result: deletion during
+      // the call stops further batches, the result, usage and notification.
+      if (!(await isOrganizationActive(orgId))) return NextResponse.json(ORGANIZATION_INACTIVE);
       const embeddings = await embed(batch.map((c) => c.content));
+      if (!(await isOrganizationActive(orgId))) return NextResponse.json(ORGANIZATION_INACTIVE);
 
       await unscopedPrisma.$transaction(
         batch.map((chunk, j) =>
@@ -128,6 +138,8 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     return NextResponse.json({ ok: true, chunks: chunks.length });
   } catch (err) {
+    // Deleted meanwhile: no failure record or notification (no retry either).
+    if (!(await isOrganizationActive(orgId))) return NextResponse.json(ORGANIZATION_INACTIVE);
     const message = err instanceof Error ? err.message.slice(0, 500) : "processing failed";
     await unscopedPrisma.document.update({
       where: { id: documentId },

@@ -14,18 +14,31 @@ const payloadSchema = z.object({ reminderId: z.string().uuid() });
  * deliveries can never double-send.
  */
 export async function POST(request: Request): Promise<NextResponse> {
-  const [{ verifyJobRequest }, { unscopedPrisma }, { sendEmail }, emailMod] = await Promise.all([
-    import("@/server/jobs/verify"),
-    import("@/server/db/tenant"),
-    import("@/server/integrations/resend"),
-    import("../../../../../../emails/booking-email"),
-  ]);
+  const [{ verifyJobRequest }, { unscopedPrisma }, { sendEmail }, emailMod, guard] =
+    await Promise.all([
+      import("@/server/jobs/verify"),
+      import("@/server/db/tenant"),
+      import("@/server/integrations/resend"),
+      import("../../../../../../emails/booking-email"),
+      import("@/server/jobs/organization-guard"),
+    ]);
 
   const body = await verifyJobRequest(request);
   if (body === null) return NextResponse.json({ error: "invalid signature" }, { status: 401 });
 
   const parsed = payloadSchema.safeParse(JSON.parse(body));
   if (!parsed.success) return NextResponse.json({ error: "invalid payload" }, { status: 400 });
+
+  // A reminder of a missing or soft-deleted organization is left as it is
+  // and nothing is sent. (An unknown reminder falls through to the claim,
+  // which matches nothing.)
+  const owner = await unscopedPrisma.reminder.findUnique({
+    where: { id: parsed.data.reminderId },
+    select: { organizationId: true },
+  });
+  if (owner && !(await guard.isOrganizationActive(owner.organizationId))) {
+    return NextResponse.json(guard.ORGANIZATION_INACTIVE);
+  }
 
   // Claim the reminder atomically; 0 rows → already handled or canceled.
   const claimed = await unscopedPrisma.reminder.updateMany({
@@ -43,7 +56,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           booking: {
             select: { guestEmail: true, guestName: true, guestTimezone: true, guestLocale: true },
           },
-          organization: { select: { name: true } },
+          organization: { select: { name: true, deletedAt: true } },
         },
       },
     },
@@ -51,6 +64,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   const event = reminder?.event;
   if (!reminder || !event || event.status === "CANCELED" || event.deletedAt) {
     return NextResponse.json({ skipped: true });
+  }
+  // Deleted after the check above: same as a canceled event (nothing sent).
+  if (event.organization.deletedAt || event.organizationId !== reminder.organizationId) {
+    return NextResponse.json(guard.ORGANIZATION_INACTIVE);
   }
 
   try {
