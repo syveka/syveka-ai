@@ -318,6 +318,15 @@ unchanged. This closes #73's run-time recipient item. **It doesn't cover the two
   - **Sync keeps running:** `jobs/calendar-sync` iterates every `syncEnabled` external calendar and
     checks only that the organization isn't deleted. The removed user's calendar keeps syncing into
     the organization, and their tokens stay stored.
+  - **What is exposed:** each imported event carries its title, description, location and up to 50
+    attendees, and is visible in the organization's calendar.
+  - **Booking slots:** public booking availability (`booking.ts`) is computed from these events, so
+    a former member's private schedule shapes the organization's bookable slots.
+  - **No self-service exit:** the former member can't disconnect, because
+    `setCalendarSyncEnabled` requires a current member's context.
+  - **No write-back found:** I found no code that writes to external calendars.
+- **Classification: pre-production assessment required.** Fix it, or have the owner accept it in
+  writing, before production. Not deferred to after launch by default.
 - **Existing protections:**
   - The HMAC-signed `state` binds the org, user and provider, and expires after 10 minutes.
   - Tokens are encrypted at rest.
@@ -339,6 +348,10 @@ unchanged. This closes #73's run-time recipient item. **It doesn't cover the two
   - Another organization's connections are untouched.
 
 #### R2. Queued non-workflow jobs still run after an organization is soft-deleted
+
+**Classification: pre-production assessment required.** Fix it, or have the owner accept it in
+writing, before production. Not deferred to after launch by default. Until it's fixed, step 5.1 of
+the deletion runbook (stop scheduled side effects before soft deletion) is mandatory.
 
 - **Present on current `main`:** yes. Jobs queued before `organizations.deleted_at` is set run
   without checking it, and so do jobs enqueued afterwards by schedules:

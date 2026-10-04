@@ -336,6 +336,11 @@ Status as of 2026-10-04: **operational preparation, not a compliance statement.*
 - **No export or deletion tooling exists in the app.** There's no export route or action, and no
   UI or Server Action that deletes an organization or a user account.
 - **Every request is handled manually**, by an approved operator, under owner approval.
+- **A documented procedure is not a verified deletion capability.** This procedure has never been
+  exercised end to end, and `gdpr-erasure` is incomplete (section 5). Report deletion as
+  "procedure documented, capability unverified" until a dry run on a disposable non-production
+  organization shows zero remaining rows for `<ORG_ID>`, zero objects under `<ORG_ID>/` in all five
+  buckets, and the provider steps recorded.
 - **Legal review is separate.** It covers which data must be exported or deleted, and which retention
   exceptions apply; this runbook doesn't decide either.
 
