@@ -10,6 +10,8 @@ build/
 /src/generated/
 .env
 .env*.local
+# Local devserver overrides may have a suffix after .local.
+.env.local.*
 *.tsbuildinfo
 next-env.d.ts
 coverage/
