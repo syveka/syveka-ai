@@ -118,3 +118,27 @@ export function displayedMonthlyPriceEur(plan: PublicPlan, interval: "monthly" |
   const monthly = PLAN_MONTHLY_PRICE_EUR[plan];
   return interval === "annual" ? Math.round((monthly * ANNUAL_BILLED_MONTHS) / 12) : monthly;
 }
+
+/**
+ * How extra seats are handled once a plan's included seats are used:
+ * "none" (no extra seats can be bought), "paid" (each extra seat is billed),
+ * or "custom" (set by contract).
+ */
+export type ExtraSeatPolicy = "none" | "paid" | "custom";
+
+/**
+ * Target seat model: included seats + paid extra seats. Read only by
+ * computeSeatBilling() and reconcileSeatBilling()
+ * (src/server/services/billing/seats.ts). Nothing is charged for extra seats
+ * until their Stripe prices and a proration policy are approved; seat limits
+ * are still enforced by PLAN_LIMITS[plan].maxSeats.
+ */
+export const SEAT_BILLING_POLICY: Record<
+  Plan,
+  { includedSeats: number; extraSeats: ExtraSeatPolicy }
+> = {
+  FREE: { includedSeats: 1, extraSeats: "none" },
+  STARTER: { includedSeats: 2, extraSeats: "paid" },
+  PRO: { includedSeats: 5, extraSeats: "paid" },
+  ENTERPRISE: { includedSeats: 0, extraSeats: "custom" },
+};
