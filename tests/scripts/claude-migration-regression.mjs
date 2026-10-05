@@ -3,15 +3,23 @@ import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { test } from "node:test";
 
-const helper = fileURLToPath(new URL("../../.claude/skills/syveka-context/scripts/check-served-sha.mjs", import.meta.url));
-const guard = fileURLToPath(new URL("../../.claude/skills/syveka-context/scripts/prod-guard.mjs", import.meta.url));
+const helper = fileURLToPath(
+  new URL("../../.claude/skills/syveka-context/scripts/check-served-sha.mjs", import.meta.url),
+);
+const guard = fileURLToPath(
+  new URL("../../.claude/skills/syveka-context/scripts/prod-guard.mjs", import.meta.url),
+);
 
 function probe(origin, healthy = true, expected = "-") {
   const mock = `globalThis.fetch = async (url) => {
     if (url.href !== 'https://example.invalid/api/health') throw new Error('unexpected URL');
     return { status: ${healthy ? 200 : 503}, json: async () => ({status: '${healthy ? "healthy" : "degraded"}', build: '${"a".repeat(40)}', checks: {}}) };
   };`;
-  return spawnSync(process.execPath, ["--import", `data:text/javascript,${encodeURIComponent(mock)}`, helper, expected, origin], { encoding: "utf8" });
+  return spawnSync(
+    process.execPath,
+    ["--import", `data:text/javascript,${encodeURIComponent(mock)}`, helper, expected, origin],
+    { encoding: "utf8" },
+  );
 }
 
 for (const origin of [
@@ -57,7 +65,8 @@ for (const tool of [
 ]) {
   test(`blocks inert protected-tool payload: ${tool}`, () => {
     const result = spawnSync(process.execPath, [guard], {
-      input: JSON.stringify({ tool_name: tool, tool_input: {} }), encoding: "utf8",
+      input: JSON.stringify({ tool_name: tool, tool_input: {} }),
+      encoding: "utf8",
     });
     assert.equal(result.status, 2);
   });
@@ -65,7 +74,11 @@ for (const tool of [
 
 test("allows read-only connector payload", () => {
   const result = spawnSync(process.execPath, [guard], {
-    input: JSON.stringify({ tool_name: "mcp__codex_apps__github_fetch_file", tool_input: {} }), encoding: "utf8",
+    input: JSON.stringify({
+      tool_name: "mcp__codex_apps__github_fetch_file",
+      tool_input: {},
+    }),
+    encoding: "utf8",
   });
   assert.equal(result.status, 0);
 });
