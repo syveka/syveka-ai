@@ -191,7 +191,7 @@ Production requires a verified backup before approving the GitHub `production` E
 - **Option B is an exception** for narrow releases only. It applies only when every eligibility condition below holds and the owner accepts its risk in writing.
 - If any condition isn't met, Option A is required.
 
-Neither option is a substitute for the other's records. Record everything in the private change record before approving the `production` Environment.
+Whichever option applies, its records go in the private change record before the `production` Environment is approved.
 
 ### Option A (default): PITR
 
@@ -208,9 +208,9 @@ All conditions must hold, verified for the exact release SHA against the SHA pro
 
 1. **No database change.**
    - `git diff --name-only <production-sha> <release-sha> -- prisma` prints nothing: no new or changed migration, `schema.prisma`, or `prisma/sql/*` file.
-   - The release's "Apply Prisma migrations" step reports no pending migrations.
+   - Before approval, the read-only `npx prisma migrate status` against production (the operator preflight below) reports the schema is up to date. If it lists any pending migration, Option B doesn't apply: the release would apply it automatically after approval.
 2. **No destructive database operation.** No backfill, bulk update or delete, or manual SQL. The only database writes are the release workflow's existing rerunnable steps, which are unchanged in this release.
-3. **A verified application rollback target.** The current production deployment (ID or URL) is recorded, and the rollback command the release prints is ready to run.
+3. **A verified application rollback target.** Before approval, the current production deployment (ID or URL) is recorded as the rollback target. `vercel rollback <that deployment> --timeout 5m --yes` restores it; the release also prints this command.
 
 #### Requirements
 
