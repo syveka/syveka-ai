@@ -394,7 +394,7 @@ jobs:
             echo
             echo "If the candidate was promoted, restore the previous production deployment with:"
             echo
-            echo "\`vercel rollback $PREVIOUS_DEPLOYMENT_ID --timeout 5m --yes\`"ci: restore trailing newline in deploy.yml
+            echo "\`vercel rollback $PREVIOUS_DEPLOYMENT_ID --timeout 5m --yes\`"
           } | tee -a "$GITHUB_STEP_SUMMARY"
         env:
           PREVIOUS_DEPLOYMENT_ID: ${{ steps.previous.outputs.id }}
