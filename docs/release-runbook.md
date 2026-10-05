@@ -185,17 +185,63 @@ and assertion SQL; tracked Prisma migrations remain one-time operations.
 
 ## Production preflight and backup
 
-Production requires a verified backup before approving the GitHub `production`
-Environment:
+Production requires a verified backup before approving the GitHub `production` Environment.
+
+- **Option A (point-in-time recovery) is the required default.**
+- **Option B is an exception** for narrow releases only. It applies only when every eligibility condition below holds and the owner accepts its risk in writing.
+- If any condition isn't met, Option A is required.
+
+Whichever option applies, its records go in the private change record before the `production` Environment is approved.
+
+### Option A (default): PITR
 
 - Confirm Supabase PITR is enabled and the recovery window covers the release.
 - Create an on-demand logical backup using an approved encrypted destination.
-- Record backup time, database project ref, Git SHA, migration status, restore
-  owner, and the tested restore procedure in the private change record.
-- Test restore into an isolated non-production project when the backup process or
-  schema has changed.
-- Never store a backup in the repository, Actions artifacts, PRs, or unencrypted
-  developer folders.
+- Record backup time, database project ref, Git SHA, migration status, restore owner, and the tested restore procedure in the private change record.
+- Test restore into an isolated non-production project when the backup process or schema has changed.
+
+### Option B (exception): daily physical backup + pre-release logical backup, without PITR
+
+#### Eligibility
+
+All conditions must hold, verified for the exact release SHA against the SHA production currently serves:
+
+1. **No database change.**
+   - `git diff --name-only <production-sha> <release-sha> -- prisma` prints nothing: no new or changed migration, `schema.prisma`, or `prisma/sql/*` file.
+   - Before approval, the read-only `npx prisma migrate status` against production (the operator preflight below) reports the schema is up to date. If it lists any pending migration, Option B doesn't apply: the release would apply it automatically after approval.
+2. **No destructive database operation.** No backfill, bulk update or delete, or manual SQL. The only database writes are the release workflow's existing rerunnable steps, which are unchanged in this release.
+3. **A verified application rollback target.** Before approval, the current production deployment (ID or URL) is recorded as the rollback target. `vercel rollback <that deployment> --timeout 5m --yes` restores it; the release also prints this command.
+
+#### Requirements
+
+All are recorded before approval:
+
+4. **Daily backup.** The latest Supabase daily **PHYSICAL** backup is less than 24 hours old when the gate is approved. Record its timestamp.
+5. **Pre-release logical backup.**
+   - Taken no more than 60 minutes before approving the gate, and after any announced production write freeze.
+   - Stored in an approved encrypted destination.
+   - Record its UTC timestamp, size, and SHA-256 checksum.
+   - Verified readable (`pg_restore --list` succeeds).
+   - It is **not** restore-tested.
+6. **Release identity.** Record:
+   - the exact release SHA;
+   - the production SHA it replaces;
+   - the previous production deployment (rollback target);
+   - a **named rollback owner**, available for the whole release window.
+7. **The owner's explicit written risk acceptance.** It must name this release SHA, state each of the following, and acknowledge each risk individually; a general approval is not enough:
+   - **PITR is not available** for this release.
+   - **Recovery-point window.**
+     - For a problem the release itself causes, data written after the logical backup can be lost.
+     - For any other incident, recovery falls back to the latest usable daily backup. That is up to about 24 hours of data, or more if a daily backup failed.
+   - **No restore has been tested** for either backup, so the recovery time is unknown.
+   - **Storage objects** are excluded from database backups. If separate Storage backup coverage isn't verified, Storage loss is unrecoverable.
+   - **Confirmation** that the release contains no migrations or schema changes (condition 1).
+
+Option B never applies to a release that changes the schema or migrations, and it doesn't remove the restore-test requirement when the backup process or schema has changed.
+
+### Both options
+
+- Never store a backup in the repository, Actions artifacts, PRs, or unencrypted developer folders.
 
 Before approval, archive the successful staging workflow URL, compare the release
 SHA with the production candidate, run `npm run migrations:check`, and review
