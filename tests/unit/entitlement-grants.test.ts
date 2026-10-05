@@ -207,7 +207,7 @@ describe("getEntitlements + internal entitlement grants", () => {
       reason: "Pilot smoke test",
     });
 
-    expect(mocks.redisDel).toHaveBeenCalledWith("ent:org-a");
+    expect(mocks.redisDel).toHaveBeenCalledWith("ent:v2:org-a");
   });
 
   it("8b. revoking an override invalidates the org's cached entitlements", async () => {
@@ -217,7 +217,7 @@ describe("getEntitlements + internal entitlement grants", () => {
 
     await revokeEntitlementOverride("grant-1");
 
-    expect(mocks.redisDel).toHaveBeenCalledWith("ent:org-a");
+    expect(mocks.redisDel).toHaveBeenCalledWith("ent:v2:org-a");
   });
 
   it("9. granting or revoking an override never touches the Subscription table", async () => {

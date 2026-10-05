@@ -53,7 +53,7 @@ vi.mock("@/server/services/billing/entitlements", () => {
     EntitlementError,
     getMonthUsage: vi.fn(async () => 0),
     assertWithinLimit: vi.fn(async () => {
-      if (m.quotaExceeded) throw new EntitlementError("aiMessagesPerUserMonth");
+      if (m.quotaExceeded) throw new EntitlementError("aiMessagesPerOrgMonth");
     }),
     recordUsage: m.recordUsage,
   };

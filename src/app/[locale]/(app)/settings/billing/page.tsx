@@ -72,7 +72,7 @@ export default async function BillingPage({
           {
             label: t("usage.aiMessages"),
             used: aiMessages,
-            limit: ent.aiMessagesPerUserMonth * seats,
+            limit: ent.aiMessagesPerOrgMonth,
           },
           { label: t("usage.voiceMinutes"), used: voiceMinutes, limit: ent.voiceMinutesMonth },
           { label: t("usage.contacts"), used: contacts, limit: ent.maxContacts },

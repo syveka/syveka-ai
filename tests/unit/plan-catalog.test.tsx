@@ -64,16 +64,16 @@ describe("plan catalog", () => {
     expect(text).toContain("€0");
     expect(text).toContain("€29");
     expect(text).toContain("€79");
-    // Free: 2 seats, 50 pooled AI messages, no voice.
+    // Free: 2 seats, 50 pooled AI messages, no voice. Every plan shows one pooled number.
     expect(text).toContain("planSeats(2)");
     expect(text).toContain("planAiMessages(50)");
     expect(text).toContain("planVoiceNone");
-    // Starter and Pro: per-user AI messages and voice minutes.
+    // Starter and Pro: pooled AI messages and voice minutes.
     expect(text).toContain("planSeats(10)");
-    expect(text).toContain("planAiMessagesPerUser(1,000)");
+    expect(text).toContain("planAiMessages(1,000)");
     expect(text).toContain("planVoiceMinutes(100)");
     expect(text).toContain("planSeats(50)");
-    expect(text).toContain("planAiMessagesPerUser(5,000)");
+    expect(text).toContain("planAiMessages(5,000)");
     expect(text).toContain("planVoiceMinutes(500)");
   });
 });

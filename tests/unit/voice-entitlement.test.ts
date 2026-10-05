@@ -70,7 +70,7 @@ function entitlements(voiceAssistants: number) {
     status: "ACTIVE",
     readOnly: false,
     maxSeats: 2,
-    aiMessagesPerUserMonth: 25,
+    aiMessagesPerOrgMonth: 50,
     voiceAssistants,
     voiceMinutesMonth: 0,
     kbStorageMb: 50,

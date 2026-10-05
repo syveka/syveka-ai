@@ -8,7 +8,6 @@ import {
   HIGHLIGHTED_PLAN,
   PLAN_LIMITS,
   PLAN_MONTHLY_PRICE_EUR,
-  POOLED_AI_MESSAGE_PLANS,
   PUBLIC_PLANS,
 } from "@/lib/billing/plan-catalog";
 
@@ -17,15 +16,11 @@ import {
 // catalog, the same source entitlements use.
 const PLANS = PUBLIC_PLANS.map((plan) => {
   const limits = PLAN_LIMITS[plan];
-  const pooled = POOLED_AI_MESSAGE_PLANS.has(plan);
   return {
     name: PLAN_NAMES[plan],
     priceEur: PLAN_MONTHLY_PRICE_EUR[plan],
     seats: limits.maxSeats,
-    aiMessages: pooled
-      ? limits.aiMessagesPerUserMonth * limits.maxSeats
-      : limits.aiMessagesPerUserMonth,
-    perUser: !pooled,
+    aiMessages: limits.aiMessagesPerOrgMonth,
     voiceMinutes: limits.voiceMinutesMonth > 0 ? limits.voiceMinutesMonth : null,
     highlight: plan === HIGHLIGHTED_PLAN,
   };
@@ -59,12 +54,7 @@ export default async function PricingPage({ params }: { params: Promise<{ locale
             <CardContent className="space-y-4">
               <ul className="space-y-1.5 text-sm text-muted-foreground">
                 <li>· {t("planSeats", { count: numberFormat.format(p.seats) })}</li>
-                <li>
-                  ·{" "}
-                  {t(p.perUser ? "planAiMessagesPerUser" : "planAiMessages", {
-                    count: numberFormat.format(p.aiMessages),
-                  })}
-                </li>
+                <li>· {t("planAiMessages", { count: numberFormat.format(p.aiMessages) })}</li>
                 <li>
                   ·{" "}
                   {p.voiceMinutes === null

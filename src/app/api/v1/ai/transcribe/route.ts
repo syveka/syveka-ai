@@ -71,8 +71,8 @@ export async function POST(request: Request): Promise<Response> {
   // Dictation only feeds a chat message, so it is refused once the chat quota
   // is exhausted rather than paying to transcribe a message that can't be sent.
   try {
-    const userMonthCount = await getMonthUsage(ctx.orgId, "AI_MESSAGES");
-    await assertWithinLimit(ctx.orgId, { kind: "ai_messages", userMonthCount });
+    const orgMonthCount = await getMonthUsage(ctx.orgId, "AI_MESSAGES");
+    await assertWithinLimit(ctx.orgId, { kind: "ai_messages", orgMonthCount });
   } catch (e) {
     if (e instanceof EntitlementError) return error(e.code, 402);
     throw e;

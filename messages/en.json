@@ -822,7 +822,7 @@
       "seats": "Seats"
     },
     "features": {
-      "aiMessagesPerUser": "{count} AI messages per user/mo",
+      "aiMessages": "{count} AI messages/mo, shared by your team",
       "voice": "{assistants, plural, one {{assistantsText} voice assistant} other {{assistantsText} voice assistants}} · {minutes} min",
       "knowledgeBase": "{gb} GB knowledge base",
       "workflows": "{count} workflows",
@@ -1331,10 +1331,9 @@
     "startFree": "Start free",
     "pricing": "Pricing",
     "pricingTitle": "Pricing",
-    "pricingSubtitle": "Per user / month + VAT. 14-day free Pro trial.",
+    "pricingSubtitle": "Prices per user per month, excluding VAT.",
     "planSeats": "{count} seats",
-    "planAiMessages": "{count} AI messages/mo",
-    "planAiMessagesPerUser": "{count} AI messages per user/mo",
+    "planAiMessages": "{count} AI messages/mo, shared by your team",
     "planVoiceMinutes": "Voice AI: {minutes} min",
     "planVoiceNone": "Voice AI: —",
     "getStarted": "Get started",

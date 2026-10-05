@@ -115,7 +115,7 @@ vi.mock("@/server/services/billing/entitlements", () => ({
   getEntitlements: vi.fn(async () => ({
     plan: state.plan,
     status: "ACTIVE",
-    aiMessagesPerUserMonth: 1000,
+    aiMessagesPerOrgMonth: 1000,
     voiceMinutesMonth: 100,
     maxContacts: 5000,
     kbStorageMb: 1024,
@@ -313,7 +313,8 @@ describe.each(LOCALES)("Settings pages render real %s translations", (locale) =>
     }
     expect(text).not.toMatch(/[٠-٩]/);
     const features = m.billingPage!.features as Record<string, string>;
-    expect(text).toContain(features.apiWebhooks);
+    // No plan card advertises a public API until one exists.
+    expect(text).not.toContain(features.apiWebhooks);
   });
 });
 
