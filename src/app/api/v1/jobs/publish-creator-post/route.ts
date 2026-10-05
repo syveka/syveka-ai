@@ -18,10 +18,12 @@ const payloadSchema = z.object({ orgId: z.string().uuid(), postId: z.string().uu
  * enqueue time) can attempt transient failures again.
  */
 export async function POST(request: Request): Promise<NextResponse> {
-  const [{ verifyJobRequest }, { publishCreatorPost }] = await Promise.all([
-    import("@/server/jobs/verify"),
-    import("@/server/services/creator-publishing"),
-  ]);
+  const [{ verifyJobRequest }, { publishCreatorPost }, { ORGANIZATION_INACTIVE }] =
+    await Promise.all([
+      import("@/server/jobs/verify"),
+      import("@/server/services/creator-publishing"),
+      import("@/server/jobs/organization-guard"),
+    ]);
 
   const body = await verifyJobRequest(request);
   if (body === null) return NextResponse.json({ error: "invalid signature" }, { status: 401 });
@@ -30,7 +32,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (!parsed.success) return NextResponse.json({ error: "invalid payload" }, { status: 400 });
 
   try {
-    await publishCreatorPost(parsed.data.orgId, parsed.data.postId);
+    const outcome = await publishCreatorPost(parsed.data.orgId, parsed.data.postId);
+    if (outcome === "organization_inactive") return NextResponse.json(ORGANIZATION_INACTIVE);
     return NextResponse.json({ ok: true });
   } catch (e) {
     console.error("publish-creator-post job failed", { ...parsed.data, error: e });

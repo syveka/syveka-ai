@@ -3,6 +3,10 @@
 Snapshot date: **2026-07-23**. All checks below were either read directly from workflow/script
 files or executed locally (read-only, non-destructive) during this audit.
 
+> **Historical snapshot.** Sections 1–7 and "Summary classification" record the 2026-07-23 audit
+> and are kept as evidence; several items have changed since. Current status is in the dated
+> addenda below, newest first: **2026-10-06**, then 2026-10-04.
+
 ## 1. GitHub Actions workflows
 
 ### `.github/workflows/ci.yml` — triggers on PR→`main` and push→`main`, 14 jobs
@@ -176,6 +180,56 @@ end-to-end** (no staging or production dispatch has occurred per repository evid
 | Dashboard index ownership check  | Missing from CI wiring                                      |
 | Staging E2E smoke                | Environment-dependent, not yet exercised                    |
 | Production/staging deploy        | Correctly gated, not yet exercised                          |
+
+## Addendum (2026-10-06): current status
+
+Fresh findings for this date. Evidence class is marked on each line: _repo_ (repository or CI
+metadata), _staging_ (staging release), or _public endpoint_ (unauthenticated `/api/health`).
+Nothing here was read from production secrets or databases.
+
+**Release state**
+
+- `main` = `d0deaa9` (_repo_): #232 (database connection diagnostic) and #239 (backup gate) merged.
+  CI #656 passed on `d0deaa9`.
+- Staging = `d0deaa9` (_staging_): release #126 passed every step, including smoke and auth journeys,
+  with no pending migrations. The public endpoint confirms the build.
+- Production serves `fc645727` (_public endpoint_, 2026-10-05 21:28 UTC). That's production run #23
+  (2026-09-25), 92 commits behind `main`. The `main` → production delta has **no `prisma/` changes**.
+
+**Backup gate** (`docs/release-runbook.md`, merged in #239): PITR (Option A) is the required default
+and is **not met**. Option B is a narrow exception for releases with no database change and needs a
+complete per-release record. **Its existence is not release approval.** Restore testing and Storage
+backup coverage remain **unverified**. Supabase ticket SU-494644 was acknowledged; that is not
+technical clearance.
+
+**Expected-project configuration** (_repo_ metadata, names only): the GitHub `production`
+environment defines only `PROD_URL`. `PRODUCTION_SUPABASE_PROJECT_REF` exists only on `staging`, so a
+production build would inline an empty expected ref and the diagnostic would report
+`expectedProjectMatch: "unknown"`. Adding the variable is an owner action. Variable presence would
+still not prove the deployed value; the post-release diagnostic line does.
+
+**Secret-scanning alert #1** (_repo_): the flagged `whsec_` literal (in
+`tests/unit/inbox-resend-inbound.test.ts:155`, commit `1e16a50`, removed in `55ea7c7` the same day,
+allowlisted in `.gitleaksignore`) is byte-identical to the example signing secret in svix's public
+documentation. It's a synthetic test fixture, not a provider-issued Syveka secret. It remains visible
+in public history; nothing needs revoking. Closing the alert is an owner action.
+
+**Classification of open items**
+
+| Item                                                                                                      | Class                                                                                  |
+| --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Backup gate: PITR off; Option B not yet applied to any release                                            | Release blocker (until A, or a complete B record)                                      |
+| `PRODUCTION_SUPABASE_PROJECT_REF` missing in `production`                                                 | Release blocker for the DB-mode verification goal                                      |
+| Seat limit not enforced at join (pending invitations can exceed the plan; concurrent joins unserialized)  | Limited-pilot blocker; fix proposed in a dedicated Draft PR                            |
+| Creator Studio mock media in production without FAL (#234)                                                | Limited-pilot blocker if Creator Studio is enabled for any org                         |
+| AI allowance enforced org-wide against a per-user field; display and 80% warning multiply by seats (#237) | Limited-pilot blocker for paid plans                                                   |
+| Error tracking inactive (no DSN)                                                                          | Release blocker per the 2026-10-04 addendum (P1-2)                                     |
+| Data export and deletion: procedure documented, capability unverified (P1-10)                             | Release blocker for a commercial launch; limited-pilot acceptable with manual handling |
+| No dunning emails; webhook marks `PAST_DUE` only                                                          | Post-launch improvement (commercial launch)                                            |
+| Creator Studio monthly credits accumulate without expiry                                                  | Commercial-policy decision                                                             |
+| Stripe checkout bills `members.length`; quantity never synced                                             | Commercial launch blocker; depends on unapproved commercial model                      |
+| `usage-rollup` QStash schedule (retention purge, 80% warnings)                                            | Unknown, needs owner evidence                                                          |
+| Production Vercel variable names (mock pins absent, required present)                                     | Unknown, needs owner evidence                                                          |
 
 ## Addendum (2026-10-04): production preflight review
 

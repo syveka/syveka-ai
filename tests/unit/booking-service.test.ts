@@ -15,6 +15,9 @@ const {
 } = vi.hoisted(() => {
   const txMock = {
     $executeRaw: vi.fn(async () => 0),
+    // Eligibility locks (owner membership, then the booking type): granted here;
+    // removal and ineligible owners are covered in booking-owner-removal.test.ts.
+    $queryRaw: vi.fn(async () => [{ role: "OWNER", id: "bt-1" }]),
     calendarEvent: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     contact: { findFirst: vi.fn(), create: vi.fn() },
     eventAttendee: { create: vi.fn() },
@@ -32,6 +35,8 @@ const {
     txMock,
     unscopedMock: {
       bookingType: { findFirst: vi.fn() },
+      // The booking type's owner is a current member.
+      organizationMember: { findFirst: vi.fn(async () => ({ id: "member-1" })) },
       availabilitySchedule: { findFirst: vi.fn(async () => null) },
       calendarEvent: {
         findMany: vi.fn(async (): Promise<Array<{ startsAt: Date; endsAt: Date }>> => []),

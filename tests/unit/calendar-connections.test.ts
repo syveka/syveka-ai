@@ -6,6 +6,16 @@ const { unscopedMock } = vi.hoisted(() => ({
     calendarConnection: { findFirst: vi.fn(), update: vi.fn(), upsert: vi.fn() },
     externalCalendar: { upsert: vi.fn() },
     organizationMember: { findFirst: vi.fn() },
+    // Persisting under the membership lock: the transaction runs against this
+    // same mock, and the lock query (lockCalendarMember) reports the role the
+    // membership lookup reports, so both checks agree.
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(unscopedMock)),
+    $queryRaw: vi.fn(async () => {
+      const member = (await unscopedMock.organizationMember.findFirst.getMockImplementation()?.(
+        {},
+      )) as { role?: string } | null | undefined;
+      return member?.role ? [{ role: member.role }] : [];
+    }),
   },
 }));
 
@@ -38,6 +48,7 @@ function connectionRow(overrides: Record<string, unknown> = {}) {
   return {
     id: "conn-1",
     organizationId: "org-a",
+    userId: "user-a",
     provider: "MOCK",
     accessTokenEnc: encryptToken("mock-access-token"),
     refreshTokenEnc: encryptToken("mock-refresh-token"),
@@ -52,6 +63,9 @@ describe("getFreshTokens org scoping", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.CALENDAR_TOKEN_ENCRYPTION_KEY = randomBytes(32).toString("base64");
+    // The connection's user is a current member (revocation is covered in
+    // calendar-membership-revocation.test.ts).
+    unscopedMock.organizationMember.findFirst.mockResolvedValue({ id: "member-1" });
   });
 
   it("queries by both connectionId and orgId, not connectionId alone", async () => {

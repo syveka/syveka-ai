@@ -85,6 +85,20 @@ matrix, gated on `auth.users.app_metadata.is_superadmin` (Supabase dashboard onl
   Supabase-native client paths (PostgREST/Realtime/Storage) — the actual tenant boundary for the
   Prisma/Next.js app is `tenantDb()`'s injection plus disciplined `unscopedPrisma` usage. See
   `docs/ARCHITECTURE.md` §5 and `docs/DATABASE-AUDIT.md` for the verified detail.
+- **Queued jobs and soft-deleted organizations.** These jobs call `isOrganizationActive()`
+  (`src/server/jobs/organization-guard.ts`): `publish-creator-post`, `send-reminder`,
+  `embed-document` and `post-call`.
+  - **When:** before any external or business effect, and again before persisting the result of a
+    long provider call.
+  - **Missing or soft-deleted organization:** HTTP 200 `{ skipped: "organization_inactive" }`, so
+    there's no retry. The resource is left as it was when nothing was attempted.
+  - **Guard database error:** an error, not a skip, so the queue retries.
+  - **What it can't do:** close the window between the last check and a provider call already in
+    flight. A post already published (its record is kept), an email already sent, or a paid call
+    already made can't be recalled.
+  - **Not covered:** `run-workflow` steps.
+  - **Still needed:** stopping scheduled side effects before a soft delete remains a deletion-runbook
+    step.
 
 ## 6. RBAC
 

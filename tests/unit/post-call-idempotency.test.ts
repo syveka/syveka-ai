@@ -62,6 +62,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/server/jobs/verify", () => ({ verifyJobRequest: mocks.verifyJobRequest }));
+// The organization is active (inactive/missing organizations are covered in
+// jobs-organization-guard.test.ts).
+vi.mock("@/server/jobs/organization-guard", () => ({
+  isOrganizationActive: vi.fn(async () => true),
+  ORGANIZATION_INACTIVE: { skipped: "organization_inactive" },
+}));
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {
     voiceCall: { findFirst: mocks.voiceCallFindFirst, update: mocks.voiceCallUpdate },

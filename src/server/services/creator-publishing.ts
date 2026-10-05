@@ -4,6 +4,7 @@ import { unscopedPrisma } from "@/server/db/tenant";
 import { getSocialPublishingProvider } from "@/server/social";
 import { decryptSocialToken } from "@/server/integrations/social/crypto";
 import { createSupabaseAdmin } from "@/server/supabase/server";
+import { isOrganizationActive } from "@/server/jobs/organization-guard";
 import { audit } from "./audit";
 import { notifyUser } from "./creator-notifications";
 import { evaluateAutopilotRules } from "./creator-posts";
@@ -68,7 +69,14 @@ function startOfMonth(from: Date): Date {
  * publish time, regardless of what was checked when the post was scheduled
  * (Phase 12: "approval validation immediately before publish").
  */
-export async function publishCreatorPost(orgId: string, postId: string): Promise<void> {
+export async function publishCreatorPost(
+  orgId: string,
+  postId: string,
+): Promise<"done" | "organization_inactive"> {
+  // A missing or soft-deleted organization publishes nothing; the post's
+  // status is left as it is (nothing was attempted).
+  if (!(await isOrganizationActive(orgId))) return "organization_inactive";
+
   // 1-2. Resolve organization + post, verifying tenant ownership via the
   // explicit organizationId filter (never trust the caller's orgId alone).
   const post = await unscopedPrisma.creatorPost.findFirst({
@@ -90,7 +98,7 @@ export async function publishCreatorPost(orgId: string, postId: string): Promise
     data: { publishStatus: "PUBLISHING", publishAttemptCount: { increment: 1 } },
   });
   if (claim.count !== 1) {
-    return; // already publishing/published/canceled/rejected — nothing to do
+    return "done"; // already publishing/published/canceled/rejected — nothing to do
   }
 
   try {
@@ -144,8 +152,11 @@ export async function publishCreatorPost(orgId: string, postId: string): Promise
     }
 
     // 6. Verify social connection.
+    // The relation has no organization constraint in the database: only an
+    // account of this same organization may publish.
     if (
       !post.socialAccount ||
+      post.socialAccount.organizationId !== orgId ||
       post.socialAccount.status !== "CONNECTED" ||
       !post.socialAccount.accessTokenEnc
     ) {
@@ -170,6 +181,10 @@ export async function publishCreatorPost(orgId: string, postId: string): Promise
     const provider = getSocialPublishingProvider(post.platform);
     const mediaType = assets[0]!.assetType.includes("video") ? "video" : "image";
     const assetUrls = await Promise.all(assets.map(signAssetUrl));
+    // Last check before the external call (the claim and signing took time).
+    if (!(await isOrganizationActive(orgId))) {
+      throw new PublishGuardError("organization_inactive", "The organization is no longer active.");
+    }
     const result = await provider.publishPost(
       {
         accessToken: decryptSocialToken(post.socialAccount.accessTokenEnc),
@@ -201,11 +216,17 @@ export async function publishCreatorPost(orgId: string, postId: string): Promise
       resourceId: postId,
       after: { platform: post.platform, externalPostId: result.externalPostId },
     });
-    await notifyUser(ctx, post.createdById, {
-      type: "creator_post_published",
-      title: "Your post was published",
-      href: "/creator-studio/calendar",
-    });
+    // The post is live on the platform and can't be recalled: its record
+    // above is kept either way. If the organization was deleted while the
+    // provider call ran, nobody is notified.
+    if (await isOrganizationActive(orgId)) {
+      await notifyUser(ctx, post.createdById, {
+        type: "creator_post_published",
+        title: "Your post was published",
+        href: "/creator-studio/calendar",
+      });
+    }
+    return "done";
   } catch (error) {
     const code = error instanceof PublishGuardError ? error.code : "publish_failed";
     const safeMessage =
@@ -220,6 +241,10 @@ export async function publishCreatorPost(orgId: string, postId: string): Promise
       where: { id: postId },
       data: { publishStatus: "FAILED", lastErrorCode: code, lastErrorSafe: safeMessage },
     });
+    // Deleted meanwhile: record the failure only; no notification, no retry.
+    if (code === "organization_inactive" || !(await isOrganizationActive(orgId))) {
+      return "organization_inactive";
+    }
     await audit(ctx, {
       action: "creator.post.publish_failed",
       resourceType: "creator_post",

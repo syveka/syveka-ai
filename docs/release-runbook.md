@@ -185,18 +185,63 @@ and assertion SQL; tracked Prisma migrations remain one-time operations.
 
 ## Production preflight and backup
 
-Production requires a verified backup before approving the GitHub `production`
-Environment (current evidence status: `docs/CI-PRODUCTION-READINESS.md`, addendum
-2026-10-04):
+Production requires a verified backup before approving the GitHub `production` Environment. Current evidence status: `docs/CI-PRODUCTION-READINESS.md`, addendum 2026-10-04, and "Backup and recovery evidence" below.
+
+- **Option A (point-in-time recovery) is the required default.**
+- **Option B is an exception** for narrow releases only. It applies only when every eligibility condition below holds and the owner accepts its risk in writing.
+- If any condition isn't met, Option A is required.
+
+Whichever option applies, its records go in the private change record before the `production` Environment is approved.
+
+### Option A (default): PITR
 
 - Confirm Supabase PITR is enabled and the recovery window covers the release.
 - Create an on-demand logical backup using an approved encrypted destination.
-- Record backup time, database project ref, Git SHA, migration status, restore
-  owner, and the tested restore procedure in the private change record.
-- Test restore into an isolated non-production project when the backup process or
-  schema has changed.
-- Never store a backup in the repository, Actions artifacts, PRs, or unencrypted
-  developer folders.
+- Record backup time, database project ref, Git SHA, migration status, restore owner, and the tested restore procedure in the private change record.
+- Test restore into an isolated non-production project when the backup process or schema has changed.
+
+### Option B (exception): daily physical backup + pre-release logical backup, without PITR
+
+#### Eligibility
+
+All conditions must hold, verified for the exact release SHA against the SHA production currently serves:
+
+1. **No database change.**
+   - `git diff --name-only <production-sha> <release-sha> -- prisma` prints nothing: no new or changed migration, `schema.prisma`, or `prisma/sql/*` file.
+   - Before approval, the read-only `npx prisma migrate status` against production (the operator preflight below) reports the schema is up to date. If it lists any pending migration, Option B doesn't apply: the release would apply it automatically after approval.
+2. **No destructive database operation.** No backfill, bulk update or delete, or manual SQL. The only database writes are the release workflow's existing rerunnable steps, which are unchanged in this release.
+3. **A verified application rollback target.** Before approval, the current production deployment (ID or URL) is recorded as the rollback target. `vercel rollback <that deployment> --timeout 5m --yes` restores it; the release also prints this command.
+
+#### Requirements
+
+All are recorded before approval:
+
+4. **Daily backup.** The latest Supabase daily **PHYSICAL** backup is less than 24 hours old when the gate is approved. Record its timestamp.
+5. **Pre-release logical backup.**
+   - Taken no more than 60 minutes before approving the gate, and after any announced production write freeze.
+   - Stored in an approved encrypted destination.
+   - Record its UTC timestamp, size, and SHA-256 checksum.
+   - Verified readable (`pg_restore --list` succeeds).
+   - It is **not** restore-tested.
+6. **Release identity.** Record:
+   - the exact release SHA;
+   - the production SHA it replaces;
+   - the previous production deployment (rollback target);
+   - a **named rollback owner**, available for the whole release window.
+7. **The owner's explicit written risk acceptance.** It must name this release SHA, state each of the following, and acknowledge each risk individually; a general approval is not enough:
+   - **PITR is not available** for this release.
+   - **Recovery-point window.**
+     - For a problem the release itself causes, data written after the logical backup can be lost.
+     - For any other incident, recovery falls back to the latest usable daily backup. That is up to about 24 hours of data, or more if a daily backup failed.
+   - **No restore has been tested** for either backup, so the recovery time is unknown.
+   - **Storage objects** are excluded from database backups. If separate Storage backup coverage isn't verified, Storage loss is unrecoverable.
+   - **Confirmation** that the release contains no migrations or schema changes (condition 1).
+
+Option B never applies to a release that changes the schema or migrations, and it doesn't remove the restore-test requirement when the backup process or schema has changed.
+
+### Both options
+
+- Never store a backup in the repository, Actions artifacts, PRs, or unencrypted developer folders.
 
 Before approval, archive the successful staging workflow URL, compare the release
 SHA with the production candidate, run `npm run migrations:check`, and review
@@ -221,9 +266,12 @@ that a restore works, and they don't establish which backup will be the latest a
 | Storage objects        | The dashboard states that database backups exclude Storage objects; only their metadata is included      | **Separate Storage backup coverage unverified** |
 | Restore test           | None performed                                                                                           | **Pending; the physical drill is blocked**      |
 
-**The recovery requirement is not met yet.** The gate above ("Confirm Supabase PITR is enabled") is
-**not satisfied**: PITR is off. No restore has been tested. Storage objects are excluded from the
-observed database backups; separate Storage backup coverage is unverified.
+**The recovery requirement is not met yet (status 2026-10-06).** Backup-gate **Option A** (PITR, the
+required default; "Production preflight and backup" above, from #239) is **not satisfied**: PITR is
+off. **Option B** (the narrow exception) can apply only to an eligible release, and only once its
+records, including the owner's written risk acceptance, exist for that exact release SHA. None exist
+yet, so no release is approved under either option. No restore has been tested. Storage objects are
+excluded from the observed database backups; separate Storage backup coverage is unverified.
 
 The successful staging release #124 (`7a1a8fe`) is release-pipeline evidence, not backup or
 recovery evidence.
@@ -852,28 +900,26 @@ deletion, corruption or a project-level incident, would be unrecoverable.
     loss. It's the default response to a bad release.
   - **Database recovery:** restore a backup. It loses data written after the backup point, so it's
     for destructive or corrupting changes only, with incident approval.
-- **The current gate stands.** "Confirm Supabase PITR is enabled and the recovery window covers the
-  release" is a **mandatory** pre-approval step today. It is **not met**, and this document doesn't
-  remove it.
+- **The backup gate (merged in #239, 2026-10-05).**
+  - **Option A (PITR)** is the required default. It is **not met**: PITR is off.
+  - **Option B** is an exception for releases with no database change (no `prisma/` diff, no pending
+    migration in the read-only `prisma migrate status` before approval), no destructive database
+    operation and a recorded rollback target. It needs a daily PHYSICAL backup under 24 hours old, an
+    encrypted pre-release logical backup at most 60 minutes old and verified readable, the release
+    and rollback identities, a named rollback owner, and the owner's written, item-by-item risk
+    acceptance.
+  - **Option B's existence is not release approval.** Each use needs its own complete record. The
+    candidate is checked against the runbook on `main` at that release SHA.
 
-**Proposed amendment (pending owner decision; not in effect).** Replace the PITR line with:
+**Broader alternative (proposal only; not in effect).** The earlier proposal in this section, for
+releases _with_ schema changes, would need a passing restore drill within the last 90 days. That drill
+is still blocked (Supabase ticket SU-494644 acknowledged, technical response pending; an
+acknowledgment is not clearance). Until it passes, a release that changes the schema or migrations
+needs Option A.
 
-- **either** PITR enabled, covering the release window;
-- **or all of the following:**
-  1. the latest daily PHYSICAL backup is under 24 hours old, verified on the day;
-  2. a passing restore drill within the last 90 days (and after major schema changes): option A once
-     unblocked. An isolated option B drill doesn't validate the managed backup and counts only if
-     the owner accepts that gap in writing;
-  3. a logical dump taken immediately before the release migrations, stored encrypted, with its
-     restore procedure written down;
-  4. the owner's written acceptance of a recovery point of up to about 24 hours for incidents
-     unrelated to a release, or longer if a backup fails;
-  5. Storage backup coverage verified, or the owner's written acceptance that Storage loss is
-     unrecoverable.
-
-**Owner decision required:** adopt this alternative (and accept that recovery point), **or**
-keep PITR mandatory and approve its recurring cost: at least about $100/month for 7 days, plus a
-Small compute minimum. Neither is assumed here.
+**Owner decision still open:** keep using Option B for eligible releases and accept its recovery-point
+risk each time, **or** enable PITR (about $100/month for 7 days, plus at least Small compute), which
+also covers schema-changing releases.
 
 **Unknowns** (no figures are invented here):
 
