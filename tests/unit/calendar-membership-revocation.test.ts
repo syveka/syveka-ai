@@ -49,6 +49,10 @@ const matches = (row: Row, where: Row = {}) =>
 
 const db = {
   organizationMember: {
+    count: vi.fn(
+      async ({ where }: { where: Row }) =>
+        s.members.filter((m) => m.organizationId === where.organizationId).length,
+    ),
     findFirst: vi.fn(async ({ where }: { where: Row }) => {
       const m = s.members.find(
         (x) => x.organizationId === where.organizationId && x.userId === where.userId,
@@ -253,7 +257,12 @@ vi.mock("@/server/integrations/calendar", () => ({ getProviderAdapter: () => pro
 vi.mock("@/server/services/audit", () => ({ audit: vi.fn(async () => undefined) }));
 vi.mock("@/server/supabase/server", () => ({ createSupabaseAdmin: vi.fn() }));
 vi.mock("@/server/integrations/resend", () => ({ sendEmail: vi.fn() }));
-vi.mock("@/server/services/billing/entitlements", () => ({ assertWithinLimit: vi.fn() }));
+vi.mock("@/server/services/billing/entitlements", () => ({
+  assertWithinLimit: vi.fn(),
+  // Seats are not what these tests exercise: room for everyone.
+  getEntitlements: vi.fn(async () => ({ maxSeats: Number.MAX_SAFE_INTEGER, readOnly: false })),
+  EntitlementError: class EntitlementError extends Error {},
+}));
 vi.mock("../../emails/invitation", () => ({ InvitationEmail: () => null }));
 
 import { removeMember } from "@/server/services/members";

@@ -8,6 +8,13 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatCount, PLAN_NAMES } from "./plan-display";
+import {
+  displayedMonthlyPriceEur,
+  PLAN_CARD_EXTRAS,
+  PLAN_LIMITS,
+  SELF_SERVE_PLANS,
+  type SelfServePlan,
+} from "@/lib/billing/plan-catalog";
 
 type Limits = {
   aiMessagesPerUser: number;
@@ -20,33 +27,24 @@ type Limits = {
   auditRetentionYears?: number;
 };
 
-const PLANS: Array<{ plan: Plan; monthly: number; limits: Limits }> = [
-  {
-    plan: "STARTER",
-    monthly: 29,
+/** In-app plan cards, derived from the plan catalog (same source as entitlements). */
+const PLANS: Array<{ plan: SelfServePlan; limits: Limits }> = SELF_SERVE_PLANS.map((plan) => {
+  const l = PLAN_LIMITS[plan];
+  const extras = PLAN_CARD_EXTRAS[plan];
+  return {
+    plan,
     limits: {
-      aiMessagesPerUser: 1000,
-      voiceAssistants: 1,
-      voiceMinutes: 100,
-      knowledgeBaseGb: 1,
-      workflows: 5,
-      contacts: 5000,
+      aiMessagesPerUser: l.aiMessagesPerUserMonth,
+      voiceAssistants: l.voiceAssistants,
+      voiceMinutes: l.voiceMinutesMonth,
+      knowledgeBaseGb: l.kbStorageMb / 1_024,
+      workflows: l.activeWorkflows,
+      contacts: extras.contacts ? l.maxContacts : undefined,
+      apiWebhooks: extras.apiWebhooks && l.apiAccess ? true : undefined,
+      auditRetentionYears: extras.auditRetention ? l.auditRetentionDays / 365 : undefined,
     },
-  },
-  {
-    plan: "PRO",
-    monthly: 79,
-    limits: {
-      aiMessagesPerUser: 5000,
-      voiceAssistants: 3,
-      voiceMinutes: 500,
-      knowledgeBaseGb: 10,
-      workflows: 25,
-      apiWebhooks: true,
-      auditRetentionYears: 2,
-    },
-  },
-];
+  };
+});
 
 export function PlanCards({ currentPlan }: { currentPlan: Plan }) {
   const t = useTranslations("billingPage");
@@ -100,8 +98,8 @@ export function PlanCards({ currentPlan }: { currentPlan: Plan }) {
         </div>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        {PLANS.map(({ plan, monthly, limits }) => {
-          const price = interval === "annual" ? Math.round((monthly * 10) / 12) : monthly;
+        {PLANS.map(({ plan, limits }) => {
+          const price = displayedMonthlyPriceEur(plan, interval);
           const isCurrent = plan === currentPlan;
           return (
             <Card key={plan} className={cn(isCurrent && "border-primary")}>

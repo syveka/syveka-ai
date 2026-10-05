@@ -3,38 +3,33 @@ import { Link } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
+import { PLAN_NAMES } from "@/components/billing/plan-display";
+import {
+  HIGHLIGHTED_PLAN,
+  PLAN_LIMITS,
+  PLAN_MONTHLY_PRICE_EUR,
+  POOLED_AI_MESSAGE_PLANS,
+  PUBLIC_PLANS,
+} from "@/lib/billing/plan-catalog";
 
 // Plan names are product names and stay untranslated; every other string comes
-// from the "marketing" message namespace.
-const PLANS = [
-  {
-    name: "Free",
-    priceEur: 0,
-    seats: 2,
-    aiMessages: 50,
-    perUser: false,
-    voiceMinutes: null,
-    highlight: false,
-  },
-  {
-    name: "Starter",
-    priceEur: 29,
-    seats: 10,
-    aiMessages: 1000,
-    perUser: true,
-    voiceMinutes: 100,
-    highlight: false,
-  },
-  {
-    name: "Pro",
-    priceEur: 79,
-    seats: 50,
-    aiMessages: 5000,
-    perUser: true,
-    voiceMinutes: 500,
-    highlight: true,
-  },
-] as const;
+// from the "marketing" message namespace. Prices and limits come from the plan
+// catalog, the same source entitlements use.
+const PLANS = PUBLIC_PLANS.map((plan) => {
+  const limits = PLAN_LIMITS[plan];
+  const pooled = POOLED_AI_MESSAGE_PLANS.has(plan);
+  return {
+    name: PLAN_NAMES[plan],
+    priceEur: PLAN_MONTHLY_PRICE_EUR[plan],
+    seats: limits.maxSeats,
+    aiMessages: pooled
+      ? limits.aiMessagesPerUserMonth * limits.maxSeats
+      : limits.aiMessagesPerUserMonth,
+    perUser: !pooled,
+    voiceMinutes: limits.voiceMinutesMonth > 0 ? limits.voiceMinutesMonth : null,
+    highlight: plan === HIGHLIGHTED_PLAN,
+  };
+});
 
 export default async function PricingPage({ params }: { params: Promise<{ locale: string }> }) {
   const { locale } = await params;
