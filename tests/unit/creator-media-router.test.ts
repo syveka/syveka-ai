@@ -65,10 +65,13 @@ describe("Creator Studio media provider routing", () => {
       expect(getRoutedCreatorMediaProvider().name).toBe("fal");
     });
 
-    it("still honors a deliberate CREATOR_MEDIA_PROVIDER=mock pin", async () => {
+    it("refuses a CREATOR_MEDIA_PROVIDER=mock pin, with or without a FAL key", async () => {
       process.env.CREATOR_MEDIA_PROVIDER = "mock";
-      const { getRoutedCreatorMediaProvider } = await import("@/server/ai/creator/router");
-      expect(getRoutedCreatorMediaProvider().name).toBe("mock");
+      const { getRoutedCreatorMediaProvider, CreatorMediaProviderUnavailableError } =
+        await import("@/server/ai/creator/router");
+      expect(() => getRoutedCreatorMediaProvider()).toThrow(CreatorMediaProviderUnavailableError);
+      process.env.FAL_API_KEY = "test-key";
+      expect(() => getRoutedCreatorMediaProvider()).toThrow(CreatorMediaProviderUnavailableError);
     });
 
     it("fails closed again once a configured key is removed", async () => {

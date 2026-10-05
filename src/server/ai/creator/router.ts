@@ -38,19 +38,22 @@ export class CreatorMediaProviderUnavailableError extends Error {
 }
 
 /**
- * Fails closed in production: a missing FAL_API_KEY must never silently serve
- * mock media (which still costs credits) to real customers. An explicit
- * CREATOR_MEDIA_PROVIDER=mock pin is still honored as a deliberate operator
- * choice, like CREATOR_STUDIO_SOCIAL_MOCK_PROVIDER=1. A `fal` pin without a
- * key fails closed everywhere instead of failing after credits are reserved.
+ * Production never serves mock media (which still costs credits): a missing
+ * FAL_API_KEY fails closed, and so does a CREATOR_MEDIA_PROVIDER=mock pin. A
+ * stray pin then surfaces as an error instead of silently serving placeholders
+ * or being silently ignored. Outside production the mock pin and the mock
+ * fallback still work. A `fal` pin without a key fails closed everywhere
+ * instead of failing after credits are reserved.
  */
 function resolveMediaProviderName(): CreatorMediaProviderName {
   const pinned = process.env.CREATOR_MEDIA_PROVIDER as CreatorMediaProviderName | undefined;
-  if (pinned === "mock") return "mock";
-  if (isFalConfigured()) return "fal";
-  if (pinned === "fal" || process.env.NODE_ENV === "production") {
-    throw new CreatorMediaProviderUnavailableError();
+  const production = process.env.NODE_ENV === "production";
+  if (pinned === "mock") {
+    if (production) throw new CreatorMediaProviderUnavailableError();
+    return "mock";
   }
+  if (isFalConfigured()) return "fal";
+  if (pinned === "fal" || production) throw new CreatorMediaProviderUnavailableError();
   return "mock";
 }
 

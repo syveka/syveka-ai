@@ -152,6 +152,20 @@ describe("Creator Studio media generation fails closed in production", () => {
     },
   );
 
+  it.each(GENERATIONS)(
+    "%s: a CREATOR_MEDIA_PROVIDER=mock pin is refused too, before anything is charged",
+    async (_label, generate) => {
+      process.env.CREATOR_MEDIA_PROVIDER = "mock";
+      process.env.FAL_API_KEY = "test-key";
+
+      await expect(generate()).rejects.toBeInstanceOf(CreatorMediaProviderUnavailableError);
+
+      expect(reserveMock).not.toHaveBeenCalled();
+      expect(db.creatorGeneration.create).not.toHaveBeenCalled();
+      expect(db.creatorReferenceAsset.create).not.toHaveBeenCalled();
+    },
+  );
+
   it("maps to 503 with a stable code and no configuration detail", async () => {
     const response = handleCreatorStudioError(new CreatorMediaProviderUnavailableError());
     expect(response.status).toBe(503);
