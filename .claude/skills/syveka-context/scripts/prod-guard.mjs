@@ -39,6 +39,7 @@ const SQL_WRITE =
   /\b(insert\s+into|update\s+\S+\s+set|delete\s+from|drop\s|truncate\s|alter\s|create\s|grant\s|revoke\s|vacuum\b|reindex\b|copy\s+\S+\s+from)/i;
 
 const BLOCKED_MCP_TOOLS = [
+  /^mcp__codex_apps__github_(merge_pull_request|enable_auto_merge|delete_file|update_ref|create_commit|create_tree|create_blob)$/,
   /^mcp__github__merge_pull_request$/,
   /^mcp__github__enable_pr_auto_merge$/,
   /^mcp__github__actions_run_trigger$/,

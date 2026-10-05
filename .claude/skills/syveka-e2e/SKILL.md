@@ -4,7 +4,7 @@ description: Diagnose Syveka Playwright E2E failures (auth journeys, onboarding,
 argument-hint: "[failing test name | workflow run URL | spec file]"
 hooks:
   PreToolUse:
-    - matcher: "Bash|PowerShell|mcp__github__.*"
+    - matcher: "Bash|PowerShell|mcp__github__.*|mcp__codex_apps__github_.*"
       hooks:
         - type: command
           command: "node .claude/skills/syveka-context/scripts/prod-guard.mjs"

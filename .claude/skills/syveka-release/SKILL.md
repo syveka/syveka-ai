@@ -5,7 +5,7 @@ argument-hint: "[PR number | release SHA]"
 disable-model-invocation: true
 hooks:
   PreToolUse:
-    - matcher: "Bash|PowerShell|mcp__github__.*"
+    - matcher: "Bash|PowerShell|mcp__github__.*|mcp__codex_apps__github_.*"
       hooks:
         - type: command
           command: "node .claude/skills/syveka-context/scripts/prod-guard.mjs"

@@ -29,9 +29,10 @@ Exact command for the human to run: <command>   Rollback: <how to undo>
 
 - Never print values of `DATABASE_URL`, `DIRECT_URL`, `SUPABASE_SERVICE_ROLE_KEY`, `*_API_KEY`,
   `*_SECRET*`, `*_TOKEN`, Stripe/Vapi/Resend/QStash/Vercel credentials, or `.env*` contents.
-- Report **shape only**: presence (`set`/`missing`), length, host suffix, port, query-param
-  _names_, project-ref last 4 chars. Example: `DATABASE_URL: set, host *.pooler.supabase.com,
-port 6543, params [pgbouncer, connection_limit]`.
+- Default to variable names and set/missing status only. Do not inspect or report secret
+  values, lengths, hashes, prefixes, suffixes, or derived connection details. Use sanitized
+  validation results already available from approved workflows. Any additional credential
+  inspection requires a separate, explicitly scoped authorization.
 - Mask identifiers: emails `e***@domain`, UUIDs `abcd…wxyz`, deployment IDs first 8 chars.
 - Never paste raw logs containing URLs with credentials; sanitize first.
 

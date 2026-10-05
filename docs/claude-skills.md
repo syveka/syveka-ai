@@ -45,7 +45,7 @@ and a partial backstop on top; they are not an access-control boundary.
 
 Every `syveka-*` skill except `syveka-context` declares
 `.claude/skills/syveka-context/scripts/prod-guard.mjs` as a `PreToolUse` hook for `Bash`,
-`PowerShell`, and `mcp__github__*` tools.
+`PowerShell`, `mcp__github__*`, and `mcp__codex_apps__github_*` tools.
 
 **Lifetime.** Claude Code registers a skill's hooks when the skill is invoked, by a human or by
 Claude auto-loading it, and keeps them for the rest of the session (Claude Code hooks
@@ -77,7 +77,9 @@ wrappers:
   secret-named variables, and `cat`/`head`/`tail`/`less` of `.env*` files (except
   `.env.example`).
 - **GitHub MCP:** `merge_pull_request`, `enable_pr_auto_merge`, `actions_run_trigger`, and
-  `delete_file`.
+  `delete_file`. The `mcp__codex_apps__github_*` connector equivalents for merge,
+  auto-merge, deletion, ref updates, and Git-object writes are also blocked. Other connector
+  names still require explicit validation in the target environment.
 
 **Known limitations.** The guard is regex matching over command text. It is not comprehensive
 command or SQL enforcement:
@@ -127,7 +129,7 @@ exact command for the human to run. Approval is per action and per target, and n
 
 ## Security rules for skills
 
-- Never print secret values. Report shape only (presence, length, host suffix, port, param names).
+- Never print secret values or derived credential properties. Report names and set/missing only.
 - Staging is observe-only; production is strictly read-only.
 - Parallelize only independent read-only work. Never parallelize git writes, migrations, deploys,
   or env/alias changes.
@@ -146,3 +148,10 @@ exact command for the human to run. Approval is per action and per target, and n
 4. Avoid `allowed-tools` unless each rule is narrowly read-only.
 5. Extend `tests/unit/hook-prod-guard.test.ts` when changing the guard, including any new known
    limitation, and run `/verify`.
+
+## Migration regression checks
+
+Run `node --test tests/scripts/claude-migration-regression.mjs` from the repository root.
+These use synthetic credentials, mocked fetch responses, and inert hook payloads; no network,
+real credentials, or protected operations are used. They check input redaction, SHA/health
+failure exits, and connector-name coverage. This standalone suite is not wired into CI.

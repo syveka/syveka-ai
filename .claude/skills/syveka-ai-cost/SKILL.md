@@ -4,7 +4,7 @@ description: Syveka AI cost and model-routing work — estimate the cost of AI c
 argument-hint: "[call site | feature | question]"
 hooks:
   PreToolUse:
-    - matcher: "Bash|PowerShell|mcp__github__.*"
+    - matcher: "Bash|PowerShell|mcp__github__.*|mcp__codex_apps__github_.*"
       hooks:
         - type: command
           command: "node .claude/skills/syveka-context/scripts/prod-guard.mjs"

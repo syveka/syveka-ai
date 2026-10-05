@@ -4,7 +4,7 @@ description: Syveka database troubleshooting — Prisma errors, PostgreSQL 42P05
 argument-hint: "[error code/message | environment]"
 hooks:
   PreToolUse:
-    - matcher: "Bash|PowerShell|mcp__github__.*"
+    - matcher: "Bash|PowerShell|mcp__github__.*|mcp__codex_apps__github_.*"
       hooks:
         - type: command
           command: "node .claude/skills/syveka-context/scripts/prod-guard.mjs"
@@ -13,7 +13,7 @@ hooks:
 # syveka-db-diagnostics
 
 Problem: `$ARGUMENTS`. Follow [guardrails](../syveka-context/references/guardrails.md).
-**Never print a connection string.** Report shape only (host suffix, port, param names).
+**Never print a connection string.** Report variable names and set/missing status only.
 No writes, migrations, `db push`, or `migrate resolve` against shared databases.
 
 ## Expected configuration
@@ -50,10 +50,9 @@ there. Only flag it with evidence (e.g. a failure traced to one of these scripts
 
 1. Capture exact error code/message, environment, build SHA, and which process (runtime route,
    job, migration, script).
-2. Inspect config shape safely, e.g.
-   `node -e "const u=new URL(process.env.DATABASE_URL);console.log(u.hostname.replace(/^[^.]+/,'*'),u.port,[...u.searchParams.keys()])"`
-   — hostname prefix masked, no user/password/db name. For staging/prod, rely on CI validation
-   output (`scripts/validate-staging-config.mjs`) instead of local env.
+2. Use existing sanitized CI validation results (`scripts/validate-staging-config.mjs`).
+   Report names and set/missing status only; do not read or derive properties from local
+   credentials. Mark unavailable evidence UNKNOWN and request a separately scoped check.
 3. Find every DB client: `grep -rn "new PrismaClient\|new PrismaPg\|new Pool(" src scripts`.
 4. Correlate with health: `/api/health` `checks.database`.
 5. Conclude layer (config / pooler mode / client / query / migration) with VERIFIED/INFERRED.

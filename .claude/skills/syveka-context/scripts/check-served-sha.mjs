@@ -15,14 +15,19 @@ if (!expected || origins.length === 0 || (expected !== "-" && !/^[0-9a-f]{40}$/.
   process.exit(2);
 }
 
-async function probe(origin) {
+async function probe(origin, index) {
+  const label = `input ${index + 1}`;
   let url;
   try {
-    url = new URL("/api/health", origin);
+    url = new URL(origin);
   } catch {
-    return { origin, error: "invalid origin" };
+    return { origin: label, error: "invalid origin" };
   }
-  if (url.username || url.password) return { origin, error: "origin must not contain credentials" };
+  if (url.username || url.password)
+    return { origin: label, error: "origin must not contain credentials" };
+  if (url.protocol !== "https:" && url.protocol !== "http:")
+    return { origin: label, error: "origin must use HTTP or HTTPS" };
+  url = new URL("/api/health", url.origin);
   try {
     const res = await fetch(url, {
       method: "GET",
@@ -52,7 +57,7 @@ for (const r of results) {
   }
   const shaMatch = expected === "-" || r.build === expected;
   const healthy = r.http === 200 && r.status === "healthy";
-  if (!shaMatch || (expected !== "-" && !healthy)) ok = false;
+  if (!shaMatch || !healthy) ok = false;
   const verdict = expected === "-" ? "INFO" : shaMatch && healthy ? "PASS" : "FAIL";
   console.log(
     `${verdict}  ${r.origin}  http=${r.http} status=${r.status} checks=${JSON.stringify(r.checks)} ` +

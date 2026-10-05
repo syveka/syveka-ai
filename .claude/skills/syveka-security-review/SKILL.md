@@ -4,7 +4,7 @@ description: Syveka security review of a diff or area touching Supabase Auth, RL
 argument-hint: "[PR number | branch | path]"
 hooks:
   PreToolUse:
-    - matcher: "Bash|PowerShell|mcp__github__.*"
+    - matcher: "Bash|PowerShell|mcp__github__.*|mcp__codex_apps__github_.*"
       hooks:
         - type: command
           command: "node .claude/skills/syveka-context/scripts/prod-guard.mjs"
