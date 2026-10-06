@@ -289,6 +289,26 @@ these packages or their callers change.
   `aiMessagesPerOrgMonth`. Before #237 merges, determine whether any external API consumer (public
   API keys, integrations, mobile or embedded clients) matches on that value. Then either keep the
   old identifier for compatibility or announce the change.
+  - Assessed 2026-10-06 on #237's tree. These conclusions hold for the call paths inspected, not
+    every possible client. `error.code` (`entitlement_exceeded`) is unchanged on every 402. The
+    changed `limit` value appears only on the chat route's 402; transcribe and voice-turn return
+    the code alone. The only caller of the chat route is the in-app `use-chat.ts`, which reads
+    `error.code` only, and no code in the repository reads `error.limit`. The route authenticates
+    with the session cookie. `resolveApiKey` has no callers, so there is no public API-key access
+    yet, and there are no SDK, mobile or embedded clients in the repository. No compatibility shim
+    is needed. When a public API ships, document `limit` as a plan-limit key (it can also be
+    `maxSeats` for a read-only workspace).
+- **Atomic AI usage reservation** (accepted for this release, follow-up for later). The chat route
+  checks the organization's month total before generating a reply and records `AI_MESSAGES` only
+  after the reply finishes. Requests in flight at the same moment can all pass at the boundary.
+  Overshoot is bounded by concurrent in-flight requests; the rate limiters default to 30 per user
+  and 300 per organization per minute. Transcribe and voice-turn check the same total. The owner
+  accepted this bounded overshoot for #237 on 2026-10-06. Proposed future mechanism: atomically
+  reserve one message against `aiMessagesPerOrgMonth` before calling the provider (a Redis counter
+  or a database row under the organization's key). Commit the reservation on success. Release it
+  when the request fails, is moderated out, or is aborted by the client, and expire it so a crashed
+  request cannot hold it forever. Reconcile with `usage_records` so displayed usage and enforcement
+  stay one number.
 
 ## Addendum (2026-10-04): production preflight review
 
