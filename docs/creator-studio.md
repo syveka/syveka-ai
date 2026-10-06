@@ -159,7 +159,8 @@ without touching the other.
   pipeline would be needed for true consistent-character generation; out of scope for this pass.
 - **Media, routing**: `src/server/ai/creator/router.ts` resolves `mock` vs `fal` (future: a premium
   provider, e.g. Veo) per-capability, auto-detecting `fal` once `FAL_API_KEY` is set, or pinned explicitly
-  via `CREATOR_MEDIA_PROVIDER=mock|fal`. Adding a further provider is registering it in this router's
+  via `CREATOR_MEDIA_PROVIDER=mock|fal`. In production it never serves mock media: a missing key or a
+  `mock` pin fails closed before any credit is reserved. Adding a further provider is registering it in this router's
   `PROVIDERS` map — see §12.
 - **Caption**: `ClaudeCaptionProvider` (`caption-provider.ts`) — a real call through the platform's
   existing `streamClaude()` (`src/server/integrations/anthropic.ts`), `routeModel("draft")`. Prompts the

@@ -10,6 +10,7 @@ import { CampaignError } from "@/server/services/creator-campaigns";
 import { FeatureDisabledError } from "@/server/services/feature-flags";
 import { DocumentIngestionError } from "@/server/security/document-ingestion";
 import { SocialProviderNotImplementedError } from "@/server/social";
+import { CreatorMediaProviderUnavailableError } from "@/server/ai/creator/router";
 import {
   IdempotencyConflictError,
   IdempotencyKeyTooLongError,
@@ -40,6 +41,9 @@ export function handleCreatorStudioError(e: unknown): NextResponse {
   }
   if (e instanceof IdempotencyKeyTooLongError) {
     return NextResponse.json({ error: { code: e.code } }, { status: 400 });
+  }
+  if (e instanceof CreatorMediaProviderUnavailableError) {
+    return NextResponse.json({ error: { code: e.code } }, { status: 503 });
   }
   if (e instanceof SocialProviderNotImplementedError) {
     return NextResponse.json(
