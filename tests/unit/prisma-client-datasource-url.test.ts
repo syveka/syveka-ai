@@ -88,4 +88,65 @@ describe("getPrisma() driver adapter construction", () => {
     expect(PrismaPgMock).toHaveBeenCalledTimes(1);
     expect(PrismaClientMock).toHaveBeenCalledTimes(1);
   });
+
+  describe("connection diagnostic", () => {
+    const POOLER_URL =
+      "postgresql://postgres.prodrefaaaaaaaaaaaaa:S3cr3t-pw@aws-1-eu-north-1.pooler.supabase.com:6543/postgres";
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+    });
+
+    function diagnosticLines(info: { mock: { calls: unknown[][] } }): string[] {
+      return info.mock.calls
+        .map((call) => String(call[0]))
+        .filter((line) => line.includes("db_connection_diagnostic"));
+    }
+
+    it("logs one sanitized diagnostic per client initialization, not per access", async () => {
+      process.env.DATABASE_URL = POOLER_URL;
+      const info = vi.spyOn(console, "info").mockImplementation(() => {});
+
+      const { prisma } = await import("@/server/db/prisma");
+      void prisma.$queryRaw;
+      void prisma.$transaction;
+      void prisma.$disconnect;
+
+      const lines = diagnosticLines(info);
+      expect(lines).toHaveLength(1);
+      expect(JSON.parse(lines[0] ?? "")).toMatchObject({
+        endpointCategory: "shared_pooler",
+        port: 6543,
+        connectionMode: "transaction",
+      });
+      expect(lines[0]).not.toContain("S3cr3t-pw");
+      expect(lines[0]).not.toContain("prodrefaaaaaaaaaaaaa");
+    });
+
+    it("leaves the adapter's connection string and pool size unchanged", async () => {
+      process.env.DATABASE_URL = POOLER_URL;
+      vi.spyOn(console, "info").mockImplementation(() => {});
+
+      const { prisma } = await import("@/server/db/prisma");
+      void prisma.$queryRaw;
+
+      expect(PrismaPgMock.mock.calls[0]?.[0]).toEqual({
+        connectionString: `${POOLER_URL}?pgbouncer=true&connection_limit=1`,
+        max: 1,
+      });
+    });
+
+    it("still initializes the client when the diagnostic can't be logged or parsed", async () => {
+      process.env.DATABASE_URL = "postgresql://postgres:S3cr3t-pw@[broken-host:6543/postgres";
+      vi.spyOn(console, "info").mockImplementation(() => {
+        throw new Error("log sink unavailable");
+      });
+
+      const { prisma } = await import("@/server/db/prisma");
+      expect(() => prisma.$queryRaw).not.toThrow();
+
+      expect(PrismaPgMock).toHaveBeenCalledTimes(1);
+      expect(PrismaClientMock).toHaveBeenCalledTimes(1);
+    });
+  });
 });

@@ -692,27 +692,34 @@ describe("legacy schema contract generator", () => {
 });
 
 describe("PRISMA_DMMF_CACHE_PATH cache-integrity guarantees", () => {
-  it("an invalid schema exercises the real, uncached getDMMF() path and fails closed", () => {
-    // Explicitly unsets PRISMA_DMMF_CACHE_PATH (every other test in this file relies on
-    // the default env, which sets it) so this run cannot take the cache fast path no
-    // matter what -- it must call the real getDMMF() against the broken schema below.
-    const brokenDir = mkdtempSync(join(tmpdir(), "legacy-schema-contract-broken-schema-"));
-    mkdirSync(join(brokenDir, "prisma"));
-    writeFileSync(
-      join(brokenDir, "prisma", "schema.prisma"),
-      `${schemaSource}\nthis is not valid prisma syntax {{{\n`,
-      "utf8",
-    );
-    try {
-      const envWithoutCache = { ...process.env };
-      delete envWithoutCache.PRISMA_DMMF_CACHE_PATH;
-      const result = runGenerator(generatorSource, { cwd: brokenDir, env: envWithoutCache });
-      expect(result.status).not.toBe(0);
-      expect(result.stderr).toContain("Validation Error");
-    } finally {
-      rmSync(brokenDir, { recursive: true, force: true });
-    }
-  });
+  // The only test here that deliberately pays a real schema-engine cold start in a
+  // subprocess (~2s alone, measured 4.6-5.1s under full-suite load), so Vitest's 5s
+  // default is too tight for it; the assertions are unchanged.
+  it(
+    "an invalid schema exercises the real, uncached getDMMF() path and fails closed",
+    { timeout: 30_000 },
+    () => {
+      // Explicitly unsets PRISMA_DMMF_CACHE_PATH (every other test in this file relies on
+      // the default env, which sets it) so this run cannot take the cache fast path no
+      // matter what -- it must call the real getDMMF() against the broken schema below.
+      const brokenDir = mkdtempSync(join(tmpdir(), "legacy-schema-contract-broken-schema-"));
+      mkdirSync(join(brokenDir, "prisma"));
+      writeFileSync(
+        join(brokenDir, "prisma", "schema.prisma"),
+        `${schemaSource}\nthis is not valid prisma syntax {{{\n`,
+        "utf8",
+      );
+      try {
+        const envWithoutCache = { ...process.env };
+        delete envWithoutCache.PRISMA_DMMF_CACHE_PATH;
+        const result = runGenerator(generatorSource, { cwd: brokenDir, env: envWithoutCache });
+        expect(result.status).not.toBe(0);
+        expect(result.stderr).toContain("Validation Error");
+      } finally {
+        rmSync(brokenDir, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("fails closed with a nonzero exit code when PRISMA_DMMF_CACHE_PATH points to malformed JSON", () => {
     const badCacheDir = mkdtempSync(join(tmpdir(), "legacy-schema-contract-bad-cache-"));
