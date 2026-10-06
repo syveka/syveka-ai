@@ -125,6 +125,9 @@ runtime only) and `NEXT_PUBLIC_SENTRY_DSN` (browser, inlined at build) are parse
 `parseSentryDsn()` in `src/lib/observability/dsn.ts`. Unset, empty or malformed means off: the
 SDK isn't loaded, nothing is sent, and the CSP gains no origin. With a DSN, only error events are
 sent (no tracing, Session Replay, sessions or logs), with no user or organization identity.
+`NEXT_PUBLIC_SENTRY_ENVIRONMENT` (inlined at build, lowercase) sets the environment label for
+both runtimes; set it to `staging` on the staging Vercel project, whose stable alias is built
+with `--prod` and would otherwise be labelled `production`. Unset keeps the SDK default.
 `src/lib/observability/scrub.ts` rebuilds every event from an allowlist before it leaves:
 exception messages become fixed descriptions (the original text is never forwarded), and paths
 become app route templates from `src/lib/observability/route-templates.ts`, or are omitted.
