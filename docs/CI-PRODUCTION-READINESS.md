@@ -375,6 +375,95 @@ from the code paths inspected at `1e510df`; none is a guarantee about paths not 
   `ROADMAP` and `NEXT-STEPS` still say Sentry has "no SDK integration". That was accurate on their
   2026-07-23 snapshot date and is superseded by #226; `docs/DEVELOPMENT.md` is current.
 
+**Prepared plans, 2026-10-07** (_repo_; none implemented on `main`, nothing merged)
+
+- **#209 (no tool after client disconnect).**
+  - **Status:** updated from `main` to `37d70e2`; CI 17/17 green; still a Draft.
+  - **Change:** the abort check is now the first statement in `onToolUse`, before the voice tool
+    limit and the write-proposal path.
+  - **Tests:** one covers proposals, one is a connected-client control. Removing the guard fails
+    both abort tests.
+  - **Ready for owner review.**
+- **Access-token hook redesign (plan only; auth, RLS and migrations need approval).** Three
+  defects make the current hook unsafe to register:
+  1. It overwrites the JWT `role` claim, which Supabase uses to choose the Postgres role.
+  2. It runs as `supabase_auth_admin` without `SECURITY DEFINER`, and that role has no grant or
+     RLS policy on `organization_members`. The hook would most likely fail, and with it every
+     token issuance, so nobody could log in.
+  3. `EXECUTE` on the hook and on `auth_org_id()` / `auth_role()` was never revoked from
+     `PUBLIC`, so PostgREST exposes the hook as an RPC. It runs as the invoker under RLS, so it
+     reveals nothing today, but it shouldn't be callable.
+
+  **Proposed single migration:**
+  - The hook writes `org_role` instead of `role`.
+  - Grant `supabase_auth_admin` `SELECT` on `organization_members`, plus an RLS policy
+    `FOR SELECT TO supabase_auth_admin USING (true)` (Supabase's documented pattern), instead of
+    `SECURITY DEFINER`.
+  - `REVOKE EXECUTE ... FROM PUBLIC, anon, authenticated` on the hook.
+  - Redefine `auth_role()` to read `org_role`.
+  - Policy text stays unchanged. The contract checks policy expressions by function name, not
+    function bodies.
+
+  **Tests:**
+  - **RLS suites:** update the four isolation suites to claims `{role: "authenticated",
+org_role: …}`.
+  - **Hook as `supabase_auth_admin`:** returns `org_id`/`org_role` and leaves `role` untouched.
+  - **Non-members:** gain no claims.
+  - **API roles:** `authenticated` and `anon` can't call the hook.
+
+  **Rollout:**
+  1. Merge.
+  2. Staging release.
+  3. Register the hook on staging and verify login, the live unread badge, and REST under RLS.
+  4. Only then, production.
+
+- **#145 (Creator Studio navigation behind its flag).**
+  - **Status:** 232 commits behind; conflicts only in `tests/unit/mobile-nav.test.tsx`.
+  - **Plan:**
+    1. Update from `main` and resolve the test conflict.
+    2. Read the flag from the organization row the layout already loads, instead of
+       `isFeatureEnabled()` (an extra query on every app page).
+    3. Move the flag key to one shared, non-server-only constant used by `nav-items.ts`,
+       `creator-profiles.ts` and the layout (today it's three hand-synced literals).
+    4. Pass `string[]` rather than `Set` to the client components.
+  - **Impact:** UI only; pages already handle a disabled flag.
+- **E2E coverage, prioritized.** Each needs a disposable staging fixture, and any new fixture step
+  in `staging-release.yml` is a protected workflow change.
+  1. **Invitations and seat limit** (P1). A second test identity accepts an invitation; a full
+     plan shows the error and creates no membership.
+  2. **Billing page** (P1). Plan cards, the organization-level allowance copy, and usage meters.
+     Checkout only up to the redirect, and only with Stripe test keys on staging.
+  3. **Inbox** (P2). A seeded thread renders and a reply draft is saved, with no external send.
+  4. **Calendar booking** (P2). The public booking page books a far-future slot and cancels it
+     through the manage link.
+  5. **Voice** (P3). Readiness UI only; never a paid call.
+  6. **Export and deletion.** Blocked until the capability exists.
+- **Development-only dependency advisories.**
+  - **Safe, lockfile-only and in range:** `undici` 8.10.0 → 8.11.2 (`jsdom` `^8.9.0`) and
+    `engine.io` 6.6.9 → 6.6.11 (`socket.io` `~6.6.0`, under `react-email`).
+  - **Planned major upgrades:**
+    - `vitest` 3.2.7 → 4.1.11, which is outside the flagged `vitest` range and should clear the
+      `tinypool` critical;
+    - `react-email` 3 → 6, which removes its nested `next@15.1.2` with critical advisories. It's
+      used only by the `email dev` preview; runtime rendering uses `@react-email/components`.
+  - **No fix exists:** `braces` (every version flagged), reached through build-time globbing in
+    `tailwindcss` 3 and `eslint-config-next`. Patterns are repository-controlled; accept and track.
+- **Production → isolated clone: what the code shows.**
+  - **No database-scheduled outbound work in the repository:** no `pg_cron`, `pg_net`, `http` or
+    function webhooks; the only trigger is `on_auth_user_created`. The owner's 2026-10-04
+    production preflight found the same.
+  - **Where the risk comes from:** cloned data plus shared keys, not the database.
+    - Real customer emails and phone numbers could receive staging reminders, invitations or
+      workflow messages.
+    - Calendar and social tokens decrypt only if the clone environment shares
+      `CALENDAR_TOKEN_ENCRYPTION_KEY` / `SOCIAL_TOKEN_ENCRYPTION_KEY` with production.
+    - Stripe, Vapi and Meta IDs point at production resources if the provider accounts are shared.
+    - Redis keys collide if the Upstash database is shared.
+  - **Requirements for a clone:**
+    - its own project and Vercel environment, with separate keys, Redis and QStash;
+    - outbound email, SMS and voice disabled, or contact data scrubbed;
+    - no production provider webhooks pointing at it.
+
 ## Addendum (2026-10-04): production preflight review
 
 This addendum supersedes §7's 2026-07-23 status for the items below. It reuses existing release
