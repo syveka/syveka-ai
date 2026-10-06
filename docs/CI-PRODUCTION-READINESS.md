@@ -231,6 +231,45 @@ in public history; nothing needs revoking. Closing the alert is an owner action.
 | `usage-rollup` QStash schedule (retention purge, 80% warnings)                                            | Unknown, needs owner evidence                                                          |
 | Production Vercel variable names (mock pins absent, required present)                                     | Unknown, needs owner evidence                                                          |
 
+**Dependency findings after #242** (_repo_)
+
+#242 (`1851f01`) bumped `source-map-js` to 1.2.2 (GHSA-68fv-2mgg-jv7q, high). Main CI passed on
+`1851f01`. `npm audit --omit=dev` now reports 0 critical, 0 high, 3 moderate and 1 low. The blocking
+gate (`--audit-level=high`) passes. The findings below are below that threshold but are recorded,
+not dismissed. Reachability statements are conclusions from the call paths inspected on 2026-10-06
+at `1851f01`. They are not guarantees about every possible use, and they must be re-checked when
+these packages or their callers change.
+
+- **`sprintf-js` GHSA-hp3w-g68c-fv3c** (moderate; `<= 1.1.3`, **no patched release**). An
+  attacker-controlled format string with an unbounded precision specifier throws an uncaught
+  `RangeError` (denial of service).
+  - Path: `mammoth@1.12.0` (production) → `argparse@1.0.10` → `sprintf-js@1.0.3`. npm also counts
+    `argparse` and `mammoth` as moderate; they are this same finding.
+  - Inspected call path: the application's only `mammoth` call is `mammoth.extractRawText({ buffer })`
+    in the parser worker (`src/server/security/parser-security.ts`). In `mammoth@1.12.0`, `argparse`
+    is required only by the CLI entry (`bin/mammoth`), not by `lib/` (the package `main`). The
+    `sprintf` calls inside `argparse` use literal format strings. On that path, no request input
+    reaches `sprintf-js`.
+  - Fix: none without a breaking change. `npm audit fix --force` would move `mammoth` to 0.3.29, a
+    breaking downgrade, so it was not applied. Re-check when `sprintf-js` publishes a fix, or when
+    `mammoth` drops `argparse@1`.
+- **`@babel/core` GHSA-4x5r-pxfx-6jf8** (low; `<= 7.29.0`, patched 7.29.6). Compiling
+  attacker-controlled source with a crafted `sourceMappingURL` comment can read a source-map file
+  from the machine running Babel. This requires attacker-controlled input code, readable output, and
+  a known target path.
+  - Paths (installed 7.24.5): production `@sentry/nextjs@11.4.0` → `@sentry/bundler-plugins@11.4.0`
+    → `@babel/core`; dev `react-email@3.0.7` → `@babel/core` (also via
+    `@babel/helper-module-transforms`).
+  - Inspected call path: Sentry's bundler plugin runs Babel at build time on repository source, and
+    `react-email` is a devDependency used by the local `email dev` preview. No request handler was
+    found that passes user-supplied code to Babel.
+  - Fix: a within-range lockfile update to 7.29.6 or later is available (`npm audit fix`, not
+    `--force`). It was not applied with #242. Proposed as its own small lockfile PR for owner review.
+  - Constraint: `react-email@3.0.7` pins `@babel/core` and `@babel/parser` to exactly `7.24.5`. A fix
+    therefore leaves the hoisted copy patched for Sentry's production path and nests 7.24.5 under
+    `react-email` (dev only). The dev-only copy stays flagged until `react-email` moves to a major
+    version that no longer pins it, which is out of scope for a lockfile-only change.
+
 ## Addendum (2026-10-04): production preflight review
 
 This addendum supersedes §7's 2026-07-23 status for the items below. It reuses existing release
