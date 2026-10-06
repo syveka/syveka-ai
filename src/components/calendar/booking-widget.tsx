@@ -1,12 +1,16 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
+
+const subscribeNever = () => () => {};
+const readBrowserTimeZone = () =>
+  Intl.DateTimeFormat().resolvedOptions().timeZone ?? "Europe/Helsinki";
 
 /**
  * Public guest booking widget: pick a day → pick a slot → enter details →
@@ -36,10 +40,11 @@ export function BookingWidget({
 }) {
   const t = useTranslations("booking");
   const uiLocale = useLocale();
-  const guestTz = useMemo(
-    () => Intl.DateTimeFormat().resolvedOptions().timeZone ?? "Europe/Helsinki",
-    [],
-  );
+  // The browser's zone, never the server's: the server snapshot is null, so
+  // the server render and the hydration pass match, and every zone-dependent
+  // part (week header, timezone note, slots) appears right after hydration.
+  const browserTz = useSyncExternalStore(subscribeNever, readBrowserTimeZone, () => null);
+  const guestTz = browserTz ?? "UTC";
 
   const [duration, setDuration] = useState(durationMinutes);
   const [weekStart, setWeekStart] = useState(() => {
@@ -126,7 +131,7 @@ export function BookingWidget({
         body: JSON.stringify({
           startsAt: selectedSlot,
           durationMinutes: duration,
-          timezone: guestTz,
+          timezone: browserTz ?? readBrowserTimeZone(),
           name: form.get("name"),
           email: form.get("email"),
           phone: form.get("phone") || undefined,
@@ -223,13 +228,17 @@ export function BookingWidget({
             size="icon"
             aria-label={t("previousWeek")}
             onClick={() => setWeekStart(new Date(weekStart.getTime() - 7 * 86_400_000))}
-            disabled={weekStart <= new Date()}
+            disabled={browserTz === null || weekStart <= new Date()}
           >
             <ChevronLeft className="size-4 rtl:rotate-180" />
           </Button>
           <p className="text-sm font-medium">
-            {dayFmt.format(weekStart)} –{" "}
-            {dayFmt.format(new Date(weekStart.getTime() + 6 * 86_400_000))}
+            {browserTz === null ? null : (
+              <>
+                {dayFmt.format(weekStart)} –{" "}
+                {dayFmt.format(new Date(weekStart.getTime() + 6 * 86_400_000))}
+              </>
+            )}
           </p>
           <Button
             variant="ghost"
@@ -242,7 +251,7 @@ export function BookingWidget({
         </div>
 
         <p className="text-center text-xs text-muted-foreground">
-          {t("timezoneNote", { timezone: guestTz })}
+          {browserTz === null ? null : t("timezoneNote", { timezone: browserTz })}
         </p>
 
         {loading ? (
