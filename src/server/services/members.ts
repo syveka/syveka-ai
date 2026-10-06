@@ -3,7 +3,8 @@ import "server-only";
 import type { Role } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { createSupabaseAdmin } from "@/server/supabase/server";
-import { assertWithinLimit } from "./billing/entitlements";
+import { assertWithinLimit, EntitlementError, getEntitlements } from "./billing/entitlements";
+import { countActiveSeats, lockOrgSeats } from "./billing/seats";
 import { sendEmail } from "@/server/integrations/resend";
 import { InvitationEmail } from "../../../emails/invitation";
 import { audit } from "./audit";
@@ -29,8 +30,19 @@ export async function inviteMember(
 ): Promise<void> {
   const db = tenantDb(ctx.orgId);
 
-  const seatCount = await db.organizationMember.count();
-  await assertWithinLimit(ctx.orgId, { kind: "seats", current: seatCount });
+  // Pending, unexpired invitations to other addresses hold a seat: each could
+  // be accepted. Re-inviting the same address doesn't count twice. Accepting
+  // re-checks the limit authoritatively (acceptInvitation).
+  const [memberCount, pendingInvitations] = await Promise.all([
+    db.organizationMember.count(),
+    db.invitation.count({
+      where: { status: "PENDING", expiresAt: { gt: new Date() }, NOT: { email: input.email } },
+    }),
+  ]);
+  await assertWithinLimit(ctx.orgId, {
+    kind: "seats",
+    current: memberCount + pendingInvitations,
+  });
 
   const existingUser = await unscopedPrisma.user.findUnique({ where: { email: input.email } });
   if (existingUser) {
@@ -96,24 +108,44 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
     throw new Error("Invitation was sent to a different email address");
   }
 
-  const [, , rejoinDisabled] = await unscopedPrisma.$transaction([
-    unscopedPrisma.organizationMember.create({
+  const ent = await getEntitlements(invitation.organizationId);
+  if (ent.readOnly) {
+    throw new EntitlementError("maxSeats", "Subscription is past due — workspace is read-only.");
+  }
+
+  const { rejoinDisabled, activeSeats } = await unscopedPrisma.$transaction(async (tx) => {
+    // The seat check is authoritative here, where a seat is actually taken.
+    // Joins to one organization are serialized, so concurrent acceptances
+    // can't all pass the same count; an invitation sent while seats were
+    // free can't exceed the plan when it's accepted later.
+    await lockOrgSeats(tx, invitation.organizationId);
+    const org = await tx.organization.findUnique({
+      where: { id: invitation.organizationId },
+      select: { deletedAt: true },
+    });
+    if (!org || org.deletedAt) throw new Error("Invalid invitation");
+    const seatsBefore = await countActiveSeats(invitation.organizationId, tx);
+    if (seatsBefore >= ent.maxSeats) {
+      throw new EntitlementError("maxSeats", "Seat limit reached for your plan.");
+    }
+
+    await tx.organizationMember.create({
       data: {
         organizationId: invitation.organizationId,
         userId,
         role: invitation.role,
       },
-    }),
-    unscopedPrisma.invitation.update({
+    });
+    await tx.invitation.update({
       where: { id: invitation.id },
       data: { status: "ACCEPTED" },
-    }),
+    });
     // A joining user's booking types in this organization can only be left
     // over from an earlier membership. Removal disables them now, but a
     // member removed before it did still has them stored as active; joining
     // again must not make those public links bookable. An admin re-enables
     // them explicitly. For a first-time member this matches nothing.
-    unscopedPrisma.bookingType.updateMany({
+    const disabled = await tx.bookingType.updateMany({
       where: {
         organizationId: invitation.organizationId,
         ownerId: userId,
@@ -121,8 +153,9 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
         deletedAt: null,
       },
       data: { isActive: false },
-    }),
-  ]);
+    });
+    return { rejoinDisabled: disabled, activeSeats: seatsBefore + 1 };
+  });
 
   const admin = createSupabaseAdmin();
   await admin.auth.admin.updateUserById(userId, {
@@ -135,7 +168,7 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
       action: "member.join",
       resourceType: "organization_member",
       resourceId: userId,
-      after: { bookingTypesDisabled: rejoinDisabled.count },
+      after: { bookingTypesDisabled: rejoinDisabled.count, activeSeats },
     },
   );
 
@@ -215,11 +248,12 @@ export async function removeMember(ctx: TenantContext, memberId: string): Promis
     return { invalidated: connectionIds.length, bookingTypesDisabled: disabledTypes.count };
   });
 
+  const activeSeats = await countActiveSeats(ctx.orgId);
   await audit(ctx, {
     action: "member.remove",
     resourceType: "organization_member",
     resourceId: memberId,
     before: { userId: member.userId, role: member.role },
-    after: { calendarConnectionsDisabled: invalidated, bookingTypesDisabled },
+    after: { calendarConnectionsDisabled: invalidated, bookingTypesDisabled, activeSeats },
   });
 }
