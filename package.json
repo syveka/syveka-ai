@@ -95,7 +95,7 @@
   "overrides": {
     "next": {
       "postcss": "8.5.26",
-      "sharp": "0.35.4"
+      "sharp": "0.35.5"
     },
     "@swc/helpers": "0.5.23",
     "nanoid": "3.3.18",
