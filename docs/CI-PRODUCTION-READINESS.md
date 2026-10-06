@@ -220,8 +220,8 @@ in public history; nothing needs revoking. Closing the alert is an owner action.
 | --------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
 | Backup gate: PITR off; Option B not yet applied to any release                                            | Release blocker (until A, or a complete B record)                                      |
 | `PRODUCTION_SUPABASE_PROJECT_REF` missing in `production`                                                 | Release blocker for the DB-mode verification goal                                      |
-| Seat limit not enforced at join (pending invitations can exceed the plan; concurrent joins unserialized)  | Limited-pilot blocker; fix proposed in a dedicated Draft PR                            |
-| Creator Studio mock media in production without FAL (#234)                                                | Limited-pilot blocker if Creator Studio is enabled for any org                         |
+| Seat limit not enforced at join (pending invitations can exceed the plan; concurrent joins unserialized)  | Fixed on `main` by #241 (`1e4a2cb`); not yet released                                  |
+| Creator Studio mock media in production without FAL (#234)                                                | Fixed on `main` by #234 (`c6779d8`); not yet released                                  |
 | AI allowance enforced org-wide against a per-user field; display and 80% warning multiply by seats (#237) | Limited-pilot blocker for paid plans                                                   |
 | Error tracking inactive (no DSN)                                                                          | Release blocker per the 2026-10-04 addendum (P1-2)                                     |
 | Data export and deletion: procedure documented, capability unverified (P1-10)                             | Release blocker for a commercial launch; limited-pilot acceptable with manual handling |
@@ -269,6 +269,26 @@ these packages or their callers change.
     therefore leaves the hoisted copy patched for Sentry's production path and nests 7.24.5 under
     `react-email` (dev only). The dev-only copy stays flagged until `react-email` moves to a major
     version that no longer pins it, which is out of scope for a lockfile-only change.
+
+**Follow-ups recorded after merging #241 and #234** (_repo_; not blocking those merges)
+
+- **Invitation status inside the acceptance transaction** (#241). `acceptInvitation` reads the
+  invitation and checks `status === "PENDING"` before the seat transaction starts, then sets
+  `ACCEPTED` inside it. An invitation revoked between those two points can still be accepted. `main`
+  already behaved this way before #241. Proposed fix: inside the transaction, accept with a
+  conditional update (`updateMany` where `id` and `status: "PENDING"`, then require `count === 1`),
+  so a concurrent revocation or second acceptance fails cleanly.
+- **Customer-visible errors from Creator Studio server actions.** `src/actions/creator-studio.ts`
+  returns `e.message` for any thrown `Error`, so unexpected internal errors can reach the UI verbatim,
+  contrary to the charter's rule against leaking internal errors. Known errors (for example
+  `CreatorMediaProviderUnavailableError`) also reach the UI untranslated. Proposed fix: map known
+  error classes to stable codes with translated messages, and return a generic code for everything
+  else (log the detail server-side, sanitized).
+- **External compatibility of #237's changed API error identifier.** `POST /api/v1/ai/chat`
+  returns `402 { error: { code, limit } }`. #237 changes `limit` from `aiMessagesPerUserMonth` to
+  `aiMessagesPerOrgMonth`. Before #237 merges, determine whether any external API consumer (public
+  API keys, integrations, mobile or embedded clients) matches on that value. Then either keep the
+  old identifier for compatibility or announce the change.
 
 ## Addendum (2026-10-04): production preflight review
 
