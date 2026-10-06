@@ -33,8 +33,23 @@ const s = vi.hoisted(() => ({
 const nextId = (p: string) => `${p}-${++s.seq}`;
 const orgDeleted = (id: string) => s.orgs.find((o) => o.id === id)?.deletedAt != null;
 
+const countMembers = async ({ where }: { where: Row }) =>
+  orgDeleted(where.organizationId as string)
+    ? 0
+    : s.members.filter((m) => m.organizationId === where.organizationId).length;
+
 const tx = {
   $executeRaw: vi.fn(async () => 0),
+  // acceptInvitation (interactive): seat lock, organization check, seat count.
+  organization: {
+    findUnique: vi.fn(async ({ where }: { where: Row }) => {
+      const o = s.orgs.find((x) => x.id === where.id);
+      return o ? { deletedAt: o.deletedAt } : null;
+    }),
+  },
+  invitation: {
+    update: vi.fn(async (args: { where: Row; data: Row }) => db.invitation.update(args)),
+  },
   $queryRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
     const sql = strings.join("?");
     if (sql.includes("FROM organization_members")) {
@@ -64,6 +79,8 @@ const tx = {
       if (i < 0) throw new Error("P2025");
       return s.members.splice(i, 1)[0];
     }),
+    count: vi.fn(countMembers),
+    create: vi.fn(async (args: { data: Row }) => db.organizationMember.create(args)),
   },
   bookingType: {
     updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
@@ -169,6 +186,7 @@ const db = {
     }),
   },
   organizationMember: {
+    count: vi.fn(countMembers),
     findFirst: vi.fn(async ({ where }: { where: Row }) => {
       const m = s.members.find(
         (x) => x.organizationId === where.organizationId && x.userId === where.userId,
@@ -258,7 +276,12 @@ vi.mock("@/server/supabase/server", () => ({
   createSupabaseAdmin: () => ({ auth: { admin: { updateUserById: vi.fn(async () => ({})) } } }),
 }));
 vi.mock("@/server/integrations/resend", () => ({ sendEmail: vi.fn() }));
-vi.mock("@/server/services/billing/entitlements", () => ({ assertWithinLimit: vi.fn() }));
+vi.mock("@/server/services/billing/entitlements", () => ({
+  assertWithinLimit: vi.fn(),
+  // Seats are not what these tests exercise: room for everyone.
+  getEntitlements: vi.fn(async () => ({ maxSeats: Number.MAX_SAFE_INTEGER, readOnly: false })),
+  EntitlementError: class EntitlementError extends Error {},
+}));
 vi.mock("../../emails/invitation", () => ({ InvitationEmail: () => null }));
 
 import {
