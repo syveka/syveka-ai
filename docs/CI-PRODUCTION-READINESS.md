@@ -310,6 +310,71 @@ these packages or their callers change.
   request cannot hold it forever. Reconcile with `usage_records` so displayed usage and enforcement
   stay one number.
 
+**Release-readiness review, evening of 2026-10-06** (_repo_ unless marked _owner_)
+
+Release candidate: `main` = `1e510df`, which includes #244 (`sharp` 0.35.5, clearing
+GHSA-wq5f-xc86-pv6w) and #243 (Sentry environment label). Main CI run 37510636165 passed. Staging
+release #130 passed on `1e510df`. Production still serves `fc64572`. Each conclusion below comes
+from the code paths inspected at `1e510df`; none is a guarantee about paths not inspected.
+
+- **Supabase Phase 0 evidence** (_owner_, production, 2026-10-06):
+  - **Vault:** 0 secrets.
+  - **Auth Hooks:** none configured.
+  - **Extensions:** `http`, `dblink`, `postgres_fdw`, `wrappers` and `pg_net` are all OFF.
+  - None of these was changed.
+- **Access-token hook: claim design (finding; plan only, not implemented).**
+  - **What depends on it:** RLS helpers `auth_org_id()` and `auth_role()` read `org_id` and `role`
+    from the JWT. Only `public.custom_access_token_hook` adds `org_id`, and production has no hook
+    registered.
+  - **Effect today:** under RLS, the Supabase-native path is deny-all for org-scoped rows. The only
+    such path in the app is the browser Realtime subscription behind the topbar's live unread badge
+    (`src/hooks/use-notifications.ts`; `notifications_select` requires
+    `organization_id = auth_org_id()`). It fails closed: the badge updates only on reload, and
+    nothing leaks.
+  - **Unaffected:** application data and Storage access go through Prisma, which bypasses RLS,
+    and server-side admin or signed URLs, with tenant isolation enforced in the application.
+  - **Do not register the hook as written.** It overwrites the JWT `role` claim with the
+    organization role (`OWNER`/`ADMIN`/…). Supabase uses `role` to choose the Postgres role for
+    REST and Realtime, so registering it would most likely break every user-JWT request.
+  - **Proposed fix (needs approval; touches auth, RLS and migrations):** a migration that writes
+    the organization role to a separate claim (for example `org_role`), keeps `role` untouched, and
+    redefines `auth_role()` to read it. Then register the hook on staging, verify, and only then on
+    production.
+- **Redis/QStash environment separation (finding; owner check before any database clone).** Redis
+  keys carry no environment prefix: `ent:v2:{orgId}`, `idem:…`, `rl:*`, `vapi:tool:…`,
+  `vapi:eocr:…`, `synced:…` and others.
+  - **If staging and production share one Upstash database:** that's harmless while their database
+    IDs differ. After a production-to-staging clone, IDs would collide. Staging would then read and
+    write production's entitlement cache, idempotency keys, rate limits and Vapi state.
+  - **Owner check:** compare the Upstash Redis REST URL host (host only, never the token) and the
+    QStash project between the two Vercel projects. Confirm they are separate before any clone.
+- **Clone target vs staging policy (decision).** This runbook requires staging to be "a dedicated
+  Supabase project containing no production data". Cloning production into the staging project
+  would contradict that. A clone needs its own isolated project, with outbound work disabled
+  (`pg_cron`, webhooks, Edge Functions, provider callbacks), or an explicit policy change.
+- **Edge Functions.** The repository defines only `gdpr-erasure`, and nothing in code, scripts or
+  workflows invokes it. Whether it's deployed to production is unknown (_owner_ check).
+- **Full dependency audit (development tooling only).** `npm ci` reports 23 vulnerabilities
+  (1 low, 8 moderate, 11 high, 3 critical), identical in staging releases #128–#130.
+  - **Sources:** `eslint-config-next`, `react-email` (with its own `next@15.1.2`), `vitest` /
+    `tinypool`, `tailwindcss` → `chokidar`, `engine.io`, `undici`.
+  - **Production:** the blocking production audit is clean.
+  - **Fix:** mostly breaking major upgrades, which need a planned toolchain update and approval.
+- **Open PRs.**
+  - #193 and #144 are superseded by #234 (owner may close).
+  - #209 (no abort check before a model-requested tool starts) is still relevant on `main`. Write
+    tools are proposed rather than executed, so the impact is wasted read-only work and cost. It's
+    stale and needs an update from `main`.
+  - #145 (Creator Studio shown in every role's navigation without the feature flag) is still
+    relevant; the page itself shows a "not available" message.
+  - #238 stays deferred.
+- **E2E coverage.** Staging runs smoke (28) and auth journeys (3) only. There's no end-to-end
+  coverage for billing/checkout, invitations and seat limits, inbox, voice, calendar booking, or
+  data export and deletion (#115 has proposed broader scenarios since 2026-09-06).
+- **Dated snapshot docs.** `FEATURE-INVENTORY`, `PROJECT-CONTEXT`, `PROJECT-STATUS`, `DECISIONS`,
+  `ROADMAP` and `NEXT-STEPS` still say Sentry has "no SDK integration". That was accurate on their
+  2026-07-23 snapshot date and is superseded by #226; `docs/DEVELOPMENT.md` is current.
+
 ## Addendum (2026-10-04): production preflight review
 
 This addendum supersedes §7's 2026-07-23 status for the items below. It reuses existing release
