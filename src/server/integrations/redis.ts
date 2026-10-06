@@ -32,6 +32,9 @@ type RateLimiters = {
   inboxEmailWebhook: Ratelimit;
   creatorGenerate: Ratelimit;
   publicAssistant: Ratelimit;
+  aiTranscriptionUser: Ratelimit;
+  aiTranscriptionOrg: Ratelimit;
+  aiVoiceTurnUser: Ratelimit;
 };
 
 let rateLimitersClient: RateLimiters | null = null;
@@ -93,6 +96,25 @@ function getRateLimiters(): RateLimiters {
       limiter: Ratelimit.slidingWindow(10, "1 h"),
       prefix: "rl:public-assistant",
     }),
+    // Chat voice input: each call is a paid speech-to-text request, limited
+    // separately from chat messages so dictation can't drain the chat budget.
+    aiTranscriptionUser: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(20, "10 m"),
+      prefix: "rl:ai:transcribe:user",
+    }),
+    aiTranscriptionOrg: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(200, "10 m"),
+      prefix: "rl:ai:transcribe:org",
+    }),
+    // Live voice conversation turns: separate from dictation, generous enough
+    // for a natural conversation; the session/budget limits are the real cap.
+    aiVoiceTurnUser: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(40, "5 m"),
+      prefix: "rl:ai:voice-turn:user",
+    }),
   };
   return rateLimitersClient;
 }
@@ -125,6 +147,15 @@ export const rateLimiters = {
   get publicAssistant() {
     return getRateLimiters().publicAssistant;
   },
+  get aiTranscriptionUser() {
+    return getRateLimiters().aiTranscriptionUser;
+  },
+  get aiTranscriptionOrg() {
+    return getRateLimiters().aiTranscriptionOrg;
+  },
+  get aiVoiceTurnUser() {
+    return getRateLimiters().aiVoiceTurnUser;
+  },
 } satisfies RateLimiters;
 
 export type AiChatRateLimitResult = {
@@ -152,6 +183,46 @@ export async function limitAiChat(
     limit: Math.min(user.limit, organization.limit),
     remaining: Math.min(user.remaining, organization.remaining),
   };
+}
+
+/**
+ * Per-user and per-organization limits for chat voice transcription.
+ *
+ * Fails closed: Upstash's Ratelimit *allows* a request when Redis doesn't
+ * answer within its timeout (`reason: "timeout"`). This endpoint pays a
+ * provider per request, so an unverifiable limit is treated as unavailable.
+ */
+export async function limitAiTranscription(
+  organizationId: string,
+  userId: string,
+): Promise<AiChatRateLimitResult & { unavailable?: true }> {
+  const [user, organization] = await Promise.all([
+    rateLimiters.aiTranscriptionUser.limit(`${organizationId}:${userId}`),
+    rateLimiters.aiTranscriptionOrg.limit(organizationId),
+  ]);
+  if (user.reason === "timeout" || organization.reason === "timeout") {
+    return { success: false, unavailable: true, reset: 0, limit: 0, remaining: 0 };
+  }
+  if (!user.success) return { ...user, scope: "user" };
+  if (!organization.success) return { ...organization, scope: "organization" };
+  return {
+    success: true,
+    reset: Math.max(user.reset, organization.reset),
+    limit: Math.min(user.limit, organization.limit),
+    remaining: Math.min(user.remaining, organization.remaining),
+  };
+}
+
+/** Short-window limit for live voice turns. Fails closed on limiter timeouts. */
+export async function limitAiVoiceTurn(
+  organizationId: string,
+  userId: string,
+): Promise<AiChatRateLimitResult & { unavailable?: true }> {
+  const result = await rateLimiters.aiVoiceTurnUser.limit(`${organizationId}:${userId}`);
+  if (result.reason === "timeout") {
+    return { success: false, unavailable: true, reset: 0, limit: 0, remaining: 0 };
+  }
+  return { ...result, scope: result.success ? undefined : "user" };
 }
 
 /** Idempotency-Key support: returns true if this key was already used. */

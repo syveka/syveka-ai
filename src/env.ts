@@ -39,11 +39,34 @@ const serverSchema = z.object({
   AI_CHAT_RATE_WINDOW_SECONDS: z.coerce.number().int().min(1).max(86_400).default(60),
   AI_RETRY_MAX_ATTEMPTS: z.coerce.number().int().min(1).max(6).default(3),
   AI_RETRY_BASE_DELAY_MS: z.coerce.number().int().min(10).max(10_000).default(250),
+  // Chat voice input: server speech-to-text through the existing OpenAI
+  // provider (OPENAI_API_KEY). Only exactly "1" enables it, because every
+  // transcription is a paid provider call. Deliberately lenient: any other
+  // value just leaves voice input off instead of failing unrelated config.
+  AI_TRANSCRIPTION_ENABLED: z.string().optional(),
+  // Temporary staging voice pilot: comma-separated "<organizationId>:<userId>"
+  // pairs allowed to use voice input. Empty or malformed allows no one.
+  AI_TRANSCRIPTION_PILOT_ALLOWLIST: z.string().optional(),
+  // Live voice conversation (separate from dictation; off unless exactly "1").
+  // Limits are validated in src/server/ai/voice-conversation.ts; an invalid
+  // value disables the feature instead of failing unrelated configuration.
+  AI_VOICE_CONVERSATION_ENABLED: z.string().optional(),
+  AI_VOICE_CONVERSATION_PILOT_ALLOWLIST: z.string().optional(),
+  AI_VOICE_CONVERSATION_SESSION_SECONDS: z.string().optional(),
+  AI_VOICE_CONVERSATION_MAX_TURN_SECONDS: z.string().optional(),
+  AI_VOICE_CONVERSATION_MAX_TURNS_PER_SESSION: z.string().optional(),
+  AI_VOICE_CONVERSATION_DAILY_ORG_SESSIONS: z.string().optional(),
+  AI_VOICE_CONVERSATION_DAILY_ORG_TURNS: z.string().optional(),
+  AI_VOICE_CONVERSATION_DAILY_ORG_AUDIO_SECONDS: z.string().optional(),
+  AI_VOICE_CONVERSATION_MAX_CONCURRENT_PER_ORG: z.string().optional(),
   QSTASH_TOKEN: z.string().min(1),
   QSTASH_CURRENT_SIGNING_KEY: z.string().min(1),
   QSTASH_NEXT_SIGNING_KEY: z.string().min(1),
 
-  SENTRY_DSN: z.string().url().optional(),
+  // Error tracking is off without a DSN; see src/lib/observability. A
+  // malformed value also leaves it off (never fails the app).
+  SENTRY_DSN: z.string().optional(),
+  NEXT_PUBLIC_SENTRY_DSN: z.string().optional(),
   LANGFUSE_PUBLIC_KEY: z.string().optional(),
   LANGFUSE_SECRET_KEY: z.string().optional(),
   LANGFUSE_HOST: z.string().url().optional(),
@@ -170,6 +193,21 @@ export function getOpenAIEnv(): z.infer<typeof openAIEnvSchema> {
     throw providerEnvError("OpenAI", Object.keys(parsed.error.flatten().fieldErrors));
   }
   return parsed.data;
+}
+
+/**
+ * Chat voice transcription is available only when explicitly enabled and the
+ * OpenAI provider it uses is configured. Never throws: an unconfigured
+ * deployment simply doesn't offer voice input.
+ */
+export function isChatTranscriptionEnabled(): boolean {
+  if (process.env.AI_TRANSCRIPTION_ENABLED !== "1") return false;
+  try {
+    getOpenAIEnv();
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 const anthropicEnvSchema = serverSchema.pick({

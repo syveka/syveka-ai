@@ -85,6 +85,20 @@ matrix, gated on `auth.users.app_metadata.is_superadmin` (Supabase dashboard onl
   Supabase-native client paths (PostgREST/Realtime/Storage) — the actual tenant boundary for the
   Prisma/Next.js app is `tenantDb()`'s injection plus disciplined `unscopedPrisma` usage. See
   `docs/ARCHITECTURE.md` §5 and `docs/DATABASE-AUDIT.md` for the verified detail.
+- **Queued jobs and soft-deleted organizations.** These jobs call `isOrganizationActive()`
+  (`src/server/jobs/organization-guard.ts`): `publish-creator-post`, `send-reminder`,
+  `embed-document` and `post-call`.
+  - **When:** before any external or business effect, and again before persisting the result of a
+    long provider call.
+  - **Missing or soft-deleted organization:** HTTP 200 `{ skipped: "organization_inactive" }`, so
+    there's no retry. The resource is left as it was when nothing was attempted.
+  - **Guard database error:** an error, not a skip, so the queue retries.
+  - **What it can't do:** close the window between the last check and a provider call already in
+    flight. A post already published (its record is kept), an email already sent, or a paid call
+    already made can't be recalled.
+  - **Not covered:** `run-workflow` steps.
+  - **Still needed:** stopping scheduled side effects before a soft delete remains a deletion-runbook
+    step.
 
 ## 6. RBAC
 
@@ -105,6 +119,21 @@ misconfigured field 500 every route touching a different integration. When addin
 integration, add a new scoped getter rather than extending call sites to read from `env`
 directly. `SKIP_ENV_VALIDATION=1` bypasses validation only for CI/build-time compilation without
 real secrets — runtime always validates.
+
+Error tracking (Sentry) is the exception that reads no getter: `SENTRY_DSN` (server, Node.js
+runtime only) and `NEXT_PUBLIC_SENTRY_DSN` (browser, inlined at build) are parsed by
+`parseSentryDsn()` in `src/lib/observability/dsn.ts`. Unset, empty or malformed means off: the
+SDK isn't loaded, nothing is sent, and the CSP gains no origin. With a DSN, only error events are
+sent (no tracing, Session Replay, sessions or logs), with no user or organization identity.
+`NEXT_PUBLIC_SENTRY_ENVIRONMENT` (inlined at build, lowercase) sets the environment label for
+both runtimes; set it to `staging` on the staging Vercel project, whose stable alias is built
+with `--prod` and would otherwise be labelled `production`. Unset keeps the SDK default.
+`src/lib/observability/scrub.ts` rebuilds every event from an allowlist before it leaves:
+exception messages become fixed descriptions (the original text is never forwarded), and paths
+become app route templates from `src/lib/observability/route-templates.ts`, or are omitted.
+After adding or moving a route, run `node scripts/generate-route-templates.mjs`
+(`observability-routes.test.ts` fails while the list is stale). Never add `setUser`/`setTag` calls
+with tenant or user identifiers without a privacy review.
 
 ## 8. AI provider routing
 

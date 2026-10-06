@@ -2,11 +2,32 @@
 
 import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
-import { Sparkles, Wrench, FileText } from "lucide-react";
+import { Sparkles, Wrench, FileText, Volume2, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UiMessage } from "@/hooks/use-chat";
+import type { PlaybackError } from "@/hooks/use-speech-playback";
+import { ActionConfirmation } from "./action-confirmation";
 
-export function ChatThread({ messages }: { messages: UiMessage[] }) {
+/** Optional read-aloud controls for assistant replies (never autoplays). */
+export type ReplyPlayback = {
+  supported: boolean;
+  playingId: string | null;
+  error: { id: string; code: PlaybackError } | null;
+  /** `turn`: the user message the reply answers (its language context). */
+  play: (id: string, text: string, turn?: string) => void;
+  stop: () => void;
+};
+
+export function ChatThread({
+  messages,
+  playback,
+  onActionSettled,
+}: {
+  messages: UiMessage[];
+  playback?: ReplyPlayback;
+  /** A proposed write action was decided for good. */
+  onActionSettled?: (actionId: string) => void;
+}) {
   const t = useTranslations("chat");
   const bottomRef = useRef<HTMLDivElement>(null);
 
@@ -25,15 +46,39 @@ export function ChatThread({ messages }: { messages: UiMessage[] }) {
 
   return (
     <div className="flex-1 space-y-4 overflow-y-auto p-4">
-      {messages.map((m) => (
-        <MessageBubble key={m.id} message={m} />
+      {messages.map((m, i) => (
+        <MessageBubble
+          key={m.id}
+          message={m}
+          playback={playback}
+          turn={m.role === "assistant" ? precedingUserText(messages, i) : undefined}
+          onActionSettled={onActionSettled}
+        />
       ))}
       <div ref={bottomRef} />
     </div>
   );
 }
 
-function MessageBubble({ message }: { message: UiMessage }) {
+/** The user message an assistant reply answers. */
+function precedingUserText(messages: UiMessage[], index: number): string | undefined {
+  for (let i = index - 1; i >= 0; i--) {
+    if (messages[i]!.role === "user") return messages[i]!.content;
+  }
+  return undefined;
+}
+
+function MessageBubble({
+  message,
+  playback,
+  turn,
+  onActionSettled,
+}: {
+  message: UiMessage;
+  playback?: ReplyPlayback;
+  turn?: string;
+  onActionSettled?: (actionId: string) => void;
+}) {
   const isUser = message.role === "user";
   return (
     <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
@@ -75,7 +120,55 @@ function MessageBubble({ message }: { message: UiMessage }) {
             ))}
           </div>
         ) : null}
+
+        {!isUser && message.actions?.length
+          ? message.actions.map((action) => (
+              <ActionConfirmation key={action.id} action={action} onSettled={onActionSettled} />
+            ))
+          : null}
+
+        {!isUser && playback?.supported && !message.streaming && message.content.trim() ? (
+          <ListenControl message={message} playback={playback} turn={turn} />
+        ) : null}
       </div>
+    </div>
+  );
+}
+
+function ListenControl({
+  message,
+  playback,
+  turn,
+}: {
+  message: UiMessage;
+  playback: ReplyPlayback;
+  turn?: string;
+}) {
+  const t = useTranslations("chat.voice");
+  const playing = playback.playingId === message.id;
+  const error = playback.error?.id === message.id ? playback.error.code : null;
+  return (
+    <div className="mt-2 flex flex-wrap items-center gap-2 border-t border-border/50 pt-2">
+      <button
+        type="button"
+        onClick={() =>
+          playing ? playback.stop() : playback.play(message.id, message.content, turn)
+        }
+        aria-label={playing ? t("stopListening") : t("listenLabel")}
+        className="inline-flex min-h-10 items-center gap-1.5 rounded-md px-2 text-xs text-muted-foreground hover:bg-background/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        {playing ? (
+          <Square aria-hidden className="size-3.5" />
+        ) : (
+          <Volume2 aria-hidden className="size-3.5" />
+        )}
+        {playing ? t("stopListening") : t("listen")}
+      </button>
+      {error ? (
+        <span role="status" className="text-xs text-muted-foreground">
+          {t(`playbackErrors.${error}`)}
+        </span>
+      ) : null}
     </div>
   );
 }

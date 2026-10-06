@@ -10,6 +10,8 @@ import { ProviderError, type OAuthTokens } from "@/server/integrations/calendar/
 import { getAppUrlEnv } from "@/env";
 import type { TenantContext } from "@/server/auth/session";
 import { can } from "@/server/auth/permissions";
+import type { Role } from "@/generated/prisma/client/client";
+import { lockActiveCalendarConnection, lockCalendarMember } from "@/server/calendar/locks";
 
 export class ConnectionError extends Error {
   constructor(
@@ -142,56 +144,71 @@ export async function completeConnection(params: {
     );
   }
 
+  // Provider calls first, outside any transaction.
   const adapter = getProviderAdapter(provider);
   const tokens = await adapter.exchangeCode({
     code: params.code,
     redirectUri: oauthRedirectUri(provider),
   });
-
-  const connection = await unscopedPrisma.calendarConnection.upsert({
-    where: { organizationId_userId_provider: { organizationId: orgId, userId, provider } },
-    create: {
-      organizationId: orgId,
-      userId,
-      provider,
-      accountEmail: tokens.accountEmail ?? null,
-      accessTokenEnc: encryptToken(tokens.accessToken),
-      refreshTokenEnc: tokens.refreshToken ? encryptToken(tokens.refreshToken) : null,
-      tokenExpiresAt: tokens.expiresAt ?? null,
-      scopes: tokens.scopes,
-      status: "CONNECTED",
-      lastCheckedAt: new Date(),
-    },
-    update: {
-      accountEmail: tokens.accountEmail ?? null,
-      accessTokenEnc: encryptToken(tokens.accessToken),
-      refreshTokenEnc: tokens.refreshToken ? encryptToken(tokens.refreshToken) : undefined,
-      tokenExpiresAt: tokens.expiresAt ?? null,
-      scopes: tokens.scopes,
-      status: "CONNECTED",
-      lastError: null,
-      lastCheckedAt: new Date(),
-    },
-  });
-
-  // Discover calendars (idempotent upsert by (connectionId, externalId)).
   const calendars = await adapter.listCalendars(tokens);
-  for (const cal of calendars) {
-    await unscopedPrisma.externalCalendar.upsert({
-      where: {
-        connectionId_externalId: { connectionId: connection.id, externalId: cal.externalId },
-      },
+
+  // The member may have been removed (or the org deleted) during the
+  // exchange. Persist only while holding their membership row: a removal
+  // either committed first (nothing is stored) or waits and then clears
+  // what this stores (see lockCalendarMember). The provider grant just
+  // issued is not revoked on refusal; it's the user's own.
+  const connection = await unscopedPrisma.$transaction(async (tx) => {
+    const role = await lockCalendarMember(tx, orgId, userId);
+    if (!role || !can(role as Role, "integrations:manage")) {
+      throw new ConnectionError(
+        "User is no longer an authorized member of this organization",
+        "membership_revoked",
+      );
+    }
+    const conn = await tx.calendarConnection.upsert({
+      where: { organizationId_userId_provider: { organizationId: orgId, userId, provider } },
       create: {
-        connectionId: connection.id,
         organizationId: orgId,
-        externalId: cal.externalId,
-        name: cal.name,
-        isPrimary: cal.isPrimary,
-        timezone: cal.timezone ?? null,
+        userId,
+        provider,
+        accountEmail: tokens.accountEmail ?? null,
+        accessTokenEnc: encryptToken(tokens.accessToken),
+        refreshTokenEnc: tokens.refreshToken ? encryptToken(tokens.refreshToken) : null,
+        tokenExpiresAt: tokens.expiresAt ?? null,
+        scopes: tokens.scopes,
+        status: "CONNECTED",
+        lastCheckedAt: new Date(),
       },
-      update: { name: cal.name, isPrimary: cal.isPrimary, timezone: cal.timezone ?? null },
+      update: {
+        accountEmail: tokens.accountEmail ?? null,
+        accessTokenEnc: encryptToken(tokens.accessToken),
+        refreshTokenEnc: tokens.refreshToken ? encryptToken(tokens.refreshToken) : undefined,
+        tokenExpiresAt: tokens.expiresAt ?? null,
+        scopes: tokens.scopes,
+        status: "CONNECTED",
+        lastError: null,
+        lastCheckedAt: new Date(),
+      },
     });
-  }
+    // Discover calendars (idempotent upsert by (connectionId, externalId)).
+    for (const cal of calendars) {
+      await tx.externalCalendar.upsert({
+        where: {
+          connectionId_externalId: { connectionId: conn.id, externalId: cal.externalId },
+        },
+        create: {
+          connectionId: conn.id,
+          organizationId: orgId,
+          externalId: cal.externalId,
+          name: cal.name,
+          isPrimary: cal.isPrimary,
+          timezone: cal.timezone ?? null,
+        },
+        update: { name: cal.name, isPrimary: cal.isPrimary, timezone: cal.timezone ?? null },
+      });
+    }
+    return conn;
+  });
 
   await audit(
     { orgId, userId },
@@ -206,13 +223,37 @@ export async function completeConnection(params: {
   return { orgId, connectionId: connection.id };
 }
 
+/**
+ * Whether the user is a current member of the (non-deleted) organization. A
+ * plain read, used to refuse early; anything persisted on the user's behalf
+ * is guarded by lockCalendarMember() instead.
+ */
+export async function isCalendarMember(orgId: string, userId: string): Promise<boolean> {
+  const member = await unscopedPrisma.organizationMember.findFirst({
+    where: { organizationId: orgId, userId, organization: { deletedAt: null } },
+    select: { id: true },
+  });
+  return Boolean(member);
+}
+
 /** Decrypted, refreshed-when-needed tokens for a connection. Filters by `orgId` so the
- * function is tenant-safe by construction rather than by caller discipline. */
+ * function is tenant-safe by construction rather than by caller discipline. A
+ * disconnected connection, or one whose user is no longer a current member of
+ * the organization (e.g. removed before removal invalidated connections),
+ * yields no tokens. */
 export async function getFreshTokens(connectionId: string, orgId: string): Promise<OAuthTokens> {
   const conn = await unscopedPrisma.calendarConnection.findFirst({
     where: { id: connectionId, organizationId: orgId },
   });
-  if (!conn || !conn.accessTokenEnc) throw new ConnectionError("Connection not found", "not_found");
+  if (!conn || !conn.accessTokenEnc || conn.status === "DISCONNECTED") {
+    throw new ConnectionError("Connection not found", "not_found");
+  }
+  if (!(await isCalendarMember(orgId, conn.userId))) {
+    throw new ConnectionError(
+      "Connection owner is no longer a member of this organization",
+      "membership_revoked",
+    );
+  }
 
   const adapter = getProviderAdapter(conn.provider);
   const needsRefresh =
@@ -236,11 +277,38 @@ export async function getFreshTokens(connectionId: string, orgId: string): Promi
     );
     throw new ProviderError("No refresh token", "token_expired");
   }
+  const usedRefreshTokenEnc = conn.refreshTokenEnc;
 
+  let refreshed: OAuthTokens;
   try {
-    const refreshed = await adapter.refreshTokens(decryptToken(conn.refreshTokenEnc));
-    await unscopedPrisma.calendarConnection.update({
-      where: { id: connectionId },
+    refreshed = await adapter.refreshTokens(decryptToken(usedRefreshTokenEnc));
+  } catch (e) {
+    await markConnectionStatus(
+      connectionId,
+      "NEEDS_REAUTH",
+      e instanceof Error ? e.message : "Token refresh failed",
+    );
+    throw e;
+  }
+
+  // The refresh was a network call: the member may have been removed, or the
+  // connection invalidated or replaced, meanwhile. Store the new tokens only
+  // while holding the membership and connection rows, and only if the
+  // refresh token used is still the stored one (compare-and-swap on its
+  // ciphertext, which is unique per write), so a stale refresh can never
+  // restore credentials or status. If the swap misses while access is intact,
+  // another refresh or a re-connection stored newer tokens first: use those.
+  const outcome = await unscopedPrisma.$transaction(async (tx): Promise<OAuthTokens | null> => {
+    if (!(await lockCalendarMember(tx, orgId, conn.userId))) return null;
+    const usable = await lockActiveCalendarConnection(tx, {
+      connectionId,
+      orgId,
+      userId: conn.userId,
+      forUpdate: true,
+    });
+    if (!usable) return null;
+    const written = await tx.calendarConnection.updateMany({
+      where: { id: connectionId, organizationId: orgId, refreshTokenEnc: usedRefreshTokenEnc },
       data: {
         accessTokenEnc: encryptToken(refreshed.accessToken),
         refreshTokenEnc: refreshed.refreshToken ? encryptToken(refreshed.refreshToken) : undefined,
@@ -250,15 +318,23 @@ export async function getFreshTokens(connectionId: string, orgId: string): Promi
         lastCheckedAt: new Date(),
       },
     });
-    return refreshed;
-  } catch (e) {
-    await markConnectionStatus(
-      connectionId,
-      "NEEDS_REAUTH",
-      e instanceof Error ? e.message : "Token refresh failed",
-    );
-    throw e;
+    if (written.count === 1) return refreshed;
+    const current = await tx.calendarConnection.findFirst({
+      where: { id: connectionId, organizationId: orgId },
+    });
+    if (!current?.accessTokenEnc) return null;
+    return {
+      accessToken: decryptToken(current.accessTokenEnc),
+      refreshToken: current.refreshTokenEnc ? decryptToken(current.refreshTokenEnc) : undefined,
+      expiresAt: current.tokenExpiresAt ?? undefined,
+      scopes: current.scopes,
+      accountEmail: current.accountEmail ?? undefined,
+    };
+  });
+  if (!outcome) {
+    throw new ConnectionError("Connection is no longer active", "membership_revoked");
   }
+  return outcome;
 }
 
 export async function markConnectionStatus(
@@ -266,9 +342,11 @@ export async function markConnectionStatus(
   status: "CONNECTED" | "NEEDS_REAUTH" | "ERROR" | "DISCONNECTED",
   lastError?: string,
 ): Promise<void> {
+  // Never overwrites DISCONNECTED: only a new OAuth connection (completeConnection)
+  // brings a disconnected or invalidated connection back.
   await unscopedPrisma.calendarConnection
-    .update({
-      where: { id: connectionId },
+    .updateMany({
+      where: { id: connectionId, status: { not: "DISCONNECTED" } },
       data: { status, lastError: lastError ?? null, lastCheckedAt: new Date() },
     })
     .catch(() => undefined);

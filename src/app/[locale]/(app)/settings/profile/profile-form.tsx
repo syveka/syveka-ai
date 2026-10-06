@@ -15,6 +15,7 @@ export function ProfileForm({
 }: {
   initial: { fullName: string; email: string; locale: string; timezone: string };
 }) {
+  const t = useTranslations("settingsProfile");
   const tc = useTranslations("common");
   const [state, action, pending] = useActionState<SettingsActionState, FormData>(
     updateProfileAction,
@@ -26,16 +27,16 @@ export function ProfileForm({
       <CardContent className="pt-6">
         <form action={action} className="space-y-4">
           <div className="space-y-1.5">
-            <Label>Email</Label>
-            <Input value={initial.email} disabled />
+            <Label htmlFor="email">{t("email")}</Label>
+            <Input id="email" value={initial.email} disabled />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="fullName">Name</Label>
+            <Label htmlFor="fullName">{t("name")}</Label>
             <Input id="fullName" name="fullName" defaultValue={initial.fullName} required />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid gap-3 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <Label htmlFor="locale">Language</Label>
+              <Label htmlFor="locale">{t("language")}</Label>
               <select
                 id="locale"
                 name="locale"
@@ -48,7 +49,7 @@ export function ProfileForm({
               </select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="timezone">Timezone</Label>
+              <Label htmlFor="timezone">{t("timezone")}</Label>
               <select
                 id="timezone"
                 name="timezone"
@@ -63,8 +64,16 @@ export function ProfileForm({
               </select>
             </div>
           </div>
-          {state.message ? <p className="text-sm text-success">✓</p> : null}
-          {state.error ? <p className="text-sm text-destructive">{tc("error")}</p> : null}
+          {state.message ? (
+            <p role="status" className="text-sm text-success">
+              {t("saved")}
+            </p>
+          ) : null}
+          {state.error ? (
+            <p role="alert" className="text-sm text-destructive">
+              {tc("error")}
+            </p>
+          ) : null}
           <Button type="submit" disabled={pending}>
             {pending ? tc("loading") : tc("save")}
           </Button>

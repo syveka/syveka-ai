@@ -166,6 +166,27 @@ async function claimStep(
   }
 }
 
+/**
+ * Whether `userId` is a current member of this organization, which must not
+ * be soft-deleted. Checked when a notification is about to be written: the
+ * save-time check (upsertWorkflow) can't see a member removed later, and a
+ * workflow's creator can leave too.
+ */
+async function isCurrentMember(
+  db: Prisma.TransactionClient,
+  orgId: string,
+  userId: string,
+): Promise<boolean> {
+  const member = await db.organizationMember.findFirst({
+    where: { organizationId: orgId, userId, organization: { deletedAt: null } },
+    select: { id: true },
+  });
+  return member !== null;
+}
+
+/** Step output recorded when a notification was skipped for a non-member. */
+const RECIPIENT_NOT_MEMBER = { skipped: "recipient_not_member" } as const;
+
 async function completeStep(
   unscopedPrisma: Prisma.TransactionClient,
   claim: { stepExecutionId: string; startedAt: Date },
@@ -577,32 +598,55 @@ export async function POST(request: Request): Promise<NextResponse> {
           });
           if (!claim.claimed) {
             if (claim.reason === "succeeded") {
-              results.push({ stepId: step.id, status: "ok" });
+              const skipped =
+                (claim.output as { skipped?: unknown } | null)?.skipped ===
+                RECIPIENT_NOT_MEMBER.skipped;
+              results.push(
+                skipped
+                  ? { stepId: step.id, status: "skipped", output: RECIPIENT_NOT_MEMBER }
+                  : { stepId: step.id, status: "ok" },
+              );
               break;
             }
             return NextResponse.json({ ok: true, skipped: "step_in_progress", stepId: step.id });
           }
           try {
             // Same atomic-transaction + fencing treatment as
-            // crm.create_activity.
-            await unscopedPrisma.$transaction(async (tx) => {
-              await tx.notification.create({
-                data: {
-                  organizationId: orgId,
-                  userId: step.userId ?? workflow.createdById,
-                  type: "workflow.notification",
-                  title: interpolate(step.title, ctx),
-                  body: step.body ? interpolate(step.body, ctx) : undefined,
-                  href: `/workflows/${workflowId}`,
-                },
-              });
+            // crm.create_activity. Membership is checked in the same
+            // transaction as the write: a recipient removed from the org
+            // (or an org deleted) since the workflow was saved gets nothing,
+            // and the step completes as skipped rather than failing the run.
+            const recipientId = step.userId ?? workflow.createdById;
+            const delivered = await unscopedPrisma.$transaction(async (tx) => {
+              const member = await isCurrentMember(tx, orgId, recipientId);
+              if (member) {
+                await tx.notification.create({
+                  data: {
+                    organizationId: orgId,
+                    userId: recipientId,
+                    type: "workflow.notification",
+                    title: interpolate(step.title, ctx),
+                    body: step.body ? interpolate(step.body, ctx) : undefined,
+                    href: `/workflows/${workflowId}`,
+                  },
+                });
+              }
               const written = await tx.workflowStepExecution.updateMany({
                 where: { id: claim.stepExecutionId, startedAt: claim.startedAt },
-                data: { status: "SUCCEEDED", finishedAt: new Date() },
+                data: {
+                  status: "SUCCEEDED",
+                  ...(member ? {} : { output: RECIPIENT_NOT_MEMBER }),
+                  finishedAt: new Date(),
+                },
               });
               if (written.count === 0) throw new StepFencedError();
+              return member;
             });
-            results.push({ stepId: step.id, status: "ok" });
+            results.push(
+              delivered
+                ? { stepId: step.id, status: "ok" }
+                : { stepId: step.id, status: "skipped", output: RECIPIENT_NOT_MEMBER },
+            );
           } catch (stepErr) {
             if (stepErr instanceof StepFencedError) {
               results.push({ stepId: step.id, status: "ok" });
@@ -675,16 +719,19 @@ export async function POST(request: Request): Promise<NextResponse> {
     const message = err instanceof Error ? err.message.slice(0, 500) : "step failed";
     results.push({ stepId: "error", status: "failed", output: message });
     await persist("FAILED", message);
-    await unscopedPrisma.notification.create({
-      data: {
-        organizationId: orgId,
-        userId: workflow.createdById,
-        type: "workflow.failed",
-        title: workflow.name,
-        body: message,
-        href: `/workflows/${workflowId}`,
-      },
-    });
+    // Only a creator who is still a member of this (not deleted) org is told.
+    if (await isCurrentMember(unscopedPrisma, orgId, workflow.createdById)) {
+      await unscopedPrisma.notification.create({
+        data: {
+          organizationId: orgId,
+          userId: workflow.createdById,
+          type: "workflow.failed",
+          title: workflow.name,
+          body: message,
+          href: `/workflows/${workflowId}`,
+        },
+      });
+    }
     // QStash retries (3x) then DLQ (§17.2)
     return NextResponse.json({ error: message }, { status: 500 });
   }

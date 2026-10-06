@@ -6,7 +6,7 @@ describe("plan matrix (§14.1)", () => {
     const order = ["FREE", "STARTER", "PRO"] as const;
     const keys = [
       "maxSeats",
-      "aiMessagesPerUserMonth",
+      "aiMessagesPerOrgMonth",
       "voiceMinutesMonth",
       "kbStorageMb",
       "activeWorkflows",

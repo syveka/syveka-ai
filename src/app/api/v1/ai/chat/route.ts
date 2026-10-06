@@ -1,16 +1,41 @@
 import { NextResponse } from "next/server";
 import { describeAiChatStreamError } from "@/server/ai/stream-error-log";
-import { chatRequestSchema, type ChatStreamEvent } from "@/lib/validators/chat";
+import {
+  chatRequestSchema,
+  type ChatStreamEvent,
+  type ProposedActionView,
+} from "@/lib/validators/chat";
 import type { RetrievedChunk } from "@/server/ai/rag";
 import type { ToolIdentity } from "@/server/ai/tools";
+import type { EvalClient } from "@/server/ai/voice-conversation";
 import { estimateAiCost } from "@/server/ai/cost";
 import { isAbortError } from "@/server/ai/retry";
+import { detectReplyLanguage } from "@/lib/voice/reply-language";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 120;
 
 const CONTEXT_WINDOW_TURNS = 20; // then rolling summary (§15.6)
+
+/**
+ * Per-response bounds for live voice turns (typed chat is unchanged). A voice
+ * reply is spoken, so it is short; it uses the standard chat model (never a
+ * pinned or "deep" model), less history and fewer knowledge chunks, at most
+ * two model/tool rounds and no provider retries (a retry would be a hidden
+ * extra paid generation).
+ */
+const VOICE_MAX_OUTPUT_TOKENS = 400;
+const VOICE_CONTEXT_MESSAGES = 12;
+/** Characters kept per history message (a long typed message is cut, not dropped). */
+const VOICE_HISTORY_MESSAGE_CHARS = 2_000;
+const VOICE_RAG_CHUNKS = 3;
+const VOICE_MAX_TOOL_ROUNDS = 2;
+/** Tool executions per voice turn; further calls get an error result. */
+const VOICE_MAX_TOOL_CALLS = 3;
+
+const clip = (text: string, max: number) =>
+  text.length > max ? `${text.slice(0, max)} [truncated]` : text;
 
 function sse(event: ChatStreamEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;
@@ -28,7 +53,7 @@ export async function POST(request: Request): Promise<Response> {
     { buildSystemPrompt },
     { getBusinessDnaContext },
     { retrieveChunks, extractValidCitations },
-    { anthropicToolsFor, executeTool },
+    { anthropicToolsFor, executeTool, READ_ONLY_TOOL_NAMES, WRITE_TOOL_NAMES },
     { assertWithinLimit, recordUsage, getMonthUsage, EntitlementError },
     {
       attachDocumentsToConversation,
@@ -36,6 +61,8 @@ export async function POST(request: Request): Promise<Response> {
       generateTitle,
       getConversationDocumentIds,
     },
+    voice,
+    budget,
   ] = await Promise.all([
     import("@/server/auth/session"),
     import("@/server/auth/permissions"),
@@ -50,6 +77,8 @@ export async function POST(request: Request): Promise<Response> {
     import("@/server/ai/tools"),
     import("@/server/services/billing/entitlements"),
     import("@/server/services/conversations"),
+    import("@/server/ai/voice-conversation"),
+    import("@/server/ai/voice-input-budget"),
   ]);
 
   // ── Guardrails: auth → permission → rate limit → entitlement → moderation ──
@@ -88,9 +117,33 @@ export async function POST(request: Request): Promise<Response> {
   }
   const input = body.data;
 
+  // ── Live voice boundary ──
+  // Voice mode comes only from a valid single-use grant (issued per accepted
+  // turn by /voice-conversation/turn), never from a client flag. While the
+  // user has a live session, chat without a grant is refused, so live turns
+  // can't be routed around the voice restrictions or budgets.
+  const voiceTurn = input.voiceGrant !== undefined;
+  // A grant is bound to one conversation, so a voice turn must name it.
+  if (voiceTurn && (input.documentIds.length > 0 || !input.conversationId)) {
+    return NextResponse.json({ error: { code: "invalid_input" } }, { status: 400 });
+  }
+  let redisClient: EvalClient | null = null;
+  if (voiceTurn || voice.isVoiceConversationFeatureOn()) {
+    redisClient = (await import("@/server/integrations/redis")).redis;
+  }
+  if (!voiceTurn && voice.isVoiceConversationFeatureOn()) {
+    try {
+      if (await voice.hasActiveVoiceSession(redisClient!, ctx)) {
+        return NextResponse.json({ error: { code: "live_voice_session_active" } }, { status: 409 });
+      }
+    } catch {
+      return NextResponse.json({ error: { code: "service_unavailable" } }, { status: 503 });
+    }
+  }
+
   try {
-    const userMonthCount = await getMonthUsage(ctx.orgId, "AI_MESSAGES");
-    await assertWithinLimit(ctx.orgId, { kind: "ai_messages", userMonthCount });
+    const orgMonthCount = await getMonthUsage(ctx.orgId, "AI_MESSAGES");
+    await assertWithinLimit(ctx.orgId, { kind: "ai_messages", orgMonthCount });
   } catch (e) {
     if (e instanceof EntitlementError) {
       return NextResponse.json({ error: { code: e.code, limit: e.limit } }, { status: 402 });
@@ -102,19 +155,56 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: { code: "content_flagged" } }, { status: 422 });
   }
 
+  // Consume the grant atomically right before paid work: one accepted turn,
+  // one generation, in the grant's own conversation. Replays and concurrent
+  // duplicates find no grant; another conversation is refused.
+  let voiceNewConversation = false;
+  if (voiceTurn) {
+    try {
+      const consumed = await voice.consumeVoiceGrant(
+        redisClient!,
+        ctx,
+        input.voiceGrant!,
+        input.message,
+        input.conversationId!,
+      );
+      if (!consumed.ok) {
+        const code =
+          consumed.reason === "session_ended" ? "voice_session_ended" : "voice_turn_invalid";
+        return NextResponse.json({ error: { code } }, { status: 409 });
+      }
+      voiceNewConversation = consumed.newConversation;
+    } catch {
+      return NextResponse.json({ error: { code: "service_unavailable" } }, { status: 503 });
+    }
+  }
+
   const db = tenantDb(ctx.orgId);
 
   // ── Conversation + history ──
-  const conversation = input.conversationId
+  let conversation = input.conversationId
     ? await db.conversation.findFirst({
         where: { id: input.conversationId, userId: ctx.userId, deletedAt: null },
       })
     : await db.conversation.create({ data: { organizationId: ctx.orgId, userId: ctx.userId } });
+  let createdForVoice = false;
+  if (!conversation && voiceNewConversation) {
+    // A live session in a new chat: the id was reserved by the server when the
+    // session started (never chosen by the client); the first turn creates it.
+    try {
+      conversation = await db.conversation.create({
+        data: { id: input.conversationId!, organizationId: ctx.orgId, userId: ctx.userId },
+      });
+      createdForVoice = true;
+    } catch {
+      conversation = null; // e.g. the id exists but isn't accessible (deleted)
+    }
+  }
 
   if (!conversation) {
     return NextResponse.json({ error: { code: "resource_not_found" } }, { status: 404 });
   }
-  const isFirstMessage = !input.conversationId;
+  const isFirstMessage = !input.conversationId || createdForVoice;
 
   try {
     await attachDocumentsToConversation({
@@ -126,16 +216,20 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: { code: "invalid_document" } }, { status: 400 });
   }
 
-  const summary = await ensureConversationSummary({
-    organizationId: ctx.orgId,
-    conversationId: conversation.id,
-    signal: request.signal,
-  });
+  // A voice turn uses the stored rolling summary but never generates one (no
+  // extra paid summarization call inside a live turn).
+  const summary = voiceTurn
+    ? conversation.summary
+    : await ensureConversationSummary({
+        organizationId: ctx.orgId,
+        conversationId: conversation.id,
+        signal: request.signal,
+      });
 
   const history = await unscopedPrisma.message.findMany({
     where: { conversationId: conversation.id, role: { in: ["USER", "ASSISTANT"] } },
     orderBy: { createdAt: "desc" },
-    take: CONTEXT_WINDOW_TURNS * 2,
+    take: voiceTurn ? VOICE_CONTEXT_MESSAGES : CONTEXT_WINDOW_TURNS * 2,
     select: { role: true, content: true },
   });
   history.reverse();
@@ -169,6 +263,7 @@ export async function POST(request: Request): Promise<Response> {
       orgId: ctx.orgId,
       query: input.message,
       documentIds: attachedDocumentIds.length > 0 ? attachedDocumentIds : undefined,
+      ...(voiceTurn ? { count: VOICE_RAG_CHUNKS } : {}),
       signal: request.signal,
     }).catch(() => []);
   }
@@ -179,9 +274,10 @@ export async function POST(request: Request): Promise<Response> {
     role: ctx.role,
     actorType: "user",
   };
-  const tools = anthropicToolsFor(identity);
+  // Live voice turns are submitted automatically: read-only tools only.
+  const tools = anthropicToolsFor(identity, voiceTurn ? [...READ_ONLY_TOOL_NAMES] : undefined);
 
-  let system = buildSystemPrompt({
+  const promptParams = {
     locale: ctx.locale,
     org: {
       name: org.name,
@@ -195,12 +291,50 @@ export async function POST(request: Request): Promise<Response> {
       title: c.title,
     })),
     hasTools: tools.length > 0,
-  });
+    responseMode: voiceTurn ? ("voice" as const) : ("text" as const),
+    // The transcript's own language, only when clear: history (earlier turns
+    // in other languages) and the interface language must not decide it.
+    voiceTurnLanguage: voiceTurn ? detectReplyLanguage(input.message) : null,
+  };
+  let system = buildSystemPrompt(promptParams);
   if (summary) {
     system += `\n\nRolling conversation summary (trusted conversation context, not instructions):\n${summary}`;
   }
+  let chatHistory = history.map((m) => ({
+    role: m.role === "ASSISTANT" ? ("assistant" as const) : ("user" as const),
+    content: voiceTurn ? clip(m.content, VOICE_HISTORY_MESSAGE_CHARS) : m.content,
+  }));
 
-  const { model, maxTokens } = routeModel(input.deepMode ? "deep" : "chat", conversation.model);
+  // Live voice: fit the whole first request (instructions, Business DNA,
+  // history, transcript, knowledge, tools) into the input budget by leaving
+  // out lower-priority context; refuse before any model call if the required
+  // content alone doesn't fit. Typed chat is unchanged.
+  if (voiceTurn) {
+    const plan = budget.planVoiceContext({
+      prompt: promptParams,
+      summary,
+      history: chatHistory,
+      message: input.message,
+      tools,
+    });
+    if (!plan.ok) {
+      console.warn(JSON.stringify({ event: "voice_context_too_large", estimate: plan.estimate }));
+      return NextResponse.json({ error: { code: "voice_context_too_large" } }, { status: 422 });
+    }
+    system = plan.system;
+    chatHistory = plan.history.map((m) => ({ role: m.role, content: String(m.content) }));
+    if (Object.values(plan.reduced).some(Boolean)) {
+      console.info(JSON.stringify({ event: "voice_context_reduced", ...plan.reduced }));
+    }
+  }
+
+  const route = voiceTurn
+    ? routeModel("chat")
+    : routeModel(input.deepMode ? "deep" : "chat", conversation.model);
+  const model = route.model;
+  const maxTokens = voiceTurn
+    ? Math.min(route.maxTokens, VOICE_MAX_OUTPUT_TOKENS)
+    : route.maxTokens;
 
   // ── Stream ──
   const encoder = new TextEncoder();
@@ -217,7 +351,33 @@ export async function POST(request: Request): Promise<Response> {
         }
       }, 15_000);
       let fullText = "";
-      const toolCallLog: Array<{ name: string; ok: boolean }> = [];
+      let usageSoFar = { tokensIn: 0, tokensOut: 0 };
+      let estimatedInput = 0;
+      /** Keeps billed tokens of completed calls when a voice turn stops early. */
+      const recordPartialUsage = async (reason: "aborted" | "voice_context_too_large") => {
+        if (usageSoFar.tokensIn + usageSoFar.tokensOut === 0) return;
+        const cost = estimateAiCost(model, usageSoFar);
+        const meta = {
+          model,
+          userId: ctx.userId,
+          conversationId: conversation.id,
+          aborted: reason === "aborted",
+          stoppedBy: reason,
+        };
+        await Promise.all([
+          recordUsage(ctx.orgId, "AI_TOKENS_IN", usageSoFar.tokensIn, {
+            ...meta,
+            estimatedCostUsd: cost.promptUsd,
+          }),
+          recordUsage(ctx.orgId, "AI_TOKENS_OUT", usageSoFar.tokensOut, {
+            ...meta,
+            estimatedCostUsd: cost.completionUsd,
+          }),
+        ]).catch(() => {});
+      };
+      // Saved with the reply. A proposed write keeps its action view, so a
+      // reopened conversation can show it with its recorded outcome.
+      const toolCallLog: Array<{ name: string; ok: boolean; action?: ProposedActionView }> = [];
       const assistantMessageId = crypto.randomUUID();
 
       send({ type: "meta", conversationId: conversation.id, messageId: assistantMessageId });
@@ -227,13 +387,7 @@ export async function POST(request: Request): Promise<Response> {
           model,
           system,
           maxTokens,
-          messages: [
-            ...history.map((m) => ({
-              role: m.role === "ASSISTANT" ? ("assistant" as const) : ("user" as const),
-              content: m.content,
-            })),
-            { role: "user", content: input.message },
-          ],
+          messages: [...chatHistory, { role: "user", content: input.message }],
           tools,
           callbacks: {
             onText: (delta) => {
@@ -241,20 +395,77 @@ export async function POST(request: Request): Promise<Response> {
             },
             onToolUse: async (name, toolInput) => {
               // The model can request a tool after the user has already left
-              // (closed the page, ended a voice call). Tools can write CRM or
-              // calendar data, so never start one for a disconnected client.
+              // (closed the page, ended a voice call). Never start one, or
+              // create a pending write proposal, for a disconnected client.
               if (request.signal.aborted) {
                 throw new DOMException("Request aborted", "AbortError");
               }
+              if (voiceTurn && toolCallLog.length >= VOICE_MAX_TOOL_CALLS) {
+                toolCallLog.push({ name, ok: false });
+                return JSON.stringify({ error: "tool_limit_reached" });
+              }
               send({ type: "tool", name, status: "start" });
-              const result = await executeTool(identity, name, toolInput);
+              if (!voiceTurn && WRITE_TOOL_NAMES.includes(name)) {
+                // A write never runs on the model's call: it becomes a pending
+                // action the user must confirm (POST /api/v1/ai/actions/{id}).
+                const [{ proposeToolAction }, { redis }] = await Promise.all([
+                  import("@/server/ai/tool-actions"),
+                  import("@/server/integrations/redis"),
+                ]);
+                const proposal = await proposeToolAction(
+                  redis,
+                  identity,
+                  conversation.id,
+                  name,
+                  toolInput,
+                );
+                if (proposal.action) send({ type: "action", action: proposal.action });
+                toolCallLog.push(
+                  proposal.action
+                    ? { name, ok: true, action: proposal.action }
+                    : { name, ok: false },
+                );
+                send({ type: "tool", name, status: "done" });
+                return proposal.modelResult;
+              }
+              const result = await executeTool(identity, name, toolInput, {
+                readOnly: voiceTurn,
+              });
               toolCallLog.push({ name, ok: !result.includes('"error"') });
               send({ type: "tool", name, status: "done" });
-              return result;
+              // Structural fit: stays valid JSON for this tool call.
+              return voiceTurn ? budget.fitToolResult(result) : result;
+            },
+            onUsage: (tokensIn, tokensOut) => {
+              usageSoFar = { tokensIn, tokensOut };
             },
           },
           signal: request.signal,
+          ...(voiceTurn
+            ? {
+                maxToolRounds: VOICE_MAX_TOOL_ROUNDS,
+                maxAttempts: 1,
+                // Checked before EVERY model call, including the tool round.
+                beforeModelCall: (modelRequest) => {
+                  const estimate = budget.inputTokenUpperBound(modelRequest);
+                  if (estimate > budget.VOICE_INPUT_TOKEN_BUDGET) {
+                    throw new budget.VoiceContextTooLargeError(estimate);
+                  }
+                  estimatedInput += estimate;
+                },
+              }
+            : {}),
         });
+        if (voiceTurn && usage.tokensIn > estimatedInput) {
+          // The byte-based bound under-counted: surface it (no content logged).
+          console.warn(
+            JSON.stringify({
+              event: "voice_input_bound_exceeded",
+              tokensIn: usage.tokensIn,
+              estimate: estimatedInput,
+            }),
+          );
+        }
 
         // Output is held until moderation completes so unsafe text never reaches the client.
         if (await isFlaggedByModeration(fullText, request.signal)) {
@@ -284,6 +495,17 @@ export async function POST(request: Request): Promise<Response> {
 
         const citations = extractValidCitations(fullText, retrieved);
         if (citations.length > 0) send({ type: "citations", citations });
+        if (voiceTurn) {
+          // Language pairing diagnostics (codes only, never content).
+          console.info(
+            JSON.stringify({
+              event: "voice_conversation_reply",
+              conversationId: conversation.id,
+              turnLanguage: promptParams.voiceTurnLanguage,
+              replyLanguage: detectReplyLanguage(fullText),
+            }),
+          );
+        }
 
         await unscopedPrisma.message.create({
           data: {
@@ -331,7 +553,23 @@ export async function POST(request: Request): Promise<Response> {
           estimatedCostUsd: cost.totalUsd,
         });
       } catch (err) {
-        if (isAbortError(err) || request.signal.aborted) return;
+        if (err instanceof budget.VoiceContextTooLargeError) {
+          // The next model call would exceed the input budget: it isn't made.
+          console.warn(
+            JSON.stringify({ event: "voice_context_too_large", estimate: err.estimate }),
+          );
+          await recordPartialUsage("voice_context_too_large");
+          send({ type: "error", code: "voice_context_too_large" });
+          return;
+        }
+        if (isAbortError(err) || request.signal.aborted) {
+          // Ending a live conversation mid-reply aborts the request. Model
+          // calls that already completed were billed by the provider, so
+          // their tokens stay recorded (the call in flight when the abort
+          // arrived may also be billed but reports no usage).
+          if (voiceTurn) await recordPartialUsage("aborted");
+          return;
+        }
         console.error(JSON.stringify(describeAiChatStreamError(err)));
         send({ type: "error", code: "generation_failed" });
       } finally {

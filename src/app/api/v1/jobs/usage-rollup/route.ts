@@ -37,11 +37,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   let warned = 0;
   for (const org of orgs) {
     const ent = await getEntitlements(org.id);
-    const seats = ent.seats;
     const checks: Array<{ used: number; limit: number; label: string }> = [
       {
         used: await getMonthUsage(org.id, "AI_MESSAGES"),
-        limit: ent.aiMessagesPerUserMonth * seats,
+        limit: ent.aiMessagesPerOrgMonth,
         label: "AI messages",
       },
       {

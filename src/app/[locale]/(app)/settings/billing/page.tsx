@@ -1,6 +1,7 @@
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import { PlanCards } from "@/components/billing/plan-cards";
 import { UsageMeters } from "@/components/billing/usage-meters";
+import { PLAN_NAMES } from "@/components/billing/plan-display";
 import { openPortalAction } from "@/actions/billing";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -22,6 +23,7 @@ export default async function BillingPage({
 
   const ctx = await requirePermission("billing:view");
   const t = await getTranslations("billingPage");
+  const locale = await getLocale();
   const { status } = await searchParams;
   const canManage = can(ctx.role, "billing:manage");
 
@@ -53,7 +55,7 @@ export default async function BillingPage({
       <div className="flex items-center justify-between">
         <div>
           <p className="text-sm text-muted-foreground">{t("currentPlan")}</p>
-          <p className="text-xl font-semibold">{ent.plan}</p>
+          <p className="text-xl font-semibold">{PLAN_NAMES[ent.plan]}</p>
         </div>
         {canManage && ent.plan !== "FREE" ? (
           <form action={openPortalAction}>
@@ -65,11 +67,12 @@ export default async function BillingPage({
       </div>
 
       <UsageMeters
+        locale={locale}
         items={[
           {
             label: t("usage.aiMessages"),
             used: aiMessages,
-            limit: ent.aiMessagesPerUserMonth * seats,
+            limit: ent.aiMessagesPerOrgMonth,
           },
           { label: t("usage.voiceMinutes"), used: voiceMinutes, limit: ent.voiceMinutesMonth },
           { label: t("usage.contacts"), used: contacts, limit: ent.maxContacts },

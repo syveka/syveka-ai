@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import type React from "react";
 import { getTranslations } from "next-intl/server";
+import { stageLabel, type DefaultStageKey } from "@/lib/crm/stage-labels";
 import { Link } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -25,6 +26,8 @@ type DashboardProps = {
 };
 
 type DashboardLabels = {
+  /** Interface-language labels of the untouched default pipeline stages. */
+  defaultStages: Record<DefaultStageKey, string>;
   title: string;
   subtitle: string;
   totalCustomers: string;
@@ -338,7 +341,9 @@ function PipelinePreview({
             {dashboard.pipeline.stages.map((stage) => (
               <div key={stage.id}>
                 <div className="mb-1 flex items-center justify-between gap-3 text-sm">
-                  <span className="truncate text-start">{stage.name}</span>
+                  <span className="truncate text-start">
+                    {stageLabel(stage, (key) => labels.defaultStages[key])}
+                  </span>
                   <span className="shrink-0 text-muted-foreground">
                     {labels.stageSummary
                       .replace("{count}", formatNumber(stage.count, locale))
@@ -462,7 +467,16 @@ function AiInsights({ dashboard, labels }: DashboardProps & { labels: DashboardL
 
 export async function CrmDashboardView({ dashboard, locale }: DashboardProps) {
   const t = await getTranslations("dashboard");
+  const tCrm = await getTranslations("crm");
   const labels = {
+    defaultStages: {
+      newLead: tCrm("defaultStages.newLead"),
+      contacted: tCrm("defaultStages.contacted"),
+      proposal: tCrm("defaultStages.proposal"),
+      negotiation: tCrm("defaultStages.negotiation"),
+      won: tCrm("defaultStages.won"),
+      lost: tCrm("defaultStages.lost"),
+    },
     title: t("title"),
     subtitle: t("subtitle"),
     totalCustomers: t("totalCustomers"),

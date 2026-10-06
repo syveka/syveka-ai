@@ -24,6 +24,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     { routeModel },
     { recordUsage },
     { emitWorkflowEvent },
+    { isOrganizationActive, ORGANIZATION_INACTIVE },
   ] = await Promise.all([
     import("@/server/jobs/verify"),
     import("@/server/db/tenant"),
@@ -31,6 +32,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/ai/router"),
     import("@/server/services/billing/entitlements"),
     import("@/server/services/workflow-events"),
+    import("@/server/jobs/organization-guard"),
   ]);
 
   const rawBody = await verifyJobRequest(request);
@@ -39,6 +41,10 @@ export async function POST(request: Request): Promise<NextResponse> {
   const parsed = payloadSchema.safeParse(JSON.parse(rawBody));
   if (!parsed.success) return NextResponse.json({ error: "invalid payload" }, { status: 400 });
   const { vapiCallId, orgId } = parsed.data;
+
+  // A missing or soft-deleted organization gets no usage record, contact,
+  // paid summary, notification or workflow event; the call stays unprocessed.
+  if (!(await isOrganizationActive(orgId))) return NextResponse.json(ORGANIZATION_INACTIVE);
 
   const call = await unscopedPrisma.voiceCall.findFirst({
     where: { vapiCallId, organizationId: orgId },
@@ -134,6 +140,9 @@ export async function POST(request: Request): Promise<NextResponse> {
           },
         ],
       });
+      // The summary call can take a while: nothing more for an organization
+      // deleted meanwhile (the call itself can't be recalled).
+      if (!(await isOrganizationActive(orgId))) return NextResponse.json(ORGANIZATION_INACTIVE);
       const text = res.content[0]?.type === "text" ? res.content[0].text : "{}";
       const json = analysisSchema.safeParse(JSON.parse(text.replace(/^```json?|```$/g, "").trim()));
 
@@ -174,6 +183,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   // notification for the same call. `href` is `/voice/calls/${call.id}` —
   // unique per call — so it's the natural existence key, matching the same
   // find-before-create idiom step 1 already uses for usageRecord.
+  if (!(await isOrganizationActive(orgId))) return NextResponse.json(ORGANIZATION_INACTIVE);
+
   const owner = await unscopedPrisma.organizationMember.findFirst({
     where: { organizationId: orgId, role: "OWNER" },
     select: { userId: true },

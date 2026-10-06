@@ -15,6 +15,7 @@ import { DealBoard } from "@/components/crm/deal-board";
 import { DealDialog } from "@/components/crm/deal-dialog";
 import { PipelineManager } from "@/components/crm/pipeline-manager";
 import { formatCents } from "@/lib/utils";
+import { stageLabel } from "@/lib/crm/stage-labels";
 
 export default async function DealsPage() {
   const ctx = await requirePermission("crm:read");
@@ -35,6 +36,10 @@ export default async function DealsPage() {
   }
 
   const ownerNameById = new Map(owners.map((o) => [o.id, o.name]));
+  // Untouched default stages are shown in the interface language; renamed and
+  // custom stages exactly as entered (see stage-labels.ts). Display only.
+  const label = (s: { name: string; order: number; isWon: boolean; isLost: boolean }) =>
+    stageLabel(s, (key) => t(`defaultStages.${key}`));
   const openDeals = pipeline.stages
     .filter((s) => !s.isWon && !s.isLost)
     .flatMap((s) => s.deals.map((d) => ({ deal: d, stage: s })))
@@ -48,15 +53,17 @@ export default async function DealsPage() {
 
   return (
     <div className="space-y-4">
+      {/* Title and actions wrap instead of widening the page: long translated
+          labels (e.g. Finnish) must never push the layout past the viewport. */}
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">{t("deals")}</h1>
+        <div className="min-w-0">
+          <h1 className="hyphens-auto break-words text-2xl font-semibold">{t("deals")}</h1>
           <p className="text-sm text-muted-foreground">
             {t("openPipeline")}: <strong>{formatCents(openValue, locale)}</strong> · {t("forecast")}
             : <strong>{formatCents(forecastValue, locale)}</strong>
           </p>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
           {canManagePipeline ? (
             <PipelineManager
               stages={pipeline.stages.map((s) => ({
@@ -72,7 +79,7 @@ export default async function DealsPage() {
           {canWrite ? (
             <DealDialog
               mode="create"
-              stages={pipeline.stages.map((s) => ({ id: s.id, name: s.name }))}
+              stages={pipeline.stages.map((s) => ({ id: s.id, name: label(s) }))}
               contacts={contacts}
               companies={companies}
               owners={owners}
@@ -84,7 +91,7 @@ export default async function DealsPage() {
         canWrite={canWrite}
         stages={pipeline.stages.map((s) => ({
           id: s.id,
-          name: s.name,
+          name: label(s),
           probability: s.probability,
           isWon: s.isWon,
           isLost: s.isLost,

@@ -10,7 +10,17 @@ const { unscopedMock, getFreshTokensMock } = vi.hoisted(() => ({
       updateMany: vi.fn(async () => ({ count: 0 })),
     },
     eventAttendee: { createMany: vi.fn() },
-    calendarSyncState: { upsert: vi.fn(), update: vi.fn(), findFirst: vi.fn() },
+    calendarSyncState: {
+      upsert: vi.fn(),
+      update: vi.fn(),
+      updateMany: vi.fn(async () => ({ count: 1 })),
+      findFirst: vi.fn(),
+    },
+    // Writes run in a transaction that first locks the owner's membership and
+    // the connection; here the owner is a current member with a usable
+    // connection (the revocation cases are in calendar-membership-revocation).
+    $transaction: vi.fn(async (fn: (tx: unknown) => unknown) => fn(unscopedMock)),
+    $queryRaw: vi.fn(async () => [{ role: "MEMBER", id: "conn-1" }]),
   },
   getFreshTokensMock: vi.fn(async () => ({
     accessToken: "mock-access-token",
@@ -25,6 +35,15 @@ vi.mock("@/server/db/tenant", () => ({
 vi.mock("@/server/services/calendar-connections", () => ({
   getFreshTokens: getFreshTokensMock,
   markConnectionStatus: vi.fn(async () => undefined),
+  isCalendarMember: vi.fn(async () => true),
+  ConnectionError: class ConnectionError extends Error {
+    constructor(
+      message: string,
+      readonly code: string,
+    ) {
+      super(message);
+    }
+  },
 }));
 
 import {

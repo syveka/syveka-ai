@@ -9,6 +9,8 @@
     "search": "Search",
     "loading": "Loading…",
     "error": "Something went wrong",
+    "errorDescription": "This page could not be loaded. Please try again in a moment.",
+    "retry": "Try again",
     "confirm": "Confirm",
     "back": "Back",
     "next": "Next",
@@ -33,6 +35,71 @@
     "settings": "Settings",
     "businessDna": "Business DNA",
     "creatorStudio": "Creator Studio"
+  },
+  "settingsNav": {
+    "label": "Settings sections",
+    "profile": "Profile",
+    "organization": "Organization",
+    "members": "Members",
+    "businessDna": "Business DNA",
+    "integrations": "Integrations",
+    "billing": "Billing",
+    "auditLog": "Audit log"
+  },
+  "roles": {
+    "OWNER": "Owner",
+    "ADMIN": "Admin",
+    "MANAGER": "Manager",
+    "MEMBER": "Member",
+    "VIEWER": "Viewer"
+  },
+  "settingsProfile": {
+    "title": "Profile",
+    "email": "Email",
+    "name": "Name",
+    "language": "Language",
+    "timezone": "Timezone",
+    "saved": "Saved."
+  },
+  "settingsOrganization": {
+    "title": "Organization",
+    "workspace": "Workspace: {slug}",
+    "companyName": "Company name",
+    "businessId": "Business ID (Y-tunnus)",
+    "vatId": "VAT ID",
+    "aiInstructionsTitle": "AI instructions",
+    "aiInstructionsHelp": "Extra context every AI answer follows: tone of voice, key facts, dos and don'ts.",
+    "aiInstructionsPlaceholder": "We are a plumbing company in Tampere. Always mention our 24h emergency line…",
+    "saved": "Saved."
+  },
+  "settingsMembers": {
+    "title": "Team",
+    "inviteTitle": "Invite a team member",
+    "emailLabel": "Email address",
+    "emailPlaceholder": "colleague@company.fi",
+    "roleLabel": "Role",
+    "send": "Send invite",
+    "sending": "Sending…",
+    "invited": "Invitation sent.",
+    "remove": "Remove",
+    "removeLabel": "Remove {name}",
+    "changeRoleLabel": "Role for {name}",
+    "pending": "Invitation pending",
+    "errors": {
+      "invalid_input": "Check the email address and role.",
+      "already_member": "This person is already a member of the organization.",
+      "plan_limit": "Your plan doesn't allow more members right now: all seats are in use or the subscription needs attention. See Billing.",
+      "invite_failed": "The invitation could not be sent. Please try again."
+    }
+  },
+  "settingsAuditLog": {
+    "title": "Audit log",
+    "description": "Every sensitive change in this organization, retained per your plan.",
+    "filterLabel": "Filter by action",
+    "filterPlaceholder": "Filter by action (e.g. member.role_change)…",
+    "empty": "No entries.",
+    "timesShownIn": "Times are shown in {timeZone}.",
+    "details": "Changes"
   },
   "auth": {
     "login": "Log in",
@@ -135,7 +202,159 @@
       "upload_failed": "The file could not be uploaded.",
       "unsupported_file": "Use a PDF, DOCX or TXT file.",
       "file_too_large": "The file must be 25 MB or smaller.",
-      "invalid_document": "One of the attached files is unavailable."
+      "invalid_document": "One of the attached files is unavailable.",
+      "live_voice_session_active": "A voice conversation is active in this chat. End it before typing.",
+      "voice_session_ended": "The voice conversation has ended.",
+      "voice_turn_invalid": "That voice turn could not be answered. Please say it again.",
+      "voice_context_too_large": "This question needs more context than a voice conversation can use. End the voice conversation and ask it in the typed chat.",
+      "service_unavailable": "The service is temporarily unavailable. Please try again."
+    },
+    "voice": {
+      "record": "Record a voice message",
+      "stopRecording": "Stop and transcribe",
+      "cancel": "Cancel",
+      "recording": "Recording…",
+      "requesting": "Waiting for microphone permission…",
+      "transcribing": "Transcribing…",
+      "maxDuration": "Recording stops automatically after {seconds} seconds.",
+      "privacy": "Your recording is sent to our speech-to-text provider (OpenAI) only to create the text, and is not stored.",
+      "transcriptAdded": "Transcript added to the message box. Review it, then press Send.",
+      "recordingStarted": "Recording started.",
+      "recordingCancelled": "Recording cancelled.",
+      "dismiss": "Dismiss",
+      "listen": "Listen",
+      "stopListening": "Stop reading aloud",
+      "listenLabel": "Read this reply aloud",
+      "playbackErrors": {
+        "unsupported": "This browser can't read replies aloud.",
+        "no_voice": "This device has no voice for this language.",
+        "unknown_language": "The language of this reply couldn't be matched to a voice.",
+        "playback_failed": "The reply couldn't be read aloud."
+      },
+      "errors": {
+        "unsupported": "Voice input isn't supported in this browser. You can still type your message.",
+        "unsupported_format": "This browser can't record audio in a supported format. You can still type your message.",
+        "permission_denied": "Microphone access is blocked. Allow it in your browser's site settings, then try again.",
+        "no_microphone": "No microphone was found.",
+        "microphone_busy": "The microphone is in use by another app or unavailable. Try again.",
+        "too_short": "The recording was too short. Hold on a moment longer and try again.",
+        "too_large": "The recording is too large. Keep it under {seconds} seconds.",
+        "empty_transcript": "No speech was recognised. Try again closer to the microphone.",
+        "rate_limited": "Too many recordings in a short time. Wait a moment and try again.",
+        "quota_exceeded": "Monthly AI quota reached — upgrade your plan to continue.",
+        "not_allowed": "Your role can't use the AI chat.",
+        "session_expired": "Your session has expired. Sign in again.",
+        "unavailable": "Voice input is currently unavailable. You can still type your message.",
+        "timeout": "Transcription took too long. Please try again.",
+        "network_error": "Connection lost while transcribing. Please try again.",
+        "transcription_failed": "The recording couldn't be transcribed. Please try again.",
+        "daily_limit": "You've used today's {limit} voice transcriptions for this pilot. Try again tomorrow (Helsinki time) or type your message."
+      }
+    },
+    "live": {
+      "start": "Start voice conversation",
+      "introTitle": "Talk with Syveka",
+      "introMic": "Your microphone stays on while the conversation is active.",
+      "introAuto": "When you stop speaking, what you said is sent automatically and Syveka answers aloud.",
+      "introControl": "You can mute the microphone, stop a reply or end the conversation at any time.",
+      "introActions": "In a voice conversation Syveka can look things up and check calendar availability, but won't create, change, book or send anything. For that, end the conversation and ask in the chat.",
+      "introLanguage": "You can speak Finnish, English or Arabic, and switch between them. Syveka answers in the language you speak, read by this device's voice for that language; if there isn't one, that reply is shown as text.",
+      "introLimit": "A conversation lasts at most {minutes} minutes. It ends earlier when the first limit is reached: session time, today's turns or today's speaking time.",
+      "introDailyLimit": "Starting a conversation uses one of today's starts, even if you end it early.",
+      "introPrivacy": "Your speech is sent to our speech-to-text provider (OpenAI) only to create the text and is not stored by Syveka. Replies are read aloud by your device's voices; the text of the conversation is saved in the chat like typed messages.",
+      "confirm": "Start conversation",
+      "cancel": "Cancel",
+      "panelLabel": "Voice conversation",
+      "elapsed": "Time",
+      "remaining": "Session time left",
+      "mute": "Mute microphone",
+      "unmute": "Unmute microphone",
+      "stopReply": "Stop reply",
+      "end": "End conversation",
+      "dismiss": "Dismiss",
+      "state": {
+        "connecting": "Connecting…",
+        "listening": "Listening…",
+        "userSpeaking": "You're speaking…",
+        "processing": "Transcribing…",
+        "thinking": "Syveka is thinking…",
+        "speaking": "Syveka is speaking…",
+        "muted": "Microphone muted",
+        "ended": "Voice conversation ended."
+      },
+      "notices": {
+        "not_heard": "Didn't catch that. Please say it again.",
+        "no_voice": "This device has no voice for this reply's language, so it's shown as text. You can keep talking.",
+        "language_unknown": "This reply is shown as text because its language couldn't be matched to a voice. You can keep talking.",
+        "turn_too_long": "That was too long for one turn. Please say it in shorter parts.",
+        "speech_blocked": "Your browser didn't allow Syveka to speak. Tap \"Enable spoken replies\" to hear the reply; the conversation continues.",
+        "speech_failed": "The reply couldn't be played aloud; it is shown as text. Tap \"Enable spoken replies\" to try again."
+      },
+      "errors": {
+        "unsupported": "Voice conversation isn't supported in this browser. You can keep typing.",
+        "permission_denied": "Microphone access is blocked. Allow it in your browser's site settings, then try again.",
+        "no_microphone": "No microphone was found.",
+        "microphone_busy": "The microphone is in use by another app or unavailable. Try again.",
+        "not_enabled": "Voice conversation isn't available for your account.",
+        "limit_reached": "Today's voice conversation limit has been reached. You can keep typing.",
+        "capacity_reached": "Another voice conversation is already running in your organization. Try again later.",
+        "session_expired": "The voice conversation reached its time limit and ended.",
+        "unavailable": "Voice conversation is currently unavailable. You can keep typing.",
+        "network_error": "The connection was lost, so the voice conversation ended. Start again when you're ready.",
+        "ended_elsewhere": "The voice conversation continued in another tab.",
+        "reply_failed": "Syveka couldn't answer that. Keep talking or end the conversation.",
+        "daily_sessions_used": "All of today's voice conversation starts have been used. They renew at {time} Helsinki time. You can keep typing.",
+        "daily_turns_used": "All of today's voice turns have been used. They renew at {time} Helsinki time. You can keep typing.",
+        "daily_audio_used": "Today's voice speaking time has been used. It renews at {time} Helsinki time. You can keep typing.",
+        "session_turns_used": "This conversation reached its maximum number of turns and ended. You can keep typing.",
+        "rate_limited": "Too many voice requests in a short time. Wait a moment and try again."
+      },
+      "voiceChecking": "Checking voices…",
+      "voiceUnavailable": "This device has no voice for this language, so Syveka can't answer aloud. You can talk and read the replies, or use dictation instead.",
+      "voiceUnknown": "Your device didn't list its voices yet. If you don't hear replies, end the conversation and start again with text replies.",
+      "startTextOnly": "Start with text replies",
+      "useDictation": "Use dictation instead",
+      "textOnlyHint": "Replies are shown as text only.",
+      "enableSpeech": "Enable spoken replies",
+      "allowanceTitle": "Left today for your organization",
+      "allowanceLoading": "Checking today's allowance…",
+      "allowanceUnknown": "Today's allowance can't be shown right now. The limits still apply.",
+      "allowanceStarts": "{count, plural, =0 {No conversation starts} one {# conversation start} other {# conversation starts}}",
+      "allowanceTurns": "{count, plural, =0 {No turns} one {# turn} other {# turns}} (each time you speak counts as one, even if it isn't understood)",
+      "allowanceAudio": "Speaking time:",
+      "allowanceRenews": "Renews at {time} Helsinki time. These are pilot limits, not paid credits.",
+      "turnsLeft": "Turns left:",
+      "audioLeft": "Speaking time left today:",
+      "unknown": "unknown"
+    },
+    "actions": {
+      "title": "Confirm this action",
+      "createContact": "Create contact {name}",
+      "logNote": "Add a note to {contact}: {subject}",
+      "logTask": "Add a task for {contact}: {subject}",
+      "bookMeeting": "Book “{title}” on {when} ({minutes} min)",
+      "withContact": "With {contact}",
+      "email": "Email: {value}",
+      "phone": "Phone: {value}",
+      "dueAt": "Due {when}",
+      "content": "Text to be saved:",
+      "nothingYet": "Nothing is created or changed until you confirm.",
+      "confirm": "Confirm",
+      "confirming": "Confirming…",
+      "cancel": "Cancel",
+      "result": {
+        "done": "Done.",
+        "canceled": "Canceled. Nothing was changed.",
+        "slotTaken": "That time is no longer free. Nothing was booked.",
+        "expired": "This request expired. Ask Syveka again.",
+        "alreadyDecided": "This action was already handled.",
+        "permission": "You don't have permission to do this.",
+        "failed": "It couldn't be completed. Try again or do it manually.",
+        "pending": "Waiting for your confirmation.",
+        "submitting": "Confirming…",
+        "unavailable": "This request is no longer available. No result was recorded for it.",
+        "unknown": "The result couldn't be confirmed. Check your records before asking again."
+      }
     }
   },
   "publicAssistant": {
@@ -288,7 +507,15 @@
     "lostBadge": "Lost",
     "closedLabel": "Closed",
     "generateInsights": "AI insights",
-    "generatingInsights": "Analyzing…"
+    "generatingInsights": "Analyzing…",
+    "defaultStages": {
+      "newLead": "New lead",
+      "contacted": "Contacted",
+      "proposal": "Proposal",
+      "negotiation": "Negotiation",
+      "won": "Won",
+      "lost": "Lost"
+    }
   },
   "voice": {
     "title": "Voice AI",
@@ -471,8 +698,10 @@
       "collectPhone": "Ask for phone",
       "collectCompany": "Ask for company",
       "confirmationMessage": "Confirmation message",
-      "slugTaken": "This URL slug is already in use"
-    }
+      "slugTaken": "This URL slug is already in use",
+      "ownerNotMember": "This booking type's owner is no longer a member, so it can't be activated."
+    },
+    "connectCalendarLink": "Connect calendar"
   },
   "notifications": {
     "title": "Notifications",
@@ -580,6 +809,7 @@
     "current": "Current plan",
     "choosePlan": "Choose plan",
     "perUserMonth": "user/mo",
+    "intervalLabel": "Billing interval",
     "interval": {
       "monthly": "Monthly",
       "annual": "Annual (2 months free)"
@@ -590,6 +820,15 @@
       "contacts": "Contacts",
       "storage": "Knowledge base (MB)",
       "seats": "Seats"
+    },
+    "features": {
+      "aiMessages": "{count} AI messages/mo, shared by your team",
+      "voice": "{assistants, plural, one {{assistantsText} voice assistant} other {{assistantsText} voice assistants}} · {minutes} min",
+      "knowledgeBase": "{gb} GB knowledge base",
+      "workflows": "{count} workflows",
+      "contacts": "{count} contacts",
+      "apiWebhooks": "API + webhooks",
+      "auditRetention": "{years, plural, one {{yearsText} year} other {{yearsText} years}} of audit log history"
     }
   },
   "booking": {
@@ -1092,15 +1331,21 @@
     "startFree": "Start free",
     "pricing": "Pricing",
     "pricingTitle": "Pricing",
-    "pricingSubtitle": "Per user / month + VAT. 14-day free Pro trial.",
+    "pricingSubtitle": "Prices per user per month, excluding VAT.",
     "planSeats": "{count} seats",
-    "planAiMessages": "{count} AI messages/mo",
-    "planAiMessagesPerUser": "{count} AI messages per user/mo",
+    "planAiMessages": "{count} AI messages/mo, shared by your team",
     "planVoiceMinutes": "Voice AI: {minutes} min",
     "planVoiceNone": "Voice AI: —",
     "getStarted": "Get started",
     "enterprise": "Enterprise:",
     "footerPrivacy": "Privacy",
     "footerTerms": "Terms"
+  },
+  "onboarding": {
+    "title": "Create your organization",
+    "description": "This is your workspace in Syveka — you can invite your team next.",
+    "companyName": "Company name",
+    "businessId": "Business ID / Y-tunnus (optional)",
+    "industry": "Industry"
   }
 }

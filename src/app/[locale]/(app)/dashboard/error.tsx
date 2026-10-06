@@ -1,12 +1,22 @@
 "use client";
 
+import { useEffect } from "react";
 import { AlertCircle } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { reportBoundaryError } from "@/lib/observability/client";
 
-export default function DashboardError({ reset }: { error: Error; reset: () => void }) {
+export default function DashboardError({
+  error,
+  reset,
+}: {
+  error: Error & { digest?: string };
+  reset: () => void;
+}) {
   const t = useTranslations("dashboard");
+
+  useEffect(() => reportBoundaryError(error), [error]);
 
   return (
     <Card role="alert">

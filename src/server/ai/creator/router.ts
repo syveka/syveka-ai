@@ -23,10 +23,38 @@ const PROVIDERS: Record<CreatorMediaProviderName, () => CreatorMediaProvider> = 
 let mediaProviderSingleton: CreatorMediaProvider | null = null;
 let resolvedProviderName: CreatorMediaProviderName | null = null;
 
+/**
+ * No real media provider can run. Thrown before any credit is reserved: every
+ * generation resolves its provider first, since the credit cost depends on it.
+ * The message is shown to customers, so it names no configuration.
+ */
+export class CreatorMediaProviderUnavailableError extends Error {
+  readonly code = "media_provider_not_configured";
+
+  constructor() {
+    super("Media generation is temporarily unavailable.");
+    this.name = "CreatorMediaProviderUnavailableError";
+  }
+}
+
+/**
+ * Production never serves mock media (which still costs credits): a missing
+ * FAL_API_KEY fails closed, and so does a CREATOR_MEDIA_PROVIDER=mock pin. A
+ * stray pin then surfaces as an error instead of silently serving placeholders
+ * or being silently ignored. Outside production the mock pin and the mock
+ * fallback still work. A `fal` pin without a key fails closed everywhere
+ * instead of failing after credits are reserved.
+ */
 function resolveMediaProviderName(): CreatorMediaProviderName {
   const pinned = process.env.CREATOR_MEDIA_PROVIDER as CreatorMediaProviderName | undefined;
-  if (pinned && pinned in PROVIDERS) return pinned;
-  return isFalConfigured() ? "fal" : "mock";
+  const production = process.env.NODE_ENV === "production";
+  if (pinned === "mock") {
+    if (production) throw new CreatorMediaProviderUnavailableError();
+    return "mock";
+  }
+  if (isFalConfigured()) return "fal";
+  if (pinned === "fal" || production) throw new CreatorMediaProviderUnavailableError();
+  return "mock";
 }
 
 export function getRoutedCreatorMediaProvider(): CreatorMediaProvider {

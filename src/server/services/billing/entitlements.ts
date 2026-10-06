@@ -29,7 +29,8 @@ export const METRIC_TO_PLAN_LIMIT_KEY: Record<
   Exclude<keyof PlanLimits, "apiAccess">
 > = {
   MAX_SEATS: "maxSeats",
-  AI_MESSAGES_PER_USER_MONTH: "aiMessagesPerUserMonth",
+  // The stored metric keeps its historical name; it grants pooled messages.
+  AI_MESSAGES_PER_USER_MONTH: "aiMessagesPerOrgMonth",
   VOICE_ASSISTANTS: "voiceAssistants",
   VOICE_MINUTES_MONTH: "voiceMinutesMonth",
   KB_STORAGE_MB: "kbStorageMb",
@@ -90,6 +91,15 @@ export class EntitlementError extends Error {
 
 const CACHE_TTL_SECONDS = 60;
 
+/**
+ * Versioned: a cached object from before a field rename would lack the new
+ * field, and a missing limit compares as "never reached". Bump the version
+ * whenever PlanLimits' fields change.
+ */
+export function entitlementsCacheKey(orgId: string): string {
+  return `ent:v2:${orgId}`;
+}
+
 /** Subscription statuses that keep the stored plan's limits. */
 const PAYING_STATUSES: ReadonlySet<string> = new Set(["ACTIVE", "TRIALING", "PAST_DUE"]);
 
@@ -106,7 +116,7 @@ const PAYING_STATUSES: ReadonlySet<string> = new Set(["ACTIVE", "TRIALING", "PAS
  * truth stays exactly what Stripe (or the FREE default) says it is.
  */
 export async function getEntitlements(orgId: string): Promise<Entitlements> {
-  const cacheKey = `ent:${orgId}`;
+  const cacheKey = entitlementsCacheKey(orgId);
   const cached = await redis.get<Entitlements>(cacheKey);
   if (cached) return cached;
 
@@ -148,7 +158,7 @@ export async function getEntitlements(orgId: string): Promise<Entitlements> {
 }
 
 export async function invalidateEntitlements(orgId: string): Promise<void> {
-  await redis.del(`ent:${orgId}`);
+  await redis.del(entitlementsCacheKey(orgId));
 }
 
 /** Current-month usage for a metric (rolled up nightly + live tail). */
@@ -187,7 +197,7 @@ export async function recordUsage(
 export async function assertWithinLimit(
   orgId: string,
   check:
-    | { kind: "ai_messages"; userMonthCount: number }
+    | { kind: "ai_messages"; orgMonthCount: number }
     | { kind: "voice_minutes" }
     | { kind: "contacts"; current: number }
     | { kind: "workflows"; active: number }
@@ -201,8 +211,8 @@ export async function assertWithinLimit(
 
   switch (check.kind) {
     case "ai_messages":
-      if (check.userMonthCount >= ent.aiMessagesPerUserMonth) {
-        throw new EntitlementError("aiMessagesPerUserMonth", "Monthly AI message quota reached.");
+      if (check.orgMonthCount >= ent.aiMessagesPerOrgMonth) {
+        throw new EntitlementError("aiMessagesPerOrgMonth", "Monthly AI message quota reached.");
       }
       break;
     case "voice_minutes": {

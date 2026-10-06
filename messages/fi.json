@@ -9,6 +9,8 @@
     "search": "Hae",
     "loading": "Ladataan…",
     "error": "Jokin meni pieleen",
+    "errorDescription": "Tätä sivua ei voitu ladata. Yritä hetken kuluttua uudelleen.",
+    "retry": "Yritä uudelleen",
     "confirm": "Vahvista",
     "back": "Takaisin",
     "next": "Seuraava",
@@ -33,6 +35,71 @@
     "settings": "Asetukset",
     "businessDna": "Yrityksen DNA",
     "creatorStudio": "Creator Studio"
+  },
+  "settingsNav": {
+    "label": "Asetusten osiot",
+    "profile": "Profiili",
+    "organization": "Organisaatio",
+    "members": "Jäsenet",
+    "businessDna": "Yrityksen DNA",
+    "integrations": "Integraatiot",
+    "billing": "Laskutus",
+    "auditLog": "Tapahtumaloki"
+  },
+  "roles": {
+    "OWNER": "Omistaja",
+    "ADMIN": "Ylläpitäjä",
+    "MANAGER": "Esihenkilö",
+    "MEMBER": "Jäsen",
+    "VIEWER": "Katselija"
+  },
+  "settingsProfile": {
+    "title": "Profiili",
+    "email": "Sähköposti",
+    "name": "Nimi",
+    "language": "Kieli",
+    "timezone": "Aikavyöhyke",
+    "saved": "Tallennettu."
+  },
+  "settingsOrganization": {
+    "title": "Organisaatio",
+    "workspace": "Työtila: {slug}",
+    "companyName": "Yrityksen nimi",
+    "businessId": "Y-tunnus",
+    "vatId": "ALV-tunniste",
+    "aiInstructionsTitle": "Tekoälyn ohjeet",
+    "aiInstructionsHelp": "Lisätietoa, jota jokainen tekoälyn vastaus noudattaa: äänensävy, keskeiset faktat sekä tehtävät ja kiellot.",
+    "aiInstructionsPlaceholder": "Olemme LVI-yritys Tampereella. Mainitse aina 24h-päivystysnumeromme…",
+    "saved": "Tallennettu."
+  },
+  "settingsMembers": {
+    "title": "Tiimi",
+    "inviteTitle": "Kutsu tiimin jäsen",
+    "emailLabel": "Sähköpostiosoite",
+    "emailPlaceholder": "kollega@yritys.fi",
+    "roleLabel": "Rooli",
+    "send": "Lähetä kutsu",
+    "sending": "Lähetetään…",
+    "invited": "Kutsu lähetetty.",
+    "remove": "Poista",
+    "removeLabel": "Poista {name}",
+    "changeRoleLabel": "Käyttäjän {name} rooli",
+    "pending": "Kutsu odottaa",
+    "errors": {
+      "invalid_input": "Tarkista sähköpostiosoite ja rooli.",
+      "already_member": "Henkilö on jo organisaation jäsen.",
+      "plan_limit": "Tilauksesi ei salli lisää jäseniä juuri nyt: kaikki käyttäjäpaikat ovat käytössä tai tilaus vaatii toimenpiteitä. Katso Laskutus.",
+      "invite_failed": "Kutsua ei voitu lähettää. Yritä uudelleen."
+    }
+  },
+  "settingsAuditLog": {
+    "title": "Tapahtumaloki",
+    "description": "Kaikki organisaation arkaluonteiset muutokset, säilytetään tilauksesi mukaisesti.",
+    "filterLabel": "Suodata toiminnon mukaan",
+    "filterPlaceholder": "Suodata toiminnon mukaan (esim. member.role_change)…",
+    "empty": "Ei merkintöjä.",
+    "timesShownIn": "Ajat näytetään aikavyöhykkeellä {timeZone}.",
+    "details": "Muutokset"
   },
   "auth": {
     "login": "Kirjaudu sisään",
@@ -135,7 +202,159 @@
       "upload_failed": "Tiedoston lataaminen epäonnistui.",
       "unsupported_file": "Käytä PDF-, DOCX- tai TXT-tiedostoa.",
       "file_too_large": "Tiedoston enimmäiskoko on 25 Mt.",
-      "invalid_document": "Yksi liitetyistä tiedostoista ei ole käytettävissä."
+      "invalid_document": "Yksi liitetyistä tiedostoista ei ole käytettävissä.",
+      "live_voice_session_active": "Puhekeskustelu on käynnissä. Lopeta se ennen kirjoittamista.",
+      "voice_session_ended": "Puhekeskustelu on päättynyt.",
+      "voice_turn_invalid": "Puheenvuoroon ei voitu vastata. Sano se uudelleen.",
+      "voice_context_too_large": "Tähän kysymykseen tarvitaan enemmän taustatietoa kuin puhekeskustelussa voidaan käyttää. Lopeta puhekeskustelu ja kysy kirjoittamalla.",
+      "service_unavailable": "Palvelu ei ole tilapäisesti käytettävissä. Yritä uudelleen."
+    },
+    "voice": {
+      "record": "Nauhoita ääniviesti",
+      "stopRecording": "Lopeta ja litteroi",
+      "cancel": "Peruuta",
+      "recording": "Nauhoitetaan…",
+      "requesting": "Odotetaan mikrofonin käyttölupaa…",
+      "transcribing": "Litteroidaan…",
+      "maxDuration": "Nauhoitus päättyy automaattisesti {seconds} sekunnin kohdalla.",
+      "privacy": "Nauhoitus lähetetään puheentunnistuspalvelullemme (OpenAI) vain tekstin luomista varten, eikä sitä tallenneta.",
+      "transcriptAdded": "Teksti lisättiin viestikenttään. Tarkista se ja paina Lähetä.",
+      "recordingStarted": "Nauhoitus alkoi.",
+      "recordingCancelled": "Nauhoitus peruttiin.",
+      "dismiss": "Sulje",
+      "listen": "Kuuntele",
+      "stopListening": "Lopeta ääneen lukeminen",
+      "listenLabel": "Lue vastaus ääneen",
+      "playbackErrors": {
+        "unsupported": "Tämä selain ei osaa lukea vastauksia ääneen.",
+        "no_voice": "Tässä laitteessa ei ole puheääntä tälle kielelle.",
+        "unknown_language": "Tämän vastauksen kieltä ei voitu yhdistää puheääneen.",
+        "playback_failed": "Vastausta ei voitu lukea ääneen."
+      },
+      "errors": {
+        "unsupported": "Tämä selain ei tue puhesyötettä. Voit silti kirjoittaa viestisi.",
+        "unsupported_format": "Tämä selain ei pysty nauhoittamaan tuettua äänimuotoa. Voit silti kirjoittaa viestisi.",
+        "permission_denied": "Mikrofonin käyttö on estetty. Salli se selaimen sivustoasetuksista ja yritä uudelleen.",
+        "no_microphone": "Mikrofonia ei löytynyt.",
+        "microphone_busy": "Mikrofoni on toisen sovelluksen käytössä tai ei käytettävissä. Yritä uudelleen.",
+        "too_short": "Nauhoitus oli liian lyhyt. Puhu hetki pidempään ja yritä uudelleen.",
+        "too_large": "Nauhoitus on liian suuri. Pidä se alle {seconds} sekunnin mittaisena.",
+        "empty_transcript": "Puhetta ei tunnistettu. Yritä uudelleen lähempänä mikrofonia.",
+        "rate_limited": "Liian monta nauhoitusta lyhyessä ajassa. Odota hetki ja yritä uudelleen.",
+        "quota_exceeded": "Kuukauden AI-kiintiö on käytetty — päivitä tilaus jatkaaksesi.",
+        "not_allowed": "Roolisi ei voi käyttää AI-keskustelua.",
+        "session_expired": "Istuntosi on vanhentunut. Kirjaudu uudelleen.",
+        "unavailable": "Puhesyöte ei ole juuri nyt käytettävissä. Voit silti kirjoittaa viestisi.",
+        "timeout": "Litterointi kesti liian kauan. Yritä uudelleen.",
+        "network_error": "Yhteys katkesi litteroinnin aikana. Yritä uudelleen.",
+        "transcription_failed": "Nauhoitusta ei voitu litteroida. Yritä uudelleen.",
+        "daily_limit": "Tämän pilotin {limit} päivittäistä puheen litterointia on käytetty. Yritä huomenna uudelleen (Suomen aikaa) tai kirjoita viestisi."
+      }
+    },
+    "live": {
+      "start": "Aloita puhekeskustelu",
+      "introTitle": "Keskustele Syvekan kanssa",
+      "introMic": "Mikrofoni on päällä koko keskustelun ajan.",
+      "introAuto": "Kun lopetat puhumisen, puheesi lähetetään automaattisesti ja Syveka vastaa ääneen.",
+      "introControl": "Voit mykistää mikrofonin, keskeyttää vastauksen tai lopettaa keskustelun milloin tahansa.",
+      "introActions": "Puhekeskustelussa Syveka voi hakea tietoja ja tarkistaa kalenterin vapaat ajat, mutta ei luo, muuta, varaa tai lähetä mitään. Lopeta silloin keskustelu ja pyydä sitä chatissa.",
+      "introLanguage": "Voit puhua suomea, englantia tai arabiaa ja vaihtaa kieltä kesken keskustelun. Syveka vastaa puhumallasi kielellä, ja vastauksen lukee laitteen puheääni kyseiselle kielelle; jos ääntä ei ole, vastaus näytetään tekstinä.",
+      "introLimit": "Keskustelu kestää enintään {minutes} minuuttia. Se päättyy aiemmin, kun jokin raja täyttyy ensin: keskustelun aika, päivän puheenvuorot tai päivän puheaika.",
+      "introDailyLimit": "Keskustelun aloittaminen käyttää yhden päivän aloituksista, vaikka lopettaisit sen aikaisin.",
+      "introPrivacy": "Puheesi lähetetään puheentunnistuspalvelullemme (OpenAI) vain tekstin luomista varten, eikä Syveka tallenna sitä. Vastaukset luetaan laitteesi puheäänillä; keskustelun teksti tallentuu chattiin kuten kirjoitetut viestit.",
+      "confirm": "Aloita keskustelu",
+      "cancel": "Peruuta",
+      "panelLabel": "Puhekeskustelu",
+      "elapsed": "Aika",
+      "remaining": "Keskusteluaikaa jäljellä",
+      "mute": "Mykistä mikrofoni",
+      "unmute": "Poista mikrofonin mykistys",
+      "stopReply": "Keskeytä vastaus",
+      "end": "Lopeta keskustelu",
+      "dismiss": "Sulje",
+      "state": {
+        "connecting": "Yhdistetään…",
+        "listening": "Kuunnellaan…",
+        "userSpeaking": "Puhut…",
+        "processing": "Litteroidaan…",
+        "thinking": "Syveka miettii…",
+        "speaking": "Syveka puhuu…",
+        "muted": "Mikrofoni mykistetty",
+        "ended": "Puhekeskustelu päättyi."
+      },
+      "notices": {
+        "not_heard": "En saanut selvää. Sano se uudelleen.",
+        "no_voice": "Tässä laitteessa ei ole puheääntä tämän vastauksen kielelle, joten se näytetään tekstinä. Voit jatkaa puhumista.",
+        "language_unknown": "Tämä vastaus näytetään tekstinä, koska sen kieltä ei voitu yhdistää puheääneen. Voit jatkaa puhumista.",
+        "turn_too_long": "Puheenvuoro oli liian pitkä. Sano asia lyhyemmissä osissa.",
+        "speech_blocked": "Selain ei sallinut Syvekan puhua. Kuule vastaus napauttamalla ”Ota puhutut vastaukset käyttöön”; keskustelu jatkuu.",
+        "speech_failed": "Vastausta ei voitu toistaa ääneen, joten se näytetään tekstinä. Yritä uudelleen napauttamalla ”Ota puhutut vastaukset käyttöön”."
+      },
+      "errors": {
+        "unsupported": "Tämä selain ei tue puhekeskustelua. Voit jatkaa kirjoittamalla.",
+        "permission_denied": "Mikrofonin käyttö on estetty. Salli se selaimen sivustoasetuksista ja yritä uudelleen.",
+        "no_microphone": "Mikrofonia ei löytynyt.",
+        "microphone_busy": "Mikrofoni on toisen sovelluksen käytössä tai ei käytettävissä. Yritä uudelleen.",
+        "not_enabled": "Puhekeskustelu ei ole käytettävissä tilillesi.",
+        "limit_reached": "Päivän puhekeskusteluraja on täynnä. Voit jatkaa kirjoittamalla.",
+        "capacity_reached": "Organisaatiossasi on jo käynnissä toinen puhekeskustelu. Yritä myöhemmin uudelleen.",
+        "session_expired": "Puhekeskustelu saavutti aikarajansa ja päättyi.",
+        "unavailable": "Puhekeskustelu ei ole juuri nyt käytettävissä. Voit jatkaa kirjoittamalla.",
+        "network_error": "Yhteys katkesi, joten puhekeskustelu päättyi. Aloita uudelleen, kun olet valmis.",
+        "ended_elsewhere": "Puhekeskustelu jatkui toisessa välilehdessä.",
+        "reply_failed": "Syveka ei pystynyt vastaamaan. Jatka puhumista tai lopeta keskustelu.",
+        "daily_sessions_used": "Päivän puhekeskustelujen aloitukset on käytetty. Ne uusiutuvat klo {time} Helsingin aikaa. Voit jatkaa kirjoittamalla.",
+        "daily_turns_used": "Päivän puheenvuorot on käytetty. Ne uusiutuvat klo {time} Helsingin aikaa. Voit jatkaa kirjoittamalla.",
+        "daily_audio_used": "Päivän puheaika on käytetty. Se uusiutuu klo {time} Helsingin aikaa. Voit jatkaa kirjoittamalla.",
+        "session_turns_used": "Tämä keskustelu saavutti puheenvuorojen enimmäismäärän ja päättyi. Voit jatkaa kirjoittamalla.",
+        "rate_limited": "Liian monta puhepyyntöä lyhyessä ajassa. Odota hetki ja yritä uudelleen."
+      },
+      "voiceChecking": "Tarkistetaan puheääniä…",
+      "voiceUnavailable": "Tässä laitteessa ei ole puheääntä tälle kielelle, joten Syveka ei voi vastata ääneen. Voit puhua ja lukea vastaukset tai käyttää sanelua.",
+      "voiceUnknown": "Laitteesi ei vielä kertonut puheääniään. Jos et kuule vastauksia, lopeta keskustelu ja aloita uudelleen tekstivastauksin.",
+      "startTextOnly": "Aloita tekstivastauksin",
+      "useDictation": "Käytä sanelua",
+      "textOnlyHint": "Vastaukset näytetään vain tekstinä.",
+      "enableSpeech": "Ota puhutut vastaukset käyttöön",
+      "allowanceTitle": "Organisaatiollasi jäljellä tänään",
+      "allowanceLoading": "Tarkistetaan päivän käyttörajoja…",
+      "allowanceUnknown": "Päivän käyttörajoja ei voida näyttää juuri nyt. Rajat ovat silti voimassa.",
+      "allowanceStarts": "{count, plural, =0 {Ei keskustelun aloituksia} one {# keskustelun aloitus} other {# keskustelun aloitusta}}",
+      "allowanceTurns": "{count, plural, =0 {Ei puheenvuoroja} one {# puheenvuoro} other {# puheenvuoroa}} (jokainen puhumasi kerta lasketaan, vaikkei sitä ymmärrettäisi)",
+      "allowanceAudio": "Puheaikaa:",
+      "allowanceRenews": "Uusiutuu klo {time} Helsingin aikaa. Nämä ovat kokeilun rajoja, eivät maksettuja krediittejä.",
+      "turnsLeft": "Puheenvuoroja jäljellä:",
+      "audioLeft": "Puheaikaa jäljellä tänään:",
+      "unknown": "ei tiedossa"
+    },
+    "actions": {
+      "title": "Vahvista toiminto",
+      "createContact": "Luo yhteystieto {name}",
+      "logNote": "Lisää muistiinpano yhteystiedolle {contact}: {subject}",
+      "logTask": "Lisää tehtävä yhteystiedolle {contact}: {subject}",
+      "bookMeeting": "Varaa ”{title}” {when} ({minutes} min)",
+      "withContact": "Osallistuja: {contact}",
+      "email": "Sähköposti: {value}",
+      "phone": "Puhelin: {value}",
+      "dueAt": "Määräaika {when}",
+      "content": "Tallennettava teksti:",
+      "nothingYet": "Mitään ei luoda tai muuteta ennen kuin vahvistat.",
+      "confirm": "Vahvista",
+      "confirming": "Vahvistetaan…",
+      "cancel": "Peruuta",
+      "result": {
+        "done": "Valmis.",
+        "canceled": "Peruttu. Mitään ei muutettu.",
+        "slotTaken": "Aika ei ole enää vapaana. Mitään ei varattu.",
+        "expired": "Pyyntö vanheni. Pyydä Syvekaa uudelleen.",
+        "alreadyDecided": "Tämä toiminto on jo käsitelty.",
+        "permission": "Sinulla ei ole oikeutta tähän.",
+        "failed": "Toimintoa ei voitu suorittaa. Yritä uudelleen tai tee se itse.",
+        "pending": "Odottaa vahvistustasi.",
+        "submitting": "Vahvistetaan…",
+        "unavailable": "Tämä pyyntö ei ole enää käytettävissä. Sille ei tallentunut tulosta.",
+        "unknown": "Tulosta ei voitu vahvistaa. Tarkista tiedot ennen kuin pyydät uudelleen."
+      }
     }
   },
   "publicAssistant": {
@@ -288,7 +507,15 @@
     "lostBadge": "Hävitty",
     "closedLabel": "Suljettu",
     "generateInsights": "AI-analyysi",
-    "generatingInsights": "Analysoidaan…"
+    "generatingInsights": "Analysoidaan…",
+    "defaultStages": {
+      "newLead": "Uusi liidi",
+      "contacted": "Yhteydenotto",
+      "proposal": "Tarjous",
+      "negotiation": "Neuvottelu",
+      "won": "Voitettu",
+      "lost": "Hävitty"
+    }
   },
   "voice": {
     "title": "Puheavustaja",
@@ -471,8 +698,10 @@
       "collectPhone": "Kysy puhelinnumero",
       "collectCompany": "Kysy yritys",
       "confirmationMessage": "Vahvistusviesti",
-      "slugTaken": "URL-tunnus on jo käytössä"
-    }
+      "slugTaken": "URL-tunnus on jo käytössä",
+      "ownerNotMember": "Tämän varaustyypin omistaja ei ole enää jäsen, joten sitä ei voi aktivoida."
+    },
+    "connectCalendarLink": "Yhdistä kalenteri"
   },
   "notifications": {
     "title": "Ilmoitukset",
@@ -580,6 +809,7 @@
     "current": "Nykyinen tilaus",
     "choosePlan": "Valitse tilaus",
     "perUserMonth": "käyttäjä/kk",
+    "intervalLabel": "Laskutusväli",
     "interval": {
       "monthly": "Kuukausittain",
       "annual": "Vuosittain (2 kk ilmaiseksi)"
@@ -590,6 +820,15 @@
       "contacts": "Kontaktit",
       "storage": "Tietopankki (Mt)",
       "seats": "Käyttäjäpaikat"
+    },
+    "features": {
+      "aiMessages": "{count} tekoälyviestiä / kk koko tiimille",
+      "voice": "{assistants, plural, one {{assistantsText} puheavustaja} other {{assistantsText} puheavustajaa}} · {minutes} min",
+      "knowledgeBase": "{gb} Gt tietopankki",
+      "workflows": "{count} työnkulkua",
+      "contacts": "{count} kontaktia",
+      "apiWebhooks": "API + webhookit",
+      "auditRetention": "Tapahtumaloki {yearsText} vuoden ajalta"
     }
   },
   "booking": {
@@ -1092,15 +1331,21 @@
     "startFree": "Aloita ilmaiseksi",
     "pricing": "Hinnoittelu",
     "pricingTitle": "Hinnoittelu",
-    "pricingSubtitle": "Hinnat / käyttäjä / kk + ALV. 14 päivän ilmainen Pro-kokeilu.",
+    "pricingSubtitle": "Hinnat / käyttäjä / kk + ALV.",
     "planSeats": "{count} käyttäjää",
-    "planAiMessages": "{count} AI-viestiä/kk",
-    "planAiMessagesPerUser": "{count} AI-viestiä / käyttäjä / kk",
+    "planAiMessages": "{count} AI-viestiä / kk koko tiimille",
     "planVoiceMinutes": "Puheavustaja: {minutes} min",
     "planVoiceNone": "Puheavustaja: —",
     "getStarted": "Aloita",
     "enterprise": "Suuryrityksille:",
     "footerPrivacy": "Tietosuoja",
     "footerTerms": "Käyttöehdot"
+  },
+  "onboarding": {
+    "title": "Luo organisaatiosi",
+    "description": "Tämä on työtilasi Syvekassa — voit kutsua tiimisi seuraavaksi.",
+    "companyName": "Yrityksen nimi",
+    "businessId": "Y-tunnus (valinnainen)",
+    "industry": "Toimiala"
   }
 }
