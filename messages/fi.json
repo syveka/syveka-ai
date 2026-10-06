@@ -822,7 +822,7 @@
       "seats": "Käyttäjäpaikat"
     },
     "features": {
-      "aiMessagesPerUser": "{count} tekoälyviestiä / käyttäjä / kk",
+      "aiMessages": "{count} tekoälyviestiä / kk koko tiimille",
       "voice": "{assistants, plural, one {{assistantsText} puheavustaja} other {{assistantsText} puheavustajaa}} · {minutes} min",
       "knowledgeBase": "{gb} Gt tietopankki",
       "workflows": "{count} työnkulkua",
@@ -1331,10 +1331,9 @@
     "startFree": "Aloita ilmaiseksi",
     "pricing": "Hinnoittelu",
     "pricingTitle": "Hinnoittelu",
-    "pricingSubtitle": "Hinnat / käyttäjä / kk + ALV. 14 päivän ilmainen Pro-kokeilu.",
+    "pricingSubtitle": "Hinnat / käyttäjä / kk + ALV.",
     "planSeats": "{count} käyttäjää",
-    "planAiMessages": "{count} AI-viestiä/kk",
-    "planAiMessagesPerUser": "{count} AI-viestiä / käyttäjä / kk",
+    "planAiMessages": "{count} AI-viestiä / kk koko tiimille",
     "planVoiceMinutes": "Puheavustaja: {minutes} min",
     "planVoiceNone": "Puheavustaja: —",
     "getStarted": "Aloita",

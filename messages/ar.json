@@ -822,7 +822,7 @@
       "seats": "المقاعد"
     },
     "features": {
-      "aiMessagesPerUser": "{count} رسالة ذكاء اصطناعي لكل مستخدم شهريًا",
+      "aiMessages": "{count} رسالة ذكاء اصطناعي شهريًا مشتركة للفريق",
       "voice": "{assistants, plural, zero {لا مساعدات صوتية} one {مساعد صوتي واحد} two {مساعدان صوتيان} few {{assistantsText} مساعدين صوتيين} many {{assistantsText} مساعدًا صوتيًا} other {{assistantsText} مساعد صوتي}} · {minutes} دقيقة",
       "knowledgeBase": "قاعدة معرفة بسعة {gb} غيغابايت",
       "workflows": "{count} مسارات عمل",
@@ -1331,10 +1331,9 @@
     "startFree": "ابدأ مجانًا",
     "pricing": "الأسعار",
     "pricingTitle": "الأسعار",
-    "pricingSubtitle": "الأسعار لكل مستخدم شهريًا، غير شاملة ضريبة القيمة المضافة. تجربة مجانية لخطة Pro لمدة 14 يومًا.",
+    "pricingSubtitle": "الأسعار لكل مستخدم شهريًا، غير شاملة ضريبة القيمة المضافة.",
     "planSeats": "عدد المستخدمين: {count}",
-    "planAiMessages": "رسائل الذكاء الاصطناعي شهريًا: {count}",
-    "planAiMessagesPerUser": "رسائل الذكاء الاصطناعي لكل مستخدم شهريًا: {count}",
+    "planAiMessages": "رسائل الذكاء الاصطناعي شهريًا للفريق بأكمله: {count}",
     "planVoiceMinutes": "المساعد الصوتي: {minutes} دقيقة",
     "planVoiceNone": "المساعد الصوتي: —",
     "getStarted": "ابدأ الآن",

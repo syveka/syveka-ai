@@ -17,7 +17,7 @@ import {
 } from "@/lib/billing/plan-catalog";
 
 type Limits = {
-  aiMessagesPerUser: number;
+  aiMessages: number;
   voiceAssistants: number;
   voiceMinutes: number;
   knowledgeBaseGb: number;
@@ -34,7 +34,7 @@ const PLANS: Array<{ plan: SelfServePlan; limits: Limits }> = SELF_SERVE_PLANS.m
   return {
     plan,
     limits: {
-      aiMessagesPerUser: l.aiMessagesPerUserMonth,
+      aiMessages: l.aiMessagesPerOrgMonth,
       voiceAssistants: l.voiceAssistants,
       voiceMinutes: l.voiceMinutesMonth,
       knowledgeBaseGb: l.kbStorageMb / 1_024,
@@ -52,7 +52,7 @@ export function PlanCards({ currentPlan }: { currentPlan: Plan }) {
   const n = (value: number) => formatCount(locale, value);
   const featureLines = (l: Limits) =>
     [
-      t("features.aiMessagesPerUser", { count: n(l.aiMessagesPerUser) }),
+      t("features.aiMessages", { count: n(l.aiMessages) }),
       t("features.voice", {
         assistants: l.voiceAssistants,
         assistantsText: n(l.voiceAssistants),

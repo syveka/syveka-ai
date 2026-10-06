@@ -142,8 +142,8 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   try {
-    const userMonthCount = await getMonthUsage(ctx.orgId, "AI_MESSAGES");
-    await assertWithinLimit(ctx.orgId, { kind: "ai_messages", userMonthCount });
+    const orgMonthCount = await getMonthUsage(ctx.orgId, "AI_MESSAGES");
+    await assertWithinLimit(ctx.orgId, { kind: "ai_messages", orgMonthCount });
   } catch (e) {
     if (e instanceof EntitlementError) {
       return NextResponse.json({ error: { code: e.code, limit: e.limit } }, { status: 402 });

@@ -13,7 +13,11 @@ import type { Plan } from "@/generated/prisma/client/client";
 
 export type PlanLimits = {
   maxSeats: number;
-  aiMessagesPerUserMonth: number;
+  /**
+   * AI messages per month for the whole organization: one shared pool,
+   * never multiplied by members or seats.
+   */
+  aiMessagesPerOrgMonth: number;
   voiceAssistants: number;
   voiceMinutesMonth: number;
   kbStorageMb: number;
@@ -29,7 +33,7 @@ export type PlanLimits = {
 export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
   FREE: {
     maxSeats: 2,
-    aiMessagesPerUserMonth: 25, // 50 per org / 2 seats
+    aiMessagesPerOrgMonth: 50,
     voiceAssistants: 0,
     voiceMinutesMonth: 0,
     kbStorageMb: 50,
@@ -41,7 +45,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
   },
   STARTER: {
     maxSeats: 10,
-    aiMessagesPerUserMonth: 1_000,
+    aiMessagesPerOrgMonth: 1_000,
     voiceAssistants: 1,
     voiceMinutesMonth: 100,
     kbStorageMb: 1_024,
@@ -53,7 +57,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
   },
   PRO: {
     maxSeats: 50,
-    aiMessagesPerUserMonth: 5_000,
+    aiMessagesPerOrgMonth: 5_000,
     voiceAssistants: 3,
     voiceMinutesMonth: 500,
     kbStorageMb: 10_240,
@@ -65,7 +69,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
   },
   ENTERPRISE: {
     maxSeats: Number.MAX_SAFE_INTEGER,
-    aiMessagesPerUserMonth: Number.MAX_SAFE_INTEGER,
+    aiMessagesPerOrgMonth: Number.MAX_SAFE_INTEGER,
     voiceAssistants: Number.MAX_SAFE_INTEGER,
     voiceMinutesMonth: Number.MAX_SAFE_INTEGER,
     kbStorageMb: Number.MAX_SAFE_INTEGER,
@@ -98,19 +102,14 @@ export const ANNUAL_BILLED_MONTHS = 10;
 /** The plan the public pricing page highlights. */
 export const HIGHLIGHTED_PLAN: PublicPlan = "PRO";
 
-/**
- * Plans whose AI messages are presented as one pooled monthly total
- * (allowance per user × seats) rather than per user.
- */
-export const POOLED_AI_MESSAGE_PLANS: ReadonlySet<PublicPlan> = new Set(["FREE"]);
-
 /** Which optional limits each in-app plan card lists (a display choice). */
 export const PLAN_CARD_EXTRAS: Record<
   SelfServePlan,
   { contacts: boolean; apiWebhooks: boolean; auditRetention: boolean }
 > = {
   STARTER: { contacts: true, apiWebhooks: false, auditRetention: false },
-  PRO: { contacts: false, apiWebhooks: true, auditRetention: true },
+  // apiWebhooks stays off until a public API exists (no route accepts API keys).
+  PRO: { contacts: false, apiWebhooks: false, auditRetention: true },
 };
 
 /** Displayed price per seat per month for a billing interval, rounded to whole euros. */

@@ -11,7 +11,7 @@ import { RevokeGrantButton } from "@/components/admin/revoke-grant-button";
 
 const METRIC_LABELS: Record<string, string> = {
   MAX_SEATS: "Seats",
-  AI_MESSAGES_PER_USER_MONTH: "AI messages / user / month",
+  AI_MESSAGES_PER_USER_MONTH: "AI messages / organization / month",
   VOICE_ASSISTANTS: "Voice assistants",
   VOICE_MINUTES_MONTH: "Voice minutes / month",
   KB_STORAGE_MB: "Knowledge base storage (MB)",

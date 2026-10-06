@@ -91,8 +91,8 @@ export async function POST(request: Request): Promise<Response> {
 
   // Every voice turn becomes a chat message; refuse once chat is out of quota.
   try {
-    const userMonthCount = await getMonthUsage(ctx.orgId, "AI_MESSAGES");
-    await assertWithinLimit(ctx.orgId, { kind: "ai_messages", userMonthCount });
+    const orgMonthCount = await getMonthUsage(ctx.orgId, "AI_MESSAGES");
+    await assertWithinLimit(ctx.orgId, { kind: "ai_messages", orgMonthCount });
   } catch (e) {
     if (e instanceof EntitlementError) return error(e.code, 402);
     throw e;
