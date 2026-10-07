@@ -850,6 +850,7 @@
     "confirmButton": "Vahvista varaus",
     "confirmedTitle": "Varaus vahvistettu",
     "confirmationEmailNote": "Vahvistussähköposti peruutus- ja siirtolinkkeineen on matkalla.",
+    "confirmationEmailFailedNote": "Varauksesi on vahvistettu, mutta vahvistussähköpostin lähettäminen epäonnistui. Voit hallita tai perua varauksesi alla olevasta linkistä.",
     "manageBooking": "Hallitse varausta",
     "errors": {
       "loadFailed": "Aikojen lataus epäonnistui",

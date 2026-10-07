@@ -10,21 +10,33 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * close that gap without touching the function itself.
  */
 
-const { unscopedPrismaMock, sendEmailMock, seenIdempotencyKeyMock } = vi.hoisted(() => ({
-  unscopedPrismaMock: {
-    booking: { findUnique: vi.fn() },
-    user: { findUnique: vi.fn() },
-    notification: { create: vi.fn(async () => ({})) },
-  },
-  sendEmailMock: vi.fn(async (_params: { to: string; subject: string; react: unknown }) => {
-    void _params;
-    return undefined;
-  }),
-  seenIdempotencyKeyMock: vi.fn(async (_key: string) => {
-    void _key;
-    return false;
-  }),
-}));
+const { unscopedPrismaMock, sendEmailMock, seenIdempotencyKeyMock, releaseMock, EmailSendError } =
+  vi.hoisted(() => ({
+    unscopedPrismaMock: {
+      booking: { findUnique: vi.fn() },
+      user: { findUnique: vi.fn() },
+      notification: { create: vi.fn(async () => ({})) },
+    },
+    sendEmailMock: vi.fn(async (_params: { to: string; subject: string; react: unknown }) => {
+      void _params;
+      return undefined;
+    }),
+    seenIdempotencyKeyMock: vi.fn(async (_key: string) => {
+      void _key;
+      return false;
+    }),
+    releaseMock: vi.fn(async (_key: string) => {
+      void _key;
+    }),
+    EmailSendError: class EmailSendError extends Error {
+      constructor(
+        readonly code: string,
+        message: string,
+      ) {
+        super(`Resend error: ${message}`);
+      }
+    },
+  }));
 
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: unscopedPrismaMock,
@@ -32,10 +44,12 @@ vi.mock("@/server/db/tenant", () => ({
 
 vi.mock("@/server/integrations/resend", () => ({
   sendEmail: sendEmailMock,
+  EmailSendError,
 }));
 
 vi.mock("@/server/integrations/redis", () => ({
   seenIdempotencyKey: seenIdempotencyKeyMock,
+  releaseIdempotencyKey: releaseMock,
 }));
 
 vi.mock("@/env", () => ({
@@ -80,33 +94,53 @@ function ownerRow(overrides: Record<string, unknown> = {}) {
 describe("sendBookingLifecycleNotifications", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.restoreAllMocks();
     seenIdempotencyKeyMock.mockResolvedValue(false);
     unscopedPrismaMock.booking.findUnique.mockResolvedValue(bookingRow());
     unscopedPrismaMock.user.findUnique.mockResolvedValue(ownerRow());
   });
 
-  it("CRITICAL: a retried/redelivered call for the same booking+kind is a full no-op (idempotency gate)", async () => {
+  it("CRITICAL: a retried/redelivered call whose parts were all delivered is a full no-op", async () => {
     seenIdempotencyKeyMock.mockResolvedValue(true);
 
-    await sendBookingLifecycleNotifications({ kind: "confirmation", bookingId: "booking-1" });
+    const result = await sendBookingLifecycleNotifications({
+      kind: "confirmation",
+      bookingId: "booking-1",
+    });
 
-    expect(seenIdempotencyKeyMock).toHaveBeenCalledWith("booking-notify:booking-1:confirmation");
+    expect(seenIdempotencyKeyMock).toHaveBeenCalledWith(
+      "booking-notify:booking-1:confirmation:guest",
+    );
+    expect(seenIdempotencyKeyMock).toHaveBeenCalledWith(
+      "booking-notify:booking-1:confirmation:owner",
+    );
+    expect(seenIdempotencyKeyMock).toHaveBeenCalledWith(
+      "booking-notify:booking-1:confirmation:in-app",
+    );
     expect(sendEmailMock).not.toHaveBeenCalled();
     expect(unscopedPrismaMock.notification.create).not.toHaveBeenCalled();
-    // The idempotency key must never have been consulted before the booking
-    // lookup - findUnique still runs (to resolve the key's own bookingId),
-    // but no side effect follows it.
-    expect(unscopedPrismaMock.user.findUnique).not.toHaveBeenCalled();
+    expect(result).toEqual({ guestEmail: "skipped" });
   });
 
-  it("the idempotency key is scoped to both bookingId AND kind - a different kind for the same booking is NOT suppressed", async () => {
-    seenIdempotencyKeyMock.mockImplementation(
-      async (key: string) => key === "booking-notify:booking-1:confirmation",
+  it("the claims are scoped to bookingId AND kind - a different kind for the same booking is NOT suppressed", async () => {
+    seenIdempotencyKeyMock.mockImplementation(async (key: string) =>
+      key.startsWith("booking-notify:booking-1:confirmation:"),
     );
 
     await sendBookingLifecycleNotifications({ kind: "cancellation", bookingId: "booking-1" });
 
     expect(sendEmailMock).toHaveBeenCalled();
+  });
+
+  it("each email carries its claim as the provider's Idempotency-Key", async () => {
+    await sendBookingLifecycleNotifications({ kind: "confirmation", bookingId: "booking-1" });
+
+    expect(sendEmailMock.mock.calls[0]![0]).toMatchObject({
+      idempotencyKey: "booking-notify:booking-1:confirmation:guest",
+    });
+    expect(sendEmailMock.mock.calls[1]![0]).toMatchObject({
+      idempotencyKey: "booking-notify:booking-1:confirmation:owner",
+    });
   });
 
   it("sends both the guest email and the owner email, plus one in-app notification, on a fresh call", async () => {
@@ -132,7 +166,7 @@ describe("sendBookingLifecycleNotifications", () => {
 
     await expect(
       sendBookingLifecycleNotifications({ kind: "confirmation", bookingId: "gone" }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ guestEmail: "skipped" });
     expect(sendEmailMock).not.toHaveBeenCalled();
   });
 
@@ -146,14 +180,90 @@ describe("sendBookingLifecycleNotifications", () => {
     expect(unscopedPrismaMock.notification.create).not.toHaveBeenCalled();
   });
 
-  it("a guest email send failure never throws or blocks the owner email (failures are swallowed)", async () => {
+  it("a guest email failure never throws or blocks the owner email, and is reported as failed", async () => {
     sendEmailMock.mockRejectedValueOnce(new Error("resend outage"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
 
-    await expect(
-      sendBookingLifecycleNotifications({ kind: "confirmation", bookingId: "booking-1" }),
-    ).resolves.toBeUndefined();
+    const result = await sendBookingLifecycleNotifications({
+      kind: "confirmation",
+      bookingId: "booking-1",
+    });
+
+    expect(result).toEqual({ guestEmail: "failed" });
     // Owner email (the second call) still attempted despite the first failing.
     expect(sendEmailMock).toHaveBeenCalledTimes(2);
+  });
+
+  it("a failed send gives back its claim, so a retry delivers it (only that part)", async () => {
+    sendEmailMock.mockRejectedValueOnce(new Error("resend outage"));
+    vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await sendBookingLifecycleNotifications({ kind: "confirmation", bookingId: "booking-1" });
+
+    expect(releaseMock).toHaveBeenCalledTimes(1);
+    expect(releaseMock).toHaveBeenCalledWith("booking-notify:booking-1:confirmation:guest");
+
+    // Retry: the owner email and in-app row are already claimed; the guest
+    // email's claim was released, so only the guest email is sent again.
+    const claimed = new Set([
+      "booking-notify:booking-1:confirmation:owner",
+      "booking-notify:booking-1:confirmation:in-app",
+    ]);
+    seenIdempotencyKeyMock.mockImplementation(async (key: string) => claimed.has(key));
+    sendEmailMock.mockClear();
+    unscopedPrismaMock.notification.create.mockClear();
+
+    const retry = await sendBookingLifecycleNotifications({
+      kind: "confirmation",
+      bookingId: "booking-1",
+    });
+
+    expect(retry).toEqual({ guestEmail: "sent" });
+    expect(sendEmailMock).toHaveBeenCalledTimes(1);
+    expect(sendEmailMock.mock.calls[0]![0]).toMatchObject({ to: "guest@example.com" });
+    expect(unscopedPrismaMock.notification.create).not.toHaveBeenCalled();
+  });
+
+  it("logs a failure with a reason code only: never the address, token or provider message", async () => {
+    sendEmailMock.mockRejectedValueOnce(
+      new EmailSendError(
+        "validation_error",
+        "You can only send testing emails to your own email address (owner@example.com).",
+      ),
+    );
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await sendBookingLifecycleNotifications({
+      kind: "confirmation",
+      bookingId: "booking-1",
+      manageToken: "tok_secret_123",
+    });
+
+    expect(log).toHaveBeenCalledTimes(1);
+    const line = String(log.mock.calls[0]![0]);
+    expect(JSON.parse(line)).toEqual({
+      event: "booking_notification_failed",
+      kind: "confirmation",
+      part: "guest_email",
+      bookingId: "booking-1",
+      reason: "provider:validation_error",
+    });
+    for (const secret of ["guest@example.com", "owner@example.com", "tok_secret_123", "testing"]) {
+      expect(line).not.toContain(secret);
+    }
+  });
+
+  it("a missing provider configuration is logged as provider_not_configured", async () => {
+    sendEmailMock.mockRejectedValueOnce(
+      new Error("Invalid Resend environment variables: RESEND_API_KEY"),
+    );
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await sendBookingLifecycleNotifications({ kind: "confirmation", bookingId: "booking-1" });
+
+    expect(JSON.parse(String(log.mock.calls[0]![0]))).toMatchObject({
+      reason: "provider_not_configured",
+    });
   });
 
   it("includes a manage URL built from the token only when manageToken is provided", async () => {

@@ -230,3 +230,11 @@ export async function seenIdempotencyKey(key: string): Promise<boolean> {
   const set = await redis.set(`idem:${key}`, "1", { nx: true, ex: 60 * 60 * 24 });
   return set === null;
 }
+
+/**
+ * Gives back a claim taken with seenIdempotencyKey() when the work it guarded
+ * failed, so a later retry can do it instead of being skipped as done.
+ */
+export async function releaseIdempotencyKey(key: string): Promise<void> {
+  await redis.del(`idem:${key}`);
+}

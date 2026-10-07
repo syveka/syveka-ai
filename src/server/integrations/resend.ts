@@ -11,6 +11,21 @@ function getResend(): Resend {
   return resend;
 }
 
+/**
+ * A send the provider rejected. `code` is Resend's error name (for example
+ * "validation_error" or "invalid_from_address"): safe to log, unlike the
+ * message, which can quote addresses.
+ */
+export class EmailSendError extends Error {
+  constructor(
+    readonly code: string,
+    message: string,
+  ) {
+    super(`Resend error: ${message}`);
+    this.name = "EmailSendError";
+  }
+}
+
 /** All outbound email goes through here (localized templates in /emails). */
 export async function sendEmail(params: {
   to: string | string[];
@@ -37,7 +52,9 @@ export async function sendEmail(params: {
     },
     params.idempotencyKey ? { idempotencyKey: params.idempotencyKey } : undefined,
   );
-  if (error || !data) throw new Error(`Resend error: ${error?.message ?? "unknown"}`);
+  if (error || !data) {
+    throw new EmailSendError(error?.name ?? "unknown", error?.message ?? "unknown");
+  }
   return { id: data.id };
 }
 

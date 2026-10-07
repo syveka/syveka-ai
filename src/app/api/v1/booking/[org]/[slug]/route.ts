@@ -43,8 +43,10 @@ export async function POST(
   try {
     const result = await createPublicBooking({ orgSlug: org, typeSlug: slug, input: parsed.data });
 
-    // Fire-and-forget side effects (never fail the booking).
-    await Promise.allSettled([
+    // Side effects never fail the booking, but the guest is told whether the
+    // confirmation email actually left (a retry of a failed send can still
+    // deliver it: its idempotency claim is released on failure).
+    const [notified] = await Promise.allSettled([
       sendBookingLifecycleNotifications({
         kind: "confirmation",
         bookingId: result.booking.id,
@@ -63,6 +65,9 @@ export async function POST(
       startsAt: result.booking.startsAt.toISOString(),
       endsAt: result.booking.endsAt.toISOString(),
       confirmationMessage: result.bookingType.confirmationMessage,
+      // "skipped" means the email was already claimed (sent or in flight).
+      confirmationEmailSent:
+        notified.status === "fulfilled" && notified.value.guestEmail !== "failed",
     });
   } catch (e) {
     if (e instanceof BookingError) {
