@@ -850,6 +850,7 @@
     "confirmButton": "Confirm booking",
     "confirmedTitle": "Booking confirmed",
     "confirmationEmailNote": "A confirmation email with cancellation and rescheduling links is on its way.",
+    "confirmationEmailFailedNote": "Your booking is confirmed, but we couldn't send the confirmation email. Use the link below to manage or cancel your booking.",
     "manageBooking": "Manage booking",
     "errors": {
       "loadFailed": "Could not load times",

@@ -55,6 +55,7 @@ export function BookingWidget({
     startsAt: string;
     manageToken: string;
     confirmationMessage: string | null;
+    confirmationEmailSent: boolean;
   } | null>(null);
 
   const loadSlots = useCallback(async () => {
@@ -142,6 +143,7 @@ export function BookingWidget({
         startsAt?: string;
         manageToken?: string;
         confirmationMessage?: string | null;
+        confirmationEmailSent?: boolean;
       };
       if (!res.ok || data.error) {
         setError(
@@ -161,6 +163,8 @@ export function BookingWidget({
         startsAt: data.startsAt!,
         manageToken: data.manageToken!,
         confirmationMessage: data.confirmationMessage ?? null,
+        // Older servers didn't report it; only an explicit false means unsent.
+        confirmationEmailSent: data.confirmationEmailSent !== false,
       });
     } catch {
       setError(t("errors.bookingFailed"));
@@ -184,7 +188,11 @@ export function BookingWidget({
           {confirmed.confirmationMessage ? (
             <p className="text-sm text-muted-foreground">{confirmed.confirmationMessage}</p>
           ) : null}
-          <p className="text-sm text-muted-foreground">{t("confirmationEmailNote")}</p>
+          <p className="text-sm text-muted-foreground">
+            {confirmed.confirmationEmailSent
+              ? t("confirmationEmailNote")
+              : t("confirmationEmailFailedNote")}
+          </p>
           <a
             href={`/booking/manage/${confirmed.manageToken}`}
             className="inline-block text-sm text-primary underline"
