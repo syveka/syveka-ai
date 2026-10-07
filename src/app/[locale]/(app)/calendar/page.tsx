@@ -4,7 +4,8 @@ import { getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";
 import { listEvents, listCalendarOwnerOptions } from "@/server/services/calendar";
-import { tenantDb } from "@/server/db/tenant";
+import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
+import { resolveDisplayTimeZone, toZonedWallTime } from "@/lib/date-time";
 import { eventFiltersSchema } from "@/lib/validators/calendar";
 import { CalendarView } from "@/components/calendar/calendar-view";
 import { Link } from "@/i18n/routing";
@@ -39,8 +40,21 @@ export default async function CalendarPage({
 
   const parsed = eventFiltersSchema.safeParse(sp);
   const filters = parsed.success ? parsed.data : eventFiltersSchema.parse({});
-  const anchorIso = filters.date ?? new Date().toISOString().slice(0, 10);
-  const range = rangeFor(filters.view, anchorIso);
+  // Events are placed and timed in the viewer's profile zone (the same rule
+  // as the audit log), so server and browser render identically.
+  const viewer = await unscopedPrisma.user.findUnique({
+    where: { id: ctx.userId },
+    select: { timezone: true },
+  });
+  const timeZone = resolveDisplayTimeZone(viewer?.timezone);
+  const anchorIso = filters.date ?? toZonedWallTime(new Date(), timeZone).slice(0, 10);
+  const utcRange = rangeFor(filters.view, anchorIso);
+  // Local days are up to ±14h from UTC days: widen the fetch by a day on each
+  // side so an event early or late in a local day isn't left out.
+  const range = {
+    from: new Date(utcRange.from.getTime() - 86_400_000),
+    to: new Date(utcRange.to.getTime() + 86_400_000),
+  };
 
   const canWrite = can(ctx.role, "calendar:write");
   const db = tenantDb(ctx.orgId);
@@ -97,6 +111,7 @@ export default async function CalendarPage({
         </div>
       </div>
       <CalendarView
+        timeZone={timeZone}
         view={filters.view}
         anchor={anchorIso}
         q={filters.q ?? ""}

@@ -9,6 +9,7 @@ import { Input } from "@/components/ui/input";
 import { EventDialog, type EventOptions } from "./event-dialog";
 import { AssistantPanel } from "./assistant-panel";
 import { cn } from "@/lib/utils";
+import { toZonedWallTime } from "@/lib/date-time";
 
 export type CalEvent = {
   id: string;
@@ -41,6 +42,7 @@ export function CalendarView({
   canWrite,
   canDelete,
   options,
+  timeZone,
 }: {
   view: View;
   anchor: string; // YYYY-MM-DD
@@ -49,6 +51,8 @@ export function CalendarView({
   canWrite: boolean;
   canDelete: boolean;
   options: EventOptions;
+  /** The viewer's profile zone (validated by the page): events are placed and timed in it. */
+  timeZone: string;
 }) {
   const locale = useLocale();
   const t = useTranslations("calendar");
@@ -60,7 +64,7 @@ export function CalendarView({
   const [search, setSearch] = useState(q);
 
   const anchorDate = new Date(`${anchor}T00:00:00Z`);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = toZonedWallTime(new Date(), timeZone).slice(0, 10);
 
   const setParams = (patch: Record<string, string | undefined>) => {
     const params = new URLSearchParams();
@@ -80,11 +84,12 @@ export function CalendarView({
   const eventsByDay = useMemo(() => {
     const map = new Map<string, CalEvent[]>();
     for (const e of visible) {
-      const key = e.startsAt.slice(0, 10);
+      // The local day in the viewer's zone, not the UTC date of the instant.
+      const key = toZonedWallTime(e.startsAt, timeZone).slice(0, 10);
       map.set(key, [...(map.get(key) ?? []), e]);
     }
     return map;
-  }, [visible]);
+  }, [visible, timeZone]);
 
   const headerLabel = new Intl.DateTimeFormat(locale, {
     ...(view === "month"
@@ -93,7 +98,11 @@ export function CalendarView({
     timeZone: "UTC",
   }).format(anchorDate);
 
-  const timeFmt = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" });
+  const timeFmt = new Intl.DateTimeFormat(locale, {
+    hour: "2-digit",
+    minute: "2-digit",
+    timeZone,
+  });
 
   return (
     <div className="space-y-3">
@@ -169,8 +178,8 @@ export function CalendarView({
         <AssistantPanel
           onPickSlot={(startIso, endIso) => {
             setAssistantOpen(false);
-            setPrefill({ startsAt: startIso.slice(0, 16), endsAt: endIso.slice(0, 16) });
-            setDialog({ date: startIso.slice(0, 10) });
+            setPrefill({ startsAt: startIso, endsAt: endIso });
+            setDialog({ date: toZonedWallTime(startIso, timeZone).slice(0, 10) });
           }}
         />
       ) : null}
@@ -181,6 +190,7 @@ export function CalendarView({
           eventsByDay={eventsByDay}
           today={today}
           locale={locale}
+          timeFmt={timeFmt}
           canWrite={canWrite}
           onDayClick={(day) => canWrite && setDialog({ date: day })}
           onEventClick={(e) => setDialog({ event: e })}
@@ -211,6 +221,7 @@ export function CalendarView({
           date={dialog.date}
           event={dialog.event}
           prefill={prefill}
+          timeZone={timeZone}
           canWrite={canWrite}
           canDelete={canDelete}
           options={options}
@@ -271,6 +282,7 @@ function MonthGrid({
   eventsByDay,
   today,
   locale,
+  timeFmt,
   canWrite,
   onDayClick,
   onEventClick,
@@ -279,6 +291,7 @@ function MonthGrid({
   eventsByDay: Map<string, CalEvent[]>;
   today: string;
   locale: string;
+  timeFmt: Intl.DateTimeFormat;
   canWrite: boolean;
   onDayClick: (day: string) => void;
   onEventClick: (e: CalEvent) => void;
@@ -286,7 +299,6 @@ function MonthGrid({
   const month = anchor.getUTCMonth();
   const weeks = buildMonthGrid(anchor.getUTCFullYear(), month);
   const weekdayFmt = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" });
-  const timeFmt = new Intl.DateTimeFormat(locale, { hour: "2-digit", minute: "2-digit" });
 
   return (
     <div className="grid grid-cols-7 overflow-hidden rounded-lg border text-sm">
