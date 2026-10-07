@@ -4,6 +4,8 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { getEntityEvents } from "@/server/services/calendar";
 import { Link } from "@/i18n/routing";
 import type { TenantContext } from "@/server/auth/session";
+import { unscopedPrisma } from "@/server/db/tenant";
+import { resolveDisplayTimeZone } from "@/lib/date-time";
 
 /**
  * Server component: meeting timeline for a CRM entity page
@@ -22,9 +24,18 @@ export async function EntityMeetings({
 }) {
   const t = await getTranslations("calendar");
   const locale = await getLocale();
-  const { upcoming, past } = await getEntityEvents(ctx, { contactId, companyId, dealId }, 5);
+  const [{ upcoming, past }, viewer] = await Promise.all([
+    getEntityEvents(ctx, { contactId, companyId, dealId }, 5),
+    unscopedPrisma.user.findUnique({ where: { id: ctx.userId }, select: { timezone: true } }),
+  ]);
 
-  const fmt = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
+  // In the viewer's profile zone, never the server's (UTC on Vercel), which
+  // printed a 09:00 Helsinki meeting as 06:00.
+  const fmt = new Intl.DateTimeFormat(locale, {
+    dateStyle: "medium",
+    timeStyle: "short",
+    timeZone: resolveDisplayTimeZone(viewer?.timezone),
+  });
 
   const renderRow = (e: (typeof upcoming)[number]) => (
     <li key={`${e.id}-${e.startsAt.toISOString()}`} className="flex items-start gap-2 py-1.5">
