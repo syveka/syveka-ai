@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isValidTimeZone, isZonelessWallTime, zonedWallTimeToUtc } from "@/lib/date-time";
 
 const optionalTrimmed = (max: number) =>
   z
@@ -52,6 +53,20 @@ export const eventSchema = z
         }
       }),
   })
+  .refine((v) => isValidTimeZone(v.timezone), {
+    message: "Unknown timezone",
+    path: ["timezone"],
+  })
+  // The editor posts wall-clock times ("2026-10-07T09:00") that name a time
+  // in the event's own timezone. Convert them to UTC instants here, so every
+  // caller stores and compares the instant the user meant -- not the wall
+  // time read in the server's zone. Values that already carry an offset or
+  // "Z" are instants and pass through.
+  .transform((v) => ({
+    ...v,
+    startsAt: toInstantIso(v.startsAt, v.timezone),
+    endsAt: toInstantIso(v.endsAt, v.timezone),
+  }))
   .refine((v) => !Number.isNaN(new Date(v.startsAt).getTime()), {
     message: "Invalid start",
     path: ["startsAt"],
@@ -60,6 +75,12 @@ export const eventSchema = z
     message: "End must be after start",
     path: ["endsAt"],
   });
+
+function toInstantIso(value: string, timeZone: string): string {
+  // An invalid zone is reported by the refinement above; never throw here.
+  if (!isZonelessWallTime(value) || !isValidTimeZone(timeZone)) return value;
+  return zonedWallTimeToUtc(value, timeZone).toISOString();
+}
 
 export type EventInput = z.infer<typeof eventSchema>;
 

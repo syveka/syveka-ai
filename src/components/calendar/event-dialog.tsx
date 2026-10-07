@@ -13,6 +13,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CalEvent } from "./calendar-view";
+import { toZonedWallTime } from "@/lib/date-time";
 
 export type EventOptions = {
   owners: Array<{ id: string; name: string }>;
@@ -45,6 +46,7 @@ export function EventDialog({
   date,
   event,
   prefill,
+  timeZone,
   canWrite,
   canDelete,
   options,
@@ -52,7 +54,10 @@ export function EventDialog({
 }: {
   date?: string;
   event?: CalEvent;
+  /** Instants (ISO) to start a new event from, e.g. a slot the assistant suggested. */
   prefill?: { startsAt: string; endsAt: string } | null;
+  /** The viewer's zone: the default for new events. */
+  timeZone: string;
   canWrite: boolean;
   canDelete: boolean;
   options: EventOptions;
@@ -74,10 +79,25 @@ export function EventDialog({
     () => Intl.DateTimeFormat().resolvedOptions().timeZone ?? "Europe/Helsinki",
     [],
   );
-  const timezones = useMemo(() => [...new Set([browserTz, ...COMMON_TIMEZONES])], [browserTz]);
+  const timezones = useMemo(
+    () => [...new Set([timeZone, browserTz, ...COMMON_TIMEZONES])],
+    [timeZone, browserTz],
+  );
 
-  const defaultStart = prefill?.startsAt ?? (event ? event.startsAt.slice(0, 16) : `${date}T09:00`);
-  const defaultEnd = prefill?.endsAt ?? (event ? event.endsAt.slice(0, 16) : `${date}T10:00`);
+  // The start/end inputs are wall-clock times in the event's own zone (the
+  // zone shown beside them), never the UTC instant's digits. The server
+  // converts them back with the same zone (eventSchema).
+  const eventZone = event?.timezone ?? timeZone;
+  const defaultStart = event
+    ? toZonedWallTime(event.startsAt, eventZone)
+    : prefill
+      ? toZonedWallTime(prefill.startsAt, eventZone)
+      : `${date}T09:00`;
+  const defaultEnd = event
+    ? toZonedWallTime(event.endsAt, eventZone)
+    : prefill
+      ? toZonedWallTime(prefill.endsAt, eventZone)
+      : `${date}T10:00`;
   const readOnly = !canWrite || event?.source === "VOICE_AI" || event?.source === "BOOKING";
 
   const initialAttendees = event?.attendees ?? [];
@@ -163,7 +183,7 @@ export function EventDialog({
                 <select
                   id="timezone"
                   name="timezone"
-                  defaultValue={event?.timezone ?? browserTz}
+                  defaultValue={eventZone}
                   disabled={readOnly}
                   className={selectClass}
                 >
@@ -336,7 +356,7 @@ export function EventDialog({
                 <ul className="mt-1 list-inside list-disc text-muted-foreground">
                   {state.conflicts?.map((c) => (
                     <li key={c.id}>
-                      {c.title} — {c.startsAt.slice(0, 16).replace("T", " ")}
+                      {c.title} — {toZonedWallTime(c.startsAt, eventZone).replace("T", " ")}
                     </li>
                   ))}
                 </ul>
