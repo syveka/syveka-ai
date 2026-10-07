@@ -34,11 +34,13 @@ describe("zonedWallTimeToUtc / toZonedWallTime", () => {
     expect(toZonedWallTime(instant, "Europe/Helsinki")).toBe("2026-03-29T04:30");
   });
 
-  it("an ambiguous time (clocks go back) resolves to the earlier instant", () => {
-    // Helsinki repeats 03:00-04:00 on 2026-10-25 (EEST, then EET).
+  it("a repeated time (clocks go back) takes the later occurrence, as availability slots do", () => {
+    // Helsinki repeats 03:00-04:00 on 2026-10-25 (EEST, then EET). The
+    // calendar's own zone math (also used for slots) picks the EET one.
     expect(zonedWallTimeToUtc("2026-10-25T03:30", "Europe/Helsinki").toISOString()).toBe(
-      "2026-10-25T00:30:00.000Z",
+      "2026-10-25T01:30:00.000Z",
     );
+    expect(toZonedWallTime("2026-10-25T00:30:00.000Z", "Europe/Helsinki")).toBe("2026-10-25T03:30");
     expect(toZonedWallTime("2026-10-25T01:30:00.000Z", "Europe/Helsinki")).toBe("2026-10-25T03:30");
   });
 
@@ -49,9 +51,12 @@ describe("zonedWallTimeToUtc / toZonedWallTime", () => {
       for (let t = start; t < Date.UTC(2027, 0, 1); t += 60 * 60_000) {
         const wall = toZonedWallTime(new Date(t), zone);
         const back = zonedWallTimeToUtc(wall, zone).getTime();
-        // Ambiguous walls map to the earlier instant, never a different wall.
+        // Every wall time round-trips to the same wall time, at one of its
+        // real occurrences (a repeated hour has two, an hour apart). Which
+        // one is the calendar zone math's choice: the later one east of UTC
+        // (Helsinki), the earlier one west of it (New York).
         expect(toZonedWallTime(new Date(back), zone)).toBe(wall);
-        expect(back === t || back === t - 3_600_000).toBe(true);
+        expect(Math.abs(back - t) === 0 || Math.abs(back - t) === 3_600_000).toBe(true);
       }
     },
     30_000,
