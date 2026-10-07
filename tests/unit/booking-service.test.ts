@@ -20,7 +20,7 @@ const {
     $queryRaw: vi.fn(async () => [{ role: "OWNER", id: "bt-1" }]),
     calendarEvent: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
     contact: { findFirst: vi.fn(), create: vi.fn() },
-    eventAttendee: { create: vi.fn() },
+    eventAttendee: { create: vi.fn(), findFirst: vi.fn() },
     booking: {
       create: vi.fn(),
       update: vi.fn(),
@@ -140,6 +140,7 @@ beforeEach(() => {
   txMock.contact.findFirst.mockResolvedValue(null);
   txMock.contact.create.mockResolvedValue({ id: "contact-new" });
   txMock.eventAttendee.create.mockResolvedValue({});
+  txMock.eventAttendee.findFirst.mockResolvedValue(null);
   txMock.bookingToken.updateMany.mockResolvedValue({ count: 1 }); // token claim succeeds by default
   txMock.booking.create.mockImplementation(async (args: { data: Record<string, unknown> }) => ({
     id: "bk-1",
@@ -199,6 +200,14 @@ describe("createPublicBooking", () => {
     });
     expect(result.booking.id).toBe("bk-1");
     expect(result.manageToken).toBe("raw-manage-token");
+    // The guest's contact is linked through the attendee row only (CRM
+    // Meetings finds it there); the event itself carries no duplicate link.
+    expect(txMock.calendarEvent.create).toHaveBeenCalledWith({
+      data: expect.not.objectContaining({ contactId: expect.anything() }),
+    });
+    expect(txMock.eventAttendee.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ contactId: expect.any(String) }),
+    });
     // The guest's manage link stays valid at least until the meeting ends.
     expect(issueTokenMock).toHaveBeenCalledWith("bk-1", "MANAGE", undefined, result.booking.endsAt);
     expect(txMock.calendarEvent.create).toHaveBeenCalledWith(
@@ -397,6 +406,31 @@ describe("rescheduleBookingViaToken", () => {
 
   // Tuesday 2026-02-03, 10:00 Helsinki = 08:00Z (winter).
   const NEW_START = "2026-02-03T08:00:00.000Z";
+
+  it("the moved meeting keeps the guest's CRM contact on its attendee (CRM Meetings)", async () => {
+    txMock.eventAttendee.findFirst.mockResolvedValueOnce({ contactId: "contact-guest" });
+
+    await rescheduleBookingViaToken("raw-token", NEW_START);
+
+    expect(txMock.eventAttendee.findFirst).toHaveBeenCalledWith({
+      where: { eventId: "evt-old", email: "guest@example.com" },
+      select: { contactId: true },
+    });
+    expect(txMock.eventAttendee.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ contactId: "contact-guest", email: "guest@example.com" }),
+    });
+    // The relationship stays on the attendee only, as for new bookings.
+    expect(txMock.calendarEvent.create).toHaveBeenCalledWith({
+      data: expect.not.objectContaining({ contactId: expect.anything() }),
+    });
+  });
+
+  it("a guest attendee without a contact stays without one", async () => {
+    await rescheduleBookingViaToken("raw-token", NEW_START);
+    expect(txMock.eventAttendee.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ contactId: null }),
+    });
+  });
 
   it("consumes the token INSIDE the same transaction as the mutation, before any write", async () => {
     const callOrder: string[] = [];
