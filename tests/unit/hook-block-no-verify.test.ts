@@ -4,7 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const HOOK_PATH = path.join(REPO_ROOT, ".claude", "hooks", "block-no-verify.mjs");
+// block-no-verify.mjs was folded into the always-on command-guard; these cases are kept as
+// regression coverage for that consolidation.
+const HOOK_PATH = path.join(REPO_ROOT, ".claude", "hooks", "command-guard.mjs");
 
 function runHook(command: string) {
   const result = spawnSync(process.execPath, [HOOK_PATH], {
@@ -14,7 +16,7 @@ function runHook(command: string) {
   return { status: result.status, stderr: result.stderr };
 }
 
-describe("block-no-verify guardrail", () => {
+describe("command-guard: legacy block-no-verify regression cases", () => {
   it("blocks git commit --no-verify", () => {
     const { status, stderr } = runHook('git commit --no-verify -m "msg"');
     expect(status).toBe(2);
@@ -53,8 +55,13 @@ describe("block-no-verify guardrail", () => {
   });
 
   it("allows a normal push", () => {
-    const { status } = runHook("git push origin main");
+    const { status } = runHook("git push origin feat/guardrails");
     expect(status).toBe(0);
+  });
+
+  it("denies a direct push to main (stricter than the original block-no-verify)", () => {
+    const { status } = runHook("git push origin main");
+    expect(status).toBe(2);
   });
 
   it("does not false-positive on a quoted commit message mentioning --no-verify", () => {
@@ -76,7 +83,7 @@ describe("block-no-verify guardrail", () => {
   });
 
   it("does not false-positive on git push -n (dry-run, not no-verify)", () => {
-    const { status } = runHook("git push -n origin main");
+    const { status } = runHook("git push -n origin feat/guardrails");
     expect(status).toBe(0);
   });
 

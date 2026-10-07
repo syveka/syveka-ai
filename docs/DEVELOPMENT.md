@@ -183,25 +183,60 @@ rule. Every UI string needs matching keys in all three `messages/*.json` files �
 
 ## 12. Agent guardrails
 
-Two repository-local Claude Code `PreToolUse` hooks (`.claude/hooks/block-no-verify.mjs`,
-`.claude/hooks/config-protection.mjs`, wired in `.claude/settings.json`) give CLAUDE.md §9's
-policy a technical backstop:
+Two always-on, repository-local Claude Code `PreToolUse` hooks give CLAUDE.md §9 a technical
+backstop. They are wired in `.claude/settings.json` and share parsing/path rules in
+`.claude/hooks/lib/`. Skills must not register their own guard hooks; policy lives in CLAUDE.md
+and enforcement lives here.
 
-- **`block-no-verify`** unconditionally blocks any agent command that bypasses git verification
-  hooks (`--no-verify`, `commit -n`, `-c core.hooksPath=`). There is no override — a genuinely
-  approved bypass must be run by a human directly, not the agent.
-- **`config-protection`** blocks agent `Edit`/`Write` access to security/quality-critical shared
-  config (ESLint/Prettier/tsconfig, CI workflows, `.claude/settings.json` and hooks, `CLAUDE.md`,
-  the CI verification scripts, and `package.json`'s required validation script entries).
+- **`command-guard`** (`Bash`, `PowerShell`, `Monitor`, `mcp__*`) parses each command, including
+  `bash -c`, `pwsh -Command`, `eval`/`Invoke-Expression`, `$(...)`, `npx`/`docker exec`
+  wrappers and inline `node -e`/`python -c` code.
+  - **Denied** (the agent may never run these): git verification-hook bypasses (`--no-verify`,
+    `commit -n`, `core.hooksPath`, `HUSKY=0`, inline aliases), force pushes, pushes to `main`,
+    Vercel production deploy/promote/rollback/`env pull`, remote database resets
+    (`supabase db reset --linked`, `prisma migrate reset`, `db push --accept-data-loss`),
+    reading `.env*` files, credential stores or secret environment variables, `gh auth token`,
+    encoded PowerShell, and shell writes to protected configuration.
+  - **Ask** (a human must approve this specific instance, even in auto mode): PR merge/approval,
+    workflow dispatch/rerun/cancel, mutating `gh api` calls, release/secret/repo-settings changes,
+    other Vercel/Supabase changes, migrations and `npm run db:*`, database clients, destructive
+    local git operations (`reset --hard`, `checkout --`, `clean -f`, branch/worktree deletion,
+    rebase), remote branch deletion, the staging-ops helpers, and destructive or write-SQL MCP tools.
+- **`config-protection`** (`Edit`, `Write`, `NotebookEdit`, `MultiEdit`, `Read`, `Grep`) denies
+  edits to `CLAUDE.md` (any directory), everything under `.claude/`, `.env*` (templates such as
+  `.env.example` excepted), ESLint/Prettier/TypeScript/Vitest/Playwright config, `.github/`, CI and
+  release-verification scripts, `vercel.json`, the guardrail tests, user-level Claude Code
+  settings, and `package.json`'s required validation script entries. It also denies `Read`/`Grep` of
+  secret files and credential stores.
 
-To make an intentional, reviewed change to one of these protected files, a human starts the
-session with:
+**Fail-safe.** Hooks are registered as `node "${CLAUDE_PROJECT_DIR}/.claude/hooks/<guard>.mjs" ||
+exit 2`: Claude Code treats any exit code other than 2 as non-blocking, so a missing or crashing
+guard blocks the call instead of silently allowing it. Malformed hook input is denied. An internal
+guard error blocks only security-sensitive calls, so a guard bug cannot lock out routine work. If
+a broken guard ever blocks everything, a human can fix or restore `.claude/hooks/` from their own
+terminal. The registration uses Bash syntax, so on Windows Claude Code needs Git Bash (as the
+Prettier hook already does).
+
+To make an intentional, reviewed change to protected configuration, a human starts the session
+with:
 
 ```
 SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT=1
 ```
 
 set in their own shell environment before launching Claude Code. The agent cannot set this
-itself. Only use it for a specific change you've already decided to make — it is not a general
-opt-out, and it has no effect on `block-no-verify`: git verification-hook bypasses remain
-unavailable to agents regardless of this variable.
+itself. Only use it for a specific change you've already decided to make. It unlocks
+protected-config writes only (through edit tools or the shell): it never unlocks secret reads,
+hook bypasses, force/main pushes, production deploys or any other `command-guard` denial.
+
+Some CLAUDE.md §9 actions that a human may authorize (force pushes, `prisma migrate reset`, Vercel
+production deploys) are **denied** to the agent rather than prompted: the human runs them directly
+(for example with the `!` prefix) after authorizing them. Everything in the **ask** list stays
+approvable inside the session.
+
+These hooks are pattern analysis, not a sandbox: scripts on disk, pre-existing git/gh aliases
+and deliberately obfuscated code can evade them. They complement the permission rules, branch
+protection and GitHub Environment approvals rather than replacing them. Known residual gaps:
+pre-existing git/gh aliases or push configuration, `git stash pop` of protected-file changes,
+and hosts where Claude Code runs hooks under PowerShell instead of Git Bash (the `|| exit 2`
+registration needs Bash).

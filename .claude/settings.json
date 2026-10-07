@@ -2,20 +2,20 @@
   "hooks": {
     "PreToolUse": [
       {
-        "matcher": "Bash|PowerShell",
+        "matcher": "^(Bash|PowerShell|Monitor|mcp__.*)$",
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/block-no-verify.mjs"
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/command-guard.mjs\" || exit 2"
           }
         ]
       },
       {
-        "matcher": "Edit|Write",
+        "matcher": "^(Edit|Write|MultiEdit|NotebookEdit|Read|Grep)$",
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/config-protection.mjs"
+            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/config-protection.mjs\" || exit 2"
           }
         ]
       }
