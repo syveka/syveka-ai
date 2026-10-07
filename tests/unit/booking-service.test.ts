@@ -199,6 +199,8 @@ describe("createPublicBooking", () => {
     });
     expect(result.booking.id).toBe("bk-1");
     expect(result.manageToken).toBe("raw-manage-token");
+    // The guest's manage link stays valid at least until the meeting ends.
+    expect(issueTokenMock).toHaveBeenCalledWith("bk-1", "MANAGE", undefined, result.booking.endsAt);
     expect(txMock.calendarEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({
         data: expect.objectContaining({ organizationId: "org-a", source: "BOOKING" }),
@@ -414,9 +416,16 @@ describe("rescheduleBookingViaToken", () => {
       return { count: 1 };
     });
 
-    await rescheduleBookingViaToken("raw-token", NEW_START);
+    const rescheduled = await rescheduleBookingViaToken("raw-token", NEW_START);
 
     expect(callOrder).toEqual(["consume-token", "re-fetch-status", "lock", "cancel-old-booking"]);
+    // The new link also lives until the moved meeting ends.
+    expect(issueTokenMock).toHaveBeenLastCalledWith(
+      rescheduled.booking.id,
+      "MANAGE",
+      undefined,
+      rescheduled.booking.endsAt,
+    );
   });
 
   it("rejects (whole transaction rolls back) when the token was already consumed by a concurrent request", async () => {

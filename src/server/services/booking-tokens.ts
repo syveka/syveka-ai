@@ -31,18 +31,26 @@ export class BookingTokenError extends Error {
   }
 }
 
+/**
+ * `validThrough` keeps a link alive at least until that instant (the
+ * booking's end): bookings can be made up to `maxWindowDays` ahead (365 at
+ * most), longer than the default TTL, and a guest's cancel/reschedule link
+ * must not expire before their meeting.
+ */
 export async function issueToken(
   bookingId: string,
   purpose: BookingTokenPurpose,
   ttlDays = TOKEN_TTL_DAYS,
+  validThrough?: Date,
 ): Promise<string> {
   const raw = generateRawToken();
+  const ttlExpiry = Date.now() + ttlDays * 86_400_000;
   await unscopedPrisma.bookingToken.create({
     data: {
       bookingId,
       tokenHash: hashToken(raw),
       purpose,
-      expiresAt: new Date(Date.now() + ttlDays * 86_400_000),
+      expiresAt: new Date(Math.max(ttlExpiry, validThrough?.getTime() ?? 0)),
     },
   });
   return raw;

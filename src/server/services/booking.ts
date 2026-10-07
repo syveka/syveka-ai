@@ -528,7 +528,12 @@ export async function createPublicBooking(params: {
     return { booking, event, contactId: matchedContact.id };
   });
 
-  const manageToken = await issueToken(created.booking.id, "MANAGE");
+  const manageToken = await issueToken(
+    created.booking.id,
+    "MANAGE",
+    undefined,
+    created.booking.endsAt,
+  );
 
   await audit(
     { orgId, userId: bookingType.ownerId },
@@ -873,7 +878,12 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
   // old booking - the token actually used above is already consumed
   // atomically by consumeTokenAtomic, inside the same transaction.
   await invalidateBookingTokens(oldBooking.id);
-  const manageToken = await issueToken(result.booking.id, "MANAGE");
+  const manageToken = await issueToken(
+    result.booking.id,
+    "MANAGE",
+    undefined,
+    result.booking.endsAt,
+  );
 
   await audit(
     { orgId, userId: bookingType.ownerId },
