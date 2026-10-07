@@ -21,6 +21,7 @@ import {
   hashToken,
   invalidateBookingTokens,
   issueToken,
+  TOKEN_TTL_DAYS,
   resolveToken,
 } from "@/server/services/booking-tokens";
 
@@ -57,6 +58,29 @@ describe("token generation", () => {
     expect(stored.tokenHash).toBe(hashToken(raw));
     expect(stored.tokenHash).not.toBe(raw);
     expect(stored.expiresAt.getTime()).toBeGreaterThan(Date.now());
+  });
+});
+
+describe("token lifetime", () => {
+  const DAY = 86_400_000;
+
+  it("a manage link for a meeting further out than the default TTL lives until the meeting ends", async () => {
+    bookingTokenMock.create.mockResolvedValue({});
+    // Booking pages accept bookings up to maxWindowDays ahead (60 by default,
+    // 365 at most): the guest's link must not expire before the meeting.
+    const meetingEnds = new Date(Date.now() + 60 * DAY);
+    await issueToken("bk-1", "MANAGE", undefined, meetingEnds);
+    const stored = bookingTokenMock.create.mock.calls[0]![0].data;
+    expect(stored.expiresAt.getTime()).toBe(meetingEnds.getTime());
+    expect(stored.expiresAt.getTime()).toBeGreaterThan(Date.now() + TOKEN_TTL_DAYS * DAY);
+  });
+
+  it("a meeting sooner than the default TTL keeps the default TTL", async () => {
+    bookingTokenMock.create.mockResolvedValue({});
+    const before = Date.now();
+    await issueToken("bk-1", "MANAGE", undefined, new Date(before + 2 * DAY));
+    const stored = bookingTokenMock.create.mock.calls[0]![0].data;
+    expect(stored.expiresAt.getTime()).toBeGreaterThanOrEqual(before + TOKEN_TTL_DAYS * DAY);
   });
 });
 
