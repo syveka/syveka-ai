@@ -835,9 +835,19 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
         source: "BOOKING",
       },
     });
+    // Keep the guest's CRM contact on the moved meeting: it is linked only
+    // through the attendee row (see createPublicBooking), so a successor
+    // attendee without it would drop the meeting from the contact's page.
+    const previousGuest = oldBooking.eventId
+      ? await tx.eventAttendee.findFirst({
+          where: { eventId: oldBooking.eventId, email: oldBooking.guestEmail },
+          select: { contactId: true },
+        })
+      : null;
     await tx.eventAttendee.create({
       data: {
         eventId: event.id,
+        contactId: previousGuest?.contactId ?? null,
         email: oldBooking.guestEmail,
         name: oldBooking.guestName,
         status: "ACCEPTED",

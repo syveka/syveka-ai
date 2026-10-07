@@ -461,7 +461,17 @@ export async function getEntityEvents(
   const now = new Date();
   const where: Prisma.CalendarEventWhereInput = {
     deletedAt: null,
-    ...(entity.contactId ? { contactId: entity.contactId } : {}),
+    // A contact's meetings: events linked to it directly (the editor's
+    // contact field) or through an attendee row (public bookings link the
+    // guest's contact only as an attendee). One row per event either way.
+    ...(entity.contactId
+      ? {
+          OR: [
+            { contactId: entity.contactId },
+            { attendeeRecords: { some: { contactId: entity.contactId } } },
+          ],
+        }
+      : {}),
     ...(entity.companyId ? { companyId: entity.companyId } : {}),
     ...(entity.dealId ? { dealId: entity.dealId } : {}),
   };
