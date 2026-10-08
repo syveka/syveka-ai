@@ -256,13 +256,27 @@ describe("command-guard: pushes", () => {
     expect(await bash(`git -C "${mainRepo}" push`, { cwd: featureRepo })).toBe("deny");
   });
 
+  // Pinned to a feature checkout: with no refspec, `git push --prune origin` also pushes the
+  // current branch, so its verdict depends on that branch (CI runs on main check out main).
   it("asks before deleting remote branches", async () => {
-    await expectAll(bash, "ask", [
+    await expectAll((command) => bash(command, { cwd: featureRepo }), "ask", [
       "git push origin :feat",
       "git push origin --delete feat",
       "git push -d origin feat",
       "git push --prune origin",
     ]);
+  });
+
+  it("denies deleting, pruning onto or force-pushing main from any checkout", async () => {
+    for (const cwd of [featureRepo, mainRepo]) {
+      await expectAll((command) => bash(command, { cwd }), "deny", [
+        "git push --delete origin main",
+        "git push origin :main",
+        "git push -f",
+        "git push --force-with-lease",
+      ]);
+    }
+    expect(await bash("git push --prune origin", { cwd: mainRepo })).toBe("deny");
   });
 });
 
