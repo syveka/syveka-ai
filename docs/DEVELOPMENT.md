@@ -240,3 +240,28 @@ protection and GitHub Environment approvals rather than replacing them. Known re
 pre-existing git/gh aliases or push configuration, `git stash pop` of protected-file changes,
 and hosts where Claude Code runs hooks under PowerShell instead of Git Bash (the `|| exit 2`
 registration needs Bash).
+
+## 13. Claude Code tooling
+
+Project plugins are enabled in `.claude/settings.json` (`enabledPlugins`) and come from
+Anthropic's official marketplace: `typescript-lsp` (code intelligence), `pr-review-toolkit`
+(review agents and `/review-pr`) and `frontend-design` (design guidance). None of them ships
+hooks, MCP servers or scripts, and their agents run under the §12 guardrails. User-level
+plugins that are unrelated to Syveka (`shopify-ai-toolkit`, `cli-anything`) are switched off
+for this project.
+
+`typescript-lsp` needs the language server on each developer machine (it is not an app
+dependency). Install pinned versions into a directory on `PATH`, for example:
+
+```
+npm install -g --ignore-scripts typescript-language-server@6.0.1 typescript@5.9.3
+```
+
+With nvm for Windows, global packages may land outside `PATH`; add
+`--prefix "%APPDATA%\npm"` in that case.
+
+**Warm-up:** the TypeScript server answers from a fast single-file "syntax server" until the
+full project is loaded, which takes roughly 35–60 seconds in this repository. During that
+window, cross-file go-to-definition and hover return only the local import (for example
+`import requirePermission`). This is expected: wait for diagnostics to appear, or retry after
+about a minute, before treating cross-file results as authoritative.
