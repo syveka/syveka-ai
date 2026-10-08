@@ -1234,7 +1234,49 @@ describe("command-guard: fourth independent review (round 4)", () => {
     const globs = Array.from({ length: 200 }, (_, i) => `src/*/*${i}*`).join(" ");
     const started = Date.now();
     expect(await bash(`git add ${globs}`)).toBe("deny");
-    expect(await bash(`ls ${globs}`)).toBe("allow");
+    // Beyond the glob budget a non-sensitive command asks instead of passing unchecked.
+    expect(await bash(`ls ${globs}`)).toBe("ask");
     expect(Date.now() - started).toBeLessThan(20_000);
+  });
+});
+
+describe("command-guard: fifth review follow-ups (round 5)", () => {
+  it("treats named PowerShell path parameters given a subexpression as computed", async () => {
+    await expectAll(pwsh, "deny", [
+      "Set-Content -Path (Join-Path .claude settings.json) -Value '{}'",
+      "Set-Content -Value x -Path (Join-Path . CLAUDE.md)",
+      "Set-Content -LiteralPath (Join-Path . CLAUDE.md) -Value x",
+    ]);
+  });
+
+  it("treats positional output files as writes", async () => {
+    await expectAll(bash, "deny", [
+      "uniq a.txt .mcp.json",
+      "split -l 1 x .claude/hooks/a",
+      "csplit -f .claude/hooks/a x 1",
+      "tar -cf CLAUDE.md src",
+      "echo 00 | xxd -r -p - CLAUDE.md",
+      "openssl enc -base64 -d -in x -out CLAUDE.md",
+      "base64 -d -o CLAUDE.md x",
+    ]);
+    await expectAll(bash, "allow", [
+      "uniq src/a.txt /tmp/out.txt",
+      "tar -tf bundle.tar",
+      "tar -cf /tmp/src.tar src",
+    ]);
+  });
+
+  it("does not let glob padding hide a read or write", async () => {
+    const pad = Array.from({ length: 45 }, (_, i) => `src/*/x${i}*`).join(" ");
+    expect(await bash(`ls ${pad}; cat .e*`)).not.toBe("allow");
+    expect(await bash(`ls ${pad}; echo x > .cla*/settings.json`)).toBe("deny");
+  });
+
+  it("does not treat a quoted git pathspec as protected paths piped to xargs", async () => {
+    await expectAll(bash, "allow", [
+      "git diff --name-only -- '*.ts' | xargs npx prettier --check",
+      "git diff --name-only -- '*.ts' | xargs npx eslint",
+    ]);
+    expect(await bash("echo CLAUDE.md | xargs rm")).toBe("deny");
   });
 });

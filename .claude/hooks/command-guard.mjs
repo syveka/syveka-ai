@@ -78,6 +78,21 @@ const PIPE_READERS = new Set([
   "%",
   "findstr",
 ]);
+const PATH_EMITTERS = new Set([
+  "echo",
+  "printf",
+  "write-output",
+  "write-host",
+  "ls",
+  "dir",
+  "gci",
+  "get-childitem",
+  "find",
+  "get-item",
+  "gi",
+  "resolve-path",
+  "rvpa",
+]);
 const PIPE_WRITERS = new Set([
   "remove-item",
   "ri",
@@ -449,8 +464,12 @@ function inspectPipelines(commands, depth, ctx, state) {
     previous = {
       secretListing,
       secret: args.some((w) => isSecretWord(w, state)),
-      // PowerShell pipes literal paths too: 'CLAUDE.md' | Remove-Item
-      protectedPath: command.words.some((w) => !isFlag(w) && isProtectedWord(w, ctx, state)),
+      // Only commands that print path names feed paths into the pipe: echo/printf/ls/find,
+      // or a bare PowerShell literal ('CLAUDE.md' | Remove-Item). A git pathspec such as
+      // '*.ts' is matched by git, not expanded by the shell.
+      protectedPath:
+        (PATH_EMITTERS.has(name) || /[./\\]/.test(name)) &&
+        command.words.some((w) => !isFlag(w) && isProtectedWord(w, ctx, state)),
       recursiveListing:
         listing && args.some((a) => /^-(r|recurse|s)$/i.test(a) || /^-recurse/i.test(a)),
       listingTarget: listing ? (args.find((a) => !isFlag(a)) ?? ".") : ".",
@@ -599,7 +618,17 @@ function inspectCommand(command, ctx, state) {
       ctx.deny("passes file names from a directory listing that includes a secret env file");
     }
   }
-  // PowerShell write cmdlets with a computed path: Set-Content (Join-Path $PWD CLAUDE.md) x
+  // PowerShell write cmdlets with a computed path, positional or named:
+  // Set-Content (Join-Path $PWD CLAUDE.md) x, Set-Content -Path (Join-Path .claude x) -Value y
+  if (
+    command.dialect === "powershell" &&
+    WRITE_LIKE_CMDLETS.has(name) &&
+    /^-(path|literalpath|filepath|destination|lp|pspath)$/i.test(args[args.length - 1] ?? "") &&
+    PROTECTED_HINT.test(state.rootSource) &&
+    !isOverrideEnabled()
+  ) {
+    ctx.deny(`${name} writes to a path computed at run time near protected configuration`);
+  }
   if (
     command.dialect === "powershell" &&
     WRITE_LIKE_CMDLETS.has(name) &&
@@ -2371,6 +2400,46 @@ function inspectFileArguments(name, args, ctx, state) {
       for (const a of args.filter((x) => !isFlag(x)).slice(1)) writeTargets.push(a);
     }
   }
+  {
+    const positional = args.filter((a) => !isFlag(a));
+    const valueOf = (flags) => {
+      for (let i = 0; i < args.length; i++) {
+        if (flags.includes(args[i])) return args[i + 1];
+        const inline = flags.map((fl) => fl + "=").find((p) => args[i].startsWith(p));
+        if (inline) return args[i].slice(inline.length);
+      }
+      return undefined;
+    };
+    // uniq INPUT OUTPUT, split [opts] INPUT PREFIX
+    if (name === "uniq" && positional[1]) writeTargets.push(positional[1]);
+    if (name === "split" && positional.length >= 2)
+      writeTargets.push(positional[positional.length - 1]);
+    if (name === "csplit") {
+      const prefix = valueOf(["-f", "--prefix"]);
+      if (prefix) writeTargets.push(prefix);
+    }
+    // tar -c/-r/-u with -f FILE (also clustered: -cf FILE, -czf FILE)
+    if (name === "tar") {
+      for (let i = 0; i < args.length; i++) {
+        const a = args[i];
+        if (/^-?[a-zA-Z]*[cru][a-zA-Z]*f$/.test(a) && !a.startsWith("--"))
+          writeTargets.push(args[i + 1] ?? "");
+        else if (a === "-f" || a === "--file") writeTargets.push(args[i + 1] ?? "");
+        else if (/^--file=/.test(a)) writeTargets.push(a.slice(7));
+      }
+    }
+    if (name === "xxd" && args.some((a) => /^-[a-z]*r/.test(a)) && positional.length >= 2) {
+      writeTargets.push(positional[positional.length - 1]);
+    }
+    if (name === "openssl") {
+      const out = valueOf(["-out"]);
+      if (out) writeTargets.push(out);
+    }
+    if (name === "base64") {
+      const out = valueOf(["-o", "--output"]);
+      if (out) writeTargets.push(out);
+    }
+  }
   if (
     (name === "tar" &&
       args.some((a) => /^-?[a-zA-Z]*x/.test(a) || a === "--extract" || a === "--get")) ||
@@ -2595,8 +2664,12 @@ runGuard("command-guard", (payload) => {
       ctx.deny("the shell command is malformed, so it could not be inspected");
     } else {
       inspectScript(input.command, tool === "PowerShell" ? "powershell" : "bash", ctx, 0);
-      if (inspectionBudgetExceeded && isSensitiveText(input.command)) {
-        ctx.deny("the command uses too many glob patterns to inspect quickly");
+      if (inspectionBudgetExceeded) {
+        if (isSensitiveText(input.command) || PROTECTED_HINT.test(input.command)) {
+          ctx.deny("the command uses too many glob patterns to inspect quickly");
+        } else {
+          ctx.ask("the command uses more glob patterns than the guard can inspect quickly");
+        }
       }
     }
   }
