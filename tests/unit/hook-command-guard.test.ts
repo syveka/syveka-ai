@@ -1469,6 +1469,31 @@ describe("command-guard: final review follow-ups (implicit push targets, push pl
       "git push --dry-run",
     ]);
   });
+
+  it("sees pushes through winpty, xargs with git global options, value options, head and subtree", async () => {
+    await expectAll(fromFeature, "deny", [
+      "winpty -Xallow-non-tty git push origin HEAD:main",
+      "winpty git switch main && git push",
+      "echo origin HEAD:main | xargs git -C . push",
+      "echo origin HEAD:main | xargs git -c a=b push",
+      "echo HEAD:main | xargs --max-args 1 git push origin",
+      "git switch main && git push --recurse-submodules no origin",
+      "git switch main && git push --push-opt ci.skip origin",
+      // Refs are case-insensitive on Windows and macOS.
+      "git push origin head:main",
+      "git switch main && git push origin head",
+      "git subtree push -P d origin main",
+      "git subtree push --prefix=d origin refs/heads/main",
+    ]);
+    expect(await fromFeature("git subtree push -P d origin")).toBe("ask");
+    await expectAll(fromFeature, "allow", [
+      "winpty -Xallow-non-tty git status",
+      "git push --recurse-submodules check origin feat",
+      "git push -o ci.skip origin feat",
+      "git subtree push -P d origin feature/x",
+      "echo feat | xargs git -C . log",
+    ]);
+  });
 });
 
 describe("guardrail runtime: portable internal timeout", () => {

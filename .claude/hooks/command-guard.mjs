@@ -423,6 +423,14 @@ const CHECKOUT_LONG_OPTIONS = [
   "--pathspec-file-nul",
 ];
 
+// Index of the git subcommand, past global options such as `-C <dir>` and `-c <name>=<value>`.
+function gitSubcommandIndex(args) {
+  const withValue = ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"];
+  let i = 0;
+  while (i < args.length && args[i].startsWith("-")) i += withValue.includes(args[i]) ? 2 : 1;
+  return i;
+}
+
 // git runs external subcommands case-insensitively on Windows: `git HTTP-PUSH` is http-push.
 function gitSubcommand(word) {
   return typeof word === "string" && /^http-push$/i.test(word) ? "http-push" : word;
@@ -778,7 +786,7 @@ function inspectCommand(command, ctx, state) {
     if (["gh", "vercel", "supabase", "prisma", "psql"].includes(name)) {
       ctx.deny(`runs ${name} with arguments read from stdin via xargs, which cannot be inspected`);
     } else if (name === "git") {
-      const sub = gitSubcommand(args.find((a) => !isFlag(a)));
+      const sub = gitSubcommand(args[gitSubcommandIndex(args)]);
       if (
         !sub ||
         [
@@ -984,6 +992,7 @@ function unwrap(initialWords, command, ctx, state, assigns) {
         "unbuffer",
         "caffeinate",
         "setsid",
+        "winpty",
         "coproc",
         "shx",
       ].includes(name)
@@ -1048,6 +1057,10 @@ function unwrap(initialWords, command, ctx, state, assigns) {
         "-a",
         "--arg-file",
         "--delimiter",
+        "--max-args",
+        "--max-procs",
+        "--max-chars",
+        "--process-slot-var",
       ];
       while (i < rest.length && isFlag(rest[i])) i += withValue.includes(rest[i]) ? 2 : 1;
       words = rest.slice(i);
@@ -1623,6 +1636,22 @@ function inspectGit(args, ctx, state, assigns) {
     case "http-push":
       inspectGitPush(rest, ctx, gitCwd, { sendPack: true });
       break;
+    case "subtree":
+      if (rest[0] === "push") {
+        const valueFlags = ["-P", "--prefix", "-m", "--message"];
+        const positional = [];
+        for (let k = 1; k < rest.length; k++) {
+          if (valueFlags.includes(rest[k])) k++;
+          else if (!isFlag(rest[k])) positional.push(rest[k]);
+        }
+        const branch = positional[1];
+        if (!branch || isDynamicWord(branch)) {
+          ctx.ask("`git subtree push` to a branch that could not be determined");
+        } else if (isMainBranch(branch.split(":").pop())) {
+          ctx.deny("`git subtree push` pushes directly to main");
+        }
+      }
+      break;
     case "credential":
     case "credential-manager":
     case "credential-store":
@@ -1750,6 +1779,15 @@ function shortClusterHas(args, flag, valueTaking) {
   return false;
 }
 
+// `git push` long options that take a separate value, with the shortest unambiguous prefix.
+const PUSH_VALUE_OPTIONS = [
+  ["--repo", 5],
+  ["--receive-pack", 6],
+  ["--exec", 4],
+  ["--push-option", 5],
+  ["--recurse-submodules", 6],
+];
+
 const SEND_PACK_OPTIONS = new Set([
   "--all",
   "--mirror",
@@ -1809,7 +1847,7 @@ function inspectGitPush(args, ctx, gitCwd, { sendPack = false } = {}) {
       else if (prefixOf("--delete", name, 4)) ctx.ask("deletes a remote branch or tag");
       else if (prefixOf("--prune", name, 5)) ctx.ask("`git push --prune` deletes remote branches");
       else if (
-        (["--repo", "--receive-pack", "--exec", "--push-option"].includes(name) ||
+        (PUSH_VALUE_OPTIONS.some(([option, min]) => prefixOf(option, name, min)) ||
           (sendPack && name === "--remote")) &&
         !a.includes("=")
       )
@@ -1859,7 +1897,7 @@ function inspectGitPush(args, ctx, gitCwd, { sendPack = false } = {}) {
         ctx.deny("`git push <remote> :` pushes every matching branch, including main");
       else if (src === "") ctx.ask(`deletes the remote ref "${dst}"`);
       targets = [dst];
-    } else if (s === "HEAD" || s === "@") {
+    } else if (s.toUpperCase() === "HEAD" || s === "@") {
       // send-pack matches a bare HEAD against the remote's HEAD, which points at main.
       if (!sendPack) {
         applyImplicitPushDecision(ctx, gitCwd);
@@ -1870,7 +1908,7 @@ function inspectGitPush(args, ctx, gitCwd, { sendPack = false } = {}) {
       // `@{-1}` (the previous branch) and other reflog forms can name main.
       targets = [s.startsWith("@{") ? null : s];
     }
-    if (targets.some((t) => t === "HEAD" || t === "@")) {
+    if (targets.some((t) => typeof t === "string" && (t.toUpperCase() === "HEAD" || t === "@"))) {
       ctx.deny("updates the remote HEAD, which points at main");
     }
     if (targets.some(isMainBranch)) ctx.deny("pushes directly to main");
