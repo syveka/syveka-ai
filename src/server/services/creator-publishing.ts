@@ -62,6 +62,22 @@ function startOfMonth(from: Date): Date {
   return d;
 }
 
+// QStash may deliver a delayed message slightly early; only a clearly early job is skipped.
+const EARLY_DELIVERY_TOLERANCE_MS = 60_000;
+
+async function markPublished(postId: string, externalPostId: string): Promise<void> {
+  await unscopedPrisma.creatorPost.update({
+    where: { id: postId },
+    data: {
+      publishStatus: "PUBLISHED",
+      externalPostId,
+      publishedAt: new Date(),
+      lastErrorCode: null,
+      lastErrorSafe: null,
+    },
+  });
+}
+
 /**
  * Centralized publishing engine (Phase 13). Called by the
  * /api/v1/jobs/publish-creator-post handler — never call provider.publishPost
@@ -89,6 +105,12 @@ export async function publishCreatorPost(
 
   const ctx = { orgId, userId: post.createdById };
 
+  // A job delivered before the post's current scheduled time belongs to an earlier schedule
+  // (the post was rescheduled later); the job enqueued for the new time publishes it.
+  if (post.scheduledFor && post.scheduledFor.getTime() > Date.now() + EARLY_DELIVERY_TOLERANCE_MS) {
+    return "done";
+  }
+
   // Idempotent claim: only a SCHEDULED or previously-FAILED post can start
   // publishing, and the conditional UPDATE (like the credit ledger's
   // reserve) makes a concurrent duplicate delivery a safe no-op rather than
@@ -101,6 +123,9 @@ export async function publishCreatorPost(
     return "done"; // already publishing/published/canceled/rejected — nothing to do
   }
 
+  // Set once the provider has published: from then on the post is live and must never be
+  // marked FAILED, because a FAILED post can be claimed again and would be published twice.
+  let externalPostId: string | null = null;
   try {
     if (post.publishStatus === "CANCELED" || post.approvalStatus === "REJECTED") {
       throw new PublishGuardError("not_publishable", "Post is canceled or rejected.");
@@ -199,16 +224,8 @@ export async function publishCreatorPost(
       },
     );
 
-    await unscopedPrisma.creatorPost.update({
-      where: { id: postId },
-      data: {
-        publishStatus: "PUBLISHED",
-        externalPostId: result.externalPostId,
-        publishedAt: new Date(),
-        lastErrorCode: null,
-        lastErrorSafe: null,
-      },
-    });
+    externalPostId = result.externalPostId;
+    await markPublished(postId, externalPostId);
 
     await audit(ctx, {
       action: "creator.post.published",
@@ -228,6 +245,13 @@ export async function publishCreatorPost(
     }
     return "done";
   } catch (error) {
+    if (externalPostId !== null) {
+      // Live on the platform; only the bookkeeping after it failed. Record it as published if
+      // that write was what failed, and finish without a retry.
+      console.error("creator post published, but recording it failed", { postId, orgId });
+      await markPublished(postId, externalPostId).catch(() => undefined);
+      return "done";
+    }
     const code = error instanceof PublishGuardError ? error.code : "publish_failed";
     const safeMessage =
       error instanceof PublishGuardError

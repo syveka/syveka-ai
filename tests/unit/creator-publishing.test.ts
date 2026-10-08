@@ -213,4 +213,42 @@ describe("publishCreatorPost", () => {
     );
     expect(failCall![0].data.lastErrorSafe).not.toContain("raw upstream secret leak");
   });
+
+  it("never marks a live post FAILED when recording it fails after the provider published", async () => {
+    unscopedPrismaMock.creatorPost.findFirst.mockResolvedValue(approvedPost());
+    auditMock.mockRejectedValueOnce(new Error("audit write failed"));
+
+    expect(await publishCreatorPost("org-a", "post-1")).toBe("done");
+
+    expect(provider.publishPost).toHaveBeenCalledTimes(1);
+    const statuses = unscopedPrismaMock.creatorPost.update.mock.calls.map(
+      ([args]) => args.data.publishStatus,
+    );
+    expect(statuses).not.toContain("FAILED");
+    expect(statuses).toContain("PUBLISHED");
+  });
+
+  it("finishes without retrying when even recording PUBLISHED fails, so the post can't be claimed again", async () => {
+    unscopedPrismaMock.creatorPost.findFirst.mockResolvedValue(approvedPost());
+    unscopedPrismaMock.creatorPost.update.mockRejectedValue(new Error("db down"));
+
+    try {
+      expect(await publishCreatorPost("org-a", "post-1")).toBe("done");
+    } finally {
+      unscopedPrismaMock.creatorPost.update.mockReset();
+      unscopedPrismaMock.creatorPost.update.mockResolvedValue({});
+    }
+    expect(provider.publishPost).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips a job delivered for an earlier schedule, before claiming the post", async () => {
+    unscopedPrismaMock.creatorPost.findFirst.mockResolvedValue(
+      approvedPost({ scheduledFor: new Date(Date.now() + 60 * 60 * 1000) }),
+    );
+
+    expect(await publishCreatorPost("org-a", "post-1")).toBe("done");
+
+    expect(unscopedPrismaMock.creatorPost.updateMany).not.toHaveBeenCalled();
+    expect(provider.publishPost).not.toHaveBeenCalled();
+  });
 });

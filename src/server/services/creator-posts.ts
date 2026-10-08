@@ -216,7 +216,12 @@ export async function schedulePost(
   await enqueue(
     "publish-creator-post",
     { orgId: ctx.orgId, postId },
-    { delaySeconds, deduplicationId: `publish-creator-post:${postId}:${updated.contentVersion}` },
+    {
+      delaySeconds,
+      // Each schedule gets its own message: a reschedule must not be dropped as a duplicate of
+      // the earlier one (which publishCreatorPost then skips as early).
+      deduplicationId: `publish-creator-post:${postId}:${updated.contentVersion}:${params.scheduledFor.getTime()}`,
+    },
   );
 
   await audit(ctx, {

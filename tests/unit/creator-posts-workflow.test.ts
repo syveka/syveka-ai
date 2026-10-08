@@ -155,6 +155,20 @@ describe("Creator Studio approval state machine", () => {
       expect.objectContaining({ deduplicationId: expect.stringContaining("post-1") }),
     );
   });
+
+  it("a reschedule enqueues its own job instead of being dropped as a duplicate", async () => {
+    const first = new Date(Date.now() + 60_000);
+    const later = new Date(Date.now() + 2 * 60 * 60_000);
+    await schedulePost(ctx(), "post-1", { scheduledFor: first, socialAccountId: "acct-1" });
+    await schedulePost(ctx(), "post-1", { scheduledFor: later, socialAccountId: "acct-1" });
+
+    const ids = enqueueMock.mock.calls.map(
+      (call) =>
+        (call as unknown as [string, unknown, { deduplicationId: string }])[2].deduplicationId,
+    );
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
 });
 
 describe("evaluateAutopilotRules", () => {
