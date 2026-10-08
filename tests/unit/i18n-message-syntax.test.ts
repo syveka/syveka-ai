@@ -39,6 +39,20 @@ describe("translation messages", () => {
     });
   }
 
+  it("detects an invalid message (the check is not vacuous)", () => {
+    const invalid: string[] = [];
+    const t = createTranslator({
+      locale: "en",
+      messages: { bad: "Use {{name}} here" },
+      onError: (error) => {
+        if (error.code === IntlErrorCode.INVALID_MESSAGE) invalid.push(error.message);
+      },
+      getMessageFallback: ({ key }) => key,
+    });
+    t("bad" as never);
+    expect(invalid).toHaveLength(1);
+  });
+
   it("renders escaped braces literally", () => {
     const messages = JSON.parse(
       fs.readFileSync(path.resolve(__dirname, "../../messages/en.json"), "utf8"),
