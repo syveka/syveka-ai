@@ -1445,6 +1445,12 @@ describe("command-guard: final review follow-ups (implicit push targets, push pl
       "git rebase --strat ours origin/main main && git push",
       // git runs dashed external commands case-insensitively on Windows.
       "git HTTP-PUSH https://example.com/repo.git main",
+      // git derives the local branch from a fully qualified remote ref too.
+      "git checkout -t refs/remotes/origin/main && git push",
+      "git switch --track remotes/origin/main && git push",
+      "git rebase -C 3 origin/main main && git push",
+      // An exact or unique abbreviated option is never read as a longer one.
+      "git checkout --ov main && git push",
     ]);
     await expectAll(fromFeature, "ask", [
       "git switch -- - && git push",
@@ -1456,6 +1462,9 @@ describe("command-guard: final review follow-ups (implicit push targets, push pl
       "git switch -cfeature && git push -u origin HEAD",
       "git checkout -p main && git push",
       "git checkout --patch main && git push",
+      "git checkout -pq main && git push",
+      // git push has no --remote option; it is not taken to consume "origin".
+      "git push --remote origin feat",
       "git checkout -b fix/x && git push -u origin fix/x",
       "git push --dry-run",
     ]);

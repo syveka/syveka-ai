@@ -385,9 +385,11 @@ function recordCheckoutTarget(
   else if (detach) recordBranchChange(ctx, null);
   else if (positional.length === 1) {
     recordBranchChange(ctx, positional[0]);
-    // --track origin/main creates and checks out a local "main".
-    if (track && positional[0].includes("/")) {
-      recordBranchChange(ctx, positional[0].slice(positional[0].indexOf("/") + 1));
+    // --track origin/main (or refs/remotes/origin/main) creates and checks out a local "main":
+    // git strips refs/, then remotes/, then the remote name.
+    const remoteRef = positional[0].replace(/^refs\//, "").replace(/^remotes\//, "");
+    if (track && remoteRef.includes("/")) {
+      recordBranchChange(ctx, remoteRef.slice(remoteRef.indexOf("/") + 1));
     }
   }
 }
@@ -1399,11 +1401,19 @@ function inspectGit(args, ctx, state, assigns) {
         ctx.ask("`git rebase` rewrites history");
       }
       {
-        const longValueFlags = ["--onto", "--strategy", "--strategy-option", "--exec"];
+        const longValueFlags = [
+          "--onto",
+          "--strategy",
+          "--strategy-option",
+          "--exec",
+          "--whitespace",
+          "--empty",
+          "--trailer",
+        ];
         const positional = [];
         for (let k = 0; k < rest.length; k++) {
           const a = rest[k];
-          if (["-s", "-X", "-x"].includes(a)) k++;
+          if (["-s", "-X", "-x", "-C"].includes(a)) k++;
           else if (!a.includes("=") && longValueFlags.some((o) => prefixOf(o, a, 4))) k++;
           else if (!isFlag(a)) positional.push(a);
         }
