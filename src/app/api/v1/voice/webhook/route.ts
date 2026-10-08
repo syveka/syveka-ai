@@ -190,6 +190,17 @@ export async function POST(request: Request): Promise<NextResponse> {
     case "end-of-call-report": {
       if (!message.call) return NextResponse.json({ ok: true });
       const durationSeconds = Math.round(message.durationSeconds ?? 0);
+      // The same call details whether or not the in-progress status update was received:
+      // post-call bills from durationSeconds and summarizes the transcript.
+      const callResult = {
+        status: message.endedReason === "assistant-forwarded-call" ? "TRANSFERRED" : "COMPLETED",
+        endedAt: new Date(),
+        durationSeconds,
+        costCents: Math.round((message.cost ?? 0) * 100),
+        endedReason: message.endedReason,
+        transcript: message.artifact?.messages as Prisma.InputJsonValue | undefined,
+        recordingUrl: message.artifact?.recordingUrl,
+      } as const;
 
       await unscopedPrisma.voiceCall.upsert({
         where: { vapiCallId: message.call.id },
@@ -199,17 +210,9 @@ export async function POST(request: Request): Promise<NextResponse> {
           vapiCallId: message.call.id,
           callerNumber: message.call.customer?.number,
           startedAt: new Date(Date.now() - durationSeconds * 1000),
-          status: "COMPLETED",
+          ...callResult,
         },
-        update: {
-          status: message.endedReason === "assistant-forwarded-call" ? "TRANSFERRED" : "COMPLETED",
-          endedAt: new Date(),
-          durationSeconds,
-          costCents: Math.round((message.cost ?? 0) * 100),
-          endedReason: message.endedReason,
-          transcript: message.artifact?.messages as Prisma.InputJsonValue | undefined,
-          recordingUrl: message.artifact?.recordingUrl,
-        },
+        update: callResult,
       });
 
       // Replay/idempotency guard for the post-call side effect only — the voiceCall
