@@ -1295,6 +1295,85 @@ describe("command-guard: fifth review follow-ups (round 5)", () => {
   });
 });
 
+describe("command-guard: final review follow-ups (implicit push targets, push plumbing)", () => {
+  let featureRepo: string;
+
+  beforeAll(() => {
+    featureRepo = fs.mkdtempSync(path.join(os.tmpdir(), "guard-feature-"));
+    spawnSync("git", ["init", "-q", "-b", "feature", featureRepo]);
+  });
+
+  afterAll(() => {
+    fs.rmSync(featureRepo, { recursive: true, force: true });
+  });
+
+  const fromFeature = (command: string) => bash(command, { cwd: featureRepo });
+
+  it("denies an implicit push after moving HEAD to main earlier in the same command", async () => {
+    await expectAll(fromFeature, "deny", [
+      "git switch main && git push origin HEAD",
+      "git switch main && git push",
+      "git checkout main && git push",
+      "git checkout main; git push origin",
+      "git checkout -t origin/main && git push",
+      "git switch --track origin/main && git push",
+      "git checkout -B main && git push",
+      "git branch -m main && git push",
+      "git symbolic-ref HEAD refs/heads/main && git push",
+      "git rebase origin/main main && git push",
+      "git stash branch main && git push",
+      "bash -c 'git switch main' && git push",
+    ]);
+  });
+
+  it("asks when an earlier command moves HEAD somewhere the guard can't name", async () => {
+    await expectAll(fromFeature, "ask", [
+      "git switch - && git push",
+      "git checkout @{-1} && git push",
+      "git switch --detach && git push",
+      "gh pr checkout 12 && git push",
+    ]);
+  });
+
+  it("still allows feature-branch switches and pushes", async () => {
+    await expectAll(fromFeature, "allow", [
+      "git push",
+      "git switch -c feat2 && git push -u origin feat2",
+      "git checkout -b feat2 && git push -u origin HEAD",
+      "git checkout -b feat2 main && git push",
+      "git switch feat2 && git push",
+      "git push && git switch main",
+      "git checkout main",
+    ]);
+  });
+
+  it("inspects git send-pack and http-push like git push", async () => {
+    await expectAll(fromFeature, "deny", [
+      "git send-pack ssh://git@github.com/syveka/syveka-ai.git HEAD:refs/heads/main",
+      "git send-pack --force ssh://x/repo.git feat:refs/heads/main",
+      "git send-pack ssh://x/repo.git main",
+      "git send-pack ssh://x/repo.git +feat:feat",
+      "git send-pack ssh://x/repo.git HEAD",
+      "git send-pack ssh://x/repo.git feat:HEAD",
+      "git send-pack ssh://x/repo.git",
+      "git send-pack --all ssh://x/repo.git",
+      "git send-pack --mirror ssh://x/repo.git",
+      "git send-pack --stdin ssh://x/repo.git",
+      'git send-pack ssh://x/repo.git "$(echo main)"',
+      "echo main | xargs git send-pack ssh://x/repo.git",
+      "git -C . send-pack ssh://x/repo.git feat:main",
+      "git-send-pack ssh://x/repo.git HEAD:refs/heads/main",
+      "/usr/lib/git-core/git-send-pack ssh://x/repo.git feat:main",
+      "git http-push https://x/repo.git main",
+    ]);
+    await expectAll(fromFeature, "allow", [
+      "git send-pack ssh://x/repo.git feat",
+      "git send-pack ssh://x/repo.git feat:refs/heads/feat",
+      "git http-push https://x/repo.git feat",
+    ]);
+  });
+});
+
 describe("guardrail runtime: portable internal timeout", () => {
   const settings = () =>
     JSON.parse(fs.readFileSync(path.join(REPO_ROOT, ".claude", "settings.json"), "utf8")) as {
