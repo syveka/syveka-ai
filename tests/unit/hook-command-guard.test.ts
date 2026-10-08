@@ -1137,3 +1137,104 @@ describe("command-guard: third independent review (round 3)", () => {
     }
   });
 });
+
+describe("command-guard: fourth independent review (round 4)", () => {
+  it("allows heredoc commit and PR bodies that mention secrets or Claude config", async () => {
+    await expectAll(bash, "allow", [
+      "git commit -m \"$(cat <<'EOF'\nfix(security): rotate webhook secret handling\nEOF\n)\"",
+      "git commit -m \"$(cat <<'EOF'\nchore: update .claude hooks and CLAUDE.md, ignore .env.local\nEOF\n)\"",
+      "gh pr create --draft --title t --body \"$(cat <<'EOF'\nRotates the API token; no .env changes.\nEOF\n)\"",
+    ]);
+  });
+
+  it("allows process substitution as command input", async () => {
+    await expectAll(bash, "allow", [
+      'while read -r f; do npx prettier --check "$f"; done < <(git diff --name-only origin/main...HEAD)',
+      "mapfile -t files < <(git ls-files '*.ts')",
+    ]);
+  });
+
+  it("checks find start points and substitutes {} in -exec", async () => {
+    await expectAll(bash, "deny", [
+      "find .claude -delete",
+      "find .claude -type f -exec rm {} \\;",
+      "find .claude/hooks -name '*.mjs' -exec sed -i 's/a/b/' {} +",
+    ]);
+    expect(await bash("find src -name '*.ts' -exec grep -l foo {} +")).toBe("allow");
+  });
+
+  it("expands globs in redirect targets", async () => {
+    await expectAll(bash, "deny", ["echo x > CLAUD?.md", "echo x > CLAUDE*"]);
+  });
+
+  it("treats batch editors and output-writing tools as writes", async () => {
+    await expectAll(bash, "deny", [
+      "vim -es -c '1d|wq' CLAUDE.md",
+      "ex -sc '1d|x' CLAUDE.md",
+      "sort -o CLAUDE.md CLAUDE.md",
+      "iconv -f utf8 -t ascii -o .claude/settings.json x.json",
+      "dos2unix CLAUDE.md",
+      "gzip .claude/settings.json",
+      "zip -m out.zip CLAUDE.md",
+    ]);
+    expect(await pwsh("Get-Process | Export-Csv -Path CLAUDE.md")).toBe("deny");
+    await expectAll(bash, "allow", [
+      "sort -o /tmp/sorted.txt src/list.txt",
+      "zip out.zip CLAUDE.md",
+    ]);
+  });
+
+  it("checks interpreter writes to paths passed on argv", async () => {
+    await expectAll(bash, "deny", [
+      "node -e \"require('fs').writeFileSync(process.argv[1],'x')\" CLAUDE.md",
+      "python -c \"import sys; open(sys.argv[1],'w').write('x')\" CLAUDE.md",
+    ]);
+    expect(
+      await bash("node -e \"require('fs').writeFileSync(process.argv[1],'x')\" /tmp/out.txt"),
+    ).toBe("allow");
+  });
+
+  it("denies secret reads through listings and computed file names", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-r4-"));
+    fs.writeFileSync(path.join(dir, ".env.local"), "SECRET=1\n");
+    try {
+      const inDir = (command: string) => bash(command, { cwd: dir });
+      const psInDir = (command: string) => decide("PowerShell", { command }, { cwd: dir });
+      await expectAll(inDir, "deny", [
+        "ls -a | grep local | xargs cat",
+        "ls -A | grep -E '^\\.env\\.l' | xargs -I{} cat {}",
+        'ls -a | grep local | while read f; do cat "$f"; done',
+        'cat "$(ls -a | grep local)"',
+      ]);
+      await expectAll(psInDir, "deny", [
+        "gci -Force | ? Name -match 'local$' | gc",
+        "gci -Hidden | % { gc $_ }",
+      ]);
+      expect(await inDir("ls -a | wc -l")).toBe("allow");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("closes the round-4 P2 gaps", async () => {
+    await expectAll(pwsh, "deny", [
+      "Push-Location .claude; Remove-Item hooks -Recurse",
+      "Set-Content (Join-Path $PWD CLAUDE.md) x",
+      "$p = Join-Path . CLAUDE.md; Set-Content $p x",
+      "'CLAUDE.md' | Remove-Item",
+    ]);
+    await expectAll(bash, "deny", [
+      "cd -- .claude && rm hooks/command-guard.mjs",
+      "declare -p ANTHROPIC_API_KEY",
+      'npx tsx -e "console.log(process.env)"',
+    ]);
+  });
+
+  it("bounds glob-heavy commands", async () => {
+    const globs = Array.from({ length: 200 }, (_, i) => `src/*/*${i}*`).join(" ");
+    const started = Date.now();
+    expect(await bash(`git add ${globs}`)).toBe("deny");
+    expect(await bash(`ls ${globs}`)).toBe("allow");
+    expect(Date.now() - started).toBeLessThan(20_000);
+  });
+});

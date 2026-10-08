@@ -190,6 +190,21 @@ const WRITE_COMMANDS = new Set([
   "mklink",
   "patch",
   "set-itemproperty",
+  // Batch editors and in-place converters/compressors.
+  "vim",
+  "vi",
+  "nvim",
+  "ex",
+  "ed",
+  "sponge",
+  "dos2unix",
+  "unix2dos",
+  "gzip",
+  "bzip2",
+  "xz",
+  "export-csv",
+  "export-clixml",
+  "start-transcript",
 ]);
 const DB_CLIENTS = new Set([
   "psql",
@@ -206,6 +221,8 @@ const DB_CLIENTS = new Set([
   "redis-cli",
 ]);
 const INLINE_CODE_FLAGS = {
+  tsx: ["-e", "--eval", "-p", "--print"],
+  "ts-node": ["-e", "--eval", "-p", "--print"],
   node: ["-e", "--eval", "-p", "--print", "-pe"],
   nodejs: ["-e", "--eval", "-p", "--print"],
   bun: ["-e", "--eval", "-p", "--print"],
@@ -377,6 +394,13 @@ function inspectPipelines(commands, depth, ctx, state) {
     const name = commandName(command.words.find((w) => !/^[A-Za-z_]\w*=/.test(w)) ?? "");
     const args = command.words.slice(1).map((w) => substituteKnown(w, state));
     if (command.piped && previous) {
+      // `ls -a | grep local | xargs cat`, `gci -Force | ? Name -match x | gc`: a listing of
+      // a directory that holds a secret env file, filtered and then read.
+      if (previous.secretListing && (PIPE_READERS.has(name) || ["read", "while"].includes(name))) {
+        ctx.deny(
+          `reads files selected from a directory listing that includes ${previous.secretListing}`,
+        );
+      }
       if (previous.secret && PIPE_READERS.has(name)) {
         ctx.deny(`pipes a secret file into ${name}, which would print its contents`);
       }
@@ -393,9 +417,40 @@ function inspectPipelines(commands, depth, ctx, state) {
       }
     }
     const listing = ["get-childitem", "gci", "dir", "ls"].includes(name);
+    const lister = listing || ["find", "get-item", "gi"].includes(name);
+    const filters = [
+      "grep",
+      "egrep",
+      "sed",
+      "awk",
+      "head",
+      "tail",
+      "sort",
+      "uniq",
+      "cut",
+      "tr",
+      "where-object",
+      "?",
+      "where",
+      "select-object",
+      "select",
+    ];
+    let secretListing = null;
+    if (lister) {
+      const target = path.resolve(
+        state.cwd,
+        (args.find((a) => !isFlag(a)) ?? ".").replace(/\\/g, "/"),
+      );
+      const found = findSecretEnvFile(target, name === "find" ? 3 : 0);
+      secretListing = found ? path.basename(found) : null;
+    } else if (command.piped && previous?.secretListing && filters.includes(name)) {
+      secretListing = previous.secretListing;
+    }
     previous = {
+      secretListing,
       secret: args.some((w) => isSecretWord(w, state)),
-      protectedPath: args.some((w) => !isFlag(w) && isProtectedWord(w, ctx, state)),
+      // PowerShell pipes literal paths too: 'CLAUDE.md' | Remove-Item
+      protectedPath: command.words.some((w) => !isFlag(w) && isProtectedWord(w, ctx, state)),
       recursiveListing:
         listing && args.some((a) => /^-(r|recurse|s)$/i.test(a) || /^-recurse/i.test(a)),
       listingTarget: listing ? (args.find((a) => !isFlag(a)) ?? ".") : ".",
@@ -448,6 +503,8 @@ function inspectCommand(command, ctx, state) {
       continue;
     }
     if (!redirect.target) continue;
+    // `done < <(git diff --name-only)`: the substituted commands were already inspected.
+    if (redirect.target === "<(...)") continue;
     const target = substituteKnown(redirect.target, state);
     if (isDynamicWord(target) && isSensitiveText(state.rootSource)) {
       ctx.deny(
@@ -455,14 +512,17 @@ function inspectCommand(command, ctx, state) {
       );
       continue;
     }
-    const abs = resolveArgPath(target, state.cwd);
-    if (redirect.op.includes("<") && isSecretPath(abs)) {
-      ctx.deny(`reads a secret file (${redirect.target})`);
-    }
-    if (redirect.op.includes(">")) {
-      checkConfigWrite(abs, redirect.target, ctx, state);
-      if (isSecretPath(abs) && !protectedConfigLabel(abs, roots(ctx, state))) {
-        ctx.deny(`writes to a credential store (${redirect.target})`);
+    // Bash expands globs in redirect targets (`echo x > CLAUD?.md`).
+    for (const expanded of expandPattern(target, state.cwd)) {
+      const abs = resolveArgPath(expanded, state.cwd);
+      if (redirect.op.includes("<") && isSecretPath(abs)) {
+        ctx.deny(`reads a secret file (${redirect.target})`);
+      }
+      if (redirect.op.includes(">")) {
+        checkConfigWrite(abs, redirect.target, ctx, state);
+        if (isSecretPath(abs) && !protectedConfigLabel(abs, roots(ctx, state))) {
+          ctx.deny(`writes to a credential store (${redirect.target})`);
+        }
       }
     }
   }
@@ -527,12 +587,27 @@ function inspectCommand(command, ctx, state) {
 
   // A file argument computed by command substitution (`cat $(ls -a | grep env)`) can't be
   // checked; block it when the substitution looks like it is reaching for secrets/config.
+  // Heredoc bodies are data (commit messages, PR bodies), not file names.
+  const substitutionCode = (state.substitutions ?? []).map(stripHeredocBodies).join("\n");
+  if (args.some((a) => /\$\(\.\.\.\)|`\.\.\.`/.test(a)) && !METADATA_COMMANDS.has(name)) {
+    if (SECRETISH_TEXT.test(substitutionCode)) {
+      ctx.deny("passes a computed argument that may resolve to a secret or protected file");
+    } else if (
+      /(^|[\s;|(])(ls|dir|gci|get-childitem|find)\b/i.test(substitutionCode) &&
+      findSecretEnvFile(state.cwd, 0)
+    ) {
+      ctx.deny("passes file names from a directory listing that includes a secret env file");
+    }
+  }
+  // PowerShell write cmdlets with a computed path: Set-Content (Join-Path $PWD CLAUDE.md) x
   if (
-    args.some((a) => /\$\(\.\.\.\)|`\.\.\.`/.test(a)) &&
-    !METADATA_COMMANDS.has(name) &&
-    SECRETISH_TEXT.test((state.substitutions ?? []).join("\n"))
+    command.dialect === "powershell" &&
+    WRITE_LIKE_CMDLETS.has(name) &&
+    (args.length === 0 || args.some((a) => isDynamicWord(a))) &&
+    PROTECTED_HINT.test(state.rootSource) &&
+    !isOverrideEnabled()
   ) {
-    ctx.deny("passes a computed argument that may resolve to a secret or protected file");
+    ctx.deny(`${name} writes to a path computed at run time near protected configuration`);
   }
   // xargs appends arguments the guard never sees.
   if (state.fromXargs) {
@@ -579,8 +654,9 @@ function inspectCommand(command, ctx, state) {
     case "pushd":
     case "set-location":
     case "sl":
+    case "push-location":
       state.cwd = resolveDir(
-        args.find((a) => !isFlag(a)),
+        args.find((a) => !isFlag(a) && a !== "--"),
         state.cwd,
       );
       return;
@@ -590,6 +666,12 @@ function inspectCommand(command, ctx, state) {
     case "readonly":
     case "local":
       if (!args.some((a) => !isFlag(a))) ctx.deny("dumps environment variables");
+      if (
+        args.some((a) => /^-[a-zA-Z]*p/.test(a)) &&
+        args.some((a) => !isFlag(a) && isSecretName(a))
+      ) {
+        ctx.deny("prints a secret-bearing environment variable");
+      }
       for (const a of args) if (!isFlag(a)) state.assigns.add(a.split("=")[0]);
       return;
     case "set":
@@ -1886,6 +1968,13 @@ function inspectInlineCode(name, args, command, ctx, state, depth, hereStrings) 
   const readsStdin = !rest.some((a) => !isFlag(a) && !code.includes(a)) || rest.includes("-");
   if (readsStdin) code.push(...command.heredocs, ...hereStrings);
   for (const snippet of code) inspectCode(snippet, ctx, state, depth);
+  // node -e "fs.writeFileSync(process.argv[1], 'x')" CLAUDE.md
+  if (code.some((c) => CODE_WRITES.test(c) && /argv|\$args|ARGV/.test(c))) {
+    for (const a of rest) {
+      if (isFlag(a) || code.includes(a)) continue;
+      checkConfigWrite(resolveArgPath(a, state.cwd), a, ctx, state);
+    }
+  }
 }
 
 function inspectCode(code, ctx, state, depth) {
@@ -1945,7 +2034,59 @@ function inspectCode(code, ctx, state, depth) {
 
 // Expands shell globs/braces in a path argument against the file system, so `cat .e*`
 // or `cat {.env.local,x}` is checked against the files it would actually match.
-function expandPattern(candidate, cwd, budget = { left: MAX_EXPANSIONS }) {
+// Each glob costs file-system reads; bound how many words a single call expands.
+const MAX_GLOB_WORDS = 40;
+let globWordsExpanded = 0;
+let inspectionBudgetExceeded = false;
+const expandCache = new Map();
+
+function expandPattern(candidate, cwd, budget) {
+  if (budget) return expandPatternUncached(candidate, cwd, budget);
+  const key = `${cwd}\u0000${candidate}`;
+  if (expandCache.has(key)) return expandCache.get(key);
+  if (/[*?[{]/.test(candidate) && ++globWordsExpanded > MAX_GLOB_WORDS) {
+    inspectionBudgetExceeded = true;
+    return [candidate];
+  }
+  const result = expandPatternUncached(candidate, cwd, { left: MAX_EXPANSIONS });
+  expandCache.set(key, result);
+  return result;
+}
+
+function stripHeredocBodies(text) {
+  return String(text).replace(
+    /<<-?\s*(['"]?)(\w+)\1[^\n]*\n[\s\S]*?\n\s*\2\s*(?=\n|$)/g,
+    "<<HEREDOC",
+  );
+}
+
+const CODE_WRITES =
+  /writeFile|writeSync|openSync|appendFile|createWriteStream|unlink|rmSync|\brm\s*\(|rmdir|rename|copyFile|cpSync|truncate|\bopen\s*\([^)]*['"][wax+]|write_text|write_bytes|shutil\.|os\.remove|chmod|symlink|Set-Content|Out-File|WriteAll(Text|Bytes|Lines)|AppendAll(Text|Lines)/;
+const WRITE_LIKE_CMDLETS = new Set([
+  "set-content",
+  "sc",
+  "add-content",
+  "ac",
+  "out-file",
+  "remove-item",
+  "ri",
+  "del",
+  "erase",
+  "move-item",
+  "mi",
+  "copy-item",
+  "cpi",
+  "new-item",
+  "ni",
+  "rename-item",
+  "rni",
+  "clear-content",
+  "clc",
+]);
+const PROTECTED_HINT =
+  /claude|\.git\b|settings\.json|hooks|\.mcp|\.github|eslint|tsconfig|vitest|playwright|\.env/i;
+
+function expandPatternUncached(candidate, cwd, budget = { left: MAX_EXPANSIONS }) {
   const braces = /\{([^{}]*,[^{}]*)\}/.exec(candidate);
   if (braces) {
     const out = [];
@@ -2147,10 +2288,23 @@ function inspectFind(name, args, ctx, state, depth) {
   ) {
     ctx.deny("runs a command on or deletes protected configuration selected by find");
   }
+  // Start points come before the first expression (-name, -type, !, ( ...).
+  const firstExpr = args.findIndex((a) => /^[-!(]/.test(a) && a !== "-");
+  const startPoints = (firstExpr === -1 ? args : args.slice(0, firstExpr)).filter(Boolean);
+  if (
+    (execIndex !== -1 || args.includes("-delete")) &&
+    startPoints.some((p) => isProtectedWord(p, ctx, state)) &&
+    !isOverrideEnabled()
+  ) {
+    ctx.deny("runs a command on or deletes files under protected configuration via find");
+  }
   if (execIndex !== -1) {
     const end = args.findIndex((a, i) => i > execIndex && (a === ";" || a === "+" || a === "\\;"));
     const execWords = args.slice(execIndex + 1, end === -1 ? undefined : end);
-    inspectScript(execWords.join(" "), "bash", ctx, depth + 1, { ...state });
+    for (const start of startPoints.length ? startPoints : ["."]) {
+      const concrete = execWords.map((w) => (w === "{}" ? start : w));
+      inspectScript(concrete.join(" "), "bash", ctx, depth + 1, { ...state });
+    }
   }
 }
 
@@ -2205,6 +2359,17 @@ function inspectFileArguments(name, args, ctx, state) {
         ? !writeTargets.length
         : args.some((a) => /^-[a-zA-Z]*O[a-zA-Z]*$/.test(a) || a === "--remote-name");
     if (remoteName && usesRemoteName) writeTargets.push(`${dir ?? "."}/${remoteName}`);
+  }
+  if (["sort", "shuf", "iconv", "uniq", "split", "zip"].includes(name)) {
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (a === "-o" || a === "--output") writeTargets.push(args[i + 1] ?? "");
+      else if (/^--output=/.test(a)) writeTargets.push(a.slice(a.indexOf("=") + 1));
+      else if (/^-o.+/.test(a) && name !== "zip") writeTargets.push(a.slice(2));
+    }
+    if (name === "zip" && args.includes("-m")) {
+      for (const a of args.filter((x) => !isFlag(x)).slice(1)) writeTargets.push(a);
+    }
   }
   if (
     (name === "tar" &&
@@ -2430,6 +2595,9 @@ runGuard("command-guard", (payload) => {
       ctx.deny("the shell command is malformed, so it could not be inspected");
     } else {
       inspectScript(input.command, tool === "PowerShell" ? "powershell" : "bash", ctx, 0);
+      if (inspectionBudgetExceeded && isSensitiveText(input.command)) {
+        ctx.deny("the command uses too many glob patterns to inspect quickly");
+      }
     }
   }
   return ctx.verdict;

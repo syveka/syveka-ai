@@ -106,8 +106,18 @@ function canonicalize(absPosix) {
   return absPosix;
 }
 
+const resolveCache = new Map();
+
 /** Resolves a shell/tool path argument to an absolute, canonical, posix, lower-cased path. */
 export function resolveArgPath(arg, cwd) {
+  const key = `${cwd}\u0000${arg}`;
+  if (resolveCache.has(key)) return resolveCache.get(key);
+  const resolved = resolveArgPathUncached(arg, cwd);
+  resolveCache.set(key, resolved);
+  return resolved;
+}
+
+function resolveArgPathUncached(arg, cwd) {
   let raw = String(arg ?? "").trim();
   if (!raw) return null;
   const home = os.homedir();
