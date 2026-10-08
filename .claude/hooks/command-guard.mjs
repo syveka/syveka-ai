@@ -308,37 +308,71 @@ function recordBranchChange(ctx, branch) {
   ctx.branchChanges.push(known ? branch.replace(/^refs\/heads\//, "") : null);
 }
 
-// Every branch an implicit push in this call may run from.
-function implicitPushBranches(ctx, gitCwd) {
-  return [currentBranch(gitCwd), ...ctx.branchChanges];
+// The verdict for a push that runs from "the current branch". Denied when the last recorded
+// move, or the checkout itself, is main. Asks when main or an unknown branch is checked out
+// along the way: a move that fails (the branch already exists) leaves HEAD where it was.
+function implicitPushDecision(ctx, gitCwd) {
+  const current = currentBranch(gitCwd);
+  const moves = ctx.branchChanges;
+  if (isMainBranch(current) || (moves.length && isMainBranch(moves[moves.length - 1]))) {
+    return "deny";
+  }
+  return [current, ...moves].some((b) => b === null || isMainBranch(b)) ? "ask" : null;
+}
+
+function applyImplicitPushDecision(ctx, gitCwd) {
+  const decision = implicitPushDecision(ctx, gitCwd);
+  if (decision === "deny") ctx.deny("pushes directly to main");
+  else if (decision === "ask") ctx.ask("could not determine which branch this push targets");
+}
+
+// git accepts any unambiguous prefix of a long option (`--cre=main` for `--create=main`).
+function isLongOption(word, option) {
+  const name = word.split("=")[0];
+  return name.length >= 3 && option.startsWith(name);
 }
 
 // Records where `git checkout`/`git switch` leaves HEAD: a created branch, the single
 // branch named, or an unknown (null) one for `--detach`. A checkout with paths doesn't move it.
-function recordCheckoutTarget(rest, ctx, { createFlags, valueFlags, detachFlags }) {
+// Options may be clustered and take attached values (`-qbmain`, `-Cmain`) or be abbreviated.
+function recordCheckoutTarget(rest, ctx, { shortCreate, shortDetach, longCreate, longValue }) {
   let created;
+  let detach = false;
+  let track = false;
   const positional = [];
   for (let k = 0; k < rest.length; k++) {
     const a = rest[k];
-    if (a === "--") return;
-    if (createFlags.includes(a)) {
-      created = rest[++k];
+    if (a === "--") {
+      if (k + 1 < rest.length) return;
+      break;
+    }
+    if (a.startsWith("--")) {
+      const inline = a.includes("=") ? a.slice(a.indexOf("=") + 1) : undefined;
+      if (longCreate.some((o) => isLongOption(a, o))) created = inline ?? rest[++k];
+      else if (isLongOption(a, "--detach")) detach = true;
+      else if (isLongOption(a, "--track")) track = true;
+      else if (longValue.some((o) => isLongOption(a, o)) && inline === undefined) k++;
       continue;
     }
-    const inline = createFlags.find((f) => f.startsWith("--") && a.startsWith(`${f}=`));
-    if (inline) {
-      created = a.slice(inline.length + 1);
+    if (isFlag(a)) {
+      for (let c = 1; c < a.length; c++) {
+        if (shortCreate.includes(a[c])) {
+          created = c + 1 < a.length ? a.slice(c + 1) : rest[++k];
+          break;
+        }
+        if (shortDetach.includes(a[c])) detach = true;
+        if (a[c] === "t") track = true;
+      }
       continue;
     }
-    if (valueFlags.includes(a)) k++;
-    else if (!isFlag(a)) positional.push(a);
+    positional.push(a);
   }
   if (created !== undefined) recordBranchChange(ctx, created);
-  else if (rest.some((a) => detachFlags.includes(a))) recordBranchChange(ctx, null);
+  else if (detach) recordBranchChange(ctx, null);
   else if (positional.length === 1) {
     recordBranchChange(ctx, positional[0]);
     // --track origin/main creates and checks out a local "main".
-    if (rest.some((a) => a === "-t" || a.startsWith("--track")) && positional[0].includes("/")) {
+    if (track && positional[0].includes("/")) {
       recordBranchChange(ctx, positional[0].slice(positional[0].indexOf("/") + 1));
     }
   }
@@ -720,6 +754,10 @@ function inspectCommand(command, ctx, state) {
       if (sub === "switch") recordBranchChange(ctx, null);
     }
   }
+  if (/^git-remote-/.test(name))
+    ctx.deny(
+      "runs a git transport helper directly; it reads push commands from stdin, which cannot be inspected",
+    );
   if (["cmdkey", "vaultcmd", "get-storedcredential"].includes(name)) {
     ctx.deny("lists or reads stored Windows credentials");
   }
@@ -1247,6 +1285,10 @@ function inspectGit(args, ctx, state, assigns) {
       ctx.ask(`runs \`git ${sub}\` with arguments computed at run time`);
     }
   }
+  if (/^remote-/i.test(sub))
+    ctx.deny(
+      "runs a git transport helper directly; it reads push commands from stdin, which cannot be inspected",
+    );
   const hasNoVerify = rest.some((a) => prefixOf("--no-verify", a.split("=")[0], 9));
 
   switch (sub) {
@@ -1323,7 +1365,9 @@ function inspectGit(args, ctx, state, assigns) {
           if (valueFlags.includes(rest[k])) k++;
           else if (!isFlag(rest[k])) positional.push(rest[k]);
         }
-        if (positional.length >= 2) recordBranchChange(ctx, positional[1]);
+        // `git rebase <upstream> <branch>` and `git rebase --root <branch>` check out <branch>.
+        const branchIndex = rest.includes("--root") ? 0 : 1;
+        if (positional.length > branchIndex) recordBranchChange(ctx, positional[branchIndex]);
       }
       break;
     case "reset":
@@ -1370,9 +1414,10 @@ function inspectGit(args, ctx, state, assigns) {
         ctx.ask("`git checkout` with paths, -B or --force discards work or overwrites a branch");
       }
       recordCheckoutTarget(rest, ctx, {
-        createFlags: ["-b", "-B", "--orphan"],
-        valueFlags: ["--conflict", "--pathspec-from-file"],
-        detachFlags: ["--detach"],
+        shortCreate: "bB",
+        shortDetach: "",
+        longCreate: ["--orphan"],
+        longValue: ["--conflict", "--pathspec-from-file"],
       });
       break;
     }
@@ -1383,9 +1428,10 @@ function inspectGit(args, ctx, state, assigns) {
         ctx.ask("`git switch` with --discard-changes/--force discards work or overwrites a branch");
       }
       recordCheckoutTarget(rest, ctx, {
-        createFlags: ["-c", "-C", "--create", "--force-create", "--orphan"],
-        valueFlags: ["--conflict"],
-        detachFlags: ["--detach", "-d"],
+        shortCreate: "cC",
+        shortDetach: "d",
+        longCreate: ["--create", "--force-create", "--orphan"],
+        longValue: ["--conflict"],
       });
       break;
     case "restore": {
@@ -1453,8 +1499,14 @@ function inspectGit(args, ctx, state, assigns) {
       ) {
         ctx.ask("deletes, force-moves or force-renames a branch");
       }
-      if (rest.some((a) => a === "--move" || (/^-[a-zA-Z]+$/.test(a) && /[mM]/.test(a.slice(1))))) {
-        const names = rest.filter((a) => !isFlag(a));
+      if (
+        rest.some(
+          (a) =>
+            (a.startsWith("--") && isLongOption(a, "--move")) ||
+            (/^-[a-zA-Z]+$/.test(a) && /[mM]/.test(a.slice(1))),
+        )
+      ) {
+        const names = rest.filter((a) => !isFlag(a) && a !== "--");
         if (names.length) recordBranchChange(ctx, names[names.length - 1]);
       }
       break;
@@ -1492,7 +1544,7 @@ function inspectGit(args, ctx, state, assigns) {
       const positional = [];
       for (let k = 0; k < rest.length; k++) {
         if (rest[k] === "-m") k++;
-        else if (!isFlag(rest[k])) positional.push(rest[k]);
+        else if (!isFlag(rest[k]) && rest[k] !== "--") positional.push(rest[k]);
       }
       if (positional[0] === "HEAD" && positional.length > 1) recordBranchChange(ctx, positional[1]);
       break;
@@ -1628,6 +1680,31 @@ function shortClusterHas(args, flag, valueTaking) {
   return false;
 }
 
+const SEND_PACK_OPTIONS = new Set([
+  "--all",
+  "--mirror",
+  "--dry-run",
+  "--force",
+  "--force-with-lease",
+  "--verbose",
+  "--quiet",
+  "--progress",
+  "--no-progress",
+  "--thin",
+  "--no-thin",
+  "--atomic",
+  "--no-atomic",
+  "--signed",
+  "--no-signed",
+  "--stdin",
+  "--stateless-rpc",
+  "--helper-status",
+  "--receive-pack",
+  "--exec",
+  "--remote",
+  "--push-option",
+]);
+
 // `sendPack` covers the plumbing that pushes directly (`git send-pack <url> <ref>...`,
 // `git http-push`): no implicit current branch, and with no refs it updates every match.
 function inspectGitPush(args, ctx, gitCwd, { sendPack = false } = {}) {
@@ -1640,6 +1717,12 @@ function inspectGitPush(args, ctx, gitCwd, { sendPack = false } = {}) {
     }
     if (a.startsWith("--")) {
       const name = a.split("=")[0];
+      if (sendPack && !SEND_PACK_OPTIONS.has(name)) {
+        ctx.deny(
+          `uses an option the guard does not recognise (${name}), so the refs can't be inspected`,
+        );
+        continue;
+      }
       if (prefixOf("--no-verify", name, 9))
         ctx.deny("`git push --no-verify` bypasses git verification hooks");
       else if (
@@ -1651,12 +1734,12 @@ function inspectGitPush(args, ctx, gitCwd, { sendPack = false } = {}) {
         ctx.deny("force-pushes, which can overwrite remote history");
       } else if (prefixOf("--mirror", name, 4))
         ctx.deny("`git push --mirror` overwrites and deletes remote refs");
-      else if (name === "--all" || name === "--branches")
+      else if (prefixOf("--all", name, 4) || prefixOf("--branches", name, 4))
         ctx.deny("pushes every branch, including main");
       else if (prefixOf("--delete", name, 4)) ctx.ask("deletes a remote branch or tag");
       else if (prefixOf("--prune", name, 5)) ctx.ask("`git push --prune` deletes remote branches");
       else if (
-        ["--repo", "--receive-pack", "--exec", "--push-option"].includes(name) &&
+        ["--repo", "--receive-pack", "--exec", "--push-option", "--remote"].includes(name) &&
         !a.includes("=")
       )
         i++;
@@ -1685,9 +1768,7 @@ function inspectGitPush(args, ctx, gitCwd, { sendPack = false } = {}) {
       ctx.deny("without refs it updates every branch both sides have, including main");
       return;
     }
-    const branches = implicitPushBranches(ctx, gitCwd);
-    if (branches.some(isMainBranch)) ctx.deny("pushes directly to main");
-    else if (branches.includes(null)) ctx.ask("could not determine which branch this push targets");
+    applyImplicitPushDecision(ctx, gitCwd);
     return;
   }
   for (const spec of refspecs) {
@@ -1709,11 +1790,16 @@ function inspectGitPush(args, ctx, gitCwd, { sendPack = false } = {}) {
       targets = [dst];
     } else if (s === "HEAD" || s === "@") {
       // send-pack matches a bare HEAD against the remote's HEAD, which points at main.
-      targets = sendPack ? ["main"] : implicitPushBranches(ctx, gitCwd);
+      if (!sendPack) {
+        applyImplicitPushDecision(ctx, gitCwd);
+        continue;
+      }
+      targets = ["main"];
     } else {
-      targets = [s];
+      // `@{-1}` (the previous branch) and other reflog forms can name main.
+      targets = [s.startsWith("@{") ? null : s];
     }
-    if (sendPack && targets.some((t) => t === "HEAD" || t === "@")) {
+    if (targets.some((t) => t === "HEAD" || t === "@")) {
       ctx.deny("updates the remote HEAD, which points at main");
     }
     if (targets.some(isMainBranch)) ctx.deny("pushes directly to main");

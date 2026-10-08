@@ -1297,17 +1297,22 @@ describe("command-guard: fifth review follow-ups (round 5)", () => {
 
 describe("command-guard: final review follow-ups (implicit push targets, push plumbing)", () => {
   let featureRepo: string;
+  let mainRepo: string;
 
   beforeAll(() => {
     featureRepo = fs.mkdtempSync(path.join(os.tmpdir(), "guard-feature-"));
     spawnSync("git", ["init", "-q", "-b", "feature", featureRepo]);
+    mainRepo = fs.mkdtempSync(path.join(os.tmpdir(), "guard-main-"));
+    spawnSync("git", ["init", "-q", "-b", "main", mainRepo]);
   });
 
   afterAll(() => {
     fs.rmSync(featureRepo, { recursive: true, force: true });
+    fs.rmSync(mainRepo, { recursive: true, force: true });
   });
 
   const fromFeature = (command: string) => bash(command, { cwd: featureRepo });
+  const fromMain = (command: string) => bash(command, { cwd: mainRepo });
 
   it("denies an implicit push after moving HEAD to main earlier in the same command", async () => {
     await expectAll(fromFeature, "deny", [
@@ -1323,6 +1328,42 @@ describe("command-guard: final review follow-ups (implicit push targets, push pl
       "git rebase origin/main main && git push",
       "git stash branch main && git push",
       "bash -c 'git switch main' && git push",
+    ]);
+  });
+
+  it("parses clustered, attached and abbreviated options when tracking HEAD moves", async () => {
+    await expectAll(fromFeature, "deny", [
+      "git switch -Cmain && git push",
+      "git switch -cmain origin/main && git push",
+      "git checkout -bmain origin/main && git push",
+      "git checkout -Bmain && git push",
+      "git checkout -qbmain && git push -u origin HEAD",
+      "git switch --cre=main origin/main && git push",
+      "git switch --force-c=main && git push",
+      "git checkout --tr origin/main && git push",
+      "git switch --tr origin/main && git push",
+      "git switch main -- && git push",
+      "git branch --mov main && git push -u origin HEAD",
+      "git symbolic-ref HEAD -- refs/heads/main && git push",
+      "git rebase --root main && git push",
+    ]);
+  });
+
+  it("asks, rather than denies, when main is only passed through on the way", async () => {
+    await expectAll(fromFeature, "ask", [
+      "git checkout main && git pull && git checkout -b fix/y && git push -u origin HEAD",
+      "git switch main && git pull && git switch -c fix/y && git push",
+      "git stash && git checkout main && git pull && git checkout feature && git stash pop && git push",
+      "git switch main; git switch feature; git push",
+    ]);
+  });
+
+  it("still denies implicit pushes from a main checkout, whatever comes first", async () => {
+    await expectAll(fromMain, "deny", [
+      "git push",
+      "git push origin HEAD",
+      "git switch -c fix && git push",
+      "git switch feat && git push",
     ]);
   });
 
@@ -1365,11 +1406,32 @@ describe("command-guard: final review follow-ups (implicit push targets, push pl
       "git-send-pack ssh://x/repo.git HEAD:refs/heads/main",
       "/usr/lib/git-core/git-send-pack ssh://x/repo.git feat:main",
       "git http-push https://x/repo.git main",
+      "git send-pack --remote origin ../bare.git",
+      "git send-pack --remote origin ../bare.git feat:main",
+      "git send-pack --rem origin ../bare.git feat",
     ]);
     await expectAll(fromFeature, "allow", [
       "git send-pack ssh://x/repo.git feat",
       "git send-pack ssh://x/repo.git feat:refs/heads/feat",
       "git http-push https://x/repo.git feat",
+      "git send-pack --remote origin ../bare.git feat",
+      "git send-pack --thin ssh://x/repo.git feat:feat",
+    ]);
+  });
+
+  it("closes the remaining push spellings found in review", async () => {
+    await expectAll(fromFeature, "deny", [
+      "git push --al origin",
+      "git push --branc origin",
+      "git push origin HEAD:HEAD",
+      "printf 'push refs/heads/feature:refs/heads/main\\n\\n' | git remote-https origin https://github.com/syveka/syveka-ai.git",
+      "git-remote-https origin https://github.com/syveka/syveka-ai.git",
+    ]);
+    expect(await fromFeature("git push origin @{-1}")).toBe("ask");
+    await expectAll(fromFeature, "allow", [
+      "git push --atomic origin feat",
+      "git remote -v",
+      "git remote add upstream https://github.com/x/y.git",
     ]);
   });
 });
