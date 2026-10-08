@@ -26,6 +26,7 @@ import {
   updatePostContent,
   reviewCreatorPost,
   schedulePost,
+  cancelScheduledPost,
   evaluateAutopilotRules,
   PostWorkflowError,
 } from "@/server/services/creator-posts";
@@ -54,6 +55,7 @@ describe("Creator Studio approval state machine", () => {
     creatorPost: {
       findFirstOrThrow: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
+      updateMany: ReturnType<typeof vi.fn>;
     };
     socialAccount: { findFirstOrThrow: ReturnType<typeof vi.fn> };
   };
@@ -67,6 +69,7 @@ describe("Creator Studio approval state machine", () => {
           ...basePost(),
           ...data,
         })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
       },
       socialAccount: {
         findFirstOrThrow: vi.fn(async () => ({ id: "acct-1", status: "CONNECTED" })),
@@ -168,6 +171,25 @@ describe("Creator Studio approval state machine", () => {
     );
     expect(ids).toHaveLength(2);
     expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it("never makes a publishing or published post claimable again by rescheduling or canceling it", async () => {
+    db.creatorPost.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      schedulePost(ctx(), "post-1", {
+        scheduledFor: new Date(Date.now() + 60_000),
+        socialAccountId: "acct-1",
+      }),
+    ).rejects.toMatchObject({ code: "already_published" });
+    await expect(cancelScheduledPost(ctx(), "post-1")).rejects.toMatchObject({
+      code: "already_published",
+    });
+
+    expect(enqueueMock).not.toHaveBeenCalled();
+    const where = db.creatorPost.updateMany.mock.calls[0]![0].where;
+    expect(where.publishStatus.in).not.toContain("PUBLISHED");
+    expect(where.publishStatus.in).not.toContain("PUBLISHING");
   });
 });
 

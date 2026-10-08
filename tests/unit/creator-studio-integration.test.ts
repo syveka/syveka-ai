@@ -115,6 +115,19 @@ describe("Creator Studio: approve -> schedule -> publish integration", () => {
           Object.assign(post, resolveIncrements(data));
           return post;
         }),
+        updateMany: vi.fn(
+          async ({
+            where,
+            data,
+          }: {
+            where: { publishStatus: { in: string[] } };
+            data: Record<string, unknown>;
+          }) => {
+            if (!where.publishStatus.in.includes(post.publishStatus as string)) return { count: 0 };
+            Object.assign(post, resolveIncrements(data));
+            return { count: 1 };
+          },
+        ),
       },
       socialAccount: {
         findFirstOrThrow: vi.fn(async () => ({

@@ -248,7 +248,11 @@ export async function publishCreatorPost(
     if (externalPostId !== null) {
       // Live on the platform; only the bookkeeping after it failed. Record it as published if
       // that write was what failed, and finish without a retry.
-      console.error("creator post published, but recording it failed", { postId, orgId });
+      console.error("creator post published, but recording it failed", {
+        postId,
+        orgId,
+        externalPostId,
+      });
       await markPublished(postId, externalPostId).catch(() => undefined);
       return "done";
     }

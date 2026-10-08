@@ -8,7 +8,11 @@ import { audit } from "./audit";
 import { notifyApprovers, notifyUser } from "./creator-notifications";
 import { enqueue } from "@/server/jobs/queue";
 import type { CreatePostInput, AutopilotRules } from "@/lib/validators/creator-studio";
-import type { CreatorCampaignApprovalMode, SocialPlatform } from "@/generated/prisma/client/client";
+import type {
+  CreatorCampaignApprovalMode,
+  CreatorPostPublishStatus,
+  SocialPlatform,
+} from "@/generated/prisma/client/client";
 
 export class PostWorkflowError extends Error {
   constructor(
@@ -172,6 +176,14 @@ export async function reviewCreatorPost(
   return updated;
 }
 
+// Posts that can be (re)scheduled or canceled: not publishing, not published.
+const RESCHEDULABLE_STATUSES: CreatorPostPublishStatus[] = [
+  "NOT_SCHEDULED",
+  "SCHEDULED",
+  "FAILED",
+  "CANCELED",
+];
+
 /**
  * Phase 12: schedules a post for publish. Approval/autopilot authorization
  * itself is re-verified immediately before publish (see
@@ -204,14 +216,22 @@ export async function schedulePost(
   const now = Date.now();
   const delaySeconds = Math.max(0, Math.round((params.scheduledFor.getTime() - now) / 1000));
 
-  const updated = await db.creatorPost.update({
-    where: { id: postId },
+  // A post that is publishing or already published must never become claimable again.
+  const claimed = await db.creatorPost.updateMany({
+    where: { id: postId, publishStatus: { in: RESCHEDULABLE_STATUSES } },
     data: {
       scheduledFor: params.scheduledFor,
       socialAccountId: params.socialAccountId,
       publishStatus: "SCHEDULED",
     },
   });
+  if (claimed.count !== 1) {
+    throw new PostWorkflowError(
+      "already_published",
+      "A post that is publishing or already published cannot be rescheduled.",
+    );
+  }
+  const updated = await db.creatorPost.findFirstOrThrow({ where: { id: postId } });
 
   await enqueue(
     "publish-creator-post",
@@ -236,10 +256,17 @@ export async function schedulePost(
 export async function cancelScheduledPost(ctx: TenantContext, postId: string) {
   await assertFeatureEnabled(ctx.orgId, CREATOR_STUDIO_FLAG);
   const db = tenantDb(ctx.orgId);
-  const updated = await db.creatorPost.update({
-    where: { id: postId },
+  const canceled = await db.creatorPost.updateMany({
+    where: { id: postId, publishStatus: { in: RESCHEDULABLE_STATUSES } },
     data: { publishStatus: "CANCELED" },
   });
+  if (canceled.count !== 1) {
+    throw new PostWorkflowError(
+      "already_published",
+      "A post that is publishing or already published cannot be canceled.",
+    );
+  }
+  const updated = await db.creatorPost.findFirstOrThrow({ where: { id: postId } });
   await audit(ctx, {
     action: "creator.post.canceled",
     resourceType: "creator_post",
