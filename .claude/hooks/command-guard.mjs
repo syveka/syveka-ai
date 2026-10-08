@@ -425,11 +425,20 @@ const CHECKOUT_LONG_OPTIONS = [
 
 // Index of the git subcommand, past global options such as `-C <dir>` and `-c <name>=<value>`.
 function gitSubcommandIndex(args) {
-  const withValue = ["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"];
+  const withValue = ["-C", "-c", "--config-env", ...GIT_GLOBAL_VALUE_OPTIONS];
   let i = 0;
   while (i < args.length && args[i].startsWith("-")) i += withValue.includes(args[i]) ? 2 : 1;
   return i;
 }
+
+const GIT_GLOBAL_VALUE_OPTIONS = [
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--super-prefix",
+  "--attr-source",
+  "--list-cmds",
+];
 
 // git runs external subcommands case-insensitively on Windows: `git HTTP-PUSH` is http-push.
 function gitSubcommand(word) {
@@ -998,7 +1007,9 @@ function unwrap(initialWords, command, ctx, state, assigns) {
       ].includes(name)
     ) {
       let i = 0;
-      while (i < rest.length && isFlag(rest[i])) i++;
+      while (i < rest.length && isFlag(rest[i]))
+        i += name === "stdbuf" && ["-i", "-o", "-e"].includes(rest[i]) ? 2 : 1;
+      if (rest[i] === "--") i++;
       words = rest.slice(i);
       continue;
     }
@@ -1046,15 +1057,8 @@ function unwrap(initialWords, command, ctx, state, assigns) {
     }
     if (name === "xargs") {
       let i = 0;
-      const withValue = [
-        "-I",
-        "-n",
-        "-P",
-        "-L",
-        "-d",
-        "-s",
-        "-E",
-        "-a",
+      const withValue = ["-I", "-n", "-P", "-L", "-d", "-s", "-E", "-a"];
+      const longWithValue = [
         "--arg-file",
         "--delimiter",
         "--max-args",
@@ -1062,7 +1066,11 @@ function unwrap(initialWords, command, ctx, state, assigns) {
         "--max-chars",
         "--process-slot-var",
       ];
-      while (i < rest.length && isFlag(rest[i])) i += withValue.includes(rest[i]) ? 2 : 1;
+      const takesValue = (a) =>
+        withValue.includes(a) ||
+        (a.startsWith("--") && !a.includes("=") && longWithValue.some((o) => prefixOf(o, a, 3)));
+      while (i < rest.length && isFlag(rest[i])) i += takesValue(rest[i]) ? 2 : 1;
+      if (rest[i] === "--") i++;
       words = rest.slice(i);
       state.fromXargs = true;
       continue;
@@ -1287,7 +1295,7 @@ function inspectGit(args, ctx, state, assigns) {
       i += 2;
       continue;
     }
-    if (["--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix"].includes(a)) {
+    if (GIT_GLOBAL_VALUE_OPTIONS.includes(a)) {
       i += 2;
       continue;
     }
@@ -1636,22 +1644,30 @@ function inspectGit(args, ctx, state, assigns) {
     case "http-push":
       inspectGitPush(rest, ctx, gitCwd, { sendPack: true });
       break;
-    case "subtree":
-      if (rest[0] === "push") {
-        const valueFlags = ["-P", "--prefix", "-m", "--message"];
-        const positional = [];
-        for (let k = 1; k < rest.length; k++) {
-          if (valueFlags.includes(rest[k])) k++;
-          else if (!isFlag(rest[k])) positional.push(rest[k]);
+    case "subtree": {
+      const longValue = ["--prefix", "--branch", "--message", "--onto", "--annotate"];
+      const positional = [];
+      for (let k = 0; k < rest.length; k++) {
+        const a = rest[k];
+        if (a === "--") {
+          positional.push(...rest.slice(k + 1));
+          break;
         }
-        const branch = positional[1];
-        if (!branch || isDynamicWord(branch)) {
+        if (["-P", "-b", "-m"].includes(a)) k++;
+        else if (a.startsWith("--")) {
+          if (!a.includes("=") && longValue.some((o) => prefixOf(o, a, 3))) k++;
+        } else if (!isFlag(a)) positional.push(a);
+      }
+      if (positional[0] === "push") {
+        const ref = positional[2];
+        if (!ref || isDynamicWord(ref)) {
           ctx.ask("`git subtree push` to a branch that could not be determined");
-        } else if (isMainBranch(branch.split(":").pop())) {
+        } else if (isMainBranch(ref.replace(/^\+/, "").split(":").pop())) {
           ctx.deny("`git subtree push` pushes directly to main");
         }
       }
       break;
+    }
     case "credential":
     case "credential-manager":
     case "credential-store":
@@ -1908,7 +1924,7 @@ function inspectGitPush(args, ctx, gitCwd, { sendPack = false } = {}) {
       // `@{-1}` (the previous branch) and other reflog forms can name main.
       targets = [s.startsWith("@{") ? null : s];
     }
-    if (targets.some((t) => typeof t === "string" && (t.toUpperCase() === "HEAD" || t === "@"))) {
+    if (targets.some((t) => t === "HEAD" || t === "@")) {
       ctx.deny("updates the remote HEAD, which points at main");
     }
     if (targets.some(isMainBranch)) ctx.deny("pushes directly to main");

@@ -1494,6 +1494,31 @@ describe("command-guard: final review follow-ups (implicit push targets, push pl
       "echo feat | xargs git -C . log",
     ]);
   });
+
+  it("parses subtree options anywhere, `--` after wrappers, abbreviated xargs options and more git globals", async () => {
+    await expectAll(fromFeature, "deny", [
+      "git subtree -P d push origin main",
+      "git subtree -q push -P d origin main",
+      "git subtree push -P d -b feat origin main",
+      "git subtree push --pre d origin main",
+      "git subtree push -P d -- origin main",
+      "git subtree push -P d origin +main",
+      "winpty -- git push origin main",
+      "nohup -- git push origin main",
+      "echo HEAD:main | xargs -- git push origin",
+      "echo HEAD:main | xargs --max-a 1 git push origin",
+      "git --attr-source HEAD push origin main",
+      "echo origin main | xargs git --attr-source HEAD push",
+      "stdbuf -o L git push origin main",
+    ]);
+    // A destination named "head" is a branch: remote refs match case-sensitively.
+    await expectAll(fromFeature, "allow", [
+      "git push origin feat:head",
+      "git subtree split -P d -b tmp",
+      "winpty -- git status",
+      "stdbuf -o L git status",
+    ]);
+  });
 });
 
 describe("guardrail runtime: portable internal timeout", () => {
