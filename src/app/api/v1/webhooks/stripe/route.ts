@@ -354,8 +354,13 @@ export async function POST(request: Request): Promise<NextResponse> {
           : null;
         if (org) {
           await unscopedPrisma.$transaction(async (tx) => {
-            await tx.subscription.update({
-              where: { organizationId: org.id },
+            // Only the subscription whose invoice failed: a failure for another (older)
+            // subscription must not mark the org's current one PAST_DUE.
+            await tx.subscription.updateMany({
+              where: {
+                organizationId: org.id,
+                ...(failedSubId ? { stripeSubscriptionId: failedSubId } : {}),
+              },
               data: { status: "PAST_DUE" },
             });
             await tx.stripeWebhookEvent.update({

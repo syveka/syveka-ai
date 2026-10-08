@@ -414,8 +414,8 @@ describe("existing subscription and entitlement behavior is unchanged", () => {
 
     expect(res.status).toBe(200);
     expect(mocks.subscriptionsRetrieve).toHaveBeenCalledWith("sub_123");
-    expect(mocks.txSubscriptionUpdate).toHaveBeenCalledWith({
-      where: { organizationId: "org-a" },
+    expect(mocks.txSubscriptionUpdateMany).toHaveBeenCalledWith({
+      where: { organizationId: "org-a", stripeSubscriptionId: "sub_123" },
       data: { status: "PAST_DUE" },
     });
     expect(mocks.invalidateEntitlements).toHaveBeenCalledWith("org-a");
