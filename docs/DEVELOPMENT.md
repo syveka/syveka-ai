@@ -196,15 +196,19 @@ and enforcement lives here.
     Vercel production deploy/promote/rollback/`env pull`, remote database resets
     (`supabase db reset --linked`, `prisma migrate reset`, `db push --accept-data-loss`),
     reading `.env*` files, credential stores or secret environment variables, `gh auth token`,
-    encoded PowerShell, and shell writes to protected configuration.
+    encoded PowerShell, shell writes to protected configuration (including downloads, git
+    plumbing and formatters), git config that executes commands (`core.fsmonitor`,
+    `core.pager`, `credential.helper`, `include.path`, …) or re-routes pushes, and risky git
+    commands whose arguments are computed at run time (`$(…)`, `${…}`, brace expansion, `xargs`).
   - **Ask** (a human must approve this specific instance, even in auto mode): PR merge/approval,
     workflow dispatch/rerun/cancel, mutating `gh api` calls, release/secret/repo-settings changes,
     other Vercel/Supabase changes, migrations and `npm run db:*`, database clients, destructive
     local git operations (`reset --hard`, `checkout --`, `clean -f`, branch/worktree deletion,
     rebase), remote branch deletion, the staging-ops helpers, and destructive or write-SQL MCP tools.
 - **`config-protection`** (`Edit`, `Write`, `NotebookEdit`, `MultiEdit`, `Read`, `Grep`) denies
-  edits to `CLAUDE.md` (any directory), everything under `.claude/`, `.env*` (templates such as
-  `.env.example` excepted), ESLint/Prettier/TypeScript/Vitest/Playwright config, `.github/`, CI and
+  edits to `CLAUDE.md` (any directory), everything under `.claude/`, `.mcp.json`, git's own
+  `.git/config`, `.git/hooks/` and `~/.gitconfig`, `.env*` (templates such as `.env.example`
+  excepted), ESLint/Prettier/TypeScript/Vitest/Playwright config, `.github/`, CI and
   release-verification scripts, `vercel.json`, the guardrail tests, user-level Claude Code
   settings, and `package.json`'s required validation script entries. It also denies `Read`/`Grep` of
   secret files and credential stores.

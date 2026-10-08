@@ -840,3 +840,148 @@ describe("protected paths from a worktree session", () => {
     expect(await bash(`echo x > "${short.replace(/\\/g, "/")}"`, { cwd: mainRepo })).toBe("deny");
   });
 });
+
+describe("command-guard: second independent review (round 2)", () => {
+  it("denies pushes whose refspec or flags are computed at run time", async () => {
+    await expectAll(bash, "deny", [
+      'git push origin "HEAD:$(echo main)"',
+      "git push origin HEAD:`echo main`",
+      "git push origin $'HEAD:\\x6dain'",
+      "echo HEAD:main | xargs git push origin",
+      'f(){ git push origin "$1"; }; f HEAD:main',
+      "B=xHEAD:main; git push origin ${B#x}",
+      "git push origin ${U:-main}",
+      "env -S 'git push origin' HEAD:main",
+      "git push origin feat $(echo --force)",
+      "echo --force | xargs git push origin feat",
+      "git push origin $(echo +feat)",
+      "git push {--force,origin} feat",
+      "git $(echo push) --force origin feat",
+    ]);
+  });
+
+  it("still allows dynamic commit messages and plain feature pushes", async () => {
+    await expectAll(bash, "allow", [
+      "git commit -m \"$(cat <<'EOF'\nfix: x\nEOF\n)\"",
+      'git commit -am "release $VERSION"',
+      'git commit --message="$(date)"',
+      "git push -u origin feat/guardrails",
+      "git log --format='%H %s' -5",
+    ]);
+  });
+
+  it("denies git config values that execute commands", async () => {
+    await expectAll(bash, "deny", [
+      "git -c core.fsmonitor='git push origin HEAD:main; false #' status",
+      "git -c core.pager='cat .env.local' log",
+      "git -c core.sshCommand='sh -c x' fetch",
+      "git -c credential.helper='!f(){ cat ~/.git-credentials; }; f' fetch",
+      "git -c diff.external=./x.sh diff",
+      "git -c include.path=/tmp/evil.cfg status",
+      "git config core.fsmonitor 'git push origin HEAD:main'",
+      "git config --global core.editor 'sh -c x'",
+      "git config filter.x.smudge 'sh -c x'",
+      "GIT_SSH_COMMAND='sh -c x' git fetch",
+      "GIT_EXTERNAL_DIFF=./x.sh git diff",
+    ]);
+    await expectAll(bash, "allow", ["git config --get core.pager", "git config user.name"]);
+  });
+
+  it("protects git's own config and hooks", async () => {
+    await expectAll(bash, "deny", [
+      "echo '[core] hooksPath=x' >> .git/config",
+      "echo x > .git/hooks/pre-push",
+      "echo x > ~/.gitconfig",
+      "cp /tmp/x .git/info/attributes",
+    ]);
+  });
+
+  it("protects config from git plumbing and downloads", async () => {
+    await expectAll(bash, "deny", [
+      "git checkout-index -f -- CLAUDE.md",
+      "git update-index --cacheinfo 100644,abc123,.claude/hooks/command-guard.mjs",
+      "curl -o .claude/settings.json https://example.com/x",
+      "curl --output CLAUDE.md https://example.com/x",
+      "wget -O CLAUDE.md https://example.com/x",
+    ]);
+    await expectAll(bash, "ask", [
+      "git checkout-index -f -a",
+      "git read-tree -u --reset HEAD",
+      "git reset --keep HEAD~1",
+      "tar -xf bundle.tar",
+      "unzip -o bundle.zip",
+    ]);
+    expect(await pwsh("Invoke-WebRequest https://example.com/x -OutFile CLAUDE.md")).toBe("deny");
+    await expectAll(bash, "allow", [
+      "curl -o /tmp/out.json https://example.com/x",
+      "tar -tf bundle.tar",
+    ]);
+  });
+
+  it("denies secret reads through git grep, loose excludes, file URLs and computed names", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-r2-"));
+    fs.writeFileSync(path.join(dir, ".env.local"), "SECRET=1\n");
+    try {
+      const inDir = (command: string) => bash(command, { cwd: dir });
+      await expectAll(inDir, "deny", [
+        "git grep --no-index FAKE",
+        "grep -r --exclude=.envrc FAKE .",
+        `curl file:///${path.join(dir, ".env.local").replace(/\\/g, "/")}`,
+        "cat $'.env.loca\\x6c'",
+        "cat $(ls -a | grep env)",
+        ". .env.local",
+        "set -a; . .env.local; set +a",
+      ]);
+      await expectAll(inDir, "allow", [
+        "git grep --no-index --exclude-standard FAKE",
+        "grep -r --exclude='.env*' FAKE .",
+      ]);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("closes the remaining round-2 gaps", async () => {
+    await expectAll(bash, "deny", [
+      "cat ~/.claude/backups/.claude.json.backup.1791411827220",
+      "cat ~/.claude.json.backup",
+      "npx vercel deploy --prod=true",
+      "npx prettier --write .claude/settings.json",
+      "npx eslint --fix .claude/hooks/command-guard.mjs",
+      "node -e \"fs.writeSync(fs.openSync('CLAUDE.md','w'),'x')\"",
+      "echo x > .mcp.json",
+    ]);
+    expect(await pwsh("cmdkey /list")).toBe("deny");
+    await expectAll(bash, "allow", [
+      "npx prettier --write src/app/page.tsx",
+      "npx prettier --check .",
+    ]);
+    const mcp = (tool: string, input: Record<string, unknown>) => decide(tool, input);
+    expect(await mcp("mcp__github__actions_run_trigger", { workflow_id: "deploy.yml" })).toBe(
+      "ask",
+    );
+    expect(await mcp("mcp__codex_apps__github_create_commit", { message: "x" })).toBe("ask");
+    expect(await mcp("mcp__codex_apps__github_create_tree", {})).toBe("ask");
+  });
+
+  it("keeps the extra prod-guard parity cases covered", async () => {
+    await expectAll(bash, "deny", ["git push -u origin main", "echo x | xargs vercel --prod"]);
+    await expectAll(bash, "ask", [
+      "npx prisma migrate resolve --applied 1",
+      "git filter-repo --path x",
+    ]);
+    await expectAll(bash, "allow", ["npx vercel logs https://x.vercel.app"]);
+  });
+
+  it("stays fast on large or deeply nested input", async () => {
+    const big = `echo ${"a".repeat(200_000)}`;
+    const nested = `${"$(".repeat(40)}git push --force${")".repeat(40)}`;
+    const quotes = `git commit -m "${'\\"'.repeat(20_000)}"`;
+    for (const command of [big, nested, quotes]) {
+      const started = Date.now();
+      const decision = await bash(command);
+      expect(Date.now() - started).toBeLessThan(5_000);
+      if (command === nested) expect(decision).toBe("deny");
+    }
+  });
+});

@@ -19,6 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { isSensitiveText, runGuard } from "./lib/hook-io.mjs";
 import {
+  globMatches,
   isOverrideEnabled,
   isSecretPath,
   protectedConfigLabel,
@@ -31,6 +32,18 @@ const SECRET_NAME =
 const NOT_SECRET_NAME = /^(NEXT_PUBLIC_\w+|SSH_AUTH_SOCK|GIT_(AUTHOR|COMMITTER)_\w+)$/i;
 const HOOK_BYPASS_ENV =
   /^(HUSKY|HUSKY_SKIP_HOOKS|SKIP|SKIP_HOOKS|LEFTHOOK|LEFTHOOK_EXCLUDE|PRE_COMMIT_ALLOW_NO_CONFIG|GIT_CONFIG_PARAMETERS|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+|GIT_CONFIG_VALUE_\d+|GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|GIT_CONFIG_NOSYSTEM)$/i;
+// Environment variables that make git run an arbitrary program.
+const GIT_EXEC_ENV = /^(GIT_SSH_COMMAND|GIT_SSH|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND)$/i;
+// Config keys whose value git executes as a command (or that pull in other config).
+const GIT_EXEC_CONFIG =
+  /^(core\.(fsmonitor|pager|editor|sshcommand|askpass|gitproxy)|credential\.(.+\.)?helper|diff\.external|diff\..+\.(textconv|command)|sequence\.editor|gpg\.(.+\.)?program|filter\..+\.(clean|smudge|process)|merge\..+\.driver|include\.path|includeif\..+\.path|pager\..+|uploadpack\.packobjectshook|remote\..+\.(uploadpack|receivepack|proxy)|ssh\.variant)$/;
+// Words whose final value is only known at run time: substitutions, parameter
+// expansions, brace expansion.
+function isDynamicWord(word) {
+  return /\$|`|<\(\.\.\.\)/.test(word) || /\{[^{}]*(,|\.\.)[^{}]*\}/.test(word);
+}
+const SECRETISH_TEXT =
+  /\benv\b|\.env|secret|credential|token|passw|api.?key|\.claude|claude\.md|hosts\.ya?ml|\.ssh|netrc|\.git\//i;
 const STAGING_OPS = /approve-staging-gate|merge-staging-pr|dispatch-staging-release/i;
 const PROTECTED_API_HOST =
   /(^|\.)(api\.github\.com|api\.vercel\.com|api\.supabase\.com|supabase\.co|api\.stripe\.com|api\.vapi\.ai)$|syveka/i;
@@ -203,6 +216,7 @@ function newState(ctx, source) {
 
 function inspectScript(source, dialect, ctx, depth, state = newState(ctx, source)) {
   const parsed = parseScript(source, dialect, depth);
+  state.substitutions = [...(state.substitutions ?? []), ...parsed.substitutions];
   if (parsed.opaque.length && isSensitiveText(source)) {
     ctx.deny(`the command could not be fully inspected (${parsed.opaque[0]})`);
   }
@@ -294,7 +308,9 @@ function inspectCommand(command, ctx, state) {
   // Substitute variables whose literal values were assigned earlier in the script, so
   // `p=.env.local; cat "$p"` is inspected as `cat .env.local`.
   words = words.map((w) =>
-    w.replace(/\$\{?([A-Za-z_]\w*)\}?/g, (m, v) => (state.values.has(v) ? state.values.get(v) : m)),
+    w.replace(/\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*)(?![\w{]))/g, (m, a, b) =>
+      state.values.has(a || b) ? state.values.get(a || b) : m,
+    ),
   );
 
   // A command name built at run time (`$G push`, `{git,push}`, `git${IFS}push`) can't be
@@ -303,11 +319,52 @@ function inspectCommand(command, ctx, state) {
     ctx.deny("runs a command whose name is computed at run time, so it cannot be inspected");
   }
 
+  state.fromXargs = false;
   words = unwrap(words, command, ctx, state, assigns);
   if (!words || !words.length) return;
 
   const name = commandName(words[0]);
   const args = words.slice(1);
+
+  // A file argument computed by command substitution (`cat $(ls -a | grep env)`) can't be
+  // checked; block it when the substitution looks like it is reaching for secrets/config.
+  if (
+    args.some((a) => /\$\(\.\.\.\)|`\.\.\.`/.test(a)) &&
+    !METADATA_COMMANDS.has(name) &&
+    SECRETISH_TEXT.test((state.substitutions ?? []).join("\n"))
+  ) {
+    ctx.deny("passes a computed argument that may resolve to a secret or protected file");
+  }
+  // xargs appends arguments the guard never sees.
+  if (state.fromXargs) {
+    if (["gh", "vercel", "supabase", "prisma", "psql"].includes(name)) {
+      ctx.deny(`runs ${name} with arguments read from stdin via xargs, which cannot be inspected`);
+    } else if (name === "git") {
+      const sub = args.find((a) => !isFlag(a));
+      if (
+        !sub ||
+        [
+          "push",
+          "config",
+          "checkout",
+          "restore",
+          "reset",
+          "clean",
+          "branch",
+          "update-index",
+          "checkout-index",
+          "rm",
+          "mv",
+          "update-ref",
+        ].includes(sub)
+      ) {
+        ctx.deny("runs git with arguments read from stdin via xargs, which cannot be inspected");
+      }
+    }
+  }
+  if (["cmdkey", "vaultcmd", "get-storedcredential"].includes(name)) {
+    ctx.deny("lists or reads stored Windows credentials");
+  }
 
   const runsHelper =
     STAGING_OPS.test(words[0]) ||
@@ -435,7 +492,17 @@ function unwrap(initialWords, command, ctx, state, assigns) {
       let i = 0;
       while (i < rest.length) {
         const w = rest[i];
-        if (w === "-u" || w === "--unset" || w === "-C" || w === "--chdir" || w === "-S") i += 2;
+        if (w === "-S" || w === "--split-string" || /^(-S.|--split-string=)/.test(w)) {
+          // env -S 'cmd args' splits its argument into a command line.
+          const inline =
+            w === "-S" || w === "--split-string"
+              ? (rest[i + 1] ?? "")
+              : w.replace(/^(-S|--split-string=)/, "");
+          const after = rest.slice(w === "-S" || w === "--split-string" ? i + 2 : i + 1);
+          inspectScript([inline, ...after].join(" "), "bash", ctx, nestedDepth, state);
+          return null;
+        }
+        if (w === "-u" || w === "--unset" || w === "-C" || w === "--chdir") i += 2;
         else if (isFlag(w)) i += 1;
         else if (/^[A-Za-z_]\w*=/.test(w)) {
           assigns.push(w.split("=")[0]);
@@ -487,6 +554,7 @@ function unwrap(initialWords, command, ctx, state, assigns) {
       ];
       while (i < rest.length && isFlag(rest[i])) i += withValue.includes(rest[i]) ? 2 : 1;
       words = rest.slice(i);
+      state.fromXargs = true;
       continue;
     }
     if (["npx", "bunx", "pnpx"].includes(name)) {
@@ -651,7 +719,7 @@ function unwrap(initialWords, command, ctx, state, assigns) {
       words = rest.slice(i);
       continue;
     }
-    if (words[0] === "&" || words[0] === ".") {
+    if (words[0] === "&") {
       words = rest;
       continue;
     }
@@ -710,9 +778,43 @@ function inspectGit(args, ctx, state, assigns) {
     ctx.deny(`sets ${bypassVar}, which can disable or reconfigure git verification hooks`);
   }
 
+  const execVar = allAssigns.find((n) => GIT_EXEC_ENV.test(n));
+  if (execVar) ctx.deny(`sets ${execVar}, which makes git run an arbitrary program`);
+
   const sub = args[i];
   const rest = args.slice(i + 1);
   if (!sub) return;
+
+  // Arguments whose value is only known at run time (`HEAD:$(echo main)`, `${B#x}`,
+  // `{--force,origin}`) can't be checked. Commit messages and formats are exempt.
+  const dynamic = dynamicGitArgs(args);
+  if (dynamic.length) {
+    const risky = [
+      "push",
+      "config",
+      "update-index",
+      "checkout-index",
+      "read-tree",
+      "update-ref",
+      "filter-branch",
+      "filter-repo",
+      "reset",
+      "checkout",
+      "restore",
+      "clean",
+      "branch",
+      "worktree",
+      "rm",
+      "mv",
+    ];
+    if (isDynamicWord(sub) || risky.includes(sub)) {
+      ctx.deny(
+        `runs \`git ${isDynamicWord(sub) ? "<computed>" : sub}\` with arguments computed at run time, which cannot be inspected`,
+      );
+    } else {
+      ctx.ask(`runs \`git ${sub}\` with arguments computed at run time`);
+    }
+  }
   const hasNoVerify = rest.some((a) => prefixOf("--no-verify", a.split("=")[0], 9));
 
   switch (sub) {
@@ -746,6 +848,22 @@ function inspectGit(args, ctx, state, assigns) {
     case "reset":
       if (rest.some((a) => a.startsWith("--ha")))
         ctx.ask("`git reset --hard` discards uncommitted work");
+      if (rest.some((a) => a === "--keep" || a === "--merge"))
+        ctx.ask("`git reset --keep/--merge` rewrites working-tree files");
+      break;
+    case "update-index":
+    case "checkout-index": {
+      for (const a of rest) {
+        if (isFlag(a)) continue;
+        const target = a.includes(",") ? a.slice(a.lastIndexOf(",") + 1) : a;
+        checkConfigWrite(resolveArgPath(target, gitCwd), target, ctx, state);
+      }
+      ctx.ask(`\`git ${sub}\` writes the index or working tree directly`);
+      break;
+    }
+    case "read-tree":
+      if (rest.some((a) => a === "-u" || a === "--reset" || a === "-m"))
+        ctx.ask("`git read-tree` with -u/--reset/-m rewrites working-tree files");
       break;
     case "checkout": {
       const valueFlags = ["-b", "-B", "--orphan", "--conflict", "--pathspec-from-file"];
@@ -800,6 +918,18 @@ function inspectGit(args, ctx, state, assigns) {
     case "grep":
     case "log":
     case "blame":
+      // git grep --no-index/--untracked searches files .gitignore would hide (.env*).
+      if (
+        sub === "grep" &&
+        rest.some((a) => a === "--no-index" || a === "--untracked") &&
+        !rest.includes("--exclude-standard")
+      ) {
+        const secret = secretEnvFilesIn(gitCwd)[0];
+        if (secret)
+          ctx.deny(
+            `\`git grep --no-index\` would print values from ${secret}; add --exclude-standard`,
+          );
+      }
       for (const a of rest) {
         const revPath = /^[^:]*:(.+)$/.exec(a);
         if (revPath && isSecretPath(resolveArgPath(revPath[1], gitCwd))) {
@@ -880,7 +1010,48 @@ function inspectGit(args, ctx, state, assigns) {
 }
 
 // Config keys that disable hooks, hide commands, or silently re-route pushes to main.
+function dynamicGitArgs(args) {
+  const valueOptions = [
+    "-m",
+    "--message",
+    "-F",
+    "--file",
+    "--author",
+    "--date",
+    "--format",
+    "--pretty",
+    "-t",
+    "--template",
+    "--trailer",
+  ];
+  const out = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (valueOptions.includes(a)) {
+      i++;
+      continue;
+    }
+    if (/^--(message|author|date|format|pretty|template|trailer|file)=/.test(a)) continue;
+    // Short clusters ending in a message flag (-am "...") take the next word as the value.
+    if (/^-[a-zA-Z]*[mF]$/.test(a) && !a.startsWith("--")) {
+      i++;
+      continue;
+    }
+    if (isDynamicWord(a)) out.push(a);
+  }
+  return out;
+}
+
+function secretEnvFilesIn(dir) {
+  try {
+    return fs.readdirSync(dir).filter((entry) => isSecretEnvFileName(entry));
+  } catch {
+    return [];
+  }
+}
+
 function inspectGitConfigKey(key, value, ctx) {
+  if (GIT_EXEC_CONFIG.test(key)) ctx.deny(`sets ${key}, which makes git run an arbitrary command`);
   if (key === "core.hookspath") ctx.deny("sets core.hooksPath, which disables verification hooks");
   if (key.startsWith("alias.")) ctx.deny("defines a git alias, which can hide a protected command");
   if (/^remote\..+\.(push|mirror)$/.test(key)) {
@@ -1249,7 +1420,7 @@ function inspectVercel(args, ctx) {
     "--meta",
   ]);
   const prod =
-    flags.some((f) => f === "--prod" || f === "--production" || /^--target=production$/i.test(f)) ||
+    flags.some((f) => f.startsWith("--prod") || /^--target=production$/i.test(f)) ||
     flags.some((f, i) => f === "--target" && /^production$/i.test(flags[i + 1] ?? ""));
   if (!positional.length && flags.some((f) => /^(--version|-v|--help|-h)$/.test(f))) return;
   const sub = positional.length && VERCEL_COMMANDS.has(positional[0]) ? positional[0] : "deploy";
@@ -1446,7 +1617,7 @@ function inspectCode(code, ctx, state, depth) {
   }
   const literals = stringLiterals(text);
   const writes =
-    /writeFile|appendFile|createWriteStream|unlink|rmSync|\brm\s*\(|rmdir|rename|copyFile|cpSync|truncate|\bopen\s*\([^)]*['"][wax+]|write_text|write_bytes|shutil\.|os\.remove|chmod|symlink|Set-Content|Out-File|WriteAll(Text|Bytes|Lines)|AppendAll(Text|Lines)|::(Delete|Move|Copy|Replace|Create)\s*\(/.test(
+    /writeFile|writeSync|openSync|appendFile|createWriteStream|unlink|rmSync|\brm\s*\(|rmdir|rename|copyFile|cpSync|truncate|\bopen\s*\([^)]*['"][wax+]|write_text|write_bytes|shutil\.|os\.remove|chmod|symlink|Set-Content|Out-File|WriteAll(Text|Bytes|Lines)|AppendAll(Text|Lines)|::(Delete|Move|Copy|Replace|Create)\s*\(/.test(
       text,
     );
   for (const literal of literals) {
@@ -1529,7 +1700,16 @@ function inspectRecursiveSearch(name, args, ctx, state) {
     );
   }
   if (!recursive) return;
-  if (args.some((a) => /^--exclude=['"]?\.env/i.test(a) || /^--glob=['"]?!\.env/i.test(a))) return;
+  const exclusions = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    const inline = /^--(exclude|glob|iglob)=(.*)$/.exec(a);
+    if (inline) exclusions.push(inline[2].replace(/^!/, ""));
+    else if (["--exclude", "--glob", "-g", "--iglob"].includes(a) && args[i + 1] !== undefined) {
+      exclusions.push(args[i + 1].replace(/^!/, ""));
+    }
+  }
+  const excluded = (entry) => exclusions.some((pattern) => globMatches(entry, pattern));
   const valueFlags = [
     "-e",
     "-f",
@@ -1557,7 +1737,9 @@ function inspectRecursiveSearch(name, args, ctx, state) {
     try {
       const dir = path.resolve(state.cwd, target.replace(/\\/g, "/"));
       if (!fs.statSync(dir).isDirectory()) continue;
-      const secret = fs.readdirSync(dir).find((entry) => isSecretEnvFileName(entry));
+      const secret = fs
+        .readdirSync(dir)
+        .find((entry) => isSecretEnvFileName(entry) && !excluded(entry));
       if (secret) {
         ctx.deny(
           `searches ${target} recursively, which would print values from ${secret}; exclude it (for example --exclude='.env*') or use git grep`,
@@ -1589,9 +1771,47 @@ function inspectFind(name, args, ctx, state, depth) {
   }
 }
 
+const DOWNLOADERS = new Set([
+  "curl",
+  "wget",
+  "invoke-webrequest",
+  "iwr",
+  "invoke-restmethod",
+  "irm",
+]);
+const FORMATTERS = new Set(["prettier", "eslint", "biome", "dprint"]);
+
 function inspectFileArguments(name, args, ctx, state) {
   const candidates = [];
   let destination = null;
+  const writeTargets = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    const lower = a.toLowerCase();
+    if (DOWNLOADERS.has(name)) {
+      if (
+        ["-o", "--output", "--output-document", "-outfile"].includes(lower) ||
+        (name === "wget" && a === "-O")
+      ) {
+        writeTargets.push(args[i + 1] ?? "");
+      } else if (/^--(output|output-document)=/.test(a))
+        writeTargets.push(a.slice(a.indexOf("=") + 1));
+    }
+  }
+  if (
+    (name === "tar" &&
+      args.some((a) => /^-?[a-zA-Z]*x/.test(a) || a === "--extract" || a === "--get")) ||
+    ["unzip", "expand-archive", "7z", "7za"].includes(name)
+  ) {
+    ctx.ask(`${name} extracts an archive, which can overwrite protected files`);
+  }
+  const formatterWrites =
+    FORMATTERS.has(name) && args.some((a) => ["--write", "-w", "--fix", "--apply"].includes(a));
+  for (const target of writeTargets) {
+    const abs = resolveArgPath(target, state.cwd);
+    checkConfigWrite(abs, target, ctx, state);
+    if (isSecretPath(abs)) ctx.deny(`downloads over a secret or credential file (${target})`);
+  }
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
     if (/^-(destination|target-directory)$/i.test(a) || a === "-t") {
@@ -1609,7 +1829,7 @@ function inspectFileArguments(name, args, ctx, state) {
       continue;
     }
     if (a.includes("=")) candidates.push(a.slice(a.indexOf("=") + 1));
-    if (!isFlag(a)) candidates.push(a.replace(/^@/, ""));
+    if (!isFlag(a)) candidates.push(a.replace(/^@/, "").replace(/^file:\/\/\/?/i, ""));
   }
   const positional = args.filter((a) => !isFlag(a));
   if (COPY_COMMANDS.has(name) && destination === null)
@@ -1645,6 +1865,7 @@ function inspectFileArguments(name, args, ctx, state) {
         MOVE_COMMANDS.has(name) ||
         WRITE_COMMANDS.has(name) ||
         inPlace ||
+        formatterWrites ||
         (COPY_COMMANDS.has(name) && original === destination) ||
         (name === "dd" && args.some((a) => a === `of=${original}`));
       if (isWrite) {
@@ -1729,7 +1950,7 @@ function inspectMcp(toolName, input, ctx) {
     /(^|_)(merge|delete|remove|destroy|drop|deploy|promote|rollback|dispatch|rerun|cancel|approve|revoke|rotate|transfer|archive|reset|restore|pause)(_|$)/.test(
       tool,
     ) ||
-    /apply_migration|run_workflow|workflow_dispatch|push_files|create_or_update_file|update_pull_request_branch|update_ref|branch_protection|ruleset|secret|environment_variable|api_key/.test(
+    /apply_migration|run_workflow|run_trigger|actions_run|workflow_dispatch|create_commit|create_tree|create_blob|create_ref|push_files|create_or_update_file|update_pull_request_branch|update_ref|branch_protection|ruleset|secret|environment_variable|api_key/.test(
       tool,
     )
   ) {

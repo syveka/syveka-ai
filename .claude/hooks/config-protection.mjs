@@ -15,10 +15,11 @@
 // tool calls don't persist environment state into the hook process. The override never
 // unlocks secret reads.
 
-import { readFileSync, writeSync } from "node:fs";
+import { readdirSync, readFileSync, writeSync } from "node:fs";
 import path from "node:path";
 import { runGuard } from "./lib/hook-io.mjs";
 import {
+  globMatches,
   isOverrideEnabled,
   isSecretPath,
   protectedConfigLabel,
@@ -95,6 +96,22 @@ runGuard("config-protection", (payload) => {
   const cwd = typeof payload.cwd === "string" && payload.cwd ? payload.cwd : process.cwd();
   const roots = [process.env.CLAUDE_PROJECT_DIR || cwd, cwd];
 
+  if (toolName === "Grep" && typeof input.glob === "string" && input.glob) {
+    // A glob such as "*.local" or ".e*" can select secret files the path check never sees.
+    const dir = path.resolve(cwd, typeof input.path === "string" && input.path ? input.path : ".");
+    let entries = [];
+    try {
+      entries = readdirSync(dir);
+    } catch {
+      entries = [];
+    }
+    const secret = entries.find(
+      (entry) => isSecretPath(resolveArgPath(entry, dir)) && globMatches(entry, input.glob),
+    );
+    if (secret) {
+      verdict.deny.push(`the Grep glob "${input.glob}" matches the secret file "${secret}"`);
+    }
+  }
   if (toolName === "Read" || toolName === "Grep") {
     for (const candidate of [input.file_path, input.path, input.glob]) {
       if (typeof candidate !== "string" || !candidate) continue;

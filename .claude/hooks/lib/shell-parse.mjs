@@ -23,13 +23,14 @@ const MAX_DEPTH = 6;
  *   envReads: string[],
  *   envWrites: string[],
  *   opaque: string[],
+ *   substitutions: string[],
  * }} ParseResult
  */
 
 /** @returns {ParseResult} */
 export function parseScript(source, dialect = "bash", depth = 0) {
   /** @type {ParseResult} */
-  const result = { commands: [], envReads: [], envWrites: [], opaque: [] };
+  const result = { commands: [], envReads: [], envWrites: [], opaque: [], substitutions: [] };
   if (depth > MAX_DEPTH) {
     result.opaque.push("command nesting is deeper than the guard can inspect");
     return result;
@@ -44,6 +45,7 @@ function mergeInto(target, nested) {
   target.envReads.push(...nested.envReads);
   target.envWrites.push(...nested.envWrites);
   target.opaque.push(...nested.opaque);
+  target.substitutions.push(...nested.substitutions);
 }
 
 function readBalanced(src, start, open, close) {
@@ -106,7 +108,12 @@ function tokenize(src, dialect, depth, result) {
     word = "";
     inWord = false;
   };
-  const nested = (text, d = dialect) => mergeInto(result, parseScript(text, d, depth + 1));
+  // Command substitutions run as commands of their own; their text is also kept so callers
+  // can tell when a word's value is computed at run time.
+  const nested = (text, d = dialect) => {
+    result.substitutions.push(text);
+    mergeInto(result, parseScript(text, d, depth + 1));
+  };
 
   let i = 0;
   while (i < src.length) {
@@ -244,6 +251,50 @@ function tokenize(src, dialect, depth, result) {
           continue;
         }
         text += c;
+        j++;
+      }
+      word += text;
+      inWord = true;
+      i = j + 1;
+      continue;
+    }
+    // Bash ANSI-C quoting: $'\x67it' is the literal word "git".
+    if (dialect === "bash" && ch === "$" && next === "'") {
+      let j = i + 2;
+      let text = "";
+      while (j < src.length && src[j] !== "'") {
+        if (src[j] === "\\" && j + 1 < src.length) {
+          const rest = src.slice(j + 1);
+          const hex = /^x([0-9a-fA-F]{1,2})/.exec(rest);
+          const uni = /^[uU]([0-9a-fA-F]{1,8})/.exec(rest);
+          const oct = /^([0-7]{1,3})/.exec(rest);
+          if (hex) {
+            text += String.fromCharCode(parseInt(hex[1], 16));
+            j += 1 + hex[0].length;
+          } else if (uni) {
+            text += String.fromCodePoint(parseInt(uni[1], 16));
+            j += 1 + uni[0].length;
+          } else if (oct) {
+            text += String.fromCharCode(parseInt(oct[1], 8));
+            j += 1 + oct[0].length;
+          } else {
+            const escapes = {
+              n: "\n",
+              t: "\t",
+              r: "\r",
+              a: "\x07",
+              b: "\b",
+              e: "\x1b",
+              E: "\x1b",
+              f: "\f",
+              v: "\v",
+            };
+            text += escapes[rest[0]] ?? rest[0];
+            j += 2;
+          }
+          continue;
+        }
+        text += src[j];
         j++;
       }
       word += text;

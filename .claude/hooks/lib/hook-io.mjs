@@ -9,8 +9,11 @@
 //
 // Fail-safe: Claude Code treats any exit code other than 2 (a crash, a missing file)
 // as non-blocking, so the hooks are registered as `node ... || exit 2` and never
-// exit 1 on purpose. Malformed input is denied. An internal error denies only when
-// the raw input looks security-sensitive, so a guard bug can't lock out routine work.
+// exit 1 on purpose: any crash outside evaluate() (import or syntax error, missing
+// file) is turned into a deny by that wrapper. Malformed input is denied. An error
+// thrown by evaluate() denies only when the raw input looks security-sensitive, so a
+// guard bug can't lock out routine work; on other input it is allowed silently.
+// evaluate() must be synchronous.
 
 import { writeSync } from "node:fs";
 
@@ -84,6 +87,10 @@ export async function runGuard(guard, evaluate) {
   let verdict;
   try {
     verdict = evaluate(payload);
+    // Guards must be synchronous: a Promise here would otherwise read as "no objection".
+    if (verdict && typeof verdict.then === "function") {
+      throw new Error("guard returned a Promise; evaluate must be synchronous");
+    }
   } catch (error) {
     if (SENSITIVE_FALLBACK.test(raw)) {
       deny(guard, [

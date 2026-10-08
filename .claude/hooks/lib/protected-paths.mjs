@@ -27,6 +27,9 @@ const PROTECTED_CONFIG = [
   /^tests(\/unit)?$/,
   /^scripts\/(check-i18n-parity|check-migration-history|verify-release-chain|validate-staging-config|verify-prisma-engine|generate-legacy-schema-contract|check-dashboard-index-ownership|run-npm-audit)\.(mjs|ts|js)$/,
   /^tests\/unit\/hook-[\w-]+\.test\.ts$/,
+  /^\.mcp\.json$/,
+  // Git's own config and hooks can re-enable every bypass the command guard blocks.
+  /(^|\/)\.git\/(.*\/)?(config(\.worktree)?|hooks(\/.*)?|info\/attributes)$/,
 ];
 
 // Template env files carry no secrets and are edited whenever a variable is added.
@@ -39,7 +42,8 @@ const NESTED_WORKTREE = /^(?:\.claude\/worktrees|\.worktrees)\/[^/]+\//;
 // Credential stores outside the repository (absolute, posix, lower-cased suffixes).
 const CREDENTIAL_PATHS = [
   /\/\.claude\/\.credentials\.json$/,
-  /\/\.claude\.json$/,
+  /\/\.claude\.json(\.backup(\.\d+)?)?$/,
+  /\/\.claude\/backups\/.*claude\.json/,
   /\/\.config\/gh\/hosts\.ya?ml$/,
   /\/github cli\/hosts\.ya?ml$/,
   /\/\.git-credentials$/,
@@ -65,6 +69,10 @@ const AGENT_CONFIG_ANYWHERE = [
   /\/\.claude\.json$/,
   /\/claude\.md$/,
   /\/\.github\/workflows\//,
+  /\/\.mcp\.json$/,
+  /\/\.gitconfig$/,
+  /\/\.config\/git\/(config|attributes)$/,
+  /\/\.git\/(.*\/)?(config(\.worktree)?|hooks\/.*|info\/attributes)$/,
 ];
 
 function toPosix(p) {
@@ -197,6 +205,34 @@ export function protectedConfigLabel(abs, roots) {
   if (candidates.some((root) => relativeWithin(root, abs) !== null)) return null;
   const mains = [...new Set(roots.filter(Boolean).map(mainCheckoutRoot).filter(Boolean))];
   return check(mains.map((r) => canonicalize(toPosix(r))));
+}
+
+/** Shell-style glob match on a single path component (*, ?, [...], {a,b}). */
+export function globMatches(name, pattern) {
+  const braces = /\{([^{}]*)\}/.exec(pattern);
+  if (braces) {
+    return braces[1].split(",").some((part) => globMatches(name, pattern.replace(braces[0], part)));
+  }
+  const base = String(pattern).replace(/\\/g, "/").split("/").pop() ?? "";
+  let source = "^";
+  for (let i = 0; i < base.length; i++) {
+    const ch = base[i];
+    if (ch === "*") source += ".*";
+    else if (ch === "?") source += ".";
+    else if (ch === "[" && base.indexOf("]", i + 1) !== -1) {
+      const close = base.indexOf("]", i + 1);
+      source += `[${base
+        .slice(i + 1, close)
+        .replace(/^!/, "^")
+        .replace(/\\/g, "\\\\")}]`;
+      i = close;
+    } else source += ch.replace(/[.+^${}()|\\]/g, "\\$&");
+  }
+  try {
+    return new RegExp(`${source}$`, "i").test(name);
+  } catch {
+    return false;
+  }
 }
 
 export function isOverrideEnabled() {

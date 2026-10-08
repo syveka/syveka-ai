@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { spawnSync } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -219,5 +221,39 @@ describe("config-protection: consolidated coverage", () => {
       statusOf({ tool_name: "Read", tool_input: { file_path: path.join(REPO_ROOT, "CLAUDE.md") } }),
     ).toBe(0);
     expect(statusOf({ tool_name: "Grep", tool_input: { pattern: "x", path: "src" } })).toBe(0);
+  });
+});
+
+describe("config-protection: second independent review (round 2)", () => {
+  const statusOf = (payload: Record<string, unknown>) =>
+    runHook(payload, { CLAUDE_PROJECT_DIR: REPO_ROOT, SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT: "" })
+      .status;
+
+  it.each([".git/config", ".git/hooks/pre-push", ".git/info/attributes", ".mcp.json"])(
+    "blocks editing %s",
+    (relPath) => {
+      expect(statusOf(editOf(relPath))).toBe(2);
+    },
+  );
+
+  it("denies a Grep glob that selects a secret file", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-grep-"));
+    fs.writeFileSync(path.join(dir, ".env.local"), "SECRET=1\n");
+    try {
+      for (const glob of ["*.local", ".e*", "{.env.local,x}"]) {
+        expect(
+          statusOf({ tool_name: "Grep", cwd: dir, tool_input: { pattern: "x", path: dir, glob } }),
+        ).toBe(2);
+      }
+      expect(
+        statusOf({
+          tool_name: "Grep",
+          cwd: dir,
+          tool_input: { pattern: "x", path: dir, glob: "*.ts" },
+        }),
+      ).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
