@@ -206,6 +206,8 @@ async function runGeneration(
         errorCode,
         errorMessageSafe: "Could not reserve credits for this generation.",
         completedAt: new Date(),
+        // Nothing was reserved, so there is nothing for the reconciler to release.
+        creditsReserved: 0,
       },
     });
     throw error;

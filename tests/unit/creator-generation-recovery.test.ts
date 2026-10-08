@@ -14,6 +14,7 @@ const {
   auditLogFindFirstMock,
   auditMock,
   settledMock,
+  reservedMock,
   commitMock,
   releaseMock,
   claimCompletedMock,
@@ -29,6 +30,7 @@ const {
   auditLogFindFirstMock: vi.fn(async (): Promise<{ id: string } | null> => null),
   auditMock: vi.fn(async () => undefined),
   settledMock: vi.fn(async () => false),
+  reservedMock: vi.fn(async () => true),
   commitMock: vi.fn(async () => ({ applied: true })),
   releaseMock: vi.fn(async () => ({ applied: true })),
   claimCompletedMock: vi.fn(async () => ({ claimed: true })),
@@ -62,6 +64,7 @@ vi.mock("@/server/db/tenant", () => ({
 vi.mock("@/server/services/audit", () => ({ audit: auditMock }));
 vi.mock("@/server/services/creator-credits", () => ({
   creatorGenerationCreditsSettled: settledMock,
+  creatorGenerationCreditsReserved: reservedMock,
   commitCreatorCredits: commitMock,
   releaseCreatorCredits: releaseMock,
 }));
@@ -109,6 +112,7 @@ describe("reconcileCreatorGenerations", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     settledMock.mockResolvedValue(false);
+    reservedMock.mockResolvedValue(true);
     commitMock.mockResolvedValue({ applied: true });
     releaseMock.mockResolvedValue({ applied: true });
     claimCompletedMock.mockResolvedValue({ claimed: true });
@@ -269,6 +273,17 @@ describe("reconcileCreatorGenerations", () => {
 
     expect(result.settlementRepaired).toBe(1);
     expect(releaseMock).toHaveBeenCalledTimes(1);
+    expect(commitMock).not.toHaveBeenCalled();
+  });
+
+  it("FAILED because the reservation itself failed (no RESERVE row): never releases, so no credits are minted", async () => {
+    seedSettlementScan([generatingRow({ status: "FAILED" })]);
+    reservedMock.mockResolvedValueOnce(false);
+
+    const result = await reconcileCreatorGenerations({});
+
+    expect(result.settlementRepaired).toBe(0);
+    expect(releaseMock).not.toHaveBeenCalled();
     expect(commitMock).not.toHaveBeenCalled();
   });
 

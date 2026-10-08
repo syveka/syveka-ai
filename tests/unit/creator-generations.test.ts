@@ -150,6 +150,26 @@ describe("runGeneration (via requestCharacterImageGeneration)", () => {
     );
   });
 
+  it("records nothing reserved when the reservation itself fails, so recovery can't release credits that were never taken", async () => {
+    const db = makeDb();
+    tenantDbMock.mockReturnValue(db);
+    reserveMock.mockRejectedValueOnce(new Error("insufficient"));
+
+    await expect(
+      requestCharacterImageGeneration(ctx(), {
+        creatorProfileId: "profile-1",
+        prompt: "a portrait",
+        aspectRatio: "1:1",
+      }),
+    ).rejects.toThrow("insufficient");
+
+    expect(db.generation.status).toBe("FAILED");
+    expect(db.generation.creditsReserved).toBe(0);
+    expect(providerMock.generateCharacterImage).not.toHaveBeenCalled();
+    expect(releaseMock).not.toHaveBeenCalled();
+    expect(commitMock).not.toHaveBeenCalled();
+  });
+
   it("reserves once and releases exactly once on provider failure — never commits", async () => {
     const db = makeDb();
     tenantDbMock.mockReturnValue(db);

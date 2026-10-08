@@ -122,33 +122,39 @@ export async function getCreatorCreditBalance(
   };
 }
 
-/** Reserve credits before running a paid provider call. Throws InsufficientCreditsError if unavailable. */
+/**
+ * Reserve credits before running a paid provider call. Throws InsufficientCreditsError if
+ * unavailable. The balance change and its RESERVE ledger row commit together, so a RESERVE row
+ * exists exactly when credits were moved to "reserved" -- the reconciler relies on that.
+ */
 export async function reserveCreatorCredits(
   ctx: TenantContext,
   params: { generationId: string; amount: number },
 ): Promise<void> {
   await ensureMonthlyCreditGrant(ctx.orgId);
 
-  const db = tenantDb(ctx.orgId);
-  const result = await db.creatorCreditBalance.updateMany({
-    where: { organizationId: ctx.orgId, availableCredits: { gte: params.amount } },
-    data: {
-      availableCredits: { decrement: params.amount },
-      reservedCredits: { increment: params.amount },
-    },
-  });
-  if (result.count !== 1) {
-    throw new InsufficientCreditsError("Insufficient Creator Studio credits for this generation.");
-  }
-
-  await unscopedPrisma.creatorCreditTransaction.create({
-    data: {
-      organizationId: ctx.orgId,
-      generationId: params.generationId,
-      type: "RESERVE",
-      amount: params.amount,
-      createdById: ctx.userId,
-    },
+  await unscopedPrisma.$transaction(async (tx) => {
+    const result = await tx.creatorCreditBalance.updateMany({
+      where: { organizationId: ctx.orgId, availableCredits: { gte: params.amount } },
+      data: {
+        availableCredits: { decrement: params.amount },
+        reservedCredits: { increment: params.amount },
+      },
+    });
+    if (result.count !== 1) {
+      throw new InsufficientCreditsError(
+        "Insufficient Creator Studio credits for this generation.",
+      );
+    }
+    await tx.creatorCreditTransaction.create({
+      data: {
+        organizationId: ctx.orgId,
+        generationId: params.generationId,
+        type: "RESERVE",
+        amount: params.amount,
+        createdById: ctx.userId,
+      },
+    });
   });
 }
 
@@ -243,6 +249,14 @@ export async function releaseCreatorCredits(
  * whether a repair is needed without re-deriving it from the generation
  * row alone.
  */
+export async function creatorGenerationCreditsReserved(generationId: string): Promise<boolean> {
+  const existing = await unscopedPrisma.creatorCreditTransaction.findFirst({
+    where: { generationId, type: "RESERVE" },
+  });
+  return existing !== null;
+}
+
+/** Whether a COMMIT or RELEASE already settled this generation's reservation. */
 export async function creatorGenerationCreditsSettled(generationId: string): Promise<boolean> {
   const existing = await unscopedPrisma.creatorCreditTransaction.findFirst({
     where: { generationId, type: { in: ["COMMIT", "RELEASE"] } },
