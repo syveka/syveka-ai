@@ -40,7 +40,73 @@ const GIT_EXEC_CONFIG =
 // Words whose final value is only known at run time: substitutions, parameter
 // expansions, brace expansion.
 function isDynamicWord(word) {
-  return /\$|`|<\(\.\.\.\)/.test(word) || /\{[^{}]*(,|\.\.)[^{}]*\}/.test(word);
+  return (
+    /\$|`|<\(\.\.\.\)/.test(word) || /\{[^{}]*(,|\.\.)[^{}]*\}/.test(word) || /^@\w+$/.test(word)
+  );
+}
+
+// Limits that keep a single hook call well under Claude Code's hook timeout. Inputs
+// beyond them are denied when they look security-sensitive and skipped otherwise.
+const MAX_WORDS_PER_COMMAND = 2000;
+const MAX_REDIRECTS_PER_COMMAND = 200;
+const MAX_EXPANSIONS = 64;
+const MAX_SOURCE_LENGTH = 500_000;
+
+// Number of words a brace expression expands to (capped), without expanding it.
+function braceFanOut(word) {
+  let total = 1;
+  for (const m of String(word).matchAll(/\{([^{}]*)\}/g)) {
+    const range = /^(-?\w+)\.\.(-?\w+)$/.exec(m[1]);
+    const n = m[1].includes(",") ? m[1].split(",").length : range ? 100 : 1;
+    total *= n;
+    if (total > MAX_EXPANSIONS) return total;
+  }
+  return total;
+}
+
+const PIPE_READERS = new Set([
+  "cat",
+  "type",
+  "gc",
+  "get-content",
+  "select-string",
+  "sls",
+  "xargs",
+  "more",
+  "less",
+  "foreach-object",
+  "%",
+  "findstr",
+]);
+const PIPE_WRITERS = new Set([
+  "remove-item",
+  "ri",
+  "rm",
+  "del",
+  "erase",
+  "move-item",
+  "mi",
+  "set-content",
+  "sc",
+  "add-content",
+  "ac",
+  "out-file",
+  "clear-content",
+  "copy-item",
+  "cpi",
+  "rename-item",
+  "rni",
+  "xargs",
+  "tee",
+  "tee-object",
+]);
+const SECRETISH_WORD =
+  /(^|[\\/*])\.env([.*?[]|$)|^env$|credential|\.git-credentials|hosts\.ya?ml|\.claude\.json|\.netrc|\.pem$/i;
+
+function substituteKnown(word, state) {
+  return word.replace(/\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*)(?![\w{]))/g, (m, a, b) =>
+    state.values.has(a || b) ? state.values.get(a || b) : m,
+  );
 }
 const SECRETISH_TEXT =
   /\benv\b|\.env|secret|credential|token|passw|api.?key|\.claude|claude\.md|hosts\.ya?ml|\.ssh|netrc|\.git\//i;
@@ -70,6 +136,8 @@ const METADATA_COMMANDS = new Set([
   "write-host",
 ]);
 const DELETE_COMMANDS = new Set([
+  "rimraf",
+  "del-cli",
   "rm",
   "rmdir",
   "unlink",
@@ -215,6 +283,10 @@ function newState(ctx, source) {
 }
 
 function inspectScript(source, dialect, ctx, depth, state = newState(ctx, source)) {
+  if (String(source).length > MAX_SOURCE_LENGTH) {
+    if (isSensitiveText(source)) ctx.deny("the command is too large to inspect");
+    return;
+  }
   const parsed = parseScript(source, dialect, depth);
   state.substitutions = [...(state.substitutions ?? []), ...parsed.substitutions];
   if (parsed.opaque.length && isSensitiveText(source)) {
@@ -230,7 +302,13 @@ function inspectScript(source, dialect, ctx, depth, state = newState(ctx, source
   for (const m of text.matchAll(/ENVIRON\s*\[\s*["'](\w+)["']\s*\]/g)) {
     if (isSecretName(m[1])) ctx.deny(`reads the secret-bearing environment variable ${m[1]}`);
   }
-  if (/\bENVIRON\b(?!\s*\[)|\bps\s+\S*e\S*ww|\$\{!\w*\*?\}/.test(text)) {
+  // `ps eww` prints other processes' environments. The flag word is captured first and
+  // inspected separately, keeping the check linear on adversarial input like `ps eeee…`.
+  const psFlags = [...text.matchAll(/\bps\s+(-?[a-zA-Z]{1,64})(?![a-zA-Z])/g)].map((m) => m[1]);
+  if (
+    /\bENVIRON\b(?!\s*\[)|\$\{!\w*\*?\}/i.test(text) ||
+    psFlags.some((flags) => flags.includes("e") && flags.includes("ww"))
+  ) {
     ctx.deny("dumps environment variables");
   }
   // PowerShell .NET calls ([IO.File]::ReadAllText(...), [scriptblock]::Create(...)) carry
@@ -251,7 +329,100 @@ function inspectScript(source, dialect, ctx, depth, state = newState(ctx, source
   )) {
     if (isSecretName(m[1])) ctx.deny(`reads the secret-bearing environment variable ${m[1]}`);
   }
+  if (dialect === "powershell") {
+    // git arguments built by a PowerShell expression: git push origin (('m','a','i','n') -join '')
+    if (
+      /\bgit(\.exe)?\b[^;\n|]*\(/i.test(text) &&
+      /\bgit\b[^;\n|]*\b(push|config|checkout|reset|clean)\b/i.test(text)
+    ) {
+      ctx.deny(
+        "runs git with arguments built by a PowerShell expression, which cannot be inspected",
+      );
+    }
+    // .NET reads of a file object: (Get-Item .env.local).OpenText().ReadToEnd()
+    if (
+      /\.(OpenText|OpenRead|ReadToEnd|ReadAllText|ReadAllLines|ReadAllBytes)\s*\(/i.test(text) &&
+      parsed.commands.some((c) => c.words.some((w) => isSecretWord(w, state)))
+    ) {
+      ctx.deny("reads a secret file through a .NET file object");
+    }
+  }
+  inspectPipelines(parsed.commands, depth, ctx, state);
   for (const command of parsed.commands) inspectCommand(command, ctx, state);
+}
+
+function isSecretWord(word, state) {
+  if (SECRETISH_WORD.test(word)) return true;
+  if (braceFanOut(word) > MAX_EXPANSIONS) return false;
+  return expandPattern(word, state.cwd).some((c) => isSecretPath(resolveArgPath(c, state.cwd)));
+}
+
+function isProtectedWord(word, ctx, state) {
+  if (braceFanOut(word) > MAX_EXPANSIONS) return false;
+  return expandPattern(word, state.cwd).some((c) =>
+    Boolean(protectedConfigLabel(resolveArgPath(c, state.cwd), roots(ctx, state))),
+  );
+}
+
+// Secrets and protected files reached through a pipeline: `ls -a | grep env | xargs cat`,
+// `Get-Item .env.local | Get-Content`, `gci .claude -r | Remove-Item`,
+// `gci -Recurse | Select-String KEY`.
+function inspectPipelines(commands, depth, ctx, state) {
+  let previous = null;
+  for (const command of commands) {
+    if (command.depth !== depth || command.words.length > MAX_WORDS_PER_COMMAND) {
+      previous = null;
+      continue;
+    }
+    const name = commandName(command.words.find((w) => !/^[A-Za-z_]\w*=/.test(w)) ?? "");
+    const args = command.words.slice(1).map((w) => substituteKnown(w, state));
+    if (command.piped && previous) {
+      if (previous.secret && PIPE_READERS.has(name)) {
+        ctx.deny(`pipes a secret file into ${name}, which would print its contents`);
+      }
+      if (previous.protectedPath && PIPE_WRITERS.has(name) && !isOverrideEnabled()) {
+        ctx.deny(`pipes protected configuration into ${name}, which would modify or delete it`);
+      }
+      if (previous.recursiveListing && ["select-string", "sls", "findstr"].includes(name)) {
+        const secret = findSecretEnvFile(path.resolve(state.cwd, previous.listingTarget), 3);
+        if (secret) {
+          ctx.deny(
+            `searches a recursive listing that includes ${secret}, which would print its values`,
+          );
+        }
+      }
+    }
+    const listing = ["get-childitem", "gci", "dir", "ls"].includes(name);
+    previous = {
+      secret: args.some((w) => isSecretWord(w, state)),
+      protectedPath: args.some((w) => !isFlag(w) && isProtectedWord(w, ctx, state)),
+      recursiveListing:
+        listing && args.some((a) => /^-(r|recurse|s)$/i.test(a) || /^-recurse/i.test(a)),
+      listingTarget: listing ? (args.find((a) => !isFlag(a)) ?? ".") : ".",
+    };
+  }
+}
+
+// Finds a secret env file within `depth` directory levels (bounded walk).
+function findSecretEnvFile(dir, depth, budget = { entries: 4000 }) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    if (--budget.entries < 0) return null;
+    if (entry.isFile() && isSecretEnvFileName(entry.name)) return path.join(dir, entry.name);
+  }
+  if (depth <= 0) return null;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || ["node_modules", ".git", ".next"].includes(entry.name)) continue;
+    const found = findSecretEnvFile(path.join(dir, entry.name), depth - 1, budget);
+    if (found) return found;
+    if (budget.entries < 0) return null;
+  }
+  return null;
 }
 
 function inspectCommand(command, ctx, state) {
@@ -260,13 +431,31 @@ function inspectCommand(command, ctx, state) {
   const assigns = [];
   const hereStrings = [];
 
+  if (
+    words.length > MAX_WORDS_PER_COMMAND ||
+    command.redirects.length > MAX_REDIRECTS_PER_COMMAND ||
+    words.some((w) => braceFanOut(w) > MAX_EXPANSIONS)
+  ) {
+    if (isSensitiveText(state.rootSource)) {
+      ctx.deny("the command is too large or expands too widely to inspect");
+    }
+    return;
+  }
+
   for (const redirect of command.redirects) {
     if (redirect.op.endsWith("<<<")) {
       if (redirect.target !== null) hereStrings.push(redirect.target);
       continue;
     }
     if (!redirect.target) continue;
-    const abs = resolveArgPath(redirect.target, state.cwd);
+    const target = substituteKnown(redirect.target, state);
+    if (isDynamicWord(target) && isSensitiveText(state.rootSource)) {
+      ctx.deny(
+        `redirects to a path computed at run time (${redirect.target}), which cannot be inspected`,
+      );
+      continue;
+    }
+    const abs = resolveArgPath(target, state.cwd);
     if (redirect.op.includes("<") && isSecretPath(abs)) {
       ctx.deny(`reads a secret file (${redirect.target})`);
     }
@@ -279,14 +468,19 @@ function inspectCommand(command, ctx, state) {
   }
 
   // PowerShell `$x = <command>` / `$env:X = value` — the right-hand side may run a command.
+  // Only plain literals are recorded; an expression ('ma'+'in', -join, arrays) stays a
+  // variable, so later uses count as computed at run time.
+  const isLiteralValue = (v) => !/[+(),\[$]|-join|-f\b/i.test(String(v));
   const psGlued = /^\$(?:env:)?(\w+)=(.*)$/i.exec(words[0] ?? "");
   if (psGlued && words.length === 1) {
-    state.values.set(psGlued[1], psGlued[2]);
+    if (isLiteralValue(psGlued[2])) state.values.set(psGlued[1], psGlued[2]);
     return;
   }
   const psAssign = /^\$(?:env:)?([\w]+)$/i.exec(words[0] ?? "");
   if (words.length >= 2 && /^\$[\w:{}]+$/.test(words[0]) && words[1] === "=") {
-    if (psAssign && words.length === 3) state.values.set(psAssign[1], words[2]);
+    if (psAssign && words.length === 3 && isLiteralValue(words[2])) {
+      state.values.set(psAssign[1], words[2]);
+    }
     words = words.slice(2);
     if (words.length === 1 && !/^[\w-]+$/.test(words[0])) return;
   } else if (words.length && /^\$[\w:{}]+=/.test(words[0])) {
@@ -305,18 +499,23 @@ function inspectCommand(command, ctx, state) {
     return;
   }
 
+  // A command name built at run time (`$G push`, `{git,push}`, `git${IFS}push`, `$c` with a
+  // custom IFS) can't be matched against the rules; block it when the command looks
+  // security-sensitive. Checked before substitution so a variable can't hide it.
+  if (/[$`{@]|\bIFS\b/.test(words[0]) && isSensitiveText(state.rootSource)) {
+    ctx.deny("runs a command whose name is computed at run time, so it cannot be inspected");
+  }
+
   // Substitute variables whose literal values were assigned earlier in the script, so
   // `p=.env.local; cat "$p"` is inspected as `cat .env.local`.
-  words = words.map((w) =>
-    w.replace(/\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*)(?![\w{]))/g, (m, a, b) =>
-      state.values.has(a || b) ? state.values.get(a || b) : m,
-    ),
-  );
+  words = words.map((w) => substituteKnown(w, state));
 
-  // A command name built at run time (`$G push`, `{git,push}`, `git${IFS}push`) can't be
-  // matched against the rules; block it when the command looks security-sensitive.
-  if (/[$`{]|\bIFS\b/.test(words[0]) && isSensitiveText(state.rootSource)) {
-    ctx.deny("runs a command whose name is computed at run time, so it cannot be inspected");
+  // PowerShell `-Param:value` is the same as `-Param value`.
+  if (command.dialect === "powershell") {
+    words = words.flatMap((w) => {
+      const m = /^(-[A-Za-z][\w-]*):(.+)$/.exec(w);
+      return m ? [m[1], m[2]] : [w];
+    });
   }
 
   state.fromXargs = false;
@@ -517,14 +716,54 @@ function unwrap(initialWords, command, ctx, state, assigns) {
       continue;
     }
     if (
-      ["command", "builtin", "exec", "nohup", "time", "stdbuf", "unbuffer", "caffeinate"].includes(
-        name,
-      )
+      [
+        "command",
+        "builtin",
+        "exec",
+        "nohup",
+        "time",
+        "stdbuf",
+        "unbuffer",
+        "caffeinate",
+        "setsid",
+        "coproc",
+        "shx",
+      ].includes(name)
     ) {
       let i = 0;
       while (i < rest.length && isFlag(rest[i])) i++;
       words = rest.slice(i);
       continue;
+    }
+    if (name === "flock") {
+      let i = 0;
+      while (i < rest.length && isFlag(rest[i]))
+        i += ["-w", "--timeout", "-E"].includes(rest[i]) ? 2 : 1;
+      if (["-c", "--command"].includes(rest[i + 1])) {
+        inspectScript(rest[i + 2] ?? "", "bash", ctx, nestedDepth, state);
+        return null;
+      }
+      words = rest.slice(i + 1);
+      continue;
+    }
+    if (name === "script" && rest.some((a) => a === "-c" || a === "--command")) {
+      const c = rest.findIndex((a) => a === "-c" || a === "--command");
+      inspectScript(rest[c + 1] ?? "", "bash", ctx, nestedDepth, state);
+      return null;
+    }
+    if (name === "trap" && rest.length) {
+      inspectScript(rest[0], "bash", ctx, nestedDepth, state);
+      return null;
+    }
+    if (name === "parallel") {
+      inspectScript(
+        rest.filter((a) => !isFlag(a) && a !== ":::").join(" "),
+        "bash",
+        ctx,
+        nestedDepth,
+        state,
+      );
+      return null;
     }
     if (name === "nice" || name === "ionice") {
       let i = 0;
@@ -571,6 +810,17 @@ function unwrap(initialWords, command, ctx, state, assigns) {
     }
     if (name === "npm" || name === "pnpm" || name === "yarn" || name === "bun") {
       const sub = rest[0];
+      if (
+        sub === "pkg" &&
+        ["set", "delete"].includes(rest[1]) &&
+        rest.slice(2).some((a) => /^scripts([.[]|$)/.test(a)) &&
+        !isOverrideEnabled()
+      ) {
+        ctx.deny(
+          "`npm pkg` rewrites package.json scripts, including the required validation scripts",
+        );
+        return null;
+      }
       if (["exec", "x", "dlx"].includes(sub)) {
         let i = 1;
         while (i < rest.length && (isFlag(rest[i]) || rest[i] === "--")) {
@@ -603,7 +853,7 @@ function unwrap(initialWords, command, ctx, state, assigns) {
       words = dashDash === -1 ? rest.filter((w) => !isFlag(w)).slice(1) : rest.slice(dashDash + 1);
       continue;
     }
-    if (name === "cmd" && /^\/[ck]$/i.test(rest[0] ?? "")) {
+    if (name === "cmd" && /^\/\/?[ck]$/i.test(rest[0] ?? "")) {
       // cmd.exe: backslashes are literal and ^ is the escape character.
       const script = rest.slice(1).join(" ").replace(/\^(.)/g, "$1");
       inspectScript(script, "powershell", ctx, nestedDepth, state);
@@ -787,7 +1037,24 @@ function inspectGit(args, ctx, state, assigns) {
 
   // Arguments whose value is only known at run time (`HEAD:$(echo main)`, `${B#x}`,
   // `{--force,origin}`) can't be checked. Commit messages and formats are exempt.
-  const dynamic = dynamicGitArgs(args);
+  const readOnlySubcommands = [
+    "diff",
+    "log",
+    "show",
+    "rev-parse",
+    "merge-base",
+    "blame",
+    "status",
+    "describe",
+    "shortlog",
+    "ls-files",
+    "ls-tree",
+    "rev-list",
+    "name-rev",
+    "for-each-ref",
+    "cherry",
+  ];
+  const dynamic = readOnlySubcommands.includes(sub) ? [] : dynamicGitArgs(args);
   if (dynamic.length) {
     const risky = [
       "push",
@@ -798,14 +1065,6 @@ function inspectGit(args, ctx, state, assigns) {
       "update-ref",
       "filter-branch",
       "filter-repo",
-      "reset",
-      "checkout",
-      "restore",
-      "clean",
-      "branch",
-      "worktree",
-      "rm",
-      "mv",
     ];
     if (isDynamicWord(sub) || risky.includes(sub)) {
       ctx.deny(
@@ -825,6 +1084,38 @@ function inspectGit(args, ctx, state, assigns) {
       break;
     case "push":
       inspectGitPush(rest, ctx, gitCwd);
+      break;
+    case "clone": {
+      const positional = rest.filter((a) => !isFlag(a));
+      if (positional[1])
+        checkConfigWrite(resolveArgPath(positional[1], gitCwd), positional[1], ctx, state);
+      break;
+    }
+    case "submodule": {
+      if (rest[0] === "foreach") {
+        inspectScript(
+          rest
+            .slice(1)
+            .filter((a) => !isFlag(a))
+            .join(" "),
+          "bash",
+          ctx,
+          1,
+          state,
+        );
+      } else if (rest[0] === "add") {
+        const positional = rest.slice(1).filter((a) => !isFlag(a));
+        if (positional[1])
+          checkConfigWrite(resolveArgPath(positional[1], gitCwd), positional[1], ctx, state);
+      }
+      break;
+    }
+    case "hash-object":
+      for (const a of rest) {
+        if (!isFlag(a) && isSecretPath(resolveArgPath(a, gitCwd))) {
+          ctx.deny(`copies a secret file into the git object store (${a})`);
+        }
+      }
       break;
     case "merge":
     case "am":
@@ -963,6 +1254,10 @@ function inspectGit(args, ctx, state, assigns) {
       }
       break;
     case "worktree":
+      if (rest[0] === "add") {
+        const target = rest.slice(1).find((a) => !isFlag(a));
+        if (target) checkConfigWrite(resolveArgPath(target, gitCwd), target, ctx, state);
+      }
       if (rest[0] === "remove" || rest[0] === "prune")
         ctx.ask(`\`git worktree ${rest[0]}\` deletes worktrees`);
       break;
@@ -1181,7 +1476,9 @@ function inspectGitPush(args, ctx, gitCwd) {
     let target;
     if (s.includes(":")) {
       const [src, dst] = [s.slice(0, s.indexOf(":")), s.slice(s.indexOf(":") + 1)];
-      if (src === "") ctx.ask(`deletes the remote ref "${dst}"`);
+      if (src === "" && dst === "")
+        ctx.deny("`git push <remote> :` pushes every matching branch, including main");
+      else if (src === "") ctx.ask(`deletes the remote ref "${dst}"`);
       target = dst;
     } else {
       target = s === "HEAD" || s === "@" ? currentBranch(gitCwd) : s;
@@ -1629,18 +1926,52 @@ function inspectCode(code, ctx, state, depth) {
     }
     if (/\s/.test(literal)) inspectScript(literal, "bash", ctx, depth + 1, { ...state });
   }
+  // Argument-array APIs spread one command over several literals:
+  // spawnSync('git', ['push', '-f']), [Diagnostics.Process]::Start('git', 'push origin main').
+  const shortLiterals = literals.filter((l) => l.length < 200 && !/[\n;|&]/.test(l));
+  if (shortLiterals.length > 1 && shortLiterals.length < 40) {
+    // Start at every literal that names a guarded program ('child_process', 'git', 'push').
+    shortLiterals.forEach((literal, index) => {
+      if (
+        /^(git|gh|vercel|supabase|prisma|psql|rm|curl|wget|bash|sh|pwsh|powershell|npx|npm)(\.exe)?$/i.test(
+          literal,
+        )
+      ) {
+        inspectScript(shortLiterals.slice(index).join(" "), "bash", ctx, depth + 1, { ...state });
+      }
+    });
+  }
 }
 
 // Expands shell globs/braces in a path argument against the file system, so `cat .e*`
 // or `cat {.env.local,x}` is checked against the files it would actually match.
-function expandPattern(candidate, cwd) {
+function expandPattern(candidate, cwd, budget = { left: MAX_EXPANSIONS }) {
   const braces = /\{([^{}]*,[^{}]*)\}/.exec(candidate);
   if (braces) {
-    return braces[1]
-      .split(",")
-      .flatMap((part) => expandPattern(candidate.replace(braces[0], part), cwd));
+    const out = [];
+    for (const part of braces[1].split(",")) {
+      if (budget.left-- <= 0) break;
+      out.push(...expandPattern(candidate.replace(braces[0], part), cwd, budget));
+    }
+    return out.length ? out : [candidate];
   }
   if (!/[*?[]/.test(candidate)) return [candidate];
+  // A glob in a directory component (`.cl*/settings.json`): expand that component first.
+  const parts = candidate.replace(/\\/g, "/").split("/");
+  const globDir = parts.slice(0, -1).findIndex((p) => /[*?[]/.test(p));
+  if (globDir !== -1) {
+    const prefix = parts.slice(0, globDir).join("/") || ".";
+    const out = [candidate];
+    for (const dirMatch of expandPattern(
+      `${prefix === "." ? "" : prefix + "/"}${parts[globDir]}`,
+      cwd,
+      budget,
+    ).slice(1)) {
+      if (budget.left-- <= 0) break;
+      out.push(...expandPattern([dirMatch, ...parts.slice(globDir + 1)].join("/"), cwd, budget));
+    }
+    return out;
+  }
   const normalized = candidate.replace(/\\/g, "/");
   const slash = normalized.lastIndexOf("/");
   const dir = slash === -1 ? "." : normalized.slice(0, slash) || "/";
@@ -1696,6 +2027,9 @@ function inspectRecursiveSearch(name, args, ctx, state) {
       (a) =>
         a === "--recursive" ||
         a === "--dereference-recursive" ||
+        a === "--directories=recurse" ||
+        (a === "recurse" &&
+          (args[args.indexOf(a) - 1] === "-d" || args[args.indexOf(a) - 1] === "--directories")) ||
         (/^-[a-zA-Z]+$/.test(a) && /[rR]/.test(a)),
     );
   }
@@ -1709,7 +2043,21 @@ function inspectRecursiveSearch(name, args, ctx, state) {
       exclusions.push(args[i + 1].replace(/^!/, ""));
     }
   }
-  const excluded = (entry) => exclusions.some((pattern) => globMatches(entry, pattern));
+  const inclusions = [];
+  for (let i = 0; i < args.length; i++) {
+    const inline = /^--include=(.*)$/.exec(args[i]);
+    if (inline) inclusions.push(inline[1]);
+    else if (args[i] === "--include" && args[i + 1] !== undefined) inclusions.push(args[i + 1]);
+  }
+  // A file is searched unless an exclude matches it; with --include, only matching files are.
+  const excluded = (entry) => {
+    if (inclusions.length && !inclusions.some((pattern) => globMatches(entry, pattern)))
+      return true;
+    return (
+      exclusions.some((pattern) => globMatches(entry, pattern)) &&
+      !inclusions.some((pattern) => globMatches(entry, pattern))
+    );
+  };
   const valueFlags = [
     "-e",
     "-f",
@@ -1737,9 +2085,8 @@ function inspectRecursiveSearch(name, args, ctx, state) {
     try {
       const dir = path.resolve(state.cwd, target.replace(/\\/g, "/"));
       if (!fs.statSync(dir).isDirectory()) continue;
-      const secret = fs
-        .readdirSync(dir)
-        .find((entry) => isSecretEnvFileName(entry) && !excluded(entry));
+      const secretPath = findSecretEnvFileWhere(dir, 3, (entry) => !excluded(entry));
+      const secret = secretPath ? path.relative(dir, secretPath) || secretPath : null;
       if (secret) {
         ctx.deny(
           `searches ${target} recursively, which would print values from ${secret}; exclude it (for example --exclude='.env*') or use git grep`,
@@ -1752,7 +2099,32 @@ function inspectRecursiveSearch(name, args, ctx, state) {
 }
 
 function isSecretEnvFileName(entry) {
-  return /^\.env(\.[^\s]+)?$/i.test(entry) && !/\.(example|sample|template)$/i.test(entry);
+  return (
+    /^\.env(\.[^\s]+)?$/i.test(entry) && !/\.(example|sample|template)(\.[^\s]+)?$/i.test(entry)
+  );
+}
+
+function findSecretEnvFileWhere(dir, depth, accept, budget = { entries: 4000 }) {
+  let entries;
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const entry of entries) {
+    if (--budget.entries < 0) return null;
+    if (entry.isFile() && isSecretEnvFileName(entry.name) && accept(entry.name)) {
+      return path.join(dir, entry.name);
+    }
+  }
+  if (depth <= 0) return null;
+  for (const entry of entries) {
+    if (!entry.isDirectory() || ["node_modules", ".git", ".next"].includes(entry.name)) continue;
+    const found = findSecretEnvFileWhere(path.join(dir, entry.name), depth - 1, accept, budget);
+    if (found) return found;
+    if (budget.entries < 0) return null;
+  }
+  return null;
 }
 
 function inspectFind(name, args, ctx, state, depth) {
@@ -1763,6 +2135,17 @@ function inspectFind(name, args, ctx, state, depth) {
     if (names.some((n) => /\.env|credential|\.pem|id_[a-z0-9]+|hosts\.ya?ml|netrc/i.test(n))) {
       ctx.deny("runs a command on secret files selected by find");
     }
+  }
+  if (
+    (execIndex !== -1 || args.includes("-delete")) &&
+    names.some((n) =>
+      /claude|\.git|settings|hooks|\.mcp|eslint|prettier|tsconfig|vitest|playwright|workflows/i.test(
+        n,
+      ),
+    ) &&
+    !isOverrideEnabled()
+  ) {
+    ctx.deny("runs a command on or deletes protected configuration selected by find");
   }
   if (execIndex !== -1) {
     const end = args.findIndex((a, i) => i > execIndex && (a === ";" || a === "+" || a === "\\;"));
@@ -1790,13 +2173,38 @@ function inspectFileArguments(name, args, ctx, state) {
     const lower = a.toLowerCase();
     if (DOWNLOADERS.has(name)) {
       if (
-        ["-o", "--output", "--output-document", "-outfile"].includes(lower) ||
+        ["-o", "--output", "--output-document"].includes(lower) ||
+        lower.startsWith("-outf") ||
         (name === "wget" && a === "-O")
       ) {
         writeTargets.push(args[i + 1] ?? "");
-      } else if (/^--(output|output-document)=/.test(a))
+      } else if (/^--(output|output-document)=/.test(a)) {
         writeTargets.push(a.slice(a.indexOf("=") + 1));
+      } else if (name === "curl" && /^-[a-zA-Z]*o$/.test(a)) {
+        writeTargets.push(args[i + 1] ?? "");
+      } else if (name === "curl" && /^-o.+/.test(a)) {
+        writeTargets.push(a.slice(2));
+      } else if (name === "wget" && /^-O.+/.test(a)) {
+        writeTargets.push(a.slice(2));
+      }
     }
+  }
+  if (name === "curl" || name === "wget") {
+    // Saving under the remote file name (curl -O, wget's default) into an output directory.
+    const url = args.find((a) => /^[a-z][a-z0-9+.-]*:\/\//i.test(a));
+    const remoteName = url ? url.split(/[?#]/)[0].split("/").pop() : "";
+    let dir = null;
+    for (let i = 0; i < args.length; i++) {
+      const a = args[i];
+      if (["--output-dir", "-P", "--directory-prefix"].includes(a)) dir = args[i + 1] ?? null;
+      else if (/^--(output-dir|directory-prefix)=/.test(a)) dir = a.slice(a.indexOf("=") + 1);
+      else if (name === "wget" && /^-P.+/.test(a)) dir = a.slice(2);
+    }
+    const usesRemoteName =
+      name === "wget"
+        ? !writeTargets.length
+        : args.some((a) => /^-[a-zA-Z]*O[a-zA-Z]*$/.test(a) || a === "--remote-name");
+    if (remoteName && usesRemoteName) writeTargets.push(`${dir ?? "."}/${remoteName}`);
   }
   if (
     (name === "tar" &&
@@ -1814,6 +2222,10 @@ function inspectFileArguments(name, args, ctx, state) {
   }
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
+    if (/^--target-directory=/.test(a)) {
+      destination = a.slice(a.indexOf("=") + 1);
+      continue;
+    }
     if (/^-(destination|target-directory)$/i.test(a) || a === "-t") {
       destination = args[i + 1] ?? null;
       continue;
@@ -1836,8 +2248,38 @@ function inspectFileArguments(name, args, ctx, state) {
     destination = positional[positional.length - 1] ?? null;
 
   const inPlace =
-    ["sed", "perl", "ruby"].includes(name) &&
-    args.some((a) => /^-[a-zA-Z]*i/.test(a) || a.startsWith("--in-place"));
+    (["sed", "perl", "ruby"].includes(name) &&
+      args.some((a) => /^-[a-zA-Z]*i/.test(a) || a.startsWith("--in-place"))) ||
+    (["awk", "gawk"].includes(name) &&
+      args.some((a, k) => a === "-i" && /inplace/.test(args[k + 1] ?? "")));
+  // Copy/move into an existing directory writes <dir>/<basename(source)>.
+  if ((COPY_COMMANDS.has(name) || MOVE_COMMANDS.has(name)) && destination) {
+    let destIsDir = false;
+    try {
+      destIsDir = fs.statSync(path.resolve(state.cwd, destination)).isDirectory();
+    } catch {
+      destIsDir = false;
+    }
+    if (destIsDir) {
+      for (const source of positional.filter((p) => p !== destination)) {
+        const base = path.basename(source.replace(/[\\/]+$/, ""));
+        const joined = `${destination.replace(/[\\/]+$/, "")}/${base}`;
+        checkConfigWrite(resolveArgPath(joined, state.cwd), joined, ctx, state);
+      }
+    }
+  }
+  // Deleting or moving a repository root (`rm -rf .`, `rm -rf $PWD`).
+  if (DELETE_COMMANDS.has(name) || MOVE_COMMANDS.has(name)) {
+    for (const p of positional) {
+      const abs = resolveArgPath(p, state.cwd);
+      if (!abs) continue;
+      const hitsRoot = roots(ctx, state).some((r) => {
+        const rr = resolveArgPath(r, state.cwd);
+        return rr === abs || (rr && rr.startsWith(`${abs}/`));
+      });
+      if (hitsRoot) ctx.ask(`${name} targets the repository root itself (${p})`);
+    }
+  }
   const isGit = name === "git";
   const gitSub = isGit ? args.find((a) => !isFlag(a)) : null;
 
@@ -1851,7 +2293,9 @@ function inspectFileArguments(name, args, ctx, state) {
         } else if (DELETE_COMMANDS.has(name)) {
           ctx.ask(`deletes a secret file (${candidate})`);
         } else if (isGit) {
-          if (["diff", "show", "blame", "cat-file", "grep", "log"].includes(gitSub)) {
+          if (
+            ["diff", "show", "blame", "cat-file", "grep", "log", "hash-object"].includes(gitSub)
+          ) {
             ctx.deny(`prints the contents of a secret file (${candidate})`);
           }
         } else if (!(
@@ -1891,7 +2335,7 @@ function collectStrings(value, out = []) {
 
 const READ_ONLY_SQL = /^\s*(select|with|explain|show|values|table|describe)\b/i;
 const WRITE_SQL =
-  /\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|copy|vacuum|call|do|comment|lock|refresh|reindex|cluster|merge|set\s+(role|session))\b/i;
+  /\b(insert|update|delete|drop|alter|truncate|create|grant|revoke|copy|vacuum|call|do|comment|lock|refresh|reindex|cluster|merge|into|set\s+(role|session)|pg_terminate_backend|pg_cancel_backend|set_config|lo_import|lo_export|pg_read_file|pg_read_binary_file|pg_ls_dir|pg_write_file|dblink(_exec)?)\b/i;
 const SENSITIVE_SQL =
   /\b(auth|vault|storage|supabase_functions|pgsodium)\s*\.|\bpg_shadow\b|\bpg_authid\b/i;
 
@@ -1940,6 +2384,12 @@ function inspectMcp(toolName, input, ctx) {
         checkConfigWrite(abs, p, ctx, { cwd: ctx.cwd });
       }
     }
+  }
+  // Code/command fields run as code: apply the same rules as inline interpreters/shells.
+  if (typeof input?.code === "string") inspectCode(input.code, ctx, newState(ctx, input.code), 1);
+  if (typeof input?.command === "string") inspectScript(input.command, "bash", ctx, 1);
+  if (/(^|_)(promote|rollback)(_|$)/.test(tool)) {
+    ctx.deny(`MCP tool ${toolName} changes which build serves production`);
   }
   if (/deploy|promote|alias/.test(tool) && /production|\bprod\b/i.test(serialized)) {
     ctx.deny(

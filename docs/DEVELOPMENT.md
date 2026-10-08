@@ -213,9 +213,11 @@ and enforcement lives here.
   settings, and `package.json`'s required validation script entries. It also denies `Read`/`Grep` of
   secret files and credential stores.
 
-**Fail-safe.** Hooks are registered as `node "${CLAUDE_PROJECT_DIR}/.claude/hooks/<guard>.mjs" ||
-exit 2`: Claude Code treats any exit code other than 2 as non-blocking, so a missing or crashing
-guard blocks the call instead of silently allowing it. Malformed hook input is denied. An internal
+**Fail-safe.** Hooks are registered as `timeout 45 node "${CLAUDE_PROJECT_DIR}/.claude/hooks/<guard>.mjs"
+|| exit 2`: Claude Code treats any exit code other than 2, and a hook that runs past its own
+timeout, as non-blocking, so a missing, crashing or stalled guard blocks the call instead of
+silently allowing it. Inputs too large to inspect quickly (huge argument lists, wide brace
+expansion) are denied when they look security-sensitive. Malformed hook input is denied. An internal
 guard error blocks only security-sensitive calls, so a guard bug cannot lock out routine work. If
 a broken guard ever blocks everything, a human can fix or restore `.claude/hooks/` from their own
 terminal. The registration uses Bash syntax, so on Windows Claude Code needs Git Bash (as the
@@ -241,6 +243,8 @@ approvable inside the session.
 These hooks are pattern analysis, not a sandbox: scripts on disk, pre-existing git/gh aliases
 and deliberately obfuscated code can evade them. They complement the permission rules, branch
 protection and GitHub Environment approvals rather than replacing them. Known residual gaps:
-pre-existing git/gh aliases or push configuration, `git stash pop` of protected-file changes,
+pre-existing git/gh aliases or push configuration, `git stash pop`/`merge`/`cherry-pick` of
+commits that change protected files (git plumbing can craft such commits), `npx prettier --write .`
+reformatting protected files,
 and hosts where Claude Code runs hooks under PowerShell instead of Git Bash (the `|| exit 2`
 registration needs Bash).

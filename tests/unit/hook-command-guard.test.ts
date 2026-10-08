@@ -579,7 +579,7 @@ describe("guardrail fail-safe behavior", () => {
     expect(commands).toHaveLength(2);
     for (const command of commands) {
       expect(command).toMatch(
-        /^node "\$\{CLAUDE_PROJECT_DIR\}\/\.claude\/hooks\/[\w-]+\.mjs" \|\| exit 2$/,
+        /^timeout 45 node "\$\{CLAUDE_PROJECT_DIR\}\/\.claude\/hooks\/[\w-]+\.mjs" \|\| exit 2$/,
       );
       const script = command.match(/hooks\/([\w-]+\.mjs)/)?.[1] ?? "";
       expect(fs.existsSync(path.join(REPO_ROOT, ".claude", "hooks", script))).toBe(true);
@@ -982,6 +982,158 @@ describe("command-guard: second independent review (round 2)", () => {
       const decision = await bash(command);
       expect(Date.now() - started).toBeLessThan(5_000);
       if (command === nested) expect(decision).toBe("deny");
+    }
+  });
+});
+
+describe("command-guard: third independent review (round 3)", () => {
+  it("does not hang on brace fan-out, huge argument lists or regex-hostile input", async () => {
+    // Each call must finish far below Claude Code's hook timeout (measured ~150 ms each);
+    // the bound is per call and generous so CI load can't make it flaky.
+    const timed = async (command: string) => {
+      const started = Date.now();
+      const decision = await bash(command);
+      expect({ command: command.slice(0, 40), fast: Date.now() - started < 10_000 }).toEqual({
+        command: command.slice(0, 40),
+        fast: true,
+      });
+      return decision;
+    };
+    expect(await timed(`git push --force origin main; echo ${"{a,b}".repeat(16)}`)).toBe("deny");
+    expect(await timed(`echo ${"a ".repeat(100_000)}; git push origin main`)).toBe("deny");
+    expect(await timed(`echo x ${"> /tmp/x ".repeat(5_000)}; git push origin main`)).toBe("deny");
+    expect(await timed(`ps ${"e".repeat(150_000)}`)).toBe("allow");
+    expect(await timed("ps eww")).toBe("deny");
+  });
+
+  it("substitutes and checks variable redirect targets", async () => {
+    await expectAll(bash, "deny", [
+      "F=CLAUDE.md; echo x > $F",
+      "F=.claude/settings.json; echo x >> $F",
+      'echo x > "$(echo CLAUDE.md)"',
+    ]);
+  });
+
+  it("parses PowerShell -Param:value and ignores trailing dots like Windows does", async () => {
+    await expectAll(pwsh, "deny", [
+      "Set-Content -Path:CLAUDE.md -Value x",
+      "'x' | Out-File -FilePath:.claude\\settings.json",
+      "Copy-Item x -Destination:CLAUDE.md",
+      "Remove-Item -Path:CLAUDE.md",
+      "Invoke-WebRequest https://example.com/x -OutFile:CLAUDE.md",
+      "Set-Content -Path 'CLAUDE.md.' -Value x",
+      "Remove-Item CLAUDE.md.",
+      "Set-Content -Path '.claude./settings.json' -Value x",
+    ]);
+    expect(
+      await pwsh("Invoke-RestMethod -Uri https://api.github.com/repos/o/r/merges -Method:Post"),
+    ).toBe("ask");
+  });
+
+  it("denies npm pkg rewrites of the scripts block", async () => {
+    await expectAll(bash, "deny", [
+      'npm pkg set scripts.test="echo ok"',
+      "npm pkg delete scripts.lint",
+    ]);
+    expect(await bash("npm pkg get scripts")).toBe("allow");
+  });
+
+  it("catches glued, clustered and directory-prefixed download targets", async () => {
+    await expectAll(bash, "deny", [
+      'curl -o".claude/settings.json" https://example.com/x',
+      "curl -o.claude/settings.json https://example.com/x",
+      "curl -sSLo CLAUDE.md https://example.com/x",
+      "wget -OCLAUDE.md https://example.com/x",
+      "wget -P .claude https://example.com/settings.json",
+      "curl -O --output-dir .claude/hooks https://example.com/command-guard.mjs",
+    ]);
+    expect(await pwsh("iwr https://example.com/x -OutF .claude\\settings.json")).toBe("deny");
+  });
+
+  it("denies secret reads and protected writes through pipelines", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-r3-"));
+    fs.writeFileSync(path.join(dir, ".env.local"), "SECRET=1\n");
+    fs.mkdirSync(path.join(dir, "src"));
+    try {
+      const inDir = (command: string) => bash(command, { cwd: dir });
+      const psInDir = (command: string) => decide("PowerShell", { command }, { cwd: dir });
+      await expectAll(inDir, "deny", [
+        "ls -a | grep env | xargs cat",
+        "find . -maxdepth 1 -name '.env*' | xargs cat",
+        "echo CLAUDE.md | xargs rm",
+      ]);
+      await expectAll(psInDir, "deny", [
+        "Get-Item .env.local | Get-Content",
+        "Get-ChildItem -Force -Filter .env* | Get-Content",
+        "(Get-Item .env.local).OpenText().ReadToEnd()",
+        "Get-ChildItem -Recurse | Select-String KEY",
+        "Get-ChildItem .claude -Recurse | Remove-Item",
+      ]);
+      expect(await psInDir("Get-ChildItem src -Recurse | Select-String foo")).toBe("allow");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("treats PowerShell expressions and splats as computed values", async () => {
+    await expectAll(pwsh, "deny", [
+      "$b='ma'+'in'; git push origin $b",
+      "$a='push','origin','main'; git @a",
+      "git push origin (('m','a','i','n') -join '')",
+      "[Diagnostics.Process]::Start('git','push origin main')",
+      "git push origin “main”",
+    ]);
+  });
+
+  it("closes the round-3 P2 gaps", async () => {
+    await expectAll(bash, "deny", [
+      "IFS=,; c='git,push,origin,main'; $c",
+      "git push origin :",
+      "git clone https://example.com/x.git .claude/skills/evil",
+      "git worktree add .claude/skills/evil HEAD",
+      "git submodule add https://example.com/x.git .claude/skills/evil",
+      "git submodule foreach git push origin main",
+      "awk -i inplace '{print}' CLAUDE.md",
+      "cp --target-directory=.claude/hooks x.mjs",
+      "rm .cl*/settings.json",
+      "find . -name CLAUDE.md -delete",
+      "npx rimraf CLAUDE.md",
+      "npx shx rm CLAUDE.md",
+      "node -e \"require('child_process').spawnSync('git', ['push', '-f'])\"",
+      "git hash-object -w .env.local",
+      "flock /tmp/lock git push --force origin feat",
+      "trap 'git push --force origin feat' EXIT",
+    ]);
+    await expectAll(bash, "ask", ["rm -rf .", "git checkout -b feat/$(date +%s)"]);
+    await expectAll(bash, "allow", [
+      'git diff "$(git merge-base HEAD origin/main)"..HEAD',
+      "BASE=$(git merge-base HEAD origin/main); git log $BASE..HEAD",
+      'git log --since="$(date -d yesterday)"',
+      "cp .env.example .env.example.bak",
+    ]);
+    const mcp = (tool: string, input: Record<string, unknown>) => decide(tool, input);
+    expect(await mcp("mcp__supabase__execute_sql", { query: "select * into t2 from t" })).toBe(
+      "ask",
+    );
+    expect(await mcp("mcp__supabase__execute_sql", { query: "select pg_read_file('x')" })).toBe(
+      "ask",
+    );
+    expect(await mcp("mcp__ide__executeCode", { code: "print(open('.env.local').read())" })).toBe(
+      "deny",
+    );
+    expect(await mcp("mcp__vercel__promote_deployment", { id: "dpl_x" })).toBe("deny");
+  });
+
+  it("only treats grep --include as narrowing when it excludes the secret files", async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "guard-inc-"));
+    fs.writeFileSync(path.join(dir, ".env.local"), "SECRET=1\n");
+    try {
+      const inDir = (command: string) => bash(command, { cwd: dir });
+      expect(await inDir('grep -rn foo --include="*.ts" .')).toBe("allow");
+      expect(await inDir("grep -r --exclude='.env*' --include='.env*' KEY .")).toBe("deny");
+      expect(await inDir("grep -d recurse KEY .")).toBe("deny");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
     }
   });
 });

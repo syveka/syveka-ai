@@ -95,7 +95,12 @@ function recordVariable(src, i, dialect, result) {
   return 0;
 }
 
-function tokenize(src, dialect, depth, result) {
+function tokenize(rawSrc, dialect, depth, result) {
+  // PowerShell treats typographic quotes as ordinary quotes.
+  const src =
+    dialect === "powershell"
+      ? rawSrc.replace(/[\u201C\u201D\u201E]/g, '"').replace(/[\u2018\u2019\u201A]/g, "'")
+      : rawSrc;
   /** @type {Array<{t: "word", v: string} | {t: "op", v: string} | {t: "redir", v: string} | {t: "heredoc", v: string}>} */
   const tokens = [];
   let word = "";
@@ -429,18 +434,20 @@ const KEYWORDS = new Set([
 
 function groupCommands(tokens, dialect, depth, result) {
   /** @type {SimpleCommand} */
-  let current = { words: [], redirects: [], heredocs: [], dialect, depth };
+  let current = { words: [], redirects: [], heredocs: [], dialect, depth, piped: false };
   let pendingRedirect = null;
   const flush = () => {
     if (pendingRedirect) current.redirects.push({ op: pendingRedirect, target: null });
     pendingRedirect = null;
     while (current.words.length && KEYWORDS.has(current.words[0])) current.words.shift();
     if (current.words.length || current.redirects.length) result.commands.push(current);
-    current = { words: [], redirects: [], heredocs: [], dialect, depth };
+    current = { words: [], redirects: [], heredocs: [], dialect, depth, piped: false };
   };
   for (const token of tokens) {
     if (token.t === "op") {
       flush();
+      // `piped` marks a command that reads the previous command's output.
+      current.piped = token.v === "|" || token.v === "|&";
     } else if (token.t === "redir") {
       if (pendingRedirect) current.redirects.push({ op: pendingRedirect, target: null });
       pendingRedirect = token.v;

@@ -33,7 +33,7 @@ const PROTECTED_CONFIG = [
 ];
 
 // Template env files carry no secrets and are edited whenever a variable is added.
-const ENV_TEMPLATE = /^\.env(\..+)?\.(example|sample|template)$/;
+const ENV_TEMPLATE = /^\.env(\..+)?\.(example|sample|template)(\.[^\s]+)?$/;
 
 // Worktrees nested inside the checkout are separate working copies; evaluate the
 // path relative to the worktree root instead of treating it all as `.claude/**`.
@@ -126,7 +126,14 @@ export function resolveArgPath(arg, cwd) {
   if (rest.includes(":")) posix = drive + rest.slice(0, rest.indexOf(":"));
   const isAbsolute = /^[a-z]:\//i.test(posix) || posix.startsWith("/");
   const abs = isAbsolute ? posix : path.posix.join(toPosix(cwd || process.cwd()), posix);
-  return canonicalize(path.posix.normalize(abs)).toLowerCase();
+  // Windows ignores trailing dots and spaces in path components (`CLAUDE.md.` is
+  // CLAUDE.md), so strip them before matching.
+  const trimmed = path.posix
+    .normalize(abs)
+    .split("/")
+    .map((part) => (part === "." || part === ".." ? part : part.replace(/[. ]+$/, "") || part))
+    .join("/");
+  return canonicalize(trimmed).toLowerCase();
 }
 
 const mainCheckoutCache = new Map();

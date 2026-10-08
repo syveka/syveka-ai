@@ -114,6 +114,10 @@ runGuard("config-protection", (payload) => {
   }
   if (toolName === "Read" || toolName === "Grep") {
     for (const candidate of [input.file_path, input.path, input.glob]) {
+      if (candidate !== undefined && candidate !== null && typeof candidate !== "string") {
+        verdict.deny.push("the read target path is malformed, so the call could not be inspected");
+        continue;
+      }
       if (typeof candidate !== "string" || !candidate) continue;
       if (isSecretPath(resolveArgPath(candidate, cwd))) {
         verdict.deny.push(

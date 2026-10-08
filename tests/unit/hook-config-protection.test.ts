@@ -257,3 +257,17 @@ describe("config-protection: second independent review (round 2)", () => {
     }
   });
 });
+
+describe("config-protection: third independent review (round 3)", () => {
+  it("denies Read/Grep with malformed paths", () => {
+    const run = (payload: Record<string, unknown>) =>
+      runHook(payload, { CLAUDE_PROJECT_DIR: REPO_ROOT, SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT: "" })
+        .status;
+    expect(run({ tool_name: "Read", tool_input: { file_path: [".env.local"] } })).toBe(2);
+    expect(run({ tool_name: "Grep", tool_input: { pattern: "x", path: 42 } })).toBe(2);
+  });
+
+  it("treats Windows trailing dots as the same protected file", () => {
+    expect(runHook(editOf("CLAUDE.md."), { CLAUDE_PROJECT_DIR: REPO_ROOT }).status).toBe(2);
+  });
+});

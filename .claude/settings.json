@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/command-guard.mjs\" || exit 2"
+            "command": "timeout 45 node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/command-guard.mjs\" || exit 2"
           }
         ]
       },
@@ -15,7 +15,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/config-protection.mjs\" || exit 2"
+            "command": "timeout 45 node \"${CLAUDE_PROJECT_DIR}/.claude/hooks/config-protection.mjs\" || exit 2"
           }
         ]
       }

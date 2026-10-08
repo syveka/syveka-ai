@@ -92,7 +92,8 @@ export async function runGuard(guard, evaluate) {
       throw new Error("guard returned a Promise; evaluate must be synchronous");
     }
   } catch (error) {
-    if (SENSITIVE_FALLBACK.test(raw)) {
+    // Judge the tool input only: the payload's transcript_path always contains `.claude`.
+    if (SENSITIVE_FALLBACK.test(JSON.stringify(payload.tool_input ?? payload) ?? "")) {
       deny(guard, [
         `the guard hit an internal error (${error?.message ?? "unknown"}) while inspecting a security-sensitive call`,
       ]);
