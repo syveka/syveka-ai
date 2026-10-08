@@ -89,77 +89,86 @@ function editedText(toolName, input) {
   return `${input?.old_string ?? ""}\n${input?.new_string ?? ""}`;
 }
 
-runGuard("config-protection", (payload) => {
-  const verdict = { deny: [], ask: [] };
-  const toolName = String(payload.tool_name ?? "");
-  const input = payload.tool_input ?? {};
-  const cwd = typeof payload.cwd === "string" && payload.cwd ? payload.cwd : process.cwd();
-  const roots = [process.env.CLAUDE_PROJECT_DIR || cwd, cwd];
+runGuard(
+  "config-protection",
+  (payload) => {
+    const verdict = { deny: [], ask: [] };
+    const toolName = String(payload.tool_name ?? "");
+    const input = payload.tool_input ?? {};
+    const cwd = typeof payload.cwd === "string" && payload.cwd ? payload.cwd : process.cwd();
+    const roots = [process.env.CLAUDE_PROJECT_DIR || cwd, cwd];
 
-  if (toolName === "Grep" && typeof input.glob === "string" && input.glob) {
-    // A glob such as "*.local" or ".e*" can select secret files the path check never sees.
-    const dir = path.resolve(cwd, typeof input.path === "string" && input.path ? input.path : ".");
-    let entries = [];
-    try {
-      entries = readdirSync(dir);
-    } catch {
-      entries = [];
-    }
-    const secret = entries.find(
-      (entry) => isSecretPath(resolveArgPath(entry, dir)) && globMatches(entry, input.glob),
-    );
-    if (secret) {
-      verdict.deny.push(`the Grep glob "${input.glob}" matches the secret file "${secret}"`);
-    }
-  }
-  if (toolName === "Read" || toolName === "Grep") {
-    for (const candidate of [input.file_path, input.path, input.glob]) {
-      if (candidate !== undefined && candidate !== null && typeof candidate !== "string") {
-        verdict.deny.push("the read target path is malformed, so the call could not be inspected");
-        continue;
+    if (toolName === "Grep" && typeof input.glob === "string" && input.glob) {
+      // A glob such as "*.local" or ".e*" can select secret files the path check never sees.
+      const dir = path.resolve(
+        cwd,
+        typeof input.path === "string" && input.path ? input.path : ".",
+      );
+      let entries = [];
+      try {
+        entries = readdirSync(dir);
+      } catch {
+        entries = [];
       }
-      if (typeof candidate !== "string" || !candidate) continue;
-      if (isSecretPath(resolveArgPath(candidate, cwd))) {
-        verdict.deny.push(
-          `"${candidate}" is a secret or credential file and must not be read by the agent`,
-        );
+      const secret = entries.find(
+        (entry) => isSecretPath(resolveArgPath(entry, dir)) && globMatches(entry, input.glob),
+      );
+      if (secret) {
+        verdict.deny.push(`the Grep glob "${input.glob}" matches the secret file "${secret}"`);
       }
     }
-    return verdict;
-  }
-  if (!EDIT_TOOLS.has(toolName)) return verdict;
+    if (toolName === "Read" || toolName === "Grep") {
+      for (const candidate of [input.file_path, input.path, input.glob]) {
+        if (candidate !== undefined && candidate !== null && typeof candidate !== "string") {
+          verdict.deny.push(
+            "the read target path is malformed, so the call could not be inspected",
+          );
+          continue;
+        }
+        if (typeof candidate !== "string" || !candidate) continue;
+        if (isSecretPath(resolveArgPath(candidate, cwd))) {
+          verdict.deny.push(
+            `"${candidate}" is a secret or credential file and must not be read by the agent`,
+          );
+        }
+      }
+      return verdict;
+    }
+    if (!EDIT_TOOLS.has(toolName)) return verdict;
 
-  const filePath = input.file_path ?? input.notebook_path;
-  if (filePath !== undefined && typeof filePath !== "string") {
-    verdict.deny.push("the edit target path is malformed, so the call could not be inspected");
-    return verdict;
-  }
-  if (!filePath) return verdict;
-  const abs = resolveArgPath(filePath, cwd);
+    const filePath = input.file_path ?? input.notebook_path;
+    if (filePath !== undefined && typeof filePath !== "string") {
+      verdict.deny.push("the edit target path is malformed, so the call could not be inspected");
+      return verdict;
+    }
+    if (!filePath) return verdict;
+    const abs = resolveArgPath(filePath, cwd);
 
-  let reason = null;
-  const label = protectedConfigLabel(abs, roots);
-  if (label) {
-    reason = `"${label}" is a protected verification-critical config file`;
-  } else if (
-    /(^|\/)package\.json$/.test(abs) &&
-    changesCriticalScripts(toolName, input, path.resolve(cwd, filePath))
-  ) {
-    reason = `the edit touches a required validation script entry in package.json ("scripts")`;
-  }
-  if (!reason) return verdict;
+    let reason = null;
+    const label = protectedConfigLabel(abs, roots);
+    if (label) {
+      reason = `"${label}" is a protected verification-critical config file`;
+    } else if (
+      /(^|\/)package\.json$/.test(abs) &&
+      changesCriticalScripts(toolName, input, path.resolve(cwd, filePath))
+    ) {
+      reason = `the edit touches a required validation script entry in package.json ("scripts")`;
+    }
+    if (!reason) return verdict;
 
-  if (isOverrideEnabled()) {
-    writeSync(
-      2,
-      `SYVEKA guardrail (config-protection): allowing edit — ${reason} — because ` +
-        "SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT=1 is set in the environment.\n",
+    if (isOverrideEnabled()) {
+      writeSync(
+        2,
+        `SYVEKA guardrail (config-protection): allowing edit — ${reason} — because ` +
+          "SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT=1 is set in the environment.\n",
+      );
+      return verdict;
+    }
+    verdict.deny.push(
+      `${reason}. If a human has approved this exact change, they should set ` +
+        "SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT=1 in their own shell before the session, or make the edit directly",
     );
     return verdict;
-  }
-  verdict.deny.push(
-    `${reason}. If a human has approved this exact change, they should set ` +
-      "SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT=1 in their own shell before the session, or make the edit directly",
-  );
-  return verdict;
-});
+  },
+  import.meta.url,
+);

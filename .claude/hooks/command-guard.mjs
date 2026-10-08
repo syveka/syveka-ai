@@ -2652,26 +2652,30 @@ function inspectMcp(toolName, input, ctx) {
 
 // ---------------------------------------------------------------------------
 
-runGuard("command-guard", (payload) => {
-  const ctx = makeContext(payload);
-  const tool = String(payload.tool_name ?? "");
-  const input = payload.tool_input ?? {};
-  if (tool.startsWith("mcp__")) {
-    inspectMcp(tool, input, ctx);
-  } else if (input.command !== undefined) {
-    // Bash, PowerShell, Monitor, and any future tool that runs a shell command.
-    if (typeof input.command !== "string") {
-      ctx.deny("the shell command is malformed, so it could not be inspected");
-    } else {
-      inspectScript(input.command, tool === "PowerShell" ? "powershell" : "bash", ctx, 0);
-      if (inspectionBudgetExceeded) {
-        if (isSensitiveText(input.command) || PROTECTED_HINT.test(input.command)) {
-          ctx.deny("the command uses too many glob patterns to inspect quickly");
-        } else {
-          ctx.ask("the command uses more glob patterns than the guard can inspect quickly");
+runGuard(
+  "command-guard",
+  (payload) => {
+    const ctx = makeContext(payload);
+    const tool = String(payload.tool_name ?? "");
+    const input = payload.tool_input ?? {};
+    if (tool.startsWith("mcp__")) {
+      inspectMcp(tool, input, ctx);
+    } else if (input.command !== undefined) {
+      // Bash, PowerShell, Monitor, and any future tool that runs a shell command.
+      if (typeof input.command !== "string") {
+        ctx.deny("the shell command is malformed, so it could not be inspected");
+      } else {
+        inspectScript(input.command, tool === "PowerShell" ? "powershell" : "bash", ctx, 0);
+        if (inspectionBudgetExceeded) {
+          if (isSensitiveText(input.command) || PROTECTED_HINT.test(input.command)) {
+            ctx.deny("the command uses too many glob patterns to inspect quickly");
+          } else {
+            ctx.ask("the command uses more glob patterns than the guard can inspect quickly");
+          }
         }
       }
     }
-  }
-  return ctx.verdict;
-});
+    return ctx.verdict;
+  },
+  import.meta.url,
+);

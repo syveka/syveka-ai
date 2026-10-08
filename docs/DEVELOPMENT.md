@@ -213,15 +213,20 @@ and enforcement lives here.
   settings, and `package.json`'s required validation script entries. It also denies `Read`/`Grep` of
   secret files and credential stores.
 
-**Fail-safe.** Hooks are registered as `timeout 45 node "${CLAUDE_PROJECT_DIR}/.claude/hooks/<guard>.mjs"
-|| exit 2`: Claude Code treats any exit code other than 2, and a hook that runs past its own
-timeout, as non-blocking, so a missing, crashing or stalled guard blocks the call instead of
-silently allowing it. Inputs too large to inspect quickly (huge argument lists, wide brace
-expansion) are denied when they look security-sensitive. Malformed hook input is denied. An internal
-guard error blocks only security-sensitive calls, so a guard bug cannot lock out routine work. If
-a broken guard ever blocks everything, a human can fix or restore `.claude/hooks/` from their own
-terminal. The registration uses Bash syntax, so on Windows Claude Code needs Git Bash (as the
-Prettier hook already does).
+**Fail-safe.** Hooks are registered as `node "${CLAUDE_PROJECT_DIR}/.claude/hooks/<guard>.mjs" ||
+exit 2` with a 120-second hook timeout. Claude Code treats any exit code other than 2, and a hook
+that runs past its own timeout, as non-blocking, so: a missing or crashing guard is turned into a
+deny by `|| exit 2`; and each guard runs its inspection in a worker thread under an internal
+45-second deadline that starts when the hook starts. If the inspection stalls (including inside a
+blocking file-system or process call) or crashes, the guard writes its reason and kills its own
+process, which `|| exit 2` turns into a deny well before the hook timeout. The deadline is enforced
+inside Node (no external `timeout` binary), so behaviour is the same on Windows Git Bash, Linux and
+macOS. Inputs too large to inspect quickly (huge argument lists, wide brace expansion) are denied
+when they look security-sensitive. Malformed hook input is denied. An internal guard error blocks
+only security-sensitive calls, so a guard bug cannot lock out routine work. If a broken guard ever
+blocks everything, a human can fix or restore `.claude/hooks/` from their own terminal. The
+registration uses POSIX shell syntax, so on Windows Claude Code needs Git Bash (as the Prettier
+hook already does).
 
 To make an intentional, reviewed change to protected configuration, a human starts the session
 with:

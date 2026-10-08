@@ -579,7 +579,7 @@ describe("guardrail fail-safe behavior", () => {
     expect(commands).toHaveLength(2);
     for (const command of commands) {
       expect(command).toMatch(
-        /^timeout 45 node "\$\{CLAUDE_PROJECT_DIR\}\/\.claude\/hooks\/[\w-]+\.mjs" \|\| exit 2$/,
+        /^node "\$\{CLAUDE_PROJECT_DIR\}\/\.claude\/hooks\/[\w-]+\.mjs" \|\| exit 2$/,
       );
       const script = command.match(/hooks\/([\w-]+\.mjs)/)?.[1] ?? "";
       expect(fs.existsSync(path.join(REPO_ROOT, ".claude", "hooks", script))).toBe(true);
@@ -1278,5 +1278,138 @@ describe("command-guard: fifth review follow-ups (round 5)", () => {
       "git diff --name-only -- '*.ts' | xargs npx eslint",
     ]);
     expect(await bash("echo CLAUDE.md | xargs rm")).toBe("deny");
+  });
+});
+
+describe("guardrail runtime: portable internal timeout", () => {
+  const settings = () =>
+    JSON.parse(fs.readFileSync(path.join(REPO_ROOT, ".claude", "settings.json"), "utf8")) as {
+      hooks: { PreToolUse: Array<{ hooks: Array<{ command: string; timeout?: number }> }> };
+    };
+
+  // Absolute path to a bash that can run the registered hook command, or null.
+  function findBash(): string | null {
+    if (process.platform !== "win32") {
+      for (const candidate of ["/bin/bash", "/usr/bin/bash"])
+        if (fs.existsSync(candidate)) return candidate;
+      return null;
+    }
+    for (const dir of (process.env.PATH ?? "").split(path.delimiter)) {
+      const candidate = path.join(dir, "bash.exe");
+      if (fs.existsSync(candidate) && !/system32/i.test(candidate)) return candidate;
+    }
+    return null;
+  }
+
+  it("registers the guards without any external timeout binary, under a longer hook timeout", () => {
+    for (const entry of settings().hooks.PreToolUse) {
+      for (const hook of entry.hooks) {
+        expect(hook.command).not.toMatch(/\btimeout\b/);
+        expect(hook.command).toMatch(
+          /^node "\$\{CLAUDE_PROJECT_DIR\}\/\.claude\/hooks\/[\w-]+\.mjs" \|\| exit 2$/,
+        );
+        // Claude Code must wait longer than the guard's own 45 s deadline.
+        expect(hook.timeout ?? 0).toBeGreaterThan(45);
+      }
+    }
+  });
+
+  it("allows safe commands and still denies protected ones when no timeout binary is on PATH", () => {
+    const bashPath = findBash();
+    if (!bashPath) return;
+    // PATH holds only Node's directory: no `timeout`, as on a stock macOS install.
+    const env: NodeJS.ProcessEnv = {
+      NODE_ENV: "test",
+      PATH: path.dirname(process.execPath),
+      CLAUDE_PROJECT_DIR: REPO_ROOT,
+      SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT: "",
+      SystemRoot: process.env.SystemRoot ?? "",
+    };
+    const commandHook = settings().hooks.PreToolUse[0]?.hooks[0]?.command ?? "";
+    expect(commandHook).toContain("command-guard.mjs");
+    const run = (command: string) =>
+      spawnSync(bashPath, ["-c", commandHook], {
+        input: JSON.stringify({ cwd: REPO_ROOT, tool_name: "Bash", tool_input: { command } }),
+        encoding: "utf8",
+        env,
+      });
+    const missing = spawnSync(bashPath, ["-c", "command -v timeout"], { encoding: "utf8", env });
+    expect(missing.stdout.trim()).toBe("");
+    for (const safe of ["npm test", "git status --short", "npx prettier --check ."]) {
+      const result = run(safe);
+      expect({ safe, status: result.status, stderr: result.stderr }).toEqual({
+        safe,
+        status: 0,
+        stderr: "",
+      });
+    }
+    for (const blocked of [
+      "git push --force origin feat",
+      "cat .env.local",
+      "git push origin main",
+    ]) {
+      expect({ blocked, status: run(blocked).status }).toEqual({ blocked, status: 2 });
+    }
+  });
+
+  // Runs a guard exactly as Claude Code does: through the registered `node … || exit 2`.
+  function runRegistered(index: number, stdin: string, extraEnv: Record<string, string>) {
+    const bashPath = findBash();
+    if (!bashPath) return null;
+    const command = settings().hooks.PreToolUse[index]?.hooks[0]?.command ?? "";
+    return spawnSync(bashPath, ["-c", command], {
+      input: stdin,
+      encoding: "utf8",
+      env: { ...process.env, CLAUDE_PROJECT_DIR: REPO_ROOT, ...extraEnv },
+    });
+  }
+
+  it.each([
+    ["a JavaScript stall", { SYVEKA_GUARD_TEST_STALL_MS: "15000" }],
+    // A native call (unreachable network share, hung child process) blocks the worker
+    // thread itself; the guard must still deny on time instead of waiting for it.
+    ["a native stall", { SYVEKA_GUARD_TEST_NATIVE_STALL_MS: "15000" }],
+  ])("denies %s once the internal deadline passes", (_label, stall) => {
+    const stdin = JSON.stringify({
+      cwd: REPO_ROOT,
+      tool_name: "Bash",
+      tool_input: { command: "npm test" },
+    });
+    for (const index of [0, 1]) {
+      const started = Date.now();
+      const result = runRegistered(index, stdin, { SYVEKA_GUARD_TIMEOUT_MS: "750", ...stall });
+      if (!result) return;
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("did not finish within 750 ms");
+      expect(Date.now() - started).toBeLessThan(8_000);
+    }
+  });
+
+  it("denies harmless but deeply nested input without leaking a stack trace", () => {
+    // Built as text: JSON.stringify itself overflows the stack at this depth.
+    const nested = `${'{"n":'.repeat(5000)}"x"${"}".repeat(5000)}`;
+    const stdin = `{"cwd":${JSON.stringify(REPO_ROOT)},"tool_name":"Bash","tool_input":{"command":"ls","extra":${nested}}}`;
+    const result = runRegistered(0, stdin, {});
+    if (!result) return;
+    expect([0, 2]).toContain(result.status);
+    expect(result.stderr).not.toMatch(/\bat .*\.mjs:\d+/);
+  });
+
+  it("cannot be configured to wait longer than 45 seconds", () => {
+    const started = Date.now();
+    // A request above the cap is clamped; with a short stall the call still completes normally.
+    const result = runRawSync(
+      COMMAND_GUARD,
+      JSON.stringify({ cwd: REPO_ROOT, tool_name: "Bash", tool_input: { command: "npm test" } }),
+      { SYVEKA_GUARD_TIMEOUT_MS: "999999999", SYVEKA_GUARD_TEST_STALL_MS: "200" },
+    );
+    expect(result.status).toBe(0);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    const source = fs.readFileSync(
+      path.join(REPO_ROOT, ".claude", "hooks", "lib", "hook-io.mjs"),
+      "utf8",
+    );
+    expect(source).toMatch(/Math\.min\(requested, GUARD_TIMEOUT_MS\)/);
+    expect(source).toMatch(/GUARD_TIMEOUT_MS = 45_000/);
   });
 });
