@@ -733,8 +733,8 @@
     "newPrompt": "أمر جديد",
     "use": "استخدام",
     "openInChat": "فتح في الدردشة",
-    "contentPlaceholder": "اكتب رداً إلى {{customer}} حول {{topic}}…",
-    "variableHint": "استخدم {{name}} لتعريف المتغيرات.",
+    "contentPlaceholder": "اكتب رداً إلى '{{'customer'}}' حول '{{'topic'}}'…",
+    "variableHint": "استخدم '{{'name'}}' لتعريف المتغيرات.",
     "categories": {
       "general": "عام",
       "sales": "مبيعات",
@@ -760,7 +760,7 @@
     "saved": "تم الحفظ.",
     "runHistory": "سجل التشغيل",
     "seconds": "ثوانٍ",
-    "promptPlaceholder": "لخّص {{trigger.title}} للفريق…",
+    "promptPlaceholder": "لخّص '{{'trigger.title'}}' للفريق…",
     "subjectPlaceholder": "الموضوع…",
     "fields": {
       "name": "الاسم",

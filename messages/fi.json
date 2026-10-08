@@ -733,8 +733,8 @@
     "newPrompt": "Uusi prompti",
     "use": "Käytä",
     "openInChat": "Avaa chatissa",
-    "contentPlaceholder": "Kirjoita vastaus asiakkaalle {{customer}} aiheesta {{topic}}…",
-    "variableHint": "Määritä täytettävät muuttujat muodossa {{nimi}}.",
+    "contentPlaceholder": "Kirjoita vastaus asiakkaalle '{{'customer'}}' aiheesta '{{'topic'}}'…",
+    "variableHint": "Määritä täytettävät muuttujat muodossa '{{'nimi'}}'.",
     "categories": {
       "general": "Yleinen",
       "sales": "Myynti",
@@ -760,7 +760,7 @@
     "saved": "Tallennettu.",
     "runHistory": "Ajohistoria",
     "seconds": "sekuntia",
-    "promptPlaceholder": "Tee tiimille yhteenveto: {{trigger.title}}…",
+    "promptPlaceholder": "Tee tiimille yhteenveto: '{{'trigger.title'}}'…",
     "subjectPlaceholder": "Otsikko…",
     "fields": {
       "name": "Nimi",
