@@ -558,7 +558,6 @@
       "transferNumber": "Siirto ihmiselle (numero)"
     },
     "toolNames": {
-      "searchContacts": "Hae soittajia CRM:stä",
       "createContact": "Luo uusia kontakteja",
       "logActivity": "Kirjaa puhelumuistiinpanot CRM:ään",
       "getCalendarAvailability": "Tarkista kalenterin saatavuus",
