@@ -1,7 +1,7 @@
 import "server-only";
 
 import { Prisma, type CreatorGenerationType } from "@/generated/prisma/client/client";
-import { tenantDb } from "@/server/db/tenant";
+import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import type { TenantContext } from "@/server/auth/session";
 import { assertFeatureEnabled } from "./feature-flags";
 import { CREATOR_STUDIO_FLAG, CreatorProfileError } from "./creator-profiles";
@@ -505,11 +505,37 @@ export async function persistGeneratedAssetWithCleanup(
   }
 }
 
+// The profile and template foreign keys don't check the organization, so a client-supplied id
+// must be resolved within this organization before it is stored on a generation or asset.
+async function assertOwnedProfile(ctx: TenantContext, creatorProfileId: string | undefined) {
+  if (!creatorProfileId) return;
+  const profile = await tenantDb(ctx.orgId).creatorProfile.findFirst({
+    where: { id: creatorProfileId },
+    select: { id: true },
+  });
+  if (!profile) throw new CreatorProfileError("profile_not_found", "Creator profile not found.");
+}
+
+async function assertUsableTemplate(ctx: TenantContext, templateId: string | undefined) {
+  if (!templateId) return;
+  // Global templates have no organization; any other template must be this organization's.
+  const template = await unscopedPrisma.creatorTemplate.findFirst({
+    where: { id: templateId, OR: [{ organizationId: null }, { organizationId: ctx.orgId }] },
+    select: { id: true },
+  });
+  if (!template) throw new CreatorProfileError("template_not_found", "Template not found.");
+}
+
 async function requireActiveProfileWithReferences(ctx: TenantContext, creatorProfileId: string) {
   const db = tenantDb(ctx.orgId);
   const profile = await db.creatorProfile.findFirstOrThrow({
     where: { id: creatorProfileId },
-    include: { referenceAssets: { where: { validationStatus: "APPROVED" }, take: 10 } },
+    include: {
+      referenceAssets: {
+        where: { organizationId: ctx.orgId, validationStatus: "APPROVED" },
+        take: 10,
+      },
+    },
   });
   if (!profile.consentConfirmedAt) {
     throw new CreatorProfileError(
@@ -539,6 +565,7 @@ export async function requestCharacterImageGeneration(
 ) {
   await assertFeatureEnabled(ctx.orgId, CREATOR_STUDIO_FLAG);
   const profile = await requireActiveProfileWithReferences(ctx, input.creatorProfileId);
+  await assertUsableTemplate(ctx, input.templateId);
   const provider = getCreatorMediaProvider();
   const creditCost = getCreatorGenerationCreditCost("IMAGE", provider.name, "default", {
     quality: input.quality,
@@ -606,6 +633,7 @@ export async function requestImageFromCharacterGeneration(
 ) {
   await assertFeatureEnabled(ctx.orgId, CREATOR_STUDIO_FLAG);
   const profile = await requireActiveProfileWithReferences(ctx, input.creatorProfileId);
+  await assertUsableTemplate(ctx, input.templateId);
   const provider = getCreatorMediaProvider();
   const creditCost = getCreatorGenerationCreditCost("IMAGE", provider.name, "default", {
     quality: input.quality,
@@ -679,6 +707,7 @@ export async function requestVideoFromImageGeneration(
   const sourceAsset = await db.creatorReferenceAsset.findFirstOrThrow({
     where: { id: input.sourceAssetId },
   });
+  await assertOwnedProfile(ctx, input.creatorProfileId);
   const provider = getCreatorMediaProvider();
   const creditCost = getCreatorGenerationCreditCost("IMAGE_TO_VIDEO", provider.name, "default", {
     quality: input.quality,
@@ -745,6 +774,7 @@ export async function requestCaptionGeneration(
   },
 ) {
   await assertFeatureEnabled(ctx.orgId, CREATOR_STUDIO_FLAG);
+  await assertOwnedProfile(ctx, input.creatorProfileId);
   const provider = getCreatorCaptionProvider();
   const creditCost = getCreatorGenerationCreditCost("CAPTION", provider.name, "default");
 

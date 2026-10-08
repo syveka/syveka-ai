@@ -22,6 +22,22 @@ export class PostWorkflowError extends Error {
 export async function createCreatorPost(ctx: TenantContext, input: CreatePostInput) {
   await assertFeatureEnabled(ctx.orgId, CREATOR_STUDIO_FLAG);
   const db = tenantDb(ctx.orgId);
+  // The foreign keys don't check the organization: another organization's AUTOPILOT campaign
+  // would let this post publish without approval.
+  if (input.campaignId) {
+    const campaign = await db.creatorCampaign.findFirst({
+      where: { id: input.campaignId },
+      select: { id: true },
+    });
+    if (!campaign) throw new PostWorkflowError("campaign_not_found", "Campaign not found.");
+  }
+  if (input.creatorProfileId) {
+    const profile = await db.creatorProfile.findFirst({
+      where: { id: input.creatorProfileId },
+      select: { id: true },
+    });
+    if (!profile) throw new PostWorkflowError("profile_not_found", "Creator profile not found.");
+  }
   const post = await db.creatorPost.create({
     data: {
       organizationId: ctx.orgId,
