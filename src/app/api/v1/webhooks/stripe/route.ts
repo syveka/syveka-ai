@@ -278,9 +278,12 @@ export async function POST(request: Request): Promise<NextResponse> {
         const orgId = sub.metadata.orgId;
         if (orgId) {
           await unscopedPrisma.$transaction(async (tx) => {
-            // Downgrade to FREE; data kept, over-limit features go read-only (§14.4)
-            await tx.subscription.update({
-              where: { organizationId: orgId },
+            // Downgrade to FREE; data kept, over-limit features go read-only (§14.4).
+            // Only when the deleted subscription is the org's current one: deleting an older
+            // subscription (cancelled at period end after a new checkout) must not drop an org
+            // that is still paying, and an org with no subscription row has nothing to downgrade.
+            await tx.subscription.updateMany({
+              where: { organizationId: orgId, stripeSubscriptionId: sub.id },
               data: { plan: "FREE", status: "CANCELED", stripeSubscriptionId: null },
             });
             await tx.stripeWebhookEvent.update({

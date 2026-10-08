@@ -13,15 +13,21 @@ type LedgerWriteArgs = { where?: unknown; data?: { status?: string; [key: string
 const mocks = vi.hoisted(() => {
   const txSubscriptionUpsert = vi.fn(async (_args: unknown) => ({}));
   const txSubscriptionUpdate = vi.fn(async (_args: unknown) => ({}));
+  const txSubscriptionUpdateMany = vi.fn(async (_args: unknown) => ({ count: 1 }));
   const txStripeWebhookEventUpdate = vi.fn(async (_args: LedgerWriteArgs) => ({}));
   const tx = {
-    subscription: { upsert: txSubscriptionUpsert, update: txSubscriptionUpdate },
+    subscription: {
+      upsert: txSubscriptionUpsert,
+      update: txSubscriptionUpdate,
+      updateMany: txSubscriptionUpdateMany,
+    },
     stripeWebhookEvent: { update: txStripeWebhookEventUpdate },
   };
   return {
     tx,
     txSubscriptionUpsert,
     txSubscriptionUpdate,
+    txSubscriptionUpdateMany,
     txStripeWebhookEventUpdate,
     ledgerCreate: vi.fn(async (_args: unknown) => ({})),
     ledgerFindUnique: vi.fn(async (_args: unknown) => null as Record<string, unknown> | null),
@@ -365,11 +371,32 @@ describe("existing subscription and entitlement behavior is unchanged", () => {
     const res = await POST(webhookRequest("{}"));
 
     expect(res.status).toBe(200);
-    expect(mocks.txSubscriptionUpdate).toHaveBeenCalledWith({
-      where: { organizationId: "org-a" },
+    expect(mocks.txSubscriptionUpdateMany).toHaveBeenCalledWith({
+      where: { organizationId: "org-a", stripeSubscriptionId: "sub_del" },
       data: { plan: "FREE", status: "CANCELED", stripeSubscriptionId: null },
     });
     expect(mocks.invalidateEntitlements).toHaveBeenCalledWith("org-a");
+  });
+
+  it("deleting an older subscription never downgrades an org that moved to a new one, and still completes", async () => {
+    const event = fakeEvent("customer.subscription.deleted", fakeSubscription({ id: "sub_old" }));
+    mocks.constructEvent.mockReturnValue(event);
+    // The org's row now holds a different (current) subscription id, so nothing matches.
+    mocks.txSubscriptionUpdateMany.mockResolvedValueOnce({ count: 0 });
+
+    const res = await POST(webhookRequest("{}"));
+
+    expect(res.status).toBe(200);
+    expect(mocks.txSubscriptionUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { organizationId: "org-a", stripeSubscriptionId: "sub_old" },
+      }),
+    );
+    expect(mocks.txSubscriptionUpdate).not.toHaveBeenCalled();
+    expect(mocks.txStripeWebhookEventUpdate).toHaveBeenCalledWith({
+      where: { stripeEventId: "evt_123" },
+      data: expect.objectContaining({ status: "COMPLETED" }),
+    });
   });
 
   it("invoice.payment_failed transitions the resolved organization's subscription to PAST_DUE", async () => {
