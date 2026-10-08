@@ -797,7 +797,11 @@
         "duration": "Wait"
       }
     },
-    "testRun": "Test run"
+    "testRun": "Test run",
+    "testErrors": {
+      "quota": "Your plan doesn't include workflows. Upgrade to run a test.",
+      "rateLimited": "Too many test runs. Try again later."
+    }
   },
   "billingPage": {
     "title": "Billing",

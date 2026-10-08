@@ -35,6 +35,7 @@ type RateLimiters = {
   aiTranscriptionUser: Ratelimit;
   aiTranscriptionOrg: Ratelimit;
   aiVoiceTurnUser: Ratelimit;
+  workflowTestRun: Ratelimit;
 };
 
 let rateLimitersClient: RateLimiters | null = null;
@@ -115,6 +116,13 @@ function getRateLimiters(): RateLimiters {
       limiter: Ratelimit.slidingWindow(40, "5 m"),
       prefix: "rl:ai:voice-turn:user",
     }),
+    // Manual workflow test runs: each can call an AI provider and send email
+    // from the platform domain, so they are capped per organization.
+    workflowTestRun: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(10, "1 h"),
+      prefix: "rl:workflow-test-run:org",
+    }),
   };
   return rateLimitersClient;
 }
@@ -155,6 +163,9 @@ export const rateLimiters = {
   },
   get aiVoiceTurnUser() {
     return getRateLimiters().aiVoiceTurnUser;
+  },
+  get workflowTestRun() {
+    return getRateLimiters().workflowTestRun;
   },
 } satisfies RateLimiters;
 
