@@ -243,11 +243,8 @@ export async function releaseCreatorCredits(
 }
 
 /**
- * Ledger-based check for whether a generation's reservation has already
- * been settled (COMMIT or RELEASE), independent of the CreatorGeneration
- * row's own status — used by the recovery/reconciliation path to decide
- * whether a repair is needed without re-deriving it from the generation
- * row alone.
+ * Whether credits were actually reserved for a generation (a RESERVE row exists). A generation
+ * whose reservation failed never moved credits, whatever its creditsReserved column says.
  */
 export async function creatorGenerationCreditsReserved(generationId: string): Promise<boolean> {
   const existing = await unscopedPrisma.creatorCreditTransaction.findFirst({
@@ -256,7 +253,13 @@ export async function creatorGenerationCreditsReserved(generationId: string): Pr
   return existing !== null;
 }
 
-/** Whether a COMMIT or RELEASE already settled this generation's reservation. */
+/**
+ * Ledger-based check for whether a generation's reservation has already
+ * been settled (COMMIT or RELEASE), independent of the CreatorGeneration
+ * row's own status — used by the recovery/reconciliation path to decide
+ * whether a repair is needed without re-deriving it from the generation
+ * row alone.
+ */
 export async function creatorGenerationCreditsSettled(generationId: string): Promise<boolean> {
   const existing = await unscopedPrisma.creatorCreditTransaction.findFirst({
     where: { generationId, type: { in: ["COMMIT", "RELEASE"] } },

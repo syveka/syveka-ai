@@ -150,7 +150,7 @@ describe("runGeneration (via requestCharacterImageGeneration)", () => {
     );
   });
 
-  it("records nothing reserved when the reservation itself fails, so recovery can't release credits that were never taken", async () => {
+  it("fails the generation without a provider call or settlement when the reservation itself fails", async () => {
     const db = makeDb();
     tenantDbMock.mockReturnValue(db);
     reserveMock.mockRejectedValueOnce(new Error("insufficient"));
@@ -164,7 +164,6 @@ describe("runGeneration (via requestCharacterImageGeneration)", () => {
     ).rejects.toThrow("insufficient");
 
     expect(db.generation.status).toBe("FAILED");
-    expect(db.generation.creditsReserved).toBe(0);
     expect(providerMock.generateCharacterImage).not.toHaveBeenCalled();
     expect(releaseMock).not.toHaveBeenCalled();
     expect(commitMock).not.toHaveBeenCalled();

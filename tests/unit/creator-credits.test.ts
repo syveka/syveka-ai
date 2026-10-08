@@ -223,6 +223,41 @@ describe("credit reservation ledger", () => {
     });
   });
 
+  it("reserve: runs the balance UPDATE and the RESERVE insert inside one transaction", async () => {
+    let inTransaction = false;
+    const seen: string[] = [];
+    unscopedPrismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => {
+      inTransaction = true;
+      try {
+        return await fn(unscopedPrismaMock);
+      } finally {
+        inTransaction = false;
+      }
+    });
+    db.creatorCreditBalance.updateMany.mockImplementationOnce(async () => {
+      seen.push(`update:${inTransaction}`);
+      return { count: 1 };
+    });
+    const create = unscopedPrismaMock.creatorCreditTransaction.create as unknown as {
+      mockImplementation: (fn: (args: { data: { type: string } }) => Promise<object>) => void;
+    };
+    create.mockImplementation(async (args) => {
+      if (args.data.type === "RESERVE") seen.push(`reserve:${inTransaction}`);
+      return {};
+    });
+
+    try {
+      await reserveCreatorCredits(ctx(), { generationId: "gen-1", amount: 10 });
+    } finally {
+      unscopedPrismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
+        fn(unscopedPrismaMock),
+      );
+      create.mockImplementation(async () => ({}));
+    }
+
+    expect(seen).toEqual(["update:true", "reserve:true"]);
+  });
+
   it("reserve: writes a RESERVE row only when the balance UPDATE succeeds", async () => {
     const reserveRows = () =>
       unscopedPrismaMock.creatorCreditTransaction.create.mock.calls.filter(
