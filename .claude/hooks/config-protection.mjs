@@ -1,29 +1,32 @@
 #!/usr/bin/env node
+// PreToolUse guardrail for file tools (CLAUDE.md §9).
+//
+// Edit/Write/NotebookEdit (and MultiEdit, for older Claude Code versions) on protected
+// configuration are denied: CLAUDE.md, everything under .claude/ (settings, hooks,
+// skills), .env files, lint/format/TypeScript/Vitest/Playwright config, .github/, CI
+// and release-verification scripts, vercel.json, the guardrail tests, user-level
+// Claude Code settings, and package.json edits that touch required validation scripts.
+// Shell writes to the same paths are handled by command-guard with the same rules.
+//
+// Read/Grep of secret env files and credential stores are always denied.
+//
+// A human who has approved a specific protected-config change can start the session
+// with SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT=1 in their own shell. The agent can't set it:
+// tool calls don't persist environment state into the hook process. The override never
+// unlocks secret reads.
+
+import { readdirSync, readFileSync, writeSync } from "node:fs";
 import path from "node:path";
+import { runGuard } from "./lib/hook-io.mjs";
+import {
+  globMatches,
+  isOverrideEnabled,
+  isSecretPath,
+  protectedConfigLabel,
+  resolveArgPath,
+} from "./lib/protected-paths.mjs";
 
-// PreToolUse guardrail: gates Edit/Write access to security/quality-critical shared
-// config so the agent can't silently weaken CI gates (CLAUDE.md §9 lists CI-policy
-// and workflow-policy changes as requiring explicit authorization). Unlike
-// block-no-verify, this one supports an explicit human override: a human who has
-// consciously approved a specific config change can set
-// SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT=1 in their own shell environment before
-// launching the session. The agent cannot set this itself — Bash/PowerShell tool
-// calls in this harness don't persist environment state into the hook's process.
-
-const ALWAYS_PROTECTED = [
-  /(^|\/)eslint\.config\.(mjs|js|cjs|ts)$/,
-  /(^|\/)\.eslintrc(\..*)?$/,
-  /(^|\/)\.prettierrc(\..*)?$/,
-  /(^|\/)prettier\.config\.(mjs|js|cjs)$/,
-  /^tsconfig(\.[\w-]+)?\.json$/,
-  /(^|\/)\.github\/workflows\/.*\.ya?ml$/,
-  /(^|\/)\.claude\/settings\.json$/,
-  /(^|\/)\.claude\/hooks\/.*/,
-  /^CLAUDE\.md$/,
-  /(^|\/)scripts\/ci\/.*/,
-  /(^|\/)scripts\/(check-i18n-parity|check-migration-history|verify-release-chain|validate-staging-config|verify-prisma-engine|generate-legacy-schema-contract|check-dashboard-index-ownership)\.(mjs|ts|js)$/,
-];
-
+const EDIT_TOOLS = new Set(["Edit", "Write", "MultiEdit", "NotebookEdit"]);
 const CRITICAL_SCRIPT_KEYS = [
   "format:check",
   "lint",
@@ -35,21 +38,6 @@ const CRITICAL_SCRIPT_KEYS = [
   "test:e2e",
 ];
 
-function readStdin() {
-  return new Promise((resolve, reject) => {
-    let data = "";
-    process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (chunk) => (data += chunk));
-    process.stdin.on("end", () => resolve(data));
-    process.stdin.on("error", reject);
-  });
-}
-
-function toRelPosix(cwd, filePath) {
-  const rel = path.relative(cwd || process.cwd(), filePath);
-  return rel.split(path.sep).join("/");
-}
-
 function touchesCriticalScript(text) {
   return CRITICAL_SCRIPT_KEYS.some((key) => {
     const escaped = key.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -57,60 +45,130 @@ function touchesCriticalScript(text) {
   });
 }
 
-async function main() {
-  const raw = await readStdin();
-  let payload;
-  try {
-    payload = JSON.parse(raw);
-  } catch {
-    process.exit(0);
-  }
-
-  const toolName = payload?.tool_name;
-  if (toolName !== "Edit" && toolName !== "Write") {
-    process.exit(0);
-  }
-
-  const filePath = payload?.tool_input?.file_path;
-  if (typeof filePath !== "string" || filePath === "") {
-    process.exit(0);
-  }
-
-  const relPath = toRelPosix(payload?.cwd, filePath);
-
-  let reason = null;
-  if (ALWAYS_PROTECTED.some((pattern) => pattern.test(relPath))) {
-    reason = `"${relPath}" is a protected verification-critical config file`;
-  } else if (relPath === "package.json") {
-    const text =
-      toolName === "Edit"
-        ? `${payload?.tool_input?.old_string ?? ""}\n${payload?.tool_input?.new_string ?? ""}`
-        : (payload?.tool_input?.content ?? "");
-    if (touchesCriticalScript(text)) {
-      reason = `the edit touches a required validation script entry in package.json ("scripts")`;
-    }
-  }
-
-  if (!reason) {
-    process.exit(0);
-  }
-
-  if (process.env.SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT === "1") {
-    process.stderr.write(
-      `SYVEKA guardrail (config-protection): allowing edit — ${reason} — because ` +
-        "SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT=1 is set in the environment.\n",
-    );
-    process.exit(0);
-  }
-
-  process.stderr.write(
-    `Blocked by SYVEKA guardrail (config-protection): ${reason}. Per CLAUDE.md §9, changes to ` +
-      "CI-policy/verification-critical config require explicit human authorization for this " +
-      "specific change. If a human has approved this exact change, they should set " +
-      "SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT=1 in their own shell before the session, or make the " +
-      "edit directly.\n",
-  );
-  process.exit(2);
+function criticalScripts(text) {
+  const scripts = JSON.parse(text)?.scripts ?? {};
+  return JSON.stringify(CRITICAL_SCRIPT_KEYS.map((key) => scripts[key] ?? null));
 }
 
-main();
+// Applies the edit to the current file and compares the required validation scripts, so
+// an edit that only touches a script's value (not its key) is still caught.
+function changesCriticalScripts(toolName, input, filePath) {
+  let before;
+  try {
+    before = readFileSync(filePath, "utf8");
+  } catch {
+    before = "{}";
+  }
+  let after = before;
+  if (toolName === "Write") after = String(input?.content ?? "");
+  else {
+    const edits = toolName === "MultiEdit" ? (input?.edits ?? []) : [input];
+    for (const edit of edits) {
+      const oldString = String(edit?.old_string ?? "");
+      const newString = String(edit?.new_string ?? "");
+      after = edit?.replace_all
+        ? after.split(oldString).join(newString)
+        : after.replace(oldString, newString);
+    }
+  }
+  try {
+    return criticalScripts(before) !== criticalScripts(after);
+  } catch {
+    // Unparseable result: fall back to flagging edits that mention a required script key.
+    return touchesCriticalScript(editedText(toolName, input));
+  }
+}
+
+function editedText(toolName, input) {
+  if (toolName === "Write") return String(input?.content ?? "");
+  if (toolName === "MultiEdit") {
+    return (input?.edits ?? [])
+      .map((e) => `${e?.old_string ?? ""}\n${e?.new_string ?? ""}`)
+      .join("\n");
+  }
+  return `${input?.old_string ?? ""}\n${input?.new_string ?? ""}`;
+}
+
+runGuard(
+  "config-protection",
+  (payload) => {
+    const verdict = { deny: [], ask: [] };
+    const toolName = String(payload.tool_name ?? "");
+    const input = payload.tool_input ?? {};
+    const cwd = typeof payload.cwd === "string" && payload.cwd ? payload.cwd : process.cwd();
+    const roots = [process.env.CLAUDE_PROJECT_DIR || cwd, cwd];
+
+    if (toolName === "Grep" && typeof input.glob === "string" && input.glob) {
+      // A glob such as "*.local" or ".e*" can select secret files the path check never sees.
+      const dir = path.resolve(
+        cwd,
+        typeof input.path === "string" && input.path ? input.path : ".",
+      );
+      let entries = [];
+      try {
+        entries = readdirSync(dir);
+      } catch {
+        entries = [];
+      }
+      const secret = entries.find(
+        (entry) => isSecretPath(resolveArgPath(entry, dir)) && globMatches(entry, input.glob),
+      );
+      if (secret) {
+        verdict.deny.push(`the Grep glob "${input.glob}" matches the secret file "${secret}"`);
+      }
+    }
+    if (toolName === "Read" || toolName === "Grep") {
+      for (const candidate of [input.file_path, input.path, input.glob]) {
+        if (candidate !== undefined && candidate !== null && typeof candidate !== "string") {
+          verdict.deny.push(
+            "the read target path is malformed, so the call could not be inspected",
+          );
+          continue;
+        }
+        if (typeof candidate !== "string" || !candidate) continue;
+        if (isSecretPath(resolveArgPath(candidate, cwd))) {
+          verdict.deny.push(
+            `"${candidate}" is a secret or credential file and must not be read by the agent`,
+          );
+        }
+      }
+      return verdict;
+    }
+    if (!EDIT_TOOLS.has(toolName)) return verdict;
+
+    const filePath = input.file_path ?? input.notebook_path;
+    if (filePath !== undefined && typeof filePath !== "string") {
+      verdict.deny.push("the edit target path is malformed, so the call could not be inspected");
+      return verdict;
+    }
+    if (!filePath) return verdict;
+    const abs = resolveArgPath(filePath, cwd);
+
+    let reason = null;
+    const label = protectedConfigLabel(abs, roots);
+    if (label) {
+      reason = `"${label}" is a protected verification-critical config file`;
+    } else if (
+      /(^|\/)package\.json$/.test(abs) &&
+      changesCriticalScripts(toolName, input, path.resolve(cwd, filePath))
+    ) {
+      reason = `the edit touches a required validation script entry in package.json ("scripts")`;
+    }
+    if (!reason) return verdict;
+
+    if (isOverrideEnabled()) {
+      writeSync(
+        2,
+        `SYVEKA guardrail (config-protection): allowing edit — ${reason} — because ` +
+          "SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT=1 is set in the environment.\n",
+      );
+      return verdict;
+    }
+    verdict.deny.push(
+      `${reason}. If a human has approved this exact change, they should set ` +
+        "SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT=1 in their own shell before the session, or make the edit directly",
+    );
+    return verdict;
+  },
+  import.meta.url,
+);
