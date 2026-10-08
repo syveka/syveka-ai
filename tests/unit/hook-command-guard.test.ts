@@ -1434,6 +1434,32 @@ describe("command-guard: final review follow-ups (implicit push targets, push pl
       "git remote add upstream https://github.com/x/y.git",
     ]);
   });
+
+  it("reads the branch after `--` for switch, and exact option names before abbreviations", async () => {
+    await expectAll(fromFeature, "deny", [
+      "git switch -- main && git push",
+      "git switch -q -- main && git push origin HEAD",
+      // --force is not an abbreviation of --force-create.
+      "git switch --force --quiet main && git push",
+      "git rebase --roo main && git push",
+      "git rebase --strat ours origin/main main && git push",
+      // git runs dashed external commands case-insensitively on Windows.
+      "git HTTP-PUSH https://example.com/repo.git main",
+    ]);
+    await expectAll(fromFeature, "ask", [
+      "git switch -- - && git push",
+      "git switch --force-c fix/x && git push -u origin HEAD",
+      "git switch -qf feat2 && git push",
+    ]);
+    await expectAll(fromFeature, "allow", [
+      "git switch -- feat2 && git push",
+      "git switch -cfeature && git push -u origin HEAD",
+      "git checkout -p main && git push",
+      "git checkout --patch main && git push",
+      "git checkout -b fix/x && git push -u origin fix/x",
+      "git push --dry-run",
+    ]);
+  });
 });
 
 describe("guardrail runtime: portable internal timeout", () => {
