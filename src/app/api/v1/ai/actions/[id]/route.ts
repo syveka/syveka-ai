@@ -20,12 +20,14 @@ function error(code: string, status: number) {
 /**
  * Refusals that happen after the action was marked decided (see
  * decideToolAction), with the outcome to record: permission and an invalid
- * stored action are refused before the tool runs ("failed": nothing was
- * done); an error while the tool ran may come after its write ("unknown").
+ * stored action are refused before the tool runs, and a plan limit before
+ * it writes ("failed": nothing was done); an error while the tool ran may
+ * come after its write ("unknown").
  */
 const CONSUMED_FAILURES: Record<string, "failed" | "unknown"> = {
   permission_denied: "failed",
   invalid_action: "failed",
+  plan_limit: "failed",
   action_failed: "unknown",
 };
 
@@ -35,6 +37,7 @@ const REFUSALS = {
   mismatch: 409,
   permission_denied: 403,
   invalid_action: 422,
+  plan_limit: 402,
   action_failed: 500,
 } as const;
 

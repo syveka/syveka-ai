@@ -19,7 +19,10 @@ const m = vi.hoisted(() => {
     tx,
     transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => fn(tx)),
     contactCreate: vi.fn(),
+    contactCount: vi.fn(),
     contactFindFirst: vi.fn(),
+    // The organization's cached entitlements, read by the real plan check.
+    entitlements: {} as Record<string, unknown>,
     activityCreate: vi.fn(),
     audit: vi.fn(async () => undefined),
     ctx: null as null | { orgId: string; userId: string; role: string },
@@ -34,6 +37,7 @@ vi.mock("@/server/db/tenant", () => ({
   tenantDb: vi.fn(() => ({
     contact: {
       create: m.contactCreate,
+      count: m.contactCount,
       findFirst: m.contactFindFirst,
       findFirstOrThrow: vi.fn(async () => ({ id: "c" })),
     },
@@ -64,6 +68,7 @@ import {
   type ProposedAction,
 } from "@/server/ai/tool-actions";
 import { executeTool, type ToolIdentity } from "@/server/ai/tools";
+import { PLAN_LIMITS } from "@/lib/billing/plan-catalog";
 
 /** An isolated in-memory action store with the scripts' semantics. */
 const store: EvalClient = {
@@ -100,7 +105,11 @@ const store: EvalClient = {
 };
 
 vi.mock("@/server/integrations/redis", () => ({
-  redis: { eval: (...a: Parameters<EvalClient["eval"]>) => store.eval(...a) },
+  redis: {
+    eval: (...a: Parameters<EvalClient["eval"]>) => store.eval(...a),
+    get: vi.fn(async () => m.entitlements),
+    set: vi.fn(async () => "OK"),
+  },
   limitAiChat: vi.fn(async () => m.rate),
 }));
 
@@ -164,6 +173,15 @@ beforeEach(() => {
   m.tx.calendarEvent.create.mockResolvedValue({ id: "evt-1" });
   m.tx.contact.findFirstOrThrow.mockResolvedValue({ id: "c" });
   m.contactCreate.mockResolvedValue({ id: "contact-1" });
+  m.contactCount.mockResolvedValue(0);
+  m.entitlements = {
+    ...PLAN_LIMITS.FREE,
+    maxContacts: 3,
+    plan: "FREE",
+    seats: 1,
+    status: "ACTIVE",
+    readOnly: false,
+  };
   m.contactFindFirst.mockResolvedValue({ firstName: "Maija", lastName: "Meikäläinen" });
   m.activityCreate.mockResolvedValue({ id: "act-1" });
   vi.spyOn(console, "info").mockImplementation(() => {});
@@ -419,6 +437,21 @@ describe("deciding (only the user, only once, only that action)", () => {
     expect(await decide(a)).toEqual({ ok: false, reason: "already_decided" });
   });
 
+  it("a contact over the plan's limit is refused as plan_limit (not done, not unknown); it isn't run again", async () => {
+    const a = (await propose("createContact", { firstName: "Maija" })).action!;
+    m.contactCount.mockResolvedValue(3); // the limit was reached after the proposal
+    expect(await decide(a)).toEqual({ ok: false, reason: "plan_limit" });
+    expect(await decide(a)).toEqual({ ok: false, reason: "already_decided" });
+    nothingWritten();
+  });
+
+  it("a read-only workspace's confirmed contact is refused as plan_limit", async () => {
+    const a = (await propose("createContact", { firstName: "Maija" })).action!;
+    m.entitlements = { ...m.entitlements, readOnly: true };
+    expect(await decide(a)).toEqual({ ok: false, reason: "plan_limit" });
+    nothingWritten();
+  });
+
   it("a failure while running never leaks its message and isn't run again", async () => {
     m.contactCreate.mockRejectedValueOnce(new Error("db password=secret"));
     const a = (await propose("createContact", { firstName: "Maija" })).action!;
@@ -478,6 +511,23 @@ describe("POST /api/v1/ai/actions/{id}", () => {
     const replay = await post(a.id, bodyFor(a));
     expect(replay.status).toBe(409);
     expect(m.tx.calendarEvent.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("a confirmed contact over the plan's limit gets 402 and is recorded as failed (nothing was done)", async () => {
+    const a = (await propose("createContact", { firstName: "Maija" })).action!;
+    m.contactCount.mockResolvedValue(3);
+    const res = await post(a.id, bodyFor(a));
+    expect(res.status).toBe(402);
+    expect(await res.json()).toEqual({ error: { code: "plan_limit" } });
+    expect(m.audit).toHaveBeenCalledWith(
+      { orgId: ORG, userId: USER },
+      expect.objectContaining({
+        action: "ai_action.confirm",
+        resourceId: a.id,
+        after: { outcome: "failed", reason: "plan_limit" },
+      }),
+    );
+    nothingWritten();
   });
 
   it("another organization's signed-in user gets 404 (the action is not revealed)", async () => {
