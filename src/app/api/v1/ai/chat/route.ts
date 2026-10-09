@@ -94,6 +94,10 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const rateLimit = await limitAiChat(ctx.orgId, ctx.userId);
+  // The limit can't be verified: refuse (fail closed) before any paid call.
+  if (rateLimit.unavailable) {
+    return NextResponse.json({ error: { code: "service_unavailable" } }, { status: 503 });
+  }
   if (!rateLimit.success) {
     return NextResponse.json(
       { error: { code: "rate_limited", scope: rateLimit.scope } },

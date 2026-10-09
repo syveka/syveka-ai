@@ -22,7 +22,7 @@ export const redis = new Proxy({} as Redis, {
   },
 });
 
-type RateLimiters = {
+export type RateLimiters = {
   api: Ratelimit;
   auth: Ratelimit;
   aiChatUser: Ratelimit;
@@ -181,25 +181,99 @@ export const rateLimiters = {
   },
 } satisfies RateLimiters;
 
+/**
+ * The outcome of one rate-limit check. "unavailable" means the limit could not
+ * be verified (Redis timed out, errored, or isn't configured).
+ */
+export type LimitDecision =
+  | { ok: true; limit: number; remaining: number; reset: number }
+  | {
+      ok: false;
+      reason: "limited";
+      limit: number;
+      remaining: number;
+      reset: number;
+      scope?: "user" | "organization";
+    }
+  | { ok: false; reason: "unavailable" };
+
+function logRateLimitUnavailable(limiter: keyof RateLimiters, cause: "timeout" | "error"): void {
+  // The key is never logged: keys contain IP addresses and user/organization IDs.
+  console.error(JSON.stringify({ event: "rate_limit_unavailable", limiter, cause }));
+}
+
+/**
+ * Checks one named limiter. Never throws, and never reports an unverified
+ * limit as allowed: Upstash's Ratelimit *allows* a request when Redis doesn't
+ * answer within its timeout (`reason: "timeout"`) and throws when Redis
+ * errors, and reading a limiter throws when Redis isn't configured. All three
+ * are "unavailable", for the caller to refuse (fail closed). A "cacheBlock"
+ * or "denyList" refusal is "limited".
+ */
+export async function checkRateLimit(
+  name: keyof RateLimiters,
+  key: string,
+): Promise<LimitDecision> {
+  let result;
+  try {
+    // The limiter is read inside the try: its getter throws without Redis config.
+    result = await rateLimiters[name].limit(key);
+  } catch {
+    logRateLimitUnavailable(name, "error");
+    return { ok: false, reason: "unavailable" };
+  }
+  if (result.reason === "timeout") {
+    logRateLimitUnavailable(name, "timeout");
+    return { ok: false, reason: "unavailable" };
+  }
+  const { limit, remaining, reset } = result;
+  return result.success
+    ? { ok: true, limit, remaining, reset }
+    : { ok: false, reason: "limited", limit, remaining, reset };
+}
+
 export type AiChatRateLimitResult = {
   success: boolean;
+  /** The limit could not be verified: refuse as unavailable (503), not as rate-limited. */
+  unavailable?: true;
   scope?: "user" | "organization";
   reset: number;
   limit: number;
   remaining: number;
 };
 
-/** Enforce independent per-user and per-organization Redis limits. */
-export async function limitAiChat(
+function toAiLimitResult(
+  decision: LimitDecision,
+  scope: "user" | "organization",
+): AiChatRateLimitResult {
+  if (decision.ok) {
+    const { limit, remaining, reset } = decision;
+    return { success: true, limit, remaining, reset };
+  }
+  if (decision.reason === "unavailable") {
+    return { success: false, unavailable: true, reset: 0, limit: 0, remaining: 0 };
+  }
+  const { limit, remaining, reset } = decision;
+  return { success: false, scope, limit, remaining, reset };
+}
+
+/** Both limits must pass; an unverifiable one refuses the request before a denied one. */
+async function limitUserAndOrganization(
+  userLimiter: keyof RateLimiters,
+  organizationLimiter: keyof RateLimiters,
   organizationId: string,
   userId: string,
 ): Promise<AiChatRateLimitResult> {
   const [user, organization] = await Promise.all([
-    rateLimiters.aiChatUser.limit(`${organizationId}:${userId}`),
-    rateLimiters.aiChatOrg.limit(organizationId),
+    checkRateLimit(userLimiter, `${organizationId}:${userId}`),
+    checkRateLimit(organizationLimiter, organizationId),
   ]);
-  if (!user.success) return { ...user, scope: "user" };
-  if (!organization.success) return { ...organization, scope: "organization" };
+  if (!user.ok && user.reason === "unavailable") return toAiLimitResult(user, "user");
+  if (!organization.ok && organization.reason === "unavailable") {
+    return toAiLimitResult(organization, "organization");
+  }
+  if (!user.ok) return toAiLimitResult(user, "user");
+  if (!organization.ok) return toAiLimitResult(organization, "organization");
   return {
     success: true,
     reset: Math.max(user.reset, organization.reset),
@@ -209,43 +283,40 @@ export async function limitAiChat(
 }
 
 /**
- * Per-user and per-organization limits for chat voice transcription.
- *
- * Fails closed: Upstash's Ratelimit *allows* a request when Redis doesn't
- * answer within its timeout (`reason: "timeout"`). This endpoint pays a
- * provider per request, so an unverifiable limit is treated as unavailable.
+ * Independent per-user and per-organization limits for chat and the other
+ * paid AI features. Fails closed: `unavailable` when either can't be verified.
+ */
+export async function limitAiChat(
+  organizationId: string,
+  userId: string,
+): Promise<AiChatRateLimitResult> {
+  return limitUserAndOrganization("aiChatUser", "aiChatOrg", organizationId, userId);
+}
+
+/**
+ * Per-user and per-organization limits for chat voice transcription (a paid
+ * provider call per request). Fails closed: `unavailable` when either can't be
+ * verified.
  */
 export async function limitAiTranscription(
   organizationId: string,
   userId: string,
-): Promise<AiChatRateLimitResult & { unavailable?: true }> {
-  const [user, organization] = await Promise.all([
-    rateLimiters.aiTranscriptionUser.limit(`${organizationId}:${userId}`),
-    rateLimiters.aiTranscriptionOrg.limit(organizationId),
-  ]);
-  if (user.reason === "timeout" || organization.reason === "timeout") {
-    return { success: false, unavailable: true, reset: 0, limit: 0, remaining: 0 };
-  }
-  if (!user.success) return { ...user, scope: "user" };
-  if (!organization.success) return { ...organization, scope: "organization" };
-  return {
-    success: true,
-    reset: Math.max(user.reset, organization.reset),
-    limit: Math.min(user.limit, organization.limit),
-    remaining: Math.min(user.remaining, organization.remaining),
-  };
+): Promise<AiChatRateLimitResult> {
+  return limitUserAndOrganization(
+    "aiTranscriptionUser",
+    "aiTranscriptionOrg",
+    organizationId,
+    userId,
+  );
 }
 
-/** Short-window limit for live voice turns. Fails closed on limiter timeouts. */
+/** Short-window limit for live voice turns. Fails closed: `unavailable` when unverifiable. */
 export async function limitAiVoiceTurn(
   organizationId: string,
   userId: string,
-): Promise<AiChatRateLimitResult & { unavailable?: true }> {
-  const result = await rateLimiters.aiVoiceTurnUser.limit(`${organizationId}:${userId}`);
-  if (result.reason === "timeout") {
-    return { success: false, unavailable: true, reset: 0, limit: 0, remaining: 0 };
-  }
-  return { ...result, scope: result.success ? undefined : "user" };
+): Promise<AiChatRateLimitResult> {
+  const decision = await checkRateLimit("aiVoiceTurnUser", `${organizationId}:${userId}`);
+  return toAiLimitResult(decision, "user");
 }
 
 /** Idempotency-Key support: returns true if this key was already used. */
