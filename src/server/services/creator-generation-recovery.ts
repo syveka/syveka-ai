@@ -5,6 +5,7 @@ import { unscopedPrisma } from "@/server/db/tenant";
 import type { TenantContext } from "@/server/auth/session";
 import { audit } from "./audit";
 import {
+  creatorGenerationCreditsReserved,
   creatorGenerationCreditsSettled,
   commitCreatorCredits,
   releaseCreatorCredits,
@@ -450,6 +451,9 @@ async function reconcileSettlement(
 ): Promise<void> {
   const settled = await creatorGenerationCreditsSettled(generation.id);
   if (settled) return; // nothing to repair
+  // A generation whose reservation itself failed never moved any credits; "releasing" it would
+  // mint credits the organization never had.
+  if (!(await creatorGenerationCreditsReserved(generation.id))) return;
 
   const ctx = systemCtx(generation);
 

@@ -38,6 +38,7 @@ import {
   reserveCreatorCredits,
   commitCreatorCredits,
   releaseCreatorCredits,
+  creatorGenerationCreditsReserved,
   creatorGenerationCreditsSettled,
   InsufficientCreditsError,
 } from "@/server/services/creator-credits";
@@ -84,7 +85,9 @@ describe("credit reservation ledger", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    db = { creatorCreditBalance: { updateMany: vi.fn(async () => ({ count: 1 })) } };
+    // reserve runs its balance UPDATE inside the $transaction (tx === unscopedPrismaMock).
+    db = { creatorCreditBalance: unscopedPrismaMock.creatorCreditBalance };
+    db.creatorCreditBalance.updateMany.mockResolvedValue({ count: 1 });
     tenantDbMock.mockReturnValue(db);
     getEntitlementsMock.mockResolvedValue({ creatorCreditsPerMonth: 200 });
   });
@@ -212,6 +215,74 @@ describe("credit reservation ledger", () => {
 
   it("scopes every ledger mutation to the caller's organization (tenant isolation)", async () => {
     await reserveCreatorCredits(ctx("org-b"), { generationId: "gen-1", amount: 5 });
-    expect(tenantDbMock).toHaveBeenCalledWith("org-b");
+    expect(db.creatorCreditBalance.updateMany.mock.calls[0]![0].where).toMatchObject({
+      organizationId: "org-b",
+    });
+    expect(unscopedPrismaMock.creatorCreditTransaction.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ organizationId: "org-b", type: "RESERVE" }),
+    });
+  });
+
+  it("reserve: runs the balance UPDATE and the RESERVE insert inside one transaction", async () => {
+    let inTransaction = false;
+    const seen: string[] = [];
+    unscopedPrismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) => {
+      inTransaction = true;
+      try {
+        return await fn(unscopedPrismaMock);
+      } finally {
+        inTransaction = false;
+      }
+    });
+    db.creatorCreditBalance.updateMany.mockImplementationOnce(async () => {
+      seen.push(`update:${inTransaction}`);
+      return { count: 1 };
+    });
+    const create = unscopedPrismaMock.creatorCreditTransaction.create as unknown as {
+      mockImplementation: (fn: (args: { data: { type: string } }) => Promise<object>) => void;
+    };
+    create.mockImplementation(async (args) => {
+      if (args.data.type === "RESERVE") seen.push(`reserve:${inTransaction}`);
+      return {};
+    });
+
+    try {
+      await reserveCreatorCredits(ctx(), { generationId: "gen-1", amount: 10 });
+    } finally {
+      unscopedPrismaMock.$transaction.mockImplementation(async (fn: (tx: unknown) => unknown) =>
+        fn(unscopedPrismaMock),
+      );
+      create.mockImplementation(async () => ({}));
+    }
+
+    expect(seen).toEqual(["update:true", "reserve:true"]);
+  });
+
+  it("reserve: writes a RESERVE row only when the balance UPDATE succeeds", async () => {
+    const reserveRows = () =>
+      unscopedPrismaMock.creatorCreditTransaction.create.mock.calls.filter(
+        (call) => (call as unknown as [{ data: { type: string } }])[0].data.type === "RESERVE",
+      );
+
+    await reserveCreatorCredits(ctx(), { generationId: "gen-1", amount: 10 });
+    expect(reserveRows()).toHaveLength(1);
+
+    vi.clearAllMocks();
+    db.creatorCreditBalance.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(
+      reserveCreatorCredits(ctx(), { generationId: "gen-2", amount: 999 }),
+    ).rejects.toThrow(InsufficientCreditsError);
+    expect(reserveRows()).toHaveLength(0);
+  });
+
+  it("creatorGenerationCreditsReserved: reflects whether a RESERVE row exists for a generation", async () => {
+    unscopedPrismaMock.creatorCreditTransaction.findFirst.mockResolvedValueOnce(null);
+    expect(await creatorGenerationCreditsReserved("gen-1")).toBe(false);
+    expect(unscopedPrismaMock.creatorCreditTransaction.findFirst).toHaveBeenCalledWith({
+      where: { generationId: "gen-1", type: "RESERVE" },
+    });
+
+    unscopedPrismaMock.creatorCreditTransaction.findFirst.mockResolvedValueOnce({ id: "txn-1" });
+    expect(await creatorGenerationCreditsReserved("gen-1")).toBe(true);
   });
 });
