@@ -125,6 +125,8 @@ export async function POST(request: Request): Promise<NextResponse> {
   // in the first place too: call.summary stays null and this block is
   // skipped identically on every attempt, so there's nothing to duplicate.
   const transcriptText = JSON.stringify(call.transcript ?? []).slice(0, 30_000);
+  // The workflow event below reports the sentiment computed here, not the value loaded before it.
+  let sentiment = call.sentiment;
   if (transcriptText.length > 10 && !call.summary) {
     try {
       const { model, maxTokens } = routeModel("summary");
@@ -155,6 +157,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             actionsTaken: json.data.followUps,
           },
         });
+        sentiment = json.data.sentiment;
 
         if (contactId) {
           await unscopedPrisma.activity.create({
@@ -215,7 +218,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       callId: call.id,
       contactId,
       durationSeconds: call.durationSeconds,
-      sentiment: call.sentiment,
+      sentiment,
     },
     call.id,
   );

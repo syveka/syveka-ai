@@ -109,6 +109,19 @@ beforeEach(() => {
   mocks.notificationFindFirst.mockResolvedValue(null);
 });
 
+describe("post-call job — workflow event", () => {
+  it("reports the sentiment computed by this run, not the value loaded before it", async () => {
+    await POST(jobRequest());
+
+    expect(mocks.emitWorkflowEvent).toHaveBeenCalledWith(
+      ORG_ID,
+      "call.completed",
+      expect.objectContaining({ sentiment: "positive" }),
+      expect.anything(),
+    );
+  });
+});
+
 describe("post-call job — idempotency against QStash-level retry", () => {
   it("first invocation: runs every step and marks the call processed at the end", async () => {
     const response = await POST(jobRequest());
