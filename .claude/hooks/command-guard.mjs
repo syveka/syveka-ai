@@ -1006,9 +1006,15 @@ function unwrap(initialWords, command, ctx, state, assigns) {
       // GNU env options, read like getopt: in a short cluster the first value-taking letter
       // (-u NAME, -C DIR, -S STRING) takes the rest of the word or, when last, the next word;
       // long options may be abbreviated.
-      // -S splits on whitespace and on its own escapes (\_ separates arguments, \t is a tab).
+      // -S splits on whitespace and on its own escapes (\_ separates arguments, \t is a tab);
+      // \c ends the string and a word starting with # comments out the rest of it, but the
+      // arguments after -S are still appended to the command line.
       const splitScript = (inline, after) => {
-        const split = inline.replace(/\\_/g, " ").replace(/\\t/g, " ");
+        const cut = inline.indexOf("\\c");
+        const split = (cut === -1 ? inline : inline.slice(0, cut))
+          .replace(/\\_/g, " ")
+          .replace(/\\t/g, " ")
+          .replace(/(^|\s)#.*$/, "$1");
         inspectScript([split, ...after].join(" "), "bash", ctx, nestedDepth, state);
       };
       while (i < rest.length) {
