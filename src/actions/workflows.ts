@@ -5,7 +5,8 @@ import { redirect } from "next/navigation";
 import { requirePermission } from "@/server/auth/guard";
 import { upsertWorkflow, setWorkflowActive, WorkflowError } from "@/server/services/workflows";
 import { workflowSchema } from "@/lib/validators/workflows";
-import { EntitlementError } from "@/server/services/billing/entitlements";
+import { EntitlementError, getEntitlements } from "@/server/services/billing/entitlements";
+import { rateLimiters } from "@/server/integrations/redis";
 
 export type WorkflowActionState = { error?: string; message?: string };
 
@@ -47,9 +48,18 @@ export async function toggleWorkflowAction(
   return { message: "toggled" };
 }
 
-/** Test run (§17.2): creates a run row and enqueues it directly, bypassing isActive. */
-export async function testWorkflowAction(workflowId: string): Promise<void> {
+/**
+ * Test run (§17.2): creates a run row and enqueues it directly, bypassing isActive. A run can
+ * call an AI provider and send email, so it needs a plan that includes workflows and is
+ * rate-limited per organization.
+ */
+export async function testWorkflowAction(workflowId: string): Promise<WorkflowActionState> {
   const ctx = await requirePermission("workflows:manage");
+  const entitlements = await getEntitlements(ctx.orgId);
+  if (entitlements.readOnly || entitlements.activeWorkflows <= 0) return { error: "quota" };
+  const { success } = await rateLimiters.workflowTestRun.limit(ctx.orgId);
+  if (!success) return { error: "rate_limited" };
+
   const { unscopedPrisma } = await import("@/server/db/tenant");
   const { enqueue } = await import("@/server/jobs/queue");
 
@@ -73,4 +83,5 @@ export async function testWorkflowAction(workflowId: string): Promise<void> {
     resumeFromIndex: 0,
   });
   revalidatePath(`/workflows/${workflowId}`);
+  return { message: "test_started" };
 }
