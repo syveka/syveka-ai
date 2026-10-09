@@ -394,6 +394,12 @@ export async function POST(request: Request): Promise<Response> {
               fullText += delta;
             },
             onToolUse: async (name, toolInput) => {
+              // The model can request a tool after the user has already left
+              // (closed the page, ended a voice call). Never start one, or
+              // create a pending write proposal, for a disconnected client.
+              if (request.signal.aborted) {
+                throw new DOMException("Request aborted", "AbortError");
+              }
               if (voiceTurn && toolCallLog.length >= VOICE_MAX_TOOL_CALLS) {
                 toolCallLog.push({ name, ok: false });
                 return JSON.stringify({ error: "tool_limit_reached" });
