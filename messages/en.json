@@ -732,8 +732,8 @@
     "newPrompt": "New prompt",
     "use": "Use",
     "openInChat": "Open in chat",
-    "contentPlaceholder": "Write a reply to {{customer}} about {{topic}}…",
-    "variableHint": "Use {{name}} to define fill-in variables.",
+    "contentPlaceholder": "Write a reply to '{{'customer'}}' about '{{'topic'}}'…",
+    "variableHint": "Use '{{'name'}}' to define fill-in variables.",
     "categories": {
       "general": "General",
       "sales": "Sales",
@@ -759,7 +759,7 @@
     "saved": "Saved.",
     "runHistory": "Run history",
     "seconds": "seconds",
-    "promptPlaceholder": "Summarize {{trigger.title}} for the team…",
+    "promptPlaceholder": "Summarize '{{'trigger.title'}}' for the team…",
     "subjectPlaceholder": "Subject…",
     "fields": {
       "name": "Name",
