@@ -1,8 +1,9 @@
 import { z } from "zod";
 
+// Tools a phone assistant may run on behalf of an anonymous caller. searchContacts is
+// deliberately absent: it returns any contact's name, email and phone to whoever dials in.
 export const VOICE_TOOL_NAMES = [
   "searchKnowledgeBase",
-  "searchContacts",
   "createContact",
   "logActivity",
   "getCalendarAvailability",
@@ -32,6 +33,21 @@ export const voiceAssistantSchema = z.object({
 });
 
 export type VoiceAssistantInput = z.infer<typeof voiceAssistantSchema>;
+
+/**
+ * The tools a stored assistant may actually run. Assistants saved before a tool was removed
+ * from VOICE_TOOL_NAMES can still list it in their stored enabledTools; it is dropped here.
+ */
+export function allowedVoiceTools(enabledTools: unknown, useKnowledgeBase: boolean): string[] {
+  const stored = Array.isArray(enabledTools) ? enabledTools : [];
+  const allowed: readonly string[] = VOICE_TOOL_NAMES;
+  return [
+    ...new Set([
+      ...(useKnowledgeBase ? ["searchKnowledgeBase"] : []),
+      ...stored.filter((t): t is string => typeof t === "string" && allowed.includes(t)),
+    ]),
+  ];
+}
 
 /**
  * Attach an existing, externally-held number to an already-synced Vapi

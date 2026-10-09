@@ -558,7 +558,6 @@
       "transferNumber": "Human transfer number"
     },
     "toolNames": {
-      "searchContacts": "Look up callers in CRM",
       "createContact": "Create new contacts",
       "logActivity": "Log call notes to CRM",
       "getCalendarAvailability": "Check calendar availability",

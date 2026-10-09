@@ -558,7 +558,6 @@
       "transferNumber": "رقم التحويل البشري"
     },
     "toolNames": {
-      "searchContacts": "البحث عن المتصلين في CRM",
       "createContact": "إنشاء جهات اتصال جديدة",
       "logActivity": "تسجيل ملاحظات المكالمة في CRM",
       "getCalendarAvailability": "التحقق من توفر التقويم",
