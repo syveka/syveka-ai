@@ -36,6 +36,11 @@ vi.mock("@/server/services/booking", () => ({
   cancelBookingAsOwner: cancelBookingAsOwnerMock,
   BookingError: BookingErrorMock,
 }));
+// Moving an event reschedules its reminders; that behavior is covered in
+// tests/unit/calendar-event-reminders.test.ts.
+vi.mock("@/server/services/reminders", () => ({
+  rescheduleEventReminders: vi.fn(async () => 0),
+}));
 
 import {
   updateEvent,

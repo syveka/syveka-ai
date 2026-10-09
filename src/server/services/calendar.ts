@@ -10,6 +10,7 @@ import {
 import { isValidTimezone } from "@/server/calendar/timezone";
 import { intervalsOverlap } from "@/server/calendar/slots";
 import { cancelBookingAsOwner, BookingError } from "./booking";
+import { rescheduleEventReminders } from "./reminders";
 import type { TenantContext } from "@/server/auth/session";
 import type { EventFilters, EventInput } from "@/lib/validators/calendar";
 import type { Prisma } from "@/generated/prisma/client/client";
@@ -340,6 +341,7 @@ export async function updateEvent(ctx: TenantContext, eventId: string, input: Ev
       title: true,
       startsAt: true,
       endsAt: true,
+      status: true,
       booking: { select: { status: true } },
     },
   });
@@ -375,6 +377,13 @@ export async function updateEvent(ctx: TenantContext, eventId: string, input: Ev
     },
   });
   await syncAttendees(eventId, input.attendees);
+
+  // Reminders are timed from startsAt: a moved event's pending reminders would
+  // otherwise fire at the old time while naming the new one.
+  const startsAt = new Date(input.startsAt);
+  if (existing.status !== "CANCELED" && startsAt.getTime() !== existing.startsAt.getTime()) {
+    await rescheduleEventReminders({ orgId: ctx.orgId, eventId, startsAt });
+  }
 
   await audit(ctx, {
     action: "calendar.update",
