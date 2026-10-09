@@ -196,9 +196,9 @@ export async function POST(request: Request): Promise<NextResponse> {
         return NextResponse.json({ results });
       }
 
-      // Over quota: run no tool, say goodbye and end the call. Both the
-      // request-failed message (endCallAfterSpokenEnabled) and Live Call
-      // Control are used so the call ends even if one path is unavailable.
+      // Over quota: run no tool, say goodbye and end the call. Vapi acts on this
+      // reply and ends the call once the line is spoken (endCallAfterSpokenEnabled).
+      // Live Call Control is not used here: it would hang up before the goodbye.
       if (await voiceQuotaExceeded(orgId)) {
         const content = QUOTA_EXCEEDED_GOODBYE[assistant.language] ?? QUOTA_EXCEEDED_GOODBYE.EN;
         const results = (message.toolCallList ?? []).map((tc) => ({
@@ -207,12 +207,6 @@ export async function POST(request: Request): Promise<NextResponse> {
           error: "quota_exceeded",
           message: { type: "request-failed", content, endCallAfterSpokenEnabled: true },
         }));
-        if (message.call) {
-          await endCallViaControlUrl(message.call.monitor?.controlUrl, {
-            orgId,
-            vapiCallId: message.call.id,
-          });
-        }
         return NextResponse.json({ results });
       }
 

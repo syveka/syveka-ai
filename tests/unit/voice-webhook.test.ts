@@ -439,9 +439,10 @@ describe("Vapi voice webhook — deactivated assistant refuses tool-call writes 
 
 /**
  * Vapi acts on replies to tool-calls (and assistant/transfer requests) only: a
- * reply to status-update is ignored. Over-quota calls must therefore be ended
- * through Live Call Control (POST {"type":"end-call"} to call.monitor.controlUrl)
- * and, on tool-calls, with a request-failed message that ends the call.
+ * reply to status-update is ignored. On status-update an over-quota call is
+ * therefore ended through Live Call Control (POST {"type":"end-call"} to
+ * call.monitor.controlUrl); on tool-calls only by a request-failed message with
+ * endCallAfterSpokenEnabled, so the goodbye line is not cut off.
  */
 describe("Vapi voice webhook — over-quota calls are actually ended", () => {
   const CONTROL_URL =
@@ -596,7 +597,7 @@ describe("Vapi voice webhook — over-quota calls are actually ended", () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it("over-quota tool-calls runs no tool, returns request-failed with endCallAfterSpokenEnabled, and ends the call", async () => {
+  it("over-quota tool-calls runs no tool and ends the call only via request-failed + endCallAfterSpokenEnabled (no control URL race)", async () => {
     overQuota();
 
     const response = await POST(toolCalls("EN"));
@@ -614,10 +615,8 @@ describe("Vapi voice webhook — over-quota calls are actually ended", () => {
     ]);
     expect(mocks.executeTool).not.toHaveBeenCalled();
     expect(mocks.redisSet).not.toHaveBeenCalled();
-    expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
-    expect(url).toBe(CONTROL_URL);
-    expect(JSON.parse(init.body as string)).toEqual({ type: "end-call" });
+    // A Live Call Control end-call here would hang up before the goodbye is spoken.
+    expect(fetchMock).not.toHaveBeenCalled();
     expect(loggedText()).not.toContain("call-secret-123");
   });
 
@@ -634,17 +633,6 @@ describe("Vapi voice webhook — over-quota calls are actually ended", () => {
       content,
       endCallAfterSpokenEnabled: true,
     });
-  });
-
-  it("over-quota tool-calls still answers when the control URL fails", async () => {
-    overQuota();
-    fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"));
-
-    const response = await POST(toolCalls("EN"));
-
-    expect(response.status).toBe(200);
-    expect((await response.json()).results[0].error).toBe("quota_exceeded");
-    expect(mocks.executeTool).not.toHaveBeenCalled();
   });
 
   it("under quota, tool-calls executes the tools with the existing result shape and never calls the control URL", async () => {
