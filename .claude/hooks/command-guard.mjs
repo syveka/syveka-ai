@@ -1007,15 +1007,27 @@ function unwrap(initialWords, command, ctx, state, assigns) {
       // (-u NAME, -C DIR, -S STRING) takes the rest of the word or, when last, the next word;
       // long options may be abbreviated.
       // -S splits on whitespace and on its own escapes (\_ separates arguments, \t is a tab);
-      // \c ends the string and a word starting with # comments out the rest of it, but the
-      // arguments after -S are still appended to the command line.
+      // outside quotes, \c ends the string and a word starting with # comments out the rest of
+      // it, while the arguments after -S are still appended. Rather than re-implement env's
+      // quoting, every plausible reading is inspected and any one of them can deny or ask:
+      // as written, cut at \c with the comment removed, and with \t kept inside its word.
       const splitScript = (inline, after) => {
+        const words = (text) => text.replace(/\\_/g, " ");
         const cut = inline.indexOf("\\c");
-        const split = (cut === -1 ? inline : inline.slice(0, cut))
-          .replace(/\\_/g, " ")
-          .replace(/\\t/g, " ")
-          .replace(/(^|\s)#.*$/, "$1");
-        inspectScript([split, ...after].join(" "), "bash", ctx, nestedDepth, state);
+        const views = [
+          words(inline).replace(/\\t/g, " "),
+          words(cut === -1 ? inline : inline.slice(0, cut))
+            .replace(/\\t/g, " ")
+            .replace(/(^|\s)#.*$/, "$1"),
+          words(inline).replace(/\\t/g, ""),
+          // env reads \' and \" as literal quote characters, even inside single quotes.
+          words(inline)
+            .replace(/\\t/g, " ")
+            .replace(/\\['"]/g, "_"),
+        ];
+        for (const view of new Set(views)) {
+          inspectScript([view, ...after].join(" "), "bash", ctx, nestedDepth, state);
+        }
       };
       while (i < rest.length) {
         const w = rest[i];

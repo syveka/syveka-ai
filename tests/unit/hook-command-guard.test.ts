@@ -1591,6 +1591,17 @@ describe("command-guard: final review follow-ups (implicit push targets, push pl
     ]);
     await expectAll(fromFeature, "allow", ["env -S 'node -v #c'", "env -S '#x' node -v"]);
   });
+
+  it("never lets a quoted or escaped # or \\c in env -S hide the command", async () => {
+    await expectAll(fromFeature, "deny", [
+      `env -S "git -c 'x.y= #' push origin main"`,
+      `env -S 'git -c "x.y= #" push origin main'`,
+      `env -S "git -c 'x.y=\\c' push origin main"`,
+      `env -S 'git -c x.y=\\\\c push origin main'`,
+      `env -S "git -c 'x.y=\\' #' push origin main"`,
+      `env -S 'git -c x.y=a\\t#b push origin main'`,
+    ]);
+  });
 });
 
 describe("guardrail runtime: portable internal timeout", () => {
