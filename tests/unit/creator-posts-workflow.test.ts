@@ -27,6 +27,7 @@ import {
   updatePostContent,
   reviewCreatorPost,
   schedulePost,
+  cancelScheduledPost,
   evaluateAutopilotRules,
   PostWorkflowError,
 } from "@/server/services/creator-posts";
@@ -55,6 +56,7 @@ describe("Creator Studio approval state machine", () => {
     creatorPost: {
       findFirstOrThrow: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
+      updateMany: ReturnType<typeof vi.fn>;
     };
     socialAccount: { findFirstOrThrow: ReturnType<typeof vi.fn> };
   };
@@ -68,6 +70,7 @@ describe("Creator Studio approval state machine", () => {
           ...basePost(),
           ...data,
         })),
+        updateMany: vi.fn(async () => ({ count: 1 })),
       },
       socialAccount: {
         findFirstOrThrow: vi.fn(async () => ({ id: "acct-1", status: "CONNECTED" })),
@@ -155,6 +158,39 @@ describe("Creator Studio approval state machine", () => {
       { orgId: "org-a", postId: "post-1" },
       expect.objectContaining({ deduplicationId: expect.stringContaining("post-1") }),
     );
+  });
+
+  it("a reschedule enqueues its own job instead of being dropped as a duplicate", async () => {
+    const first = new Date(Date.now() + 60_000);
+    const later = new Date(Date.now() + 2 * 60 * 60_000);
+    await schedulePost(ctx(), "post-1", { scheduledFor: first, socialAccountId: "acct-1" });
+    await schedulePost(ctx(), "post-1", { scheduledFor: later, socialAccountId: "acct-1" });
+
+    const ids = enqueueMock.mock.calls.map(
+      (call) =>
+        (call as unknown as [string, unknown, { deduplicationId: string }])[2].deduplicationId,
+    );
+    expect(ids).toHaveLength(2);
+    expect(ids[0]).not.toBe(ids[1]);
+  });
+
+  it("never makes a publishing or published post claimable again by rescheduling or canceling it", async () => {
+    db.creatorPost.updateMany.mockResolvedValue({ count: 0 });
+
+    await expect(
+      schedulePost(ctx(), "post-1", {
+        scheduledFor: new Date(Date.now() + 60_000),
+        socialAccountId: "acct-1",
+      }),
+    ).rejects.toMatchObject({ code: "already_published" });
+    await expect(cancelScheduledPost(ctx(), "post-1")).rejects.toMatchObject({
+      code: "already_published",
+    });
+
+    expect(enqueueMock).not.toHaveBeenCalled();
+    const where = db.creatorPost.updateMany.mock.calls[0]![0].where;
+    expect(where.publishStatus.in).not.toContain("PUBLISHED");
+    expect(where.publishStatus.in).not.toContain("PUBLISHING");
   });
 });
 
