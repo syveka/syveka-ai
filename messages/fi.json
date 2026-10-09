@@ -337,6 +337,17 @@
       "email": "Sähköposti: {value}",
       "phone": "Puhelin: {value}",
       "dueAt": "Määräaika {when}",
+      "businessDna": {
+        "summary": "{count, plural, one {Päivitä Business DNA (# muutos)} other {Päivitä Business DNA (# muutosta)}}",
+        "kind": {
+          "added": "Lisätään",
+          "modified": "Muutetaan",
+          "removed": "Poistetaan"
+        },
+        "before": "Ennen:",
+        "after": "Jälkeen:",
+        "review": "Tarkista Business DNA"
+      },
       "content": "Tallennettava teksti:",
       "nothingYet": "Mitään ei luoda tai muuteta ennen kuin vahvistat.",
       "confirm": "Vahvista",
@@ -346,6 +357,7 @@
         "done": "Valmis.",
         "canceled": "Peruttu. Mitään ei muutettu.",
         "slotTaken": "Aika ei ole enää vapaana. Mitään ei varattu.",
+        "stale": "Business DNA:ta muutettiin muualla tämän näyttämisen jälkeen. Mitään ei muutettu — kysy Syvekalta uudelleen.",
         "expired": "Pyyntö vanheni. Pyydä Syvekaa uudelleen.",
         "alreadyDecided": "Tämä toiminto on jo käsitelty.",
         "permission": "Sinulla ei ole oikeutta tähän.",
@@ -985,6 +997,7 @@
     "savedMessage": "Tallennettu.",
     "invalidInput": "Tarkista korostetut kentät ja yritä uudelleen.",
     "saveFailed": "Tallennus epäonnistui. Yritä uudelleen.",
+    "rateLimited": "Liian monta tallennusta lyhyessä ajassa. Yritä uudelleen muutaman minuutin kuluttua.",
     "updated": "Päivitetty {date}",
     "errorTitle": "Yrityksen DNA:ta ei voitu ladata",
     "errorDescription": "Päivitä sivu tai yritä hetken kuluttua uudelleen.",

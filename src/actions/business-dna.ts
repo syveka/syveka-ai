@@ -17,6 +17,9 @@ export async function updateBusinessDnaAction(
   formData: FormData,
 ): Promise<BusinessDnaActionState> {
   const ctx = await requirePermission("business-dna:write");
+  const { rateLimiters } = await import("@/server/integrations/redis");
+  const rateLimit = await rateLimiters.businessDnaWrite.limit(ctx.orgId);
+  if (!rateLimit.success) return { error: "rate_limited" };
 
   const raw = Object.fromEntries(formData);
   let openingHours: unknown;

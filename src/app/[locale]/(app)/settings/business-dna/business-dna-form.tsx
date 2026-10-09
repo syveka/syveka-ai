@@ -652,6 +652,9 @@ export function BusinessDnaForm({
             {state.error === "failed" ? (
               <p className="text-sm text-destructive">{t("saveFailed")}</p>
             ) : null}
+            {state.error === "rate_limited" ? (
+              <p className="text-sm text-destructive">{t("rateLimited")}</p>
+            ) : null}
           </div>
         )}
       </form>

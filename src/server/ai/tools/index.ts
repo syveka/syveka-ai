@@ -17,6 +17,14 @@ import {
 import { lockOrgCalendar } from "@/server/calendar/locks";
 import type { ProposedActionView } from "@/lib/validators/chat";
 import { DEFAULT_WEEKLY_RULES } from "@/server/services/booking";
+import {
+  businessDnaPatchSchema,
+  confirmedBusinessDnaPatchSchema,
+} from "@/lib/validators/business-dna-patch";
+import {
+  applyBusinessDnaPatch,
+  previewBusinessDnaPatch,
+} from "@/server/services/business-dna-patch";
 
 /**
  * Function-calling tool registry (§15.4). Each tool declares:
@@ -32,12 +40,26 @@ export type ToolIdentity = {
   actorType: "user" | "voice_ai";
 };
 
+/** The confirmed chat action a write tool runs for, when it runs from one. */
+export type ToolActionContext = { actionId?: string; conversationId?: string };
+
 type ToolDef<S extends z.ZodTypeAny> = {
   name: string;
   description: string;
   schema: S;
+  /**
+   * For a write tool whose confirmed input differs from what the model sends
+   * (e.g. it also carries the values the user was shown): the schema of that
+   * confirmed input. Only it is accepted when the tool runs; the model's
+   * schema never is.
+   */
+  confirmedSchema?: z.ZodTypeAny;
   permission: Permission;
-  execute: (identity: ToolIdentity, input: z.infer<S>) => Promise<unknown>;
+  execute: (
+    identity: ToolIdentity,
+    input: z.infer<S>,
+    context?: ToolActionContext,
+  ) => Promise<unknown>;
 };
 
 function defineTool<S extends z.ZodTypeAny>(def: ToolDef<S>): ToolDef<S> {
@@ -404,6 +426,38 @@ const bookMeeting = defineTool({
   },
 });
 
+/**
+ * Changes the organization's Business DNA from what the user says in chat.
+ * Like every write tool it never runs on the model's call: the user is shown
+ * exactly which fields change (before and after) and confirms. What runs is
+ * the confirmed patch, and only while those fields still have the values
+ * the user was shown (see src/server/services/business-dna-patch.ts).
+ */
+const proposeBusinessDnaUpdate = defineTool({
+  name: "proposeBusinessDnaUpdate",
+  description:
+    'Propose changes to the organization\'s Business DNA (its business profile) from facts the user has stated in this conversation. Put new or changed values in `set` and fields to remove in `clear`; leave out every field the user did not talk about. Lists (supportedLocales, keyFacts) are the complete new list, so include existing items that should stay. openingHours: only the days being changed, each either {"closed": true} or {"open": "HH:MM", "close": "HH:MM"} in 24-hour time. timezone is an IANA name (e.g. Europe/Helsinki), currency a 3-letter code (e.g. EUR), supportedLocales uses FI, EN and AR. Keep descriptive text in the user\'s own words and language. Never invent facts.',
+  schema: businessDnaPatchSchema,
+  confirmedSchema: confirmedBusinessDnaPatchSchema,
+  permission: "business-dna:write",
+  execute: async (id, input, context) => {
+    // Only a user's confirmed chat action runs this (decideToolAction passes
+    // its id). Any other caller -- a direct model call, or voice, whose
+    // service identity has the permission -- could supply a made-up basis.
+    if (!context?.actionId || id.actorType !== "user") {
+      return { error: "confirmation_required" };
+    }
+    const confirmed = confirmedBusinessDnaPatchSchema.parse(input);
+    const result = await applyBusinessDnaPatch(
+      { orgId: id.orgId, userId: id.userId, actorType: id.actorType, source: context },
+      confirmed,
+    );
+    return result.applied
+      ? { applied: true, id: result.id, changedFields: result.changedFields }
+      : { applied: false, reason: result.reason };
+  },
+});
+
 export const TOOL_REGISTRY = [
   searchKnowledgeBase,
   searchContacts,
@@ -411,6 +465,7 @@ export const TOOL_REGISTRY = [
   logActivity,
   getCalendarAvailability,
   bookMeeting,
+  proposeBusinessDnaUpdate,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ] as Array<ToolDef<any>>;
 
@@ -451,14 +506,24 @@ type PreparedTool =
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   { ok: true; tool: ToolDef<any>; input: Record<string, unknown> } | { ok: false; error: string };
 
-/** The checks every tool call passes: known tool, role permission, valid input. */
-function prepareToolCall(identity: ToolIdentity, name: string, rawInput: unknown): PreparedTool {
+/**
+ * The checks every tool call passes: known tool, role permission, valid
+ * input. A model's call ("propose") is checked against the tool's schema;
+ * running it ("execute") against its confirmed schema when it has one.
+ */
+function prepareToolCall(
+  identity: ToolIdentity,
+  name: string,
+  rawInput: unknown,
+  phase: "propose" | "execute" = "execute",
+): PreparedTool {
   const tool = TOOL_REGISTRY.find((t) => t.name === name);
   if (!tool) return { ok: false, error: JSON.stringify({ error: "unknown_tool" }) };
   if (!can(identity.role, tool.permission)) {
     return { ok: false, error: JSON.stringify({ error: "permission_denied" }) };
   }
-  const parsed = tool.schema.safeParse(rawInput);
+  const schema = phase === "execute" && tool.confirmedSchema ? tool.confirmedSchema : tool.schema;
+  const parsed = schema.safeParse(rawInput);
   if (!parsed.success) {
     return {
       ok: false,
@@ -485,13 +550,20 @@ export async function describeWriteToolCall(
   name: string,
   rawInput: unknown,
 ): Promise<
-  | { ok: true; tool: string; input: Record<string, unknown>; details: WriteActionDetails }
+  | {
+      ok: true;
+      tool: string;
+      input: Record<string, unknown>;
+      details: WriteActionDetails;
+      /** Extra facts for the model about the proposal (never the confirmation itself). */
+      modelNote?: Record<string, unknown>;
+    }
   | { ok: false; error: string }
 > {
   if (!WRITE_TOOL_NAMES.includes(name)) {
     return { ok: false, error: JSON.stringify({ error: "unknown_tool" }) };
   }
-  const prepared = prepareToolCall(identity, name, rawInput);
+  const prepared = prepareToolCall(identity, name, rawInput, "propose");
   if (!prepared.ok) return prepared;
   const db = tenantDb(identity.orgId);
   const findContact = async (id: unknown) =>
@@ -502,6 +574,21 @@ export async function describeWriteToolCall(
         })
       : null;
 
+  if (name === "proposeBusinessDnaUpdate") {
+    const patch = prepared.input as z.infer<typeof businessDnaPatchSchema>;
+    const preview = await previewBusinessDnaPatch(identity.orgId, patch);
+    if (!preview.ok) return { ok: false, error: JSON.stringify({ error: "no_changes" }) };
+    return {
+      ok: true,
+      tool: name,
+      // What runs on confirmation: exactly this patch, bound to the values
+      // the user is shown now. The model can't supply them: its schema has
+      // no basis, and the confirmed schema accepts nothing else.
+      input: { ...patch, basis: preview.basis },
+      details: { tool: name, changes: preview.changes, missingAfter: preview.missingAfter },
+      modelNote: { missingAfterChange: preview.missingAfter.slice(0, 3) },
+    };
+  }
   if (name === "createContact") {
     const input = prepared.input as z.infer<typeof createContact.schema>;
     return {
@@ -567,7 +654,7 @@ export async function executeTool(
   identity: ToolIdentity,
   name: string,
   rawInput: unknown,
-  options: { readOnly?: boolean } = {},
+  options: { readOnly?: boolean; action?: ToolActionContext } = {},
 ): Promise<string> {
   if (options.readOnly && !READ_ONLY_TOOL_NAMES.includes(name)) {
     const known = TOOL_REGISTRY.some((t) => t.name === name);
@@ -579,7 +666,7 @@ export async function executeTool(
   if (!prepared.ok) return prepared.error;
   const { tool } = prepared;
   try {
-    const result = await tool.execute(identity, prepared.input);
+    const result = await tool.execute(identity, prepared.input, options.action ?? {});
     return JSON.stringify(result);
   } catch (e) {
     return JSON.stringify({
@@ -589,28 +676,52 @@ export async function executeTool(
   }
 }
 
-/** Minimal Zod→JSON-Schema for our flat tool schemas (no extra dependency). */
+/**
+ * Minimal Zod→JSON-Schema for our tool schemas (no extra dependency):
+ * objects (also nested), arrays, strings, numbers, booleans and enums.
+ * Refinements and transforms aren't described; Zod checks them when the call
+ * arrives.
+ */
 export function zodToJsonSchema(schema: z.ZodTypeAny): object {
-  if (schema instanceof z.ZodObject) {
-    const shape = schema.shape as Record<string, z.ZodTypeAny>;
-    const properties: Record<string, object> = {};
-    const required: string[] = [];
-    for (const [key, value] of Object.entries(shape)) {
-      let v = value;
-      let optional = false;
-      while (v instanceof z.ZodOptional || v instanceof z.ZodDefault) {
-        if (v instanceof z.ZodOptional) optional = true;
-        v = v._def.innerType as z.ZodTypeAny;
-      }
-      properties[key] = leafSchema(v);
-      if (!optional && !(value instanceof z.ZodDefault)) required.push(key);
+  const { type } = unwrap(schema);
+  return type instanceof z.ZodObject ? objectSchema(type) : { type: "object", properties: {} };
+}
+
+/** The underlying type, and whether the key may be left out. */
+function unwrap(schema: z.ZodTypeAny): { type: z.ZodTypeAny; optional: boolean } {
+  let type = schema;
+  let optional = false;
+  for (;;) {
+    if (type instanceof z.ZodOptional || type instanceof z.ZodDefault) {
+      optional = true;
+      type = type._def.innerType as z.ZodTypeAny;
+    } else if (type instanceof z.ZodNullable) {
+      type = type._def.innerType as z.ZodTypeAny;
+    } else if (type instanceof z.ZodEffects) {
+      type = type._def.schema as z.ZodTypeAny;
+    } else {
+      return { type, optional };
     }
-    return { type: "object", properties, required };
   }
-  return { type: "object", properties: {} };
+}
+
+function objectSchema(schema: z.AnyZodObject): object {
+  const shape = schema.shape as Record<string, z.ZodTypeAny>;
+  const properties: Record<string, object> = {};
+  const required: string[] = [];
+  for (const [key, value] of Object.entries(shape)) {
+    const { type, optional } = unwrap(value);
+    properties[key] = leafSchema(type);
+    if (!optional) required.push(key);
+  }
+  return { type: "object", properties, required };
 }
 
 function leafSchema(v: z.ZodTypeAny): object {
+  if (v instanceof z.ZodObject) return objectSchema(v);
+  if (v instanceof z.ZodArray) {
+    return { type: "array", items: leafSchema(unwrap(v.element as z.ZodTypeAny).type) };
+  }
   if (v instanceof z.ZodString) return { type: "string" };
   if (v instanceof z.ZodNumber) return { type: "number" };
   if (v instanceof z.ZodBoolean) return { type: "boolean" };

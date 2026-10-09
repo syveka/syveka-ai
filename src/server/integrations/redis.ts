@@ -35,6 +35,7 @@ type RateLimiters = {
   aiTranscriptionUser: Ratelimit;
   aiTranscriptionOrg: Ratelimit;
   aiVoiceTurnUser: Ratelimit;
+  businessDnaWrite: Ratelimit;
   workflowTestRun: Ratelimit;
 };
 
@@ -116,6 +117,14 @@ function getRateLimiters(): RateLimiters {
       limiter: Ratelimit.slidingWindow(40, "5 m"),
       prefix: "rl:ai:voice-turn:user",
     }),
+    // Business DNA profile saves (form, API): each one re-syncs every active
+    // voice assistant of the organization with the voice provider, so they are
+    // capped per organization, generously for people editing by hand.
+    businessDnaWrite: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(30, "10 m"),
+      prefix: "rl:business-dna-write:org",
+    }),
     // Manual workflow test runs: each can call an AI provider and send email
     // from the platform domain, so they are capped per organization.
     workflowTestRun: new Ratelimit({
@@ -163,6 +172,9 @@ export const rateLimiters = {
   },
   get aiVoiceTurnUser() {
     return getRateLimiters().aiVoiceTurnUser;
+  },
+  get businessDnaWrite() {
+    return getRateLimiters().businessDnaWrite;
   },
   get workflowTestRun() {
     return getRateLimiters().workflowTestRun;

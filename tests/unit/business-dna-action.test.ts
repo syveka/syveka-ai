@@ -10,9 +10,13 @@ const mocks = vi.hoisted(() => ({
     locale: "en",
   })),
   upsertBusinessDNA: vi.fn(async () => undefined),
+  businessDnaWriteLimit: vi.fn(async (_key: string) => ({ success: true })),
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
+vi.mock("@/server/integrations/redis", () => ({
+  rateLimiters: { businessDnaWrite: { limit: mocks.businessDnaWriteLimit } },
+}));
 vi.mock("@/server/auth/guard", () => ({ requirePermission: mocks.requirePermission }));
 vi.mock("@/server/services/business-dna", () => ({
   getBusinessDNA: vi.fn(),
@@ -144,6 +148,31 @@ describe("updateBusinessDnaAction", () => {
     );
 
     expect(result).toEqual({ error: "invalid_input" });
+    expect(mocks.upsertBusinessDNA).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateBusinessDnaAction rate limit", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("counts every save against the organization's Business DNA save limit", async () => {
+    await updateBusinessDnaAction({}, formData({ displayName: "Acme" }));
+
+    expect(mocks.businessDnaWriteLimit).toHaveBeenCalledWith("org-a");
+    expect(mocks.upsertBusinessDNA).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses to save, and says so, once the limit is reached", async () => {
+    mocks.businessDnaWriteLimit.mockResolvedValueOnce({ success: false });
+
+    const state: BusinessDnaActionState = await updateBusinessDnaAction(
+      {},
+      formData({ displayName: "Acme" }),
+    );
+
+    expect(state).toEqual({ error: "rate_limited" });
     expect(mocks.upsertBusinessDNA).not.toHaveBeenCalled();
   });
 });

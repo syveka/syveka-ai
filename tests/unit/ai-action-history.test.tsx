@@ -157,6 +157,16 @@ vi.mock("@/server/integrations/redis", () => ({
 import { POST as decideRoute } from "@/app/api/v1/ai/actions/[id]/route";
 import { ActionConfirmation } from "@/components/chat/action-confirmation";
 
+// The card links to Business DNA settings; next-intl's navigation needs the
+// Next.js runtime, so tests render it as a plain link.
+vi.mock("@/i18n/routing", () => ({
+  Link: ({ href, children, ...rest }: React.PropsWithChildren<{ href: string }>) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
+}));
+
 const en = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../messages/en.json"), "utf8"));
 const ar = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../messages/ar.json"), "utf8"));
 const ORG = "11111111-1111-4111-8111-111111111111";

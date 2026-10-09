@@ -226,6 +226,41 @@ auto-merge behavior unchanged. Per-service (name/price/duration) conflict detect
 deferred — text/profile-field conflicts were the priority; see the mission's own explicit
 allowance for this.
 
+## Changing Business DNA from chat
+
+Users who may change Business DNA (`business-dna:write`: OWNER, ADMIN, MANAGER) can set it up
+and keep it current by talking to Syveka in the typed chat. The flow reuses the chat's
+confirmation of AI write tools (`src/server/ai/tool-actions.ts`):
+
+1. The model calls `proposeBusinessDnaUpdate` with a partial patch: `set` (new or changed
+   values) and `clear` (fields to remove). Allowed fields and limits are in
+   `src/lib/validators/business-dna-patch.ts`: the profile fields of the form, never
+   `sourceUrl`, ids or timestamps. Services keep their own CRUD surface.
+2. `previewBusinessDnaPatch` compares it with the current profile and returns every change
+   (added, changed, removed, with values before and after) and the current values of exactly
+   those fields (the basis). Opening hours merge per day: days not named keep their hours.
+   Nothing is written.
+3. The user sees the changes in a confirmation card under the reply and confirms or cancels.
+   The model can't confirm, and can't supply the basis.
+4. On confirm, `applyBusinessDnaPatch` takes a per-organization advisory lock, checks that each
+   changed field still has its basis value, and writes only those fields together with an
+   audit row (`business_dna.create`/`business_dna.update`; before and after values of the
+   changed fields, the user, `via: "ai_chat"`, the action id and the conversation id) in one
+   transaction. If any changed field was changed elsewhere in the meantime, nothing is written
+   and the card says so (outcome `stale`). Fields the patch doesn't name are never touched.
+   Live voice assistants are re-synced afterwards, as after a form save.
+
+The tool is never available in live voice conversations or to the phone voice assistant, and
+it refuses to run except from a user's confirmed chat action.
+
+The system prompt lists the important fields that are still empty
+(`src/lib/business-dna/completeness.ts`), so the assistant asks about one at a time instead of
+presenting a form.
+
+Profile saves through `PUT /api/v1/business-dna` and the settings form are rate-limited per
+organization (`businessDnaWrite`: 30 per 10 minutes), because each save re-syncs the
+organization's live voice assistants.
+
 ## Backward compatibility
 
 - No existing Business DNA data was destroyed or renamed at the database-column level.

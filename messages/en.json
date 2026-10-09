@@ -337,6 +337,17 @@
       "email": "Email: {value}",
       "phone": "Phone: {value}",
       "dueAt": "Due {when}",
+      "businessDna": {
+        "summary": "{count, plural, one {Update Business DNA (# change)} other {Update Business DNA (# changes)}}",
+        "kind": {
+          "added": "Added",
+          "modified": "Changed",
+          "removed": "Removed"
+        },
+        "before": "Before:",
+        "after": "After:",
+        "review": "Review Business DNA"
+      },
       "content": "Text to be saved:",
       "nothingYet": "Nothing is created or changed until you confirm.",
       "confirm": "Confirm",
@@ -346,6 +357,7 @@
         "done": "Done.",
         "canceled": "Canceled. Nothing was changed.",
         "slotTaken": "That time is no longer free. Nothing was booked.",
+        "stale": "Business DNA was changed elsewhere after this was shown. Nothing was changed — ask Syveka again.",
         "expired": "This request expired. Ask Syveka again.",
         "alreadyDecided": "This action was already handled.",
         "permission": "You don't have permission to do this.",
@@ -985,6 +997,7 @@
     "savedMessage": "Saved.",
     "invalidInput": "Please check the highlighted fields and try again.",
     "saveFailed": "Could not save. Please try again.",
+    "rateLimited": "Too many saves in a short time. Try again in a few minutes.",
     "updated": "Updated {date}",
     "errorTitle": "Business DNA could not load",
     "errorDescription": "Refresh the page or try again in a moment.",
