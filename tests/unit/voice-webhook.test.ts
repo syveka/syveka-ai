@@ -604,6 +604,39 @@ describe("Vapi voice webhook — per-call write caps", () => {
     ]);
   });
 
+  // executeTool reports failures as results, it doesn't throw: invalid input and
+  // execution errors come back as { error }, a taken slot as { booked: false }.
+  it.each([
+    ["an error result", JSON.stringify({ error: "execution_failed" })],
+    ["invalid input", JSON.stringify({ error: "invalid_input", details: [] })],
+    ["a booking that didn't happen", JSON.stringify({ booked: false, reason: "slot_taken" })],
+  ])("a write that returns %s does not consume the cap", async (_label, failure) => {
+    mocks.executeTool.mockResolvedValueOnce(failure).mockResolvedValueOnce(failure);
+    expect(await runTools("call-7", [{ id: "f1", name: "bookMeeting" }])).toEqual([failure]);
+    expect(await runTools("call-7", [{ id: "f2", name: "bookMeeting" }])).toEqual([failure]);
+
+    // Two failed attempts later, the call still has both of its bookings.
+    expect(await runTools("call-7", [{ id: "b1", name: "bookMeeting" }])).toEqual([OK]);
+    expect(await runTools("call-7", [{ id: "b2", name: "bookMeeting" }])).toEqual([OK]);
+    expect(await runTools("call-7", [{ id: "b3", name: "bookMeeting" }])).toEqual([
+      err("call_write_limit"),
+    ]);
+  });
+
+  it("a successful write keeps its slot", async () => {
+    mocks.executeTool.mockResolvedValueOnce(JSON.stringify({ booked: true, eventId: "e1" }));
+    await runTools("call-7", [{ id: "b1", name: "bookMeeting" }]);
+    expect(mocks.redisDecr).not.toHaveBeenCalled();
+  });
+
+  it("a counter that can't be decremented doesn't fail the request", async () => {
+    mocks.redisDecr.mockRejectedValueOnce(new Error("redis down"));
+    mocks.executeTool.mockResolvedValueOnce(JSON.stringify({ error: "execution_failed" }));
+    const failed = await runTools("call-7", [{ id: "f1", name: "bookMeeting" }]);
+    expect(failed).toEqual([JSON.stringify({ error: "execution_failed" })]);
+    expect(mocks.redisDecr).toHaveBeenCalledTimes(1);
+  });
+
   it("a write refused by the cap keeps its tool-call claim but gives the slot back", async () => {
     await runTools("call-7", [
       { id: "b1", name: "bookMeeting" },

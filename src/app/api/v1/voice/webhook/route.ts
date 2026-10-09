@@ -212,19 +212,43 @@ async function reserveCallWrite(
   cap: number,
   claimKey: string,
 ): Promise<"call_write_limit" | "call_write_limit_unavailable" | null> {
-  let count: number;
+  let count: number | null = null;
   try {
     count = await redis.incr(capKey);
     if (count === 1) await redis.expire(capKey, CALL_WRITE_CAP_TTL_SECONDS);
   } catch {
+    // Counted but not given a TTL: give the slot back too (best effort).
+    if (count !== null) await releaseCallWrite(redis, capKey);
     await redis.del(claimKey).catch(() => undefined);
     return "call_write_limit_unavailable";
   }
   if (count > cap) {
-    await redis.decr(capKey);
+    await releaseCallWrite(redis, capKey);
     return "call_write_limit";
   }
   return null;
+}
+
+/** Gives a counted write's slot back. Best effort: a failure only makes the cap stricter. */
+async function releaseCallWrite(redis: typeof redisClient, capKey: string): Promise<void> {
+  await redis.decr(capKey).catch(() => undefined);
+}
+
+/**
+ * Whether a tool result says nothing was written: an error (executeTool reports
+ * invalid input and execution failures as `{ error }`, it doesn't throw) or a
+ * booking that didn't happen (`{ booked: false }`, e.g. the slot was taken).
+ * Such an attempt gives its cap slot back, so a caller retrying a failed
+ * booking isn't locked out of the call's legitimate writes.
+ */
+function wroteNothing(result: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(result);
+    if (typeof parsed !== "object" || parsed === null) return false;
+    return "error" in parsed || (parsed as { booked?: unknown }).booked === false;
+  } catch {
+    return false;
+  }
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -344,13 +368,12 @@ export async function POST(request: Request): Promise<NextResponse> {
             if (refusal) return { toolCallId: tc.id, result: JSON.stringify({ error: refusal }) };
           }
           try {
-            return {
-              toolCallId: tc.id,
-              result: await executeTool(identity, tc.name, tc.arguments),
-            };
+            const result = await executeTool(identity, tc.name, tc.arguments);
+            if (capKey && wroteNothing(result)) await releaseCallWrite(redis, capKey);
+            return { toolCallId: tc.id, result };
           } catch (err) {
+            if (capKey) await releaseCallWrite(redis, capKey);
             await redis.del(claimKey);
-            if (capKey) await redis.decr(capKey);
             throw err;
           }
         }),
