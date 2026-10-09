@@ -33,7 +33,13 @@ export async function PUT(request: Request): Promise<NextResponse> {
 
   try {
     const ctx = await requirePermission("business-dna:write");
-    const rateLimit = await rateLimiters.businessDnaWrite.limit(ctx.orgId);
+    let rateLimit;
+    try {
+      rateLimit = await rateLimiters.businessDnaWrite.limit(ctx.orgId);
+    } catch {
+      // The limit can't be checked: refuse (fail closed), as a clear 503.
+      return NextResponse.json({ error: { code: "service_unavailable" } }, { status: 503 });
+    }
     if (!rateLimit.success) {
       return NextResponse.json(
         { error: { code: "rate_limited" } },

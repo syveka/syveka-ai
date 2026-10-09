@@ -91,4 +91,14 @@ describe("PUT /api/v1/business-dna rate limit", () => {
     expect(m.limit).not.toHaveBeenCalled();
     expect(m.upsert).not.toHaveBeenCalled();
   });
+
+  it("answers 503 and saves nothing when the limit can't be checked", async () => {
+    m.limit.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+
+    const res = await put({ displayName: "Acme" });
+
+    expect(res.status).toBe(503);
+    expect(await res.json()).toEqual({ error: { code: "service_unavailable" } });
+    expect(m.upsert).not.toHaveBeenCalled();
+  });
 });

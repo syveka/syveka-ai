@@ -175,4 +175,13 @@ describe("updateBusinessDnaAction rate limit", () => {
     expect(state).toEqual({ error: "rate_limited" });
     expect(mocks.upsertBusinessDNA).not.toHaveBeenCalled();
   });
+
+  it("refuses to save with the form's own message when the limit can't be checked", async () => {
+    mocks.businessDnaWriteLimit.mockRejectedValueOnce(new Error("ECONNREFUSED"));
+
+    const state = await updateBusinessDnaAction({}, formData({ displayName: "Acme" }));
+
+    expect(state).toEqual({ error: "failed" });
+    expect(mocks.upsertBusinessDNA).not.toHaveBeenCalled();
+  });
 });

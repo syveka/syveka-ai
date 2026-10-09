@@ -242,8 +242,10 @@ confirmation of AI write tools (`src/server/ai/tool-actions.ts`):
    Nothing is written.
 3. The user sees the changes in a confirmation card under the reply and confirms or cancels.
    The model can't confirm, and can't supply the basis.
-4. On confirm, `applyBusinessDnaPatch` takes a per-organization advisory lock, checks that each
-   changed field still has its basis value, and writes only those fields together with an
+4. On confirm, `applyBusinessDnaPatch` takes a per-organization advisory lock and locks the
+   profile row (`FOR UPDATE`, so a form or API save can't land between the check and the
+   write), checks that each changed field still has its basis value, and writes only those
+   fields together with an
    audit row (`business_dna.create`/`business_dna.update`; before and after values of the
    changed fields, the user, `via: "ai_chat"`, the action id and the conversation id) in one
    transaction. If any changed field was changed elsewhere in the meantime, nothing is written
@@ -259,7 +261,16 @@ presenting a form.
 
 Profile saves through `PUT /api/v1/business-dna` and the settings form are rate-limited per
 organization (`businessDnaWrite`: 30 per 10 minutes), because each save re-syncs the
-organization's live voice assistants.
+organization's live voice assistants. If the limit can't be checked, the save is refused.
+Chat changes are limited by the chat's own limit (`limitAiChat`) plus one confirmation per
+change, not by `businessDnaWrite`.
+
+Known limits:
+
+- A chat change never overwrites a change made elsewhere, but the settings form still saves
+  the whole profile without a version check (last writer wins): a form opened before a chat
+  change and saved afterwards overwrites it.
+- Chat changes don't change the website-extraction provenance (`sourceUrl`, `extractedAt`).
 
 ## Backward compatibility
 

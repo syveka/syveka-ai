@@ -21,6 +21,10 @@ const m = vi.hoisted(() => ({
   now: 1_800_000_000_000,
   /** Runs inside the next patch transaction, before its checks (a concurrent writer). */
   beforeCheck: null as null | (() => void),
+  /** Runs right before the next profile insert (another save creating the profile first). */
+  beforeCreate: null as null | (() => void),
+  /** Database statements, in order. */
+  events: [] as string[],
 }));
 
 const EMPTY = {
@@ -60,15 +64,22 @@ vi.mock("next/headers", () => ({
 vi.mock("@/server/db/tenant", () => {
   const strip = (v: unknown) => (v && typeof v === "object" && "toJSON" in v ? null : v);
   const tx = {
+    $queryRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      m.events.push(`queryRaw:${strings.join("?")}|${values.join(",")}`);
+      return [];
+    },
     $executeRaw: async (strings: TemplateStringsArray, ...values: unknown[]) => {
+      m.events.push(`executeRaw:${strings.join("?")}|${values.join(",")}`);
       m.locks.push(`${strings.join("?")}|${values.join(",")}`);
       m.beforeCheck?.();
       m.beforeCheck = null;
       return 0;
     },
     businessDNA: {
-      findUnique: async ({ where }: { where: { organizationId: string } }) =>
-        profileOf(where.organizationId),
+      findUnique: async ({ where }: { where: { organizationId: string } }) => {
+        m.events.push("findUnique");
+        return profileOf(where.organizationId);
+      },
       update: async ({
         where,
         data,
@@ -83,7 +94,15 @@ vi.mock("@/server/db/tenant", () => {
         return { id: current.id };
       },
       create: async ({ data }: { data: Row }) => {
-        if (m.profiles.has(data.organizationId)) throw new Error("unique violation");
+        m.beforeCreate?.();
+        m.beforeCreate = null;
+        if (m.profiles.has(data.organizationId)) {
+          const { Prisma } = await import("@/generated/prisma/client/client");
+          throw new Prisma.PrismaClientKnownRequestError("Unique constraint failed", {
+            code: "P2002",
+            clientVersion: "test",
+          });
+        }
         const clean = Object.fromEntries(Object.entries(data).map(([k, v]) => [k, strip(v)]));
         const row = { ...EMPTY, ...clean, id: `bd-${data.organizationId.slice(0, 4)}` };
         m.profiles.set(data.organizationId, row);
@@ -237,6 +256,8 @@ beforeEach(() => {
   m.ctx = null;
   m.rate = { success: true };
   m.beforeCheck = null;
+  m.beforeCreate = null;
+  m.events.length = 0;
 });
 
 describe("availability of the Business DNA tool", () => {
@@ -498,6 +519,34 @@ describe("confirming a Business DNA change", () => {
     expect(m.profiles.get(ORG)!.displayName).toBe("Other name");
   });
 
+  it("locks the organization and its profile row before reading, so no save lands in between", async () => {
+    m.profiles.set(ORG, { ...EMPTY, id: "bd-1", organizationId: ORG, industry: "Car repair" });
+    const p = await propose({ set: { industry: "Van repair" } });
+
+    await decide(p.action!);
+
+    expect(m.events.slice(0, 3)).toEqual([
+      `executeRaw:SELECT pg_advisory_xact_lock(hashtext('business_dna'), hashtext(?))|${ORG}`,
+      `queryRaw:SELECT id FROM business_dna WHERE organization_id = ?::uuid FOR UPDATE|${ORG}`,
+      "findUnique",
+    ]);
+  });
+
+  it("treats a profile another save created after the check as stale, never as a failure", async () => {
+    const p = await propose(carRepairShop);
+    m.beforeCreate = () =>
+      m.profiles.set(ORG, {
+        ...EMPTY,
+        id: "bd-x",
+        organizationId: ORG,
+        displayName: "From the form",
+      });
+
+    expect(await decide(p.action!)).toMatchObject({ status: "not_done", reason: "stale" });
+    expect(m.profiles.get(ORG)!.displayName).toBe("From the form");
+    expect(m.audits).toHaveLength(0);
+  });
+
   it("still applies when only unrelated fields changed elsewhere, and keeps those changes", async () => {
     m.profiles.set(ORG, { ...EMPTY, id: "bd-1", organizationId: ORG, industry: "Car repair" });
     const p = await propose({ set: { brandTone: "Friendly" } });
@@ -529,6 +578,38 @@ describe("confirming a Business DNA change", () => {
       monday: { closed: false, open: "08:00", close: "17:00" },
       tuesday: { closed: true },
     });
+  });
+
+  it("rewrites only the days whose hours change, keeping every other stored day exactly as it was", async () => {
+    const raw = {
+      monday: { closed: true, open: "09:00", close: "17:00" },
+      tuesday: { closed: false, open: "09:00", close: "17:00" },
+    };
+    m.profiles.set(ORG, { ...EMPTY, id: "bd-1", organizationId: ORG, openingHours: raw });
+
+    const same = await propose({
+      set: { openingHours: { tuesday: { open: "09:00", close: "17:00" } } },
+    });
+    expect(JSON.parse(same.modelResult)).toEqual({ error: "no_changes" });
+
+    const p = await propose({
+      set: {
+        openingHours: { tuesday: { open: "09:00", close: "17:00" }, wednesday: { closed: true } },
+      },
+    });
+    expect(p.action!.details).toMatchObject({
+      changes: [
+        {
+          field: "openingHours",
+          kind: "modified",
+          before: null,
+          after: { type: "hours", days: [{ day: "wednesday", closed: true }] },
+        },
+      ],
+    });
+
+    await decide(p.action!);
+    expect(m.profiles.get(ORG)!.openingHours).toEqual({ ...raw, wednesday: { closed: true } });
   });
 
   it("runs at most once: a second confirmation is refused", async () => {

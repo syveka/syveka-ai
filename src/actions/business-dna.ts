@@ -18,8 +18,14 @@ export async function updateBusinessDnaAction(
 ): Promise<BusinessDnaActionState> {
   const ctx = await requirePermission("business-dna:write");
   const { rateLimiters } = await import("@/server/integrations/redis");
-  const rateLimit = await rateLimiters.businessDnaWrite.limit(ctx.orgId);
-  if (!rateLimit.success) return { error: "rate_limited" };
+  try {
+    const rateLimit = await rateLimiters.businessDnaWrite.limit(ctx.orgId);
+    if (!rateLimit.success) return { error: "rate_limited" };
+  } catch {
+    // The limit can't be checked: refuse the save (fail closed) with the
+    // form's own message, not an error page.
+    return { error: "failed" };
+  }
 
   const raw = Object.fromEntries(formData);
   let openingHours: unknown;

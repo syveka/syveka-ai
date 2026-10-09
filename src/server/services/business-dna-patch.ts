@@ -73,14 +73,26 @@ function storedHours(value: unknown): Partial<Record<Weekday, StoredDay>> {
   return hours;
 }
 
-/** New opening hours: the days in the patch replace those days; other days are kept. */
+const patchedDay = (v: NonNullable<OpeningHoursPatch[Weekday]>): StoredDay =>
+  v.closed ? { closed: true } : { closed: false, open: v.open!, close: v.close! };
+
+/** The patched days whose hours actually change. */
+function changedDays(current: unknown, patch: OpeningHoursPatch): Weekday[] {
+  const stored = storedHours(current);
+  return WEEKDAYS.filter((d) => patch[d] && !sameValue(stored[d] ?? null, patchedDay(patch[d]!)));
+}
+
+/**
+ * New opening hours: the days in the patch whose hours change are replaced;
+ * every other day is kept exactly as stored, so nothing the user wasn't shown
+ * is rewritten.
+ */
 function mergedHours(current: unknown, patch: OpeningHoursPatch) {
-  const hours = storedHours(current);
-  for (const day of WEEKDAYS) {
-    const v = patch[day];
-    if (!v) continue;
-    hours[day] = v.closed ? { closed: true } : { closed: false, open: v.open!, close: v.close! };
-  }
+  const hours: Record<string, unknown> =
+    current && typeof current === "object" && !Array.isArray(current)
+      ? { ...(current as Record<string, unknown>) }
+      : {};
+  for (const day of changedDays(current, patch)) hours[day] = patchedDay(patch[day]!);
   return hours;
 }
 
@@ -166,7 +178,7 @@ export async function previewBusinessDnaPatch(
     basisFields[field] = before;
     const days =
       field === "openingHours" && patch.set?.openingHours
-        ? WEEKDAYS.filter((d) => patch.set!.openingHours![d])
+        ? changedDays(before, patch.set.openingHours)
         : undefined;
     changes.push({
       field,
@@ -222,11 +234,15 @@ export async function applyBusinessDnaPatch(
   const fields = changedFields(patch);
   if (fields.length === 0) return { applied: false, reason: "stale" };
 
-  const result = await unscopedPrisma.$transaction(
-    async (tx): Promise<ApplyBusinessDnaPatchResult> => {
+  const result = await unscopedPrisma
+    .$transaction(async (tx): Promise<ApplyBusinessDnaPatchResult> => {
       // Serializes this organization's Business DNA patches: the check below
       // and the write happen with no other patch in between.
       await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('business_dna'), hashtext(${actor.orgId}))`;
+      // And against every other writer (the settings form, the API): the
+      // profile row stays locked from this check until the write commits, so
+      // a save that lands in between can't be silently overwritten.
+      await tx.$queryRaw`SELECT id FROM business_dna WHERE organization_id = ${actor.orgId}::uuid FOR UPDATE`;
       const current = (await tx.businessDNA.findUnique({
         where: { organizationId: actor.orgId },
         select: PATCH_SELECT,
@@ -280,8 +296,15 @@ export async function applyBusinessDnaPatch(
         ),
       });
       return { applied: true, id: record.id, changedFields: fields };
-    },
-  );
+    })
+    .catch((e: unknown): ApplyBusinessDnaPatchResult => {
+      // A profile created by another save after this one found none (there
+      // was no row to lock): that is a change made elsewhere, not a failure.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        return { applied: false, reason: "stale" };
+      }
+      throw e;
+    });
 
   // Same as a form save: a live voice assistant must not keep quoting old
   // hours or policies. Best-effort, after the change has committed.
