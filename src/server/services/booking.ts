@@ -304,6 +304,8 @@ async function getOwnerBusy(
       ],
     },
     select: { startsAt: true, endsAt: true, recurrenceRule: true },
+    // Newest first: if the cap is reached, old (often ended) series are what is left out.
+    orderBy: { startsAt: "desc" },
     take: 1000,
   });
   return busyIntervals(events, from, to);
@@ -388,6 +390,7 @@ async function assertSlotStillFree(
       ...(excludeEventId ? { id: { not: excludeEventId } } : {}),
     },
     select: { startsAt: true, endsAt: true, recurrenceRule: true },
+    orderBy: { startsAt: "desc" }, // newest first if the cap is reached
     take: 500,
   });
   if (busyIntervals(series, guardStart, guardEnd).length > 0) {

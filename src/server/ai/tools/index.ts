@@ -265,6 +265,8 @@ const getCalendarAvailability = defineTool({
         ...busyWindowWhere(dayStart, dayEnd),
       },
       select: { startsAt: true, endsAt: true, recurrenceRule: true },
+      orderBy: { startsAt: "desc" }, // newest first if the cap is reached
+      take: 1000,
     });
 
     const slots = computeAvailableSlots({
@@ -372,6 +374,7 @@ const bookMeeting = defineTool({
           ...recurringSeriesWhere(endsAt),
         },
         select: { startsAt: true, endsAt: true, recurrenceRule: true },
+        orderBy: { startsAt: "desc" }, // newest first if the cap is reached
         take: 500,
       });
       if (busyIntervals(series, startsAt, endsAt).length > 0) {

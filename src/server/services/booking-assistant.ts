@@ -68,6 +68,7 @@ export async function suggestAvailableTimes(
         ],
       },
       select: { startsAt: true, endsAt: true, recurrenceRule: true },
+      orderBy: { startsAt: "desc" }, // newest first if the cap is reached
       take: 500,
     }),
   ]);
