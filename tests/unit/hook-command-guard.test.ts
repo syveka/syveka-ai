@@ -1602,6 +1602,19 @@ describe("command-guard: final review follow-ups (implicit push targets, push pl
       `env -S 'git -c x.y=a\\t#b push origin main'`,
     ]);
   });
+
+  it("treats shell characters inside env -S and its arguments as literal, as env does", async () => {
+    await expectAll(fromFeature, "deny", [
+      "env -S 'git -c x.y=a;b push origin main'",
+      "env -S 'git -c x.y=a|b push origin main'",
+      "env -S 'git -c' 'x.y= #' push origin main",
+      "env -S 'git -c' 'x.y=a;b' push origin main",
+    ]);
+    await expectAll(fromFeature, "allow", [
+      "env -S 'npm run lint'",
+      "env -S 'node --no-warnings script.mjs' arg",
+    ]);
+  });
 });
 
 describe("guardrail runtime: portable internal timeout", () => {

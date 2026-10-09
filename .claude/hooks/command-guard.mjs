@@ -1024,9 +1024,16 @@ function unwrap(initialWords, command, ctx, state, assigns) {
           words(inline)
             .replace(/\\t/g, " ")
             .replace(/\\['"]/g, "_"),
+          // env runs no shell: ; | & ( ) < > and newlines are ordinary characters in a word.
+          words(inline)
+            .replace(/\\t/g, " ")
+            .replace(/[;|&()<>\n]/g, "_"),
         ];
+        // The arguments after -S are already single words; quoting keeps a # or ; inside one
+        // from becoming a comment or a separator when they are joined into one line.
+        const quotedAfter = after.map((a) => `'${a.replace(/'/g, `'\\''`)}'`);
         for (const view of new Set(views)) {
-          inspectScript([view, ...after].join(" "), "bash", ctx, nestedDepth, state);
+          inspectScript([view, ...quotedAfter].join(" "), "bash", ctx, nestedDepth, state);
         }
       };
       while (i < rest.length) {
