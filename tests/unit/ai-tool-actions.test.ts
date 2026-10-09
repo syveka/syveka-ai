@@ -69,7 +69,9 @@ import {
   TOOL_REGISTRY,
   WRITE_TOOL_NAMES,
   executeTool,
+  readOnlyToolNames,
   toolRequiresConfirmation,
+  writeToolNames,
   type ToolIdentity,
 } from "@/server/ai/tools";
 
@@ -573,6 +575,30 @@ describe("executeTool's own confirmation check (defence in depth)", () => {
     expect(toolRequiresConfirmation({ permission: "crm:read", requiresConfirmation: true })).toBe(
       true,
     );
+  });
+
+  it("the read-only and write lists never overlap: a ':read' tool requiring confirmation is only a write", () => {
+    const tools = [
+      { name: "plainRead", permission: "crm:read" as const },
+      { name: "confirmedRead", permission: "crm:read" as const, requiresConfirmation: true },
+      { name: "plainWrite", permission: "crm:write" as const },
+    ];
+
+    expect(readOnlyToolNames(tools)).toEqual(["plainRead"]);
+    expect(writeToolNames(tools)).toEqual(["confirmedRead", "plainWrite"]);
+    // The registry's lists are built the same way: a live voice turn
+    // (executeTool's readOnly) runs only READ_ONLY_TOOL_NAMES.
+    expect(READ_ONLY_TOOL_NAMES).toEqual(readOnlyToolNames(TOOL_REGISTRY));
+    expect(WRITE_TOOL_NAMES).toEqual(writeToolNames(TOOL_REGISTRY));
+  });
+
+  it("a voice turn (readOnly) refuses every write tool before running it", async () => {
+    for (const name of WRITE_TOOL_NAMES) {
+      expect(JSON.parse(await executeTool(me, name, {}, { readOnly: true }))).toEqual({
+        error: "not_available_in_voice_conversation",
+      });
+    }
+    nothingWritten();
   });
 
   it.each(writeCalls)(

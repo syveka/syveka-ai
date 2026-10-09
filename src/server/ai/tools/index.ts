@@ -487,16 +487,30 @@ export const TOOL_REGISTRY = [
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
 ] as Array<ToolDef<any>>;
 
-/** Tools the acting identity may use, in Anthropic tool format. */
+type ToolPolicy = { name: string; permission: Permission; requiresConfirmation?: boolean };
+
 /**
- * Tools that only read (permission ending in ":read"). Live voice turns are
- * limited to these: an automatically submitted spoken turn — possibly
- * background speech or an ambiguous "yes" — must never create, change, book
- * or send anything.
+ * Tools that only read: a ":read" permission and no confirmation required.
+ * Never overlaps writeToolNames, so a tool that requires confirmation can't
+ * run in a live voice turn.
  */
-export const READ_ONLY_TOOL_NAMES: readonly string[] = TOOL_REGISTRY.filter((t) =>
-  t.permission.endsWith(":read"),
-).map((t) => t.name);
+export function readOnlyToolNames(tools: readonly ToolPolicy[]): string[] {
+  return tools
+    .filter((t) => t.permission.endsWith(":read") && !toolRequiresConfirmation(t))
+    .map((t) => t.name);
+}
+
+/** Tools that require confirmation (see toolRequiresConfirmation). */
+export function writeToolNames(tools: readonly ToolPolicy[]): string[] {
+  return tools.filter((t) => toolRequiresConfirmation(t)).map((t) => t.name);
+}
+
+/**
+ * Tools that only read. Live voice turns are limited to these: an
+ * automatically submitted spoken turn — possibly background speech or an
+ * ambiguous "yes" — must never create, change, book or send anything.
+ */
+export const READ_ONLY_TOOL_NAMES: readonly string[] = readOnlyToolNames(TOOL_REGISTRY);
 
 /**
  * Tools that create or change data (those requiring confirmation). In typed
@@ -504,10 +518,9 @@ export const READ_ONLY_TOOL_NAMES: readonly string[] = TOOL_REGISTRY.filter((t) 
  * runs only after the user confirms it (see src/server/ai/tool-actions.ts).
  * executeTool also refuses a user's call of one without a confirmed action.
  */
-export const WRITE_TOOL_NAMES: readonly string[] = TOOL_REGISTRY.filter((t) =>
-  toolRequiresConfirmation(t),
-).map((t) => t.name);
+export const WRITE_TOOL_NAMES: readonly string[] = writeToolNames(TOOL_REGISTRY);
 
+/** Tools the acting identity may use, in Anthropic tool format. */
 export function anthropicToolsFor(
   identity: ToolIdentity,
   enabledNames?: string[],
