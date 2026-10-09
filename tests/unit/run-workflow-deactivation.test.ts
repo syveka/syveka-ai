@@ -128,7 +128,16 @@ vi.mock("@/server/integrations/anthropic", () => ({
 }));
 vi.mock("@/server/ai/router", () => ({ routeModel: () => ({ model: "m", maxTokens: 1 }) }));
 vi.mock("@/server/integrations/resend", () => ({ sendEmail: fx.sendEmail }));
-vi.mock("@/server/services/billing/entitlements", () => ({ recordUsage: fx.recordUsage }));
+// A plan that includes workflows, with AI quota left (plan and quota gating
+// are covered by run-workflow-ai-quota.test.ts).
+vi.mock("@/server/services/billing/entitlements", () => ({
+  recordUsage: fx.recordUsage,
+  getEntitlements: async () => ({ readOnly: false, activeWorkflows: 5 }),
+}));
+vi.mock("@/server/services/ai-spend", () => ({
+  assertAiQuotaAvailable: async () => undefined,
+  AiSpendError: class extends Error {},
+}));
 vi.mock("../../emails/workflow-notification", () => ({ WorkflowNotificationEmail: () => null }));
 
 // Loaded up front, as in jobs-organization-guard.test.ts: a first-time
