@@ -843,6 +843,8 @@ describe("Vapi voice webhook — over-quota calls are actually ended", () => {
     expect(JSON.parse(init.body as string)).toEqual({ type: "end-call" });
     expect(new Headers(init.headers).get("content-type")).toBe("application/json");
     expect(init.signal).toBeInstanceOf(AbortSignal);
+    // A redirect would send the end-call to a host the allowlist never checked.
+    expect(init.redirect).toBe("error");
     expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
     expect(loggedText()).not.toContain("call-secret-123");
     expect(loggedText()).not.toContain("vapi.ai");
