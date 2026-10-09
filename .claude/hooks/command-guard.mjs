@@ -982,8 +982,21 @@ function unwrap(initialWords, command, ctx, state, assigns) {
 
     if (name === "sudo" || name === "doas") {
       const i = skipWrapperOptions(rest, {
-        shortValue: "ughpCDrtUT",
-        longValue: ["--user", "--group", "--host", "--prompt", "--chdir", "--other-user"],
+        shortValue: "ughpCDrtUTRc",
+        longValue: [
+          "--user",
+          "--group",
+          "--host",
+          "--prompt",
+          "--chdir",
+          "--other-user",
+          "--chroot",
+          "--login-class",
+          "--role",
+          "--type",
+          "--close-from",
+          "--command-timeout",
+        ],
       });
       words = rest.slice(i);
       continue;
@@ -1006,7 +1019,12 @@ function unwrap(initialWords, command, ctx, state, assigns) {
           i += 1;
           continue;
         }
-        if (w === "-u" || w === "--unset" || w === "-C" || w === "--chdir") i += 2;
+        if (
+          w === "--unset" ||
+          w === "--chdir" ||
+          (/^-[^-]/.test(w) && /[uC]$/.test(w) && !/[uC]/.test(w.slice(1, -1)))
+        )
+          i += 2;
         else if (isFlag(w)) i += 1;
         else if (/^[A-Za-z_]\w*=/.test(w)) {
           assigns.push(w.split("=")[0]);
@@ -1042,7 +1060,9 @@ function unwrap(initialWords, command, ctx, state, assigns) {
           ? { shortValue: "ioe", longValue: ["--input", "--output", "--error"] }
           : name === "exec"
             ? { shortValue: "a" }
-            : {},
+            : name === "time"
+              ? { shortValue: "fo", longValue: ["--format", "--output"] }
+              : {},
       );
       words = rest.slice(i);
       continue;
@@ -1094,26 +1114,17 @@ function unwrap(initialWords, command, ctx, state, assigns) {
       continue;
     }
     if (name === "xargs") {
-      let i = 0;
-      const withValue = ["-I", "-n", "-P", "-L", "-d", "-s", "-E", "-a"];
-      const longWithValue = [
-        "--arg-file",
-        "--delimiter",
-        "--max-args",
-        "--max-procs",
-        "--max-chars",
-        "--process-slot-var",
-      ];
-      const takesValue = (a) =>
-        withValue.includes(a) ||
-        (a.startsWith("--") && !a.includes("=") && longWithValue.some((o) => prefixOf(o, a, 3)));
-      while (i < rest.length && isFlag(rest[i])) {
-        const a = rest[i];
-        const clusterTakesValue =
-          /^-[^-]/.test(a) && a.length > 2 && "InPLdsEa".includes(a[a.length - 1]);
-        i += takesValue(a) || clusterTakesValue ? 2 : 1;
-      }
-      if (rest[i] === "--") i++;
+      const i = skipWrapperOptions(rest, {
+        shortValue: "InPLdsEa",
+        longValue: [
+          "--arg-file",
+          "--delimiter",
+          "--max-args",
+          "--max-procs",
+          "--max-chars",
+          "--process-slot-var",
+        ],
+      });
       words = rest.slice(i);
       state.fromXargs = true;
       continue;

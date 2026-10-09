@@ -1545,6 +1545,22 @@ describe("command-guard: final review follow-ups (implicit push targets, push pl
       "echo a | xargs -rn 1 echo",
     ]);
   });
+
+  it("never mistakes an attached option value for one that takes the next word", async () => {
+    await expectAll(fromFeature, "deny", [
+      "echo main | xargs -Ia git push origin a",
+      "echo origin | xargs -Eend git push origin main",
+      "echo main | xargs -0Ia git push origin a",
+      "sudo -R /x git push origin main",
+      "command time -o out git push origin main",
+      "env -iu X git push origin main",
+    ]);
+    await expectAll(fromFeature, "allow", [
+      "echo a | xargs -Ia echo a",
+      "echo a | xargs -I{} echo {}",
+      "env -u X node -v",
+    ]);
+  });
 });
 
 describe("guardrail runtime: portable internal timeout", () => {
