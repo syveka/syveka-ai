@@ -440,6 +440,31 @@ const GIT_GLOBAL_VALUE_OPTIONS = [
   "--list-cmds",
 ];
 
+// Index of a wrapped command's first word after the wrapper's own options. `shortValue` lists
+// short options that take a value (in a cluster like `-rn 1` the last letter takes the next
+// word, `-n1` carries it); `longValue` lists long options that take a separate value, matched
+// by unique prefix; `--` ends the options.
+function skipWrapperOptions(rest, { shortValue = "", longValue = [] } = {}) {
+  let i = 0;
+  while (i < rest.length && isFlag(rest[i])) {
+    const a = rest[i];
+    if (a.startsWith("--")) {
+      i += !a.includes("=") && longValue.some((o) => prefixOf(o, a, 3)) ? 2 : 1;
+      continue;
+    }
+    let consumesNext = false;
+    for (let c = 1; c < a.length; c++) {
+      if (shortValue.includes(a[c])) {
+        consumesNext = c === a.length - 1;
+        break;
+      }
+    }
+    i += consumesNext ? 2 : 1;
+  }
+  if (rest[i] === "--") i++;
+  return i;
+}
+
 // git runs external subcommands case-insensitively on Windows: `git HTTP-PUSH` is http-push.
 function gitSubcommand(word) {
   return typeof word === "string" && /^http-push$/i.test(word) ? "http-push" : word;
@@ -956,9 +981,10 @@ function unwrap(initialWords, command, ctx, state, assigns) {
     const rest = words.slice(1);
 
     if (name === "sudo" || name === "doas") {
-      let i = 0;
-      while (i < rest.length && isFlag(rest[i]))
-        i += ["-u", "-g", "-h", "-p"].includes(rest[i]) ? 2 : 1;
+      const i = skipWrapperOptions(rest, {
+        shortValue: "ughpCDrtUT",
+        longValue: ["--user", "--group", "--host", "--prompt", "--chdir", "--other-user"],
+      });
       words = rest.slice(i);
       continue;
     }
@@ -975,6 +1001,10 @@ function unwrap(initialWords, command, ctx, state, assigns) {
           const after = rest.slice(w === "-S" || w === "--split-string" ? i + 2 : i + 1);
           inspectScript([inline, ...after].join(" "), "bash", ctx, nestedDepth, state);
           return null;
+        }
+        if (w === "--") {
+          i += 1;
+          continue;
         }
         if (w === "-u" || w === "--unset" || w === "-C" || w === "--chdir") i += 2;
         else if (isFlag(w)) i += 1;
@@ -1006,10 +1036,14 @@ function unwrap(initialWords, command, ctx, state, assigns) {
         "shx",
       ].includes(name)
     ) {
-      let i = 0;
-      while (i < rest.length && isFlag(rest[i]))
-        i += name === "stdbuf" && ["-i", "-o", "-e"].includes(rest[i]) ? 2 : 1;
-      if (rest[i] === "--") i++;
+      const i = skipWrapperOptions(
+        rest,
+        name === "stdbuf"
+          ? { shortValue: "ioe", longValue: ["--input", "--output", "--error"] }
+          : name === "exec"
+            ? { shortValue: "a" }
+            : {},
+      );
       words = rest.slice(i);
       continue;
     }
@@ -1044,14 +1078,18 @@ function unwrap(initialWords, command, ctx, state, assigns) {
       return null;
     }
     if (name === "nice" || name === "ionice") {
-      let i = 0;
-      while (i < rest.length && isFlag(rest[i])) i += rest[i] === "-n" || rest[i] === "-c" ? 2 : 1;
+      const i = skipWrapperOptions(rest, {
+        shortValue: "ncpPu",
+        longValue: ["--adjustment", "--class", "--classdata", "--pid", "--pgid", "--uid"],
+      });
       words = rest.slice(i);
       continue;
     }
     if (name === "timeout") {
-      let i = 0;
-      while (i < rest.length && isFlag(rest[i])) i += rest[i] === "-s" || rest[i] === "-k" ? 2 : 1;
+      const i = skipWrapperOptions(rest, {
+        shortValue: "sk",
+        longValue: ["--signal", "--kill-after"],
+      });
       words = rest.slice(i + 1);
       continue;
     }
@@ -1069,7 +1107,12 @@ function unwrap(initialWords, command, ctx, state, assigns) {
       const takesValue = (a) =>
         withValue.includes(a) ||
         (a.startsWith("--") && !a.includes("=") && longWithValue.some((o) => prefixOf(o, a, 3)));
-      while (i < rest.length && isFlag(rest[i])) i += takesValue(rest[i]) ? 2 : 1;
+      while (i < rest.length && isFlag(rest[i])) {
+        const a = rest[i];
+        const clusterTakesValue =
+          /^-[^-]/.test(a) && a.length > 2 && "InPLdsEa".includes(a[a.length - 1]);
+        i += takesValue(a) || clusterTakesValue ? 2 : 1;
+      }
       if (rest[i] === "--") i++;
       words = rest.slice(i);
       state.fromXargs = true;
@@ -1653,8 +1696,12 @@ function inspectGit(args, ctx, state, assigns) {
           positional.push(...rest.slice(k + 1));
           break;
         }
-        if (["-P", "-b", "-m"].includes(a)) k++;
-        else if (a.startsWith("--")) {
+        if (/^-[^-]/.test(a)) {
+          // A cluster such as -qP d: the first value-taking letter takes the rest of the word,
+          // or the next word when it is last.
+          const at = [...a.slice(1)].findIndex((ch) => "PbmS".includes(ch));
+          if (at !== -1 && at === a.length - 2 && a[at + 1] !== "S") k++;
+        } else if (a.startsWith("--")) {
           if (!a.includes("=") && longValue.some((o) => prefixOf(o, a, 3))) k++;
         } else if (!isFlag(a)) positional.push(a);
       }

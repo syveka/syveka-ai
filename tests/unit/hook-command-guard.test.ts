@@ -1519,6 +1519,32 @@ describe("command-guard: final review follow-ups (implicit push targets, push pl
       "stdbuf -o L git status",
     ]);
   });
+
+  it("reads option clusters and `--` for subtree, time, env, exec, stdbuf, sudo, nice, timeout and xargs", async () => {
+    await expectAll(fromFeature, "deny", [
+      "git subtree -qP d push origin main",
+      "git subtree push -P d -qb feat origin main",
+      "time -p git push origin main",
+      "time -p -- git push origin main",
+      "env -i -- git push origin main",
+      "exec -a foo git push origin main",
+      "stdbuf --output L git push origin main",
+      "sudo -- git push origin main",
+      "nice -n 5 -- git push origin main",
+      "timeout -- 5 git push origin main",
+      "echo main | xargs -rI {} git push origin {}",
+      "echo HEAD:main | xargs -rn 1 git push origin",
+    ]);
+    await expectAll(fromFeature, "allow", [
+      "git subtree -qPd split -b tmp",
+      "git subtree push -qP d origin feature/x",
+      "time -p git status",
+      "env -- git status",
+      "nice -10 git status",
+      "timeout 5 git status",
+      "echo a | xargs -rn 1 echo",
+    ]);
+  });
 });
 
 describe("guardrail runtime: portable internal timeout", () => {
