@@ -1469,6 +1469,152 @@ describe("command-guard: final review follow-ups (implicit push targets, push pl
       "git push --dry-run",
     ]);
   });
+
+  it("sees pushes through winpty, xargs with git global options, value options, head and subtree", async () => {
+    await expectAll(fromFeature, "deny", [
+      "winpty -Xallow-non-tty git push origin HEAD:main",
+      "winpty git switch main && git push",
+      "echo origin HEAD:main | xargs git -C . push",
+      "echo origin HEAD:main | xargs git -c a=b push",
+      "echo HEAD:main | xargs --max-args 1 git push origin",
+      "git switch main && git push --recurse-submodules no origin",
+      "git switch main && git push --push-opt ci.skip origin",
+      // Refs are case-insensitive on Windows and macOS.
+      "git push origin head:main",
+      "git switch main && git push origin head",
+      "git subtree push -P d origin main",
+      "git subtree push --prefix=d origin refs/heads/main",
+    ]);
+    expect(await fromFeature("git subtree push -P d origin")).toBe("ask");
+    await expectAll(fromFeature, "allow", [
+      "winpty -Xallow-non-tty git status",
+      "git push --recurse-submodules check origin feat",
+      "git push -o ci.skip origin feat",
+      "git subtree push -P d origin feature/x",
+      "echo feat | xargs git -C . log",
+    ]);
+  });
+
+  it("parses subtree options anywhere, `--` after wrappers, abbreviated xargs options and more git globals", async () => {
+    await expectAll(fromFeature, "deny", [
+      "git subtree -P d push origin main",
+      "git subtree -q push -P d origin main",
+      "git subtree push -P d -b feat origin main",
+      "git subtree push --pre d origin main",
+      "git subtree push -P d -- origin main",
+      "git subtree push -P d origin +main",
+      "winpty -- git push origin main",
+      "nohup -- git push origin main",
+      "echo HEAD:main | xargs -- git push origin",
+      "echo HEAD:main | xargs --max-a 1 git push origin",
+      "git --attr-source HEAD push origin main",
+      "echo origin main | xargs git --attr-source HEAD push",
+      "stdbuf -o L git push origin main",
+    ]);
+    // A destination named "head" is a branch: remote refs match case-sensitively.
+    await expectAll(fromFeature, "allow", [
+      "git push origin feat:head",
+      "git subtree split -P d -b tmp",
+      "winpty -- git status",
+      "stdbuf -o L git status",
+    ]);
+  });
+
+  it("reads option clusters and `--` for subtree, time, env, exec, stdbuf, sudo, nice, timeout and xargs", async () => {
+    await expectAll(fromFeature, "deny", [
+      "git subtree -qP d push origin main",
+      "git subtree push -P d -qb feat origin main",
+      "time -p git push origin main",
+      "time -p -- git push origin main",
+      "env -i -- git push origin main",
+      "exec -a foo git push origin main",
+      "stdbuf --output L git push origin main",
+      "sudo -- git push origin main",
+      "nice -n 5 -- git push origin main",
+      "timeout -- 5 git push origin main",
+      "echo main | xargs -rI {} git push origin {}",
+      "echo HEAD:main | xargs -rn 1 git push origin",
+    ]);
+    await expectAll(fromFeature, "allow", [
+      "git subtree -qPd split -b tmp",
+      "git subtree push -qP d origin feature/x",
+      "time -p git status",
+      "env -- git status",
+      "nice -10 git status",
+      "timeout 5 git status",
+      "echo a | xargs -rn 1 echo",
+    ]);
+  });
+
+  it("never mistakes an attached option value for one that takes the next word", async () => {
+    await expectAll(fromFeature, "deny", [
+      "echo main | xargs -Ia git push origin a",
+      "echo origin | xargs -Eend git push origin main",
+      "echo main | xargs -0Ia git push origin a",
+      "sudo -R /x git push origin main",
+      "command time -o out git push origin main",
+      "env -iu X git push origin main",
+    ]);
+    await expectAll(fromFeature, "allow", [
+      "echo a | xargs -Ia echo a",
+      "echo a | xargs -I{} echo {}",
+      "env -u X node -v",
+    ]);
+  });
+
+  it("reads env -S inside option clusters and abbreviated env long options", async () => {
+    await expectAll(fromFeature, "deny", [
+      "env -iS 'git push origin main'",
+      "env -0S 'git push origin main'",
+      "env --split-strin 'git push origin main'",
+      "env --unse X git push origin main",
+      "env --ch . git push origin main",
+    ]);
+    await expectAll(fromFeature, "allow", ["env -iS 'node -v'", "env --chdir=. ls"]);
+  });
+
+  it("reads env's shortest abbreviations, -S escapes and the lone `-`", async () => {
+    await expectAll(fromFeature, "deny", [
+      "env --u X git push origin main",
+      "env --c . git push origin main",
+      "env -S 'git\\_push\\_origin\\_main'",
+      "env - /usr/bin/git push origin main",
+    ]);
+    await expectAll(fromFeature, "allow", ["env -S 'node\\_-v'", "env - node -v"]);
+  });
+
+  it("reads env -S up to \\c and past a # comment, then the arguments after it", async () => {
+    await expectAll(fromFeature, "deny", [
+      "env -S '\\c' git push origin main",
+      "env -S 'git push origin main\\c'",
+      "env -S '#x' git push origin main",
+    ]);
+    await expectAll(fromFeature, "allow", ["env -S 'node -v #c'", "env -S '#x' node -v"]);
+  });
+
+  it("never lets a quoted or escaped # or \\c in env -S hide the command", async () => {
+    await expectAll(fromFeature, "deny", [
+      `env -S "git -c 'x.y= #' push origin main"`,
+      `env -S 'git -c "x.y= #" push origin main'`,
+      `env -S "git -c 'x.y=\\c' push origin main"`,
+      `env -S 'git -c x.y=\\\\c push origin main'`,
+      `env -S "git -c 'x.y=\\' #' push origin main"`,
+      `env -S 'git -c x.y=a\\t#b push origin main'`,
+    ]);
+  });
+
+  it("treats shell characters inside env -S and its arguments as literal, as env does", async () => {
+    await expectAll(fromFeature, "deny", [
+      "env -S 'git -c x.y=a;b push origin main'",
+      "env -S 'git -c x.y=a|b push origin main'",
+      "env -S 'git -c' 'x.y= #' push origin main",
+      "env -S 'git -c' 'x.y=a;b' push origin main",
+    ]);
+    await expectAll(fromFeature, "allow", [
+      "env -S 'npm run lint'",
+      "env -S 'node --no-warnings script.mjs' arg",
+    ]);
+  });
 });
 
 describe("guardrail runtime: portable internal timeout", () => {

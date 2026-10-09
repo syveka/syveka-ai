@@ -423,6 +423,48 @@ const CHECKOUT_LONG_OPTIONS = [
   "--pathspec-file-nul",
 ];
 
+// Index of the git subcommand, past global options such as `-C <dir>` and `-c <name>=<value>`.
+function gitSubcommandIndex(args) {
+  const withValue = ["-C", "-c", "--config-env", ...GIT_GLOBAL_VALUE_OPTIONS];
+  let i = 0;
+  while (i < args.length && args[i].startsWith("-")) i += withValue.includes(args[i]) ? 2 : 1;
+  return i;
+}
+
+const GIT_GLOBAL_VALUE_OPTIONS = [
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--super-prefix",
+  "--attr-source",
+  "--list-cmds",
+];
+
+// Index of a wrapped command's first word after the wrapper's own options. `shortValue` lists
+// short options that take a value (in a cluster like `-rn 1` the last letter takes the next
+// word, `-n1` carries it); `longValue` lists long options that take a separate value, matched
+// by unique prefix; `--` ends the options.
+function skipWrapperOptions(rest, { shortValue = "", longValue = [] } = {}) {
+  let i = 0;
+  while (i < rest.length && isFlag(rest[i])) {
+    const a = rest[i];
+    if (a.startsWith("--")) {
+      i += !a.includes("=") && longValue.some((o) => prefixOf(o, a, 3)) ? 2 : 1;
+      continue;
+    }
+    let consumesNext = false;
+    for (let c = 1; c < a.length; c++) {
+      if (shortValue.includes(a[c])) {
+        consumesNext = c === a.length - 1;
+        break;
+      }
+    }
+    i += consumesNext ? 2 : 1;
+  }
+  if (rest[i] === "--") i++;
+  return i;
+}
+
 // git runs external subcommands case-insensitively on Windows: `git HTTP-PUSH` is http-push.
 function gitSubcommand(word) {
   return typeof word === "string" && /^http-push$/i.test(word) ? "http-push" : word;
@@ -778,7 +820,7 @@ function inspectCommand(command, ctx, state) {
     if (["gh", "vercel", "supabase", "prisma", "psql"].includes(name)) {
       ctx.deny(`runs ${name} with arguments read from stdin via xargs, which cannot be inspected`);
     } else if (name === "git") {
-      const sub = gitSubcommand(args.find((a) => !isFlag(a)));
+      const sub = gitSubcommand(args[gitSubcommandIndex(args)]);
       if (
         !sub ||
         [
@@ -939,32 +981,98 @@ function unwrap(initialWords, command, ctx, state, assigns) {
     const rest = words.slice(1);
 
     if (name === "sudo" || name === "doas") {
-      let i = 0;
-      while (i < rest.length && isFlag(rest[i]))
-        i += ["-u", "-g", "-h", "-p"].includes(rest[i]) ? 2 : 1;
+      const i = skipWrapperOptions(rest, {
+        shortValue: "ughpCDrtUTRc",
+        longValue: [
+          "--user",
+          "--group",
+          "--host",
+          "--prompt",
+          "--chdir",
+          "--other-user",
+          "--chroot",
+          "--login-class",
+          "--role",
+          "--type",
+          "--close-from",
+          "--command-timeout",
+        ],
+      });
       words = rest.slice(i);
       continue;
     }
     if (name === "env") {
       let i = 0;
+      // GNU env options, read like getopt: in a short cluster the first value-taking letter
+      // (-u NAME, -C DIR, -S STRING) takes the rest of the word or, when last, the next word;
+      // long options may be abbreviated.
+      // -S splits on whitespace and on its own escapes (\_ separates arguments, \t is a tab);
+      // outside quotes, \c ends the string and a word starting with # comments out the rest of
+      // it, while the arguments after -S are still appended. Rather than re-implement env's
+      // quoting, every plausible reading is inspected and any one of them can deny or ask:
+      // as written, cut at \c with the comment removed, and with \t kept inside its word.
+      const splitScript = (inline, after) => {
+        const words = (text) => text.replace(/\\_/g, " ");
+        const cut = inline.indexOf("\\c");
+        const views = [
+          words(inline).replace(/\\t/g, " "),
+          words(cut === -1 ? inline : inline.slice(0, cut))
+            .replace(/\\t/g, " ")
+            .replace(/(^|\s)#.*$/, "$1"),
+          words(inline).replace(/\\t/g, ""),
+          // env reads \' and \" as literal quote characters, even inside single quotes.
+          words(inline)
+            .replace(/\\t/g, " ")
+            .replace(/\\['"]/g, "_"),
+          // env runs no shell: ; | & ( ) < > and newlines are ordinary characters in a word.
+          words(inline)
+            .replace(/\\t/g, " ")
+            .replace(/[;|&()<>\n]/g, "_"),
+        ];
+        // The arguments after -S are already single words; quoting keeps a # or ; inside one
+        // from becoming a comment or a separator when they are joined into one line.
+        const quotedAfter = after.map((a) => `'${a.replace(/'/g, `'\\''`)}'`);
+        for (const view of new Set(views)) {
+          inspectScript([view, ...quotedAfter].join(" "), "bash", ctx, nestedDepth, state);
+        }
+      };
       while (i < rest.length) {
         const w = rest[i];
-        if (w === "-S" || w === "--split-string" || /^(-S.|--split-string=)/.test(w)) {
-          // env -S 'cmd args' splits its argument into a command line.
-          const inline =
-            w === "-S" || w === "--split-string"
-              ? (rest[i + 1] ?? "")
-              : w.replace(/^(-S|--split-string=)/, "");
-          const after = rest.slice(w === "-S" || w === "--split-string" ? i + 2 : i + 1);
-          inspectScript([inline, ...after].join(" "), "bash", ctx, nestedDepth, state);
-          return null;
+        // A lone "-" is the old spelling of -i (empty environment).
+        if (w === "--" || w === "-") {
+          i += 1;
+          continue;
         }
-        if (w === "-u" || w === "--unset" || w === "-C" || w === "--chdir") i += 2;
-        else if (isFlag(w)) i += 1;
-        else if (/^[A-Za-z_]\w*=/.test(w)) {
+        if (w.startsWith("--")) {
+          const name = w.split("=")[0];
+          const inline = w.includes("=") ? w.slice(w.indexOf("=") + 1) : undefined;
+          if (prefixOf("--split-string", name, 3)) {
+            splitScript(
+              inline ?? rest[i + 1] ?? "",
+              rest.slice(inline === undefined ? i + 2 : i + 1),
+            );
+            return null;
+          }
+          const takesValue = prefixOf("--unset", name, 3) || prefixOf("--chdir", name, 3);
+          i += takesValue && inline === undefined ? 2 : 1;
+          continue;
+        }
+        if (isFlag(w)) {
+          const at = [...w.slice(1)].findIndex((ch) => "uCS".includes(ch)) + 1;
+          if (at > 0 && w[at] === "S") {
+            const attached = w.slice(at + 1);
+            splitScript(attached || (rest[i + 1] ?? ""), rest.slice(attached ? i + 1 : i + 2));
+            return null;
+          }
+          i += at > 0 && at === w.length - 1 ? 2 : 1;
+          continue;
+        }
+        if (/^[A-Za-z_]\w*=/.test(w)) {
           assigns.push(w.split("=")[0]);
           i += 1;
-        } else break;
+          continue;
+        }
+        break;
       }
       if (i >= rest.length) {
         ctx.deny("dumps environment variables");
@@ -984,12 +1092,21 @@ function unwrap(initialWords, command, ctx, state, assigns) {
         "unbuffer",
         "caffeinate",
         "setsid",
+        "winpty",
         "coproc",
         "shx",
       ].includes(name)
     ) {
-      let i = 0;
-      while (i < rest.length && isFlag(rest[i])) i++;
+      const i = skipWrapperOptions(
+        rest,
+        name === "stdbuf"
+          ? { shortValue: "ioe", longValue: ["--input", "--output", "--error"] }
+          : name === "exec"
+            ? { shortValue: "a" }
+            : name === "time"
+              ? { shortValue: "fo", longValue: ["--format", "--output"] }
+              : {},
+      );
       words = rest.slice(i);
       continue;
     }
@@ -1024,32 +1141,33 @@ function unwrap(initialWords, command, ctx, state, assigns) {
       return null;
     }
     if (name === "nice" || name === "ionice") {
-      let i = 0;
-      while (i < rest.length && isFlag(rest[i])) i += rest[i] === "-n" || rest[i] === "-c" ? 2 : 1;
+      const i = skipWrapperOptions(rest, {
+        shortValue: "ncpPu",
+        longValue: ["--adjustment", "--class", "--classdata", "--pid", "--pgid", "--uid"],
+      });
       words = rest.slice(i);
       continue;
     }
     if (name === "timeout") {
-      let i = 0;
-      while (i < rest.length && isFlag(rest[i])) i += rest[i] === "-s" || rest[i] === "-k" ? 2 : 1;
+      const i = skipWrapperOptions(rest, {
+        shortValue: "sk",
+        longValue: ["--signal", "--kill-after"],
+      });
       words = rest.slice(i + 1);
       continue;
     }
     if (name === "xargs") {
-      let i = 0;
-      const withValue = [
-        "-I",
-        "-n",
-        "-P",
-        "-L",
-        "-d",
-        "-s",
-        "-E",
-        "-a",
-        "--arg-file",
-        "--delimiter",
-      ];
-      while (i < rest.length && isFlag(rest[i])) i += withValue.includes(rest[i]) ? 2 : 1;
+      const i = skipWrapperOptions(rest, {
+        shortValue: "InPLdsEa",
+        longValue: [
+          "--arg-file",
+          "--delimiter",
+          "--max-args",
+          "--max-procs",
+          "--max-chars",
+          "--process-slot-var",
+        ],
+      });
       words = rest.slice(i);
       state.fromXargs = true;
       continue;
@@ -1274,7 +1392,7 @@ function inspectGit(args, ctx, state, assigns) {
       i += 2;
       continue;
     }
-    if (["--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix"].includes(a)) {
+    if (GIT_GLOBAL_VALUE_OPTIONS.includes(a)) {
       i += 2;
       continue;
     }
@@ -1623,6 +1741,34 @@ function inspectGit(args, ctx, state, assigns) {
     case "http-push":
       inspectGitPush(rest, ctx, gitCwd, { sendPack: true });
       break;
+    case "subtree": {
+      const longValue = ["--prefix", "--branch", "--message", "--onto", "--annotate"];
+      const positional = [];
+      for (let k = 0; k < rest.length; k++) {
+        const a = rest[k];
+        if (a === "--") {
+          positional.push(...rest.slice(k + 1));
+          break;
+        }
+        if (/^-[^-]/.test(a)) {
+          // A cluster such as -qP d: the first value-taking letter takes the rest of the word,
+          // or the next word when it is last.
+          const at = [...a.slice(1)].findIndex((ch) => "PbmS".includes(ch));
+          if (at !== -1 && at === a.length - 2 && a[at + 1] !== "S") k++;
+        } else if (a.startsWith("--")) {
+          if (!a.includes("=") && longValue.some((o) => prefixOf(o, a, 3))) k++;
+        } else if (!isFlag(a)) positional.push(a);
+      }
+      if (positional[0] === "push") {
+        const ref = positional[2];
+        if (!ref || isDynamicWord(ref)) {
+          ctx.ask("`git subtree push` to a branch that could not be determined");
+        } else if (isMainBranch(ref.replace(/^\+/, "").split(":").pop())) {
+          ctx.deny("`git subtree push` pushes directly to main");
+        }
+      }
+      break;
+    }
     case "credential":
     case "credential-manager":
     case "credential-store":
@@ -1750,6 +1896,15 @@ function shortClusterHas(args, flag, valueTaking) {
   return false;
 }
 
+// `git push` long options that take a separate value, with the shortest unambiguous prefix.
+const PUSH_VALUE_OPTIONS = [
+  ["--repo", 5],
+  ["--receive-pack", 6],
+  ["--exec", 4],
+  ["--push-option", 5],
+  ["--recurse-submodules", 6],
+];
+
 const SEND_PACK_OPTIONS = new Set([
   "--all",
   "--mirror",
@@ -1809,7 +1964,7 @@ function inspectGitPush(args, ctx, gitCwd, { sendPack = false } = {}) {
       else if (prefixOf("--delete", name, 4)) ctx.ask("deletes a remote branch or tag");
       else if (prefixOf("--prune", name, 5)) ctx.ask("`git push --prune` deletes remote branches");
       else if (
-        (["--repo", "--receive-pack", "--exec", "--push-option"].includes(name) ||
+        (PUSH_VALUE_OPTIONS.some(([option, min]) => prefixOf(option, name, min)) ||
           (sendPack && name === "--remote")) &&
         !a.includes("=")
       )
@@ -1859,7 +2014,7 @@ function inspectGitPush(args, ctx, gitCwd, { sendPack = false } = {}) {
         ctx.deny("`git push <remote> :` pushes every matching branch, including main");
       else if (src === "") ctx.ask(`deletes the remote ref "${dst}"`);
       targets = [dst];
-    } else if (s === "HEAD" || s === "@") {
+    } else if (s.toUpperCase() === "HEAD" || s === "@") {
       // send-pack matches a bare HEAD against the remote's HEAD, which points at main.
       if (!sendPack) {
         applyImplicitPushDecision(ctx, gitCwd);
