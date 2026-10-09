@@ -282,6 +282,18 @@ version in a new tab or load it (discarding the edits). Chat changes bump `updat
 while a chat change holds the row lock, a concurrent save waits and then re-checks the version
 against the committed row.
 
+API clients (`PUT /api/v1/business-dna`, signed-in session with `business-dna:write`; API
+keys aren't accepted by any route yet):
+
+1. `GET /api/v1/business-dna` returns `{ "data": profile | null }`. The version is
+   `data.updatedAt` (ISO 8601), or `null` when `data` is `null`.
+2. `PUT` the profile fields plus `"expectedUpdatedAt": <that version>`.
+3. `200 { "data": profile }`: saved; `data.updatedAt` is the version for the next save.
+   `409 { "error": { "code": "conflict" } }`: changed since it was read, nothing saved; read
+   again, re-apply the change to the latest profile, and save with the new version.
+   `400 invalid_input`: `expectedUpdatedAt` missing or malformed (requests written before it
+   existed now get this). `429`/`503`: rate limited / limit unavailable.
+
 Known limit: chat changes don't change the website-extraction provenance (`sourceUrl`,
 `extractedAt`).
 

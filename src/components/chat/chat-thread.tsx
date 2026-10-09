@@ -68,6 +68,20 @@ function precedingUserText(messages: UiMessage[], index: number): string | undef
   return undefined;
 }
 
+/** Tools whose activity chip has a localized label (chat.toolLabels); others show their name. */
+const LABELED_TOOLS = [
+  "searchKnowledgeBase",
+  "searchContacts",
+  "createContact",
+  "logActivity",
+  "getCalendarAvailability",
+  "bookMeeting",
+  "proposeBusinessDnaUpdate",
+] as const;
+
+const isLabeledTool = (name: string): name is (typeof LABELED_TOOLS)[number] =>
+  (LABELED_TOOLS as readonly string[]).includes(name);
+
 function MessageBubble({
   message,
   playback,
@@ -79,6 +93,7 @@ function MessageBubble({
   turn?: string;
   onActionSettled?: (actionId: string) => void;
 }) {
+  const toolLabel = useTranslations("chat.toolLabels");
   const isUser = message.role === "user";
   return (
     <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
@@ -96,7 +111,7 @@ function MessageBubble({
                 className="inline-flex items-center gap-1 rounded-full bg-background/60 px-2 py-0.5 text-xs text-muted-foreground"
               >
                 <Wrench className="size-3" />
-                {tool}
+                {isLabeledTool(tool) ? toolLabel(tool) : tool}
               </span>
             ))}
           </div>

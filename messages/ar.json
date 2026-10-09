@@ -367,6 +367,15 @@
         "unavailable": "لم يعد هذا الطلب متاحًا. لم تُسجَّل له أي نتيجة.",
         "unknown": "تعذّر التأكد من النتيجة. تحقّق من سجلاتك قبل أن تطلب مرة أخرى."
       }
+    },
+    "toolLabels": {
+      "searchKnowledgeBase": "قاعدة المعرفة",
+      "searchContacts": "جهات الاتصال",
+      "createContact": "جهة اتصال جديدة",
+      "logActivity": "نشاط",
+      "getCalendarAvailability": "المواعيد المتاحة في التقويم",
+      "bookMeeting": "حجز",
+      "proposeBusinessDnaUpdate": "Business DNA"
     }
   },
   "publicAssistant": {

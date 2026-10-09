@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { openAuthenticatedE2EDashboard, requireE2EUserCredentials } from "./helpers/auth";
 
 /**
@@ -17,6 +17,76 @@ import { openAuthenticatedE2EDashboard, requireE2EUserCredentials } from "./help
  * browser's `locale: "fi-FI"` config (which only sets `Accept-Language`/
  * `navigator.language`, not which app locale is served).
  */
+/** Finnish UI strings (unprefixed paths render the default locale; see above). */
+const FI = {
+  save: "Tallenna",
+  saved: "Tallennettu.",
+  conflict: /muutettiin muualla/,
+  conflictReload: "Lataa uusin versio (muutoksesi hylätään)",
+};
+const MUTATING_PROJECT_REASON =
+  "Mutates the shared E2E organization's Business DNA row — runs once (desktop) to avoid a desktop/mobile race on the same record.";
+const NO_PROFILE_REASON =
+  "The E2E organization has no saved Business DNA profile; saving would create one, which this test can't undo.";
+
+async function openBusinessDna(page: Page) {
+  await page.goto("/settings/business-dna");
+  await expect(page.locator("#displayName")).toBeVisible();
+}
+
+/** The form carries the loaded profile's version; empty when there is no profile yet. */
+async function hasSavedProfile(page: Page) {
+  return (await page.locator('input[name="expectedUpdatedAt"]').inputValue()) !== "";
+}
+
+/**
+ * Clicks Save and waits for that save's own server action response, so the
+ * outcome checked afterwards is this save's (never a message left on screen
+ * by an earlier one).
+ */
+async function save(page: Page) {
+  const response = page.waitForResponse(
+    (r) =>
+      r.request().method() === "POST" &&
+      r.request().headers()["next-action"] !== undefined &&
+      new URL(r.url()).pathname.endsWith("/settings/business-dna"),
+    { timeout: 15_000 },
+  );
+  await page.getByRole("button", { name: FI.save }).click();
+  await response;
+  await expect(page.getByRole("button", { name: FI.save })).toBeEnabled();
+}
+
+async function expectSaved(page: Page) {
+  await save(page);
+  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(page.getByText(FI.saved)).toBeVisible();
+}
+
+async function expectConflict(page: Page) {
+  await save(page);
+  await expect(page.getByRole("alert")).toContainText(FI.conflict);
+}
+
+/** The persisted value, read from a freshly loaded page. */
+async function freshValue(page: Page, selector: string) {
+  await openBusinessDna(page);
+  return page.locator(selector).inputValue();
+}
+
+/**
+ * Puts the original value back from a freshly loaded form (the current
+ * version): a change made meanwhile makes this conflict instead of being
+ * overwritten, and the test then fails loudly.
+ */
+async function restoreValue(page: Page, selector: string, original: string) {
+  await openBusinessDna(page);
+  if ((await page.locator(selector).inputValue()) === original) return;
+  await page.locator(selector).fill(original);
+  await expectSaved(page);
+  expect(await freshValue(page, selector)).toBe(original);
+}
+
 test.describe("business dna", () => {
   test.beforeAll(requireE2EUserCredentials);
 
@@ -41,49 +111,72 @@ test.describe("business dna", () => {
   });
 
   /**
-   * This test mutates the shared E2E organization's real Business DNA row
-   * (`#displayName`), unlike the read-only tests above. Restricted to a
-   * single project (desktop) rather than running on both desktop and
-   * mobile: the same E2E account's Business DNA record is shared across
-   * every project, so running this on both would race two concurrent
-   * edit/save cycles against the same row (Playwright runs projects with
-   * overlapping workers by default — nothing in playwright.config.ts
-   * serializes them). Running it once is also sufficient to prove the save
-   * round-trip works; the read-only tests already cover both projects for
-   * page-load/render correctness.
-   *
-   * The original value is captured, changed to a deterministic temporary
-   * value, saved, and restored in a `finally` block so restoration is
-   * attempted even if the primary assertion fails above it — leaving the
-   * shared staging organization's Business DNA permanently mutated would
-   * pollute every subsequent run (CI or human) against the same account.
-   * This is deliberately not timestamp-based cleanup (a later run would
-   * have no way to know which timestamped value was "the real one" to put
-   * back) — it round-trips through the actual original value instead.
+   * The two tests below mutate the shared E2E organization's real Business
+   * DNA row, unlike the read-only tests around them, so they:
+   * - run once (desktop project only): the same account's row is shared by
+   *   every project, and running on both would race two edit/save cycles;
+   * - run only when the organization already has a saved profile: restoring
+   *   "no profile" isn't possible by saving, so they never create one;
+   * - wait for each save's own server response and check its own outcome,
+   *   never a "Tallennettu." left on screen by an earlier save;
+   * - verify what was persisted with a fresh page load;
+   * - restore the exact original value in `finally`, from a freshly loaded
+   *   form (the current version), so the restore itself never overwrites a
+   *   change made meanwhile: it fails loudly on a conflict instead.
    */
-  test("company identity fields are editable and saving shows confirmation, then the original value is restored", async ({
+  test("saving persists the change, then the original value is restored", async ({
     page,
   }, testInfo) => {
-    test.skip(
-      testInfo.project.name !== "desktop",
-      "Mutates the shared E2E organization's Business DNA row — runs once (desktop) to avoid a desktop/mobile race on the same record.",
-    );
+    test.skip(testInfo.project.name !== "desktop", MUTATING_PROJECT_REASON);
+    await openBusinessDna(page);
+    test.skip(!(await hasSavedProfile(page)), NO_PROFILE_REASON);
 
-    await page.goto("/settings/business-dna");
-    const displayName = page.locator("#displayName");
-    await expect(displayName).toBeVisible();
-
-    const originalValue = await displayName.inputValue();
-    const temporaryValue = `E2E-temp-${Date.now()}`;
-
+    const originalName = await page.locator("#displayName").inputValue();
+    const temporaryName = `E2E-temp-${Date.now()}`;
     try {
-      await displayName.fill(temporaryValue);
-      await page.getByRole("button", { name: "Tallenna" }).click();
-      await expect(page.getByText("Tallennettu.")).toBeVisible({ timeout: 10_000 });
+      await page.locator("#displayName").fill(temporaryName);
+      await expectSaved(page);
+      expect(await freshValue(page, "#displayName")).toBe(temporaryName);
     } finally {
-      await displayName.fill(originalValue);
-      await page.getByRole("button", { name: "Tallenna" }).click();
-      await expect(page.getByText("Tallennettu.")).toBeVisible({ timeout: 10_000 });
+      await restoreValue(page, "#displayName", originalName);
+    }
+  });
+
+  test("a form loaded before another save can't overwrite it, and keeps the typed edits", async ({
+    page,
+  }, testInfo) => {
+    test.skip(testInfo.project.name !== "desktop", MUTATING_PROJECT_REASON);
+    await openBusinessDna(page);
+    test.skip(!(await hasSavedProfile(page)), NO_PROFILE_REASON);
+
+    const staleTab = page; // loaded now, saved later
+    const originalName = await staleTab.locator("#displayName").inputValue();
+    const originalIndustry = await staleTab.locator("#industry").inputValue();
+    const newerName = `E2E-temp-${Date.now()}`;
+    const staleIndustry = `E2E-stale-${Date.now()}`;
+    const otherTab = await page.context().newPage();
+    try {
+      // A newer change lands from another tab.
+      await openBusinessDna(otherTab);
+      await otherTab.locator("#displayName").fill(newerName);
+      await expectSaved(otherTab);
+
+      // The stale tab saves without reloading: refused, edits kept.
+      await staleTab.locator("#industry").fill(staleIndustry);
+      await expectConflict(staleTab);
+      await expect(staleTab.locator("#industry")).toHaveValue(staleIndustry);
+
+      // Nothing was overwritten.
+      expect(await freshValue(otherTab, "#displayName")).toBe(newerName);
+      expect(await freshValue(otherTab, "#industry")).toBe(originalIndustry);
+
+      // "Load the latest version" discards the local edits and shows what is saved.
+      await staleTab.getByRole("button", { name: FI.conflictReload }).click();
+      await expect(staleTab.locator("#displayName")).toHaveValue(newerName);
+      await expect(staleTab.locator("#industry")).toHaveValue(originalIndustry);
+    } finally {
+      await otherTab.close();
+      await restoreValue(page, "#displayName", originalName);
     }
   });
 
