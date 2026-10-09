@@ -124,11 +124,16 @@ export function BusinessDnaForm({
     updateBusinessDnaAction,
     {},
   );
-  // The profile version this form replaces when saved: the newer of the one
-  // the page was loaded with and the one returned by this form's last save
-  // (ISO timestamps compare as strings). The server refuses the save if the
-  // profile changed since (in chat or another tab).
-  const version = [state.updatedAt, updatedAt].filter(Boolean).sort().at(-1) ?? "";
+  // The profile version this form's fields are based on, sent with each save;
+  // the server refuses the save if the profile changed since (in chat or
+  // another tab). Taken once when the form mounts and advanced only by this
+  // form's own successful saves -- never from a refreshed `updatedAt` prop:
+  // the page re-renders with the latest version (e.g. after a service edit
+  // revalidates it) while the fields here keep what the user loaded and typed.
+  const [version, setVersion] = useState(updatedAt ?? "");
+  useEffect(() => {
+    if (state.message === "saved" && state.updatedAt) setVersion(state.updatedAt);
+  }, [state]);
   const [values, setValues] = useState<TextFieldValues>(() => toTextFieldValues(initial));
   const [supportedLocales, setSupportedLocales] = useState<string[]>(initial.supportedLocales);
   const [hours, setHours] = useState<WeekHours>(initial.openingHours);

@@ -143,6 +143,25 @@ describe("business-dna service", () => {
       expect(result).toMatchObject({ ok: true, record: { updatedAt: written } });
     });
 
+    it("returns exactly what it wrote, not a change that landed after it", async () => {
+      db.businessDNA.findFirst.mockResolvedValueOnce({
+        id: "bd-1",
+        displayName: "Changed in chat right after",
+        openingHours: { monday: { closed: true } },
+      } as never);
+
+      const result = await upsertBusinessDNA(
+        ctx("org-a"),
+        minimalInput({ displayName: "From the form" }),
+        LOADED,
+      );
+
+      expect(result).toMatchObject({
+        ok: true,
+        record: { id: "bd-1", displayName: "From the form", openingHours: null },
+      });
+    });
+
     it("saves nothing when the profile changed since it was loaded (e.g. in chat)", async () => {
       db.businessDNA.updateMany.mockResolvedValueOnce({ count: 0 });
 

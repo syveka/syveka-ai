@@ -71,10 +71,16 @@ export async function upsertBusinessDNA(
     if (count === 0) return { ok: false, reason: "conflict" };
     const current = await db.businessDNA.findFirst({});
     if (!current) return { ok: false, reason: "conflict" };
-    // The version this save wrote, even if another change landed right after
-    // it (before this read): the caller's next save must then conflict
-    // rather than replace a change it never saw.
-    record = { ...current, updatedAt: savedAt };
+    // Exactly what this save wrote, at the version it wrote -- even if
+    // another change landed right after it (before this read): the caller's
+    // next save must then conflict rather than replace a change it never saw.
+    // (openingHours: the stored value, not Prisma's JsonNull write sentinel.)
+    record = {
+      ...current,
+      ...shared,
+      openingHours: input.openingHours ?? null,
+      updatedAt: savedAt,
+    };
   } else {
     try {
       record = await db.businessDNA.create({ data: { organizationId: ctx.orgId, ...shared } });

@@ -132,6 +132,46 @@ describe("Business DNA form: a save conflicting with a newer change", () => {
     );
   });
 
+  it("keeps the loaded version when the page refreshes with a newer one, so a stale form still conflicts", async () => {
+    const view = show();
+    // Changed in chat meanwhile; the page re-renders (e.g. after a service edit
+    // revalidates it) with the newer version, but the fields keep the user's state.
+    view.rerender(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <BusinessDnaForm
+          initial={{ ...initial, description: "Set in chat" }}
+          isNew={false}
+          readOnly={false}
+          updatedAt="2026-10-09T10:30:00.000Z"
+          services={[]}
+          canManageServices={false}
+        />
+      </NextIntlClientProvider>,
+    );
+    await typeAndSave();
+
+    expect(action.update.mock.calls[0]![1].get("expectedUpdatedAt")).toBe(LOADED);
+  });
+
+  it("keeps the last saved version after a refused save", async () => {
+    action.update.mockResolvedValueOnce({
+      message: "saved",
+      updatedAt: "2026-10-09T10:05:00.000Z",
+    });
+    show();
+    await typeAndSave(); // saved
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.common.save }));
+    }); // conflict (default mock)
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.common.save }));
+    });
+
+    expect(action.update.mock.calls[2]![1].get("expectedUpdatedAt")).toBe(
+      "2026-10-09T10:05:00.000Z",
+    );
+  });
+
   it.each(["fi", "ar"])("is localized (%s)", async (locale) => {
     const messages = load(locale);
     render(
