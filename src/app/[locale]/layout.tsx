@@ -10,7 +10,8 @@ import "../globals.css";
 
 export const metadata: Metadata = {
   title: { default: "Syveka AI", template: "%s · Syveka AI" },
-  description: "Tekoälyavustaja suomalaisille pk-yrityksille — AI assistant for Finnish SMBs.",
+  description:
+    "AI business assistant for small and growing businesses — tekoälyavustaja pienille ja kasvaville yrityksille.",
 };
 
 export function generateStaticParams() {
