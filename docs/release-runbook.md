@@ -336,6 +336,26 @@ environment until this schedule has actually been registered against it** — un
 whose process crashes mid-flight stays stuck `GENERATING` with credits `RESERVED` indefinitely, exactly
 as before that work, because nothing will be calling this route on a recurring basis.
 
+## Nightly usage rollup and retention purge schedule (QStash)
+
+`src/app/api/v1/jobs/usage-rollup/route.ts` is the nightly job that **permanently deletes
+soft-deleted contacts, documents and conversations older than 30 days** (the GDPR retention
+promise, §13.3) and creates the in-app 80%-of-quota notifications (§15.6). Its own header says it runs from a
+QStash cron, but — like `calendar-sync` and `reconcile-creator-generations` above — **the code
+alone does not create its own trigger**, and nothing else enqueues it. A QStash recurring schedule
+must be registered manually, once per environment:
+
+- POST destination: `/api/v1/jobs/usage-rollup`
+- Cron: `0 2 * * *` (the schedule in the route header; QStash evaluates cron in UTC by default)
+- Initial JSON body: `{}` (the route ignores the body; only the QStash signature over it matters)
+- The request must be delivered and signed by QStash (verified via `verifyJobRequest`, the same
+  signature check every other `jobs/*` route uses) — do not point any other caller at this route.
+
+**Until this schedule is registered for an environment, soft-deleted personal data is never
+purged there and no quota notifications are created** — silently, because nothing calls this route. To
+check an environment, look for this destination in the QStash console's Schedules list; its last
+successful delivery should be under 24 hours old.
+
 ## Production smoke checklist
 
 - `/api/health` returns HTTP 200 with database and Redis checks `ok`.
