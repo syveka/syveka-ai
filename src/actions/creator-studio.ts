@@ -93,10 +93,19 @@ export async function confirmConsentAction(profileId: string): Promise<CreatorAc
   return {};
 }
 
+// The same per-user generation limit as the /api/v1/creator-studio/generations/* routes: each
+// generation is a paid provider call, whichever entry point starts it.
+async function generationRateLimited(ctx: { orgId: string; userId: string }): Promise<boolean> {
+  const { rateLimiters } = await import("@/server/integrations/redis");
+  const rateLimit = await rateLimiters.creatorGenerate.limit(`${ctx.orgId}:${ctx.userId}`);
+  return !rateLimit.success;
+}
+
 export async function generateCharacterImageAction(payload: unknown): Promise<CreatorActionState> {
   const ctx = await requirePermission("creator:generate");
   const parsed = generateCharacterImageSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
+  if (await generationRateLimited(ctx)) return { error: "rate_limited" };
   try {
     const { generation } = await requestCharacterImageGeneration(ctx, parsed.data);
     revalidatePath("/creator-studio/library");
@@ -112,6 +121,7 @@ export async function generateImageFromCharacterAction(
   const ctx = await requirePermission("creator:generate");
   const parsed = generateImageFromCharacterSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
+  if (await generationRateLimited(ctx)) return { error: "rate_limited" };
   try {
     const { generation } = await requestImageFromCharacterGeneration(ctx, parsed.data);
     revalidatePath("/creator-studio/library");
@@ -125,6 +135,7 @@ export async function generateVideoFromImageAction(payload: unknown): Promise<Cr
   const ctx = await requirePermission("creator:generate");
   const parsed = generateVideoFromImageSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
+  if (await generationRateLimited(ctx)) return { error: "rate_limited" };
   try {
     const { generation } = await requestVideoFromImageGeneration(ctx, parsed.data);
     revalidatePath("/creator-studio/library");
@@ -138,6 +149,7 @@ export async function generateCaptionAction(payload: unknown): Promise<CreatorAc
   const ctx = await requirePermission("creator:generate");
   const parsed = generateCaptionSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
+  if (await generationRateLimited(ctx)) return { error: "rate_limited" };
   try {
     const { generation } = await requestCaptionGeneration(ctx, parsed.data);
     revalidatePath("/creator-studio/library");
