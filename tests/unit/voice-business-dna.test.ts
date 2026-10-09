@@ -5,7 +5,7 @@ const mocks = vi.hoisted(() => ({
   tenantDb: vi.fn(),
   voiceAssistantFindFirstOrThrow: vi.fn(),
   voiceAssistantUpdate: vi.fn(async () => ({})),
-  upsertVapiAssistant: vi.fn(async (_config: { systemPrompt: string }) => ({
+  upsertVapiAssistant: vi.fn(async (_config: { systemPrompt: string; firstMessage: string }) => ({
     id: "vapi-assistant-1",
   })),
   buyPhoneNumber: vi.fn(async () => ({ id: "num-1", number: "+358401234567" })),
@@ -157,6 +157,18 @@ describe("voice assistant sync — Business DNA context", () => {
     const config = mocks.upsertVapiAssistant.mock.calls[0]![0];
     expect(config.systemPrompt).toContain("You are a helpful receptionist.");
     expect(config.systemPrompt).not.toContain("business_profile");
+  });
+
+  it("speaks the AI and recording notice before the owner's greeting", async () => {
+    mocks.tenantDb.mockReturnValue(businessDnaMock("org-a", null));
+    mocks.voiceAssistantFindFirstOrThrow.mockResolvedValue(assistantRow("org-a"));
+
+    await activateAssistant(ctx("org-a"), "assistant-1");
+
+    const config = mocks.upsertVapiAssistant.mock.calls[0]![0];
+    expect(config.firstMessage).toBe(
+      "You are speaking with an AI assistant, and this call may be recorded. Hi there!",
+    );
   });
 
   it("still includes the mandatory AI disclosure ahead of Business DNA context", async () => {
