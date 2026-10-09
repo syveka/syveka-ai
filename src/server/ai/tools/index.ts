@@ -8,7 +8,12 @@ import { can, type Permission } from "@/server/auth/permissions";
 import type { Role } from "@/generated/prisma/client/client";
 import { audit } from "@/server/services/audit";
 import { computeAvailableSlots, type DateOverride, type WeeklyRule } from "@/server/calendar/slots";
-import { addDaysUtc, isValidTimezone, zonedTimeToUtc } from "@/server/calendar/timezone";
+import {
+  addDaysUtc,
+  isValidTimezone,
+  localIsoDate,
+  zonedTimeToUtc,
+} from "@/server/calendar/timezone";
 import { lockOrgCalendar } from "@/server/calendar/locks";
 import type { ProposedActionView } from "@/lib/validators/chat";
 import { DEFAULT_WEEKLY_RULES } from "@/server/services/booking";
@@ -287,6 +292,32 @@ const getCalendarAvailability = defineTool({
 
 type BookMeetingResult = { ok: true; eventId: string } | { ok: false; reason: "slot_taken" };
 
+/**
+ * Whether `startsAt` is one of the bookable slots of the org's availability schedule on that
+ * day (future, inside working hours, aligned to the slot grid) for a meeting of this length.
+ * Existing events are checked separately, under the calendar lock.
+ */
+async function isBookableSlot(orgId: string, startsAt: Date, durationMinutes: number) {
+  const { timezone, rules, overrides } = await resolveOrgDefaultSchedule(orgId);
+  const [year, month, day] = localIsoDate(startsAt, timezone).split("-").map(Number) as [
+    number,
+    number,
+    number,
+  ];
+  const dayStart = zonedTimeToUtc(year, month, day, 0, timezone);
+  const slots = computeAvailableSlots({
+    timezone,
+    rules,
+    overrides,
+    busy: [],
+    from: dayStart,
+    to: addDaysUtc(dayStart, 1),
+    now: new Date(),
+    durationMinutes,
+  });
+  return slots.some((slot) => slot.getTime() === startsAt.getTime());
+}
+
 const bookMeeting = defineTool({
   name: "bookMeeting",
   description:
@@ -301,12 +332,19 @@ const bookMeeting = defineTool({
   }),
   permission: "calendar:write",
   execute: async (id, input) => {
+    // A phone caller is anonymous: they can book only an offered slot (see
+    // getCalendarAvailability) and only for the service's own length, never a past, night-time
+    // or hours-long hold of their choosing.
+    const fromCaller = id.actorType === "voice_ai";
     const durationMinutes =
-      input.durationMinutes ??
+      (fromCaller ? undefined : input.durationMinutes) ??
       (await resolveServiceDurationMinutes(id.orgId, input.serviceName)) ??
       30;
     const startsAt = new Date(input.startsAt);
     const endsAt = new Date(startsAt.getTime() + durationMinutes * 60_000);
+    if (fromCaller && !(await isBookableSlot(id.orgId, startsAt, durationMinutes))) {
+      return { booked: false, reason: "outside_availability" };
+    }
 
     // Books into the org's single shared calendar (see getCalendarAvailability's
     // matching org-wide busy check, and lockOrgCalendar's comment) - conflicts

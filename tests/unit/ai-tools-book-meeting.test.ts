@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const { txMock, transactionMock, auditMock, tenantDbMock, serviceFindFirstMock } = vi.hoisted(
   () => {
@@ -162,5 +162,64 @@ describe("bookMeeting tool", () => {
       const created = txMock.calendarEvent.create.mock.calls[0]![0].data;
       expect(created.endsAt.getTime() - created.startsAt.getTime()).toBe(30 * 60_000);
     });
+  });
+});
+
+describe("bookMeeting from a phone caller (voice_ai)", () => {
+  const caller = () => identity({ actorType: "voice_ai" });
+
+  beforeEach(() => {
+    // Monday 2026-08-10, before the bookings below; no configured schedule, so the default
+    // Mon-Fri 09:00-17:00 Europe/Helsinki hours apply.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-08-10T06:00:00.000Z"));
+    tenantDbMock.mockReturnValue({
+      businessDnaService: { findFirst: serviceFindFirstMock },
+      availabilitySchedule: { findFirst: vi.fn(async () => null) },
+    });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("books an offered slot inside working hours", async () => {
+    // Monday 2026-08-17 10:00 Helsinki (UTC+3).
+    const result = await bookMeeting.execute(
+      caller(),
+      input({ startsAt: "2026-08-17T07:00:00.000Z" }),
+    );
+    expect(result).toMatchObject({ booked: true });
+  });
+
+  it("refuses a night-time, weekend or past slot", async () => {
+    for (const startsAt of [
+      "2026-08-17T00:00:00.000Z", // 03:00 Helsinki
+      "2026-08-15T07:00:00.000Z", // Saturday
+      "2026-08-03T07:00:00.000Z", // last week
+      "2026-08-17T07:10:00.000Z", // not on the slot grid
+    ]) {
+      expect(await bookMeeting.execute(caller(), input({ startsAt }))).toEqual({
+        booked: false,
+        reason: "outside_availability",
+      });
+    }
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("ignores a caller-chosen duration in favour of the service's (or the 30-minute default)", async () => {
+    await bookMeeting.execute(
+      caller(),
+      input({ startsAt: "2026-08-17T07:00:00.000Z", durationMinutes: 240 }),
+    );
+    const data = txMock.calendarEvent.create.mock.calls[0]![0].data;
+    expect(data.endsAt.getTime() - data.startsAt.getTime()).toBe(30 * 60_000);
+  });
+
+  it("leaves in-app users free to book any time, as before", async () => {
+    const result = await bookMeeting.execute(
+      identity(),
+      input({ startsAt: "2026-08-17T00:00:00.000Z" }),
+    );
+    expect(result).toMatchObject({ booked: true });
   });
 });
