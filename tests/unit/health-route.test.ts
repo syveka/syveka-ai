@@ -14,9 +14,11 @@ vi.mock("@/server/integrations/redis", () => ({
 }));
 
 import { GET } from "@/app/api/health/route";
+import { resetHealthChecksCache, runHealthChecks } from "@/server/services/health-checks";
 
 beforeEach(() => {
   vi.clearAllMocks();
+  resetHealthChecksCache();
   queryRawMock.mockResolvedValue([{ "?column?": 1 }]);
   pingMock.mockResolvedValue("PONG");
   vi.spyOn(console, "error").mockImplementation(() => {});
@@ -87,5 +89,20 @@ describe("GET /api/health", () => {
     vi.stubEnv("NEXT_PUBLIC_BUILD_SHA", "not-a-sha <script>");
     const response = await GET();
     await expect(response.json()).resolves.toMatchObject({ build: "unknown" });
+  });
+
+  it("shares one database and Redis check across requests for a few seconds", async () => {
+    await Promise.all([GET(), GET(), GET()]);
+    await GET();
+    expect(queryRawMock).toHaveBeenCalledTimes(1);
+    expect(pingMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks again once the shared result is older than ten seconds", async () => {
+    await runHealthChecks(1_000_000);
+    await runHealthChecks(1_000_000 + 9_999);
+    expect(queryRawMock).toHaveBeenCalledTimes(1);
+    await runHealthChecks(1_000_000 + 10_000);
+    expect(queryRawMock).toHaveBeenCalledTimes(2);
   });
 });
