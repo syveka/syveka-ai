@@ -1295,6 +1295,182 @@ describe("command-guard: fifth review follow-ups (round 5)", () => {
   });
 });
 
+describe("command-guard: final review follow-ups (implicit push targets, push plumbing)", () => {
+  let featureRepo: string;
+  let mainRepo: string;
+
+  beforeAll(() => {
+    featureRepo = fs.mkdtempSync(path.join(os.tmpdir(), "guard-feature-"));
+    spawnSync("git", ["init", "-q", "-b", "feature", featureRepo]);
+    mainRepo = fs.mkdtempSync(path.join(os.tmpdir(), "guard-main-"));
+    spawnSync("git", ["init", "-q", "-b", "main", mainRepo]);
+  });
+
+  afterAll(() => {
+    fs.rmSync(featureRepo, { recursive: true, force: true });
+    fs.rmSync(mainRepo, { recursive: true, force: true });
+  });
+
+  const fromFeature = (command: string) => bash(command, { cwd: featureRepo });
+  const fromMain = (command: string) => bash(command, { cwd: mainRepo });
+
+  it("denies an implicit push after moving HEAD to main earlier in the same command", async () => {
+    await expectAll(fromFeature, "deny", [
+      "git switch main && git push origin HEAD",
+      "git switch main && git push",
+      "git checkout main && git push",
+      "git checkout main; git push origin",
+      "git checkout -t origin/main && git push",
+      "git switch --track origin/main && git push",
+      "git checkout -B main && git push",
+      "git branch -m main && git push",
+      "git symbolic-ref HEAD refs/heads/main && git push",
+      "git rebase origin/main main && git push",
+      "git stash branch main && git push",
+      "bash -c 'git switch main' && git push",
+    ]);
+  });
+
+  it("parses clustered, attached and abbreviated options when tracking HEAD moves", async () => {
+    await expectAll(fromFeature, "deny", [
+      "git switch -Cmain && git push",
+      "git switch -cmain origin/main && git push",
+      "git checkout -bmain origin/main && git push",
+      "git checkout -Bmain && git push",
+      "git checkout -qbmain && git push -u origin HEAD",
+      "git switch --cre=main origin/main && git push",
+      "git switch --force-c=main && git push",
+      "git checkout --tr origin/main && git push",
+      "git switch --tr origin/main && git push",
+      "git switch main -- && git push",
+      "git branch --mov main && git push -u origin HEAD",
+      "git symbolic-ref HEAD -- refs/heads/main && git push",
+      "git rebase --root main && git push",
+    ]);
+  });
+
+  it("asks, rather than denies, when main is only passed through on the way", async () => {
+    await expectAll(fromFeature, "ask", [
+      "git checkout main && git pull && git checkout -b fix/y && git push -u origin HEAD",
+      "git switch main && git pull && git switch -c fix/y && git push",
+      "git stash && git checkout main && git pull && git checkout feature && git stash pop && git push",
+      "git switch main; git switch feature; git push",
+    ]);
+  });
+
+  it("still denies implicit pushes from a main checkout, whatever comes first", async () => {
+    await expectAll(fromMain, "deny", [
+      "git push",
+      "git push origin HEAD",
+      "git switch -c fix && git push",
+      "git switch feat && git push",
+    ]);
+  });
+
+  it("asks when an earlier command moves HEAD somewhere the guard can't name", async () => {
+    await expectAll(fromFeature, "ask", [
+      "git switch - && git push",
+      "git checkout @{-1} && git push",
+      "git switch --detach && git push",
+      "gh pr checkout 12 && git push",
+    ]);
+  });
+
+  it("still allows feature-branch switches and pushes", async () => {
+    await expectAll(fromFeature, "allow", [
+      "git push",
+      "git switch -c feat2 && git push -u origin feat2",
+      "git checkout -b feat2 && git push -u origin HEAD",
+      "git checkout -b feat2 main && git push",
+      "git switch feat2 && git push",
+      "git push && git switch main",
+      "git checkout main",
+    ]);
+  });
+
+  it("inspects git send-pack and http-push like git push", async () => {
+    await expectAll(fromFeature, "deny", [
+      "git send-pack ssh://git@github.com/syveka/syveka-ai.git HEAD:refs/heads/main",
+      "git send-pack --force ssh://x/repo.git feat:refs/heads/main",
+      "git send-pack ssh://x/repo.git main",
+      "git send-pack ssh://x/repo.git +feat:feat",
+      "git send-pack ssh://x/repo.git HEAD",
+      "git send-pack ssh://x/repo.git feat:HEAD",
+      "git send-pack ssh://x/repo.git",
+      "git send-pack --all ssh://x/repo.git",
+      "git send-pack --mirror ssh://x/repo.git",
+      "git send-pack --stdin ssh://x/repo.git",
+      'git send-pack ssh://x/repo.git "$(echo main)"',
+      "echo main | xargs git send-pack ssh://x/repo.git",
+      "git -C . send-pack ssh://x/repo.git feat:main",
+      "git-send-pack ssh://x/repo.git HEAD:refs/heads/main",
+      "/usr/lib/git-core/git-send-pack ssh://x/repo.git feat:main",
+      "git http-push https://x/repo.git main",
+      "git send-pack --remote origin ../bare.git",
+      "git send-pack --remote origin ../bare.git feat:main",
+      "git send-pack --rem origin ../bare.git feat",
+    ]);
+    await expectAll(fromFeature, "allow", [
+      "git send-pack ssh://x/repo.git feat",
+      "git send-pack ssh://x/repo.git feat:refs/heads/feat",
+      "git http-push https://x/repo.git feat",
+      "git send-pack --remote origin ../bare.git feat",
+      "git send-pack --thin ssh://x/repo.git feat:feat",
+    ]);
+  });
+
+  it("closes the remaining push spellings found in review", async () => {
+    await expectAll(fromFeature, "deny", [
+      "git push --al origin",
+      "git push --branc origin",
+      "git push origin HEAD:HEAD",
+      "printf 'push refs/heads/feature:refs/heads/main\\n\\n' | git remote-https origin https://github.com/syveka/syveka-ai.git",
+      "git-remote-https origin https://github.com/syveka/syveka-ai.git",
+    ]);
+    expect(await fromFeature("git push origin @{-1}")).toBe("ask");
+    await expectAll(fromFeature, "allow", [
+      "git push --atomic origin feat",
+      "git remote -v",
+      "git remote add upstream https://github.com/x/y.git",
+    ]);
+  });
+
+  it("reads the branch after `--` for switch, and exact option names before abbreviations", async () => {
+    await expectAll(fromFeature, "deny", [
+      "git switch -- main && git push",
+      "git switch -q -- main && git push origin HEAD",
+      // --force is not an abbreviation of --force-create.
+      "git switch --force --quiet main && git push",
+      "git rebase --roo main && git push",
+      "git rebase --strat ours origin/main main && git push",
+      // git runs dashed external commands case-insensitively on Windows.
+      "git HTTP-PUSH https://example.com/repo.git main",
+      // git derives the local branch from a fully qualified remote ref too.
+      "git checkout -t refs/remotes/origin/main && git push",
+      "git switch --track remotes/origin/main && git push",
+      "git rebase -C 3 origin/main main && git push",
+      // An exact or unique abbreviated option is never read as a longer one.
+      "git checkout --ov main && git push",
+    ]);
+    await expectAll(fromFeature, "ask", [
+      "git switch -- - && git push",
+      "git switch --force-c fix/x && git push -u origin HEAD",
+      "git switch -qf feat2 && git push",
+    ]);
+    await expectAll(fromFeature, "allow", [
+      "git switch -- feat2 && git push",
+      "git switch -cfeature && git push -u origin HEAD",
+      "git checkout -p main && git push",
+      "git checkout --patch main && git push",
+      "git checkout -pq main && git push",
+      // git push has no --remote option; it is not taken to consume "origin".
+      "git push --remote origin feat",
+      "git checkout -b fix/x && git push -u origin fix/x",
+      "git push --dry-run",
+    ]);
+  });
+});
+
 describe("guardrail runtime: portable internal timeout", () => {
   const settings = () =>
     JSON.parse(fs.readFileSync(path.join(REPO_ROOT, ".claude", "settings.json"), "utf8")) as {
