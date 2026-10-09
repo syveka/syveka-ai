@@ -267,7 +267,9 @@ export async function POST(request: Request): Promise<NextResponse> {
         // restore a paid plan). Apply the subscription's current state instead
         // -- fetched before the transaction opens, as for invoice.paid.
         const sub = await stripe.subscriptions.retrieve(event.data.object.id);
-        if (sub.status === "canceled" || sub.status === "incomplete_expired") {
+        // incomplete_expired is NOT skipped: Stripe never sends a deletion for it, so this update
+        // is what records it (as CANCELED) and lets the org check out again.
+        if (sub.status === "canceled") {
           // customer.subscription.deleted owns the downgrade; a stale update
           // must neither revive nor downgrade anything on its own.
           await markCompleted(unscopedPrisma, event.id, resolvedOrgId, sub.id);

@@ -460,6 +460,27 @@ describe("existing subscription and entitlement behavior is unchanged", () => {
     expect(mocks.txSubscriptionUpsert).toHaveBeenCalledTimes(1);
   });
 
+  it("records an expired first checkout (incomplete_expired) as CANCELED so the org can subscribe again", async () => {
+    const event = fakeEvent(
+      "customer.subscription.updated",
+      fakeSubscription({ id: "sub_a", status: "incomplete_expired" }),
+    );
+    mocks.constructEvent.mockReturnValue(event);
+    mocks.subscriptionsRetrieve.mockResolvedValue(
+      fakeSubscription({ id: "sub_a", status: "incomplete_expired" }),
+    );
+    mocks.txSubscriptionFindUnique.mockResolvedValue({
+      stripeSubscriptionId: "sub_a",
+      status: "INCOMPLETE",
+    });
+
+    await POST(webhookRequest("{}"));
+
+    expect(mocks.txSubscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: expect.objectContaining({ status: "CANCELED" }) }),
+    );
+  });
+
   it("a failed one-off invoice (no subscription) changes no subscription", async () => {
     const event = fakeEvent("invoice.payment_failed", { id: "in_1", customer: "cus_123" });
     mocks.constructEvent.mockReturnValue(event);
