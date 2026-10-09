@@ -42,6 +42,7 @@ import {
   CalendarError,
   cancelEvent,
   createEvent,
+  deleteEvent,
   findConflicts,
   listEvents,
 } from "@/server/services/calendar";
@@ -419,5 +420,68 @@ describe("attendee links stay inside the tenant and are checked before any write
     });
     expect(db.calendarEvent.create).toHaveBeenCalledTimes(1);
     expect(unscopedMock.eventAttendee.createMany).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("booked events stay in sync with their booking", () => {
+  const booked = (status = "CONFIRMED") => ({
+    id: "evt-1",
+    title: "Booked call",
+    startsAt: new Date("2026-02-02T09:00:00.000Z"),
+    endsAt: new Date("2026-02-02T10:00:00.000Z"),
+    booking: { id: "bk-1", status },
+  });
+
+  it("refuses to move a booked event's time (the guest was told that time)", async () => {
+    db.calendarEvent.findFirst.mockResolvedValue(booked());
+    await expect(
+      updateEvent(
+        ctx(),
+        "evt-1",
+        baseInput({ startsAt: "2026-02-03T09:00:00.000Z", endsAt: "2026-02-03T10:00:00.000Z" }),
+      ),
+    ).rejects.toMatchObject({ code: "booked" });
+    expect(db.calendarEvent.update).not.toHaveBeenCalled();
+  });
+
+  it("still allows editing a booked event's details at the same time", async () => {
+    db.calendarEvent.findFirst.mockResolvedValue(booked());
+    await updateEvent(ctx(), "evt-1", baseInput({ title: "Renamed" }));
+    expect(db.calendarEvent.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("allows moving an event whose booking was canceled", async () => {
+    db.calendarEvent.findFirst.mockResolvedValue(booked("CANCELED"));
+    await updateEvent(
+      ctx(),
+      "evt-1",
+      baseInput({ startsAt: "2026-02-03T09:00:00.000Z", endsAt: "2026-02-03T10:00:00.000Z" }),
+    );
+    expect(db.calendarEvent.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("cancels the booking (guest notified, reminders stopped) before deleting a booked event", async () => {
+    db.calendarEvent.findFirst.mockResolvedValue(booked());
+    cancelBookingAsOwnerMock.mockResolvedValueOnce(undefined);
+    await deleteEvent(ctx(), "evt-1");
+    expect(cancelBookingAsOwnerMock).toHaveBeenCalledWith(expect.anything(), "bk-1");
+    expect(db.calendarEvent.update).toHaveBeenCalledWith({
+      where: { id: "evt-1" },
+      data: { deletedAt: expect.any(Date) },
+    });
+  });
+
+  it("still deletes a booked event whose meeting already started", async () => {
+    db.calendarEvent.findFirst.mockResolvedValue(booked());
+    cancelBookingAsOwnerMock.mockRejectedValueOnce(new BookingErrorMock("started", "too_late"));
+    await deleteEvent(ctx(), "evt-1");
+    expect(db.calendarEvent.update).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not delete the event when canceling its booking fails unexpectedly", async () => {
+    db.calendarEvent.findFirst.mockResolvedValue(booked());
+    cancelBookingAsOwnerMock.mockRejectedValueOnce(new Error("db down"));
+    await expect(deleteEvent(ctx(), "evt-1")).rejects.toThrow("db down");
+    expect(db.calendarEvent.update).not.toHaveBeenCalled();
   });
 });
