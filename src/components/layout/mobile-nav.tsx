@@ -34,7 +34,7 @@ export function MobileNav({ permissions }: { permissions: Permission[] }) {
         <DropdownMenu.Content
           align="start"
           sideOffset={4}
-          className="z-50 w-56 rounded-md border bg-card p-1 shadow-md"
+          className="z-50 max-h-[var(--radix-dropdown-menu-content-available-height)] w-56 overflow-y-auto rounded-md border bg-card p-1 shadow-md"
         >
           {visibleNavItems(permissions).map((item) => {
             const active = pathname.startsWith(item.href);
