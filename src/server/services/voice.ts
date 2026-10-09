@@ -11,7 +11,7 @@ import {
   type PhoneImportParams,
 } from "@/server/integrations/vapi";
 import { TOOL_REGISTRY, zodToJsonSchema } from "@/server/ai/tools";
-import { buildVoiceSystemPrompt } from "@/server/ai/prompts/voice";
+import { buildVoiceFirstMessage, buildVoiceSystemPrompt } from "@/server/ai/prompts/voice";
 import { getBusinessDnaContext } from "@/server/business-dna/context";
 import { lockPhoneNumber } from "@/server/calendar/locks";
 import { getEntitlements, EntitlementError } from "./billing/entitlements";
@@ -334,7 +334,7 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
   const { NEXT_PUBLIC_APP_URL, VAPI_WEBHOOK_CREDENTIAL_ID } = getVapiEnv();
   const config: VapiAssistantConfig = {
     name: assistant.name,
-    firstMessage: assistant.firstMessage,
+    firstMessage: buildVoiceFirstMessage(assistant.language, assistant.firstMessage),
     systemPrompt: buildVoiceSystemPrompt({
       disclosure,
       businessDna,
