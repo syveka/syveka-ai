@@ -235,8 +235,20 @@ async function releaseCallWrite(redis: typeof redisClient, capKey: string): Prom
 }
 
 /**
- * Whether a tool result says nothing was written: an error (executeTool reports
- * invalid input and execution failures as `{ error }`, it doesn't throw) or a
+ * Refusals that executeTool (or the tool) returns before anything is written.
+ * executeTool reports failures as results, it doesn't throw. `execution_failed`
+ * is deliberately absent: a tool can fail after its write (e.g. the audit insert
+ * after the booking or contact was created), so that attempt keeps its slot.
+ */
+const PRE_WRITE_REFUSALS = new Set([
+  "invalid_input",
+  "permission_denied",
+  "unknown_tool",
+  "entitlement_exceeded",
+]);
+
+/**
+ * Whether a tool result says nothing was written: a pre-write refusal, or a
  * booking that didn't happen (`{ booked: false }`, e.g. the slot was taken).
  * Such an attempt gives its cap slot back, so a caller retrying a failed
  * booking isn't locked out of the call's legitimate writes.
@@ -245,7 +257,8 @@ function wroteNothing(result: string): boolean {
   try {
     const parsed: unknown = JSON.parse(result);
     if (typeof parsed !== "object" || parsed === null) return false;
-    return "error" in parsed || (parsed as { booked?: unknown }).booked === false;
+    const { error, booked } = parsed as { error?: unknown; booked?: unknown };
+    return booked === false || (typeof error === "string" && PRE_WRITE_REFUSALS.has(error));
   } catch {
     return false;
   }

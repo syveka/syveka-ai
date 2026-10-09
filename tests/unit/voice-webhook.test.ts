@@ -604,11 +604,12 @@ describe("Vapi voice webhook — per-call write caps", () => {
     ]);
   });
 
-  // executeTool reports failures as results, it doesn't throw: invalid input and
-  // execution errors come back as { error }, a taken slot as { booked: false }.
+  // executeTool reports failures as results, it doesn't throw: refusals before
+  // any write come back as { error }, a taken slot as { booked: false }.
   it.each([
-    ["an error result", JSON.stringify({ error: "execution_failed" })],
     ["invalid input", JSON.stringify({ error: "invalid_input", details: [] })],
+    ["a permission refusal", JSON.stringify({ error: "permission_denied" })],
+    ["a plan-limit refusal", JSON.stringify({ error: "entitlement_exceeded" })],
     ["a booking that didn't happen", JSON.stringify({ booked: false, reason: "slot_taken" })],
   ])("a write that returns %s does not consume the cap", async (_label, failure) => {
     mocks.executeTool.mockResolvedValueOnce(failure).mockResolvedValueOnce(failure);
@@ -623,6 +624,27 @@ describe("Vapi voice webhook — per-call write caps", () => {
     ]);
   });
 
+  it("an execution failure keeps its slot: the write may have happened before the failure", async () => {
+    const failed = JSON.stringify({ error: "execution_failed" });
+    mocks.executeTool.mockResolvedValueOnce(failed).mockResolvedValueOnce(failed);
+    await runTools("call-7", [{ id: "f1", name: "bookMeeting" }]);
+    await runTools("call-7", [{ id: "f2", name: "bookMeeting" }]);
+
+    expect(mocks.redisDecr).not.toHaveBeenCalled();
+    expect(await runTools("call-7", [{ id: "b1", name: "bookMeeting" }])).toEqual([
+      err("call_write_limit"),
+    ]);
+  });
+
+  it("a write counted but not given a TTL is refused and gives its slot back", async () => {
+    mocks.redisExpire.mockRejectedValueOnce(new Error("redis down"));
+    expect(await runTools("call-7", [{ id: "b1", name: "bookMeeting" }])).toEqual([
+      err("call_write_limit_unavailable"),
+    ]);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+    expect(mocks.redisDecr).toHaveBeenCalledWith("vapi:callcap:org-a:call-7:bookMeeting");
+  });
+
   it("a successful write keeps its slot", async () => {
     mocks.executeTool.mockResolvedValueOnce(JSON.stringify({ booked: true, eventId: "e1" }));
     await runTools("call-7", [{ id: "b1", name: "bookMeeting" }]);
@@ -631,9 +653,9 @@ describe("Vapi voice webhook — per-call write caps", () => {
 
   it("a counter that can't be decremented doesn't fail the request", async () => {
     mocks.redisDecr.mockRejectedValueOnce(new Error("redis down"));
-    mocks.executeTool.mockResolvedValueOnce(JSON.stringify({ error: "execution_failed" }));
+    mocks.executeTool.mockResolvedValueOnce(JSON.stringify({ error: "invalid_input" }));
     const failed = await runTools("call-7", [{ id: "f1", name: "bookMeeting" }]);
-    expect(failed).toEqual([JSON.stringify({ error: "execution_failed" })]);
+    expect(failed).toEqual([JSON.stringify({ error: "invalid_input" })]);
     expect(mocks.redisDecr).toHaveBeenCalledTimes(1);
   });
 
