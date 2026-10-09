@@ -66,6 +66,12 @@ describe("MobileNav", () => {
     // AppSidebar/NAV gates this route on) -- must stay hidden here too, or
     // the two navs would grant different access to the same role.
     expect(screen.queryByRole("menuitem", { name: "Analytics" })).toBeNull();
+
+    // With every destination visible the list is taller than a small phone's screen: the menu
+    // must cap its height to the space Radix reports and scroll, or the last items are unreachable.
+    const menu = await screen.findByRole("menu");
+    expect(menu.className).toContain("overflow-y-auto");
+    expect(menu.className).toContain("max-h-[var(--radix-dropdown-menu-content-available-height)]");
   }, 15000);
 
   it("is only rendered for mobile viewports (md:hidden), never a second nav on desktop", async () => {
