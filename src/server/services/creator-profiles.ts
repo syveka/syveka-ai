@@ -81,7 +81,9 @@ export async function getCreatorProfile(ctx: TenantContext, id: string) {
   const db = tenantDb(ctx.orgId);
   return db.creatorProfile.findFirstOrThrow({
     where: { id },
-    include: { referenceAssets: { orderBy: { createdAt: "desc" } } },
+    include: {
+      referenceAssets: { where: { organizationId: ctx.orgId }, orderBy: { createdAt: "desc" } },
+    },
   });
 }
 
