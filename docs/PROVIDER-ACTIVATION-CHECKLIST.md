@@ -390,7 +390,8 @@ Webhook endpoint: `{NEXT_PUBLIC_APP_URL}/api/v1/webhooks/inbox-email/resend`.
   (current + next, for zero-downtime key rotation) from the QStash dashboard.
 - No inbound webhook to configure manually — QStash calls back into the app's own job routes
   (`src/app/api/v1/jobs/{calendar-sync,embed-document,post-call,run-workflow,send-reminder,
-usage-rollup}/route.ts`), which the app itself enqueues jobs against via `enqueue()`. Every job
+usage-rollup}/route.ts`). Most are enqueued by the app via `enqueue()`; `calendar-sync` and
+  `usage-rollup` run only from manually registered QStash schedules (see `docs/release-runbook.md`). Every job
   route verifies the request with `verifyJobRequest()` (QStash's `Receiver.verify()`) before
   doing any work.
 - See `docs/calendar-booking-v1.md`'s "Calendar webhook subscription maintenance schedule" and
