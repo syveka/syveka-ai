@@ -28,6 +28,7 @@ import {
   searchContactsForLinkSchema,
   updateThreadStatusSchema,
 } from "@/lib/validators/inbox";
+import { AiSpendError, assertAiSpendAllowed, recordAiSpend } from "@/server/services/ai-spend";
 
 export type InboxActionState = { error?: string; message?: string };
 
@@ -61,9 +62,11 @@ export async function generateDraftAction(
 ): Promise<InboxActionState> {
   const ctx = await requirePermission("inbox:write");
   try {
+    await assertAiSpendAllowed(ctx);
     await generateEmailDraft(ctx, threadId);
+    await recordAiSpend(ctx, "email_draft");
   } catch (e) {
-    if (e instanceof InboxError) return { error: e.code };
+    if (e instanceof InboxError || e instanceof AiSpendError) return { error: e.code };
     return { error: "failed" };
   }
   revalidatePath(`/inbox/${threadId}`);

@@ -13,6 +13,7 @@ import {
 import { assistScheduling, generateMeetingSummary } from "@/server/services/booking-assistant";
 import { scheduleEventReminders } from "@/server/services/reminders";
 import { eventSchema } from "@/lib/validators/calendar";
+import { AiSpendError, assertAiSpendAllowed, recordAiSpend } from "@/server/services/ai-spend";
 
 export type CalendarActionState = {
   error?: string;
@@ -113,7 +114,15 @@ export async function schedulingAssistantAction(
   const contactId = String(formData.get("contactId") ?? "") || undefined;
   const dealId = String(formData.get("dealId") ?? "") || undefined;
 
+  try {
+    await assertAiSpendAllowed(ctx);
+  } catch (e) {
+    if (e instanceof AiSpendError) return { error: e.code };
+    throw e;
+  }
   const result = await assistScheduling(ctx, request, { contactId, dealId });
+  // Fallback answers (no slots, provider unavailable) made no AI call.
+  if (result.aiUsed) await recordAiSpend(ctx, "scheduling_assistant");
   return {
     reply: result.reply,
     slots: result.suggestedSlots,
@@ -125,6 +134,8 @@ export async function meetingSummaryAction(
   eventId: string,
 ): Promise<{ summary: string; followUps: string[] }> {
   const ctx = await requirePermission("calendar:read");
+  await assertAiSpendAllowed(ctx);
   const result = await generateMeetingSummary(ctx, eventId);
+  if (result.aiUsed) await recordAiSpend(ctx, "meeting_summary");
   return { summary: result.summary, followUps: result.followUps };
 }
