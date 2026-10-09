@@ -25,7 +25,8 @@ export class CalendarError extends Error {
       | "invalid_relation"
       | "conflict"
       | "already_canceled"
-      | "too_late",
+      | "too_late"
+      | "booked",
   ) {
     super(message);
     this.name = "CalendarError";
@@ -334,9 +335,25 @@ export async function updateEvent(ctx: TenantContext, eventId: string, input: Ev
   const db = tenantDb(ctx.orgId);
   const existing = await db.calendarEvent.findFirst({
     where: { id: eventId, deletedAt: null },
-    select: { id: true, title: true },
+    select: {
+      id: true,
+      title: true,
+      startsAt: true,
+      endsAt: true,
+      booking: { select: { status: true } },
+    },
   });
   if (!existing) throw new CalendarError("Event not found", "not_found");
+  // A booked guest was told a time (confirmation, reminders, manage link). Moving the event
+  // here would leave all of that pointing at the old time; it is rescheduled through the booking.
+  if (
+    existing.booking &&
+    existing.booking.status !== "CANCELED" &&
+    (new Date(input.startsAt).getTime() !== existing.startsAt.getTime() ||
+      new Date(input.endsAt).getTime() !== existing.endsAt.getTime())
+  ) {
+    throw new CalendarError("A booked event is rescheduled through its booking", "booked");
+  }
   await assertRelations(db, ctx.orgId, input);
   await assertAttendeesInTenant(db, input.attendees);
 
@@ -417,9 +434,22 @@ export async function deleteEvent(ctx: TenantContext, eventId: string): Promise<
   const db = tenantDb(ctx.orgId);
   const event = await db.calendarEvent.findFirst({
     where: { id: eventId, deletedAt: null },
-    select: { id: true, title: true },
+    select: { id: true, title: true, booking: { select: { id: true, status: true } } },
   });
   if (!event) throw new CalendarError("Event not found", "not_found");
+
+  // Deleting a booked event cancels the booking first (guest notified, reminders stopped),
+  // as the Cancel button does; otherwise the guest's booking stays confirmed for a meeting
+  // that no longer exists. A booking that already started is left as it is.
+  if (event.booking && event.booking.status !== "CANCELED") {
+    try {
+      await cancelBookingAsOwner(ctx, event.booking.id);
+    } catch (e) {
+      const settled =
+        e instanceof BookingError && (e.code === "already_canceled" || e.code === "too_late");
+      if (!settled) throw e;
+    }
+  }
 
   await db.calendarEvent.update({
     where: { id: eventId },
