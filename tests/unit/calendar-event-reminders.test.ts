@@ -36,12 +36,14 @@ type EventRow = {
   startsAt: Date;
   endsAt: Date;
   location: string | null;
+  source: "MANUAL" | "GOOGLE" | "OUTLOOK";
 };
 
 const s = vi.hoisted(() => ({
   seq: 0,
   reminders: [] as ReminderRow[],
   events: [] as EventRow[],
+  failReminderLookup: false,
 }));
 const fx = vi.hoisted(() => ({
   enqueue: vi.fn(async (_job: string, _payload: { reminderId: string }, _opts: unknown) => ({
@@ -53,7 +55,9 @@ const fx = vi.hoisted(() => ({
 }));
 
 function matches(row: Record<string, unknown>, where: Record<string, unknown>): boolean {
-  return Object.entries(where).every(([k, v]) => row[k] === v);
+  return Object.entries(where).every(([k, v]) =>
+    v && typeof v === "object" && "in" in v ? (v.in as unknown[]).includes(row[k]) : row[k] === v,
+  );
 }
 
 vi.mock("@/server/db/tenant", () => {
@@ -83,6 +87,10 @@ vi.mock("@/server/db/tenant", () => {
         return { count: rows.length };
       },
     ),
+    count: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+      if (s.failReminderLookup) throw new Error("connection reset: reminders host db-1");
+      return s.reminders.filter((r) => matches(r, where)).length;
+    }),
     deleteMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
       const before = s.reminders.length;
       s.reminders = s.reminders.filter((r) => !matches(r, where));
@@ -178,7 +186,7 @@ function input(startsAt: Date, overrides: Partial<EventInput> = {}): EventInput 
   } as EventInput;
 }
 
-async function createEventWithReminders(startsAt: Date): Promise<string[]> {
+function addEvent(startsAt: Date, source: EventRow["source"] = "MANUAL"): void {
   s.events.push({
     id: EVENT,
     organizationId: ORG,
@@ -189,7 +197,12 @@ async function createEventWithReminders(startsAt: Date): Promise<string[]> {
     startsAt,
     endsAt: new Date(startsAt.getTime() + HOUR),
     location: null,
+    source,
   });
+}
+
+async function createEventWithReminders(startsAt: Date): Promise<string[]> {
+  addEvent(startsAt);
   await scheduleEventReminders({ orgId: ORG, eventId: EVENT, startsAt });
   const ids = fx.enqueue.mock.calls.map((c) => c[1].reminderId);
   fx.enqueue.mockClear();
@@ -221,6 +234,7 @@ beforeEach(() => {
   s.seq = 0;
   s.reminders = [];
   s.events = [];
+  s.failReminderLookup = false;
 });
 afterEach(() => {
   vi.useRealTimers();
@@ -310,5 +324,54 @@ describe("moving a calendar event moves its reminders", () => {
 
     expect(pending()).toEqual([]);
     expect(fx.enqueue).not.toHaveBeenCalled();
+  });
+  it("moved into the past and back: reminders are scheduled again for the new time", async () => {
+    await createEventWithReminders(tomorrowish);
+    await updateEvent(ctx, EVENT, input(new Date(NOW.getTime() - 2 * HOUR)));
+    await updateEvent(ctx, EVENT, input(nextWeek));
+    expect(pending()).toEqual(["2026-03-09T09:00:00.000Z", "2026-03-10T08:00:00.000Z"]);
+  });
+});
+
+describe("events that never had reminders do not get them when moved", () => {
+  it("an imported Google/Outlook event that is moved gets no reminders", async () => {
+    addEvent(tomorrowish, "GOOGLE");
+    await updateEvent(ctx, EVENT, input(nextWeek));
+    expect(s.reminders).toEqual([]);
+    expect(fx.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("an assistant-booked event (created without reminders) that is moved gets none", async () => {
+    addEvent(tomorrowish, "MANUAL");
+    await updateEvent(ctx, EVENT, input(nextWeek));
+    expect(s.reminders).toEqual([]);
+    expect(fx.enqueue).not.toHaveBeenCalled();
+  });
+});
+
+describe("a reminder failure does not fail an update that is already saved", () => {
+  it("the move is saved and audited, and the failure is logged without its message", async () => {
+    await createEventWithReminders(tomorrowish);
+    s.failReminderLookup = true;
+    const log = vi.spyOn(console, "error").mockImplementation(() => {});
+
+    await expect(updateEvent(ctx, EVENT, input(nextWeek))).resolves.toMatchObject({
+      startsAt: nextWeek,
+    });
+
+    expect(fx.audit).toHaveBeenCalledWith(
+      ctx,
+      expect.objectContaining({ action: "calendar.update", resourceId: EVENT }),
+    );
+    expect(log).toHaveBeenCalledTimes(1);
+    const logged = String(log.mock.calls[0]![0]);
+    expect(JSON.parse(logged)).toEqual({
+      event: "calendar_reminder_reschedule_failed",
+      orgId: ORG,
+      eventId: EVENT,
+      errorName: "Error",
+    });
+    expect(logged).not.toContain("db-1");
+    log.mockRestore();
   });
 });

@@ -378,13 +378,6 @@ export async function updateEvent(ctx: TenantContext, eventId: string, input: Ev
   });
   await syncAttendees(eventId, input.attendees);
 
-  // Reminders are timed from startsAt: a moved event's pending reminders would
-  // otherwise fire at the old time while naming the new one.
-  const startsAt = new Date(input.startsAt);
-  if (existing.status !== "CANCELED" && startsAt.getTime() !== existing.startsAt.getTime()) {
-    await rescheduleEventReminders({ orgId: ctx.orgId, eventId, startsAt });
-  }
-
   await audit(ctx, {
     action: "calendar.update",
     resourceType: "calendar_event",
@@ -392,6 +385,26 @@ export async function updateEvent(ctx: TenantContext, eventId: string, input: Ev
     before: { title: existing.title },
     after: { title: input.title },
   });
+
+  // Reminders are timed from startsAt: a moved event's pending reminders would
+  // otherwise fire at the old time while naming the new one. The move is already
+  // saved, so a reminder failure is logged rather than failing the update (as at
+  // create time, where scheduling is best-effort).
+  const startsAt = new Date(input.startsAt);
+  if (existing.status !== "CANCELED" && startsAt.getTime() !== existing.startsAt.getTime()) {
+    try {
+      await rescheduleEventReminders({ orgId: ctx.orgId, eventId, startsAt });
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: "calendar_reminder_reschedule_failed",
+          orgId: ctx.orgId,
+          eventId,
+          errorName: error instanceof Error ? error.name : typeof error,
+        }),
+      );
+    }
+  }
   return event;
 }
 
