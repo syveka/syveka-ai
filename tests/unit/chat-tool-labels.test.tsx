@@ -57,6 +57,18 @@ describe("chat tool chips", () => {
     }
   });
 
+  it.each(["en", "fi", "ar"])(
+    "shows the Business DNA chip without the tool icon, other chips keep it (%s)",
+    (locale) => {
+      const labels = load(locale).chat.toolLabels as Record<string, string>;
+      show(["proposeBusinessDnaUpdate", "searchContacts"], locale);
+
+      const dnaChip = screen.getByText(labels.proposeBusinessDnaUpdate!);
+      expect(dnaChip.querySelector("svg")).toBeNull();
+      expect(screen.getByText(labels.searchContacts!).querySelector("svg")).not.toBeNull();
+    },
+  );
+
   it("falls back to the name for a tool without a label", () => {
     show(["someFutureTool"]);
     expect(screen.getByText("someFutureTool")).toBeTruthy();

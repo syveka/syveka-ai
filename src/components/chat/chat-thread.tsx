@@ -110,7 +110,7 @@ function MessageBubble({
                 key={`${tool}-${i}`}
                 className="inline-flex items-center gap-1 rounded-full bg-background/60 px-2 py-0.5 text-xs text-muted-foreground"
               >
-                <Wrench className="size-3" />
+                {tool === "proposeBusinessDnaUpdate" ? null : <Wrench className="size-3" />}
                 {isLabeledTool(tool) ? toolLabel(tool) : tool}
               </span>
             ))}
