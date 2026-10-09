@@ -14,6 +14,44 @@ export const maxDuration = 30;
  *  - tool-calls   → execute against the shared tool registry, <800ms budget
  *  - status-update / end-of-call-report → call lifecycle persistence
  */
+/** Tool arguments as an object: Vapi's spec sends them as a JSON string. */
+function toolArguments(raw: unknown): Record<string, unknown> | null {
+  if (raw === undefined || raw === null || raw === "") return {};
+  let value = raw;
+  if (typeof raw === "string") {
+    try {
+      value = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+/**
+ * One requested tool call, normalized to { id, name, arguments }. Vapi's API
+ * spec (ToolCall) nests the call as `function: { name, arguments }` with the
+ * arguments as a JSON string; some of its docs examples show a flat
+ * `{ name, arguments | parameters }`. Both are accepted. `arguments` is null
+ * when they can't be read as an object: such a call is refused, never run
+ * with guessed input.
+ */
+const toolCallSchema = z
+  .object({
+    id: z.string(),
+    name: z.string().optional(),
+    arguments: z.unknown().optional(),
+    parameters: z.unknown().optional(),
+    function: z.object({ name: z.string(), arguments: z.unknown().optional() }).optional(),
+  })
+  .transform((tc) => ({
+    id: tc.id,
+    name: tc.function?.name ?? tc.name ?? "",
+    arguments: toolArguments(tc.function ? tc.function.arguments : (tc.arguments ?? tc.parameters)),
+  }));
+
 const messageSchema = z.object({
   message: z.object({
     type: z.string(),
@@ -27,15 +65,7 @@ const messageSchema = z.object({
         monitor: z.object({ controlUrl: z.string().nullish() }).nullish(),
       })
       .optional(),
-    toolCallList: z
-      .array(
-        z.object({
-          id: z.string(),
-          name: z.string(),
-          arguments: z.record(z.unknown()).optional(),
-        }),
-      )
-      .optional(),
+    toolCallList: z.array(toolCallSchema).optional(),
     status: z.string().optional(),
     endedReason: z.string().optional(),
     durationSeconds: z.number().optional(),
@@ -233,6 +263,9 @@ export async function POST(request: Request): Promise<NextResponse> {
           if (!enabled.has(tc.name)) {
             return { toolCallId: tc.id, result: JSON.stringify({ error: "tool_not_enabled" }) };
           }
+          if (tc.arguments === null) {
+            return { toolCallId: tc.id, result: JSON.stringify({ error: "invalid_arguments" }) };
+          }
           const claimKey = `vapi:tool:${orgId}:${tc.id}`;
           const claimed = await redis.set(claimKey, "1", { nx: true, ex: 60 * 60 * 24 });
           if (claimed === null) {
@@ -241,7 +274,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           try {
             return {
               toolCallId: tc.id,
-              result: await executeTool(identity, tc.name, tc.arguments ?? {}),
+              result: await executeTool(identity, tc.name, tc.arguments),
             };
           } catch (err) {
             await redis.del(claimKey);
