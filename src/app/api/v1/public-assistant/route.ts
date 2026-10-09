@@ -26,10 +26,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "anon";
   // Fails closed: Upstash's Ratelimit *allows* a request when Redis doesn't
   // answer within its timeout (`reason: "timeout"`), and throws on connection
-  // errors. This endpoint is unauthenticated and pays an AI provider per
-  // request, so an unverifiable limit is treated as unavailable.
-  const rateLimit = await rateLimiters.publicAssistant
-    .limit(`public-assistant:${ip}`)
+  // errors; getting the limiter itself throws when Redis isn't configured.
+  // This endpoint is unauthenticated and pays an AI provider per request, so
+  // an unverifiable limit is treated as unavailable.
+  const rateLimit = await Promise.resolve()
+    .then(() => rateLimiters.publicAssistant.limit(`public-assistant:${ip}`))
     .catch(() => null);
   if (!rateLimit || rateLimit.reason === "timeout") {
     return NextResponse.json({ error: "service_unavailable" }, { status: 503 });
