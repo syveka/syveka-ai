@@ -15,8 +15,13 @@ const m = vi.hoisted(() => {
     recordUsage: vi.fn(async (..._args: unknown[]) => undefined),
     requirePermission: vi.fn(async () => ({ orgId: "org-a", userId: "user-1" })),
     generateDealInsights: vi.fn(async () => undefined),
-    assistScheduling: vi.fn(async () => ({ reply: "ok", suggestedSlots: [], timezone: "UTC" })),
-    generateMeetingSummary: vi.fn(async () => ({ summary: "s", followUps: [] })),
+    assistScheduling: vi.fn(async () => ({
+      reply: "ok",
+      suggestedSlots: [],
+      timezone: "UTC",
+      aiUsed: true,
+    })),
+    generateMeetingSummary: vi.fn(async () => ({ summary: "s", followUps: [], aiUsed: true })),
     generateEmailDraft: vi.fn(async () => undefined),
   };
 });
@@ -74,6 +79,17 @@ describe("AI features outside chat are rate-limited and quota-checked", () => {
     expect(m.recordUsage).toHaveBeenCalledTimes(4);
     for (const call of m.recordUsage.mock.calls)
       expect(call.slice(0, 3)).toEqual(["org-a", "AI_MESSAGES", 1]);
+  });
+
+  it("does not count a fallback answer that made no AI call", async () => {
+    m.assistScheduling.mockResolvedValueOnce({
+      reply: "fallback",
+      suggestedSlots: [],
+      timezone: "UTC",
+      aiUsed: false,
+    });
+    await schedulingAssistantAction({}, form({ request: "next week" }));
+    expect(m.recordUsage).not.toHaveBeenCalled();
   });
 
   it("refuses every feature before the provider call when rate-limited", async () => {

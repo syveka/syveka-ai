@@ -121,7 +121,8 @@ export async function schedulingAssistantAction(
     throw e;
   }
   const result = await assistScheduling(ctx, request, { contactId, dealId });
-  await recordAiSpend(ctx, "scheduling_assistant");
+  // Fallback answers (no slots, provider unavailable) made no AI call.
+  if (result.aiUsed) await recordAiSpend(ctx, "scheduling_assistant");
   return {
     reply: result.reply,
     slots: result.suggestedSlots,
@@ -135,6 +136,6 @@ export async function meetingSummaryAction(
   const ctx = await requirePermission("calendar:read");
   await assertAiSpendAllowed(ctx);
   const result = await generateMeetingSummary(ctx, eventId);
-  await recordAiSpend(ctx, "meeting_summary");
+  if (result.aiUsed) await recordAiSpend(ctx, "meeting_summary");
   return { summary: result.summary, followUps: result.followUps };
 }
