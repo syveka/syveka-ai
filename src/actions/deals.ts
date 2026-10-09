@@ -24,6 +24,7 @@ import {
   pipelineStageSchema,
 } from "@/lib/validators/crm";
 import { EntitlementError } from "@/server/services/billing/entitlements";
+import { AiSpendError, assertAiSpendAllowed, recordAiSpend } from "@/server/services/ai-spend";
 
 export type DealActionState = { error?: string; message?: string };
 
@@ -139,9 +140,11 @@ export async function generateDealInsightsAction(
 ): Promise<DealActionState> {
   const ctx = await requirePermission("crm:write");
   try {
+    await assertAiSpendAllowed(ctx);
     await generateDealInsights(ctx, dealId);
-  } catch {
-    return { error: "failed" };
+    await recordAiSpend(ctx, "deal_insights");
+  } catch (e) {
+    return { error: e instanceof AiSpendError ? e.code : "failed" };
   }
   revalidatePath(`/crm/deals/${dealId}`);
   return { message: "insightsGenerated" };

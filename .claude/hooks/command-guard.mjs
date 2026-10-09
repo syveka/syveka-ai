@@ -294,6 +294,182 @@ function isMainBranch(ref) {
   return name === "main" || name === "master";
 }
 
+// A push without a refspec runs from whatever branch is checked out by then, so a switch
+// earlier in the same call (`git switch main && git push`) counts too, not only the branch
+// checked out when the hook runs. Branches the guard can't name (`-`, `@{-1}`, computed
+// values, a detached HEAD) are recorded as null.
+function recordBranchChange(ctx, branch) {
+  const known =
+    typeof branch === "string" &&
+    branch !== "" &&
+    branch !== "-" &&
+    !branch.startsWith("@") &&
+    !isDynamicWord(branch);
+  ctx.branchChanges.push(known ? branch.replace(/^refs\/heads\//, "") : null);
+}
+
+// The verdict for a push that runs from "the current branch". Denied when the last recorded
+// move, or the checkout itself, is main. Asks when main or an unknown branch is checked out
+// along the way: a move that fails (the branch already exists) leaves HEAD where it was.
+function implicitPushDecision(ctx, gitCwd) {
+  const current = currentBranch(gitCwd);
+  const moves = ctx.branchChanges;
+  if (isMainBranch(current) || (moves.length && isMainBranch(moves[moves.length - 1]))) {
+    return "deny";
+  }
+  return [current, ...moves].some((b) => b === null || isMainBranch(b)) ? "ask" : null;
+}
+
+function applyImplicitPushDecision(ctx, gitCwd) {
+  const decision = implicitPushDecision(ctx, gitCwd);
+  if (decision === "deny") ctx.deny("pushes directly to main");
+  else if (decision === "ask") ctx.ask("could not determine which branch this push targets");
+}
+
+// git accepts any unambiguous prefix of a long option (`--cre=main` for `--create=main`), but an
+// exact name always wins: `git switch --force` is not `--force-create`.
+function resolveLongOption(word, options) {
+  const name = word.split("=")[0];
+  if (options.includes(name)) return name;
+  const matches = options.filter((o) => prefixOf(o, name, 3));
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+// Records where `git checkout`/`git switch` leaves HEAD: a created branch, the single
+// branch named, or an unknown (null) one for `--detach`. A checkout with paths doesn't move it.
+// Options may be clustered and take attached values (`-qbmain`, `-Cmain`) or be abbreviated.
+// After `--`, checkout takes paths (HEAD stays put) but switch takes the branch.
+function recordCheckoutTarget(
+  rest,
+  ctx,
+  { shortCreate, shortDetach, longCreate, longValue, longOther, pathsAfterDashDash },
+) {
+  const longOptions = [...longCreate, ...longValue, ...longOther, "--detach", "--track"];
+  let created;
+  let detach = false;
+  let track = false;
+  const positional = [];
+  for (let k = 0; k < rest.length; k++) {
+    const a = rest[k];
+    if (a === "--") {
+      if (!pathsAfterDashDash) positional.push(...rest.slice(k + 1));
+      else if (k + 1 < rest.length) return;
+      break;
+    }
+    if (a.startsWith("--")) {
+      const inline = a.includes("=") ? a.slice(a.indexOf("=") + 1) : undefined;
+      const option = resolveLongOption(a, longOptions);
+      // `git checkout --patch` picks hunks from another commit; HEAD stays put.
+      if (option === "--patch") return;
+      if (longCreate.includes(option)) created = inline ?? rest[++k];
+      else if (option === "--detach") detach = true;
+      else if (option === "--track") track = true;
+      else if (longValue.includes(option) && inline === undefined) k++;
+      continue;
+    }
+    if (isFlag(a)) {
+      for (let c = 1; c < a.length; c++) {
+        if (shortCreate.includes(a[c])) {
+          created = c + 1 < a.length ? a.slice(c + 1) : rest[++k];
+          break;
+        }
+        if (pathsAfterDashDash && a[c] === "p") return;
+        if (shortDetach.includes(a[c])) detach = true;
+        if (a[c] === "t") track = true;
+      }
+      continue;
+    }
+    positional.push(a);
+  }
+  if (created !== undefined) recordBranchChange(ctx, created);
+  else if (detach) recordBranchChange(ctx, null);
+  else if (positional.length === 1) {
+    recordBranchChange(ctx, positional[0]);
+    // --track origin/main (or refs/remotes/origin/main) creates and checks out a local "main":
+    // git strips refs/, then remotes/, then the remote name.
+    const remoteRef = positional[0].replace(/^refs\//, "").replace(/^remotes\//, "");
+    if (track && remoteRef.includes("/")) {
+      recordBranchChange(ctx, remoteRef.slice(remoteRef.indexOf("/") + 1));
+    }
+  }
+}
+
+// Long options of `git switch`/`git checkout` that neither create a branch nor take a value,
+// listed so an exact name or abbreviation is never mistaken for a longer one.
+const SWITCH_LONG_OPTIONS = [
+  "--force",
+  "--discard-changes",
+  "--merge",
+  "--quiet",
+  "--progress",
+  "--no-progress",
+  "--no-track",
+  "--guess",
+  "--no-guess",
+  "--ignore-other-worktrees",
+  "--recurse-submodules",
+  "--no-recurse-submodules",
+];
+const CHECKOUT_LONG_OPTIONS = [
+  ...SWITCH_LONG_OPTIONS.filter((o) => o !== "--discard-changes"),
+  "--patch",
+  "--ours",
+  "--theirs",
+  "--overwrite-ignore",
+  "--no-overwrite-ignore",
+  "--ignore-skip-worktree-bits",
+  "--overlay",
+  "--no-overlay",
+  "--pathspec-file-nul",
+];
+
+// Index of the git subcommand, past global options such as `-C <dir>` and `-c <name>=<value>`.
+function gitSubcommandIndex(args) {
+  const withValue = ["-C", "-c", "--config-env", ...GIT_GLOBAL_VALUE_OPTIONS];
+  let i = 0;
+  while (i < args.length && args[i].startsWith("-")) i += withValue.includes(args[i]) ? 2 : 1;
+  return i;
+}
+
+const GIT_GLOBAL_VALUE_OPTIONS = [
+  "--git-dir",
+  "--work-tree",
+  "--namespace",
+  "--super-prefix",
+  "--attr-source",
+  "--list-cmds",
+];
+
+// Index of a wrapped command's first word after the wrapper's own options. `shortValue` lists
+// short options that take a value (in a cluster like `-rn 1` the last letter takes the next
+// word, `-n1` carries it); `longValue` lists long options that take a separate value, matched
+// by unique prefix; `--` ends the options.
+function skipWrapperOptions(rest, { shortValue = "", longValue = [] } = {}) {
+  let i = 0;
+  while (i < rest.length && isFlag(rest[i])) {
+    const a = rest[i];
+    if (a.startsWith("--")) {
+      i += !a.includes("=") && longValue.some((o) => prefixOf(o, a, 3)) ? 2 : 1;
+      continue;
+    }
+    let consumesNext = false;
+    for (let c = 1; c < a.length; c++) {
+      if (shortValue.includes(a[c])) {
+        consumesNext = c === a.length - 1;
+        break;
+      }
+    }
+    i += consumesNext ? 2 : 1;
+  }
+  if (rest[i] === "--") i++;
+  return i;
+}
+
+// git runs external subcommands case-insensitively on Windows: `git HTTP-PUSH` is http-push.
+function gitSubcommand(word) {
+  return typeof word === "string" && /^http-push$/i.test(word) ? "http-push" : word;
+}
+
 function makeContext(payload) {
   const cwd = typeof payload.cwd === "string" && payload.cwd ? payload.cwd : process.cwd();
   const projectDir = process.env.CLAUDE_PROJECT_DIR || cwd;
@@ -302,6 +478,7 @@ function makeContext(payload) {
     cwd,
     projectDir,
     verdict,
+    branchChanges: [],
     deny: (reason) => verdict.deny.push(reason),
     ask: (reason) => verdict.ask.push(reason),
   };
@@ -643,11 +820,14 @@ function inspectCommand(command, ctx, state) {
     if (["gh", "vercel", "supabase", "prisma", "psql"].includes(name)) {
       ctx.deny(`runs ${name} with arguments read from stdin via xargs, which cannot be inspected`);
     } else if (name === "git") {
-      const sub = args.find((a) => !isFlag(a));
+      const sub = gitSubcommand(args[gitSubcommandIndex(args)]);
       if (
         !sub ||
         [
           "push",
+          "send-pack",
+          "http-push",
+          "symbolic-ref",
           "config",
           "checkout",
           "restore",
@@ -663,8 +843,13 @@ function inspectCommand(command, ctx, state) {
       ) {
         ctx.deny("runs git with arguments read from stdin via xargs, which cannot be inspected");
       }
+      if (sub === "switch") recordBranchChange(ctx, null);
     }
   }
+  if (/^git-remote-/.test(name))
+    ctx.deny(
+      "runs a git transport helper directly; it reads push commands from stdin, which cannot be inspected",
+    );
   if (["cmdkey", "vaultcmd", "get-storedcredential"].includes(name)) {
     ctx.deny("lists or reads stored Windows credentials");
   }
@@ -714,6 +899,10 @@ function inspectCommand(command, ctx, state) {
       return;
     case "git":
       inspectGit(args, ctx, state, assigns);
+      break;
+    case "git-send-pack":
+    case "git-http-push":
+      inspectGitPush(args, ctx, state.cwd, { sendPack: true });
       break;
     case "gh":
       inspectGh(args, ctx);
@@ -792,32 +981,98 @@ function unwrap(initialWords, command, ctx, state, assigns) {
     const rest = words.slice(1);
 
     if (name === "sudo" || name === "doas") {
-      let i = 0;
-      while (i < rest.length && isFlag(rest[i]))
-        i += ["-u", "-g", "-h", "-p"].includes(rest[i]) ? 2 : 1;
+      const i = skipWrapperOptions(rest, {
+        shortValue: "ughpCDrtUTRc",
+        longValue: [
+          "--user",
+          "--group",
+          "--host",
+          "--prompt",
+          "--chdir",
+          "--other-user",
+          "--chroot",
+          "--login-class",
+          "--role",
+          "--type",
+          "--close-from",
+          "--command-timeout",
+        ],
+      });
       words = rest.slice(i);
       continue;
     }
     if (name === "env") {
       let i = 0;
+      // GNU env options, read like getopt: in a short cluster the first value-taking letter
+      // (-u NAME, -C DIR, -S STRING) takes the rest of the word or, when last, the next word;
+      // long options may be abbreviated.
+      // -S splits on whitespace and on its own escapes (\_ separates arguments, \t is a tab);
+      // outside quotes, \c ends the string and a word starting with # comments out the rest of
+      // it, while the arguments after -S are still appended. Rather than re-implement env's
+      // quoting, every plausible reading is inspected and any one of them can deny or ask:
+      // as written, cut at \c with the comment removed, and with \t kept inside its word.
+      const splitScript = (inline, after) => {
+        const words = (text) => text.replace(/\\_/g, " ");
+        const cut = inline.indexOf("\\c");
+        const views = [
+          words(inline).replace(/\\t/g, " "),
+          words(cut === -1 ? inline : inline.slice(0, cut))
+            .replace(/\\t/g, " ")
+            .replace(/(^|\s)#.*$/, "$1"),
+          words(inline).replace(/\\t/g, ""),
+          // env reads \' and \" as literal quote characters, even inside single quotes.
+          words(inline)
+            .replace(/\\t/g, " ")
+            .replace(/\\['"]/g, "_"),
+          // env runs no shell: ; | & ( ) < > and newlines are ordinary characters in a word.
+          words(inline)
+            .replace(/\\t/g, " ")
+            .replace(/[;|&()<>\n]/g, "_"),
+        ];
+        // The arguments after -S are already single words; quoting keeps a # or ; inside one
+        // from becoming a comment or a separator when they are joined into one line.
+        const quotedAfter = after.map((a) => `'${a.replace(/'/g, `'\\''`)}'`);
+        for (const view of new Set(views)) {
+          inspectScript([view, ...quotedAfter].join(" "), "bash", ctx, nestedDepth, state);
+        }
+      };
       while (i < rest.length) {
         const w = rest[i];
-        if (w === "-S" || w === "--split-string" || /^(-S.|--split-string=)/.test(w)) {
-          // env -S 'cmd args' splits its argument into a command line.
-          const inline =
-            w === "-S" || w === "--split-string"
-              ? (rest[i + 1] ?? "")
-              : w.replace(/^(-S|--split-string=)/, "");
-          const after = rest.slice(w === "-S" || w === "--split-string" ? i + 2 : i + 1);
-          inspectScript([inline, ...after].join(" "), "bash", ctx, nestedDepth, state);
-          return null;
+        // A lone "-" is the old spelling of -i (empty environment).
+        if (w === "--" || w === "-") {
+          i += 1;
+          continue;
         }
-        if (w === "-u" || w === "--unset" || w === "-C" || w === "--chdir") i += 2;
-        else if (isFlag(w)) i += 1;
-        else if (/^[A-Za-z_]\w*=/.test(w)) {
+        if (w.startsWith("--")) {
+          const name = w.split("=")[0];
+          const inline = w.includes("=") ? w.slice(w.indexOf("=") + 1) : undefined;
+          if (prefixOf("--split-string", name, 3)) {
+            splitScript(
+              inline ?? rest[i + 1] ?? "",
+              rest.slice(inline === undefined ? i + 2 : i + 1),
+            );
+            return null;
+          }
+          const takesValue = prefixOf("--unset", name, 3) || prefixOf("--chdir", name, 3);
+          i += takesValue && inline === undefined ? 2 : 1;
+          continue;
+        }
+        if (isFlag(w)) {
+          const at = [...w.slice(1)].findIndex((ch) => "uCS".includes(ch)) + 1;
+          if (at > 0 && w[at] === "S") {
+            const attached = w.slice(at + 1);
+            splitScript(attached || (rest[i + 1] ?? ""), rest.slice(attached ? i + 1 : i + 2));
+            return null;
+          }
+          i += at > 0 && at === w.length - 1 ? 2 : 1;
+          continue;
+        }
+        if (/^[A-Za-z_]\w*=/.test(w)) {
           assigns.push(w.split("=")[0]);
           i += 1;
-        } else break;
+          continue;
+        }
+        break;
       }
       if (i >= rest.length) {
         ctx.deny("dumps environment variables");
@@ -837,12 +1092,21 @@ function unwrap(initialWords, command, ctx, state, assigns) {
         "unbuffer",
         "caffeinate",
         "setsid",
+        "winpty",
         "coproc",
         "shx",
       ].includes(name)
     ) {
-      let i = 0;
-      while (i < rest.length && isFlag(rest[i])) i++;
+      const i = skipWrapperOptions(
+        rest,
+        name === "stdbuf"
+          ? { shortValue: "ioe", longValue: ["--input", "--output", "--error"] }
+          : name === "exec"
+            ? { shortValue: "a" }
+            : name === "time"
+              ? { shortValue: "fo", longValue: ["--format", "--output"] }
+              : {},
+      );
       words = rest.slice(i);
       continue;
     }
@@ -877,32 +1141,33 @@ function unwrap(initialWords, command, ctx, state, assigns) {
       return null;
     }
     if (name === "nice" || name === "ionice") {
-      let i = 0;
-      while (i < rest.length && isFlag(rest[i])) i += rest[i] === "-n" || rest[i] === "-c" ? 2 : 1;
+      const i = skipWrapperOptions(rest, {
+        shortValue: "ncpPu",
+        longValue: ["--adjustment", "--class", "--classdata", "--pid", "--pgid", "--uid"],
+      });
       words = rest.slice(i);
       continue;
     }
     if (name === "timeout") {
-      let i = 0;
-      while (i < rest.length && isFlag(rest[i])) i += rest[i] === "-s" || rest[i] === "-k" ? 2 : 1;
+      const i = skipWrapperOptions(rest, {
+        shortValue: "sk",
+        longValue: ["--signal", "--kill-after"],
+      });
       words = rest.slice(i + 1);
       continue;
     }
     if (name === "xargs") {
-      let i = 0;
-      const withValue = [
-        "-I",
-        "-n",
-        "-P",
-        "-L",
-        "-d",
-        "-s",
-        "-E",
-        "-a",
-        "--arg-file",
-        "--delimiter",
-      ];
-      while (i < rest.length && isFlag(rest[i])) i += withValue.includes(rest[i]) ? 2 : 1;
+      const i = skipWrapperOptions(rest, {
+        shortValue: "InPLdsEa",
+        longValue: [
+          "--arg-file",
+          "--delimiter",
+          "--max-args",
+          "--max-procs",
+          "--max-chars",
+          "--process-slot-var",
+        ],
+      });
       words = rest.slice(i);
       state.fromXargs = true;
       continue;
@@ -1127,7 +1392,7 @@ function inspectGit(args, ctx, state, assigns) {
       i += 2;
       continue;
     }
-    if (["--git-dir", "--work-tree", "--namespace", "--exec-path", "--super-prefix"].includes(a)) {
+    if (GIT_GLOBAL_VALUE_OPTIONS.includes(a)) {
       i += 2;
       continue;
     }
@@ -1142,7 +1407,7 @@ function inspectGit(args, ctx, state, assigns) {
   const execVar = allAssigns.find((n) => GIT_EXEC_ENV.test(n));
   if (execVar) ctx.deny(`sets ${execVar}, which makes git run an arbitrary program`);
 
-  const sub = args[i];
+  const sub = gitSubcommand(args[i]);
   const rest = args.slice(i + 1);
   if (!sub) return;
 
@@ -1169,6 +1434,9 @@ function inspectGit(args, ctx, state, assigns) {
   if (dynamic.length) {
     const risky = [
       "push",
+      "send-pack",
+      "http-push",
+      "symbolic-ref",
       "config",
       "update-index",
       "checkout-index",
@@ -1185,6 +1453,10 @@ function inspectGit(args, ctx, state, assigns) {
       ctx.ask(`runs \`git ${sub}\` with arguments computed at run time`);
     }
   }
+  if (/^remote-/i.test(sub))
+    ctx.deny(
+      "runs a git transport helper directly; it reads push commands from stdin, which cannot be inspected",
+    );
   const hasNoVerify = rest.some((a) => prefixOf("--no-verify", a.split("=")[0], 9));
 
   switch (sub) {
@@ -1246,6 +1518,27 @@ function inspectGit(args, ctx, state, assigns) {
       if (!rest.some((a) => ["--abort", "--continue", "--skip", "--quit"].includes(a))) {
         ctx.ask("`git rebase` rewrites history");
       }
+      {
+        const longValueFlags = [
+          "--onto",
+          "--strategy",
+          "--strategy-option",
+          "--exec",
+          "--whitespace",
+          "--empty",
+          "--trailer",
+        ];
+        const positional = [];
+        for (let k = 0; k < rest.length; k++) {
+          const a = rest[k];
+          if (["-s", "-X", "-x", "-C"].includes(a)) k++;
+          else if (!a.includes("=") && longValueFlags.some((o) => prefixOf(o, a, 4))) k++;
+          else if (!isFlag(a)) positional.push(a);
+        }
+        // `git rebase <upstream> <branch>` and `git rebase --root <branch>` check out <branch>.
+        const branchIndex = rest.some((a) => prefixOf("--root", a, 4)) ? 0 : 1;
+        if (positional.length > branchIndex) recordBranchChange(ctx, positional[branchIndex]);
+      }
       break;
     case "reset":
       if (rest.some((a) => a.startsWith("--ha")))
@@ -1290,15 +1583,45 @@ function inspectGit(args, ctx, state, assigns) {
       ) {
         ctx.ask("`git checkout` with paths, -B or --force discards work or overwrites a branch");
       }
+      recordCheckoutTarget(rest, ctx, {
+        shortCreate: "bB",
+        shortDetach: "",
+        longCreate: ["--orphan"],
+        longValue: ["--conflict", "--pathspec-from-file"],
+        longOther: CHECKOUT_LONG_OPTIONS,
+        pathsAfterDashDash: true,
+      });
       break;
     }
-    case "switch":
+    case "switch": {
+      const longCreate = ["--create", "--force-create", "--orphan"];
+      const longOptions = [
+        ...longCreate,
+        "--conflict",
+        "--detach",
+        "--track",
+        ...SWITCH_LONG_OPTIONS,
+      ];
+      const forceOptions = ["--discard-changes", "--force", "--force-create"];
       if (
-        rest.some((a) => ["--discard-changes", "--force", "-f", "-C", "--force-create"].includes(a))
+        rest.some((a) =>
+          a.startsWith("--")
+            ? forceOptions.includes(resolveLongOption(a, longOptions))
+            : isFlag(a) && /^-[^cC]*[fC]/.test(a),
+        )
       ) {
         ctx.ask("`git switch` with --discard-changes/--force discards work or overwrites a branch");
       }
+      recordCheckoutTarget(rest, ctx, {
+        shortCreate: "cC",
+        shortDetach: "d",
+        longCreate,
+        longValue: ["--conflict"],
+        longOther: SWITCH_LONG_OPTIONS,
+        pathsAfterDashDash: false,
+      });
       break;
+    }
     case "restore": {
       const stagedOnly =
         rest.some((a) => a === "--staged" || a === "-S") &&
@@ -1350,6 +1673,7 @@ function inspectGit(args, ctx, state, assigns) {
       break;
     }
     case "stash":
+      if (rest[0] === "branch") recordBranchChange(ctx, rest[1]);
       if (rest[0] === "drop" || rest[0] === "clear")
         ctx.ask(`\`git stash ${rest[0]}\` permanently discards stashed work`);
       break;
@@ -1362,6 +1686,16 @@ function inspectGit(args, ctx, state, assigns) {
         )
       ) {
         ctx.ask("deletes, force-moves or force-renames a branch");
+      }
+      if (
+        rest.some(
+          (a) =>
+            (a.startsWith("--") && prefixOf("--move", a, 4)) ||
+            (/^-[a-zA-Z]+$/.test(a) && /[mM]/.test(a.slice(1))),
+        )
+      ) {
+        const names = rest.filter((a) => !isFlag(a) && a !== "--");
+        if (names.length) recordBranchChange(ctx, names[names.length - 1]);
       }
       break;
     case "worktree":
@@ -1394,6 +1728,47 @@ function inspectGit(args, ctx, state, assigns) {
     case "config":
       inspectGitConfigCommand(rest, ctx);
       break;
+    case "symbolic-ref": {
+      const positional = [];
+      for (let k = 0; k < rest.length; k++) {
+        if (rest[k] === "-m") k++;
+        else if (!isFlag(rest[k]) && rest[k] !== "--") positional.push(rest[k]);
+      }
+      if (positional[0] === "HEAD" && positional.length > 1) recordBranchChange(ctx, positional[1]);
+      break;
+    }
+    case "send-pack":
+    case "http-push":
+      inspectGitPush(rest, ctx, gitCwd, { sendPack: true });
+      break;
+    case "subtree": {
+      const longValue = ["--prefix", "--branch", "--message", "--onto", "--annotate"];
+      const positional = [];
+      for (let k = 0; k < rest.length; k++) {
+        const a = rest[k];
+        if (a === "--") {
+          positional.push(...rest.slice(k + 1));
+          break;
+        }
+        if (/^-[^-]/.test(a)) {
+          // A cluster such as -qP d: the first value-taking letter takes the rest of the word,
+          // or the next word when it is last.
+          const at = [...a.slice(1)].findIndex((ch) => "PbmS".includes(ch));
+          if (at !== -1 && at === a.length - 2 && a[at + 1] !== "S") k++;
+        } else if (a.startsWith("--")) {
+          if (!a.includes("=") && longValue.some((o) => prefixOf(o, a, 3))) k++;
+        } else if (!isFlag(a)) positional.push(a);
+      }
+      if (positional[0] === "push") {
+        const ref = positional[2];
+        if (!ref || isDynamicWord(ref)) {
+          ctx.ask("`git subtree push` to a branch that could not be determined");
+        } else if (isMainBranch(ref.replace(/^\+/, "").split(":").pop())) {
+          ctx.deny("`git subtree push` pushes directly to main");
+        }
+      }
+      break;
+    }
     case "credential":
     case "credential-manager":
     case "credential-store":
@@ -1521,7 +1896,43 @@ function shortClusterHas(args, flag, valueTaking) {
   return false;
 }
 
-function inspectGitPush(args, ctx, gitCwd) {
+// `git push` long options that take a separate value, with the shortest unambiguous prefix.
+const PUSH_VALUE_OPTIONS = [
+  ["--repo", 5],
+  ["--receive-pack", 6],
+  ["--exec", 4],
+  ["--push-option", 5],
+  ["--recurse-submodules", 6],
+];
+
+const SEND_PACK_OPTIONS = new Set([
+  "--all",
+  "--mirror",
+  "--dry-run",
+  "--force",
+  "--force-with-lease",
+  "--verbose",
+  "--quiet",
+  "--progress",
+  "--no-progress",
+  "--thin",
+  "--no-thin",
+  "--atomic",
+  "--no-atomic",
+  "--signed",
+  "--no-signed",
+  "--stdin",
+  "--stateless-rpc",
+  "--helper-status",
+  "--receive-pack",
+  "--exec",
+  "--remote",
+  "--push-option",
+]);
+
+// `sendPack` covers the plumbing that pushes directly (`git send-pack <url> <ref>...`,
+// `git http-push`): no implicit current branch, and with no refs it updates every match.
+function inspectGitPush(args, ctx, gitCwd, { sendPack = false } = {}) {
   const positional = [];
   for (let i = 0; i < args.length; i++) {
     const a = args[i];
@@ -1531,6 +1942,12 @@ function inspectGitPush(args, ctx, gitCwd) {
     }
     if (a.startsWith("--")) {
       const name = a.split("=")[0];
+      if (sendPack && !SEND_PACK_OPTIONS.has(name)) {
+        ctx.deny(
+          `uses an option the guard does not recognise (${name}), so the refs can't be inspected`,
+        );
+        continue;
+      }
       if (prefixOf("--no-verify", name, 9))
         ctx.deny("`git push --no-verify` bypasses git verification hooks");
       else if (
@@ -1542,12 +1959,13 @@ function inspectGitPush(args, ctx, gitCwd) {
         ctx.deny("force-pushes, which can overwrite remote history");
       } else if (prefixOf("--mirror", name, 4))
         ctx.deny("`git push --mirror` overwrites and deletes remote refs");
-      else if (name === "--all" || name === "--branches")
+      else if (prefixOf("--all", name, 4) || prefixOf("--branches", name, 4))
         ctx.deny("pushes every branch, including main");
       else if (prefixOf("--delete", name, 4)) ctx.ask("deletes a remote branch or tag");
       else if (prefixOf("--prune", name, 5)) ctx.ask("`git push --prune` deletes remote branches");
       else if (
-        ["--repo", "--receive-pack", "--exec", "--push-option"].includes(name) &&
+        (PUSH_VALUE_OPTIONS.some(([option, min]) => prefixOf(option, name, min)) ||
+          (sendPack && name === "--remote")) &&
         !a.includes("=")
       )
         i++;
@@ -1568,10 +1986,15 @@ function inspectGitPush(args, ctx, gitCwd) {
     positional.push(a);
   }
   const refspecs = positional.slice(1);
+  if (sendPack && args.includes("--stdin")) {
+    ctx.deny("reads the refs to update from stdin, which cannot be inspected");
+  }
   if (!refspecs.length) {
-    const branch = currentBranch(gitCwd);
-    if (branch === null) ctx.ask("could not determine which branch this push targets");
-    else if (isMainBranch(branch)) ctx.deny("pushes directly to main");
+    if (sendPack) {
+      ctx.deny("without refs it updates every branch both sides have, including main");
+      return;
+    }
+    applyImplicitPushDecision(ctx, gitCwd);
     return;
   }
   for (const spec of refspecs) {
@@ -1584,18 +2007,29 @@ function inspectGitPush(args, ctx, gitCwd) {
       ctx.deny(`pushes a wildcard refspec ("${spec}") that can include main`);
       continue;
     }
-    let target;
+    let targets;
     if (s.includes(":")) {
       const [src, dst] = [s.slice(0, s.indexOf(":")), s.slice(s.indexOf(":") + 1)];
       if (src === "" && dst === "")
         ctx.deny("`git push <remote> :` pushes every matching branch, including main");
       else if (src === "") ctx.ask(`deletes the remote ref "${dst}"`);
-      target = dst;
+      targets = [dst];
+    } else if (s.toUpperCase() === "HEAD" || s === "@") {
+      // send-pack matches a bare HEAD against the remote's HEAD, which points at main.
+      if (!sendPack) {
+        applyImplicitPushDecision(ctx, gitCwd);
+        continue;
+      }
+      targets = ["main"];
     } else {
-      target = s === "HEAD" || s === "@" ? currentBranch(gitCwd) : s;
+      // `@{-1}` (the previous branch) and other reflog forms can name main.
+      targets = [s.startsWith("@{") ? null : s];
     }
-    if (target === null) ctx.ask("could not determine which branch this push targets");
-    else if (isMainBranch(target)) ctx.deny("pushes directly to main");
+    if (targets.some((t) => t === "HEAD" || t === "@")) {
+      ctx.deny("updates the remote HEAD, which points at main");
+    }
+    if (targets.some(isMainBranch)) ctx.deny("pushes directly to main");
+    else if (targets.includes(null)) ctx.ask("could not determine which branch this push targets");
   }
 }
 
@@ -1616,6 +2050,7 @@ function inspectGh(args, ctx) {
   switch (group) {
     case "pr":
       if (sub === "merge") ctx.ask("merges a pull request");
+      if (sub === "checkout") recordBranchChange(ctx, null);
       if (sub === "review" && rest.some((a) => a.startsWith("--approve") || a === "-a"))
         ctx.ask("approves a pull request");
       break;

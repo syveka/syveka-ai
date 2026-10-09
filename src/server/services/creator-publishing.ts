@@ -132,7 +132,13 @@ export async function publishCreatorPost(
     }
 
     // 4. Verify approval / autopilot authorization.
-    if (post.campaign?.approvalMode === "AUTOPILOT" && post.campaign.autopilotEnabled) {
+    // Only this organization's campaign can authorize autopilot: a post linked to another
+    // organization's campaign (stored before campaign ids were checked) needs approval.
+    if (
+      post.campaign?.organizationId === orgId &&
+      post.campaign.approvalMode === "AUTOPILOT" &&
+      post.campaign.autopilotEnabled
+    ) {
       const [postsThisWeek, postsThisMonth] = await Promise.all([
         unscopedPrisma.creatorPost.count({
           where: {

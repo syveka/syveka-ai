@@ -184,6 +184,7 @@ describe("publishCreatorPost", () => {
         approvedContentVersion: null,
         campaignId: "camp-1",
         campaign: {
+          organizationId: "org-a",
           approvalMode: "AUTOPILOT",
           autopilotEnabled: true,
           autopilotRules: {
@@ -249,6 +250,33 @@ describe("publishCreatorPost", () => {
     expect(await publishCreatorPost("org-a", "post-1")).toBe("done");
 
     expect(unscopedPrismaMock.creatorPost.updateMany).not.toHaveBeenCalled();
+    expect(provider.publishPost).not.toHaveBeenCalled();
+  });
+
+  it("never lets another organization's AUTOPILOT campaign skip approval", async () => {
+    unscopedPrismaMock.creatorPost.findFirst.mockResolvedValue(
+      approvedPost({
+        approvalStatus: "PENDING_APPROVAL",
+        approvedContentVersion: null,
+        campaignId: "camp-of-org-b",
+        campaign: {
+          organizationId: "org-b",
+          approvalMode: "AUTOPILOT",
+          autopilotEnabled: true,
+          autopilotRules: {
+            maxPostsPerWeek: 3,
+            allowedPlatforms: ["INSTAGRAM"],
+            allowedHoursStart: 0,
+            allowedHoursEnd: 23,
+            allowedLanguages: ["EN"],
+          },
+        },
+      }),
+    );
+
+    await expect(publishCreatorPost("org-a", "post-1")).rejects.toMatchObject({
+      code: "not_approved",
+    });
     expect(provider.publishPost).not.toHaveBeenCalled();
   });
 });

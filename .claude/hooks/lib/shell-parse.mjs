@@ -439,7 +439,12 @@ function groupCommands(tokens, dialect, depth, result) {
   const flush = () => {
     if (pendingRedirect) current.redirects.push({ op: pendingRedirect, target: null });
     pendingRedirect = null;
-    while (current.words.length && KEYWORDS.has(current.words[0])) current.words.shift();
+    while (current.words.length && KEYWORDS.has(current.words[0])) {
+      // `time -p [--] cmd`: the timing options are not the command.
+      if (current.words.shift() === "time") {
+        while (["-p", "--"].includes(current.words[0])) current.words.shift();
+      }
+    }
     if (current.words.length || current.redirects.length) result.commands.push(current);
     current = { words: [], redirects: [], heredocs: [], dialect, depth, piped: false };
   };

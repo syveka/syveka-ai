@@ -23,6 +23,7 @@ vi.mock("@/server/services/creator-notifications", () => ({
 vi.mock("@/server/jobs/queue", () => ({ enqueue: enqueueMock }));
 
 import {
+  createCreatorPost,
   updatePostContent,
   reviewCreatorPost,
   schedulePost,
@@ -190,6 +191,56 @@ describe("Creator Studio approval state machine", () => {
     const where = db.creatorPost.updateMany.mock.calls[0]![0].where;
     expect(where.publishStatus.in).not.toContain("PUBLISHED");
     expect(where.publishStatus.in).not.toContain("PUBLISHING");
+  });
+});
+
+describe("createCreatorPost only links this organization's campaign and profile", () => {
+  const input = {
+    platform: "INSTAGRAM" as const,
+    assetIds: [],
+    hashtags: [],
+    caption: "hi",
+  };
+  let db: {
+    creatorCampaign: { findFirst: ReturnType<typeof vi.fn> };
+    creatorProfile: { findFirst: ReturnType<typeof vi.fn> };
+    creatorPost: { create: ReturnType<typeof vi.fn> };
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    db = {
+      creatorCampaign: { findFirst: vi.fn(async () => ({ id: "camp-a" })) },
+      creatorProfile: { findFirst: vi.fn(async () => ({ id: "profile-a" })) },
+      creatorPost: { create: vi.fn(async () => ({ id: "post-1" })) },
+    };
+    tenantDbMock.mockReturnValue(db);
+  });
+
+  it("refuses another organization's campaign (an AUTOPILOT one would skip approval)", async () => {
+    db.creatorCampaign.findFirst.mockResolvedValueOnce(null);
+    await expect(
+      createCreatorPost(ctx(), { ...input, campaignId: "camp-of-org-b" } as never),
+    ).rejects.toMatchObject({ code: "campaign_not_found" });
+    expect(db.creatorPost.create).not.toHaveBeenCalled();
+  });
+
+  it("refuses another organization's creator profile", async () => {
+    db.creatorProfile.findFirst.mockResolvedValueOnce(null);
+    await expect(
+      createCreatorPost(ctx(), { ...input, creatorProfileId: "profile-of-org-b" } as never),
+    ).rejects.toMatchObject({ code: "profile_not_found" });
+    expect(db.creatorPost.create).not.toHaveBeenCalled();
+  });
+
+  it("creates a post linked to this organization's campaign and profile", async () => {
+    await createCreatorPost(ctx(), {
+      ...input,
+      campaignId: "camp-a",
+      creatorProfileId: "profile-a",
+    } as never);
+    expect(tenantDbMock).toHaveBeenCalledWith("org-a");
+    expect(db.creatorPost.create).toHaveBeenCalledTimes(1);
   });
 });
 

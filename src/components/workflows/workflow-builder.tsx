@@ -176,7 +176,17 @@ export function WorkflowBuilder({ initial }: { initial?: Initial }) {
           <Button
             variant="outline"
             disabled={pending}
-            onClick={() => startTransition(() => testWorkflowAction(initial.id!))}
+            onClick={() =>
+              startTransition(async () => {
+                setError(null);
+                const res = await testWorkflowAction(initial.id!);
+                if (res.error) {
+                  setError(
+                    res.error === "quota" ? t("testErrors.quota") : t("testErrors.rateLimited"),
+                  );
+                }
+              })
+            }
           >
             {t("testRun")}
           </Button>

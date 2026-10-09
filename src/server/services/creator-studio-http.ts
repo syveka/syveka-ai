@@ -56,7 +56,7 @@ export function handleCreatorStudioError(e: unknown): NextResponse {
     e instanceof PostWorkflowError ||
     e instanceof CampaignError
   ) {
-    const status = e.code === "not_found" ? 404 : 409;
+    const status = e.code === "not_found" || e.code.endsWith("_not_found") ? 404 : 409;
     return NextResponse.json({ error: { code: e.code, message: e.message } }, { status });
   }
   if (e instanceof DocumentIngestionError) {

@@ -558,7 +558,6 @@
       "transferNumber": "Human transfer number"
     },
     "toolNames": {
-      "searchContacts": "Look up callers in CRM",
       "createContact": "Create new contacts",
       "logActivity": "Log call notes to CRM",
       "getCalendarAvailability": "Check calendar availability",
@@ -797,7 +796,11 @@
         "duration": "Wait"
       }
     },
-    "testRun": "Test run"
+    "testRun": "Test run",
+    "testErrors": {
+      "quota": "Your plan doesn't include workflows. Upgrade to run a test.",
+      "rateLimited": "Too many test runs. Try again later."
+    }
   },
   "billingPage": {
     "title": "Billing",
