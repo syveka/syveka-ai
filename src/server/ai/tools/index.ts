@@ -55,12 +55,30 @@ type ToolDef<S extends z.ZodTypeAny> = {
    */
   confirmedSchema?: z.ZodTypeAny;
   permission: Permission;
+  /**
+   * Whether a user's call may only run from a confirmed chat action. Leave
+   * it out to use the default: every tool whose permission isn't a ":read"
+   * one (see toolRequiresConfirmation).
+   */
+  requiresConfirmation?: boolean;
   execute: (
     identity: ToolIdentity,
     input: z.infer<S>,
     context?: ToolActionContext,
   ) => Promise<unknown>;
 };
+
+/**
+ * Whether a user's call of this tool needs a confirmed chat action to run:
+ * the tool's own setting, else true for every tool whose permission isn't a
+ * ":read" one.
+ */
+export function toolRequiresConfirmation(tool: {
+  permission: Permission;
+  requiresConfirmation?: boolean;
+}): boolean {
+  return tool.requiresConfirmation ?? !tool.permission.endsWith(":read");
+}
 
 function defineTool<S extends z.ZodTypeAny>(def: ToolDef<S>): ToolDef<S> {
   return def;
@@ -481,12 +499,13 @@ export const READ_ONLY_TOOL_NAMES: readonly string[] = TOOL_REGISTRY.filter((t) 
 ).map((t) => t.name);
 
 /**
- * Tools that create or change data. In typed chat they never run directly:
- * the call is stored as a pending action and runs only after the user
- * confirms it (see src/server/ai/tool-actions.ts).
+ * Tools that create or change data (those requiring confirmation). In typed
+ * chat they never run directly: the call is stored as a pending action and
+ * runs only after the user confirms it (see src/server/ai/tool-actions.ts).
+ * executeTool also refuses a user's call of one without a confirmed action.
  */
-export const WRITE_TOOL_NAMES: readonly string[] = TOOL_REGISTRY.filter(
-  (t) => !READ_ONLY_TOOL_NAMES.includes(t.name),
+export const WRITE_TOOL_NAMES: readonly string[] = TOOL_REGISTRY.filter((t) =>
+  toolRequiresConfirmation(t),
 ).map((t) => t.name);
 
 export function anthropicToolsFor(
@@ -665,6 +684,16 @@ export async function executeTool(
   const prepared = prepareToolCall(identity, name, rawInput);
   if (!prepared.ok) return prepared.error;
   const { tool } = prepared;
+  // Defence in depth: typed chat only runs these from a confirmed action
+  // (decideToolAction passes its id). Voice runs them directly; its limits
+  // are enforced by the voice webhook.
+  if (
+    toolRequiresConfirmation(tool) &&
+    identity.actorType === "user" &&
+    !options.action?.actionId
+  ) {
+    return JSON.stringify({ error: "confirmation_required" });
+  }
   try {
     const result = await tool.execute(identity, prepared.input, options.action ?? {});
     return JSON.stringify(result);

@@ -36,6 +36,7 @@ vi.mock("@/server/db/tenant", () => ({
       create: m.contactCreate,
       findFirst: m.contactFindFirst,
       findFirstOrThrow: vi.fn(async () => ({ id: "c" })),
+      findMany: vi.fn(async () => []),
     },
     activity: { create: m.activityCreate },
     calendarEvent: { findMany: vi.fn(async () => []) },
@@ -63,7 +64,14 @@ import {
   type EvalClient,
   type ProposedAction,
 } from "@/server/ai/tool-actions";
-import { executeTool, type ToolIdentity } from "@/server/ai/tools";
+import {
+  READ_ONLY_TOOL_NAMES,
+  TOOL_REGISTRY,
+  WRITE_TOOL_NAMES,
+  executeTool,
+  toolRequiresConfirmation,
+  type ToolIdentity,
+} from "@/server/ai/tools";
 
 /** An isolated in-memory action store with the scripts' semantics. */
 const store: EvalClient = {
@@ -525,5 +533,119 @@ describe("POST /api/v1/ai/actions/{id}", () => {
       ...override,
     };
     expect((await post(id, body)).status).toBe(400);
+  });
+});
+
+describe("executeTool's own confirmation check (defence in depth)", () => {
+  const owner: ToolIdentity = { ...me, role: "OWNER" };
+  const writeCalls: Array<[string, Record<string, unknown>]> = [
+    ["createContact", { firstName: "Maija", email: "maija@example.com" }],
+    [
+      "logActivity",
+      { contactId: "66666666-6666-4666-8666-666666666666", type: "NOTE", subject: "Call" },
+    ],
+    ["bookMeeting", booking()],
+    [
+      "proposeBusinessDnaUpdate",
+      {
+        set: { displayName: "Autokorjaamo Virtanen" },
+        basis: { exists: false, fields: { displayName: null } },
+      },
+    ],
+  ];
+
+  it("the tools requiring confirmation are exactly the four write tools", () => {
+    expect([...WRITE_TOOL_NAMES].sort()).toEqual(
+      ["bookMeeting", "createContact", "logActivity", "proposeBusinessDnaUpdate"].sort(),
+    );
+    expect(writeCalls.map(([name]) => name).sort()).toEqual([...WRITE_TOOL_NAMES].sort());
+  });
+
+  it("defaults to: every tool whose permission isn't a ':read' one; an explicit setting wins", () => {
+    for (const tool of TOOL_REGISTRY) {
+      expect(toolRequiresConfirmation(tool)).toBe(!tool.permission.endsWith(":read"));
+    }
+    expect(toolRequiresConfirmation({ permission: "crm:write" })).toBe(true);
+    expect(toolRequiresConfirmation({ permission: "crm:read" })).toBe(false);
+    expect(toolRequiresConfirmation({ permission: "crm:write", requiresConfirmation: false })).toBe(
+      false,
+    );
+    expect(toolRequiresConfirmation({ permission: "crm:read", requiresConfirmation: true })).toBe(
+      true,
+    );
+  });
+
+  it.each(writeCalls)(
+    "a user's %s call without a confirmed action is refused and writes nothing",
+    async (name, input) => {
+      const result = JSON.parse(await executeTool(owner, name, input));
+
+      expect(result).toEqual({ error: "confirmation_required" });
+      nothingWritten();
+      expect(m.transaction).not.toHaveBeenCalled();
+      expect(m.audit).not.toHaveBeenCalled();
+    },
+  );
+
+  it("an action without an id is not a confirmed action", async () => {
+    const result = JSON.parse(
+      await executeTool(owner, "createContact", { firstName: "Maija" }, { action: {} }),
+    );
+
+    expect(result).toEqual({ error: "confirmation_required" });
+    expect(m.contactCreate).not.toHaveBeenCalled();
+  });
+
+  it("checks input and permission first (their errors are unchanged)", async () => {
+    expect(JSON.parse(await executeTool(owner, "createContact", {})).error).toBe("invalid_input");
+    const viewer: ToolIdentity = { ...me, role: "VIEWER" };
+    expect(JSON.parse(await executeTool(viewer, "createContact", { firstName: "Maija" }))).toEqual({
+      error: "permission_denied",
+    });
+  });
+
+  it("with a confirmed action the write tools run as before", async () => {
+    const action = { action: { actionId: "a-1", conversationId: CONV } };
+
+    expect(
+      JSON.parse(await executeTool(me, "createContact", { firstName: "Maija" }, action)),
+    ).toMatchObject({ id: "contact-1" });
+    expect(
+      JSON.parse(
+        await executeTool(
+          me,
+          "logActivity",
+          { contactId: "66666666-6666-4666-8666-666666666666", type: "NOTE", subject: "Call" },
+          action,
+        ),
+      ),
+    ).not.toHaveProperty("error");
+    expect(JSON.parse(await executeTool(me, "bookMeeting", booking(), action))).toMatchObject({
+      booked: true,
+      eventId: "evt-1",
+    });
+    expect(m.contactCreate).toHaveBeenCalledTimes(1);
+    expect(m.activityCreate).toHaveBeenCalledTimes(1);
+    expect(m.tx.calendarEvent.create).toHaveBeenCalledTimes(1);
+  });
+
+  it("the voice assistant's identity still runs createContact directly", async () => {
+    const voice: ToolIdentity = { ...me, actorType: "voice_ai" };
+
+    const result = JSON.parse(await executeTool(voice, "createContact", { firstName: "Maija" }));
+
+    expect(result).toMatchObject({ id: "contact-1" });
+    expect(m.contactCreate).toHaveBeenCalledTimes(1);
+  });
+
+  it("read tools are unaffected: they run without an action", async () => {
+    expect(READ_ONLY_TOOL_NAMES.some((n) => WRITE_TOOL_NAMES.includes(n))).toBe(false);
+    for (const [name, input] of [
+      ["searchKnowledgeBase", { query: "prices" }],
+      ["searchContacts", { query: "Maija" }],
+      ["getCalendarAvailability", { date: "2026-10-05" }],
+    ] as const) {
+      expect(JSON.parse(await executeTool(me, name, input))).not.toHaveProperty("error");
+    }
   });
 });
