@@ -523,16 +523,29 @@ export async function POST(request: Request): Promise<NextResponse> {
             }
             results.push({ stepId: step.id, status: "ok", output: truncated });
             if (completedHere) {
-              await recordUsage(orgId, "AI_TOKENS_OUT", res.usage.output_tokens, {
-                feature: "workflow",
-                workflowId,
-              });
-              await recordUsage(orgId, "AI_MESSAGES", 1, {
-                feature: "workflow",
-                workflowId,
-                runId: run.id,
-                stepId: step.id,
-              });
+              // Best-effort: the step is already SUCCEEDED, so a recording
+              // failure must not fail it - that would reclaim it on retry
+              // and call the provider again.
+              const usage = [
+                ["AI_TOKENS_OUT", res.usage.output_tokens, { feature: "workflow", workflowId }],
+                [
+                  "AI_MESSAGES",
+                  1,
+                  { feature: "workflow", workflowId, runId: run.id, stepId: step.id },
+                ],
+              ] as const;
+              for (const [metric, quantity, metadata] of usage) {
+                await recordUsage(orgId, metric, quantity, metadata).catch((usageErr: unknown) => {
+                  console.error("run-workflow: usage recording failed", {
+                    orgId,
+                    workflowId,
+                    runId: run.id,
+                    stepId: step.id,
+                    metric,
+                    errorClass: usageErr instanceof Error ? usageErr.name : typeof usageErr,
+                  });
+                });
+              }
             }
           } catch (stepErr) {
             if (!(stepErr instanceof StepFencedError)) {

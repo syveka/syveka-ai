@@ -319,6 +319,35 @@ describe("ai.generate AI quota", () => {
     expect(aiUsageCalls()).toHaveLength(0);
   });
 
+  it("a usage-recording failure after completion leaves the step SUCCEEDED and the run going", async () => {
+    fakeDb.workflow.findFirst.mockResolvedValue(workflowWith([aiStep, notifyStep]));
+    fx.recordUsage.mockImplementation(async (_orgId, metric) => {
+      if (metric === "AI_TOKENS_OUT" || metric === "AI_MESSAGES") {
+        throw new Error("usage store down: secret-ish detail");
+      }
+    });
+    const errorLog = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    try {
+      const res = await post(bookingTrigger);
+
+      expect(res.status).toBe(200);
+      expect(await res.json()).toEqual({ ok: true });
+      expect(fx.anthropicCreate).toHaveBeenCalledTimes(1);
+      const aiExec = [...fakeDb.stepExecs.values()].find((s) => s.stepId === "s1")!;
+      expect(aiExec.status).toBe("SUCCEEDED");
+      expect([...fakeDb.runs.values()][0]!.status).toBe("SUCCEEDED");
+      expect(failureNotifications()).toHaveLength(0);
+      // Both metrics were still attempted; the log carries ids, not the error text.
+      expect(aiUsageCalls()).toHaveLength(2);
+      expect(errorLog).toHaveBeenCalledTimes(2);
+      expect(JSON.stringify(errorLog.mock.calls)).not.toContain("secret-ish detail");
+    } finally {
+      errorLog.mockRestore();
+      fx.recordUsage.mockImplementation(async () => undefined);
+    }
+  });
+
   it("a completion that lost the fencing race records no usage", async () => {
     fakeDb.workflow.findFirst.mockResolvedValue(workflowWith([aiStep]));
     // Another worker reclaims the step while the provider call is in flight.
