@@ -122,7 +122,7 @@ class FakeGenerationStore {
 function makeDb(store: FakeGenerationStore, orgId: string) {
   return {
     creatorProfile: {
-      findFirst: vi.fn(async () => ({ id: "profile-1" })),
+      findFirst: vi.fn(async () => ({ id: "profile-1", consentConfirmedAt: new Date() })),
       findFirstOrThrow: vi.fn(async () => ({
         id: "profile-1",
         consentConfirmedAt: new Date(),

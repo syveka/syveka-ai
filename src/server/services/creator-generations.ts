@@ -516,6 +516,23 @@ async function assertOwnedProfile(ctx: TenantContext, creatorProfileId: string |
   if (!profile) throw new CreatorProfileError("profile_not_found", "Creator profile not found.");
 }
 
+// Same consent gate as requireActiveProfileWithReferences, for generations that use a profile's
+// likeness without needing its reference set (video-from-image animates one existing asset).
+async function assertConsentedProfile(ctx: TenantContext, creatorProfileId: string | undefined) {
+  if (!creatorProfileId) return;
+  const profile = await tenantDb(ctx.orgId).creatorProfile.findFirst({
+    where: { id: creatorProfileId },
+    select: { id: true, consentConfirmedAt: true },
+  });
+  if (!profile) throw new CreatorProfileError("profile_not_found", "Creator profile not found.");
+  if (!profile.consentConfirmedAt) {
+    throw new CreatorProfileError(
+      "consent_required",
+      "Creator consent must be confirmed before generating content.",
+    );
+  }
+}
+
 async function assertUsableTemplate(ctx: TenantContext, templateId: string | undefined) {
   if (!templateId) return;
   // Global templates have no organization; any other template must be this organization's.
@@ -707,7 +724,10 @@ export async function requestVideoFromImageGeneration(
   const sourceAsset = await db.creatorReferenceAsset.findFirstOrThrow({
     where: { id: input.sourceAssetId },
   });
-  await assertOwnedProfile(ctx, input.creatorProfileId);
+  await assertConsentedProfile(ctx, input.creatorProfileId);
+  if (sourceAsset.creatorProfileId !== input.creatorProfileId) {
+    await assertConsentedProfile(ctx, sourceAsset.creatorProfileId);
+  }
   const provider = getCreatorMediaProvider();
   const creditCost = getCreatorGenerationCreditCost("IMAGE_TO_VIDEO", provider.name, "default", {
     quality: input.quality,
