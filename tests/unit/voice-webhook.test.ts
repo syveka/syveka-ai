@@ -100,6 +100,31 @@ describe("Vapi voice webhook — end-of-call-report replay protection", () => {
     expect(mocks.callOrder).toEqual(["upsert", "enqueue", "redis-set"]);
   });
 
+  it("records the full call result even when the in-progress status update was never received", async () => {
+    await POST(
+      eocrRequest({
+        artifact: { messages: [{ role: "user", message: "hi" }], recordingUrl: "https://r/1" },
+      }),
+    );
+
+    const args = mocks.voiceCallUpsert.mock.calls[0]![0] as {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    };
+    // post-call bills from durationSeconds and summarizes the transcript.
+    expect(args.create).toMatchObject({
+      organizationId: "org-a",
+      status: "COMPLETED",
+      durationSeconds: 42,
+      costCents: 50,
+      endedReason: "customer-ended-call",
+      transcript: [{ role: "user", message: "hi" }],
+      recordingUrl: "https://r/1",
+    });
+    expect(args.create.endedAt).toBeInstanceOf(Date);
+    expect(args.update).toMatchObject({ durationSeconds: 42, costCents: 50 });
+  });
+
   it("duplicate delivery (marker already present): persistence stays safe, no re-enqueue, duplicate response", async () => {
     mocks.redisGet.mockResolvedValue("1");
     const response = await POST(eocrRequest());
