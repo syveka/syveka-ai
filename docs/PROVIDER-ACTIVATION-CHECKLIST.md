@@ -430,6 +430,127 @@ days and need periodic re-subscription via the scheduled `calendar-sync` job.
 - [ ] **Manual verification required**: connect a real Microsoft 365 account, confirm calendars
       sync, and confirm a Graph change-notification subscription survives renewal.
 
+## 11. Sentry (error tracking)
+
+**Status: activation and live verification are PENDING.** #226 is merged and has passed staging
+release #122, but only in **inactive mode**: no DSN is configured, so the SDK isn't loaded and
+nothing is sent. Passing that release isn't evidence that telemetry works.
+
+**Optional:** `SENTRY_DSN` (server, Node.js runtime) and `NEXT_PUBLIC_SENTRY_DSN` (browser, inlined
+at build time).
+
+- **Unset, empty or malformed means off.** A malformed value logs
+  `error_tracking_disabled: SENTRY_DSN is not a valid DSN` (without the value) and leaves tracking
+  off.
+- **Accepted format:** `https://<public key>@<host>/<numeric project id>`, with no secret key, query
+  or path prefix (`src/lib/observability/dsn.ts`).
+
+**What is sent once active (`src/lib/observability/`):**
+
+- error events only;
+- no tracing or trace propagation, Session Replay, feedback, sessions, logs or console capture;
+- every v11 `dataCollection` category off;
+- exception messages replaced by fixed descriptions;
+- paths as app route templates;
+- URLs only on the app's own `NEXT_PUBLIC_APP_URL` origin;
+- no stack-frame function or module names;
+- no user, organization, headers, cookies, bodies or extras.
+
+### Scope for staging
+
+1. **Sentry project.** Create a **dedicated staging project** (platform: Next.js), separate from
+   production.
+   - **Why separate:** the stable staging alias is deployed as the staging Vercel project's
+     _Production_ target, so the SDK's default environment label would read `production`. A
+     separate project avoids mixing staging events with real ones.
+   - **Project settings:** server-side data scrubbing on, "Prevent storing of IP addresses" on,
+     Session Replay not enabled.
+2. **Vercel project:** the **staging** project, the one in the `STAGING_VERCEL_PROJECT_ID` secret.
+   **Never** the production project. Add both variables, with the same client-key DSN, to **both**
+   environments, because `staging-release.yml` builds twice:
+   - **Preview:** the per-run deployment (`vercel pull --environment=preview`);
+   - **Production:** the stable alias `syveka-ai-staging.vercel.app`
+     (`vercel pull --environment=production`).
+3. **Browser DSN build-time requirement.**
+   - **Inlined at build:** `NEXT_PUBLIC_SENTRY_DSN` is inlined when the workflow runs `vercel build`,
+     using values fetched by `vercel pull`. It must exist **before** the release run starts.
+   - **Not Sensitive:** don't mark it **Sensitive**, or `vercel pull` won't return its value and the
+     browser build silently ships without Sentry.
+   - **Runtime DSN:** `SENTRY_DSN` is read only at runtime, so it may be Sensitive.
+4. **`NEXT_PUBLIC_APP_URL`** in each environment must be the origin the browser actually uses, or
+   reported URLs are omitted. That's safe, but less useful.
+5. **Redeploy.** Env changes apply only to new deployments, so dispatch one staging release after
+   setting them. Its gate needs owner approval, as usual.
+
+**Production** follows the same steps on the production Vercel project's Production environment,
+with a separate production Sentry project, delivered through a production release. That is a
+separate, protected change.
+
+### Proposed verification (no customer content, no new endpoint)
+
+1. **Browser DSN was built in.** Run
+   `curl -sI https://syveka-ai-staging.vercel.app/en/login | grep -i content-security-policy`.
+   - **Expected:** `connect-src` gains exactly one new origin, the DSN's ingest origin, such as
+     `https://o<id>.ingest.<region>.sentry.io`.
+   - **Before activation:** on 2026-10-04 it listed only `'self'` and the Supabase origins.
+   - **If it's still absent,** the browser DSN didn't reach the build.
+2. **Browser synthetic event.** Open the staging login page signed out, so no customer data is on
+   the page. In the devtools console run `setTimeout(() => { throw new Error("synthetic") }, 0)`.
+   - **Network tab:** expect a single `POST …/envelope/` to the ingest origin with status 200.
+3. **Server synthetic event.** Optional, and it needs owner approval because it sends one event. On
+   an operator machine, run against the staging Sentry project:
+
+   ```sh
+   SENTRY_DSN='<staging DSN>' npx tsx -e "(async () => { const S = await import('@sentry/nextjs'); const Sentry = S.default ?? S; const m = await import('./src/lib/observability/options.ts'); const { sentryOptions } = m.default ?? m; Sentry.init(sentryOptions(process.env.SENTRY_DSN)); console.log('dsn configured:', Boolean(Sentry.getClient()?.getDsn())); Sentry.captureException(new Error('synthetic')); console.log('flushed:', await Sentry.flush(5000)); })()"
+   ```
+
+   - **Dry run:** checked on 2026-10-04 with **no** DSN. The command runs, prints
+     `dsn configured: false`, and sends nothing.
+   - **What it proves:** the DSN, the project and the server SDK options plus scrubbing.
+   - **What it doesn't prove:** that the deployed runtime has `SENTRY_DSN`. That's confirmed by the
+     first organic server error, or by a separately reviewed, authenticated mechanism, which isn't
+     proposed here.
+
+4. **Inspect the received payload** (Sentry → the issue → event JSON):
+   - **Message:** `exception.values[].value` is a fixed description (here
+     `Error message withheld`).
+   - **Absent fields:** there's no `user`, `extra`, or `request.headers`/`cookies`/`data`/
+     `query_string`.
+   - **Request URL:** `request.url`, if present, is a route template on the app's origin, such as
+     `https://syveka-ai-staging.vercel.app/[locale]/login`.
+   - **Contexts:** only `runtime`, `os`, `browser` and `device` (name, version and a few facts), plus
+     `nextjs` for server events.
+   - **Frames:** file, line and column only, with no function names. Source maps aren't uploaded, so
+     frames stay minified.
+   - **Breadcrumbs:** only `navigation`, `fetch`, `xhr` or `http`, carrying method, template or
+     trusted origin, and status.
+5. **Tracing and replay stay disabled:**
+   - Sentry → Traces/Performance shows no transactions or spans for the project.
+   - Replays is empty.
+   - Usage or stats show no sessions.
+   - The browser envelope contains only `event` items.
+6. **Record the result** in the release record. Only then mark error tracking active.
+
+**Known limits:**
+
+- **Release:** no release is set in the browser. On the server it's `VERCEL_GIT_COMMIT_SHA`, which
+  CLI prebuilt deploys may not provide.
+- **Source maps:** there's no source-map upload; `withSentryConfig` isn't used.
+- **Messages:** generic unless they match a known shape.
+
+### Disable or roll back
+
+- **Immediately, no rebuild:**
+  1. In the Sentry project, open Client Keys (DSN) and **disable** the key. Ingest then rejects
+     events and stores nothing.
+  2. Browsers still attempt requests, which the CSP allows, until the next build.
+- **Fully:**
+  1. Remove both variables from the staging Vercel project, in **both** Preview and Production.
+  2. Dispatch one staging release (owner approves the gate).
+  3. Confirm the CSP `connect-src` no longer lists the ingest origin and `/api/health` is healthy.
+- **Production:** the same steps on the production project, through a production release.
+- **No code change is needed to disable it.** Without a DSN the SDK isn't loaded.
+
 ## Provider-independent setup
 
 - `CALENDAR_TOKEN_ENCRYPTION_KEY` — 32-byte base64 (`openssl rand -base64 32`), required by
