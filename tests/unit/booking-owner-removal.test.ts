@@ -98,6 +98,7 @@ const tx = {
   calendarConnection: { findMany: vi.fn(async () => []) },
   calendarEvent: {
     findFirst: vi.fn(async () => null),
+    findMany: vi.fn(async () => []), // recurring-series check: none here
     create: vi.fn(async ({ data }: { data: Row }) => {
       const row = { id: nextId("evt"), ...data };
       s.events.push(row);
