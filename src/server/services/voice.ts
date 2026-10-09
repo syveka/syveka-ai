@@ -321,11 +321,12 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
     ? [...new Set(["searchKnowledgeBase", ...enabledTools])]
     : enabledTools;
 
-  // Mandatory AI disclosure (§13.3, §16.5) is prepended server-side.
+  // Mandatory AI disclosure (§13.3, §16.5): the fixed notice is spoken in the first message
+  // (buildVoiceFirstMessage); the prompt keeps the model honest about it for the rest of the call.
   const disclosure =
     assistant.language === "FI"
-      ? "Aloita kertomalla, että olet tekoälyavustaja ja puhelu voidaan tallentaa."
-      : "Start by disclosing that you are an AI assistant and the call may be recorded.";
+      ? "Puhelun alussa on jo kerrottu, että olet tekoälyavustaja ja puhelu voidaan tallentaa. Älä toista sitä, mutta vahvista kysyttäessä, että olet tekoälyavustaja."
+      : "The call has already opened with a notice that you are an AI assistant and the call may be recorded. Don't repeat it, but if asked, confirm that you are an AI assistant.";
 
   // Business DNA is optional — the assistant degrades gracefully (falls back
   // to just the human-authored prompt) when the org hasn't filled it in yet.
