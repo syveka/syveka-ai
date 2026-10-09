@@ -22,6 +22,9 @@ const messageSchema = z.object({
         id: z.string(),
         assistantId: z.string().optional(),
         customer: z.object({ number: z.string().optional() }).optional(),
+        // Live Call Control URL. Unauthenticated unless the assistant enables
+        // monitorPlan.controlAuthenticationEnabled, so it is treated as a secret.
+        monitor: z.object({ controlUrl: z.string().nullish() }).nullish(),
       })
       .optional(),
     toolCallList: z
@@ -61,6 +64,7 @@ async function resolveAssistant(
       enabledTools: true,
       useKnowledgeBase: true,
       isActive: true,
+      language: true,
       organization: {
         select: { members: { where: { role: "OWNER" }, select: { userId: true }, take: 1 } },
       },
@@ -68,22 +72,97 @@ async function resolveAssistant(
   });
 }
 
-export async function POST(request: Request): Promise<NextResponse> {
-  const [
-    { verifyVapiSignature },
-    { unscopedPrisma },
-    { executeTool },
-    { getMonthUsage, getEntitlements },
-    { enqueue },
-    { redis },
-  ] = await Promise.all([
-    import("@/server/integrations/vapi"),
-    import("@/server/db/tenant"),
-    import("@/server/ai/tools"),
-    import("@/server/services/billing/entitlements"),
-    import("@/server/jobs/queue"),
-    import("@/server/integrations/redis"),
+/**
+ * Usage is recorded only after a call ends, so calls running in parallel all
+ * pass this check until the first of them is billed.
+ */
+async function voiceQuotaExceeded(orgId: string): Promise<boolean> {
+  const { getMonthUsage, getEntitlements } = await import("@/server/services/billing/entitlements");
+  const [used, ent] = await Promise.all([
+    getMonthUsage(orgId, "VOICE_MINUTES"),
+    getEntitlements(orgId),
   ]);
+  return used >= ent.voiceMinutesMonth;
+}
+
+/** Spoken before an over-quota call ends, in the assistant's language. */
+const QUOTA_EXCEEDED_GOODBYE: Record<"FI" | "EN" | "AR", string> = {
+  FI: "Valitettavasti tämä linja ei voi juuri nyt ottaa vastaan puheluita. Näkemiin.",
+  EN: "Sorry, this line can't take more calls right now. Goodbye.",
+  AR: "عذرًا، لا يمكن لهذا الخط استقبال مكالمات أخرى الآن. مع السلامة.",
+};
+
+const END_CALL_TIMEOUT_MS = 3_000;
+
+/** Vapi's own hosts over https only: the body is signed, but it never picks an arbitrary fetch target. */
+function isVapiControlUrl(raw: string): boolean {
+  let url: URL;
+  try {
+    url = new URL(raw);
+  } catch {
+    return false;
+  }
+  return (
+    url.protocol === "https:" &&
+    url.username === "" &&
+    url.password === "" &&
+    url.port === "" &&
+    (url.hostname === "vapi.ai" || url.hostname.endsWith(".vapi.ai"))
+  );
+}
+
+/**
+ * Vapi ignores any reply to a status-update, so ending a call has to go through
+ * Live Call Control. Failure-tolerant: the webhook still answers 200. Logs ids
+ * and the error class only; the control URL is a capability and never logged.
+ */
+async function endCallViaControlUrl(
+  controlUrl: string | null | undefined,
+  ids: { orgId: string; vapiCallId: string },
+): Promise<void> {
+  if (!controlUrl || !isVapiControlUrl(controlUrl)) {
+    console.warn(
+      JSON.stringify({
+        event: "voice_quota_end_call_skipped",
+        reason: controlUrl ? "invalid_control_url" : "missing_control_url",
+        ...ids,
+      }),
+    );
+    return;
+  }
+  try {
+    const res = await fetch(controlUrl, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ type: "end-call" }),
+      redirect: "error",
+      signal: AbortSignal.timeout(END_CALL_TIMEOUT_MS),
+    });
+    if (!res.ok) {
+      console.warn(
+        JSON.stringify({ event: "voice_quota_end_call_failed", status: res.status, ...ids }),
+      );
+    }
+  } catch (err) {
+    console.warn(
+      JSON.stringify({
+        event: "voice_quota_end_call_failed",
+        name: err instanceof Error ? err.name : "unknown",
+        ...ids,
+      }),
+    );
+  }
+}
+
+export async function POST(request: Request): Promise<NextResponse> {
+  const [{ verifyVapiSignature }, { unscopedPrisma }, { executeTool }, { enqueue }, { redis }] =
+    await Promise.all([
+      import("@/server/integrations/vapi"),
+      import("@/server/db/tenant"),
+      import("@/server/ai/tools"),
+      import("@/server/jobs/queue"),
+      import("@/server/integrations/redis"),
+    ]);
 
   const rawBody = await request.text();
   const signature = request.headers.get("x-vapi-signature") ?? request.headers.get("x-vapi-secret");
@@ -114,6 +193,26 @@ export async function POST(request: Request): Promise<NextResponse> {
           toolCallId: tc.id,
           result: JSON.stringify({ error: "assistant_disabled" }),
         }));
+        return NextResponse.json({ results });
+      }
+
+      // Over quota: run no tool, say goodbye and end the call. Both the
+      // request-failed message (endCallAfterSpokenEnabled) and Live Call
+      // Control are used so the call ends even if one path is unavailable.
+      if (await voiceQuotaExceeded(orgId)) {
+        const content = QUOTA_EXCEEDED_GOODBYE[assistant.language] ?? QUOTA_EXCEEDED_GOODBYE.EN;
+        const results = (message.toolCallList ?? []).map((tc) => ({
+          toolCallId: tc.id,
+          name: tc.name,
+          error: "quota_exceeded",
+          message: { type: "request-failed", content, endCallAfterSpokenEnabled: true },
+        }));
+        if (message.call) {
+          await endCallViaControlUrl(message.call.monitor?.controlUrl, {
+            orgId,
+            vapiCallId: message.call.id,
+          });
+        }
         return NextResponse.json({ results });
       }
 
@@ -162,13 +261,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     // ── Call started: entitlement gate + record (§14.2) ──
     case "status-update": {
       if (message.status === "in-progress" && message.call) {
-        const [used, ent] = await Promise.all([
-          getMonthUsage(orgId, "VOICE_MINUTES"),
-          getEntitlements(orgId),
-        ]);
-        if (used >= ent.voiceMinutesMonth) {
-          // over quota → instruct Vapi to end the call
-          return NextResponse.json({ action: "end-call" });
+        if (await voiceQuotaExceeded(orgId)) {
+          // Over quota: no call row, and end the call through Live Call Control
+          // (Vapi does not act on a reply to status-update).
+          await endCallViaControlUrl(message.call.monitor?.controlUrl, {
+            orgId,
+            vapiCallId: message.call.id,
+          });
+          return NextResponse.json({ ok: true });
         }
         await unscopedPrisma.voiceCall.upsert({
           where: { vapiCallId: message.call.id },
