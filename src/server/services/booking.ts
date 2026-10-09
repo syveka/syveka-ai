@@ -12,6 +12,7 @@ import {
   type WeeklyRule,
 } from "@/server/calendar/slots";
 import { isValidTimezone } from "@/server/calendar/timezone";
+import { busyIntervals, busyWindowWhere, recurringSeriesWhere } from "@/server/calendar/busy";
 import {
   lockBookableBookingType,
   lockCalendarMember,
@@ -297,14 +298,15 @@ async function getOwnerBusy(
       organizationId: orgId,
       deletedAt: null,
       status: { not: "CANCELED" },
-      OR: [{ ownerId }, { ownerId: null, createdById: ownerId }],
-      startsAt: { lt: to },
-      endsAt: { gt: from },
+      AND: [
+        { OR: [{ ownerId }, { ownerId: null, createdById: ownerId }] },
+        busyWindowWhere(from, to),
+      ],
     },
-    select: { startsAt: true, endsAt: true },
+    select: { startsAt: true, endsAt: true, recurrenceRule: true },
     take: 1000,
   });
-  return events;
+  return busyIntervals(events, from, to);
 }
 
 export async function getPublicSlots(params: {
@@ -374,6 +376,23 @@ async function assertSlotStillFree(
     select: { id: true },
   });
   if (conflict) throw new BookingError("Slot no longer available", "slot_taken");
+
+  // A recurring series is stored once: check its occurrences in the window too.
+  const series = await tx.calendarEvent.findMany({
+    where: {
+      organizationId: orgId,
+      deletedAt: null,
+      status: { not: "CANCELED" },
+      OR: [{ ownerId }, { ownerId: null, createdById: ownerId }],
+      ...recurringSeriesWhere(guardEnd),
+      ...(excludeEventId ? { id: { not: excludeEventId } } : {}),
+    },
+    select: { startsAt: true, endsAt: true, recurrenceRule: true },
+    take: 500,
+  });
+  if (busyIntervals(series, guardStart, guardEnd).length > 0) {
+    throw new BookingError("Slot no longer available", "slot_taken");
+  }
 }
 
 /**

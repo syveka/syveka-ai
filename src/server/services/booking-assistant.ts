@@ -4,6 +4,7 @@ import { routeModel } from "@/server/ai/router";
 import { anthropic } from "@/server/integrations/anthropic";
 import { tenantDb } from "@/server/db/tenant";
 import { computeAvailableSlots, type WeeklyRule } from "@/server/calendar/slots";
+import { busyIntervals, busyWindowWhere } from "@/server/calendar/busy";
 import { DEFAULT_WEEKLY_RULES } from "./booking";
 import { neutralizeTagBreakout } from "@/server/ai/prompts/untrusted";
 import { buildBusinessDnaPromptBlock, getBusinessDnaContext } from "@/server/business-dna/context";
@@ -61,11 +62,12 @@ export async function suggestAvailableTimes(
       where: {
         deletedAt: null,
         status: { not: "CANCELED" },
-        OR: [{ ownerId: ctx.userId }, { ownerId: null, createdById: ctx.userId }],
-        startsAt: { lt: to },
-        endsAt: { gt: now },
+        AND: [
+          { OR: [{ ownerId: ctx.userId }, { ownerId: null, createdById: ctx.userId }] },
+          busyWindowWhere(now, to),
+        ],
       },
-      select: { startsAt: true, endsAt: true },
+      select: { startsAt: true, endsAt: true, recurrenceRule: true },
       take: 500,
     }),
   ]);
@@ -74,7 +76,7 @@ export async function suggestAvailableTimes(
     timezone: parts.timezone,
     rules: parts.rules,
     overrides: [],
-    busy: events,
+    busy: busyIntervals(events, now, to),
     from: now,
     to,
     now,
