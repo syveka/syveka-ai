@@ -569,6 +569,16 @@ describe("confirming a Business DNA change", () => {
     expect(m.profiles.get(ORG)!.displayName).toBe("Other name");
   });
 
+  it("treats a profile created elsewhere as stale even when it set none of the proposed fields", async () => {
+    // The user was shown a change to a profile that didn't exist yet. A profile
+    // created meanwhile, even with only other fields, is not what they saw.
+    const p = await propose({ set: { industry: "Car repair" } });
+    m.profiles.set(ORG, { ...EMPTY, id: "bd-x", organizationId: ORG, displayName: "Other name" });
+
+    expect(await decide(p.action!)).toMatchObject({ status: "not_done", reason: "stale" });
+    expect(m.profiles.get(ORG)).toMatchObject({ displayName: "Other name", industry: null });
+  });
+
   it("locks the organization and its profile row before reading, so no save lands in between", async () => {
     m.profiles.set(ORG, { ...EMPTY, id: "bd-1", organizationId: ORG, industry: "Car repair" });
     const p = await propose({ set: { industry: "Van repair" } });

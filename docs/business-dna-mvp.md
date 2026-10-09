@@ -31,7 +31,7 @@ line items) owned by that profile. Both are accessed through the normal Syveka s
 REST surface:
 
 - `GET /api/v1/business-dna` / `PUT /api/v1/business-dna` — read / create-or-replace the root
-  profile.
+  profile. `PUT` requires `expectedUpdatedAt` (see "Saves never overwrite newer changes" below).
 - `GET /api/v1/business-dna/services` / `POST /api/v1/business-dna/services` — list / create a
   service.
 - `PATCH /api/v1/business-dna/services/:id` / `DELETE /api/v1/business-dna/services/:id` —
