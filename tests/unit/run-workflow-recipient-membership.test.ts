@@ -110,6 +110,12 @@ const db = {
       return { count: 1 };
     }),
   },
+  // Read by the route's isOrganizationActive() guard.
+  organization: {
+    findFirst: vi.fn(async ({ where }: { where: { id: string } }) =>
+      state.deletedOrgs.has(where.id) ? null : { id: where.id },
+    ),
+  },
   organizationMember: {
     findFirst: vi.fn(
       async ({
@@ -141,7 +147,12 @@ const db = {
 };
 
 vi.mock("@/server/jobs/verify", () => ({ verifyJobRequest: async (req: Request) => req.text() }));
-vi.mock("@/server/db/tenant", () => ({ unscopedPrisma: db }));
+// A getter: the guard below is loaded before `db` is initialized.
+vi.mock("@/server/db/tenant", () => ({
+  get unscopedPrisma() {
+    return db;
+  },
+}));
 vi.mock("@/server/jobs/queue", () => ({ enqueue: vi.fn(async () => undefined) }));
 vi.mock("@/server/integrations/anthropic", () => ({
   anthropic: { messages: { create: vi.fn() } },
@@ -153,6 +164,9 @@ vi.mock("@/server/services/billing/entitlements", () => ({
 }));
 vi.mock("../../emails/workflow-notification", () => ({ WorkflowNotificationEmail: () => null }));
 
+// Loaded up front, as in jobs-organization-guard.test.ts: a first-time
+// concurrent dynamic import of a mocked module can resolve the real one.
+import "@/server/jobs/organization-guard";
 import { POST } from "@/app/api/v1/jobs/run-workflow/route";
 
 function deliver(overrides: Record<string, unknown> = {}) {
