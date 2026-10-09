@@ -1572,6 +1572,16 @@ describe("command-guard: final review follow-ups (implicit push targets, push pl
     ]);
     await expectAll(fromFeature, "allow", ["env -iS 'node -v'", "env --chdir=. ls"]);
   });
+
+  it("reads env's shortest abbreviations, -S escapes and the lone `-`", async () => {
+    await expectAll(fromFeature, "deny", [
+      "env --u X git push origin main",
+      "env --c . git push origin main",
+      "env -S 'git\\_push\\_origin\\_main'",
+      "env - /usr/bin/git push origin main",
+    ]);
+    await expectAll(fromFeature, "allow", ["env -S 'node\\_-v'", "env - node -v"]);
+  });
 });
 
 describe("guardrail runtime: portable internal timeout", () => {

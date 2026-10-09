@@ -1006,12 +1006,15 @@ function unwrap(initialWords, command, ctx, state, assigns) {
       // GNU env options, read like getopt: in a short cluster the first value-taking letter
       // (-u NAME, -C DIR, -S STRING) takes the rest of the word or, when last, the next word;
       // long options may be abbreviated.
+      // -S splits on whitespace and on its own escapes (\_ separates arguments, \t is a tab).
       const splitScript = (inline, after) => {
-        inspectScript([inline, ...after].join(" "), "bash", ctx, nestedDepth, state);
+        const split = inline.replace(/\\_/g, " ").replace(/\\t/g, " ");
+        inspectScript([split, ...after].join(" "), "bash", ctx, nestedDepth, state);
       };
       while (i < rest.length) {
         const w = rest[i];
-        if (w === "--") {
+        // A lone "-" is the old spelling of -i (empty environment).
+        if (w === "--" || w === "-") {
           i += 1;
           continue;
         }
@@ -1025,7 +1028,7 @@ function unwrap(initialWords, command, ctx, state, assigns) {
             );
             return null;
           }
-          const takesValue = prefixOf("--unset", name, 4) || prefixOf("--chdir", name, 4);
+          const takesValue = prefixOf("--unset", name, 3) || prefixOf("--chdir", name, 3);
           i += takesValue && inline === undefined ? 2 : 1;
           continue;
         }
