@@ -1003,33 +1003,48 @@ function unwrap(initialWords, command, ctx, state, assigns) {
     }
     if (name === "env") {
       let i = 0;
+      // GNU env options, read like getopt: in a short cluster the first value-taking letter
+      // (-u NAME, -C DIR, -S STRING) takes the rest of the word or, when last, the next word;
+      // long options may be abbreviated.
+      const splitScript = (inline, after) => {
+        inspectScript([inline, ...after].join(" "), "bash", ctx, nestedDepth, state);
+      };
       while (i < rest.length) {
         const w = rest[i];
-        if (w === "-S" || w === "--split-string" || /^(-S.|--split-string=)/.test(w)) {
-          // env -S 'cmd args' splits its argument into a command line.
-          const inline =
-            w === "-S" || w === "--split-string"
-              ? (rest[i + 1] ?? "")
-              : w.replace(/^(-S|--split-string=)/, "");
-          const after = rest.slice(w === "-S" || w === "--split-string" ? i + 2 : i + 1);
-          inspectScript([inline, ...after].join(" "), "bash", ctx, nestedDepth, state);
-          return null;
-        }
         if (w === "--") {
           i += 1;
           continue;
         }
-        if (
-          w === "--unset" ||
-          w === "--chdir" ||
-          (/^-[^-]/.test(w) && /[uC]$/.test(w) && !/[uC]/.test(w.slice(1, -1)))
-        )
-          i += 2;
-        else if (isFlag(w)) i += 1;
-        else if (/^[A-Za-z_]\w*=/.test(w)) {
+        if (w.startsWith("--")) {
+          const name = w.split("=")[0];
+          const inline = w.includes("=") ? w.slice(w.indexOf("=") + 1) : undefined;
+          if (prefixOf("--split-string", name, 3)) {
+            splitScript(
+              inline ?? rest[i + 1] ?? "",
+              rest.slice(inline === undefined ? i + 2 : i + 1),
+            );
+            return null;
+          }
+          const takesValue = prefixOf("--unset", name, 4) || prefixOf("--chdir", name, 4);
+          i += takesValue && inline === undefined ? 2 : 1;
+          continue;
+        }
+        if (isFlag(w)) {
+          const at = [...w.slice(1)].findIndex((ch) => "uCS".includes(ch)) + 1;
+          if (at > 0 && w[at] === "S") {
+            const attached = w.slice(at + 1);
+            splitScript(attached || (rest[i + 1] ?? ""), rest.slice(attached ? i + 1 : i + 2));
+            return null;
+          }
+          i += at > 0 && at === w.length - 1 ? 2 : 1;
+          continue;
+        }
+        if (/^[A-Za-z_]\w*=/.test(w)) {
           assigns.push(w.split("=")[0]);
           i += 1;
-        } else break;
+          continue;
+        }
+        break;
       }
       if (i >= rest.length) {
         ctx.deny("dumps environment variables");

@@ -1561,6 +1561,17 @@ describe("command-guard: final review follow-ups (implicit push targets, push pl
       "env -u X node -v",
     ]);
   });
+
+  it("reads env -S inside option clusters and abbreviated env long options", async () => {
+    await expectAll(fromFeature, "deny", [
+      "env -iS 'git push origin main'",
+      "env -0S 'git push origin main'",
+      "env --split-strin 'git push origin main'",
+      "env --unse X git push origin main",
+      "env --ch . git push origin main",
+    ]);
+    await expectAll(fromFeature, "allow", ["env -iS 'node -v'", "env --chdir=. ls"]);
+  });
 });
 
 describe("guardrail runtime: portable internal timeout", () => {
