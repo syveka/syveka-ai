@@ -14,12 +14,17 @@ const mocks = vi.hoisted(() => {
   const txSubscriptionUpsert = vi.fn(async (_args: unknown) => ({}));
   const txSubscriptionUpdate = vi.fn(async (_args: unknown) => ({}));
   const txSubscriptionUpdateMany = vi.fn(async (_args: unknown) => ({ count: 1 }));
+  const txSubscriptionFindUnique = vi.fn(
+    async (_args: unknown) =>
+      null as { stripeSubscriptionId: string | null; status: string } | null,
+  );
   const txStripeWebhookEventUpdate = vi.fn(async (_args: LedgerWriteArgs) => ({}));
   const tx = {
     subscription: {
       upsert: txSubscriptionUpsert,
       update: txSubscriptionUpdate,
       updateMany: txSubscriptionUpdateMany,
+      findUnique: txSubscriptionFindUnique,
     },
     stripeWebhookEvent: { update: txStripeWebhookEventUpdate },
   };
@@ -28,6 +33,7 @@ const mocks = vi.hoisted(() => {
     txSubscriptionUpsert,
     txSubscriptionUpdate,
     txSubscriptionUpdateMany,
+    txSubscriptionFindUnique,
     txStripeWebhookEventUpdate,
     ledgerCreate: vi.fn(async (_args: unknown) => ({})),
     ledgerFindUnique: vi.fn(async (_args: unknown) => null as Record<string, unknown> | null),
@@ -419,6 +425,51 @@ describe("existing subscription and entitlement behavior is unchanged", () => {
       data: { status: "PAST_DUE" },
     });
     expect(mocks.invalidateEntitlements).toHaveBeenCalledWith("org-a");
+  });
+
+  it("an event for another subscription never overwrites the org's live current subscription", async () => {
+    const event = fakeEvent(
+      "customer.subscription.updated",
+      fakeSubscription({ id: "sub_old", cancel_at_period_end: true }),
+    );
+    mocks.constructEvent.mockReturnValue(event);
+    mocks.txSubscriptionFindUnique.mockResolvedValue({
+      stripeSubscriptionId: "sub_current",
+      status: "ACTIVE",
+    });
+
+    const res = await POST(webhookRequest("{}"));
+
+    expect(res.status).toBe(200);
+    expect(mocks.txSubscriptionUpsert).not.toHaveBeenCalled();
+    expect(mocks.txStripeWebhookEventUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
+    );
+  });
+
+  it("a new subscription takes over once the current one is canceled", async () => {
+    const event = fakeEvent("customer.subscription.updated", fakeSubscription({ id: "sub_new" }));
+    mocks.constructEvent.mockReturnValue(event);
+    mocks.txSubscriptionFindUnique.mockResolvedValue({
+      stripeSubscriptionId: "sub_old",
+      status: "CANCELED",
+    });
+
+    await POST(webhookRequest("{}"));
+
+    expect(mocks.txSubscriptionUpsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("a failed one-off invoice (no subscription) changes no subscription", async () => {
+    const event = fakeEvent("invoice.payment_failed", { id: "in_1", customer: "cus_123" });
+    mocks.constructEvent.mockReturnValue(event);
+    mocks.organizationFindUnique.mockResolvedValue({ id: "org-a" });
+
+    const res = await POST(webhookRequest("{}"));
+
+    expect(res.status).toBe(200);
+    expect(mocks.txSubscriptionUpdateMany).not.toHaveBeenCalled();
+    expect(mocks.txSubscriptionUpdate).not.toHaveBeenCalled();
   });
 
   it("invoice.paid retrieves the subscription and clears PAST_DUE via the same upsert path", async () => {

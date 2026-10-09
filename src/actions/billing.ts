@@ -32,11 +32,7 @@ export async function startCheckoutAction(plan: Plan, interval: BillingInterval)
     where: { organizationId: ctx.orgId },
     select: { stripeSubscriptionId: true, status: true },
   });
-  if (
-    org.stripeCustomerId &&
-    current?.stripeSubscriptionId &&
-    ["ACTIVE", "TRIALING", "PAST_DUE"].includes(current.status)
-  ) {
+  if (org.stripeCustomerId && current?.stripeSubscriptionId && current.status !== "CANCELED") {
     redirect(await createPortalSession(org.stripeCustomerId));
   }
 

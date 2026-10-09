@@ -50,7 +50,7 @@ beforeEach(() => {
 });
 
 describe("startCheckoutAction", () => {
-  for (const status of ["ACTIVE", "TRIALING", "PAST_DUE"]) {
+  for (const status of ["ACTIVE", "TRIALING", "PAST_DUE", "INCOMPLETE", "PAUSED"]) {
     it(`sends an org with a ${status} subscription to the billing portal, never a second checkout`, async () => {
       m.subscriptionFindUnique.mockResolvedValueOnce({ stripeSubscriptionId: "sub_1", status });
 

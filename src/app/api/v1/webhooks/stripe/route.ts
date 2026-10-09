@@ -72,6 +72,21 @@ async function applySubscriptionUpsert(
   const orgId = sub.metadata.orgId;
   if (!orgId) throw new Error(`Subscription ${sub.id} missing orgId metadata`);
 
+  // An organization has one current subscription. Events for any other subscription (an
+  // older one still running out its period, or one created outside the app) must not overwrite
+  // it; a different subscription takes over only once the current one is canceled.
+  const existing = await tx.subscription.findUnique({
+    where: { organizationId: orgId },
+    select: { stripeSubscriptionId: true, status: true },
+  });
+  if (
+    existing?.stripeSubscriptionId &&
+    existing.stripeSubscriptionId !== sub.id &&
+    existing.status !== "CANCELED"
+  ) {
+    return orgId;
+  }
+
   const item = sub.items.data[0];
   const priceId = item?.price.id ?? "";
   const plan = deps.planForPriceId(priceId);
@@ -252,7 +267,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         // restore a paid plan). Apply the subscription's current state instead
         // -- fetched before the transaction opens, as for invoice.paid.
         const sub = await stripe.subscriptions.retrieve(event.data.object.id);
-        if (sub.status === "canceled") {
+        if (sub.status === "canceled" || sub.status === "incomplete_expired") {
           // customer.subscription.deleted owns the downgrade; a stale update
           // must neither revive nor downgrade anything on its own.
           await markCompleted(unscopedPrisma, event.id, resolvedOrgId, sub.id);
@@ -343,6 +358,10 @@ export async function POST(request: Request): Promise<NextResponse> {
             await markCompleted(unscopedPrisma, event.id, resolvedOrgId, invoice.id ?? null);
             break;
           }
+        } else {
+          // A one-off invoice says nothing about the subscription's standing.
+          await markCompleted(unscopedPrisma, event.id, resolvedOrgId, invoice.id ?? null);
+          break;
         }
         const customerId =
           typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
@@ -357,10 +376,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             // Only the subscription whose invoice failed: a failure for another (older)
             // subscription must not mark the org's current one PAST_DUE.
             await tx.subscription.updateMany({
-              where: {
-                organizationId: org.id,
-                ...(failedSubId ? { stripeSubscriptionId: failedSubId } : {}),
-              },
+              where: { organizationId: org.id, stripeSubscriptionId: failedSubId },
               data: { status: "PAST_DUE" },
             });
             await tx.stripeWebhookEvent.update({
