@@ -32,7 +32,17 @@ const NO_PROFILE_REASON =
 async function openBusinessDna(page: Page) {
   await page.goto("/settings/business-dna");
   await expect(page.locator("#displayName")).toBeVisible();
+  // #displayName is server-rendered: wait until the page has hydrated, so
+  // typing and Save go through React (a server action), not the no-JS form post.
+  await page.waitForLoadState("networkidle");
 }
+
+/**
+ * The profile form's own alerts. Scoped to the form because Next.js always
+ * mounts a screen-reader-only role="alert" route announcer on the page (see
+ * loginFormAlert in helpers/auth.ts).
+ */
+const formAlert = (page: Page) => page.locator("#business-dna-form").getByRole("alert");
 
 /** The form carries the loaded profile's version; empty when there is no profile yet. */
 async function hasSavedProfile(page: Page) {
@@ -59,13 +69,13 @@ async function save(page: Page) {
 
 async function expectSaved(page: Page) {
   await save(page);
-  await expect(page.getByRole("alert")).toHaveCount(0);
+  await expect(formAlert(page)).toHaveCount(0);
   await expect(page.getByText(FI.saved)).toBeVisible();
 }
 
 async function expectConflict(page: Page) {
   await save(page);
-  await expect(page.getByRole("alert")).toContainText(FI.conflict);
+  await expect(formAlert(page)).toContainText(FI.conflict);
 }
 
 /** The persisted value, read from a freshly loaded page. */
