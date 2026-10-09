@@ -9,7 +9,15 @@ const mocks = vi.hoisted(() => ({
     role: "MANAGER",
     locale: "en",
   })),
-  upsertBusinessDNA: vi.fn(async () => undefined),
+  upsertBusinessDNA: vi.fn(
+    async (
+      _ctx: unknown,
+      _input: unknown,
+      _expectedUpdatedAt: string | null,
+    ): Promise<
+      { ok: true; record: { id: string; updatedAt: Date } } | { ok: false; reason: "conflict" }
+    > => ({ ok: true, record: { id: "bd-1", updatedAt: new Date("2026-10-09T12:00:00.000Z") } }),
+  ),
   businessDnaWriteLimit: vi.fn(async (_key: string) => ({ success: true })),
 }));
 
@@ -48,7 +56,7 @@ describe("updateBusinessDnaAction", () => {
   it("saves successfully with only a display name set", async () => {
     const result = await updateBusinessDnaAction({}, formData({ displayName: "Acme Oy" }));
 
-    expect(result).toEqual({ message: "saved" });
+    expect(result).toEqual({ message: "saved", updatedAt: "2026-10-09T12:00:00.000Z" });
     expect(mocks.upsertBusinessDNA).toHaveBeenCalledTimes(1);
     expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
@@ -86,7 +94,7 @@ describe("updateBusinessDnaAction", () => {
 
     const result = await updateBusinessDnaAction({}, fd);
 
-    expect(result).toEqual({ message: "saved" });
+    expect(result).toEqual({ message: "saved", updatedAt: "2026-10-09T12:00:00.000Z" });
     expect(mocks.upsertBusinessDNA).toHaveBeenCalledTimes(1);
     expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
@@ -110,7 +118,7 @@ describe("updateBusinessDnaAction", () => {
   it("ignores React's own $ACTION_* progressive-enhancement fields instead of failing .strict() on them (the exact save -> restore incident)", async () => {
     const saveTemp = formData({ displayName: "E2E-temp-1789218181759" });
     const firstResult = await updateBusinessDnaAction({}, saveTemp);
-    expect(firstResult).toEqual({ message: "saved" });
+    expect(firstResult).toEqual({ message: "saved", updatedAt: "2026-10-09T12:00:00.000Z" });
 
     const restoreOriginal = formData({ displayName: "" });
     restoreOriginal.set("$ACTION_REF_2", "");
@@ -123,7 +131,7 @@ describe("updateBusinessDnaAction", () => {
       restoreOriginal,
     );
 
-    expect(secondResult).toEqual({ message: "saved" });
+    expect(secondResult).toEqual({ message: "saved", updatedAt: "2026-10-09T12:00:00.000Z" });
     expect(mocks.upsertBusinessDNA).toHaveBeenCalledTimes(2);
     expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
@@ -182,6 +190,48 @@ describe("updateBusinessDnaAction rate limit", () => {
     const state = await updateBusinessDnaAction({}, formData({ displayName: "Acme" }));
 
     expect(state).toEqual({ error: "failed" });
+    expect(mocks.upsertBusinessDNA).not.toHaveBeenCalled();
+  });
+});
+
+describe("updateBusinessDnaAction version check", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("saves only the version the form was loaded with", async () => {
+    await updateBusinessDnaAction(
+      {},
+      formData({ displayName: "Acme", expectedUpdatedAt: "2026-10-09T10:00:00.000Z" }),
+    );
+
+    expect(mocks.upsertBusinessDNA.mock.calls[0]![2]).toBe("2026-10-09T10:00:00.000Z");
+  });
+
+  it("treats a form loaded without a profile as replacing no version", async () => {
+    await updateBusinessDnaAction({}, formData({ displayName: "Acme", expectedUpdatedAt: "" }));
+
+    expect(mocks.upsertBusinessDNA.mock.calls[0]![2]).toBeNull();
+  });
+
+  it("reports a conflict, saving nothing, when the profile changed since (e.g. in chat)", async () => {
+    mocks.upsertBusinessDNA.mockResolvedValueOnce({ ok: false, reason: "conflict" });
+
+    const state = await updateBusinessDnaAction(
+      {},
+      formData({ displayName: "Stale", expectedUpdatedAt: "2026-10-09T10:00:00.000Z" }),
+    );
+
+    expect(state).toEqual({ error: "conflict" });
+  });
+
+  it("rejects a malformed version instead of saving without a check", async () => {
+    const state = await updateBusinessDnaAction(
+      {},
+      formData({ displayName: "Acme", expectedUpdatedAt: "yesterday" }),
+    );
+
+    expect(state).toEqual({ error: "invalid_input" });
     expect(mocks.upsertBusinessDNA).not.toHaveBeenCalled();
   });
 });

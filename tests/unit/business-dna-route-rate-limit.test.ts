@@ -12,7 +12,16 @@ const m = vi.hoisted(() => ({
     remaining: 29,
     reset: Date.now() + 60_000,
   })),
-  upsert: vi.fn(async () => ({ id: "bd-1" })),
+  upsert: vi.fn(
+    async (
+      _ctx: unknown,
+      _input: unknown,
+      _expectedUpdatedAt: string | null,
+    ): Promise<{ ok: true; record: { id: string } } | { ok: false; reason: "conflict" }> => ({
+      ok: true,
+      record: { id: "bd-1" },
+    }),
+  ),
   role: "MANAGER" as string,
 }));
 
@@ -59,7 +68,7 @@ beforeEach(() => {
 
 describe("PUT /api/v1/business-dna rate limit", () => {
   it("counts each save against the organization's limit", async () => {
-    const res = await put({ displayName: "Acme" });
+    const res = await put({ displayName: "Acme", expectedUpdatedAt: null });
 
     expect(res.status).toBe(200);
     expect(m.limit).toHaveBeenCalledWith("org-a");
@@ -74,7 +83,7 @@ describe("PUT /api/v1/business-dna rate limit", () => {
       reset: Date.now() + 120_000,
     });
 
-    const res = await put({ displayName: "Acme" });
+    const res = await put({ displayName: "Acme", expectedUpdatedAt: null });
 
     expect(res.status).toBe(429);
     expect(await res.json()).toEqual({ error: { code: "rate_limited" } });
@@ -85,7 +94,7 @@ describe("PUT /api/v1/business-dna rate limit", () => {
   it("checks the permission before counting anything", async () => {
     m.role = "MEMBER";
 
-    const res = await put({ displayName: "Acme" });
+    const res = await put({ displayName: "Acme", expectedUpdatedAt: null });
 
     expect(res.status).toBe(403);
     expect(m.limit).not.toHaveBeenCalled();
@@ -95,10 +104,43 @@ describe("PUT /api/v1/business-dna rate limit", () => {
   it("answers 503 and saves nothing when the limit can't be checked", async () => {
     m.limit.mockRejectedValueOnce(new Error("ECONNREFUSED"));
 
-    const res = await put({ displayName: "Acme" });
+    const res = await put({ displayName: "Acme", expectedUpdatedAt: null });
 
     expect(res.status).toBe(503);
     expect(await res.json()).toEqual({ error: { code: "service_unavailable" } });
+    expect(m.upsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("PUT /api/v1/business-dna version check", () => {
+  it("requires the version being replaced, so a client can't save without the check", async () => {
+    const res = await put({ displayName: "Acme" });
+
+    expect(res.status).toBe(400);
+    expect(m.upsert).not.toHaveBeenCalled();
+  });
+
+  it("passes the loaded version to the save, separately from the profile fields", async () => {
+    await put({ displayName: "Acme", expectedUpdatedAt: "2026-10-09T10:00:00.000Z" });
+
+    const [, input, expected] = m.upsert.mock.calls[0]!;
+    expect(expected).toBe("2026-10-09T10:00:00.000Z");
+    expect(input).not.toHaveProperty("expectedUpdatedAt");
+  });
+
+  it("answers 409 and saves nothing when the profile changed since it was loaded", async () => {
+    m.upsert.mockResolvedValueOnce({ ok: false, reason: "conflict" });
+
+    const res = await put({ displayName: "Stale", expectedUpdatedAt: "2026-10-09T10:00:00.000Z" });
+
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: { code: "conflict" } });
+  });
+
+  it("rejects a malformed version", async () => {
+    const res = await put({ displayName: "Acme", expectedUpdatedAt: "yesterday" });
+
+    expect(res.status).toBe(400);
     expect(m.upsert).not.toHaveBeenCalled();
   });
 });

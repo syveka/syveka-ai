@@ -5,6 +5,7 @@ import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { auditLogData } from "./audit";
 import { resyncActiveAssistants } from "./voice";
 import {
+  BUSINESS_DNA_PATCH_FIELDS,
   WEEKDAYS,
   type BusinessDnaChange,
   type BusinessDnaDisplayValue,
@@ -38,8 +39,6 @@ const PATCH_SELECT = {
   supportedLocales: true,
   timezone: true,
   brandTone: true,
-  communicationStyle: true,
-  responseInstructions: true,
   openingHours: true,
   cancellationPolicy: true,
   bookingPolicy: true,
@@ -144,10 +143,26 @@ function display(
   return { type: "text", value: String(value) };
 }
 
-const changedFields = (patch: BusinessDnaPatch): BusinessDnaPatchField[] => [
-  ...(Object.keys(patch.set ?? {}) as BusinessDnaPatchField[]),
-  ...(patch.clear ?? []),
-];
+/** A patch names a field chat may not change (e.g. the AI's own instructions). */
+export class BusinessDnaFieldNotAllowedError extends Error {
+  constructor() {
+    super("Business DNA field not changeable from chat");
+    this.name = "BusinessDnaFieldNotAllowedError";
+  }
+}
+
+const CHAT_FIELDS: ReadonlySet<string> = new Set(BUSINESS_DNA_PATCH_FIELDS);
+
+/**
+ * The fields a patch changes. Checked against the chat allowlist here too,
+ * not only by the input schema: preview and apply both go through this, so
+ * no input can reach a settings-only field however it was produced.
+ */
+function changedFields(patch: BusinessDnaPatch): BusinessDnaPatchField[] {
+  const fields = [...Object.keys(patch.set ?? {}), ...(patch.clear ?? [])];
+  if (fields.some((field) => !CHAT_FIELDS.has(field))) throw new BusinessDnaFieldNotAllowedError();
+  return fields as BusinessDnaPatchField[];
+}
 
 export type BusinessDnaPatchPreview =
   | {
@@ -180,11 +195,15 @@ export async function previewBusinessDnaPatch(
       field === "openingHours" && patch.set?.openingHours
         ? changedDays(before, patch.set.openingHours)
         : undefined;
+    // The kind describes what the user is shown: opening hours show only the
+    // days that change, so days that had no hours before are "added".
+    const shownBefore = display(field, before, days);
+    const shownAfter = display(field, next, days);
     changes.push({
       field,
-      kind: isEmpty(next) ? "removed" : isEmpty(before) ? "added" : "modified",
-      before: display(field, before, days),
-      after: display(field, next, days),
+      kind: !shownAfter ? "removed" : !shownBefore ? "added" : "modified",
+      before: shownBefore,
+      after: shownAfter,
     });
   }
   if (changes.length === 0) return { ok: false, reason: "no_changes" };

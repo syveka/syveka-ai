@@ -235,7 +235,11 @@ confirmation of AI write tools (`src/server/ai/tool-actions.ts`):
 1. The model calls `proposeBusinessDnaUpdate` with a partial patch: `set` (new or changed
    values) and `clear` (fields to remove). Allowed fields and limits are in
    `src/lib/validators/business-dna-patch.ts`: the profile fields of the form, never
-   `sourceUrl`, ids or timestamps. Services keep their own CRUD surface.
+   `sourceUrl`, ids or timestamps. Services keep their own CRUD surface. The fields that
+   instruct the AI itself (`responseInstructions`, `communicationStyle`) are changed only in
+   the settings: chat can't set or clear them, enforced by the input schemas and again by the
+   patch service, so a proposal steered by content the model read can never change how the
+   assistant behaves.
 2. `previewBusinessDnaPatch` compares it with the current profile and returns every change
    (added, changed, removed, with values before and after) and the current values of exactly
    those fields (the basis). Opening hours merge per day: days not named keep their hours.
@@ -265,12 +269,21 @@ organization's live voice assistants. If the limit can't be checked, the save is
 Chat changes are limited by the chat's own limit (`limitAiChat`) plus one confirmation per
 change, not by `businessDnaWrite`.
 
-Known limits:
+### Saves never overwrite newer changes
 
-- A chat change never overwrites a change made elsewhere, but the settings form still saves
-  the whole profile without a version check (last writer wins): a form opened before a chat
-  change and saved afterwards overwrites it.
-- Chat changes don't change the website-extraction provenance (`sourceUrl`, `extractedAt`).
+The settings form and `PUT /api/v1/business-dna` replace the whole profile, so each save names
+the version it replaces: the profile's `updatedAt` as loaded (`expectedUpdatedAt`; `null` when
+there was no profile yet). The API requires it. The save is a single compare-and-set
+(`UPDATE … WHERE organization_id = … AND updated_at = …`), or an insert that the one-profile
+unique constraint refuses if a profile appeared meanwhile. A save from a stale form or client
+(the profile changed since, in chat or another tab) writes nothing: the API answers `409
+conflict`; the form says so, keeps everything the user typed, and offers to open the latest
+version in a new tab or load it (discarding the edits). Chat changes bump `updatedAt` too, and
+while a chat change holds the row lock, a concurrent save waits and then re-checks the version
+against the committed row.
+
+Known limit: chat changes don't change the website-extraction provenance (`sourceUrl`,
+`extractedAt`).
 
 ## Backward compatibility
 

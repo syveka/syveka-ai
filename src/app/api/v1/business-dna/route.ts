@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { businessDnaSchema } from "@/lib/validators/business-dna";
+import { businessDnaSaveRequestSchema } from "@/lib/validators/business-dna";
 
 export const dynamic = "force-dynamic";
 
@@ -54,15 +54,21 @@ export async function PUT(request: Request): Promise<NextResponse> {
         },
       );
     }
-    const body = businessDnaSchema.safeParse(await request.json().catch(() => null));
+    const body = businessDnaSaveRequestSchema.safeParse(await request.json().catch(() => null));
     if (!body.success) {
       return NextResponse.json(
         { error: { code: "invalid_input", details: body.error.flatten() } },
         { status: 400 },
       );
     }
-    const profile = await upsertBusinessDNA(ctx, body.data);
-    return NextResponse.json({ data: profile });
+    const { expectedUpdatedAt, ...profileInput } = body.data;
+    const saved = await upsertBusinessDNA(ctx, profileInput, expectedUpdatedAt);
+    if (!saved.ok) {
+      // Changed since the client loaded it: nothing was saved. GET returns
+      // the current profile and its updatedAt.
+      return NextResponse.json({ error: { code: "conflict" } }, { status: 409 });
+    }
+    return NextResponse.json({ data: saved.record });
   } catch (e) {
     if (e instanceof AuthError) {
       return NextResponse.json({ error: { code: "forbidden" } }, { status: e.status });

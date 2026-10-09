@@ -8,7 +8,17 @@ import { BUSINESS_DNA_LOCALES } from "@/lib/validators/business-dna";
  * Only these profile fields can be changed this way. Provenance (sourceUrl,
  * extractedAt), identity (id, organizationId) and timestamps are never
  * patchable; services have their own CRUD surface.
+ *
+ * The fields that instruct the AI itself (BUSINESS_DNA_SETTINGS_ONLY_FIELDS)
+ * are changed only in the Business DNA settings: they shape every later
+ * chat and voice reply, so a proposal steered by content the model read
+ * (e.g. a knowledge-base document) must never be able to change them.
  */
+export const BUSINESS_DNA_SETTINGS_ONLY_FIELDS = [
+  "communicationStyle",
+  "responseInstructions",
+] as const;
+
 export const BUSINESS_DNA_PATCH_FIELDS = [
   "displayName",
   "industry",
@@ -17,8 +27,6 @@ export const BUSINESS_DNA_PATCH_FIELDS = [
   "supportedLocales",
   "timezone",
   "brandTone",
-  "communicationStyle",
-  "responseInstructions",
   "openingHours",
   "cancellationPolicy",
   "bookingPolicy",
@@ -98,8 +106,6 @@ const setSchema = z
     supportedLocales: z.array(z.enum(BUSINESS_DNA_LOCALES)).min(1).max(BUSINESS_DNA_LOCALES.length),
     timezone: timezoneSchema,
     brandTone: text(200),
-    communicationStyle: text(200),
-    responseInstructions: text(2000),
     openingHours: openingHoursPatchSchema,
     cancellationPolicy: text(2000),
     bookingPolicy: text(2000),

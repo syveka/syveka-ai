@@ -124,6 +124,11 @@ export function BusinessDnaForm({
     updateBusinessDnaAction,
     {},
   );
+  // The profile version this form replaces when saved: the newer of the one
+  // the page was loaded with and the one returned by this form's last save
+  // (ISO timestamps compare as strings). The server refuses the save if the
+  // profile changed since (in chat or another tab).
+  const version = [state.updatedAt, updatedAt].filter(Boolean).sort().at(-1) ?? "";
   const [values, setValues] = useState<TextFieldValues>(() => toTextFieldValues(initial));
   const [supportedLocales, setSupportedLocales] = useState<string[]>(initial.supportedLocales);
   const [hours, setHours] = useState<WeekHours>(initial.openingHours);
@@ -263,6 +268,7 @@ export function BusinessDnaForm({
       ) : null}
 
       <form id="business-dna-form" action={action} className="contents">
+        <input type="hidden" name="expectedUpdatedAt" value={version} />
         {/* 1. Company */}
         <div className="order-1">
           <Card>
@@ -639,10 +645,30 @@ export function BusinessDnaForm({
         </div>
 
         {readOnly ? null : (
-          <div className="order-8 flex items-center gap-3">
+          <div className="order-8 flex flex-wrap items-center gap-3">
             <Button type="submit" disabled={pending}>
               {pending ? tc("loading") : tc("save")}
             </Button>
+            {state.error === "conflict" ? (
+              // Nothing was saved, and everything typed here stays in the
+              // form: the user can compare with the latest version in a new
+              // tab, or load it here (discarding these edits).
+              <div role="alert" className="w-full space-y-2 text-sm">
+                <p className="text-destructive">{t("conflict.message")}</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => window.open(window.location.href, "_blank", "noopener")}
+                  >
+                    {t("conflict.review")}
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={() => window.location.reload()}>
+                    {t("conflict.reload")}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
             {justSaved && state.message === "saved" ? (
               <p className="text-sm text-success">{t("savedMessage")}</p>
             ) : null}

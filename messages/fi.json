@@ -998,6 +998,11 @@
     "invalidInput": "Tarkista korostetut kentät ja yritä uudelleen.",
     "saveFailed": "Tallennus epäonnistui. Yritä uudelleen.",
     "rateLimited": "Liian monta tallennusta lyhyessä ajassa. Yritä uudelleen muutaman minuutin kuluttua.",
+    "conflict": {
+      "message": "Business DNA:ta muutettiin muualla (chatissa tai toisessa välilehdessä) sen jälkeen, kun avasit tämän sivun. Muutoksiasi ei tallennettu, ja ne ovat yhä tässä.",
+      "review": "Avaa uusin versio uudessa välilehdessä",
+      "reload": "Lataa uusin versio (muutoksesi hylätään)"
+    },
     "updated": "Päivitetty {date}",
     "errorTitle": "Yrityksen DNA:ta ei voitu ladata",
     "errorDescription": "Päivitä sivu tai yritä hetken kuluttua uudelleen.",

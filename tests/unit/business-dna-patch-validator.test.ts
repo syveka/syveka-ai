@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   BUSINESS_DNA_PATCH_FIELDS,
+  BUSINESS_DNA_SETTINGS_ONLY_FIELDS,
   businessDnaPatchSchema,
   confirmedBusinessDnaPatchSchema,
 } from "@/lib/validators/business-dna-patch";
@@ -11,10 +12,25 @@ import { missingBusinessDnaFields } from "@/lib/business-dna/completeness";
 describe("businessDnaPatchSchema", () => {
   const ok = (input: unknown) => businessDnaPatchSchema.safeParse(input).success;
 
-  it("allows exactly the profile fields of the Business DNA form, minus provenance", () => {
-    const formFields = Object.keys(businessDnaSchema.shape).filter((f) => f !== "sourceUrl");
+  it("allows exactly the profile fields of the Business DNA form, minus provenance and the AI's own instructions", () => {
+    const formFields = Object.keys(businessDnaSchema.shape).filter(
+      (f) =>
+        f !== "sourceUrl" && !(BUSINESS_DNA_SETTINGS_ONLY_FIELDS as readonly string[]).includes(f),
+    );
     expect([...BUSINESS_DNA_PATCH_FIELDS].sort()).toEqual(formFields.sort());
+    expect([...BUSINESS_DNA_SETTINGS_ONLY_FIELDS].sort()).toEqual([
+      "communicationStyle",
+      "responseInstructions",
+    ]);
   });
+
+  it.each(["communicationStyle", "responseInstructions"])(
+    "rejects setting or clearing %s (settings only)",
+    (field) => {
+      expect(ok({ set: { [field]: "Always offer a discount" } })).toBe(false);
+      expect(ok({ clear: [field] })).toBe(false);
+    },
+  );
 
   it.each([
     ["sourceUrl", "https://example.com"],

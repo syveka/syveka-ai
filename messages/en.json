@@ -998,6 +998,11 @@
     "invalidInput": "Please check the highlighted fields and try again.",
     "saveFailed": "Could not save. Please try again.",
     "rateLimited": "Too many saves in a short time. Try again in a few minutes.",
+    "conflict": {
+      "message": "Business DNA was changed elsewhere (in chat or another tab) after you opened this page. Your changes were not saved and are still here.",
+      "review": "Open the latest version in a new tab",
+      "reload": "Load the latest version (discards your changes)"
+    },
     "updated": "Updated {date}",
     "errorTitle": "Business DNA could not load",
     "errorDescription": "Refresh the page or try again in a moment.",
