@@ -137,7 +137,13 @@ export async function POST(
       resourceType: "ai_action",
       resourceId: id,
       actorType: "user",
-      after: { tool: outcome.tool, outcome: outcome.status },
+      after: {
+        tool: outcome.tool,
+        // A change not applied because it was out of date is recorded as such,
+        // so a reopened conversation doesn't show it as a taken time slot.
+        outcome:
+          outcome.status === "not_done" && outcome.reason === "stale" ? "stale" : outcome.status,
+      },
     },
   );
   return NextResponse.json({ data: outcome });

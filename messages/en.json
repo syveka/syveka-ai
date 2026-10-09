@@ -337,6 +337,17 @@
       "email": "Email: {value}",
       "phone": "Phone: {value}",
       "dueAt": "Due {when}",
+      "businessDna": {
+        "summary": "{count, plural, one {Update Business DNA (# change)} other {Update Business DNA (# changes)}}",
+        "kind": {
+          "added": "Added",
+          "modified": "Changed",
+          "removed": "Removed"
+        },
+        "before": "Before:",
+        "after": "After:",
+        "review": "Review Business DNA"
+      },
       "content": "Text to be saved:",
       "nothingYet": "Nothing is created or changed until you confirm.",
       "confirm": "Confirm",
@@ -346,6 +357,7 @@
         "done": "Done.",
         "canceled": "Canceled. Nothing was changed.",
         "slotTaken": "That time is no longer free. Nothing was booked.",
+        "stale": "Business DNA was changed elsewhere after this was shown. Nothing was changed — ask Syveka again.",
         "expired": "This request expired. Ask Syveka again.",
         "alreadyDecided": "This action was already handled.",
         "permission": "You don't have permission to do this.",
@@ -355,6 +367,15 @@
         "unavailable": "This request is no longer available. No result was recorded for it.",
         "unknown": "The result couldn't be confirmed. Check your records before asking again."
       }
+    },
+    "toolLabels": {
+      "searchKnowledgeBase": "Knowledge base",
+      "searchContacts": "Contacts",
+      "createContact": "New contact",
+      "logActivity": "Activity",
+      "getCalendarAvailability": "Calendar availability",
+      "bookMeeting": "Booking",
+      "proposeBusinessDnaUpdate": "Business DNA"
     }
   },
   "publicAssistant": {
@@ -985,6 +1006,12 @@
     "savedMessage": "Saved.",
     "invalidInput": "Please check the highlighted fields and try again.",
     "saveFailed": "Could not save. Please try again.",
+    "rateLimited": "Too many saves in a short time. Try again in a few minutes.",
+    "conflict": {
+      "message": "Business DNA was changed elsewhere (in chat or another tab) after you opened this page. Your changes were not saved and are still here.",
+      "review": "Open the latest version in a new tab",
+      "reload": "Load the latest version (discards your changes)"
+    },
     "updated": "Updated {date}",
     "errorTitle": "Business DNA could not load",
     "errorDescription": "Refresh the page or try again in a moment.",

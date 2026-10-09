@@ -8,6 +8,16 @@ import { NextIntlClientProvider } from "next-intl";
 import { ActionConfirmation } from "@/components/chat/action-confirmation";
 import type { ProposedActionView } from "@/lib/validators/chat";
 
+// The card links to Business DNA settings; next-intl's navigation needs the
+// Next.js runtime, so tests render it as a plain link.
+vi.mock("@/i18n/routing", () => ({
+  Link: ({ href, children, ...rest }: React.PropsWithChildren<{ href: string }>) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
+}));
+
 /**
  * The confirmation card for an AI-proposed write, with real messages
  * (EN/FI/AR). Mocked: fetch (the decision endpoint).
@@ -187,5 +197,113 @@ describe("ActionConfirmation", () => {
     );
     expect(document.body.textContent).toContain("إنشاء جهة الاتصال مريم");
     expect(screen.getByRole("button", { name: ar.chat.actions.cancel })).toBeTruthy();
+  });
+});
+
+describe("ActionConfirmation — Business DNA changes", () => {
+  const dnaAction = (): ProposedActionView =>
+    action({
+      tool: "proposeBusinessDnaUpdate",
+      details: {
+        tool: "proposeBusinessDnaUpdate",
+        missingAfter: ["targetCustomer"],
+        changes: [
+          {
+            field: "industry",
+            kind: "modified",
+            before: { type: "text", value: "Car repair" },
+            after: { type: "text", value: "Car and van repair" },
+          },
+          {
+            field: "supportedLocales",
+            kind: "added",
+            before: null,
+            after: { type: "list", items: ["FI", "EN", "AR"] },
+          },
+          {
+            field: "openingHours",
+            kind: "modified",
+            before: {
+              type: "hours",
+              days: [{ day: "monday", closed: false, open: "08:00", close: "17:00" }],
+            },
+            after: { type: "hours", days: [{ day: "monday", closed: true }] },
+          },
+          {
+            field: "description",
+            kind: "removed",
+            before: { type: "text", value: "أصحاب السيارات في هلسنكي" },
+            after: null,
+          },
+        ],
+      },
+    });
+
+  it("shows every change with its field, kind, and values before and after, before confirming", () => {
+    show(dnaAction());
+    const changes = screen.getByTestId("business-dna-changes");
+
+    expect(screen.getByText("Update Business DNA (4 changes)")).toBeTruthy();
+    expect(changes.textContent).toContain(en.businessDna.fields.industry);
+    expect(changes.textContent).toContain("Car repair");
+    expect(changes.textContent).toContain("Car and van repair");
+    expect(changes.textContent).toContain(en.businessDna.sections.openingHours);
+    expect(changes.textContent).toContain(`${en.businessDna.weekdays.monday}: 08:00–17:00`);
+    expect(changes.textContent).toContain(
+      `${en.businessDna.weekdays.monday}: ${en.businessDna.closed}`,
+    );
+    for (const kind of ["added", "modified", "removed"]) {
+      expect(changes.textContent).toContain(en.chat.actions.businessDna.kind[kind]);
+    }
+    expect(screen.getByText(en.chat.actions.nothingYet)).toBeTruthy();
+    expect(screen.queryByRole("link")).toBeNull();
+  });
+
+  it("after confirming, says it's done and links to the Business DNA page", async () => {
+    response = {
+      status: 200,
+      body: { data: { status: "done", tool: "proposeBusinessDnaUpdate" } },
+    };
+    show(dnaAction());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.chat.actions.confirm }));
+    });
+
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.done);
+    const link = screen.getByRole("link", { name: en.chat.actions.businessDna.review });
+    expect(link.getAttribute("href")).toBe("/settings/business-dna");
+  });
+
+  it("a change made elsewhere in the meantime is reported as not applied, with no retry", async () => {
+    response = {
+      status: 200,
+      body: { data: { status: "not_done", reason: "stale", tool: "proposeBusinessDnaUpdate" } },
+    };
+    show(dnaAction());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.chat.actions.confirm }));
+    });
+
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.stale);
+    expect(screen.queryByRole("button", { name: en.chat.actions.confirm })).toBeNull();
+  });
+
+  it("a reopened conversation shows a stale change as such", () => {
+    show({ ...dnaAction(), restored: "stale" } as ProposedActionView);
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.stale);
+  });
+
+  it.each([
+    ["fi", fi],
+    ["ar", ar],
+  ])("is localized (%s), with the user's text direction kept per value", (locale, messages) => {
+    show(dnaAction(), messages, locale);
+    const changes = screen.getByTestId("business-dna-changes");
+
+    expect(changes.textContent).toContain(messages.businessDna.fields.industry);
+    expect(changes.textContent).toContain(messages.businessDna.weekdays.monday);
+    expect(changes.textContent).toContain(messages.chat.actions.businessDna.kind.removed);
+    const arabic = screen.getByText("أصحاب السيارات في هلسنكي");
+    expect(arabic.getAttribute("dir")).toBe("auto");
   });
 });
