@@ -215,6 +215,31 @@ describe("Vapi voice webhook — tool-calls replay protection", () => {
     });
   }
 
+  it("refuses CRM contact search for an assistant saved before it was removed from caller tools", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce({
+      ...enabledAssistant(),
+      enabledTools: ["searchContacts", "bookMeeting"],
+    });
+    const request = new Request("http://localhost/api/v1/voice/webhook", {
+      method: "POST",
+      headers: { "x-vapi-signature": "sig" },
+      body: JSON.stringify({
+        message: {
+          type: "tool-calls",
+          call: { id: "call-6", assistantId: "assistant-1" },
+          toolCallList: [{ id: "tc-search", name: "searchContacts", arguments: { query: "ma" } }],
+        },
+      }),
+    });
+
+    const body = await (await POST(request)).json();
+
+    expect(body.results).toEqual([
+      { toolCallId: "tc-search", result: JSON.stringify({ error: "tool_not_enabled" }) },
+    ]);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+  });
+
   it("first delivery claims the tool-call id atomically (NX, 24h) and executes it", async () => {
     mocks.voiceAssistantFindFirst.mockResolvedValueOnce(enabledAssistant());
     mocks.executeTool.mockResolvedValueOnce(JSON.stringify({ booked: true }));

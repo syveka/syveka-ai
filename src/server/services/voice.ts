@@ -17,7 +17,11 @@ import { lockPhoneNumber } from "@/server/calendar/locks";
 import { getEntitlements, EntitlementError } from "./billing/entitlements";
 import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
-import type { VoiceAssistantInput, AttachPhoneNumberInput } from "@/lib/validators/voice";
+import {
+  allowedVoiceTools,
+  type VoiceAssistantInput,
+  type AttachPhoneNumberInput,
+} from "@/lib/validators/voice";
 import { getVapiEnv } from "@/env";
 
 export class DuplicatePhoneNumberError extends Error {}
@@ -316,10 +320,7 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
     where: { id: assistantId, organizationId: orgId },
   });
 
-  const enabledTools = (assistant.enabledTools as string[]) ?? [];
-  const toolNames = assistant.useKnowledgeBase
-    ? [...new Set(["searchKnowledgeBase", ...enabledTools])]
-    : enabledTools;
+  const toolNames = allowedVoiceTools(assistant.enabledTools, assistant.useKnowledgeBase);
 
   // Mandatory AI disclosure (§13.3, §16.5) is prepended server-side.
   const disclosure =
