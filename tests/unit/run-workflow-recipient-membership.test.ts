@@ -340,10 +340,20 @@ describe("unavailable or deleted organizations", () => {
 
   it("a soft-deleted organization's members get no notification or failure notice", async () => {
     state.deletedOrgs.add(ORG_A);
-    workflowWithSteps([notifyStep(MEMBER)]);
-    await deliver();
-    workflowWithSteps([failingStep]);
-    await deliver({ sourceEventKey: "deal.won:d2" });
-    expect(state.notifications).toEqual([]);
+    // The org is deleted after the route's organization guard passed (it reads
+    // the org as active), so this still covers the per-step membership and
+    // failure-notice filters, not only the route-level guard.
+    const guardLookup = db.organization.findFirst.getMockImplementation()!;
+    db.organization.findFirst.mockImplementation(async ({ where }) => ({ id: where.id }));
+    try {
+      workflowWithSteps([notifyStep(MEMBER)]);
+      await deliver();
+      workflowWithSteps([failingStep]);
+      await deliver({ sourceEventKey: "deal.won:d2" });
+      expect(state.notifications).toEqual([]);
+      expect(db.organization.findFirst).toHaveBeenCalled(); // the guard ran (and passed)
+    } finally {
+      db.organization.findFirst.mockImplementation(guardLookup);
+    }
   });
 });
