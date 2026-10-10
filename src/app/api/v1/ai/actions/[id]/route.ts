@@ -96,6 +96,7 @@ export async function POST(
   if (!body.success) return error("invalid_input", 400);
 
   const rate = await limitAiChat(ctx.orgId, ctx.userId);
+  if (rate.unavailable) return error("service_unavailable", 503);
   if (!rate.success) return error("rate_limited", 429);
 
   let outcome;
