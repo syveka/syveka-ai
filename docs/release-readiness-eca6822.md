@@ -113,6 +113,13 @@ Vercel and were not accessible to this review.
 | Vercel environment mapping                                                 | Staging project, Preview + Production scopes audited | Separate project; candidate deployed staged, then promoted     | `deploy.yml`                                       | No                                                                            | —                                                                                          |
 | OAuth callback URLs (Google/Microsoft calendar, Meta)                      | **UNVERIFIED**                                       | **UNVERIFIED**                                                 | callback routes                                    | Only for calendar connect                                                     | Provider consoles list the production domain                                               |
 
+Also required for the pilot, not yet in place:
+
+- **Storage backup:** none exists today; see `docs/storage-backup-design.md` (Option B for the
+  pilot, Option A for full production). Owner: provider, region, cost, retention.
+- **Uptime monitor** on `/api/health` (alert on non-200 or a `build` other than the released
+  SHA). Owner: choose a monitor; no secret is needed.
+
 ## 5. Billing findings (read-only)
 
 | Finding                                                                                                                                                                                                                                                                                       | Type                                                                                                                                                                                | Severity |
@@ -121,6 +128,20 @@ Vercel and were not accessible to this review.
 | No dunning email sequence exists; the "day 0/3/7" comment in the webhook route refers to nothing.                                                                                                                                                                                             | **OWNER STRIPE CONFIGURATION** (Stripe's failed-payment emails, Smart Retries schedule, and final action after retries)                                                             | P2       |
 | `unpaid` maps to `PAST_DUE`; the final retry outcome (cancel vs. mark unpaid) is a Stripe setting.                                                                                                                                                                                            | **COMMERCIAL DECISION** + Stripe configuration                                                                                                                                      | P3       |
 | Signature verification, durable idempotency ledger, out-of-order protection (retrieve current state before applying)                                                                                                                                                                          | In place                                                                                                                                                                            | —        |
+
+**Fixing the grace reset together with #258.** Open draft #258 rewrites exactly the
+`invoice.payment_failed` write (an `updateMany` scoped to the org's current subscription), so
+the fix must land on top of it, not beside it:
+
+1. Merge #258 first (owner review).
+2. Then, in the same handler, write `PAST_DUE` only on a transition (add
+   `status: { not: "PAST_DUE" }` to that `updateMany`'s `where`), so retries no longer touch the
+   row. This is migration-free but still resets the clock if any other write touches the row while
+   it is past due.
+3. Robust version (needs an approved migration): a nullable `pastDueSince` column, set on the
+   transition to `PAST_DUE`, cleared on `ACTIVE`; `entitlements.ts` measures the 14 days from it.
+   Tests: repeated `invoice.payment_failed` events leave the clock unchanged; `invoice.paid`
+   clears it; the read-only lock starts 14 days after the first failure.
 
 ## 6. Observability (what production can answer today)
 
@@ -132,6 +153,12 @@ Vercel and were not accessible to this review.
 | Retention purge running             | Nothing records a run                                        | Schedule unverified (see §4)                                                                                             |
 | Booking confirmation email failures | Visible and retryable (#247)                                 | —                                                                                                                        |
 | AI cost                             | Per-request cost estimate in chat usage                      | No anomaly alert (P3)                                                                                                    |
+
+Two failure paths are invisible to operators (P3; both deliberate for the user, silent for
+operators): `embed-document` marks the document `FAILED` and notifies the uploader but logs
+nothing, and the `post-call` AI summary is best-effort with an empty `catch`. A one-line
+structured log (ids and error name only) in each would close this; `embed-document` has no route
+test harness yet, so it needs one first.
 
 ## 7. Release and rollback runbook (not executed)
 

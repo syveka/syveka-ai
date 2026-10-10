@@ -30,6 +30,17 @@ exists, what is broken, and the smallest correct implementation.
    phone numbers, and calendar/Meta OAuth grants, are left at the providers.
 6. **No erasure evidence survives**: audit rows are tenant rows and cascade away with the org.
 
+**Status (2026-10-10):** defects 1–4 are fixed in draft PR **#290**: every object under `orgId/`
+in the five private buckets, recursively and paginated; any Storage error stops the database
+delete; database-delete errors are reported; tested and mutation-checked. Defects 5–6 remain.
+
+Bucket facts behind the fix: `prisma/sql/004_storage.sql` creates **seven** buckets. The five
+private ones are organization-prefixed by policy. Of the two public ones, `avatars` is per user
+(first folder = the user's id), so it belongs to account deletion, not organization erasure, and
+`org-logos` is not written by any app code today. Call recordings are **hosted by Vapi**
+(`VoiceCall.recordingUrl`), so their deletion depends on Vapi's retention settings and the Vapi
+cleanup in step 1 below.
+
 ## Smallest correct implementation
 
 **1. Move erasure into tested server code** (replacing the Edge Function, which has no tests).
