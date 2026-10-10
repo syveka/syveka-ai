@@ -1015,6 +1015,53 @@ describe("Vapi voice webhook — over-quota calls are actually ended", () => {
     });
   });
 
+  // Billing policy (§14.4, entitlements.ts assertWithinLimit): a read-only org --
+  // PAST_DUE beyond the grace period -- may not consume any usage, whatever
+  // minutes remain on its plan.
+  describe("a read-only organization (past due) is refused like an over-quota one", () => {
+    const readOnly = () =>
+      mocks.getEntitlements.mockResolvedValue({ voiceMinutesMonth: 1000, readOnly: true } as never);
+
+    it("status-update ends the call through the control URL and records no call", async () => {
+      readOnly();
+
+      const response = await POST(statusUpdate());
+
+      expect(response.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
+        type: "end-call",
+      });
+      expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    });
+
+    it("tool-calls runs no tool and ends the call after the goodbye", async () => {
+      readOnly();
+
+      const response = await POST(toolCalls("FI"));
+
+      const body = await response.json();
+      expect(body.results.map((r: { error: string }) => r.error)).toEqual([
+        "quota_exceeded",
+        "quota_exceeded",
+      ]);
+      expect(mocks.executeTool).not.toHaveBeenCalled();
+    });
+
+    it("an org that is not read-only and has minutes left is served as before", async () => {
+      mocks.getEntitlements.mockResolvedValue({
+        voiceMinutesMonth: 1000,
+        readOnly: false,
+      } as never);
+
+      const response = await POST(statusUpdate());
+
+      expect(response.status).toBe(200);
+      expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("under quota, tool-calls executes the tools with the existing result shape and never calls the control URL", async () => {
     mocks.executeTool.mockResolvedValue(JSON.stringify({ booked: true }));
 
