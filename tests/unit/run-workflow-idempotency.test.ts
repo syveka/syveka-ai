@@ -82,6 +82,12 @@ vi.mock("@/server/db/tenant", () => ({
     ),
   },
 }));
+// The organization is active (soft-deleted organizations are covered by
+// run-workflow-deactivation.test.ts).
+vi.mock("@/server/jobs/organization-guard", () => ({
+  isOrganizationActive: async () => true,
+  ORGANIZATION_INACTIVE: { skipped: "organization_inactive" },
+}));
 vi.mock("@/server/jobs/queue", () => ({ enqueue: mocks.enqueue }));
 vi.mock("@/server/integrations/anthropic", () => ({
   anthropic: { messages: { create: mocks.anthropicCreate } },

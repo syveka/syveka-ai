@@ -96,7 +96,8 @@ matrix, gated on `auth.users.app_metadata.is_superadmin` (Supabase dashboard onl
   - **What it can't do:** close the window between the last check and a provider call already in
     flight. A post already published (its record is kept), an email already sent, or a paid call
     already made can't be recalled.
-  - **Not covered:** `run-workflow` steps.
+  - **`run-workflow`:** also guarded, once per delivery before any step; a run parked on a wait is
+    left as it was. Deactivating a workflow also stops its waiting runs, which end `CANCELED`.
   - **Still needed:** stopping scheduled side effects before a soft delete remains a deletion-runbook
     step.
 

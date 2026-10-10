@@ -235,6 +235,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     { routeModel },
     { sendEmail },
     { recordUsage },
+    { isOrganizationActive, ORGANIZATION_INACTIVE },
   ] = await Promise.all([
     import("@/server/jobs/verify"),
     import("@/server/db/tenant"),
@@ -243,6 +244,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/ai/router"),
     import("@/server/integrations/resend"),
     import("@/server/services/billing/entitlements"),
+    import("@/server/jobs/organization-guard"),
   ]);
 
   const rawBody = await verifyJobRequest(request);
@@ -262,10 +264,31 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
   }
 
+  // A missing or soft-deleted organization gets no step side effects; a run
+  // parked on a wait is left as it was.
+  if (!(await isOrganizationActive(orgId))) return NextResponse.json(ORGANIZATION_INACTIVE);
+
   const workflow = await unscopedPrisma.workflow.findFirst({
     where: { id: workflowId, organizationId: orgId },
   });
-  if (!workflow || (!workflow.isActive && !runId)) {
+  if (!workflow) return NextResponse.json({ skipped: "workflow inactive or gone" });
+
+  // Only a manual test run (testWorkflowAction, which always carries runId)
+  // may run an inactive workflow. Everything else stops here, including the
+  // delayed resume of a run parked on wait.duration: deactivating a workflow
+  // must also stop its already-waiting runs, which end CANCELED.
+  if (!workflow.isActive && (!runId || parsed.data.triggerType !== "manual")) {
+    if (runId) {
+      await unscopedPrisma.workflowRun.updateMany({
+        where: {
+          id: runId,
+          workflowId,
+          organizationId: orgId,
+          status: { in: ["WAITING", "RUNNING"] },
+        },
+        data: { status: "CANCELED", error: "workflow_deactivated", finishedAt: new Date() },
+      });
+    }
     return NextResponse.json({ skipped: "workflow inactive or gone" });
   }
 
