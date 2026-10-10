@@ -16,6 +16,7 @@ import {
   requestCaptionGeneration,
 } from "@/server/services/creator-generations";
 import { createCreatorCampaign, setCampaignAutopilot } from "@/server/services/creator-campaigns";
+import { creatorActionError } from "@/server/services/creator-studio-action-errors";
 import {
   createCreatorPost,
   updatePostContent,
@@ -87,7 +88,7 @@ export async function confirmConsentAction(profileId: string): Promise<CreatorAc
   try {
     await confirmCreatorConsent(ctx, profileId);
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "failed" };
+    return { error: creatorActionError(e, "failed") };
   }
   revalidatePath(`/creator-studio/characters/${profileId}`);
   return {};
@@ -111,7 +112,7 @@ export async function generateCharacterImageAction(payload: unknown): Promise<Cr
     revalidatePath("/creator-studio/library");
     return { id: generation.id };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "generation_failed" };
+    return { error: creatorActionError(e, "generation_failed") };
   }
 }
 
@@ -127,7 +128,7 @@ export async function generateImageFromCharacterAction(
     revalidatePath("/creator-studio/library");
     return { id: generation.id };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "generation_failed" };
+    return { error: creatorActionError(e, "generation_failed") };
   }
 }
 
@@ -141,7 +142,7 @@ export async function generateVideoFromImageAction(payload: unknown): Promise<Cr
     revalidatePath("/creator-studio/library");
     return { id: generation.id };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "generation_failed" };
+    return { error: creatorActionError(e, "generation_failed") };
   }
 }
 
@@ -155,7 +156,7 @@ export async function generateCaptionAction(payload: unknown): Promise<CreatorAc
     revalidatePath("/creator-studio/library");
     return { id: generation.id };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "generation_failed" };
+    return { error: creatorActionError(e, "generation_failed") };
   }
 }
 
@@ -178,7 +179,7 @@ export async function setCampaignAutopilotAction(
   try {
     await setCampaignAutopilot(ctx, campaignId, parsed.data);
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "failed" };
+    return { error: creatorActionError(e, "failed") };
   }
   revalidatePath(`/creator-studio/campaigns/${campaignId}`);
   return {};
@@ -203,7 +204,7 @@ export async function updatePostContentAction(
   try {
     await updatePostContent(ctx, postId, parsed.data);
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "failed" };
+    return { error: creatorActionError(e, "failed") };
   }
   revalidatePath("/creator-studio/library");
   revalidatePath("/creator-studio/approvals");
@@ -241,7 +242,7 @@ export async function schedulePostAction(
   try {
     await schedulePost(ctx, postId, parsed.data);
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "failed" };
+    return { error: creatorActionError(e, "failed") };
   }
   revalidatePath("/creator-studio/calendar");
   return {};
@@ -263,7 +264,7 @@ export async function connectSocialAccountAction(payload: unknown): Promise<Crea
     revalidatePath("/creator-studio/social-accounts");
     return { id: account.id };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "connect_failed" };
+    return { error: creatorActionError(e, "connect_failed") };
   }
 }
 
