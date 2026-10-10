@@ -13,12 +13,23 @@ export async function getBusinessDNA(ctx: TenantContext) {
   return db.businessDNA.findFirst({});
 }
 
+export type UpsertBusinessDnaResult =
+  | { ok: true; record: NonNullable<Awaited<ReturnType<typeof getBusinessDNA>>> }
+  /** The profile changed since the caller loaded it (or now exists): nothing was saved. */
+  | { ok: false; reason: "conflict" };
+
 /**
- * Deterministic create-or-replace on the org's singleton profile.
+ * Deterministic create-or-replace on the org's singleton profile, only if it
+ * is still the version the caller loaded: `expectedUpdatedAt` is the
+ * profile's `updatedAt` as loaded, or null when there was no profile yet.
  * `sourceUrl` presence re-stamps `extractedAt`; its absence clears both,
  * so provenance always reflects the data currently on record.
  */
-export async function upsertBusinessDNA(ctx: TenantContext, input: BusinessDNAInput) {
+export async function upsertBusinessDNA(
+  ctx: TenantContext,
+  input: BusinessDNAInput,
+  expectedUpdatedAt: string | null,
+): Promise<UpsertBusinessDnaResult> {
   const db = tenantDb(ctx.orgId);
   const shared = {
     displayName: input.displayName ?? null,
@@ -45,13 +56,45 @@ export async function upsertBusinessDNA(ctx: TenantContext, input: BusinessDNAIn
     extractedAt: input.sourceUrl ? new Date() : null,
   };
 
-  const existing = await db.businessDNA.findFirst({ select: { id: true } });
-  const record = existing
-    ? await db.businessDNA.update({ where: { id: existing.id }, data: shared })
-    : await db.businessDNA.create({ data: { organizationId: ctx.orgId, ...shared } });
+  // Compare-and-set in one statement: only the version the user loaded is
+  // replaced. A save from a stale form (the profile was changed since, in
+  // chat or another tab) updates nothing. While a chat change holds the row
+  // lock, this UPDATE waits and then re-checks updated_at against the
+  // committed row (see applyBusinessDnaPatch).
+  let record;
+  if (expectedUpdatedAt) {
+    const savedAt = new Date();
+    const { count } = await db.businessDNA.updateMany({
+      where: { updatedAt: new Date(expectedUpdatedAt) },
+      data: { ...shared, updatedAt: savedAt },
+    });
+    if (count === 0) return { ok: false, reason: "conflict" };
+    const current = await db.businessDNA.findFirst({});
+    if (!current) return { ok: false, reason: "conflict" };
+    // Exactly what this save wrote, at the version it wrote -- even if
+    // another change landed right after it (before this read): the caller's
+    // next save must then conflict rather than replace a change it never saw.
+    // (openingHours: the stored value, not Prisma's JsonNull write sentinel.)
+    record = {
+      ...current,
+      ...shared,
+      openingHours: input.openingHours ?? null,
+      updatedAt: savedAt,
+    };
+  } else {
+    try {
+      record = await db.businessDNA.create({ data: { organizationId: ctx.orgId, ...shared } });
+    } catch (e) {
+      // The form was opened before any profile existed, and one was created since.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === "P2002") {
+        return { ok: false, reason: "conflict" };
+      }
+      throw e;
+    }
+  }
 
   await audit(ctx, {
-    action: existing ? "business_dna.update" : "business_dna.create",
+    action: expectedUpdatedAt ? "business_dna.update" : "business_dna.create",
     resourceType: "business_dna",
     resourceId: record.id,
   });
@@ -62,5 +105,5 @@ export async function upsertBusinessDNA(ctx: TenantContext, input: BusinessDNAIn
   // here is logged, never surfaced as a failure of the Business DNA save.
   await resyncActiveAssistants(ctx.orgId);
 
-  return record;
+  return { ok: true, record };
 }

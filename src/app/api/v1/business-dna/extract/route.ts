@@ -8,7 +8,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     { requirePermission },
     { AuthError },
     { extractBusinessDnaFromUrl, BusinessDnaExtractionError, UrlIngestionError },
-    { rateLimiters },
+    { checkRateLimit },
   ] = await Promise.all([
     import("@/server/auth/guard"),
     import("@/server/auth/session"),
@@ -19,8 +19,12 @@ export async function POST(request: Request): Promise<NextResponse> {
   try {
     const ctx = await requirePermission("business-dna:write");
 
-    const rateLimit = await rateLimiters.businessDnaExtract.limit(ctx.orgId);
-    if (!rateLimit.success) {
+    const rateLimit = await checkRateLimit("businessDnaExtract", ctx.orgId);
+    if (!rateLimit.ok && rateLimit.reason === "unavailable") {
+      // The limit can't be verified: refuse (fail closed) before the paid extraction.
+      return NextResponse.json({ error: { code: "service_unavailable" } }, { status: 503 });
+    }
+    if (!rateLimit.ok) {
       return NextResponse.json(
         { error: { code: "rate_limited" } },
         {

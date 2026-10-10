@@ -11,6 +11,7 @@ import type { EvalClient } from "@/server/ai/voice-conversation";
 import { estimateAiCost } from "@/server/ai/cost";
 import { isAbortError } from "@/server/ai/retry";
 import { detectReplyLanguage } from "@/lib/voice/reply-language";
+import { missingBusinessDnaFields } from "@/lib/business-dna/completeness";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -93,6 +94,10 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   const rateLimit = await limitAiChat(ctx.orgId, ctx.userId);
+  // The limit can't be verified: refuse (fail closed) before any paid call.
+  if (rateLimit.unavailable) {
+    return NextResponse.json({ error: { code: "service_unavailable" } }, { status: 503 });
+  }
   if (!rateLimit.success) {
     return NextResponse.json(
       { error: { code: "rate_limited", scope: rateLimit.scope } },
@@ -291,6 +296,13 @@ export async function POST(request: Request): Promise<Response> {
       title: c.title,
     })),
     hasTools: tools.length > 0,
+    businessDnaSetup: tools.some((t) => t.name === "proposeBusinessDnaUpdate")
+      ? {
+          missing: missingBusinessDnaFields(businessDna, {
+            activeServiceCount: businessDna?.services.length ?? 0,
+          }),
+        }
+      : null,
     responseMode: voiceTurn ? ("voice" as const) : ("text" as const),
     // The transcript's own language, only when clear: history (earlier turns
     // in other languages) and the interface language must not decide it.
