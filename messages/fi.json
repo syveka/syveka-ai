@@ -820,7 +820,8 @@
     "testRun": "Testiajo",
     "testErrors": {
       "quota": "Tilaukseesi eivät sisälly työnkulut. Päivitä tilaus testataksesi.",
-      "rateLimited": "Liian monta testiajoa. Yritä myöhemmin uudelleen."
+      "rateLimited": "Liian monta testiajoa. Yritä myöhemmin uudelleen.",
+      "unavailable": "Testiajot eivät ole tilapäisesti käytettävissä. Yritä uudelleen."
     }
   },
   "billingPage": {
