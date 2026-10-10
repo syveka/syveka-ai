@@ -185,3 +185,44 @@ describe("buildSystemPrompt — untrusted-wrapper tag-breakout neutralization", 
     expect(prompt).toContain("<\\/source>");
   });
 });
+
+describe("buildSystemPrompt — Business DNA from conversation", () => {
+  const setup = (missing: string[]) => ({
+    ...baseParams(),
+    hasTools: true,
+    businessDnaSetup: { missing },
+  });
+
+  it("tells the model to propose changes from what the user says, never a form", () => {
+    const prompt = buildSystemPrompt(setup(["openingHours", "timezone"]));
+    expect(prompt).toContain("## Business DNA from conversation");
+    expect(prompt).toContain("call proposeBusinessDnaUpdate");
+    expect(prompt).toContain("never send them to fill in a form");
+    expect(prompt).toContain("never invent or assume values");
+  });
+
+  it("names the missing fields in order, and asks for one at a time", () => {
+    const prompt = buildSystemPrompt(setup(["openingHours", "timezone"]));
+    expect(prompt).toContain(
+      "Important fields still empty, most important first: openingHours, timezone.",
+    );
+    expect(prompt).toContain("ask at most one short, friendly question");
+    expect(prompt).toContain("Never ask a list of questions");
+  });
+
+  it("says when everything important is filled in", () => {
+    expect(buildSystemPrompt(setup([]))).toContain("All important fields are filled in.");
+  });
+
+  it("is left out without the tool, and in a live voice conversation", () => {
+    expect(buildSystemPrompt({ ...baseParams(), hasTools: true })).not.toContain(
+      "Business DNA from conversation",
+    );
+    expect(buildSystemPrompt({ ...baseParams(), businessDnaSetup: null })).not.toContain(
+      "Business DNA from conversation",
+    );
+    expect(buildSystemPrompt({ ...setup(["timezone"]), responseMode: "voice" })).not.toContain(
+      "Business DNA from conversation",
+    );
+  });
+});

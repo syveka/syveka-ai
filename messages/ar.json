@@ -337,6 +337,17 @@
       "email": "البريد الإلكتروني: {value}",
       "phone": "الهاتف: {value}",
       "dueAt": "الموعد النهائي {when}",
+      "businessDna": {
+        "summary": "{count, plural, zero {تحديث Business DNA (لا تغييرات)} one {تحديث Business DNA (تغيير واحد)} two {تحديث Business DNA (تغييران)} few {تحديث Business DNA (# تغييرات)} many {تحديث Business DNA (# تغييرًا)} other {تحديث Business DNA (# تغيير)}}",
+        "kind": {
+          "added": "إضافة",
+          "modified": "تعديل",
+          "removed": "حذف"
+        },
+        "before": "قبل:",
+        "after": "بعد:",
+        "review": "مراجعة Business DNA"
+      },
       "content": "النص الذي سيُحفظ:",
       "nothingYet": "لن يُنشأ أو يُغيَّر أي شيء حتى تؤكد.",
       "confirm": "تأكيد",
@@ -346,6 +357,7 @@
         "done": "تم.",
         "canceled": "أُلغي. لم يتغير شيء.",
         "slotTaken": "لم يعد هذا الوقت متاحًا. لم يُحجز شيء.",
+        "stale": "تم تغيير Business DNA في مكان آخر بعد عرض هذا الطلب. لم يتم تغيير أي شيء — اطلب من سيفيكا مرة أخرى.",
         "expired": "انتهت صلاحية هذا الطلب. اطلب من سيفيكا مرة أخرى.",
         "alreadyDecided": "تمت معالجة هذا الإجراء بالفعل.",
         "permission": "ليست لديك صلاحية للقيام بذلك.",
@@ -355,6 +367,15 @@
         "unavailable": "لم يعد هذا الطلب متاحًا. لم تُسجَّل له أي نتيجة.",
         "unknown": "تعذّر التأكد من النتيجة. تحقّق من سجلاتك قبل أن تطلب مرة أخرى."
       }
+    },
+    "toolLabels": {
+      "searchKnowledgeBase": "قاعدة المعرفة",
+      "searchContacts": "جهات الاتصال",
+      "createContact": "جهة اتصال جديدة",
+      "logActivity": "نشاط",
+      "getCalendarAvailability": "المواعيد المتاحة في التقويم",
+      "bookMeeting": "حجز",
+      "proposeBusinessDnaUpdate": "Business DNA"
     }
   },
   "publicAssistant": {
@@ -985,6 +1006,12 @@
     "savedMessage": "تم الحفظ.",
     "invalidInput": "يرجى مراجعة الحقول المميزة والمحاولة مرة أخرى.",
     "saveFailed": "تعذر الحفظ. يرجى المحاولة مرة أخرى.",
+    "rateLimited": "عدد كبير جدًا من عمليات الحفظ في وقت قصير. حاول مرة أخرى بعد بضع دقائق.",
+    "conflict": {
+      "message": "تم تغيير Business DNA في مكان آخر (في المحادثة أو في علامة تبويب أخرى) بعد فتحك لهذه الصفحة. لم يتم حفظ تغييراتك وهي لا تزال هنا.",
+      "review": "افتح أحدث نسخة في علامة تبويب جديدة",
+      "reload": "حمّل أحدث نسخة (سيتم تجاهل تغييراتك)"
+    },
     "updated": "آخر تحديث {date}",
     "errorTitle": "تعذر تحميل الهوية التجارية",
     "errorDescription": "حدّث الصفحة أو حاول مرة أخرى بعد لحظات.",
