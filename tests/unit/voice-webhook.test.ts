@@ -1219,3 +1219,101 @@ describe("Vapi voice webhook — request hardening", () => {
     expect(results.join("")).not.toContain("prisma");
   });
 });
+
+/**
+ * vapiCallId is unique across all organizations, but every Vapi webhook is
+ * attributed to the organization of the signed assistant. A report whose call id
+ * already belongs to another organization must never update that organization's
+ * call (transcript, recording, cost) nor start its post-call pipeline.
+ */
+describe("Vapi voice webhook — a call row is only ever written within the assistant's organization", () => {
+  const uniqueViolation = () =>
+    Object.assign(new Error("Unique constraint failed on the fields: (`vapi_call_id`)"), {
+      code: "P2002",
+    });
+
+  function statusUpdate() {
+    return new Request("http://localhost/api/v1/voice/webhook", {
+      method: "POST",
+      headers: { "x-vapi-signature": "sig" },
+      body: JSON.stringify({
+        message: {
+          type: "status-update",
+          status: "in-progress",
+          call: { id: "call-1", assistantId: "assistant-1" },
+        },
+      }),
+    });
+  }
+
+  const upsertWhere = (n = 0) =>
+    (mocks.voiceCallUpsert.mock.calls[n]![0] as { where: Record<string, unknown> }).where;
+
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => errorSpy.mockRestore());
+
+  it("end-of-call-report writes the call only where it belongs to the assistant's organization", async () => {
+    await POST(eocrRequest());
+
+    expect(upsertWhere()).toEqual({ vapiCallId: "call-1", organizationId: "org-a" });
+  });
+
+  it("status-update writes the call only where it belongs to the assistant's organization", async () => {
+    await POST(statusUpdate());
+
+    expect(upsertWhere()).toEqual({ vapiCallId: "call-1", organizationId: "org-a" });
+  });
+
+  it("a report for another organization's call id changes nothing there and starts no post-call work", async () => {
+    mocks.voiceCallUpsert.mockRejectedValueOnce(uniqueViolation());
+    // The call id is not this organization's.
+    mocks.voiceCallFindFirst.mockResolvedValue(null);
+
+    const response = await POST(eocrRequest());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "call_conflict" });
+    expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(mocks.redisSet).not.toHaveBeenCalled();
+    const logged = errorSpy.mock.calls.flat().join("\n");
+    expect(logged).toContain("voice_call_org_conflict");
+    mocks.voiceCallFindFirst.mockResolvedValue(null);
+  });
+
+  it("a status-update for another organization's call id records nothing and answers 200", async () => {
+    mocks.voiceCallUpsert.mockRejectedValueOnce(uniqueViolation());
+
+    const response = await POST(statusUpdate());
+
+    expect(response.status).toBe(200);
+    expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain("voice_call_org_conflict");
+  });
+
+  it("a race with this organization's own first write retries the write once and carries on", async () => {
+    mocks.voiceCallUpsert.mockRejectedValueOnce(uniqueViolation());
+    // First lookup (replay check) finds nothing; the conflict check then finds the
+    // row this organization's concurrent status-update just created.
+    mocks.voiceCallFindFirst
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "row-1" } as never);
+
+    const response = await POST(eocrRequest());
+
+    expect(response.status).toBe(200);
+    expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(2);
+    expect(upsertWhere(1)).toEqual({ vapiCallId: "call-1", organizationId: "org-a" });
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("any other database error still fails the request so Vapi retries it", async () => {
+    mocks.voiceCallUpsert.mockRejectedValueOnce(new Error("connection reset"));
+
+    await expect(POST(eocrRequest())).rejects.toThrow("connection reset");
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+});
