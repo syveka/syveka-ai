@@ -16,6 +16,24 @@ const analysisSchema = z.object({
   followUps: z.array(z.string()).max(5),
 });
 
+/** The model's reply as an analysis, or null when it is not the requested JSON. */
+function parseAnalysis(reply: string): z.infer<typeof analysisSchema> | null {
+  try {
+    const json = analysisSchema.safeParse(JSON.parse(reply.replace(/^```json?|```$/g, "").trim()));
+    return json.success ? json.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function logSummaryFailure(
+  orgId: string,
+  callId: string,
+  reason: "provider_error" | "invalid_response",
+): void {
+  console.error(JSON.stringify({ event: "post_call_summary_failed", orgId, callId, reason }));
+}
+
 export async function POST(request: Request): Promise<NextResponse> {
   const [
     { verifyJobRequest },
@@ -118,16 +136,21 @@ export async function POST(request: Request): Promise<NextResponse> {
   // 3. AI summary + sentiment (Haiku-class, §15.2)
   //
   // `!call.summary` guards against the same partial-failure retry as step 1:
-  // if this step already succeeded on a prior attempt (summary/sentiment/
-  // actionsTaken written, activity created) but a *later* step failed, a
-  // retry must not re-run it and create a second VOICE_AI_CALL activity for
-  // the same call. Safe for calls whose transcript is too short to summarize
-  // in the first place too: call.summary stays null and this block is
-  // skipped identically on every attempt, so there's nothing to duplicate.
+  // a summary saved by a prior attempt is never paid for again. Safe for calls
+  // whose transcript is too short to summarize too: call.summary stays null and
+  // this block is skipped identically on every attempt.
+  //
+  // The summary is best-effort: a provider failure or an unusable reply leaves the
+  // call without one (logged with ids only, never the transcript). A database
+  // failure saving it, or its activity below, fails the job so QStash retries --
+  // marking the call processed would lose them for good.
   const transcriptText = JSON.stringify(call.transcript ?? []).slice(0, 30_000);
   // The workflow event below reports the sentiment computed here, not the value loaded before it.
   let sentiment = call.sentiment;
+  let summary = call.summary;
+  let followUps: unknown = call.actionsTaken;
   if (transcriptText.length > 10 && !call.summary) {
+    let reply: string | null = null;
     try {
       const { model, maxTokens } = routeModel("summary");
       const res = await anthropic.messages.create({
@@ -142,38 +165,53 @@ export async function POST(request: Request): Promise<NextResponse> {
           },
         ],
       });
-      // The summary call can take a while: nothing more for an organization
-      // deleted meanwhile (the call itself can't be recalled).
-      if (!(await isOrganizationActive(orgId))) return NextResponse.json(ORGANIZATION_INACTIVE);
-      const text = res.content[0]?.type === "text" ? res.content[0].text : "{}";
-      const json = analysisSchema.safeParse(JSON.parse(text.replace(/^```json?|```$/g, "").trim()));
-
-      if (json.success) {
-        await unscopedPrisma.voiceCall.update({
-          where: { id: call.id },
-          data: {
-            summary: json.data.summary,
-            sentiment: json.data.sentiment,
-            actionsTaken: json.data.followUps,
-          },
-        });
-        sentiment = json.data.sentiment;
-
-        if (contactId) {
-          await unscopedPrisma.activity.create({
-            data: {
-              organizationId: orgId,
-              contactId,
-              type: "VOICE_AI_CALL",
-              subject: `${call.assistant.name}: ${json.data.sentiment} call (${minutes} min)`,
-              body: json.data.summary,
-              metadata: { voiceCallId: call.id, followUps: json.data.followUps },
-            },
-          });
-        }
-      }
+      reply = res.content[0]?.type === "text" ? res.content[0].text : "";
     } catch {
-      // summary is best-effort — the call record stands without it
+      logSummaryFailure(orgId, call.id, "provider_error");
+    }
+    // The summary call can take a while: nothing more for an organization
+    // deleted meanwhile (the call itself can't be recalled).
+    if (!(await isOrganizationActive(orgId))) return NextResponse.json(ORGANIZATION_INACTIVE);
+
+    const analysis = reply === null ? null : parseAnalysis(reply);
+    if (reply !== null && !analysis) logSummaryFailure(orgId, call.id, "invalid_response");
+    if (analysis) {
+      await unscopedPrisma.voiceCall.update({
+        where: { id: call.id },
+        data: {
+          summary: analysis.summary,
+          sentiment: analysis.sentiment,
+          actionsTaken: analysis.followUps,
+        },
+      });
+      summary = analysis.summary;
+      sentiment = analysis.sentiment;
+      followUps = analysis.followUps;
+    }
+  }
+
+  // The call's CRM activity, keyed by the call (not by the summary) so a retry after
+  // the summary was saved but the activity was not still creates it, exactly once.
+  if (summary && contactId) {
+    const activityExists = await unscopedPrisma.activity.findFirst({
+      where: {
+        organizationId: orgId,
+        type: "VOICE_AI_CALL",
+        metadata: { path: ["voiceCallId"], equals: call.id },
+      },
+      select: { id: true },
+    });
+    if (!activityExists) {
+      await unscopedPrisma.activity.create({
+        data: {
+          organizationId: orgId,
+          contactId,
+          type: "VOICE_AI_CALL",
+          subject: `${call.assistant.name}: ${sentiment ?? "neutral"} call (${minutes} min)`,
+          body: summary,
+          metadata: { voiceCallId: call.id, followUps: followUps as string[] },
+        },
+      });
     }
   }
 

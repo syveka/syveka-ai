@@ -171,6 +171,15 @@ const db = {
     }),
   },
   activity: {
+    // The post-call job looks up the call's activity by metadata.voiceCallId.
+    findFirst: vi.fn(
+      async ({ where }: { where: Row & { metadata?: { equals?: unknown } } }) =>
+        s.activities.find(
+          (a) =>
+            a.organizationId === where.organizationId &&
+            (a.metadata as Row | undefined)?.voiceCallId === where.metadata?.equals,
+        ) ?? null,
+    ),
     create: vi.fn(async ({ data }: { data: Row }) => {
       s.activities.push(data);
       return data;
