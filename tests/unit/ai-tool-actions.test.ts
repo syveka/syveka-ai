@@ -12,7 +12,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const m = vi.hoisted(() => {
   const tx = {
     $executeRaw: vi.fn(async () => 0),
-    calendarEvent: { findFirst: vi.fn(), create: vi.fn() },
+    // findMany: the recurring-series check (none here).
+    calendarEvent: { findFirst: vi.fn(), findMany: vi.fn(async () => []), create: vi.fn() },
     contact: { findFirstOrThrow: vi.fn() },
   };
   return {

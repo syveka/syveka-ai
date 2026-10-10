@@ -16,6 +16,7 @@ import {
   zonedTimeToUtc,
 } from "@/server/calendar/timezone";
 import { lockOrgCalendar } from "@/server/calendar/locks";
+import { busyIntervals, busyWindowWhere, recurringSeriesWhere } from "@/server/calendar/busy";
 import type { ProposedActionView } from "@/lib/validators/chat";
 import { DEFAULT_WEEKLY_RULES } from "@/server/services/booking";
 import {
@@ -294,17 +295,18 @@ const getCalendarAvailability = defineTool({
       where: {
         deletedAt: null,
         status: { not: "CANCELED" },
-        startsAt: { lt: dayEnd },
-        endsAt: { gt: dayStart },
+        ...busyWindowWhere(dayStart, dayEnd),
       },
-      select: { startsAt: true, endsAt: true },
+      select: { startsAt: true, endsAt: true, recurrenceRule: true },
+      orderBy: { startsAt: "desc" }, // newest first if the cap is reached
+      take: 1000,
     });
 
     const slots = computeAvailableSlots({
       timezone,
       rules,
       overrides,
-      busy: events.map((e) => ({ startsAt: e.startsAt, endsAt: e.endsAt })),
+      busy: busyIntervals(events, dayStart, dayEnd),
       from: dayStart,
       to: dayEnd,
       now: new Date(),
@@ -396,6 +398,21 @@ const bookMeeting = defineTool({
         select: { id: true },
       });
       if (conflict) return { ok: false, reason: "slot_taken" };
+      // A recurring series is stored once: check its occurrences too.
+      const series = await tx.calendarEvent.findMany({
+        where: {
+          organizationId: id.orgId,
+          deletedAt: null,
+          status: { not: "CANCELED" },
+          ...recurringSeriesWhere(endsAt),
+        },
+        select: { startsAt: true, endsAt: true, recurrenceRule: true },
+        orderBy: { startsAt: "desc" }, // newest first if the cap is reached
+        take: 500,
+      });
+      if (busyIntervals(series, startsAt, endsAt).length > 0) {
+        return { ok: false, reason: "slot_taken" };
+      }
 
       if (input.contactId) {
         // Tenancy check (mirrors logActivity): a model-supplied contactId is

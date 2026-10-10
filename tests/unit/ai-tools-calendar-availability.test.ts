@@ -16,6 +16,7 @@ vi.mock("@/server/services/audit", () => ({ audit: auditMock }));
 vi.mock("@/server/ai/rag", () => ({ retrieveChunks: vi.fn() }));
 
 import { TOOL_REGISTRY, type ToolIdentity } from "@/server/ai/tools";
+import { findManyOver } from "./helpers/calendar-event-where";
 
 const getCalendarAvailability = TOOL_REGISTRY.find((t) => t.name === "getCalendarAvailability")!;
 
@@ -104,6 +105,30 @@ describe("getCalendarAvailability tool", () => {
         endsAt: new Date("2026-08-17T06:30:00.000Z"),
       },
     ]);
+
+    const result = (await getCalendarAvailability.execute(identity(), {
+      date: "2026-08-17",
+    })) as { freeSlots: string[] };
+
+    expect(result.freeSlots).not.toContain("2026-08-17T06:00:00.000Z");
+    expect(result.freeSlots).toContain("2026-08-17T06:30:00.000Z");
+  });
+
+  it("excludes an occurrence of a weekly series that started on an earlier week", async () => {
+    scheduleFindFirstMock.mockResolvedValueOnce(null); // default Mon-Fri 09-17
+    // Monday 09:00-09:30 Helsinki every week, first held a week earlier. The
+    // mock filters by the query's real `where`, as the database would.
+    eventFindManyMock.mockImplementation(
+      findManyOver([
+        {
+          deletedAt: null,
+          status: "CONFIRMED",
+          startsAt: new Date("2026-08-10T06:00:00.000Z"),
+          endsAt: new Date("2026-08-10T06:30:00.000Z"),
+          recurrenceRule: "FREQ=WEEKLY",
+        },
+      ]) as never,
+    );
 
     const result = (await getCalendarAvailability.execute(identity(), {
       date: "2026-08-17",

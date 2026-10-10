@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicBookingInput } from "@/lib/validators/booking";
+import { findFirstOver, findManyOver } from "./helpers/calendar-event-where";
 
 const {
   unscopedMock,
@@ -18,7 +19,7 @@ const {
     // Eligibility locks (owner membership, then the booking type): granted here;
     // removal and ineligible owners are covered in booking-owner-removal.test.ts.
     $queryRaw: vi.fn(async () => [{ role: "OWNER", id: "bt-1" }]),
-    calendarEvent: { findFirst: vi.fn(), create: vi.fn(), update: vi.fn() },
+    calendarEvent: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
     contact: { findFirst: vi.fn(), create: vi.fn() },
     eventAttendee: { create: vi.fn(), findFirst: vi.fn() },
     booking: {
@@ -136,6 +137,7 @@ beforeEach(() => {
   unscopedMock.availabilitySchedule.findFirst.mockResolvedValue(null);
   unscopedMock.calendarEvent.findMany.mockResolvedValue([]);
   txMock.calendarEvent.findFirst.mockResolvedValue(null); // no conflict inside tx
+  txMock.calendarEvent.findMany.mockResolvedValue([]); // no recurring series inside tx
   txMock.calendarEvent.create.mockResolvedValue({ id: "evt-1" });
   txMock.contact.findFirst.mockResolvedValue(null);
   txMock.contact.create.mockResolvedValue({ id: "contact-new" });
@@ -767,5 +769,130 @@ describe("BookingError typing", () => {
     const e = new BookingError("x", "slot_taken");
     expect(e.code).toBe("slot_taken");
     expect(e.name).toBe("BookingError");
+  });
+});
+
+/**
+ * A recurring calendar series is stored once, as its first occurrence. Busy
+ * checks must expand it: a weekly meeting that started last week still makes
+ * this week's occurrence busy. The calendar mocks below filter the stored
+ * rows by each query's real `where`, as the database would.
+ */
+describe("recurring calendar events", () => {
+  // The owner's weekly Monday 09:00-10:00 Helsinki meeting, first held a week
+  // before VALID_START (Mon 2026-02-02 09:00 Helsinki = 07:00Z).
+  function weeklySeries(overrides: Record<string, unknown> = {}) {
+    return {
+      id: "evt-weekly",
+      organizationId: "org-a",
+      ownerId: "owner-1",
+      createdById: "owner-1",
+      deletedAt: null,
+      status: "CONFIRMED",
+      startsAt: new Date("2026-01-26T07:00:00Z"),
+      endsAt: new Date("2026-01-26T08:00:00Z"),
+      recurrenceRule: "FREQ=WEEKLY;BYDAY=MO",
+      ...overrides,
+    };
+  }
+
+  function storeEvents(rows: Array<Record<string, unknown>>) {
+    unscopedMock.calendarEvent.findMany.mockImplementation(findManyOver(rows) as never);
+    txMock.calendarEvent.findMany.mockImplementation(findManyOver(rows) as never);
+    txMock.calendarEvent.findFirst.mockImplementation(findFirstOver(rows) as never);
+  }
+
+  it("public slots leave out an occurrence of an earlier-started weekly series", async () => {
+    storeEvents([weeklySeries()]);
+
+    const { slots } = await getPublicSlots({
+      orgSlug: "acme",
+      typeSlug: "intro-call",
+      from: new Date("2026-02-02T00:00:00Z"),
+      to: new Date("2026-02-03T00:00:00Z"),
+    });
+
+    const offered = slots.map((s) => s.toISOString());
+    expect(offered).not.toContain(VALID_START);
+    expect(offered).toContain("2026-02-02T08:00:00.000Z"); // right after it: free
+  });
+
+  it("a guest can't book a series occurrence", async () => {
+    storeEvents([weeklySeries()]);
+
+    await expect(
+      createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
+    ).rejects.toMatchObject({ code: "invalid_slot" });
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("the in-transaction re-check catches a series created after the slots were shown", async () => {
+    storeEvents([weeklySeries()]);
+    unscopedMock.calendarEvent.findMany.mockResolvedValue([]); // slots computed before it existed
+
+    await expect(
+      createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
+    ).rejects.toMatchObject({ code: "slot_taken" });
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("an ended, canceled, deleted or other owner's series doesn't block the slot", async () => {
+    storeEvents([
+      weeklySeries({ id: "ended", recurrenceRule: "FREQ=WEEKLY;BYDAY=MO;COUNT=1" }),
+      weeklySeries({ id: "canceled", status: "CANCELED" }),
+      weeklySeries({ id: "deleted", deletedAt: new Date("2026-01-27T00:00:00Z") }),
+      weeklySeries({ id: "other-owner", ownerId: "someone-else", createdById: "someone-else" }),
+    ]);
+
+    const result = await createPublicBooking({
+      orgSlug: "acme",
+      typeSlug: "intro-call",
+      input: input(),
+    });
+
+    expect(result.booking.startsAt.toISOString()).toBe(VALID_START);
+  });
+
+  it("an unparseable stored rule still blocks its first occurrence (as the calendar treats it)", async () => {
+    storeEvents([
+      weeklySeries({
+        startsAt: new Date(VALID_START),
+        endsAt: new Date("2026-02-02T08:00:00Z"),
+        recurrenceRule: "FREQ=YEARLY",
+      }),
+    ]);
+
+    await expect(
+      createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
+    ).rejects.toMatchObject({ code: "invalid_slot" });
+  });
+
+  it("a guest can't reschedule onto a series occurrence", async () => {
+    const old = {
+      id: "bk-old",
+      organizationId: "org-a",
+      bookingTypeId: "bt-1",
+      eventId: "evt-old",
+      status: "CONFIRMED",
+      guestName: "Guest One",
+      guestEmail: "guest@example.com",
+      guestPhone: null,
+      guestCompany: null,
+      guestNotes: null,
+      guestTimezone: "Europe/Helsinki",
+      guestLocale: "EN",
+      consentAt: new Date("2026-01-01T00:00:00Z"),
+      startsAt: new Date("2026-02-03T08:00:00Z"),
+      endsAt: new Date("2026-02-03T09:00:00Z"),
+    };
+    resolveTokenMock.mockResolvedValue({ id: "token-1", purpose: "RESCHEDULE", booking: old });
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(old);
+    storeEvents([weeklySeries()]);
+    unscopedMock.calendarEvent.findMany.mockResolvedValue([]); // isolate the in-transaction check
+
+    await expect(rescheduleBookingViaToken("raw-token", VALID_START)).rejects.toMatchObject({
+      code: "slot_taken",
+    });
+    expect(txMock.booking.updateMany).not.toHaveBeenCalled();
   });
 });
