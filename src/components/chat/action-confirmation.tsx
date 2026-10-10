@@ -32,6 +32,8 @@ const REFUSAL_STATE: Record<string, State> = {
   // The action store couldn't be reached: the tool only runs after it answers.
   service_unavailable: "failed",
   permission_denied: "permission",
+  // The plan's limit (or a read-only workspace) refused it before any write.
+  plan_limit: "failed",
 };
 
 function formatWhen(iso: string, timeZone: string | undefined, locale: string) {
