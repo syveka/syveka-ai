@@ -94,6 +94,18 @@ type StepClaimResult =
 class StepFencedError extends Error {}
 
 /**
+ * Thrown when a step is refused before its side effect runs (e.g. the org is
+ * out of AI quota). The step and run end FAILED as usual, but the route
+ * answers 200: retrying cannot help, and each retry would notify the
+ * creator again.
+ */
+class WorkflowStepRefusedError extends Error {
+  constructor(readonly reason: "ai_quota_exceeded") {
+    super(reason);
+  }
+}
+
+/**
  * Durable, atomic per-(workflowRunId, stepId) claim - closes the crash
  * window PR #84's run-level claim leaves open: a reclaimed FAILED/stale-
  * RUNNING run restarts its step loop from index 0 (see the run-level claim
@@ -234,8 +246,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     { anthropic },
     { routeModel },
     { sendEmail },
-    { recordUsage },
+    { recordUsage, getEntitlements },
     { isOrganizationActive, ORGANIZATION_INACTIVE },
+    { assertAiQuotaAvailable, AiSpendError },
   ] = await Promise.all([
     import("@/server/jobs/verify"),
     import("@/server/db/tenant"),
@@ -245,6 +258,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/integrations/resend"),
     import("@/server/services/billing/entitlements"),
     import("@/server/jobs/organization-guard"),
+    import("@/server/services/ai-spend"),
   ]);
 
   const rawBody = await verifyJobRequest(request);
@@ -290,6 +304,18 @@ export async function POST(request: Request): Promise<NextResponse> {
       });
     }
     return NextResponse.json({ skipped: "workflow inactive or gone" });
+  }
+
+  // Plan limits are otherwise only checked when a workflow is activated, so
+  // an org that was downgraded or locked read-only afterwards would keep
+  // running its active workflows (some triggers, such as public bookings,
+  // need no signed-in user). Only fresh triggers are gated here: a resume or
+  // manual test run continues a run that was already accepted.
+  if (!runId) {
+    const entitlements = await getEntitlements(orgId);
+    if (entitlements.readOnly || entitlements.activeWorkflows <= 0) {
+      return NextResponse.json({ skipped: "plan_not_entitled" });
+    }
   }
 
   // Create, resume, or claim the run record. Resuming (runId set) always
@@ -458,6 +484,17 @@ export async function POST(request: Request): Promise<NextResponse> {
             return NextResponse.json({ ok: true, skipped: "step_in_progress", stepId: step.id });
           }
           try {
+            // Checked only for a step this attempt actually claimed: a
+            // SUCCEEDED replay above reuses its output and is never re-checked
+            // or re-counted.
+            try {
+              await assertAiQuotaAvailable(orgId);
+            } catch (quotaErr) {
+              if (quotaErr instanceof AiSpendError) {
+                throw new WorkflowStepRefusedError("ai_quota_exceeded");
+              }
+              throw quotaErr;
+            }
             const { model, maxTokens } = routeModel("utility");
             const res = await anthropic.messages.create(
               {
@@ -473,19 +510,43 @@ export async function POST(request: Request): Promise<NextResponse> {
             const text = res.content[0]?.type === "text" ? res.content[0].text : "";
             const truncated = text.slice(0, 2000);
             ctx.vars[step.outputVar] = truncated;
+            let completedHere = true;
             try {
               await completeStep(unscopedPrisma, claim, truncated);
             } catch (completeErr) {
               // Lost the fencing race after the (provider-deduped) call
               // already succeeded - another worker's claim/completion is
-              // the one of record. Not a failure: proceed as ok.
+              // the one of record. Not a failure: proceed as ok, but leave
+              // usage to that worker so the generation is counted once.
               if (!(completeErr instanceof StepFencedError)) throw completeErr;
+              completedHere = false;
             }
             results.push({ stepId: step.id, status: "ok", output: truncated });
-            await recordUsage(orgId, "AI_TOKENS_OUT", res.usage.output_tokens, {
-              feature: "workflow",
-              workflowId,
-            });
+            if (completedHere) {
+              // Best-effort: the step is already SUCCEEDED, so a recording
+              // failure must not fail it - that would reclaim it on retry
+              // and call the provider again.
+              const usage = [
+                ["AI_TOKENS_OUT", res.usage.output_tokens, { feature: "workflow", workflowId }],
+                [
+                  "AI_MESSAGES",
+                  1,
+                  { feature: "workflow", workflowId, runId: run.id, stepId: step.id },
+                ],
+              ] as const;
+              for (const [metric, quantity, metadata] of usage) {
+                await recordUsage(orgId, metric, quantity, metadata).catch((usageErr: unknown) => {
+                  console.error("run-workflow: usage recording failed", {
+                    orgId,
+                    workflowId,
+                    runId: run.id,
+                    stepId: step.id,
+                    metric,
+                    errorClass: usageErr instanceof Error ? usageErr.name : typeof usageErr,
+                  });
+                });
+              }
+            }
           } catch (stepErr) {
             if (!(stepErr instanceof StepFencedError)) {
               await failStep(
@@ -754,6 +815,11 @@ export async function POST(request: Request): Promise<NextResponse> {
           href: `/workflows/${workflowId}`,
         },
       });
+    }
+    if (err instanceof WorkflowStepRefusedError) {
+      // Deliberate refusal, not a transient error: a retry would only fail
+      // again and notify the creator again.
+      return NextResponse.json({ error: message, refused: err.reason });
     }
     // QStash retries (3x) then DLQ (§17.2)
     return NextResponse.json({ error: message }, { status: 500 });
