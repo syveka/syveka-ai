@@ -280,8 +280,17 @@ function callerSafeResult(result: string): string {
   try {
     const parsed: unknown = JSON.parse(result);
     if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
-      const { error } = parsed as { error?: unknown };
-      if (typeof error === "string") return JSON.stringify({ error });
+      const { error, details } = parsed as { error?: unknown; details?: unknown };
+      if (typeof error !== "string") return result;
+      // Which fields were invalid (paths only, never messages or input values),
+      // so the assistant can ask the caller again instead of guessing.
+      const fields =
+        error === "invalid_input" && Array.isArray(details)
+          ? details
+              .map((d) => (Array.isArray(d?.path) ? d.path.join(".") : null))
+              .filter((f): f is string => typeof f === "string" && f.length > 0)
+          : [];
+      return JSON.stringify(fields.length > 0 ? { error, fields } : { error });
     }
   } catch {
     // Not JSON: pass through unchanged (tool results are always JSON today).
@@ -433,6 +442,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                 event: "voice_tool_call_failed",
                 orgId,
                 toolCallId: tc.id,
+                tool: tc.name,
                 name: err instanceof Error ? err.name : "unknown",
               }),
             );

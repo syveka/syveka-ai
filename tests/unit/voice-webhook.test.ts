@@ -1192,6 +1192,21 @@ describe("Vapi voice webhook — request hardening", () => {
     expect(mocks.executeTool).toHaveBeenCalledTimes(1);
   });
 
+  it("tells the assistant which fields were invalid, without messages or input values", async () => {
+    mocks.executeTool.mockResolvedValueOnce(
+      JSON.stringify({
+        error: "invalid_input",
+        details: [
+          { path: ["startsAt"], message: "Invalid datetime, got 'tomorrow at 25:00'" },
+          { path: [], message: "Unrecognized key: secret" },
+        ],
+      }),
+    );
+    const results = await runTools("call-7", [{ id: "b1", name: "bookMeeting" }]);
+    expect(results).toEqual([JSON.stringify({ error: "invalid_input", fields: ["startsAt"] })]);
+    expect(results.join("")).not.toContain("25:00");
+  });
+
   it("never passes internal error text to the caller's assistant", async () => {
     mocks.executeTool.mockResolvedValueOnce(
       JSON.stringify({
