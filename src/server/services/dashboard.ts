@@ -120,7 +120,9 @@ export async function getCrmDashboard(ctx: TenantContext) {
       : Promise.resolve({ _sum: { quantity: null } }),
     permissions.canUseChat
       ? db.conversation.findMany({
-          where: { deletedAt: null },
+          // Titles are generated from the first message, so apply the same
+          // visibility rule as listConversations: own or explicitly shared only.
+          where: { deletedAt: null, OR: [{ userId: ctx.userId }, { isShared: true }] },
           orderBy: { updatedAt: "desc" },
           take: 4,
           select: { id: true, title: true, updatedAt: true, model: true },

@@ -280,3 +280,77 @@ describe("CRM dashboard permission isolation", () => {
     expect(JSON.stringify(dashboard)).not.toContain(orgData.orgB.calendarTitle);
   });
 });
+
+describe("CRM dashboard conversation visibility", () => {
+  type ConversationRow = {
+    id: string;
+    title: string;
+    userId: string;
+    isShared: boolean;
+    deletedAt: Date | null;
+    updatedAt: Date;
+    model: string;
+  };
+  type VisibilityClause = { userId?: string; isShared?: boolean };
+  type ConversationWhere = { deletedAt?: null; OR?: VisibilityClause[] };
+
+  const conversations: ConversationRow[] = [
+    {
+      id: "own-private",
+      title: "My private planning",
+      userId: "user-1",
+      isShared: false,
+      deletedAt: null,
+      updatedAt: baseDate,
+      model: "gpt-test",
+    },
+    {
+      id: "other-shared",
+      title: "Team shared playbook",
+      userId: "user-2",
+      isShared: true,
+      deletedAt: null,
+      updatedAt: baseDate,
+      model: "gpt-test",
+    },
+    {
+      id: "other-private",
+      title: "Firing Mikko next week",
+      userId: "user-2",
+      isShared: false,
+      deletedAt: null,
+      updatedAt: baseDate,
+      model: "gpt-test",
+    },
+  ];
+
+  function matchesWhere(row: ConversationRow, where: ConversationWhere): boolean {
+    if (where.deletedAt === null && row.deletedAt !== null) return false;
+    if (!where.OR) return true;
+    return where.OR.some((clause) =>
+      Object.entries(clause).every(([key, value]) => row[key as keyof VisibilityClause] === value),
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    allowPermissions("crm:read", "chat:use");
+    const db = createMockDb("orgA");
+    db.conversation.findMany = vi.fn(async ({ where }: { where: ConversationWhere }) =>
+      conversations
+        .filter((row) => matchesWhere(row, where))
+        .map(({ id, title, updatedAt, model }) => ({ id, title, updatedAt, model })),
+    );
+    tenantDbMock.mockReturnValue(db);
+  });
+
+  it("hides other members' private conversations from latest AI activity", async () => {
+    const dashboard = await getCrmDashboard(ctx("MEMBER"));
+    const titles = dashboard.feed.aiActivities.map((item) => item.title);
+
+    expect(titles).toContain("My private planning");
+    expect(titles).toContain("Team shared playbook");
+    expect(titles).not.toContain("Firing Mikko next week");
+    expect(JSON.stringify(dashboard)).not.toContain("other-private");
+  });
+});
