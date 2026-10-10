@@ -578,3 +578,38 @@ describe("booked events stay in sync with their booking", () => {
     expect(db.calendarEvent.update).not.toHaveBeenCalled();
   });
 });
+
+describe("recurring series expand in the event's own zone (DST)", () => {
+  // Weekly Monday 14:00 Helsinki from Oct 12, 2026; the EU DST change is Oct 25.
+  const series = {
+    id: "series-1",
+    title: "QA Recurring Test",
+    startsAt: new Date("2026-10-12T11:00:00Z"),
+    endsAt: new Date("2026-10-12T12:00:00Z"),
+    timezone: "Europe/Helsinki",
+    recurrenceRule: "FREQ=WEEKLY",
+    attendeeRecords: [],
+    booking: null,
+  };
+
+  it("listEvents shows the Oct 26 occurrence at 14:00 Helsinki (12:00Z)", async () => {
+    db.calendarEvent.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([series]);
+    const events = await listEvents(ctx(), {
+      from: new Date("2026-10-26T00:00:00Z"),
+      to: new Date("2026-10-27T00:00:00Z"),
+    });
+    expect(events.map((e) => e.startsAt.toISOString())).toEqual(["2026-10-26T12:00:00.000Z"]);
+  });
+
+  it("findConflicts finds the series at its local time after the change", async () => {
+    db.calendarEvent.findMany.mockResolvedValueOnce([series]);
+    const conflicts = await findConflicts(ctx(), {
+      startsAt: new Date("2026-10-26T12:00:00Z"),
+      endsAt: new Date("2026-10-26T12:30:00Z"),
+    });
+    expect(conflicts.map((c) => c.startsAt.toISOString())).toEqual(["2026-10-26T12:00:00.000Z"]);
+    expect(db.calendarEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ timezone: true }) }),
+    );
+  });
+});

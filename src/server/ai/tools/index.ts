@@ -315,7 +315,7 @@ const getCalendarAvailability = defineTool({
         status: { not: "CANCELED" },
         ...busyWindowWhere(dayStart, dayEnd),
       },
-      select: { startsAt: true, endsAt: true, recurrenceRule: true },
+      select: { startsAt: true, endsAt: true, recurrenceRule: true, timezone: true },
       orderBy: { startsAt: "desc" }, // newest first if the cap is reached
       take: 1000,
     });
@@ -424,7 +424,7 @@ const bookMeeting = defineTool({
           status: { not: "CANCELED" },
           ...recurringSeriesWhere(endsAt),
         },
-        select: { startsAt: true, endsAt: true, recurrenceRule: true },
+        select: { startsAt: true, endsAt: true, recurrenceRule: true, timezone: true },
         orderBy: { startsAt: "desc" }, // newest first if the cap is reached
         take: 500,
       });

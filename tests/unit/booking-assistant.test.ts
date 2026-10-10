@@ -149,6 +149,15 @@ describe("assistScheduling", () => {
     await assistScheduling(ctx("org-b"), "book 30 min");
     expect(tenantDbMock).toHaveBeenCalledWith("org-b");
   });
+
+  it("reads each busy event's zone so recurring series keep their local time across DST", async () => {
+    const db = baseDb();
+    tenantDbMock.mockReturnValue(db);
+    await assistScheduling(ctx(), "book 30 min");
+    expect(db.calendarEvent.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ timezone: true }) }),
+    );
+  });
 });
 
 describe("generateMeetingSummary", () => {
