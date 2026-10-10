@@ -38,6 +38,7 @@ vi.mock("@/server/db/tenant", () => ({
   tenantDb: vi.fn(() => ({
     contact: {
       create: m.contactCreate,
+      count: vi.fn(async () => 0),
       findFirst: vi.fn(async () => null),
       findFirstOrThrow: vi.fn(async () => ({ id: "c" })),
     },
@@ -90,6 +91,12 @@ vi.mock("@/server/services/audit", () => ({
   ),
 }));
 vi.mock("@/server/ai/rag", () => ({ retrieveChunks: vi.fn(async () => []) }));
+// The organization is within its plan (the plan check itself is covered in
+// ai-tools-create-contact.test.ts and ai-tool-actions.test.ts).
+vi.mock("@/server/services/billing/entitlements", () => ({
+  assertWithinLimit: vi.fn(async () => ({})),
+  EntitlementError: class EntitlementError extends Error {},
+}));
 vi.mock("@/server/auth/session", () => ({
   getTenantContext: vi.fn(async () => {
     if (!m.ctx) throw new Error("unauthenticated");

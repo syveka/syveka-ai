@@ -7,6 +7,7 @@ import { retrieveChunks } from "@/server/ai/rag";
 import { can, type Permission } from "@/server/auth/permissions";
 import type { Role } from "@/generated/prisma/client/client";
 import { audit } from "@/server/services/audit";
+import { EntitlementError, assertWithinLimit } from "@/server/services/billing/entitlements";
 import { computeAvailableSlots, type DateOverride, type WeeklyRule } from "@/server/calendar/slots";
 import {
   addDaysUtc,
@@ -126,6 +127,16 @@ const createContact = defineTool({
   permission: "crm:write",
   execute: async (id, input) => {
     const db = tenantDb(id.orgId);
+    // The same plan check as creating a contact in the app
+    // (src/server/services/contacts.ts): the plan's contact limit, and no new
+    // contacts while the workspace is read-only.
+    const current = await db.contact.count({ where: { deletedAt: null } });
+    try {
+      await assertWithinLimit(id.orgId, { kind: "contacts", current });
+    } catch (e) {
+      if (e instanceof EntitlementError) return { error: e.code };
+      throw e;
+    }
     const contact = await db.contact.create({
       data: {
         organizationId: id.orgId,
