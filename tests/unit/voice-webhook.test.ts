@@ -1016,6 +1016,220 @@ describe("Vapi voice webhook — over-quota calls are actually ended", () => {
 });
 
 /**
+ * Vapi acts on replies to tool-calls (and assistant/transfer requests) only: a
+ * reply to status-update is ignored. On status-update an over-quota call is
+ * therefore ended through Live Call Control (POST {"type":"end-call"} to
+ * call.monitor.controlUrl); on tool-calls only by a request-failed message with
+ * endCallAfterSpokenEnabled, so the goodbye line is not cut off.
+ */
+describe("Vapi voice webhook — over-quota calls are actually ended", () => {
+  const CONTROL_URL =
+    "https://phone-call-websocket.aws-us-west-2-backend-production1.vapi.ai/call-secret-123/control";
+
+  const fetchMock = vi.fn(async (..._args: unknown[]) => new Response(null, { status: 200 }));
+  const consoleSpies: Array<ReturnType<typeof vi.spyOn>> = [];
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    for (const method of ["warn", "error", "log", "info"] as const) {
+      consoleSpies.push(vi.spyOn(console, method).mockImplementation(() => {}));
+    }
+    mocks.getMonthUsage.mockResolvedValue(0);
+    mocks.getEntitlements.mockResolvedValue({ voiceMinutesMonth: 1000 });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    for (const spy of consoleSpies.splice(0)) spy.mockRestore();
+    mocks.getMonthUsage.mockResolvedValue(0);
+  });
+
+  const overQuota = () => mocks.getMonthUsage.mockResolvedValue(1000);
+
+  function loggedText(): string {
+    return consoleSpies
+      .flatMap((spy) => spy.mock.calls.flat())
+      .map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg)))
+      .join("\n");
+  }
+
+  function statusUpdate(controlUrl: string | null = CONTROL_URL) {
+    return new Request("http://localhost/api/v1/voice/webhook", {
+      method: "POST",
+      headers: { "x-vapi-signature": "sig" },
+      body: JSON.stringify({
+        message: {
+          type: "status-update",
+          status: "in-progress",
+          call: {
+            id: "call-q",
+            assistantId: "assistant-1",
+            ...(controlUrl ? { monitor: { controlUrl } } : {}),
+          },
+        },
+      }),
+    });
+  }
+
+  function toolCalls(language: "FI" | "EN" | "AR") {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce({
+      id: "assistant-1",
+      organizationId: "org-a",
+      enabledTools: ["bookMeeting"],
+      useKnowledgeBase: false,
+      isActive: true,
+      language,
+      organization: { members: [{ userId: "owner-1" }] },
+    } as never);
+    return new Request("http://localhost/api/v1/voice/webhook", {
+      method: "POST",
+      headers: { "x-vapi-signature": "sig" },
+      body: JSON.stringify({
+        message: {
+          type: "tool-calls",
+          call: { id: "call-q", assistantId: "assistant-1", monitor: { controlUrl: CONTROL_URL } },
+          toolCallList: [
+            { id: "tc-1", name: "bookMeeting", arguments: { title: "x" } },
+            { id: "tc-2", name: "bookMeeting", arguments: { title: "y" } },
+          ],
+        },
+      }),
+    });
+  }
+
+  it("over-quota status-update POSTs exactly one end-call to the control URL, records no call and never logs the URL", async () => {
+    overQuota();
+
+    const response = await POST(statusUpdate());
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
+    expect(url).toBe(CONTROL_URL);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ type: "end-call" });
+    expect(new Headers(init.headers).get("content-type")).toBe("application/json");
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    // A redirect would send the end-call to a host the allowlist never checked.
+    expect(init.redirect).toBe("error");
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    expect(loggedText()).not.toContain("call-secret-123");
+    expect(loggedText()).not.toContain("vapi.ai");
+  });
+
+  it.each([
+    ["http (not https)", "http://phone.vapi.ai/x/control"],
+    ["foreign host", "https://attacker.example/x/control"],
+    ["look-alike host", "https://evilvapi.ai/x/control"],
+    ["suffix trick", "https://phone.vapi.ai.attacker.example/x/control"],
+    ["internal address", "https://169.254.169.254/latest/meta-data"],
+    ["credentials in URL", "https://user:pw@phone.vapi.ai/x/control"],
+    ["non-default port", "https://phone.vapi.ai:8443/x/control"],
+    ["not a URL", "not a url"],
+  ])(
+    "never calls an invalid control URL (%s), records no call and answers 200",
+    async (_label, controlUrl) => {
+      overQuota();
+
+      const response = await POST(statusUpdate(controlUrl));
+
+      expect(response.status).toBe(200);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+      expect(loggedText()).not.toContain(controlUrl);
+    },
+  );
+
+  it("a missing control URL is skipped: no fetch, no call row, 200", async () => {
+    overQuota();
+
+    const response = await POST(statusUpdate(null));
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["network error", () => fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"))],
+    ["timeout", () => fetchMock.mockRejectedValueOnce(new DOMException("t", "TimeoutError"))],
+    ["non-2xx", () => fetchMock.mockResolvedValueOnce(new Response(null, { status: 500 }))],
+  ])("a control URL failure (%s) keeps the 200 and never logs the URL", async (_label, arrange) => {
+    overQuota();
+    arrange();
+
+    const response = await POST(statusUpdate());
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    expect(loggedText()).not.toContain("call-secret-123");
+  });
+
+  it("under quota, status-update records the call as before and never calls the control URL", async () => {
+    const response = await POST(statusUpdate());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("over-quota tool-calls runs no tool and ends the call only via request-failed + endCallAfterSpokenEnabled (no control URL race)", async () => {
+    overQuota();
+
+    const response = await POST(toolCalls("EN"));
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const message = {
+      type: "request-failed",
+      content: "Sorry, this line can't take more calls right now. Goodbye.",
+      endCallAfterSpokenEnabled: true,
+    };
+    expect(body.results).toEqual([
+      { toolCallId: "tc-1", name: "bookMeeting", error: "quota_exceeded", message },
+      { toolCallId: "tc-2", name: "bookMeeting", error: "quota_exceeded", message },
+    ]);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+    expect(mocks.redisSet).not.toHaveBeenCalled();
+    // A Live Call Control end-call here would hang up before the goodbye is spoken.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(loggedText()).not.toContain("call-secret-123");
+  });
+
+  it.each([
+    ["FI", "Valitettavasti tämä linja ei voi juuri nyt ottaa vastaan puheluita. Näkemiin."],
+    ["AR", "عذرًا، لا يمكن لهذا الخط استقبال مكالمات أخرى الآن. مع السلامة."],
+  ] as const)("speaks the goodbye in the assistant's language (%s)", async (language, content) => {
+    overQuota();
+
+    const body = await (await POST(toolCalls(language))).json();
+
+    expect(body.results[0].message).toEqual({
+      type: "request-failed",
+      content,
+      endCallAfterSpokenEnabled: true,
+    });
+  });
+
+  it("under quota, tool-calls executes the tools with the existing result shape and never calls the control URL", async () => {
+    mocks.executeTool.mockResolvedValue(JSON.stringify({ booked: true }));
+
+    const body = await (await POST(toolCalls("EN"))).json();
+
+    expect(body.results).toEqual([
+      { toolCallId: "tc-1", result: JSON.stringify({ booked: true }) },
+      { toolCallId: "tc-2", result: JSON.stringify({ booked: true }) },
+    ]);
+    expect(mocks.executeTool).toHaveBeenCalledTimes(2);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
  * Vapi's API spec (ToolCall) sends each requested call as
  * `{ id, type: "function", function: { name, arguments } }` with the
  * arguments as a JSON string; some docs examples show a flat
