@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { Prisma } from "@/generated/prisma/client/client";
 import type { unscopedPrisma as prismaClient } from "@/server/db/tenant";
 import type { ToolIdentity } from "@/server/ai/tools";
+import type { redis as redisClient } from "@/server/integrations/redis";
 import { allowedVoiceTools } from "@/lib/validators/voice";
 
 export const runtime = "nodejs";
@@ -79,6 +80,19 @@ const messageSchema = z.object({
       .optional(),
   }),
 });
+
+/**
+ * Per-call caps on the voice tools that write tenant data. An anonymous caller (or a
+ * script dialling in) otherwise could book every offered slot or create unlimited
+ * contacts/activities in one call. Owner-tunable defaults; read tools are not capped.
+ */
+const VOICE_CALL_WRITE_CAPS: ReadonlyMap<string, number> = new Map([
+  ["bookMeeting", 2],
+  ["createContact", 2],
+  ["logActivity", 5],
+]);
+// Outlives the longest possible call (maxDurationSeconds 900, src/server/services/voice.ts).
+const CALL_WRITE_CAP_TTL_SECONDS = 60 * 60 * 2;
 
 async function resolveAssistant(
   unscopedPrisma: typeof prismaClient,
@@ -184,6 +198,72 @@ async function endCallViaControlUrl(
   }
 }
 
+/**
+ * Counts one write against the call's cap for this tool. Returns the refusal code, or
+ * null when the write may proceed. Fails closed: if Redis cannot count the write, it is
+ * refused (and the tool-call claim released best-effort so a retry can run later). A
+ * write refused by the cap gives its slot back so it never consumes capacity, but keeps
+ * the tool-call claim: the assistant was told it failed, so that tool-call id must not
+ * run later on a retry or replay either.
+ */
+async function reserveCallWrite(
+  redis: typeof redisClient,
+  capKey: string,
+  cap: number,
+  claimKey: string,
+): Promise<"call_write_limit" | "call_write_limit_unavailable" | null> {
+  let count: number | null = null;
+  try {
+    count = await redis.incr(capKey);
+    if (count === 1) await redis.expire(capKey, CALL_WRITE_CAP_TTL_SECONDS);
+  } catch {
+    // Counted but not given a TTL: give the slot back too (best effort).
+    if (count !== null) await releaseCallWrite(redis, capKey);
+    await redis.del(claimKey).catch(() => undefined);
+    return "call_write_limit_unavailable";
+  }
+  if (count > cap) {
+    await releaseCallWrite(redis, capKey);
+    return "call_write_limit";
+  }
+  return null;
+}
+
+/** Gives a counted write's slot back. Best effort: a failure only makes the cap stricter. */
+async function releaseCallWrite(redis: typeof redisClient, capKey: string): Promise<void> {
+  await redis.decr(capKey).catch(() => undefined);
+}
+
+/**
+ * Refusals that executeTool (or the tool) returns before anything is written.
+ * executeTool reports failures as results, it doesn't throw. `execution_failed`
+ * is deliberately absent: a tool can fail after its write (e.g. the audit insert
+ * after the booking or contact was created), so that attempt keeps its slot.
+ */
+const PRE_WRITE_REFUSALS = new Set([
+  "invalid_input",
+  "permission_denied",
+  "unknown_tool",
+  "entitlement_exceeded",
+]);
+
+/**
+ * Whether a tool result says nothing was written: a pre-write refusal, or a
+ * booking that didn't happen (`{ booked: false }`, e.g. the slot was taken).
+ * Such an attempt gives its cap slot back, so a caller retrying a failed
+ * booking isn't locked out of the call's legitimate writes.
+ */
+function wroteNothing(result: string): boolean {
+  try {
+    const parsed: unknown = JSON.parse(result);
+    if (typeof parsed !== "object" || parsed === null) return false;
+    const { error, booked } = parsed as { error?: unknown; booked?: unknown };
+    return booked === false || (typeof error === "string" && PRE_WRITE_REFUSALS.has(error));
+  } catch {
+    return false;
+  }
+}
+
 export async function POST(request: Request): Promise<NextResponse> {
   const [{ verifyVapiSignature }, { unscopedPrisma }, { executeTool }, { enqueue }, { redis }] =
     await Promise.all([
@@ -258,6 +338,25 @@ export async function POST(request: Request): Promise<NextResponse> {
       // attempt already ran) must not repeat a booking or return tool output
       // to whoever re-sent it. Claimed atomically before executing, released
       // if execution throws so a legitimate retry can still run it.
+      //
+      // Writes are additionally bounded per call (VOICE_CALL_WRITE_CAPS) and refused
+      // once the call has ended -- the Redis claim expires after 24h, so the durable
+      // VoiceCall row is what stops a later replay. Both are keyed by the signed
+      // call id within the signed assistant's org.
+      const callId = message.call?.id;
+      const hasWrite = (message.toolCallList ?? []).some(
+        (tc) => enabled.has(tc.name) && VOICE_CALL_WRITE_CAPS.has(tc.name),
+      );
+      // A missing row is allowed: the in-progress status update can be missed.
+      const callRow =
+        hasWrite && callId
+          ? await unscopedPrisma.voiceCall.findFirst({
+              where: { organizationId: orgId, vapiCallId: callId },
+              select: { endedAt: true, status: true },
+            })
+          : null;
+      const callEnded = Boolean(callRow && (callRow.endedAt || callRow.status !== "IN_PROGRESS"));
+
       const results = await Promise.all(
         (message.toolCallList ?? []).map(async (tc) => {
           if (!enabled.has(tc.name)) {
@@ -266,17 +365,27 @@ export async function POST(request: Request): Promise<NextResponse> {
           if (tc.arguments === null) {
             return { toolCallId: tc.id, result: JSON.stringify({ error: "invalid_arguments" }) };
           }
+          const cap = VOICE_CALL_WRITE_CAPS.get(tc.name);
+          if (cap !== undefined && (!callId || callEnded)) {
+            const error = callId ? "call_ended" : "call_required";
+            return { toolCallId: tc.id, result: JSON.stringify({ error }) };
+          }
           const claimKey = `vapi:tool:${orgId}:${tc.id}`;
           const claimed = await redis.set(claimKey, "1", { nx: true, ex: 60 * 60 * 24 });
           if (claimed === null) {
             return { toolCallId: tc.id, result: JSON.stringify({ error: "duplicate_tool_call" }) };
           }
+          const capKey = cap === undefined ? null : `vapi:callcap:${orgId}:${callId}:${tc.name}`;
+          if (cap !== undefined && capKey) {
+            const refusal = await reserveCallWrite(redis, capKey, cap, claimKey);
+            if (refusal) return { toolCallId: tc.id, result: JSON.stringify({ error: refusal }) };
+          }
           try {
-            return {
-              toolCallId: tc.id,
-              result: await executeTool(identity, tc.name, tc.arguments),
-            };
+            const result = await executeTool(identity, tc.name, tc.arguments);
+            if (capKey && wroteNothing(result)) await releaseCallWrite(redis, capKey);
+            return { toolCallId: tc.id, result };
           } catch (err) {
+            if (capKey) await releaseCallWrite(redis, capKey);
             await redis.del(claimKey);
             throw err;
           }
@@ -329,21 +438,35 @@ export async function POST(request: Request): Promise<NextResponse> {
         recordingUrl: message.artifact?.recordingUrl,
       } as const;
 
-      await unscopedPrisma.voiceCall.upsert({
-        where: { vapiCallId: message.call.id },
-        create: {
-          organizationId: orgId,
-          assistantId: assistant.id,
-          vapiCallId: message.call.id,
-          callerNumber: message.call.customer?.number,
-          startedAt: new Date(Date.now() - durationSeconds * 1000),
-          ...callResult,
-        },
-        update: callResult,
+      // A validly-signed report never expires, so a replay must not rewrite the
+      // details of a call that has already ended (endedAt, transcript, cost...).
+      const existing = await unscopedPrisma.voiceCall.findFirst({
+        where: { organizationId: orgId, vapiCallId: message.call.id },
+        select: { endedAt: true, postCallProcessedAt: true },
       });
+      if (existing?.postCallProcessedAt) {
+        // Fully processed already: nothing to persist and nothing to re-enqueue.
+        return NextResponse.json({ ok: true, duplicate: true });
+      }
+      // Ended but not yet processed (e.g. the first delivery's enqueue failed): keep the
+      // recorded details and fall through so a legitimate retry can still enqueue.
+      if (!existing?.endedAt) {
+        await unscopedPrisma.voiceCall.upsert({
+          where: { vapiCallId: message.call.id },
+          create: {
+            organizationId: orgId,
+            assistantId: assistant.id,
+            vapiCallId: message.call.id,
+            callerNumber: message.call.customer?.number,
+            startedAt: new Date(Date.now() - durationSeconds * 1000),
+            ...callResult,
+          },
+          update: callResult,
+        });
+      }
 
       // Replay/idempotency guard for the post-call side effect only — the voiceCall
-      // upsert above is already safe to repeat. A validly-signed end-of-call-report
+      // persistence above is already safe to repeat. A validly-signed end-of-call-report
       // has no expiry, so Vapi retries (or a captured-and-replayed request) could
       // otherwise re-trigger the post-call pipeline indefinitely.
       //
