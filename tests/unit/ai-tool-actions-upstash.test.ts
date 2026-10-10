@@ -20,13 +20,23 @@ const m = vi.hoisted(() => ({
 
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: vi.fn(() => ({
-    contact: { create: m.contactCreate, findFirst: vi.fn(async () => null) },
+    contact: {
+      create: m.contactCreate,
+      count: vi.fn(async () => 0),
+      findFirst: vi.fn(async () => null),
+    },
     businessDnaService: { findFirst: vi.fn(async () => null) },
     availabilitySchedule: { findFirst: vi.fn(async () => null) },
   })),
   unscopedPrisma: {},
 }));
 vi.mock("@/server/services/audit", () => ({ audit: m.audit }));
+// The plan check is covered in ai-tools-create-contact.test.ts; here only the
+// action store's transport is under test (the organization is within its plan).
+vi.mock("@/server/services/billing/entitlements", () => ({
+  assertWithinLimit: vi.fn(async () => ({})),
+  EntitlementError: class EntitlementError extends Error {},
+}));
 vi.mock("@/server/ai/rag", () => ({ retrieveChunks: vi.fn(async () => []) }));
 
 import {

@@ -337,6 +337,17 @@
       "email": "Sähköposti: {value}",
       "phone": "Puhelin: {value}",
       "dueAt": "Määräaika {when}",
+      "businessDna": {
+        "summary": "{count, plural, one {Päivitä Business DNA (# muutos)} other {Päivitä Business DNA (# muutosta)}}",
+        "kind": {
+          "added": "Lisätään",
+          "modified": "Muutetaan",
+          "removed": "Poistetaan"
+        },
+        "before": "Ennen:",
+        "after": "Jälkeen:",
+        "review": "Tarkista Business DNA"
+      },
       "content": "Tallennettava teksti:",
       "nothingYet": "Mitään ei luoda tai muuteta ennen kuin vahvistat.",
       "confirm": "Vahvista",
@@ -346,6 +357,7 @@
         "done": "Valmis.",
         "canceled": "Peruttu. Mitään ei muutettu.",
         "slotTaken": "Aika ei ole enää vapaana. Mitään ei varattu.",
+        "stale": "Business DNA:ta muutettiin muualla tämän näyttämisen jälkeen. Mitään ei muutettu — kysy Syvekalta uudelleen.",
         "expired": "Pyyntö vanheni. Pyydä Syvekaa uudelleen.",
         "alreadyDecided": "Tämä toiminto on jo käsitelty.",
         "permission": "Sinulla ei ole oikeutta tähän.",
@@ -355,6 +367,15 @@
         "unavailable": "Tämä pyyntö ei ole enää käytettävissä. Sille ei tallentunut tulosta.",
         "unknown": "Tulosta ei voitu vahvistaa. Tarkista tiedot ennen kuin pyydät uudelleen."
       }
+    },
+    "toolLabels": {
+      "searchKnowledgeBase": "Tietopankki",
+      "searchContacts": "Yhteystiedot",
+      "createContact": "Uusi yhteystieto",
+      "logActivity": "Aktiviteetti",
+      "getCalendarAvailability": "Kalenterin vapaat ajat",
+      "bookMeeting": "Varaus",
+      "proposeBusinessDnaUpdate": "Business DNA"
     }
   },
   "publicAssistant": {
@@ -799,7 +820,8 @@
     "testRun": "Testiajo",
     "testErrors": {
       "quota": "Tilaukseesi eivät sisälly työnkulut. Päivitä tilaus testataksesi.",
-      "rateLimited": "Liian monta testiajoa. Yritä myöhemmin uudelleen."
+      "rateLimited": "Liian monta testiajoa. Yritä myöhemmin uudelleen.",
+      "unavailable": "Testiajot eivät ole tilapäisesti käytettävissä. Yritä uudelleen."
     }
   },
   "billingPage": {
@@ -985,6 +1007,12 @@
     "savedMessage": "Tallennettu.",
     "invalidInput": "Tarkista korostetut kentät ja yritä uudelleen.",
     "saveFailed": "Tallennus epäonnistui. Yritä uudelleen.",
+    "rateLimited": "Liian monta tallennusta lyhyessä ajassa. Yritä uudelleen muutaman minuutin kuluttua.",
+    "conflict": {
+      "message": "Business DNA:ta muutettiin muualla (chatissa tai toisessa välilehdessä) sen jälkeen, kun avasit tämän sivun. Muutoksiasi ei tallennettu, ja ne ovat yhä tässä.",
+      "review": "Avaa uusin versio uudessa välilehdessä",
+      "reload": "Lataa uusin versio (muutoksesi hylätään)"
+    },
     "updated": "Päivitetty {date}",
     "errorTitle": "Yrityksen DNA:ta ei voitu ladata",
     "errorDescription": "Päivitä sivu tai yritä hetken kuluttua uudelleen.",

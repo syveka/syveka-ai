@@ -82,6 +82,12 @@ vi.mock("@/server/db/tenant", () => ({
     ),
   },
 }));
+// The organization is active (soft-deleted organizations are covered by
+// run-workflow-deactivation.test.ts).
+vi.mock("@/server/jobs/organization-guard", () => ({
+  isOrganizationActive: async () => true,
+  ORGANIZATION_INACTIVE: { skipped: "organization_inactive" },
+}));
 vi.mock("@/server/jobs/queue", () => ({ enqueue: mocks.enqueue }));
 vi.mock("@/server/integrations/anthropic", () => ({
   anthropic: { messages: { create: mocks.anthropicCreate } },
@@ -90,7 +96,16 @@ vi.mock("@/server/ai/router", () => ({
   routeModel: () => ({ model: "utility-model", maxTokens: 100 }),
 }));
 vi.mock("@/server/integrations/resend", () => ({ sendEmail: mocks.sendEmail }));
-vi.mock("@/server/services/billing/entitlements", () => ({ recordUsage: mocks.recordUsage }));
+// A plan that includes workflows, with AI quota left (plan and quota gating
+// are covered by run-workflow-ai-quota.test.ts).
+vi.mock("@/server/services/billing/entitlements", () => ({
+  recordUsage: mocks.recordUsage,
+  getEntitlements: async () => ({ readOnly: false, activeWorkflows: 5 }),
+}));
+vi.mock("@/server/services/ai-spend", () => ({
+  assertAiQuotaAvailable: async () => undefined,
+  AiSpendError: class extends Error {},
+}));
 
 import { POST } from "@/app/api/v1/jobs/run-workflow/route";
 

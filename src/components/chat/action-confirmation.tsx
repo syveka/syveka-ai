@@ -4,7 +4,9 @@ import { useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Check, ShieldCheck, X } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { Link } from "@/i18n/routing";
 import type { ProposedActionView, RestoredActionState } from "@/lib/validators/chat";
+import { BusinessDnaChanges } from "./business-dna-changes";
 
 type State =
   | "pending"
@@ -12,6 +14,7 @@ type State =
   | "done"
   | "canceled"
   | "slotTaken"
+  | "stale"
   | "expired"
   | "alreadyDecided"
   | "permission"
@@ -29,6 +32,8 @@ const REFUSAL_STATE: Record<string, State> = {
   // The action store couldn't be reached: the tool only runs after it answers.
   service_unavailable: "failed",
   permission_denied: "permission",
+  // The plan's limit (or a read-only workspace) refused it before any write.
+  plan_limit: "failed",
 };
 
 function formatWhen(iso: string, timeZone: string | undefined, locale: string) {
@@ -43,7 +48,14 @@ function formatWhen(iso: string, timeZone: string | undefined, locale: string) {
 }
 
 /** Outcomes after which the action can't be decided again. */
-const SETTLED = new Set<State>(["done", "canceled", "slotTaken", "expired", "alreadyDecided"]);
+const SETTLED = new Set<State>([
+  "done",
+  "canceled",
+  "slotTaken",
+  "stale",
+  "expired",
+  "alreadyDecided",
+]);
 
 /**
  * A write the assistant proposed. Nothing happens until the user confirms
@@ -69,18 +81,20 @@ export function ActionConfirmation({
   const sentRef = useRef(false);
 
   const summary =
-    d.tool === "createContact"
-      ? t("createContact", { name: [d.firstName, d.lastName].filter(Boolean).join(" ") })
-      : d.tool === "logActivity"
-        ? t(d.type === "TASK" ? "logTask" : "logNote", {
-            contact: d.contactName,
-            subject: d.subject,
-          })
-        : t("bookMeeting", {
-            title: d.title,
-            when: formatWhen(d.startsAt, d.timezone, locale),
-            minutes: d.durationMinutes,
-          });
+    d.tool === "proposeBusinessDnaUpdate"
+      ? t("businessDna.summary", { count: d.changes.length })
+      : d.tool === "createContact"
+        ? t("createContact", { name: [d.firstName, d.lastName].filter(Boolean).join(" ") })
+        : d.tool === "logActivity"
+          ? t(d.type === "TASK" ? "logTask" : "logNote", {
+              contact: d.contactName,
+              subject: d.subject,
+            })
+          : t("bookMeeting", {
+              title: d.title,
+              when: formatWhen(d.startsAt, d.timezone, locale),
+              minutes: d.durationMinutes,
+            });
   const extra = [
     d.tool === "createContact" && d.email ? t("email", { value: d.email }) : null,
     d.tool === "createContact" && d.phone ? t("phone", { value: d.phone }) : null,
@@ -109,7 +123,7 @@ export function ActionConfirmation({
         }),
       });
       const body = (await res.json().catch(() => null)) as {
-        data?: { status?: string };
+        data?: { status?: string; reason?: string };
         error?: { code?: string };
       } | null;
       const next: State =
@@ -117,7 +131,9 @@ export function ActionConfirmation({
           ? body.data.status === "canceled"
             ? "canceled"
             : body.data.status === "not_done"
-              ? "slotTaken"
+              ? body.data.reason === "stale"
+                ? "stale"
+                : "slotTaken"
               : "done"
           : (REFUSAL_STATE[body?.error?.code ?? ""] ?? (res.status >= 500 ? "unknown" : "failed"));
       setState(next);
@@ -144,6 +160,7 @@ export function ActionConfirmation({
           {line}
         </p>
       ))}
+      {d.tool === "proposeBusinessDnaUpdate" ? <BusinessDnaChanges changes={d.changes} /> : null}
       {content ? (
         <div className="mt-1">
           <p className="text-xs text-muted-foreground">{t("content")}</p>
@@ -191,6 +208,14 @@ export function ActionConfirmation({
           {t(`result.${state}`)}
         </p>
       )}
+      {d.tool === "proposeBusinessDnaUpdate" && state === "done" ? (
+        <Link
+          href="/settings/business-dna"
+          className="mt-1 inline-block text-xs text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        >
+          {t("businessDna.review")}
+        </Link>
+      ) : null}
     </section>
   );
 }
