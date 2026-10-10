@@ -5,6 +5,7 @@ import { audit } from "./audit";
 import {
   validateRecurrenceRule,
   expandOccurrences,
+  expandOccurrencesWithStatus,
   RecurrenceError,
 } from "@/server/calendar/recurrence";
 import { isValidTimezone } from "@/server/calendar/timezone";
@@ -152,7 +153,7 @@ export async function findConflicts(
     }
     try {
       const rule = validateRecurrenceRule(e.recurrenceRule);
-      const occurrences = expandOccurrences({
+      const { occurrences, truncated } = expandOccurrencesWithStatus({
         seriesStart: e.startsAt,
         seriesEnd: e.endsAt,
         rule,
@@ -166,6 +167,14 @@ export async function findConflicts(
       );
       if (hit)
         conflicts.push({ id: e.id, title: e.title, startsAt: hit.startsAt, endsAt: hit.endsAt });
+      // An expansion cut short can't prove the slot free: report it.
+      else if (truncated)
+        conflicts.push({
+          id: e.id,
+          title: e.title,
+          startsAt: params.startsAt,
+          endsAt: params.endsAt,
+        });
     } catch {
       // Unparseable legacy rule: treat series anchor only.
       if (intervalsOverlap(params.startsAt, params.endsAt, e.startsAt, e.endsAt)) {

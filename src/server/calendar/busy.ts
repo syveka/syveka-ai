@@ -1,5 +1,5 @@
 import type { Prisma } from "@/generated/prisma/client/client";
-import { expandOccurrences, validateRecurrenceRule } from "./recurrence";
+import { expandOccurrencesWithStatus, validateRecurrenceRule } from "./recurrence";
 import type { BusyInterval } from "./slots";
 
 export type BusyEventRow = {
@@ -33,7 +33,9 @@ export function recurringSeriesWhere(to: Date): Prisma.CalendarEventWhereInput {
 /**
  * Busy intervals within [from, to): one-off events as they are, and each
  * recurring series' occurrences there. A series whose rule can't be parsed
- * counts as its first occurrence only, as in `findConflicts`.
+ * counts as its first occurrence only, as in `findConflicts`. If a series'
+ * expansion is cut short, the rest of the window counts as busy: an occurrence
+ * that was never computed must not be offered as free time.
  */
 export function busyIntervals(rows: BusyEventRow[], from: Date, to: Date): BusyInterval[] {
   const out: BusyInterval[] = [];
@@ -51,17 +53,19 @@ export function busyIntervals(rows: BusyEventRow[], from: Date, to: Date): BusyI
       }
       continue;
     }
-    out.push(
-      ...expandOccurrences({
-        seriesStart: row.startsAt,
-        seriesEnd: row.endsAt,
-        rule,
-        rangeFrom: from,
-        rangeTo: to,
-        max: 500,
-        timeZone: row.timezone,
-      }),
-    );
+    const { occurrences, truncated } = expandOccurrencesWithStatus({
+      seriesStart: row.startsAt,
+      seriesEnd: row.endsAt,
+      rule,
+      rangeFrom: from,
+      rangeTo: to,
+      max: 500,
+      timeZone: row.timezone,
+    });
+    out.push(...occurrences);
+    if (truncated) {
+      out.push({ startsAt: occurrences.at(-1)?.startsAt ?? from, endsAt: to });
+    }
   }
   return out;
 }

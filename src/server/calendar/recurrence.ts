@@ -116,7 +116,22 @@ export function validateRecurrenceRule(rule: string): RecurrenceRule {
 
 export type Occurrence = { startsAt: Date; endsAt: Date };
 
+/**
+ * `truncated`: the expansion stopped before covering the whole range (output
+ * cap or step budget), so occurrences inside it may be missing. A caller that
+ * computes busy time must treat the uncovered part as busy, never as free.
+ */
+export type Expansion = { occurrences: Occurrence[]; truncated: boolean };
+
+/** Most occurrences one expansion returns. */
 const HARD_OCCURRENCE_CAP = 500;
+/**
+ * Most candidate dates one expansion examines. Expansion starts at the range,
+ * not at the series origin, so this does not depend on how old a series is;
+ * only a monthly COUNT series (at most MAX_COUNT occurrences) walks from its
+ * origin, well within it.
+ */
+export const MAX_EXPANSION_STEPS = 20_000;
 
 type ExpandParams = {
   seriesStart: Date;
@@ -130,17 +145,25 @@ type ExpandParams = {
 const DAY_MS = 86_400_000;
 const MINUTE_MS = 60_000;
 
+/** Occurrences intersecting [rangeFrom, rangeTo); see `expandOccurrencesWithStatus`. */
+export function expandOccurrences(
+  params: ExpandParams & { timeZone?: string | null },
+): Occurrence[] {
+  return expandOccurrencesWithStatus(params).occurrences;
+}
+
 /**
- * Expand occurrences of a recurring event intersecting [rangeFrom, rangeTo).
+ * Expand occurrences of a recurring event intersecting [rangeFrom, rangeTo),
+ * including one that starts before the range and ends inside it.
  *
  * With `timeZone` (the event's own zone), days are stepped in that zone's
  * wall-clock time, so a weekly 14:00 Helsinki meeting stays at 14:00 across a
  * DST change and weekdays/days-of-month are the zone's. Without it (or with an
  * unknown zone) days are stepped in UTC, which drifts by the DST offset.
  */
-export function expandOccurrences(
+export function expandOccurrencesWithStatus(
   params: ExpandParams & { timeZone?: string | null },
-): Occurrence[] {
+): Expansion {
   const { timeZone } = params;
   if (!timeZone || !isValidTimeZone(timeZone)) return expandInUtc(params);
 
@@ -168,77 +191,115 @@ export function expandOccurrences(
   });
 
   const out: Occurrence[] = [];
-  for (const occ of naive) {
+  for (const occ of naive.occurrences) {
     // The first occurrence is the stored start itself: a wall time repeated by
     // a DST change (e.g. 03:30 on the autumn night) would otherwise map back to
     // the later of its two instants.
     const start =
       occ.startsAt.getTime() === naiveStart.getTime() ? seriesStart : fromNaive(occ.startsAt);
-    if (rule.until && start > rule.until) break;
+    if ((rule.until && start > rule.until) || start >= rangeTo) {
+      return { occurrences: out, truncated: false };
+    }
     const end = new Date(start.getTime() + durationMs);
-    if (start < rangeTo && end > rangeFrom) out.push({ startsAt: start, endsAt: end });
-    if (out.length >= max) break;
+    if (end > rangeFrom) {
+      if (out.length >= max) return { occurrences: out, truncated: true };
+      out.push({ startsAt: start, endsAt: end });
+    }
   }
-  return out;
+  return { occurrences: out, truncated: naive.truncated };
 }
 
-function expandInUtc(params: ExpandParams): Occurrence[] {
+function expandInUtc(params: ExpandParams): Expansion {
   const { seriesStart, seriesEnd, rule, rangeFrom, rangeTo } = params;
   const max = Math.min(params.max ?? 100, HARD_OCCURRENCE_CAP);
   const durationMs = seriesEnd.getTime() - seriesStart.getTime();
+  // An occurrence overlaps the range iff it starts before rangeTo and ends
+  // after rangeFrom, i.e. starts after rangeFrom - duration.
+  const earliestStart = rangeFrom.getTime() - durationMs;
+  const budget = { steps: 0 };
   const out: Occurrence[] = [];
 
-  const pushIfInRange = (start: Date) => {
-    if (rule.until && start > rule.until) return "stop" as const;
-    const end = new Date(start.getTime() + durationMs);
-    if (start < rangeTo && end > rangeFrom) out.push({ startsAt: start, endsAt: end });
-    return start >= rangeTo ? ("stop" as const) : ("continue" as const);
-  };
+  for (const startMs of occurrenceStarts(seriesStart, rule, earliestStart, budget)) {
+    if ((rule.until && startMs > rule.until.getTime()) || startMs >= rangeTo.getTime()) {
+      return { occurrences: out, truncated: false };
+    }
+    const endMs = startMs + durationMs;
+    if (endMs > rangeFrom.getTime()) {
+      if (out.length >= max) return { occurrences: out, truncated: true };
+      out.push({ startsAt: new Date(startMs), endsAt: new Date(endMs) });
+    }
+  }
+  // The generator ends when COUNT is exhausted or the step budget runs out.
+  return { occurrences: out, truncated: budget.steps > MAX_EXPANSION_STEPS };
+}
+
+/**
+ * The series' occurrence starts (ms, ascending), honouring COUNT, beginning at
+ * or shortly before `earliestStart` instead of at the series origin. COUNT
+ * counts real occurrences only: a month without the day (e.g. the 31st) is
+ * skipped without being counted.
+ */
+function* occurrenceStarts(
+  seriesStart: Date,
+  rule: RecurrenceRule,
+  earliestStart: number,
+  budget: { steps: number },
+): Generator<number> {
+  const origin = seriesStart.getTime();
+  const count = rule.count ?? Infinity;
+  const spend = () => ++budget.steps <= MAX_EXPANSION_STEPS;
 
   if (rule.freq === "DAILY") {
-    let produced = 0;
-    for (let i = 0; produced < (rule.count ?? Infinity) && i < HARD_OCCURRENCE_CAP; i++) {
-      const start = new Date(seriesStart.getTime() + i * rule.interval * 86_400_000);
-      produced += 1;
-      if (pushIfInRange(start) === "stop" || out.length >= max) break;
+    // Occurrence k starts at origin + k * step and every k is an occurrence.
+    const step = rule.interval * DAY_MS;
+    for (let k = Math.max(0, Math.floor((earliestStart - origin) / step)); k < count; k++) {
+      if (!spend()) return;
+      yield origin + k * step;
     }
-  } else if (rule.freq === "WEEKLY") {
-    const days = rule.byDay?.length ? [...rule.byDay].sort() : [seriesStart.getUTCDay()];
-    let produced = 0;
-    // Anchor at the Sunday of the series-start week (UTC).
-    const weekAnchor = new Date(seriesStart.getTime() - seriesStart.getUTCDay() * 86_400_000);
-    outer: for (let w = 0; w < HARD_OCCURRENCE_CAP; w++) {
-      const weekStart = new Date(weekAnchor.getTime() + w * rule.interval * 7 * 86_400_000);
+    return;
+  }
+
+  if (rule.freq === "WEEKLY") {
+    const days = rule.byDay?.length
+      ? [...new Set(rule.byDay)].sort((a, b) => a - b)
+      : [seriesStart.getUTCDay()];
+    const period = rule.interval * 7 * DAY_MS;
+    // The Sunday of the series' first week, at the series' time of day.
+    const anchor = origin - seriesStart.getUTCDay() * DAY_MS;
+    const inFirstWeek = days.filter((d) => anchor + d * DAY_MS >= origin).length;
+    // Week w's occurrences all start before week w + 1 begins, so weeks that
+    // end before earliestStart are skipped; their occurrences are still counted.
+    const firstWeek = Math.max(0, Math.floor((earliestStart - anchor) / period));
+    let produced = firstWeek === 0 ? 0 : inFirstWeek + (firstWeek - 1) * days.length;
+    for (let w = firstWeek; ; w++) {
       for (const d of days) {
-        const start = new Date(weekStart.getTime() + d * 86_400_000);
-        if (start < seriesStart) continue;
-        if (produced >= (rule.count ?? Infinity)) break outer;
+        const start = anchor + w * period + d * DAY_MS;
+        if (start < origin) continue;
+        if (produced >= count || !spend()) return;
         produced += 1;
-        if (pushIfInRange(start) === "stop" || out.length >= max) break outer;
+        yield start;
       }
-    }
-  } else {
-    // MONTHLY: same day-of-month; months lacking the day (e.g. 31st) are skipped.
-    const dayOfMonth = seriesStart.getUTCDate();
-    let produced = 0;
-    for (let m = 0; produced < (rule.count ?? Infinity) && m < HARD_OCCURRENCE_CAP; m++) {
-      const base = new Date(seriesStart);
-      const targetMonth = base.getUTCMonth() + m * rule.interval;
-      const candidate = new Date(
-        Date.UTC(
-          base.getUTCFullYear(),
-          targetMonth,
-          dayOfMonth,
-          base.getUTCHours(),
-          base.getUTCMinutes(),
-          base.getUTCSeconds(),
-        ),
-      );
-      produced += 1;
-      if (candidate.getUTCDate() !== dayOfMonth) continue; // rolled over: skip month
-      if (pushIfInRange(candidate) === "stop" || out.length >= max) break;
     }
   }
 
-  return out;
+  // MONTHLY: the series' day of month; months lacking it are skipped.
+  const year = seriesStart.getUTCFullYear();
+  const month = seriesStart.getUTCMonth();
+  const dayOfMonth = seriesStart.getUTCDate();
+  const timeOfDay = origin - Date.UTC(year, month, dayOfMonth);
+  let firstIndex = 0;
+  if (rule.count === undefined) {
+    // Without COUNT nothing before the range needs counting: jump to it.
+    const target = new Date(earliestStart);
+    const monthsAhead = (target.getUTCFullYear() - year) * 12 + (target.getUTCMonth() - month);
+    firstIndex = Math.max(0, Math.floor(monthsAhead / rule.interval) - 1);
+  }
+  let produced = 0;
+  for (let i = firstIndex; produced < count; i++) {
+    if (!spend()) return;
+    const day = Date.UTC(year, month + i * rule.interval, dayOfMonth);
+    if (new Date(day).getUTCDate() !== dayOfMonth) continue; // rolled over: skip month
+    produced += 1;
+    yield day + timeOfDay;
+  }
 }
