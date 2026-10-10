@@ -124,6 +124,16 @@ export function BusinessDnaForm({
     updateBusinessDnaAction,
     {},
   );
+  // The profile version this form's fields are based on, sent with each save;
+  // the server refuses the save if the profile changed since (in chat or
+  // another tab). Taken once when the form mounts and advanced only by this
+  // form's own successful saves -- never from a refreshed `updatedAt` prop:
+  // the page re-renders with the latest version (e.g. after a service edit
+  // revalidates it) while the fields here keep what the user loaded and typed.
+  const [version, setVersion] = useState(updatedAt ?? "");
+  useEffect(() => {
+    if (state.message === "saved" && state.updatedAt) setVersion(state.updatedAt);
+  }, [state]);
   const [values, setValues] = useState<TextFieldValues>(() => toTextFieldValues(initial));
   const [supportedLocales, setSupportedLocales] = useState<string[]>(initial.supportedLocales);
   const [hours, setHours] = useState<WeekHours>(initial.openingHours);
@@ -263,6 +273,7 @@ export function BusinessDnaForm({
       ) : null}
 
       <form id="business-dna-form" action={action} className="contents">
+        <input type="hidden" name="expectedUpdatedAt" value={version} />
         {/* 1. Company */}
         <div className="order-1">
           <Card>
@@ -639,10 +650,30 @@ export function BusinessDnaForm({
         </div>
 
         {readOnly ? null : (
-          <div className="order-8 flex items-center gap-3">
+          <div className="order-8 flex flex-wrap items-center gap-3">
             <Button type="submit" disabled={pending}>
               {pending ? tc("loading") : tc("save")}
             </Button>
+            {state.error === "conflict" ? (
+              // Nothing was saved, and everything typed here stays in the
+              // form: the user can compare with the latest version in a new
+              // tab, or load it here (discarding these edits).
+              <div role="alert" className="w-full space-y-2 text-sm">
+                <p className="text-destructive">{t("conflict.message")}</p>
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    type="button"
+                    variant="outline"
+                    onClick={() => window.open(window.location.href, "_blank", "noopener")}
+                  >
+                    {t("conflict.review")}
+                  </Button>
+                  <Button type="button" variant="ghost" onClick={() => window.location.reload()}>
+                    {t("conflict.reload")}
+                  </Button>
+                </div>
+              </div>
+            ) : null}
             {justSaved && state.message === "saved" ? (
               <p className="text-sm text-success">{t("savedMessage")}</p>
             ) : null}
@@ -651,6 +682,9 @@ export function BusinessDnaForm({
             ) : null}
             {state.error === "failed" ? (
               <p className="text-sm text-destructive">{t("saveFailed")}</p>
+            ) : null}
+            {state.error === "rate_limited" ? (
+              <p className="text-sm text-destructive">{t("rateLimited")}</p>
             ) : null}
           </div>
         )}

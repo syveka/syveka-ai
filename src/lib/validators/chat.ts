@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { BusinessDnaChange } from "@/lib/validators/business-dna-patch";
 
 export const chatRequestSchema = z
   .object({
@@ -63,6 +64,13 @@ export type ProposedActionView = {
         contactName?: string;
         /** The event description, shown in full. */
         notes?: string;
+      }
+    | {
+        tool: "proposeBusinessDnaUpdate";
+        /** Every field that changes, with its value before and after, shown in full. */
+        changes: BusinessDnaChange[];
+        /** Important fields still empty after this change. */
+        missingAfter: string[];
       };
 };
 
@@ -75,6 +83,8 @@ export type RestoredActionState =
   | "done"
   | "canceled"
   | "slotTaken"
+  /** Not applied: what it would change was changed elsewhere after it was shown. */
+  | "stale"
   | "failed"
   /** Decided, but the result can't be established (e.g. its record failed). Not executable. */
   | "unknown"

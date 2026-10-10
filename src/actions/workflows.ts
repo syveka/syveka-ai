@@ -6,7 +6,7 @@ import { requirePermission } from "@/server/auth/guard";
 import { upsertWorkflow, setWorkflowActive, WorkflowError } from "@/server/services/workflows";
 import { workflowSchema } from "@/lib/validators/workflows";
 import { EntitlementError, getEntitlements } from "@/server/services/billing/entitlements";
-import { rateLimiters } from "@/server/integrations/redis";
+import { checkRateLimit } from "@/server/integrations/redis";
 
 export type WorkflowActionState = { error?: string; message?: string };
 
@@ -57,8 +57,11 @@ export async function testWorkflowAction(workflowId: string): Promise<WorkflowAc
   const ctx = await requirePermission("workflows:manage");
   const entitlements = await getEntitlements(ctx.orgId);
   if (entitlements.readOnly || entitlements.activeWorkflows <= 0) return { error: "quota" };
-  const { success } = await rateLimiters.workflowTestRun.limit(ctx.orgId);
-  if (!success) return { error: "rate_limited" };
+  const rateLimit = await checkRateLimit("workflowTestRun", ctx.orgId);
+  if (!rateLimit.ok) {
+    // An unverifiable limit refuses the run (fail closed), as its own error.
+    return { error: rateLimit.reason === "unavailable" ? "service_unavailable" : "rate_limited" };
+  }
 
   const { unscopedPrisma } = await import("@/server/db/tenant");
   const { enqueue } = await import("@/server/jobs/queue");

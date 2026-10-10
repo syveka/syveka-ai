@@ -182,7 +182,11 @@ export function WorkflowBuilder({ initial }: { initial?: Initial }) {
                 const res = await testWorkflowAction(initial.id!);
                 if (res.error) {
                   setError(
-                    res.error === "quota" ? t("testErrors.quota") : t("testErrors.rateLimited"),
+                    res.error === "quota"
+                      ? t("testErrors.quota")
+                      : res.error === "service_unavailable"
+                        ? t("testErrors.unavailable")
+                        : t("testErrors.rateLimited"),
                   );
                 }
               })
