@@ -10,6 +10,23 @@ command it comes from; anything not exercised is marked **UNVERIFIED**.
 | Staging (stable alias) | `eca68222f0efea31a85c1353f45f33ffb7478a57` | `https://syveka-ai-staging.vercel.app/api/health` reports `build: eca68222…`, database `ok`, Redis `ok` |
 | Production             | `fc645727cc8f0932f90c793667d8cfe3de0b35d3` | production `/api/health` reports `build: fc645727…`; last `deploy.yml` run #23 (2026-09-25)             |
 
+## Update: `main` moved to `edfd57b` (2026-10-10, merge queue in progress)
+
+Seven PRs from the other session landed after `eca6822`: #277, #282, #283, #284, #291, #285, #281
+(`main` = `edfd57b2ed64116dbb24ade23348816c21e11151`; #275, #276, #278–#280, #286, #288, #289 still
+open). Verified by `git diff eca6822 edfd57b` (22 files):
+
+- **No** schema/migration, environment variable, workflow, QStash job, Stripe, Storage, Supabase
+  Edge Function or OAuth-callback change. §3's "no database change" and §4's matrix still hold.
+- Behavior: recurring calendar events are busy in every occurrence (#277); Vapi tool calls are
+  accepted in Vapi's documented shape (#282–#284, #291); the AI `createContact` tool enforces the
+  plan's contact limit and the read-only lock, with a new `plan_limit` outcome (#285); the public
+  assistant fails closed when its rate limit can't be checked (#281).
+- #274's Business DNA tool and the shared confirmation gates are untouched; its suites pass on
+  `edfd57b` (448/448 across 24 focused suites, together with #290).
+- **Staging has not validated `edfd57b` yet** (latest staging release #133 is `eca6822`). The
+  production candidate is the SHA the queue finishes on, after its own staging release.
+
 ## 1. Staging evidence for `eca6822`
 
 [Staging release #133](https://github.com/syveka/syveka-ai/actions/runs/37998253161), success,
