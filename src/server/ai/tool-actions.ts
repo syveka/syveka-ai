@@ -137,10 +137,10 @@ function logAction(fields: Record<string, unknown>) {
 }
 
 /** What the model is told: nothing has happened yet; the user decides. */
-const AWAITING = JSON.stringify({
+const AWAITING = {
   status: "awaiting_user_confirmation",
   note: "Nothing has been done yet. The user sees this action with Confirm and Cancel buttons under your reply. Say briefly what will happen if they confirm. Never say it is done.",
-});
+};
 
 /**
  * Turns a model's write tool call into a pending action. Returns the
@@ -204,7 +204,7 @@ export async function proposeToolAction(
   }
   logAction({ phase: "proposed", tool: described.tool, actionId: id, orgId: identity.orgId });
   return {
-    modelResult: AWAITING,
+    modelResult: JSON.stringify({ ...described.modelNote, ...AWAITING }),
     action: {
       id,
       tool: described.tool,
@@ -219,7 +219,7 @@ export async function proposeToolAction(
 export type ActionOutcome =
   | { ok: true; tool: string; status: "canceled" }
   | { ok: true; tool: string; status: "done"; result: Record<string, unknown> }
-  | { ok: true; tool: string; status: "not_done"; reason: "slot_taken" }
+  | { ok: true; tool: string; status: "not_done"; reason: "slot_taken" | "stale" }
   | {
       ok: false;
       reason:
@@ -228,6 +228,7 @@ export type ActionOutcome =
         | "mismatch"
         | "permission_denied"
         | "invalid_action"
+        | "plan_limit"
         | "action_failed";
     };
 
@@ -299,7 +300,9 @@ export async function decideToolAction(
   }
   const input = storedInput(reply[2]);
   if (!input) return { ok: false, reason: "invalid_action" };
-  const resultText = await executeTool(identity, tool, input);
+  const resultText = await executeTool(identity, tool, input, {
+    action: { actionId: request.id, conversationId: request.conversationId },
+  });
   const result = JSON.parse(resultText) as Record<string, unknown>;
   let outcome: ActionOutcome;
   if (typeof result.error === "string") {
@@ -310,10 +313,14 @@ export async function decideToolAction(
           ? "permission_denied"
           : result.error === "invalid_input" || result.error === "unknown_tool"
             ? "invalid_action"
-            : "action_failed",
+            : result.error === "entitlement_exceeded"
+              ? "plan_limit"
+              : "action_failed",
     };
   } else if (result.booked === false) {
     outcome = { ok: true, tool, status: "not_done", reason: "slot_taken" };
+  } else if (result.applied === false) {
+    outcome = { ok: true, tool, status: "not_done", reason: "stale" };
   } else {
     outcome = {
       ok: true,

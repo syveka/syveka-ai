@@ -117,6 +117,18 @@ export const businessDnaSchema = z
   .strict();
 
 export type BusinessDNAInput = z.infer<typeof businessDnaSchema>;
+
+/**
+ * The version of the profile a save replaces: its `updatedAt` as loaded
+ * (GET), or null when there was no profile yet. A save is refused when the
+ * profile has changed since, so a stale client never overwrites newer data.
+ */
+export const expectedUpdatedAtSchema = z.string().datetime().nullable();
+
+/** PUT /api/v1/business-dna: the profile plus the version it replaces. */
+export const businessDnaSaveRequestSchema = businessDnaSchema.extend({
+  expectedUpdatedAt: expectedUpdatedAtSchema,
+});
 export type OpeningHours = z.infer<typeof openingHoursSchema>;
 
 /** AI-extraction output: same shape as the form, but every field is optional

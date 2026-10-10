@@ -110,6 +110,25 @@ describe("AI features outside chat are rate-limited and quota-checked", () => {
     expect(m.recordUsage).not.toHaveBeenCalled();
   });
 
+  it("refuses every feature before the provider call when the limit can't be verified", async () => {
+    m.limitAiChat.mockResolvedValue({ success: false, unavailable: true } as never);
+    try {
+      expect(await generateDealInsightsAction("deal-1", {}, form())).toEqual({
+        error: "unavailable",
+      });
+      expect(await schedulingAssistantAction({}, form({ request: "next week" }))).toEqual({
+        error: "unavailable",
+      });
+      await expect(meetingSummaryAction("event-1")).rejects.toMatchObject({ code: "unavailable" });
+      expect(await generateDraftAction("thread-1", {}, form())).toEqual({ error: "unavailable" });
+    } finally {
+      m.limitAiChat.mockResolvedValue({ success: true });
+    }
+    expect(providerCalls()).toBe(0);
+    expect(m.getMonthUsage).not.toHaveBeenCalled();
+    expect(m.recordUsage).not.toHaveBeenCalled();
+  });
+
   it("refuses every feature before the provider call once the monthly quota is used", async () => {
     m.assertWithinLimit.mockRejectedValue(new m.EntitlementError("quota"));
     try {
