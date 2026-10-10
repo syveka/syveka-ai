@@ -8,7 +8,10 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const m = vi.hoisted(() => ({
   requirePermission: vi.fn(async () => ({ orgId: "org-a", userId: "user-1" })),
   getEntitlements: vi.fn(async () => ({ readOnly: false, activeWorkflows: 5 })),
-  limit: vi.fn(async (_key: string) => ({ success: true })),
+  checkRateLimit: vi.fn(async (_name: string, _key: string) => ({
+    ok: true as boolean,
+    reason: undefined as string | undefined,
+  })),
   workflowFindFirstOrThrow: vi.fn(async () => ({ id: "wf-1" })),
   workflowRunCreate: vi.fn(async () => ({ id: "run-1" })),
   enqueue: vi.fn(async () => undefined),
@@ -26,9 +29,7 @@ vi.mock("@/server/services/billing/entitlements", () => ({
   EntitlementError: class extends Error {},
   getEntitlements: m.getEntitlements,
 }));
-vi.mock("@/server/integrations/redis", () => ({
-  rateLimiters: { workflowTestRun: { limit: m.limit } },
-}));
+vi.mock("@/server/integrations/redis", () => ({ checkRateLimit: m.checkRateLimit }));
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {
     workflow: { findFirstOrThrow: m.workflowFindFirstOrThrow },
@@ -46,7 +47,7 @@ beforeEach(() => {
 describe("testWorkflowAction", () => {
   it("runs the workflow for an entitled organization within the limit", async () => {
     expect(await testWorkflowAction("wf-1")).toEqual({ message: "test_started" });
-    expect(m.limit).toHaveBeenCalledWith("org-a");
+    expect(m.checkRateLimit).toHaveBeenCalledWith("workflowTestRun", "org-a");
     expect(m.workflowFindFirstOrThrow).toHaveBeenCalledWith({
       where: { id: "wf-1", organizationId: "org-a" },
     });
@@ -56,7 +57,7 @@ describe("testWorkflowAction", () => {
   it("refuses a plan without workflows before creating or enqueueing a run", async () => {
     m.getEntitlements.mockResolvedValueOnce({ readOnly: false, activeWorkflows: 0 });
     expect(await testWorkflowAction("wf-1")).toEqual({ error: "quota" });
-    expect(m.limit).not.toHaveBeenCalled();
+    expect(m.checkRateLimit).not.toHaveBeenCalled();
     expect(m.workflowRunCreate).not.toHaveBeenCalled();
     expect(m.enqueue).not.toHaveBeenCalled();
   });
@@ -68,8 +69,15 @@ describe("testWorkflowAction", () => {
   });
 
   it("refuses once the organization's test-run limit is reached", async () => {
-    m.limit.mockResolvedValueOnce({ success: false });
+    m.checkRateLimit.mockResolvedValueOnce({ ok: false, reason: "limited" });
     expect(await testWorkflowAction("wf-1")).toEqual({ error: "rate_limited" });
+    expect(m.workflowRunCreate).not.toHaveBeenCalled();
+    expect(m.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the test-run limit can't be verified", async () => {
+    m.checkRateLimit.mockResolvedValueOnce({ ok: false, reason: "unavailable" });
+    expect(await testWorkflowAction("wf-1")).toEqual({ error: "service_unavailable" });
     expect(m.workflowRunCreate).not.toHaveBeenCalled();
     expect(m.enqueue).not.toHaveBeenCalled();
   });

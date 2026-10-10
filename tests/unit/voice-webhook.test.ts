@@ -1,7 +1,8 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => {
   const callOrder: string[] = [];
+  const counters = new Map<string, number>();
   return {
     callOrder,
     verifyVapiSignature: vi.fn(() => true),
@@ -29,6 +30,20 @@ const mocks = vi.hoisted(() => {
       return "OK" as string | null;
     }),
     redisDel: vi.fn(async (..._args: unknown[]) => 1),
+    // In-memory INCR/DECR counters so per-call write caps behave like Redis.
+    counters,
+    voiceCallFindFirst: vi.fn(
+      async (..._args: unknown[]) => null as Record<string, unknown> | null,
+    ),
+    redisIncr: vi.fn(async (key: string) => {
+      counters.set(key, (counters.get(key) ?? 0) + 1);
+      return counters.get(key)!;
+    }),
+    redisDecr: vi.fn(async (key: string) => {
+      counters.set(key, (counters.get(key) ?? 0) - 1);
+      return counters.get(key)!;
+    }),
+    redisExpire: vi.fn(async (..._args: unknown[]) => 1),
   };
 });
 
@@ -38,7 +53,7 @@ vi.mock("@/server/integrations/vapi", () => ({
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {
     voiceAssistant: { findFirst: mocks.voiceAssistantFindFirst },
-    voiceCall: { upsert: mocks.voiceCallUpsert },
+    voiceCall: { upsert: mocks.voiceCallUpsert, findFirst: mocks.voiceCallFindFirst },
   },
 }));
 vi.mock("@/server/ai/tools", () => ({ executeTool: mocks.executeTool }));
@@ -48,7 +63,14 @@ vi.mock("@/server/services/billing/entitlements", () => ({
 }));
 vi.mock("@/server/jobs/queue", () => ({ enqueue: mocks.enqueue }));
 vi.mock("@/server/integrations/redis", () => ({
-  redis: { get: mocks.redisGet, set: mocks.redisSet, del: mocks.redisDel },
+  redis: {
+    get: mocks.redisGet,
+    set: mocks.redisSet,
+    del: mocks.redisDel,
+    incr: mocks.redisIncr,
+    decr: mocks.redisDecr,
+    expire: mocks.redisExpire,
+  },
 }));
 
 import { POST } from "@/app/api/v1/voice/webhook/route";
@@ -73,6 +95,7 @@ function eocrRequest(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.callOrder.length = 0;
+  mocks.counters.clear();
   mocks.redisGet.mockResolvedValue(null);
 });
 
@@ -312,7 +335,12 @@ describe("Vapi voice webhook — tool-calls replay protection", () => {
     mocks.voiceAssistantFindFirst.mockResolvedValueOnce(enabledAssistant());
     mocks.executeTool.mockRejectedValueOnce(new Error("db down"));
 
-    await expect(POST(toolCallsRequest(["tc-1"]))).rejects.toThrow("db down");
+    // The failure is contained to this tool call: refused without detail, not a 500.
+    const failed = await (await POST(toolCallsRequest(["tc-1"]))).json();
+    expect(failed.results).toEqual([
+      { toolCallId: "tc-1", result: JSON.stringify({ error: "tool_unavailable" }) },
+    ]);
+    expect(JSON.stringify(failed)).not.toContain("db down");
     expect(mocks.redisDel).toHaveBeenCalledWith("vapi:tool:org-a:tc-1");
 
     mocks.voiceAssistantFindFirst.mockResolvedValueOnce(enabledAssistant());
@@ -434,5 +462,760 @@ describe("Vapi voice webhook — deactivated assistant refuses tool-call writes 
       { toolCallId: "tc-2", result: JSON.stringify({ error: "assistant_disabled" }) },
     ]);
     expect(mocks.executeTool).not.toHaveBeenCalled();
+  });
+});
+
+function writeAssistant(organizationId = "org-a") {
+  return {
+    id: `assistant-${organizationId}`,
+    organizationId,
+    enabledTools: [
+      "bookMeeting",
+      "createContact",
+      "logActivity",
+      "getCalendarAvailability",
+      "searchKnowledgeBase",
+    ],
+    useKnowledgeBase: true,
+    isActive: true,
+    organization: { members: [{ userId: "owner-1" }] },
+  };
+}
+
+function toolRequest(callId: string, calls: Array<{ id: string; name: string }>) {
+  return new Request("http://localhost/api/v1/voice/webhook", {
+    method: "POST",
+    headers: { "x-vapi-signature": "sig" },
+    body: JSON.stringify({
+      message: {
+        type: "tool-calls",
+        call: { id: callId, assistantId: "assistant-1" },
+        toolCallList: calls.map((c) => ({ ...c, arguments: {} })),
+      },
+    }),
+  });
+}
+
+async function runTools(
+  callId: string,
+  calls: Array<{ id: string; name: string }>,
+  organizationId = "org-a",
+) {
+  mocks.voiceAssistantFindFirst.mockResolvedValueOnce(writeAssistant(organizationId));
+  const res = await POST(toolRequest(callId, calls));
+  expect(res.status).toBe(200);
+  const body = (await res.json()) as { results: Array<{ toolCallId: string; result: string }> };
+  return body.results.map((r) => r.result);
+}
+
+const OK = JSON.stringify({ ok: true });
+const err = (error: string) => JSON.stringify({ error });
+
+/**
+ * One caller (or a script) must not be able to book every offered slot or create
+ * unlimited contacts/activities within a single call.
+ */
+describe("Vapi voice webhook — per-call write caps", () => {
+  beforeEach(() => {
+    mocks.executeTool.mockResolvedValue(OK);
+  });
+
+  it("refuses the third booking in the same call without executing it", async () => {
+    expect(await runTools("call-7", [{ id: "b1", name: "bookMeeting" }])).toEqual([OK]);
+    expect(await runTools("call-7", [{ id: "b2", name: "bookMeeting" }])).toEqual([OK]);
+    expect(await runTools("call-7", [{ id: "b3", name: "bookMeeting" }])).toEqual([
+      err("call_write_limit"),
+    ]);
+
+    expect(mocks.executeTool).toHaveBeenCalledTimes(2);
+    expect(mocks.redisIncr).toHaveBeenCalledWith("vapi:callcap:org-a:call-7:bookMeeting");
+    // TTL is set once, on the first increment, and outlives the 15-minute max call.
+    expect(mocks.redisExpire).toHaveBeenCalledTimes(1);
+    expect(mocks.redisExpire).toHaveBeenCalledWith(
+      "vapi:callcap:org-a:call-7:bookMeeting",
+      60 * 60 * 2,
+    );
+  });
+
+  it("caps writes requested together in one tool-calls batch", async () => {
+    const results = await runTools("call-7", [
+      { id: "b1", name: "bookMeeting" },
+      { id: "b2", name: "bookMeeting" },
+      { id: "b3", name: "bookMeeting" },
+    ]);
+
+    expect(results.filter((r) => r === OK)).toHaveLength(2);
+    expect(results.filter((r) => r === err("call_write_limit"))).toHaveLength(1);
+    expect(mocks.executeTool).toHaveBeenCalledTimes(2);
+  });
+
+  it("applies the default cap per tool: createContact 2, logActivity 5", async () => {
+    const contacts = await runTools(
+      "call-7",
+      ["c1", "c2", "c3"].map((id) => ({ id, name: "createContact" })),
+    );
+    expect(contacts.filter((r) => r === OK)).toHaveLength(2);
+
+    const activities = await runTools(
+      "call-7",
+      ["a1", "a2", "a3", "a4", "a5", "a6"].map((id) => ({ id, name: "logActivity" })),
+    );
+    expect(activities.filter((r) => r === OK)).toHaveLength(5);
+    expect(activities.filter((r) => r === err("call_write_limit"))).toHaveLength(1);
+  });
+
+  it("never caps read tools", async () => {
+    const reads = Array.from({ length: 12 }, (_, i) => ({
+      id: `r${i}`,
+      name: i % 2 ? "searchKnowledgeBase" : "getCalendarAvailability",
+    }));
+    const results = await runTools("call-7", reads);
+
+    expect(results).toEqual(reads.map(() => OK));
+    expect(mocks.redisIncr).not.toHaveBeenCalled();
+    expect(mocks.voiceCallFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("does not affect a different call in the same org", async () => {
+    await runTools("call-7", [
+      { id: "b1", name: "bookMeeting" },
+      { id: "b2", name: "bookMeeting" },
+    ]);
+    expect(await runTools("call-8", [{ id: "b3", name: "bookMeeting" }])).toEqual([OK]);
+    expect(mocks.redisIncr).toHaveBeenLastCalledWith("vapi:callcap:org-a:call-8:bookMeeting");
+  });
+
+  it("does not affect the same call id in a different org", async () => {
+    await runTools("call-7", [
+      { id: "b1", name: "bookMeeting" },
+      { id: "b2", name: "bookMeeting" },
+    ]);
+    expect(await runTools("call-7", [{ id: "b3", name: "bookMeeting" }], "org-b")).toEqual([OK]);
+    expect(mocks.redisIncr).toHaveBeenLastCalledWith("vapi:callcap:org-b:call-7:bookMeeting");
+  });
+
+  it("a write whose execution throws does not consume the cap", async () => {
+    mocks.executeTool.mockRejectedValueOnce(new Error("calendar down"));
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce(writeAssistant());
+    expect(await runTools("call-7", [{ id: "b1", name: "bookMeeting" }])).toEqual([
+      err("tool_unavailable"),
+    ]);
+    expect(mocks.redisDecr).toHaveBeenCalledWith("vapi:callcap:org-a:call-7:bookMeeting");
+
+    expect(await runTools("call-7", [{ id: "b2", name: "bookMeeting" }])).toEqual([OK]);
+    expect(await runTools("call-7", [{ id: "b3", name: "bookMeeting" }])).toEqual([OK]);
+    expect(await runTools("call-7", [{ id: "b4", name: "bookMeeting" }])).toEqual([
+      err("call_write_limit"),
+    ]);
+  });
+
+  // executeTool reports failures as results, it doesn't throw: refusals before
+  // any write come back as { error }, a taken slot as { booked: false }.
+  // What the caller hears: error results keep only their code.
+  it.each([
+    [
+      "invalid input",
+      JSON.stringify({ error: "invalid_input", details: [] }),
+      err("invalid_input"),
+    ],
+    ["a permission refusal", err("permission_denied"), err("permission_denied")],
+    ["a plan-limit refusal", err("entitlement_exceeded"), err("entitlement_exceeded")],
+    [
+      "a booking that didn't happen",
+      JSON.stringify({ booked: false, reason: "slot_taken" }),
+      JSON.stringify({ booked: false, reason: "slot_taken" }),
+    ],
+  ])("a write that returns %s does not consume the cap", async (_label, failure, heard) => {
+    mocks.executeTool.mockResolvedValueOnce(failure).mockResolvedValueOnce(failure);
+    expect(await runTools("call-7", [{ id: "f1", name: "bookMeeting" }])).toEqual([heard]);
+    expect(await runTools("call-7", [{ id: "f2", name: "bookMeeting" }])).toEqual([heard]);
+
+    // Two failed attempts later, the call still has both of its bookings.
+    expect(await runTools("call-7", [{ id: "b1", name: "bookMeeting" }])).toEqual([OK]);
+    expect(await runTools("call-7", [{ id: "b2", name: "bookMeeting" }])).toEqual([OK]);
+    expect(await runTools("call-7", [{ id: "b3", name: "bookMeeting" }])).toEqual([
+      err("call_write_limit"),
+    ]);
+  });
+
+  it("an execution failure keeps its slot: the write may have happened before the failure", async () => {
+    const failed = JSON.stringify({ error: "execution_failed" });
+    mocks.executeTool.mockResolvedValueOnce(failed).mockResolvedValueOnce(failed);
+    await runTools("call-7", [{ id: "f1", name: "bookMeeting" }]);
+    await runTools("call-7", [{ id: "f2", name: "bookMeeting" }]);
+
+    expect(mocks.redisDecr).not.toHaveBeenCalled();
+    expect(await runTools("call-7", [{ id: "b1", name: "bookMeeting" }])).toEqual([
+      err("call_write_limit"),
+    ]);
+  });
+
+  it("a write counted but not given a TTL is refused and gives its slot back", async () => {
+    mocks.redisExpire.mockRejectedValueOnce(new Error("redis down"));
+    expect(await runTools("call-7", [{ id: "b1", name: "bookMeeting" }])).toEqual([
+      err("call_write_limit_unavailable"),
+    ]);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+    expect(mocks.redisDecr).toHaveBeenCalledWith("vapi:callcap:org-a:call-7:bookMeeting");
+  });
+
+  it("a successful write keeps its slot", async () => {
+    mocks.executeTool.mockResolvedValueOnce(JSON.stringify({ booked: true, eventId: "e1" }));
+    await runTools("call-7", [{ id: "b1", name: "bookMeeting" }]);
+    expect(mocks.redisDecr).not.toHaveBeenCalled();
+  });
+
+  it("a counter that can't be decremented doesn't fail the request", async () => {
+    mocks.redisDecr.mockRejectedValueOnce(new Error("redis down"));
+    mocks.executeTool.mockResolvedValueOnce(JSON.stringify({ error: "invalid_input" }));
+    const failed = await runTools("call-7", [{ id: "f1", name: "bookMeeting" }]);
+    expect(failed).toEqual([JSON.stringify({ error: "invalid_input" })]);
+    expect(mocks.redisDecr).toHaveBeenCalledTimes(1);
+  });
+
+  it("a write refused by the cap keeps its tool-call claim but gives the slot back", async () => {
+    await runTools("call-7", [
+      { id: "b1", name: "bookMeeting" },
+      { id: "b2", name: "bookMeeting" },
+    ]);
+    expect(await runTools("call-7", [{ id: "b3", name: "bookMeeting" }])).toEqual([
+      err("call_write_limit"),
+    ]);
+
+    expect(mocks.counters.get("vapi:callcap:org-a:call-7:bookMeeting")).toBe(2);
+    expect(mocks.redisDel).not.toHaveBeenCalledWith("vapi:tool:org-a:b3");
+  });
+
+  it("fails closed for writes when Redis cannot count them; reads still run", async () => {
+    mocks.redisIncr.mockRejectedValueOnce(new Error("redis unavailable"));
+
+    const results = await runTools("call-7", [
+      { id: "b1", name: "bookMeeting" },
+      { id: "r1", name: "searchKnowledgeBase" },
+    ]);
+
+    expect(results).toEqual([err("call_write_limit_unavailable"), OK]);
+    expect(mocks.executeTool).toHaveBeenCalledTimes(1);
+    expect(mocks.executeTool).toHaveBeenCalledWith(
+      expect.anything(),
+      "searchKnowledgeBase",
+      expect.anything(),
+    );
+    // The claim is released so a retry can run once Redis is back.
+    expect(mocks.redisDel).toHaveBeenCalledWith("vapi:tool:org-a:b1");
+  });
+
+  it("refuses writes without a call id (nothing to key the cap on); reads still run", async () => {
+    const results = await runTools("", [
+      { id: "b1", name: "bookMeeting" },
+      { id: "r1", name: "searchKnowledgeBase" },
+    ]);
+
+    expect(results).toEqual([err("call_required"), OK]);
+    expect(mocks.executeTool).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The tool-call claim expires after 24h, so a captured signed request replayed later
+ * would re-run its writes. The durable VoiceCall row refuses writes for an ended call.
+ */
+describe("Vapi voice webhook — writes refused after the call has ended", () => {
+  beforeEach(() => {
+    mocks.executeTool.mockResolvedValue(OK);
+  });
+
+  it("refuses a mutating tool for an ended call; reads in the same request still run", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValueOnce({
+      endedAt: new Date("2026-01-01T10:15:00Z"),
+      status: "COMPLETED",
+    });
+
+    const results = await runTools("call-7", [
+      { id: "b1", name: "bookMeeting" },
+      { id: "c1", name: "createContact" },
+      { id: "r1", name: "searchKnowledgeBase" },
+    ]);
+
+    expect(results).toEqual([err("call_ended"), err("call_ended"), OK]);
+    expect(mocks.executeTool).toHaveBeenCalledTimes(1);
+    expect(mocks.voiceCallFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { organizationId: "org-a", vapiCallId: "call-7" } }),
+    );
+    expect(mocks.redisIncr).not.toHaveBeenCalled();
+  });
+
+  it("treats any terminal status as ended even without endedAt", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValueOnce({ endedAt: null, status: "TRANSFERRED" });
+
+    expect(await runTools("call-7", [{ id: "b1", name: "bookMeeting" }])).toEqual([
+      err("call_ended"),
+    ]);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+  });
+
+  it("allows writes for an in-progress call", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValueOnce({ endedAt: null, status: "IN_PROGRESS" });
+
+    expect(await runTools("call-7", [{ id: "b1", name: "bookMeeting" }])).toEqual([OK]);
+  });
+
+  it("allows writes when no call row exists (the in-progress status update can be missed)", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValueOnce(null);
+
+    expect(await runTools("call-7", [{ id: "b1", name: "bookMeeting" }])).toEqual([OK]);
+    expect(mocks.executeTool).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Vapi voice webhook — end-of-call-report replay does not overwrite call details", () => {
+  it("a replay for an already-ended call leaves the recorded details untouched", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValueOnce({
+      endedAt: new Date("2026-01-01T10:15:00Z"),
+      postCallProcessedAt: null,
+    });
+    mocks.redisGet.mockResolvedValue("1");
+
+    const res = await POST(eocrRequest({ durationSeconds: 1, cost: 999 }));
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ ok: true, duplicate: true });
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(mocks.voiceCallFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { organizationId: "org-a", vapiCallId: "call-1" } }),
+    );
+  });
+
+  it("a replay after post-call processing overwrites and re-enqueues nothing, even after the marker expired", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValueOnce({
+      endedAt: new Date("2026-01-01T10:15:00Z"),
+      postCallProcessedAt: new Date("2026-01-01T10:16:00Z"),
+    });
+
+    const res = await POST(eocrRequest({ durationSeconds: 1, cost: 999 }));
+
+    expect(res.status).toBe(200);
+    await expect(res.json()).resolves.toEqual({ ok: true, duplicate: true });
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("a retry after a failed enqueue keeps the recorded details but can still enqueue", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValueOnce({
+      endedAt: new Date("2026-01-01T10:15:00Z"),
+      postCallProcessedAt: null,
+    });
+
+    const res = await POST(eocrRequest());
+
+    expect(res.status).toBe(200);
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * Vapi acts on replies to tool-calls (and assistant/transfer requests) only: a
+ * reply to status-update is ignored. On status-update an over-quota call is
+ * therefore ended through Live Call Control (POST {"type":"end-call"} to
+ * call.monitor.controlUrl); on tool-calls only by a request-failed message with
+ * endCallAfterSpokenEnabled, so the goodbye line is not cut off.
+ */
+describe("Vapi voice webhook — over-quota calls are actually ended", () => {
+  const CONTROL_URL =
+    "https://phone-call-websocket.aws-us-west-2-backend-production1.vapi.ai/call-secret-123/control";
+
+  const fetchMock = vi.fn(async (..._args: unknown[]) => new Response(null, { status: 200 }));
+  const consoleSpies: Array<ReturnType<typeof vi.spyOn>> = [];
+
+  beforeEach(() => {
+    fetchMock.mockReset();
+    fetchMock.mockImplementation(async () => new Response(null, { status: 200 }));
+    vi.stubGlobal("fetch", fetchMock);
+    for (const method of ["warn", "error", "log", "info"] as const) {
+      consoleSpies.push(vi.spyOn(console, method).mockImplementation(() => {}));
+    }
+    mocks.getMonthUsage.mockResolvedValue(0);
+    mocks.getEntitlements.mockResolvedValue({ voiceMinutesMonth: 1000 });
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    for (const spy of consoleSpies.splice(0)) spy.mockRestore();
+    mocks.getMonthUsage.mockResolvedValue(0);
+  });
+
+  const overQuota = () => mocks.getMonthUsage.mockResolvedValue(1000);
+
+  function loggedText(): string {
+    return consoleSpies
+      .flatMap((spy) => spy.mock.calls.flat())
+      .map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg)))
+      .join("\n");
+  }
+
+  function statusUpdate(controlUrl: string | null = CONTROL_URL) {
+    return new Request("http://localhost/api/v1/voice/webhook", {
+      method: "POST",
+      headers: { "x-vapi-signature": "sig" },
+      body: JSON.stringify({
+        message: {
+          type: "status-update",
+          status: "in-progress",
+          call: {
+            id: "call-q",
+            assistantId: "assistant-1",
+            ...(controlUrl ? { monitor: { controlUrl } } : {}),
+          },
+        },
+      }),
+    });
+  }
+
+  function toolCalls(language: "FI" | "EN" | "AR") {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce({
+      id: "assistant-1",
+      organizationId: "org-a",
+      enabledTools: ["bookMeeting"],
+      useKnowledgeBase: false,
+      isActive: true,
+      language,
+      organization: { members: [{ userId: "owner-1" }] },
+    } as never);
+    return new Request("http://localhost/api/v1/voice/webhook", {
+      method: "POST",
+      headers: { "x-vapi-signature": "sig" },
+      body: JSON.stringify({
+        message: {
+          type: "tool-calls",
+          call: { id: "call-q", assistantId: "assistant-1", monitor: { controlUrl: CONTROL_URL } },
+          toolCallList: [
+            { id: "tc-1", name: "bookMeeting", arguments: { title: "x" } },
+            { id: "tc-2", name: "bookMeeting", arguments: { title: "y" } },
+          ],
+        },
+      }),
+    });
+  }
+
+  it("over-quota status-update POSTs exactly one end-call to the control URL, records no call and never logs the URL", async () => {
+    overQuota();
+
+    const response = await POST(statusUpdate());
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [url, init] = fetchMock.mock.calls[0]! as [string, RequestInit];
+    expect(url).toBe(CONTROL_URL);
+    expect(init.method).toBe("POST");
+    expect(JSON.parse(init.body as string)).toEqual({ type: "end-call" });
+    expect(new Headers(init.headers).get("content-type")).toBe("application/json");
+    expect(init.signal).toBeInstanceOf(AbortSignal);
+    // A redirect would send the end-call to a host the allowlist never checked.
+    expect(init.redirect).toBe("error");
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    expect(loggedText()).not.toContain("call-secret-123");
+    expect(loggedText()).not.toContain("vapi.ai");
+  });
+
+  it.each([
+    ["http (not https)", "http://phone.vapi.ai/x/control"],
+    ["foreign host", "https://attacker.example/x/control"],
+    ["look-alike host", "https://evilvapi.ai/x/control"],
+    ["suffix trick", "https://phone.vapi.ai.attacker.example/x/control"],
+    ["internal address", "https://169.254.169.254/latest/meta-data"],
+    ["credentials in URL", "https://user:pw@phone.vapi.ai/x/control"],
+    ["non-default port", "https://phone.vapi.ai:8443/x/control"],
+    ["not a URL", "not a url"],
+  ])(
+    "never calls an invalid control URL (%s), records no call and answers 200",
+    async (_label, controlUrl) => {
+      overQuota();
+
+      const response = await POST(statusUpdate(controlUrl));
+
+      expect(response.status).toBe(200);
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+      expect(loggedText()).not.toContain(controlUrl);
+    },
+  );
+
+  it("a missing control URL is skipped: no fetch, no call row, 200", async () => {
+    overQuota();
+
+    const response = await POST(statusUpdate(null));
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["network error", () => fetchMock.mockRejectedValueOnce(new TypeError("fetch failed"))],
+    ["timeout", () => fetchMock.mockRejectedValueOnce(new DOMException("t", "TimeoutError"))],
+    ["non-2xx", () => fetchMock.mockResolvedValueOnce(new Response(null, { status: 500 }))],
+  ])("a control URL failure (%s) keeps the 200 and never logs the URL", async (_label, arrange) => {
+    overQuota();
+    arrange();
+
+    const response = await POST(statusUpdate());
+
+    expect(response.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    expect(loggedText()).not.toContain("call-secret-123");
+  });
+
+  it("under quota, status-update records the call as before and never calls the control URL", async () => {
+    const response = await POST(statusUpdate());
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ ok: true });
+    expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("over-quota tool-calls runs no tool and ends the call only via request-failed + endCallAfterSpokenEnabled (no control URL race)", async () => {
+    overQuota();
+
+    const response = await POST(toolCalls("EN"));
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const message = {
+      type: "request-failed",
+      content: "Sorry, this line can't take more calls right now. Goodbye.",
+      endCallAfterSpokenEnabled: true,
+    };
+    expect(body.results).toEqual([
+      { toolCallId: "tc-1", name: "bookMeeting", error: "quota_exceeded", message },
+      { toolCallId: "tc-2", name: "bookMeeting", error: "quota_exceeded", message },
+    ]);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+    expect(mocks.redisSet).not.toHaveBeenCalled();
+    // A Live Call Control end-call here would hang up before the goodbye is spoken.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(loggedText()).not.toContain("call-secret-123");
+  });
+
+  it.each([
+    ["FI", "Valitettavasti tämä linja ei voi juuri nyt ottaa vastaan puheluita. Näkemiin."],
+    ["AR", "عذرًا، لا يمكن لهذا الخط استقبال مكالمات أخرى الآن. مع السلامة."],
+  ] as const)("speaks the goodbye in the assistant's language (%s)", async (language, content) => {
+    overQuota();
+
+    const body = await (await POST(toolCalls(language))).json();
+
+    expect(body.results[0].message).toEqual({
+      type: "request-failed",
+      content,
+      endCallAfterSpokenEnabled: true,
+    });
+  });
+
+  it("under quota, tool-calls executes the tools with the existing result shape and never calls the control URL", async () => {
+    mocks.executeTool.mockResolvedValue(JSON.stringify({ booked: true }));
+
+    const body = await (await POST(toolCalls("EN"))).json();
+
+    expect(body.results).toEqual([
+      { toolCallId: "tc-1", result: JSON.stringify({ booked: true }) },
+      { toolCallId: "tc-2", result: JSON.stringify({ booked: true }) },
+    ]);
+    expect(mocks.executeTool).toHaveBeenCalledTimes(2);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Vapi's API spec (ToolCall) sends each requested call as
+ * `{ id, type: "function", function: { name, arguments } }` with the
+ * arguments as a JSON string; some docs examples show a flat
+ * `{ id, name, parameters }`. Both must reach the tool with object arguments.
+ */
+describe("Vapi voice webhook — tool-calls payload shapes", () => {
+  const assistant = {
+    id: "assistant-1",
+    organizationId: "org-a",
+    enabledTools: ["bookMeeting"],
+    useKnowledgeBase: true,
+    isActive: true,
+    organization: { members: [{ userId: "owner-1" }] },
+  };
+
+  function toolCalls(toolCallList: unknown[]) {
+    return POST(
+      new Request("http://localhost/api/v1/voice/webhook", {
+        method: "POST",
+        headers: { "x-vapi-signature": "sig" },
+        body: JSON.stringify({
+          message: {
+            type: "tool-calls",
+            call: { id: "call-shape", assistantId: "assistant-1" },
+            toolCallList,
+          },
+        }),
+      }),
+    );
+  }
+
+  it("runs a call in the spec's shape: name under function, arguments as a JSON string", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce(assistant);
+    mocks.executeTool.mockResolvedValueOnce(JSON.stringify({ ok: true }));
+
+    const response = await toolCalls([
+      {
+        id: "tc-spec",
+        type: "function",
+        function: { name: "searchKnowledgeBase", arguments: '{"query":"opening hours"}' },
+      },
+    ]);
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).results).toEqual([
+      { toolCallId: "tc-spec", result: JSON.stringify({ ok: true }) },
+    ]);
+    expect(mocks.executeTool).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: "org-a", actorType: "voice_ai" }),
+      "searchKnowledgeBase",
+      { query: "opening hours" },
+    );
+  });
+
+  it("runs a call in the flat docs shape with `parameters`", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce(assistant);
+    mocks.executeTool.mockResolvedValueOnce(JSON.stringify({ ok: true }));
+
+    await toolCalls([
+      { id: "tc-flat", name: "searchKnowledgeBase", parameters: { query: "prices" } },
+    ]);
+
+    expect(mocks.executeTool).toHaveBeenCalledWith(expect.anything(), "searchKnowledgeBase", {
+      query: "prices",
+    });
+  });
+
+  it("refuses, without running anything, a call whose arguments can't be read as an object", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce(assistant);
+
+    const response = await toolCalls([
+      {
+        id: "tc-bad-json",
+        type: "function",
+        function: { name: "bookMeeting", arguments: "{not json" },
+      },
+      { id: "tc-array", type: "function", function: { name: "bookMeeting", arguments: "[1,2]" } },
+    ]);
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).results).toEqual([
+      { toolCallId: "tc-bad-json", result: JSON.stringify({ error: "invalid_arguments" }) },
+      { toolCallId: "tc-array", result: JSON.stringify({ error: "invalid_arguments" }) },
+    ]);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Hardening of the tool-calls request as a whole: malformed or oversized
+ * requests are refused up front, one tool call's failure stays contained, and
+ * the caller's assistant never receives internal error text.
+ */
+describe("Vapi voice webhook — request hardening", () => {
+  beforeEach(() => {
+    mocks.executeTool.mockResolvedValue(OK);
+  });
+
+  function rawRequest(body: string) {
+    return new Request("http://localhost/api/v1/voice/webhook", {
+      method: "POST",
+      headers: { "x-vapi-signature": "sig" },
+      body,
+    });
+  }
+
+  it("answers 400, not 500, to a signed body that isn't JSON, and runs nothing", async () => {
+    const res = await POST(rawRequest("{not json"));
+    expect(res.status).toBe(400);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+    expect(mocks.voiceAssistantFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("refuses a request asking for more than 20 tool calls, running none of them", async () => {
+    const calls = Array.from({ length: 21 }, (_, i) => ({
+      id: `r${i}`,
+      name: "searchKnowledgeBase",
+      arguments: {},
+    }));
+    const res = await POST(
+      rawRequest(
+        JSON.stringify({
+          message: {
+            type: "tool-calls",
+            call: { id: "call-9", assistantId: "assistant-1" },
+            toolCallList: calls,
+          },
+        }),
+      ),
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+    expect(mocks.redisSet).not.toHaveBeenCalled();
+  });
+
+  it("still accepts 20 tool calls in one request", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce(writeAssistant());
+    const reads = Array.from({ length: 20 }, (_, i) => ({
+      id: `r${i}`,
+      name: "searchKnowledgeBase",
+    }));
+    const res = await POST(toolRequest("call-9", reads));
+    expect(res.status).toBe(200);
+    expect(mocks.executeTool).toHaveBeenCalledTimes(20);
+  });
+
+  it("one tool call failing doesn't fail the batch: a booking already made still reaches the caller", async () => {
+    // b1 books; b2's claim can't be written (Redis error) -- before, the whole request 500'd
+    // and the caller never heard that b1 was booked.
+    mocks.redisSet
+      .mockImplementationOnce(async () => "OK")
+      .mockImplementationOnce(async () => {
+        throw new Error("redis down");
+      });
+    const results = await runTools("call-7", [
+      { id: "b1", name: "bookMeeting" },
+      { id: "b2", name: "bookMeeting" },
+    ]);
+    expect(results).toEqual([OK, err("tool_unavailable")]);
+    expect(mocks.executeTool).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells the assistant which fields were invalid, without messages or input values", async () => {
+    mocks.executeTool.mockResolvedValueOnce(
+      JSON.stringify({
+        error: "invalid_input",
+        details: [
+          { path: ["startsAt"], message: "Invalid datetime, got 'tomorrow at 25:00'" },
+          { path: [], message: "Unrecognized key: secret" },
+        ],
+      }),
+    );
+    const results = await runTools("call-7", [{ id: "b1", name: "bookMeeting" }]);
+    expect(results).toEqual([JSON.stringify({ error: "invalid_input", fields: ["startsAt"] })]);
+    expect(results.join("")).not.toContain("25:00");
+  });
+
+  it("never passes internal error text to the caller's assistant", async () => {
+    mocks.executeTool.mockResolvedValueOnce(
+      JSON.stringify({
+        error: "execution_failed",
+        message: "Invalid `prisma.contact.findFirstOrThrow()` invocation: No Contact found",
+      }),
+    );
+    const results = await runTools("call-7", [{ id: "c1", name: "createContact" }]);
+    expect(results).toEqual([err("execution_failed")]);
+    expect(results.join("")).not.toContain("prisma");
   });
 });

@@ -21,6 +21,7 @@ const OUTCOMES: Record<string, RestoredActionState> = {
   done: "done",
   canceled: "canceled",
   not_done: "slotTaken",
+  stale: "stale",
   failed: "failed",
   unknown: "unknown",
 };

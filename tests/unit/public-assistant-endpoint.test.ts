@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
     limit: 10,
     remaining: 9,
   })),
+  // When true, getting the limiter throws (as getRateLimiters() does when Redis isn't configured).
+  limiterUnconfigured: false,
   isFlaggedByModeration: vi.fn(async () => false),
   streamClaude: vi.fn(async (params: { callbacks: { onText: (d: string) => void } }) => {
     params.callbacks.onText("Syveka combines AI chat, Voice, CRM and booking for Finnish SMBs.");
@@ -21,7 +23,12 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/server/integrations/redis", () => ({
-  rateLimiters: { publicAssistant: { limit: mocks.rateLimit } },
+  rateLimiters: {
+    get publicAssistant() {
+      if (mocks.limiterUnconfigured) throw new Error("UPSTASH_REDIS_REST_URL is not set");
+      return { limit: mocks.rateLimit };
+    },
+  },
 }));
 vi.mock("@/server/integrations/openai", () => ({
   isFlaggedByModeration: mocks.isFlaggedByModeration,
@@ -126,6 +133,68 @@ describe("POST /api/v1/public-assistant", () => {
     expect((await res.json()).error).toBe("rate_limited");
     expect(res.headers.get("Retry-After")).toBeTruthy();
     expect(mocks.streamClaude).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with 503 when the limiter times out (Upstash allows with reason 'timeout')", async () => {
+    mocks.rateLimit.mockResolvedValueOnce({
+      success: true,
+      reset: 0,
+      limit: 0,
+      remaining: 0,
+      reason: "timeout",
+    } as Awaited<ReturnType<typeof mocks.rateLimit>>);
+    const res = await POST(req({ message: "hi" }));
+    expect(res.status).toBe(503);
+    expect((await res.json()).error).toBe("service_unavailable");
+    expect(mocks.isFlaggedByModeration).not.toHaveBeenCalled();
+    expect(mocks.streamClaude).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with 503, not a raw error, when the limiter throws", async () => {
+    mocks.rateLimit.mockRejectedValueOnce(new Error("fetch failed: redis unreachable"));
+    const res = await POST(req({ message: "hi" }));
+    expect(res.status).toBe(503);
+    const body = await res.json();
+    expect(body.error).toBe("service_unavailable");
+    expect(JSON.stringify(body)).not.toContain("redis unreachable");
+    expect(mocks.isFlaggedByModeration).not.toHaveBeenCalled();
+    expect(mocks.streamClaude).not.toHaveBeenCalled();
+  });
+
+  it("fails closed with 503 when the limiter can't even be created (Redis not configured)", async () => {
+    mocks.limiterUnconfigured = true;
+    try {
+      const res = await POST(req({ message: "hi" }));
+      expect(res.status).toBe(503);
+      const body = await res.json();
+      expect(body.error).toBe("service_unavailable");
+      expect(JSON.stringify(body)).not.toContain("UPSTASH");
+      expect(mocks.streamClaude).not.toHaveBeenCalled();
+    } finally {
+      mocks.limiterUnconfigured = false;
+    }
+  });
+
+  it("still answers 429, not 503, for Upstash's other denials (cache block, deny list)", async () => {
+    for (const reason of ["cacheBlock", "denyList"]) {
+      mocks.rateLimit.mockResolvedValueOnce({
+        success: false,
+        reset: Date.now() + 1000,
+        limit: 10,
+        remaining: 0,
+        reason,
+      } as Awaited<ReturnType<typeof mocks.rateLimit>>);
+      const res = await POST(req({ message: "hi" }));
+      expect(res.status).toBe(429);
+    }
+    expect(mocks.streamClaude).not.toHaveBeenCalled();
+  });
+
+  it("proceeds to the provider when the limiter verifies the request", async () => {
+    const res = await POST(req({ message: "hi" }));
+    expect(res.status).toBe(200);
+    expect(mocks.rateLimit).toHaveBeenCalledTimes(1);
+    expect(mocks.streamClaude).toHaveBeenCalledTimes(1);
   });
 
   it("keys the rate limiter by the caller's IP, not a shared/global key", async () => {
