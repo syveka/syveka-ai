@@ -58,7 +58,11 @@ export async function saveEventAction(
 
   try {
     if (eventId) {
-      await updateEvent(ctx, eventId, parsed.data);
+      // An explicit "Does not repeat" submits "" and clears the rule; a form
+      // without the field (e.g. a disabled control) keeps it.
+      await updateEvent(ctx, eventId, parsed.data, {
+        keepRecurrenceRule: !formData.has("recurrenceRule"),
+      });
     } else {
       const event = await createEvent(ctx, parsed.data);
       await scheduleEventReminders({
