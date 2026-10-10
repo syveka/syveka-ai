@@ -12,6 +12,12 @@ import { enqueue } from "@/server/jobs/queue";
 
 export const REMINDER_OFFSETS_MINUTES = [24 * 60, 60] as const;
 
+// The start time is part of the key: a moved event gets fresh reminders even when
+// one for its previous time was already sent (see rescheduleEventReminders).
+function reminderDedupeKey(eventId: string, offset: number, startsAt: Date): string {
+  return `evt:${eventId}:${offset}:${startsAt.getTime()}`;
+}
+
 export async function scheduleEventReminders(params: {
   orgId: string;
   eventId: string;
@@ -22,7 +28,7 @@ export async function scheduleEventReminders(params: {
   for (const offset of REMINDER_OFFSETS_MINUTES) {
     const sendAt = new Date(params.startsAt.getTime() - offset * 60_000);
     if (sendAt.getTime() <= now) continue;
-    const dedupeKey = `evt:${params.eventId}:${offset}`;
+    const dedupeKey = reminderDedupeKey(params.eventId, offset, params.startsAt);
     try {
       const reminder = await unscopedPrisma.reminder.create({
         data: {
@@ -43,6 +49,47 @@ export async function scheduleEventReminders(params: {
     }
   }
   return scheduled;
+}
+
+/**
+ * Moves an event's reminders to its new start time.
+ *
+ * Only events that were given reminders are rescheduled: imported (Google,
+ * Outlook) and assistant-booked events never had any and must not start
+ * emailing their attendees because they were moved.
+ *
+ * Pending reminders for the old time are canceled, so their already-enqueued
+ * jobs find no SCHEDULED row and send nothing; canceled rows also keep the
+ * event marked as one that has reminders. Then reminders for the new time are
+ * scheduled (none whose send time has already passed). A canceled reminder
+ * for exactly the new time (the event moved away and back) is removed first so
+ * it doesn't block its replacement. Sent reminders stay as the delivery record.
+ * `eventId` must already be verified inside `orgId`.
+ */
+export async function rescheduleEventReminders(params: {
+  orgId: string;
+  eventId: string;
+  startsAt: Date;
+}): Promise<number> {
+  const scope = { eventId: params.eventId, organizationId: params.orgId };
+  if ((await unscopedPrisma.reminder.count({ where: scope })) === 0) return 0;
+
+  await unscopedPrisma.reminder.updateMany({
+    where: { ...scope, status: "SCHEDULED" },
+    data: { status: "CANCELED" },
+  });
+  await unscopedPrisma.reminder.deleteMany({
+    where: {
+      ...scope,
+      status: "CANCELED",
+      dedupeKey: {
+        in: REMINDER_OFFSETS_MINUTES.map((offset) =>
+          reminderDedupeKey(params.eventId, offset, params.startsAt),
+        ),
+      },
+    },
+  });
+  return scheduleEventReminders(params);
 }
 
 export async function cancelEventReminders(eventId: string): Promise<void> {

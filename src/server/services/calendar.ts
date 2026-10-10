@@ -10,6 +10,7 @@ import {
 import { isValidTimezone } from "@/server/calendar/timezone";
 import { intervalsOverlap } from "@/server/calendar/slots";
 import { cancelBookingAsOwner, BookingError } from "./booking";
+import { rescheduleEventReminders } from "./reminders";
 import type { TenantContext } from "@/server/auth/session";
 import type { EventFilters, EventInput } from "@/lib/validators/calendar";
 import type { Prisma } from "@/generated/prisma/client/client";
@@ -340,6 +341,7 @@ export async function updateEvent(ctx: TenantContext, eventId: string, input: Ev
       title: true,
       startsAt: true,
       endsAt: true,
+      status: true,
       booking: { select: { status: true } },
     },
   });
@@ -383,6 +385,26 @@ export async function updateEvent(ctx: TenantContext, eventId: string, input: Ev
     before: { title: existing.title },
     after: { title: input.title },
   });
+
+  // Reminders are timed from startsAt: a moved event's pending reminders would
+  // otherwise fire at the old time while naming the new one. The move is already
+  // saved, so a reminder failure is logged rather than failing the update (as at
+  // create time, where scheduling is best-effort).
+  const startsAt = new Date(input.startsAt);
+  if (existing.status !== "CANCELED" && startsAt.getTime() !== existing.startsAt.getTime()) {
+    try {
+      await rescheduleEventReminders({ orgId: ctx.orgId, eventId, startsAt });
+    } catch (error) {
+      console.error(
+        JSON.stringify({
+          event: "calendar_reminder_reschedule_failed",
+          orgId: ctx.orgId,
+          eventId,
+          errorName: error instanceof Error ? error.name : typeof error,
+        }),
+      );
+    }
+  }
   return event;
 }
 
