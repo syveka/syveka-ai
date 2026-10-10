@@ -169,7 +169,11 @@ export function expandOccurrences(
 
   const out: Occurrence[] = [];
   for (const occ of naive) {
-    const start = fromNaive(occ.startsAt);
+    // The first occurrence is the stored start itself: a wall time repeated by
+    // a DST change (e.g. 03:30 on the autumn night) would otherwise map back to
+    // the later of its two instants.
+    const start =
+      occ.startsAt.getTime() === naiveStart.getTime() ? seriesStart : fromNaive(occ.startsAt);
     if (rule.until && start > rule.until) break;
     const end = new Date(start.getTime() + durationMs);
     if (start < rangeTo && end > rangeFrom) out.push({ startsAt: start, endsAt: end });

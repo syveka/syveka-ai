@@ -189,6 +189,46 @@ describe("recurring series keep their wall-clock time across DST", () => {
     expect(occ.map((o) => o.startsAt.toISOString())).toEqual(["2026-10-26T12:00:30.000Z"]);
   });
 
+  // Helsinki, Oct 25 2026: 04:00 EEST falls back to 03:00 EET, so 03:00–03:59
+  // happens twice (00:00–00:59Z, then 01:00–01:59Z).
+  it("ambiguous time: a series stored at the first 03:30 keeps that instant", () => {
+    const occ = expand(
+      "2026-10-25T00:30:00Z", // 03:30 EEST, the first of the two 03:30s
+      "2026-10-25T01:00:00Z",
+      "FREQ=DAILY",
+      "2026-10-24T00:00:00Z",
+      "2026-10-27T00:00:00Z",
+    );
+    expect(occ.map((o) => o.startsAt.toISOString())).toEqual([
+      "2026-10-25T00:30:00.000Z",
+      "2026-10-26T01:30:00.000Z", // 03:30 EET
+    ]);
+  });
+
+  it("ambiguous time: a later occurrence on the repeated hour takes the later instant (editor policy)", () => {
+    const occ = expand(
+      "2026-10-23T00:30:00Z", // 03:30 EEST
+      "2026-10-23T01:00:00Z",
+      "FREQ=DAILY",
+      "2026-10-25T00:00:00Z",
+      "2026-10-26T00:00:00Z",
+    );
+    expect(occ.map((o) => o.startsAt.toISOString())).toEqual(["2026-10-25T01:30:00.000Z"]);
+  });
+
+  // Helsinki, Mar 29 2026: 03:00 EET jumps to 04:00 EEST, so 03:00–03:59 never happens.
+  it("nonexistent time: the skipped 03:30 moves forward to 04:30, keeping the duration", () => {
+    const occ = expand(
+      "2026-03-27T01:30:00Z", // 03:30 EET
+      "2026-03-27T02:00:00Z",
+      "FREQ=DAILY",
+      "2026-03-28T00:00:00Z",
+      "2026-03-31T00:00:00Z",
+    );
+    expect(local(occ)).toEqual(["2026-03-28T03:30", "2026-03-29T04:30", "2026-03-30T03:30"]);
+    expect(occ.every((o) => o.endsAt.getTime() - o.startsAt.getTime() === 1_800_000)).toBe(true);
+  });
+
   it("without a zone (or an unknown one) expansion is unchanged: fixed UTC steps", () => {
     for (const zone of [null, "Not/AZone"]) {
       const occ = expand(
