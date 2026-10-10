@@ -4,7 +4,7 @@ const { txMock, transactionMock, auditMock, tenantDbMock, serviceFindFirstMock }
   () => {
     const txMock = {
       $executeRaw: vi.fn(async () => 0),
-      calendarEvent: { findFirst: vi.fn(), create: vi.fn() },
+      calendarEvent: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
       contact: { findFirstOrThrow: vi.fn() },
     };
     return {
@@ -25,6 +25,7 @@ vi.mock("@/server/services/audit", () => ({ audit: auditMock }));
 vi.mock("@/server/ai/rag", () => ({ retrieveChunks: vi.fn() }));
 
 import { TOOL_REGISTRY, type ToolIdentity } from "@/server/ai/tools";
+import { findFirstOver, findManyOver } from "./helpers/calendar-event-where";
 
 const bookMeeting = TOOL_REGISTRY.find((t) => t.name === "bookMeeting")!;
 
@@ -44,6 +45,7 @@ function input(overrides: Record<string, unknown> = {}) {
 beforeEach(() => {
   vi.clearAllMocks();
   txMock.calendarEvent.findFirst.mockResolvedValue(null); // no conflict
+  txMock.calendarEvent.findMany.mockResolvedValue([]); // no recurring series
   txMock.calendarEvent.create.mockResolvedValue({ id: "evt-1" });
   txMock.contact.findFirstOrThrow.mockResolvedValue({ id: "contact-1" });
   serviceFindFirstMock.mockResolvedValue(null);
@@ -77,6 +79,28 @@ describe("bookMeeting tool", () => {
     expect(result).toEqual({ booked: false, reason: "slot_taken" });
     expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
     expect(auditMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a slot taken by an occurrence of a weekly series that started on an earlier week", async () => {
+    // Monday 10:00-11:00Z every week, first held a week earlier. The mocks
+    // filter by each query's real `where`, as the database would.
+    const rows = [
+      {
+        organizationId: "org-a",
+        deletedAt: null,
+        status: "CONFIRMED",
+        startsAt: new Date("2026-08-10T10:00:00.000Z"),
+        endsAt: new Date("2026-08-10T11:00:00.000Z"),
+        recurrenceRule: "FREQ=WEEKLY",
+      },
+    ];
+    txMock.calendarEvent.findFirst.mockImplementation(findFirstOver(rows) as never);
+    txMock.calendarEvent.findMany.mockImplementation(findManyOver(rows) as never);
+
+    const result = await bookMeeting.execute(identity(), input()); // Mon 2026-08-17 10:00Z
+
+    expect(result).toEqual({ booked: false, reason: "slot_taken" });
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
   });
 
   it("serializes concurrent bookMeeting calls: acquires the org-calendar advisory lock before checking/writing, keyed on the trusted orgId", async () => {

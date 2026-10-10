@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@/server/auth/session";
 import type * as BusinessDnaContextModule from "@/server/business-dna/context";
 
@@ -24,7 +24,12 @@ vi.mock("@/server/business-dna/context", async (importOriginal) => ({
   getBusinessDnaContext: getBusinessDnaContextMock,
 }));
 
-import { assistScheduling, generateMeetingSummary } from "@/server/services/booking-assistant";
+import {
+  assistScheduling,
+  generateMeetingSummary,
+  suggestAvailableTimes,
+} from "@/server/services/booking-assistant";
+import { findManyOver } from "./helpers/calendar-event-where";
 
 function ctx(orgId = "org-a"): TenantContext {
   return { userId: "user-1", email: "u@example.com", orgId, role: "MEMBER", locale: "en" };
@@ -233,5 +238,43 @@ describe("generateMeetingSummary", () => {
 
     expect(result).toEqual({ summary: "", followUps: [], aiUsed: false });
     expect(anthropicCreateMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("suggestAvailableTimes", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-08-16T10:00:00.000Z")); // Sunday
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("never suggests a time taken by a weekly series that started on an earlier week", async () => {
+    const db = baseDb();
+    // The user's Monday 09:00-17:00 Helsinki block, every week since a week
+    // earlier. The mock filters by the query's real `where`, as the database would.
+    db.calendarEvent.findMany.mockImplementation(
+      findManyOver([
+        {
+          ownerId: "user-1",
+          createdById: "user-1",
+          deletedAt: null,
+          status: "CONFIRMED",
+          startsAt: new Date("2026-08-10T06:00:00.000Z"),
+          endsAt: new Date("2026-08-10T14:00:00.000Z"),
+          recurrenceRule: "FREQ=WEEKLY",
+        },
+      ]) as never,
+    );
+    tenantDbMock.mockReturnValue(db);
+
+    const { slots } = await suggestAvailableTimes(ctx(), { daysAhead: 3, limit: 50 });
+
+    expect(slots.length).toBeGreaterThan(0);
+    expect(slots.filter((s) => s.startsAt.startsWith("2026-08-17"))).toEqual([]);
+    expect(slots.some((s) => s.startsAt.startsWith("2026-08-18"))).toBe(true);
   });
 });
