@@ -228,6 +228,7 @@ export type ActionOutcome =
         | "mismatch"
         | "permission_denied"
         | "invalid_action"
+        | "plan_limit"
         | "action_failed";
     };
 
@@ -312,7 +313,9 @@ export async function decideToolAction(
           ? "permission_denied"
           : result.error === "invalid_input" || result.error === "unknown_tool"
             ? "invalid_action"
-            : "action_failed",
+            : result.error === "entitlement_exceeded"
+              ? "plan_limit"
+              : "action_failed",
     };
   } else if (result.booked === false) {
     outcome = { ok: true, tool, status: "not_done", reason: "slot_taken" };

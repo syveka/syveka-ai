@@ -107,6 +107,8 @@ describe("ActionConfirmation", () => {
     [403, { error: { code: "permission_denied" } }, "confirm", "permission"],
     // An error while the tool ran may come after its write: never "failed".
     [500, { error: { code: "action_failed" } }, "confirm", "unknown"],
+    // Refused by the plan before any write: nothing was done.
+    [402, { error: { code: "plan_limit" } }, "confirm", "failed"],
     [503, { error: { code: "service_unavailable" } }, "confirm", "failed"],
     [500, { notJson: true }, "confirm", "unknown"],
   ])("%s %j → %s shows '%s'", async (status, body, button, state) => {
