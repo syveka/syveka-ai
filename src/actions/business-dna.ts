@@ -3,9 +3,14 @@
 import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/server/auth/guard";
 import { getBusinessDNA, upsertBusinessDNA } from "@/server/services/business-dna";
-import { businessDnaSchema } from "@/lib/validators/business-dna";
+import { businessDnaSchema, expectedUpdatedAtSchema } from "@/lib/validators/business-dna";
 
-export type BusinessDnaActionState = { error?: string; message?: string };
+export type BusinessDnaActionState = {
+  error?: string;
+  message?: string;
+  /** After a save: the profile's new version, for the form's next save. */
+  updatedAt?: string;
+};
 
 export async function getBusinessDnaAction() {
   const ctx = await requirePermission("business-dna:read");
@@ -17,8 +22,22 @@ export async function updateBusinessDnaAction(
   formData: FormData,
 ): Promise<BusinessDnaActionState> {
   const ctx = await requirePermission("business-dna:write");
+  const { rateLimiters } = await import("@/server/integrations/redis");
+  try {
+    const rateLimit = await rateLimiters.businessDnaWrite.limit(ctx.orgId);
+    if (!rateLimit.success) return { error: "rate_limited" };
+  } catch {
+    // The limit can't be checked: refuse the save (fail closed) with the
+    // form's own message, not an error page.
+    return { error: "failed" };
+  }
 
   const raw = Object.fromEntries(formData);
+  // The version of the profile the form was loaded with ("" = no profile yet).
+  const expected = expectedUpdatedAtSchema.safeParse(
+    raw.expectedUpdatedAt ? String(raw.expectedUpdatedAt) : null,
+  );
+  if (!expected.success) return { error: "invalid_input" };
   let openingHours: unknown;
   if (raw.openingHours) {
     try {
@@ -101,11 +120,15 @@ export async function updateBusinessDnaAction(
     return { error: "invalid_input" };
   }
 
+  let saved;
   try {
-    await upsertBusinessDNA(ctx, parsed.data);
+    saved = await upsertBusinessDNA(ctx, parsed.data, expected.data);
   } catch {
     return { error: "failed" };
   }
+  // Changed since this form was loaded (in chat or another tab): nothing was
+  // saved. The form keeps what the user typed.
+  if (!saved.ok) return { error: "conflict" };
   revalidatePath("/settings/business-dna");
-  return { message: "saved" };
+  return { message: "saved", updatedAt: saved.record.updatedAt.toISOString() };
 }

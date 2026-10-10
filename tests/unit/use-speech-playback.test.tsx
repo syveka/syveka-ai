@@ -8,6 +8,16 @@ import { NextIntlClientProvider } from "next-intl";
 import { useSpeechPlayback } from "@/hooks/use-speech-playback";
 import { ChatThread } from "@/components/chat/chat-thread";
 
+// ChatThread's action cards can link to settings; next-intl's navigation
+// needs the Next.js runtime, so tests render it as a plain link.
+vi.mock("@/i18n/routing", () => ({
+  Link: ({ href, children, ...rest }: React.PropsWithChildren<{ href: string }>) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
+}));
+
 /** Fake speechSynthesis: records utterances; no real audio is produced. */
 class FakeUtterance {
   lang = "";

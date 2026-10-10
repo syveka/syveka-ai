@@ -31,7 +31,7 @@ line items) owned by that profile. Both are accessed through the normal Syveka s
 REST surface:
 
 - `GET /api/v1/business-dna` / `PUT /api/v1/business-dna` — read / create-or-replace the root
-  profile.
+  profile. `PUT` requires `expectedUpdatedAt` (see "Saves never overwrite newer changes" below).
 - `GET /api/v1/business-dna/services` / `POST /api/v1/business-dna/services` — list / create a
   service.
 - `PATCH /api/v1/business-dna/services/:id` / `DELETE /api/v1/business-dna/services/:id` —
@@ -225,6 +225,77 @@ merge to be conflict-aware was out of scope for this pass; opening hours keep th
 auto-merge behavior unchanged. Per-service (name/price/duration) conflict detection was likewise
 deferred — text/profile-field conflicts were the priority; see the mission's own explicit
 allowance for this.
+
+## Changing Business DNA from chat
+
+Users who may change Business DNA (`business-dna:write`: OWNER, ADMIN, MANAGER) can set it up
+and keep it current by talking to Syveka in the typed chat. The flow reuses the chat's
+confirmation of AI write tools (`src/server/ai/tool-actions.ts`):
+
+1. The model calls `proposeBusinessDnaUpdate` with a partial patch: `set` (new or changed
+   values) and `clear` (fields to remove). Allowed fields and limits are in
+   `src/lib/validators/business-dna-patch.ts`: the profile fields of the form, never
+   `sourceUrl`, ids or timestamps. Services keep their own CRUD surface. The fields that
+   instruct the AI itself (`responseInstructions`, `communicationStyle`) are changed only in
+   the settings: chat can't set or clear them, enforced by the input schemas and again by the
+   patch service, so a proposal steered by content the model read can never change how the
+   assistant behaves.
+2. `previewBusinessDnaPatch` compares it with the current profile and returns every change
+   (added, changed, removed, with values before and after) and the current values of exactly
+   those fields (the basis). Opening hours merge per day: days not named keep their hours.
+   Nothing is written.
+3. The user sees the changes in a confirmation card under the reply and confirms or cancels.
+   The model can't confirm, and can't supply the basis.
+4. On confirm, `applyBusinessDnaPatch` takes a per-organization advisory lock and locks the
+   profile row (`FOR UPDATE`, so a form or API save can't land between the check and the
+   write), checks that each changed field still has its basis value, and writes only those
+   fields together with an
+   audit row (`business_dna.create`/`business_dna.update`; before and after values of the
+   changed fields, the user, `via: "ai_chat"`, the action id and the conversation id) in one
+   transaction. If any changed field was changed elsewhere in the meantime, nothing is written
+   and the card says so (outcome `stale`). Fields the patch doesn't name are never touched.
+   Live voice assistants are re-synced afterwards, as after a form save.
+
+The tool is never available in live voice conversations or to the phone voice assistant, and
+it refuses to run except from a user's confirmed chat action.
+
+The system prompt lists the important fields that are still empty
+(`src/lib/business-dna/completeness.ts`), so the assistant asks about one at a time instead of
+presenting a form.
+
+Profile saves through `PUT /api/v1/business-dna` and the settings form are rate-limited per
+organization (`businessDnaWrite`: 30 per 10 minutes), because each save re-syncs the
+organization's live voice assistants. If the limit can't be checked, the save is refused.
+Chat changes are limited by the chat's own limit (`limitAiChat`) plus one confirmation per
+change, not by `businessDnaWrite`.
+
+### Saves never overwrite newer changes
+
+The settings form and `PUT /api/v1/business-dna` replace the whole profile, so each save names
+the version it replaces: the profile's `updatedAt` as loaded (`expectedUpdatedAt`; `null` when
+there was no profile yet). The API requires it. The save is a single compare-and-set
+(`UPDATE … WHERE organization_id = … AND updated_at = …`), or an insert that the one-profile
+unique constraint refuses if a profile appeared meanwhile. A save from a stale form or client
+(the profile changed since, in chat or another tab) writes nothing: the API answers `409
+conflict`; the form says so, keeps everything the user typed, and offers to open the latest
+version in a new tab or load it (discarding the edits). Chat changes bump `updatedAt` too, and
+while a chat change holds the row lock, a concurrent save waits and then re-checks the version
+against the committed row.
+
+API clients (`PUT /api/v1/business-dna`, signed-in session with `business-dna:write`; API
+keys aren't accepted by any route yet):
+
+1. `GET /api/v1/business-dna` returns `{ "data": profile | null }`. The version is
+   `data.updatedAt` (ISO 8601), or `null` when `data` is `null`.
+2. `PUT` the profile fields plus `"expectedUpdatedAt": <that version>`.
+3. `200 { "data": profile }`: saved; `data.updatedAt` is the version for the next save.
+   `409 { "error": { "code": "conflict" } }`: changed since it was read, nothing saved; read
+   again, re-apply the change to the latest profile, and save with the new version.
+   `400 invalid_input`: `expectedUpdatedAt` missing or malformed (requests written before it
+   existed now get this). `429`/`503`: rate limited / limit unavailable.
+
+Known limit: chat changes don't change the website-extraction provenance (`sourceUrl`,
+`extractedAt`).
 
 ## Backward compatibility
 

@@ -38,6 +38,7 @@ vi.mock("@/server/db/tenant", () => ({
   tenantDb: vi.fn(() => ({
     contact: {
       create: m.contactCreate,
+      count: vi.fn(async () => 0),
       findFirst: vi.fn(async () => null),
       findFirstOrThrow: vi.fn(async () => ({ id: "c" })),
     },
@@ -90,6 +91,12 @@ vi.mock("@/server/services/audit", () => ({
   ),
 }));
 vi.mock("@/server/ai/rag", () => ({ retrieveChunks: vi.fn(async () => []) }));
+// The organization is within its plan (the plan check itself is covered in
+// ai-tools-create-contact.test.ts and ai-tool-actions.test.ts).
+vi.mock("@/server/services/billing/entitlements", () => ({
+  assertWithinLimit: vi.fn(async () => ({})),
+  EntitlementError: class EntitlementError extends Error {},
+}));
 vi.mock("@/server/auth/session", () => ({
   getTenantContext: vi.fn(async () => {
     if (!m.ctx) throw new Error("unauthenticated");
@@ -156,6 +163,16 @@ vi.mock("@/server/integrations/redis", () => ({
 
 import { POST as decideRoute } from "@/app/api/v1/ai/actions/[id]/route";
 import { ActionConfirmation } from "@/components/chat/action-confirmation";
+
+// The card links to Business DNA settings; next-intl's navigation needs the
+// Next.js runtime, so tests render it as a plain link.
+vi.mock("@/i18n/routing", () => ({
+  Link: ({ href, children, ...rest }: React.PropsWithChildren<{ href: string }>) => (
+    <a href={href} {...rest}>
+      {children}
+    </a>
+  ),
+}));
 
 const en = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../messages/en.json"), "utf8"));
 const ar = JSON.parse(fs.readFileSync(path.resolve(__dirname, "../../messages/ar.json"), "utf8"));
