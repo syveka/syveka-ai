@@ -247,6 +247,94 @@ describe("recurring expansion in listEvents", () => {
     expect(events).toHaveLength(3);
     expect(events.every((e) => e.isOccurrence)).toBe(true);
   });
+
+  it("each occurrence carries the series' own start/end for the editor", async () => {
+    db.calendarEvent.findMany.mockResolvedValueOnce([]).mockResolvedValueOnce([
+      {
+        id: "rec-1",
+        title: "Weekly",
+        startsAt: new Date("2026-10-12T07:00:00Z"),
+        endsAt: new Date("2026-10-12T08:00:00Z"),
+        recurrenceRule: "FREQ=WEEKLY",
+        attendeeRecords: [],
+        booking: null,
+      },
+    ]);
+    const events = await listEvents(ctx(), {
+      from: new Date("2026-10-18T00:00:00Z"),
+      to: new Date("2026-10-27T00:00:00Z"),
+    });
+    expect(events.map((e) => e.startsAt.toISOString())).toEqual([
+      "2026-10-19T07:00:00.000Z",
+      "2026-10-26T07:00:00.000Z",
+    ]);
+    for (const e of events) {
+      expect(e.seriesStartsAt?.toISOString()).toBe("2026-10-12T07:00:00.000Z");
+      expect(e.seriesEndsAt?.toISOString()).toBe("2026-10-12T08:00:00.000Z");
+    }
+  });
+});
+
+describe("updateEvent on a recurring series (staging QA 2026-10-10)", () => {
+  const series = {
+    id: "series-1",
+    title: "QA Recurring Test",
+    startsAt: new Date("2026-10-12T07:00:00.000Z"),
+    endsAt: new Date("2026-10-12T08:00:00.000Z"),
+    status: "SCHEDULED",
+    booking: null,
+  };
+  const sameTimes = {
+    startsAt: "2026-10-12T07:00:00.000Z",
+    endsAt: "2026-10-12T08:00:00.000Z",
+  };
+  const written = () =>
+    (db.calendarEvent.update.mock.calls[0] as unknown as [{ data: Record<string, unknown> }])[0]
+      .data;
+
+  beforeEach(() => db.calendarEvent.findFirst.mockResolvedValue(series));
+
+  it("keepRecurrenceRule leaves the stored rule out of the write", async () => {
+    await updateEvent(ctx(), "series-1", baseInput(sameTimes), { keepRecurrenceRule: true });
+    expect(written().recurrenceRule).toBeUndefined();
+  });
+
+  it("an explicit 'Does not repeat' (no rule, not kept) clears the rule", async () => {
+    await updateEvent(ctx(), "series-1", baseInput(sameTimes));
+    expect(written().recurrenceRule).toBeNull();
+  });
+
+  it("a submitted rule is written as given", async () => {
+    await updateEvent(
+      ctx(),
+      "series-1",
+      baseInput({ ...sameTimes, recurrenceRule: "FREQ=WEEKLY" } as Partial<EventInput>),
+    );
+    expect(written().recurrenceRule).toBe("FREQ=WEEKLY");
+  });
+
+  it("a title-only edit leaves the series' reminders alone (#280)", async () => {
+    const { rescheduleEventReminders } = await import("@/server/services/reminders");
+    await updateEvent(ctx(), "series-1", baseInput({ ...sameTimes, title: "Renamed" }), {
+      keepRecurrenceRule: true,
+    });
+    expect(rescheduleEventReminders).not.toHaveBeenCalled();
+  });
+
+  it("moving the series reschedules its reminders to the new series start (#280)", async () => {
+    const { rescheduleEventReminders } = await import("@/server/services/reminders");
+    await updateEvent(
+      ctx(),
+      "series-1",
+      baseInput({ startsAt: "2026-10-12T11:00:00.000Z", endsAt: "2026-10-12T12:00:00.000Z" }),
+      { keepRecurrenceRule: true },
+    );
+    expect(rescheduleEventReminders).toHaveBeenCalledWith({
+      orgId: "org-a",
+      eventId: "series-1",
+      startsAt: new Date("2026-10-12T11:00:00.000Z"),
+    });
+  });
 });
 
 describe("cancelEvent", () => {

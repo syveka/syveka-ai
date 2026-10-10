@@ -24,6 +24,9 @@ export type CalEvent = {
   description: string | null;
   recurrenceRule: string | null;
   isOccurrence: boolean;
+  /** For an occurrence: the stored series' own start/end (what an edit changes). */
+  seriesStartsAt?: string | null;
+  seriesEndsAt?: string | null;
   contactId: string | null;
   companyId: string | null;
   dealId: string | null;

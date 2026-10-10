@@ -229,17 +229,27 @@ export async function listEvents(
         rangeFrom: range.from,
         rangeTo: range.to,
         max: 100,
-      }).map((occ) => ({ ...e, startsAt: occ.startsAt, endsAt: occ.endsAt, isOccurrence: true }));
+      }).map((occ) => ({
+        ...e,
+        startsAt: occ.startsAt,
+        endsAt: occ.endsAt,
+        isOccurrence: true,
+        // The series is one row: editing an occurrence edits the series, so the
+        // editor needs the series' own times, not this occurrence's.
+        seriesStartsAt: e.startsAt as Date | null,
+        seriesEndsAt: e.endsAt as Date | null,
+      }));
     } catch {
       return intervalsOverlap(range.from, range.to, e.startsAt, e.endsAt)
-        ? [{ ...e, isOccurrence: false }]
+        ? [{ ...e, isOccurrence: false, seriesStartsAt: null, seriesEndsAt: null }]
         : [];
     }
   });
 
-  return [...plain.map((e) => ({ ...e, isOccurrence: false })), ...expanded].sort(
-    (a, b) => a.startsAt.getTime() - b.startsAt.getTime(),
-  );
+  return [
+    ...plain.map((e) => ({ ...e, isOccurrence: false, seriesStartsAt: null, seriesEndsAt: null })),
+    ...expanded,
+  ].sort((a, b) => a.startsAt.getTime() - b.startsAt.getTime());
 }
 
 export async function getEvent(ctx: TenantContext, eventId: string) {
@@ -331,7 +341,16 @@ export async function createEvent(ctx: TenantContext, input: EventInput) {
   return event;
 }
 
-export async function updateEvent(ctx: TenantContext, eventId: string, input: EventInput) {
+/**
+ * `keepRecurrenceRule` leaves the stored rule untouched: a caller that did not
+ * submit a Repeat value must never clear a series by omission.
+ */
+export async function updateEvent(
+  ctx: TenantContext,
+  eventId: string,
+  input: EventInput,
+  options: { keepRecurrenceRule?: boolean } = {},
+) {
   validateEventInput(input);
   const db = tenantDb(ctx.orgId);
   const existing = await db.calendarEvent.findFirst({
@@ -369,7 +388,7 @@ export async function updateEvent(ctx: TenantContext, eventId: string, input: Ev
       startsAt: new Date(input.startsAt),
       endsAt: new Date(input.endsAt),
       allDay: input.allDay,
-      recurrenceRule: input.recurrenceRule ?? null,
+      recurrenceRule: options.keepRecurrenceRule ? undefined : (input.recurrenceRule ?? null),
       contactId: input.contactId ?? null,
       companyId: input.companyId ?? null,
       dealId: input.dealId ?? null,

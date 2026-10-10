@@ -130,6 +130,8 @@ export default async function CalendarPage({
           description: e.description,
           recurrenceRule: e.recurrenceRule,
           isOccurrence: e.isOccurrence,
+          seriesStartsAt: e.seriesStartsAt?.toISOString() ?? null,
+          seriesEndsAt: e.seriesEndsAt?.toISOString() ?? null,
           contactId: e.contactId,
           companyId: e.companyId,
           dealId: e.dealId,

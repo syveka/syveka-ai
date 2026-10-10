@@ -88,13 +88,18 @@ export function EventDialog({
   // zone shown beside them), never the UTC instant's digits. The server
   // converts them back with the same zone (eventSchema).
   const eventZone = event?.timezone ?? timeZone;
+  // A recurring series is stored once, so editing any occurrence edits the whole
+  // series: show (and save) the series' own times, never the clicked occurrence's.
+  const isSeries = Boolean(event?.recurrenceRule);
+  const editStart = event?.isOccurrence && event.seriesStartsAt ? event.seriesStartsAt : null;
+  const editEnd = event?.isOccurrence && event.seriesEndsAt ? event.seriesEndsAt : null;
   const defaultStart = event
-    ? toZonedWallTime(event.startsAt, eventZone)
+    ? toZonedWallTime(editStart ?? event.startsAt, eventZone)
     : prefill
       ? toZonedWallTime(prefill.startsAt, eventZone)
       : `${date}T09:00`;
   const defaultEnd = event
-    ? toZonedWallTime(event.endsAt, eventZone)
+    ? toZonedWallTime(editEnd ?? event.endsAt, eventZone)
     : prefill
       ? toZonedWallTime(prefill.endsAt, eventZone)
       : `${date}T10:00`;
@@ -140,6 +145,15 @@ export function EventDialog({
           <form action={action} className="space-y-3">
             <input type="hidden" name="attendees" value={attendeesJson} />
             <input type="hidden" name="allowConflict" value={allowConflict ? "true" : "false"} />
+
+            {isSeries ? (
+              <p
+                role="note"
+                className="rounded-md border border-border bg-muted/50 p-3 text-sm text-muted-foreground"
+              >
+                {t("seriesNotice")}
+              </p>
+            ) : null}
 
             <div className="space-y-1.5">
               <Label htmlFor="title">{t("fields.title")}</Label>
@@ -200,7 +214,7 @@ export function EventDialog({
                   id="recurrenceRule"
                   name="recurrenceRule"
                   defaultValue={event?.recurrenceRule ?? ""}
-                  disabled={readOnly || Boolean(event?.isOccurrence)}
+                  disabled={readOnly}
                   className={selectClass}
                 >
                   {RECURRENCE_PRESETS.map((r) => (
@@ -384,7 +398,7 @@ export function EventDialog({
                     variant="outline"
                     onClick={() => void cancelEventAction(event.id).then(onClose)}
                   >
-                    {t("cancelEvent")}
+                    {isSeries ? t("cancelSeries") : t("cancelEvent")}
                   </Button>
                 ) : null}
                 {event && canDelete ? (
@@ -394,7 +408,7 @@ export function EventDialog({
                     className="text-destructive"
                     onClick={() => void deleteEventAction(event.id).then(onClose)}
                   >
-                    {tc("delete")}
+                    {isSeries ? t("deleteSeries") : tc("delete")}
                   </Button>
                 ) : null}
               </div>
