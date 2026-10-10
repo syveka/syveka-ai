@@ -436,3 +436,92 @@ describe("Vapi voice webhook — deactivated assistant refuses tool-call writes 
     expect(mocks.executeTool).not.toHaveBeenCalled();
   });
 });
+
+/**
+ * Vapi's API spec (ToolCall) sends each requested call as
+ * `{ id, type: "function", function: { name, arguments } }` with the
+ * arguments as a JSON string; some docs examples show a flat
+ * `{ id, name, parameters }`. Both must reach the tool with object arguments.
+ */
+describe("Vapi voice webhook — tool-calls payload shapes", () => {
+  const assistant = {
+    id: "assistant-1",
+    organizationId: "org-a",
+    enabledTools: ["bookMeeting"],
+    useKnowledgeBase: true,
+    isActive: true,
+    organization: { members: [{ userId: "owner-1" }] },
+  };
+
+  function toolCalls(toolCallList: unknown[]) {
+    return POST(
+      new Request("http://localhost/api/v1/voice/webhook", {
+        method: "POST",
+        headers: { "x-vapi-signature": "sig" },
+        body: JSON.stringify({
+          message: {
+            type: "tool-calls",
+            call: { id: "call-shape", assistantId: "assistant-1" },
+            toolCallList,
+          },
+        }),
+      }),
+    );
+  }
+
+  it("runs a call in the spec's shape: name under function, arguments as a JSON string", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce(assistant);
+    mocks.executeTool.mockResolvedValueOnce(JSON.stringify({ ok: true }));
+
+    const response = await toolCalls([
+      {
+        id: "tc-spec",
+        type: "function",
+        function: { name: "searchKnowledgeBase", arguments: '{"query":"opening hours"}' },
+      },
+    ]);
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).results).toEqual([
+      { toolCallId: "tc-spec", result: JSON.stringify({ ok: true }) },
+    ]);
+    expect(mocks.executeTool).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: "org-a", actorType: "voice_ai" }),
+      "searchKnowledgeBase",
+      { query: "opening hours" },
+    );
+  });
+
+  it("runs a call in the flat docs shape with `parameters`", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce(assistant);
+    mocks.executeTool.mockResolvedValueOnce(JSON.stringify({ ok: true }));
+
+    await toolCalls([
+      { id: "tc-flat", name: "searchKnowledgeBase", parameters: { query: "prices" } },
+    ]);
+
+    expect(mocks.executeTool).toHaveBeenCalledWith(expect.anything(), "searchKnowledgeBase", {
+      query: "prices",
+    });
+  });
+
+  it("refuses, without running anything, a call whose arguments can't be read as an object", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce(assistant);
+
+    const response = await toolCalls([
+      {
+        id: "tc-bad-json",
+        type: "function",
+        function: { name: "bookMeeting", arguments: "{not json" },
+      },
+      { id: "tc-array", type: "function", function: { name: "bookMeeting", arguments: "[1,2]" } },
+    ]);
+
+    expect(response.status).toBe(200);
+    expect((await response.json()).results).toEqual([
+      { toolCallId: "tc-bad-json", result: JSON.stringify({ error: "invalid_arguments" }) },
+      { toolCallId: "tc-array", result: JSON.stringify({ error: "invalid_arguments" }) },
+    ]);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+  });
+});
