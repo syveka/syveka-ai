@@ -335,7 +335,12 @@ describe("Vapi voice webhook — tool-calls replay protection", () => {
     mocks.voiceAssistantFindFirst.mockResolvedValueOnce(enabledAssistant());
     mocks.executeTool.mockRejectedValueOnce(new Error("db down"));
 
-    await expect(POST(toolCallsRequest(["tc-1"]))).rejects.toThrow("db down");
+    // The failure is contained to this tool call: refused without detail, not a 500.
+    const failed = await (await POST(toolCallsRequest(["tc-1"]))).json();
+    expect(failed.results).toEqual([
+      { toolCallId: "tc-1", result: JSON.stringify({ error: "tool_unavailable" }) },
+    ]);
+    expect(JSON.stringify(failed)).not.toContain("db down");
     expect(mocks.redisDel).toHaveBeenCalledWith("vapi:tool:org-a:tc-1");
 
     mocks.voiceAssistantFindFirst.mockResolvedValueOnce(enabledAssistant());
@@ -592,9 +597,9 @@ describe("Vapi voice webhook — per-call write caps", () => {
   it("a write whose execution throws does not consume the cap", async () => {
     mocks.executeTool.mockRejectedValueOnce(new Error("calendar down"));
     mocks.voiceAssistantFindFirst.mockResolvedValueOnce(writeAssistant());
-    await expect(POST(toolRequest("call-7", [{ id: "b1", name: "bookMeeting" }]))).rejects.toThrow(
-      "calendar down",
-    );
+    expect(await runTools("call-7", [{ id: "b1", name: "bookMeeting" }])).toEqual([
+      err("tool_unavailable"),
+    ]);
     expect(mocks.redisDecr).toHaveBeenCalledWith("vapi:callcap:org-a:call-7:bookMeeting");
 
     expect(await runTools("call-7", [{ id: "b2", name: "bookMeeting" }])).toEqual([OK]);
@@ -606,15 +611,24 @@ describe("Vapi voice webhook — per-call write caps", () => {
 
   // executeTool reports failures as results, it doesn't throw: refusals before
   // any write come back as { error }, a taken slot as { booked: false }.
+  // What the caller hears: error results keep only their code.
   it.each([
-    ["invalid input", JSON.stringify({ error: "invalid_input", details: [] })],
-    ["a permission refusal", JSON.stringify({ error: "permission_denied" })],
-    ["a plan-limit refusal", JSON.stringify({ error: "entitlement_exceeded" })],
-    ["a booking that didn't happen", JSON.stringify({ booked: false, reason: "slot_taken" })],
-  ])("a write that returns %s does not consume the cap", async (_label, failure) => {
+    [
+      "invalid input",
+      JSON.stringify({ error: "invalid_input", details: [] }),
+      err("invalid_input"),
+    ],
+    ["a permission refusal", err("permission_denied"), err("permission_denied")],
+    ["a plan-limit refusal", err("entitlement_exceeded"), err("entitlement_exceeded")],
+    [
+      "a booking that didn't happen",
+      JSON.stringify({ booked: false, reason: "slot_taken" }),
+      JSON.stringify({ booked: false, reason: "slot_taken" }),
+    ],
+  ])("a write that returns %s does not consume the cap", async (_label, failure, heard) => {
     mocks.executeTool.mockResolvedValueOnce(failure).mockResolvedValueOnce(failure);
-    expect(await runTools("call-7", [{ id: "f1", name: "bookMeeting" }])).toEqual([failure]);
-    expect(await runTools("call-7", [{ id: "f2", name: "bookMeeting" }])).toEqual([failure]);
+    expect(await runTools("call-7", [{ id: "f1", name: "bookMeeting" }])).toEqual([heard]);
+    expect(await runTools("call-7", [{ id: "f2", name: "bookMeeting" }])).toEqual([heard]);
 
     // Two failed attempts later, the call still has both of its bookings.
     expect(await runTools("call-7", [{ id: "b1", name: "bookMeeting" }])).toEqual([OK]);
@@ -1101,5 +1115,92 @@ describe("Vapi voice webhook — tool-calls payload shapes", () => {
       { toolCallId: "tc-array", result: JSON.stringify({ error: "invalid_arguments" }) },
     ]);
     expect(mocks.executeTool).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * Hardening of the tool-calls request as a whole: malformed or oversized
+ * requests are refused up front, one tool call's failure stays contained, and
+ * the caller's assistant never receives internal error text.
+ */
+describe("Vapi voice webhook — request hardening", () => {
+  beforeEach(() => {
+    mocks.executeTool.mockResolvedValue(OK);
+  });
+
+  function rawRequest(body: string) {
+    return new Request("http://localhost/api/v1/voice/webhook", {
+      method: "POST",
+      headers: { "x-vapi-signature": "sig" },
+      body,
+    });
+  }
+
+  it("answers 400, not 500, to a signed body that isn't JSON, and runs nothing", async () => {
+    const res = await POST(rawRequest("{not json"));
+    expect(res.status).toBe(400);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+    expect(mocks.voiceAssistantFindFirst).not.toHaveBeenCalled();
+  });
+
+  it("refuses a request asking for more than 20 tool calls, running none of them", async () => {
+    const calls = Array.from({ length: 21 }, (_, i) => ({
+      id: `r${i}`,
+      name: "searchKnowledgeBase",
+      arguments: {},
+    }));
+    const res = await POST(
+      rawRequest(
+        JSON.stringify({
+          message: {
+            type: "tool-calls",
+            call: { id: "call-9", assistantId: "assistant-1" },
+            toolCallList: calls,
+          },
+        }),
+      ),
+    );
+    expect(res.status).toBe(400);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+    expect(mocks.redisSet).not.toHaveBeenCalled();
+  });
+
+  it("still accepts 20 tool calls in one request", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce(writeAssistant());
+    const reads = Array.from({ length: 20 }, (_, i) => ({
+      id: `r${i}`,
+      name: "searchKnowledgeBase",
+    }));
+    const res = await POST(toolRequest("call-9", reads));
+    expect(res.status).toBe(200);
+    expect(mocks.executeTool).toHaveBeenCalledTimes(20);
+  });
+
+  it("one tool call failing doesn't fail the batch: a booking already made still reaches the caller", async () => {
+    // b1 books; b2's claim can't be written (Redis error) -- before, the whole request 500'd
+    // and the caller never heard that b1 was booked.
+    mocks.redisSet
+      .mockImplementationOnce(async () => "OK")
+      .mockImplementationOnce(async () => {
+        throw new Error("redis down");
+      });
+    const results = await runTools("call-7", [
+      { id: "b1", name: "bookMeeting" },
+      { id: "b2", name: "bookMeeting" },
+    ]);
+    expect(results).toEqual([OK, err("tool_unavailable")]);
+    expect(mocks.executeTool).toHaveBeenCalledTimes(1);
+  });
+
+  it("never passes internal error text to the caller's assistant", async () => {
+    mocks.executeTool.mockResolvedValueOnce(
+      JSON.stringify({
+        error: "execution_failed",
+        message: "Invalid `prisma.contact.findFirstOrThrow()` invocation: No Contact found",
+      }),
+    );
+    const results = await runTools("call-7", [{ id: "c1", name: "createContact" }]);
+    expect(results).toEqual([err("execution_failed")]);
+    expect(results.join("")).not.toContain("prisma");
   });
 });

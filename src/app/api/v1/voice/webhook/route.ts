@@ -53,6 +53,12 @@ const toolCallSchema = z
     arguments: toolArguments(tc.function ? tc.function.arguments : (tc.arguments ?? tc.parameters)),
   }));
 
+/**
+ * A turn asks for a handful of tools; a signed request carrying hundreds would
+ * fan out that many claims, DB lookups and paid KB searches at once.
+ */
+const MAX_TOOL_CALLS_PER_REQUEST = 20;
+
 const messageSchema = z.object({
   message: z.object({
     type: z.string(),
@@ -66,7 +72,7 @@ const messageSchema = z.object({
         monitor: z.object({ controlUrl: z.string().nullish() }).nullish(),
       })
       .optional(),
-    toolCallList: z.array(toolCallSchema).optional(),
+    toolCallList: z.array(toolCallSchema).max(MAX_TOOL_CALLS_PER_REQUEST).optional(),
     status: z.string().optional(),
     endedReason: z.string().optional(),
     durationSeconds: z.number().optional(),
@@ -264,6 +270,25 @@ function wroteNothing(result: string): boolean {
   }
 }
 
+/**
+ * What the caller's assistant may hear back from a tool. Error results keep only
+ * their stable code: executeTool's execution_failed carries the raw error message
+ * (Prisma text naming models, fields and input) and invalid_input carries
+ * validation details, and the model can read either out to an anonymous caller.
+ */
+function callerSafeResult(result: string): string {
+  try {
+    const parsed: unknown = JSON.parse(result);
+    if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+      const { error } = parsed as { error?: unknown };
+      if (typeof error === "string") return JSON.stringify({ error });
+    }
+  } catch {
+    // Not JSON: pass through unchanged (tool results are always JSON today).
+  }
+  return result;
+}
+
 export async function POST(request: Request): Promise<NextResponse> {
   const [{ verifyVapiSignature }, { unscopedPrisma }, { executeTool }, { enqueue }, { redis }] =
     await Promise.all([
@@ -280,7 +305,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "invalid signature" }, { status: 401 });
   }
 
-  const parsed = messageSchema.safeParse(JSON.parse(rawBody));
+  let body: unknown;
+  try {
+    body = JSON.parse(rawBody);
+  } catch {
+    return NextResponse.json({ error: "invalid payload" }, { status: 400 });
+  }
+  const parsed = messageSchema.safeParse(body);
   if (!parsed.success) return NextResponse.json({ error: "invalid payload" }, { status: 400 });
   const { message } = parsed.data;
 
@@ -358,38 +389,56 @@ export async function POST(request: Request): Promise<NextResponse> {
       const callEnded = Boolean(callRow && (callRow.endedAt || callRow.status !== "IN_PROGRESS"));
 
       const results = await Promise.all(
-        (message.toolCallList ?? []).map(async (tc) => {
-          if (!enabled.has(tc.name)) {
-            return { toolCallId: tc.id, result: JSON.stringify({ error: "tool_not_enabled" }) };
-          }
-          if (tc.arguments === null) {
-            return { toolCallId: tc.id, result: JSON.stringify({ error: "invalid_arguments" }) };
-          }
-          const cap = VOICE_CALL_WRITE_CAPS.get(tc.name);
-          if (cap !== undefined && (!callId || callEnded)) {
-            const error = callId ? "call_ended" : "call_required";
-            return { toolCallId: tc.id, result: JSON.stringify({ error }) };
-          }
-          const claimKey = `vapi:tool:${orgId}:${tc.id}`;
-          const claimed = await redis.set(claimKey, "1", { nx: true, ex: 60 * 60 * 24 });
-          if (claimed === null) {
-            return { toolCallId: tc.id, result: JSON.stringify({ error: "duplicate_tool_call" }) };
-          }
-          const capKey = cap === undefined ? null : `vapi:callcap:${orgId}:${callId}:${tc.name}`;
-          if (cap !== undefined && capKey) {
-            const refusal = await reserveCallWrite(redis, capKey, cap, claimKey);
-            if (refusal) return { toolCallId: tc.id, result: JSON.stringify({ error: refusal }) };
-          }
-          try {
-            const result = await executeTool(identity, tc.name, tc.arguments);
-            if (capKey && wroteNothing(result)) await releaseCallWrite(redis, capKey);
-            return { toolCallId: tc.id, result };
-          } catch (err) {
-            if (capKey) await releaseCallWrite(redis, capKey);
-            await redis.del(claimKey);
-            throw err;
-          }
-        }),
+        (message.toolCallList ?? []).map((tc) =>
+          (async () => {
+            if (!enabled.has(tc.name)) {
+              return { toolCallId: tc.id, result: JSON.stringify({ error: "tool_not_enabled" }) };
+            }
+            if (tc.arguments === null) {
+              return { toolCallId: tc.id, result: JSON.stringify({ error: "invalid_arguments" }) };
+            }
+            const cap = VOICE_CALL_WRITE_CAPS.get(tc.name);
+            if (cap !== undefined && (!callId || callEnded)) {
+              const error = callId ? "call_ended" : "call_required";
+              return { toolCallId: tc.id, result: JSON.stringify({ error }) };
+            }
+            const claimKey = `vapi:tool:${orgId}:${tc.id}`;
+            const claimed = await redis.set(claimKey, "1", { nx: true, ex: 60 * 60 * 24 });
+            if (claimed === null) {
+              return {
+                toolCallId: tc.id,
+                result: JSON.stringify({ error: "duplicate_tool_call" }),
+              };
+            }
+            const capKey = cap === undefined ? null : `vapi:callcap:${orgId}:${callId}:${tc.name}`;
+            if (cap !== undefined && capKey) {
+              const refusal = await reserveCallWrite(redis, capKey, cap, claimKey);
+              if (refusal) return { toolCallId: tc.id, result: JSON.stringify({ error: refusal }) };
+            }
+            try {
+              const result = await executeTool(identity, tc.name, tc.arguments);
+              if (capKey && wroteNothing(result)) await releaseCallWrite(redis, capKey);
+              return { toolCallId: tc.id, result: callerSafeResult(result) };
+            } catch (err) {
+              if (capKey) await releaseCallWrite(redis, capKey);
+              await redis.del(claimKey).catch(() => undefined);
+              throw err;
+            }
+          })().catch((err: unknown) => {
+            // One tool call failing (e.g. Redis unreachable for its claim) must not fail
+            // the others in the batch: their results -- a booking already made -- still
+            // reach the caller. This one is refused without detail (fails closed).
+            console.error(
+              JSON.stringify({
+                event: "voice_tool_call_failed",
+                orgId,
+                toolCallId: tc.id,
+                name: err instanceof Error ? err.name : "unknown",
+              }),
+            );
+            return { toolCallId: tc.id, result: JSON.stringify({ error: "tool_unavailable" }) };
+          }),
+        ),
       );
       return NextResponse.json({ results });
     }
