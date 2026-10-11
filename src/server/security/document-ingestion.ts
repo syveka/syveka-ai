@@ -28,7 +28,8 @@ export class DocumentIngestionError extends Error {
       | "invalid_collection"
       | "mime_spoofing"
       | "oversized_upload"
-      | "empty_upload",
+      | "empty_upload"
+      | "extraction_limit",
     message: string,
   ) {
     super(message);
@@ -135,9 +136,15 @@ export function verifyUploadObject(
 
 export function assertExtractionLimits(text: string, chunkCount?: number): void {
   if (text.length > MAX_EXTRACTED_CHARS) {
-    throw new Error(`Extracted content exceeds ${MAX_EXTRACTED_CHARS} characters`);
+    throw new DocumentIngestionError(
+      "extraction_limit",
+      `Extracted content exceeds ${MAX_EXTRACTED_CHARS} characters`,
+    );
   }
   if (chunkCount !== undefined && chunkCount > MAX_DOCUMENT_CHUNKS) {
-    throw new Error(`Document exceeds ${MAX_DOCUMENT_CHUNKS} chunks`);
+    throw new DocumentIngestionError(
+      "extraction_limit",
+      `Document exceeds ${MAX_DOCUMENT_CHUNKS} chunks`,
+    );
   }
 }

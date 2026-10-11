@@ -8,14 +8,15 @@ const mocks = vi.hoisted(() => {
   return {
     tx,
     transaction: vi.fn(async (callback: (client: typeof tx) => unknown) => callback(tx)),
-    enqueue: vi.fn(async () => undefined),
+    enqueue: vi.fn(async (..._args: unknown[]) => undefined),
+    documentUpdate: vi.fn(async (..._args: unknown[]) => ({})),
     audit: vi.fn(async () => undefined),
   };
 });
 
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: vi.fn(),
-  unscopedPrisma: { $transaction: mocks.transaction },
+  unscopedPrisma: { $transaction: mocks.transaction, document: { update: mocks.documentUpdate } },
 }));
 vi.mock("@/server/supabase/server", () => ({ createSupabaseAdmin: vi.fn() }));
 vi.mock("@/server/jobs/queue", () => ({ enqueue: mocks.enqueue }));
@@ -71,5 +72,38 @@ describe("document tenant relationship integrity", () => {
       }),
     );
     expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+  });
+});
+
+/**
+ * The document row is committed as PENDING before its processing job is queued. If
+ * queueing fails, no job will ever run: the document must not sit "Pending" forever
+ * (and an upload's single-use intent is already spent, so it can't simply be resent).
+ */
+describe("document processing that can't be queued", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.tx.collection.findFirst.mockResolvedValue({ id: collectionId });
+    mocks.tx.document.create.mockResolvedValue({ id: "doc-1" });
+  });
+
+  it("marks the document FAILED with a generic reason and still fails the request", async () => {
+    mocks.enqueue.mockRejectedValueOnce(new Error("QStash 503 at https://qstash.upstash.io"));
+
+    await expect(
+      createDocument(ctx, { sourceType: "NOTE", title: "Note", collectionId, content: "content" }),
+    ).rejects.toThrow("QStash 503");
+
+    expect(mocks.documentUpdate).toHaveBeenCalledWith({
+      where: { id: "doc-1" },
+      data: { status: "FAILED", error: "Processing could not be started. Please try again." },
+    });
+    expect(mocks.audit).not.toHaveBeenCalled();
+  });
+
+  it("a queued document is left PENDING for its job", async () => {
+    await createDocument(ctx, { sourceType: "NOTE", title: "Note", collectionId, content: "x" });
+
+    expect(mocks.documentUpdate).not.toHaveBeenCalled();
   });
 });
