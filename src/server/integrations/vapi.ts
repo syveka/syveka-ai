@@ -140,7 +140,9 @@ export function toVapiPayload(cfg: VapiAssistantConfig) {
     // resolves the actual HMAC key server-side from the credential (§13.2).
     server: { url: cfg.serverUrl, credentialId: cfg.serverCredentialId },
     maxDurationSeconds: cfg.maxDurationSeconds,
-    recordingEnabled: true,
+    // Vapi's assistant schema has recording under artifactPlan only; a top-level
+    // recordingEnabled is not a documented field (CreateAssistantDTO/UpdateAssistantDTO).
+    artifactPlan: { recordingEnabled: true },
   };
 }
 
