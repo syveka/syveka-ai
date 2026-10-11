@@ -40,6 +40,21 @@ export function safeInternalNext(value: string | null, fallback = "/dashboard"):
   }
 }
 
+const INVITATION_PATH = /^\/invite\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * The one destination sign-in and registration accept from the client: an
+ * invitation page (`/invite/<token>`, unlocalized), so a person sent there
+ * from an invitation comes back to accept it. Anything else returns null and
+ * the usual destination applies. Accepting still happens on that page, as the
+ * invited account.
+ */
+export function inviteContinuation(value: unknown): `/invite/${string}` | null {
+  return typeof value === "string" && INVITATION_PATH.test(value)
+    ? (value as `/invite/${string}`)
+    : null;
+}
+
 export function localeFromPath(path: string): AppLocale {
   const segment = path.split("/")[1];
   return normalizeLocale(segment ?? null);

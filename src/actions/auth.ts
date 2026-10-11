@@ -6,7 +6,7 @@ import { createSupabaseServer } from "@/server/supabase/server";
 import { rateLimiters } from "@/server/integrations/redis";
 import { loginSchema, registerSchema } from "@/lib/validators/auth";
 import { getAppUrlEnv } from "@/env";
-import { localizedPath, normalizeLocale } from "@/lib/auth-redirect";
+import { inviteContinuation, localizedPath, normalizeLocale } from "@/lib/auth-redirect";
 
 export type AuthActionState = { error?: string; message?: string };
 
@@ -36,7 +36,12 @@ export async function loginAction(
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
   if (error) return { error: "invalid_credentials" };
 
-  redirect(localizedPath(normalizeLocale(formData.get("locale")), "/dashboard"));
+  redirect(
+    localizedPath(
+      normalizeLocale(formData.get("locale")),
+      inviteContinuation(formData.get("next")) ?? "/dashboard",
+    ),
+  );
 }
 
 export async function registerAction(
@@ -56,7 +61,10 @@ export async function registerAction(
     password: parsed.data.password,
     options: {
       data: { full_name: parsed.data.fullName },
-      emailRedirectTo: authCallbackUrl(locale, "/onboarding"),
+      emailRedirectTo: authCallbackUrl(
+        locale,
+        inviteContinuation(formData.get("next")) ?? "/onboarding",
+      ),
     },
   });
   if (error) return { error: "signup_failed" };
