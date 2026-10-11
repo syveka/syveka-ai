@@ -7,9 +7,14 @@ import { acceptInvitationAction } from "@/actions/members";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "@/i18n/routing";
+import { localizedPath, normalizeLocale } from "@/lib/auth-redirect";
 
-export default async function InvitePage({ params }: { params: Promise<{ token: string }> }) {
-  const { token } = await params;
+export default async function InvitePage({
+  params,
+}: {
+  params: Promise<{ locale: string; token: string }>;
+}) {
+  const { locale, token } = await params;
 
   const invitation = await unscopedPrisma.invitation.findUnique({
     where: { token },
@@ -28,8 +33,9 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
 
   const user = await getSessionUser();
   if (!user) {
-    // Register first, then come back (§11.3)
-    redirect(`/register?next=/invite/${token}`);
+    // Register (or sign in from there) first, then come back here (§11.3)
+    const next = encodeURIComponent(`/invite/${invitation.token}`);
+    redirect(`${localizedPath(normalizeLocale(locale), "/register")}?next=${next}`);
   }
 
   return (
