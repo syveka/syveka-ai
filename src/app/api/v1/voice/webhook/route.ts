@@ -123,6 +123,45 @@ async function resolveAssistant(
 }
 
 /**
+ * Upserts a call row only within `orgId`. vapiCallId is unique across organizations,
+ * so a call id already held by another organization makes the create fail (P2002):
+ * that row is left untouched and "foreign" returned. A P2002 from this organization's
+ * own concurrent first write (status-update racing end-of-call-report) retries once.
+ */
+async function upsertOwnCall(
+  unscopedPrisma: typeof prismaClient,
+  orgId: string,
+  args: {
+    vapiCallId: string;
+    create: Prisma.VoiceCallUncheckedCreateInput;
+    update: Prisma.VoiceCallUncheckedUpdateInput;
+  },
+): Promise<"ok" | "foreign"> {
+  const upsert = () =>
+    unscopedPrisma.voiceCall.upsert({
+      where: { vapiCallId: args.vapiCallId, organizationId: orgId },
+      create: args.create,
+      update: args.update,
+    });
+  try {
+    await upsert();
+    return "ok";
+  } catch (err) {
+    if ((err as { code?: unknown } | null)?.code !== "P2002") throw err;
+    const own = await unscopedPrisma.voiceCall.findFirst({
+      where: { vapiCallId: args.vapiCallId, organizationId: orgId },
+      select: { id: true },
+    });
+    if (!own) {
+      console.error(JSON.stringify({ event: "voice_call_org_conflict", orgId }));
+      return "foreign";
+    }
+    await upsert();
+    return "ok";
+  }
+}
+
+/**
  * Usage is recorded only after a call ends, so calls running in parallel all
  * pass this check until the first of them is billed. A read-only workspace
  * (past due beyond the grace period) may not use anything, as in assertWithinLimit.
@@ -466,8 +505,9 @@ export async function POST(request: Request): Promise<NextResponse> {
           });
           return NextResponse.json({ ok: true });
         }
-        await unscopedPrisma.voiceCall.upsert({
-          where: { vapiCallId: message.call.id },
+        // Another organization's call id: nothing is recorded (logged in upsertOwnCall).
+        await upsertOwnCall(unscopedPrisma, orgId, {
+          vapiCallId: message.call.id,
           create: {
             organizationId: orgId,
             assistantId: assistant.id,
@@ -511,8 +551,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       // Ended but not yet processed (e.g. the first delivery's enqueue failed): keep the
       // recorded details and fall through so a legitimate retry can still enqueue.
       if (!existing?.endedAt) {
-        await unscopedPrisma.voiceCall.upsert({
-          where: { vapiCallId: message.call.id },
+        const written = await upsertOwnCall(unscopedPrisma, orgId, {
+          vapiCallId: message.call.id,
           create: {
             organizationId: orgId,
             assistantId: assistant.id,
@@ -523,6 +563,10 @@ export async function POST(request: Request): Promise<NextResponse> {
           },
           update: callResult,
         });
+        // Not this organization's call: no post-call work. A retry cannot change that.
+        if (written === "foreign") {
+          return NextResponse.json({ error: "call_conflict" }, { status: 409 });
+        }
       }
 
       // Replay/idempotency guard for the post-call side effect only — the voiceCall
