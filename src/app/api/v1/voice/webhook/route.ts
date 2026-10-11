@@ -5,6 +5,7 @@ import type { unscopedPrisma as prismaClient } from "@/server/db/tenant";
 import type { ToolIdentity } from "@/server/ai/tools";
 import type { redis as redisClient } from "@/server/integrations/redis";
 import { allowedVoiceTools } from "@/lib/validators/voice";
+import { upsertOwnCall } from "@/server/voice/call-rows";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -120,45 +121,6 @@ async function resolveAssistant(
       },
     },
   });
-}
-
-/**
- * Upserts a call row only within `orgId`. vapiCallId is unique across organizations,
- * so a call id already held by another organization makes the create fail (P2002):
- * that row is left untouched and "foreign" returned. A P2002 from this organization's
- * own concurrent first write (status-update racing end-of-call-report) retries once.
- */
-async function upsertOwnCall(
-  unscopedPrisma: typeof prismaClient,
-  orgId: string,
-  args: {
-    vapiCallId: string;
-    create: Prisma.VoiceCallUncheckedCreateInput;
-    update: Prisma.VoiceCallUncheckedUpdateInput;
-  },
-): Promise<"ok" | "foreign"> {
-  const upsert = () =>
-    unscopedPrisma.voiceCall.upsert({
-      where: { vapiCallId: args.vapiCallId, organizationId: orgId },
-      create: args.create,
-      update: args.update,
-    });
-  try {
-    await upsert();
-    return "ok";
-  } catch (err) {
-    if ((err as { code?: unknown } | null)?.code !== "P2002") throw err;
-    const own = await unscopedPrisma.voiceCall.findFirst({
-      where: { vapiCallId: args.vapiCallId, organizationId: orgId },
-      select: { id: true },
-    });
-    if (!own) {
-      console.error(JSON.stringify({ event: "voice_call_org_conflict", orgId }));
-      return "foreign";
-    }
-    await upsert();
-    return "ok";
-  }
 }
 
 /**
