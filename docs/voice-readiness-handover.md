@@ -31,7 +31,7 @@ Each claim below is labelled with the strongest evidence behind it:
 | #297 | `fcaace0` | Post-call summary failures hidden; CRM activity lost; simultaneous runs double-record         | P2                    | **db** (concurrency, retry, rollback); mocked (summary) |
 | #300 | `391e677` | Knowledge ingestion: raw provider/parser errors shown; READY flipped to FAILED; stuck Pending | P2 (raw errors: §4)   | mocked                                                  |
 | #302 | `041716b` | Anonymous phone callers could search every document of the organization                       | P1                    | mocked (real route and tool registry)                   |
-| #304 | `52193ae` | Recording requested in an undocumented top-level field instead of `artifactPlan`              | P3                    | docs + mocked                                           |
+| #304 | `fc8e922` | Recording requested in an undocumented top-level field; dashboard `artifactPlan` options kept | P3                    | docs + mocked                                           |
 | #303 | `8af176e` | Evidence only (#295 + #297 on Postgres in PR CI). **Not for merge.**                          | n/a                   | db                                                      |
 
 All are based on main `a72fa7d`. #294, #295 and #302 each touch
@@ -200,10 +200,16 @@ is not proposed.
   Neither `CreateAssistantDTO` nor `UpdateAssistantDTO` has a top-level `recordingEnabled`, which
   `src/server/integrations/vapi.ts` sends; recording happens only because the documented field
   defaults to on. Draft #304 sends the same intent (recording on) as
-  `artifactPlan: { recordingEnabled: true }`. No policy change. Review risk: it is the first
-  `artifactPlan` the sync sends, so if Vapi treats a nested object in a PATCH as a replacement,
-  hand-set `artifactPlan` options on a synced assistant would be reset. Check one staging
-  assistant's `artifactPlan` in the dashboard (read only) before deploying.
+  `artifactPlan: { recordingEnabled: true }`. No policy change.
+  - **Merge or replace: unresolved.** Neither Vapi's OpenAPI spec nor its Update Assistant page
+    says whether `PATCH /assistant/{id}` merges or replaces a nested object. #304 doesn't depend
+    on the answer: an update reads the assistant first and sends its current `artifactPlan` back
+    with only `recordingEnabled` set (nothing is updated if that read fails); create is
+    unchanged.
+  - **Live state: unverified.** No staging assistant was read: no browser session was connected,
+    and reading the API key from the environment is off-limits. Whether recording works today is
+    unknown; the documented default being on is not evidence. Dashboard checklist: #304's
+    description.
 - **Recording URLs** (OpenAPI `Artifact`): presigned URLs expire; the raw `recordingUrl` "remain[s]
   the stable identifier and do[es] not expire". Whether the raw URL needs authentication is not
   stated.
@@ -216,8 +222,9 @@ is not proposed.
 - the actual credential settings;
 - the subscription's retention days;
 - whether raw recording URLs are publicly fetchable;
-- whether Vapi ignores or rejects the top-level `recordingEnabled` main sends today, and what
-  `artifactPlan` the live assistants have.
+- whether Vapi ignores or rejects the top-level `recordingEnabled` main sends today, what
+  `artifactPlan` the live assistants have, and whether recording is actually on;
+- whether `PATCH /assistant/{id}` merges or replaces a nested object (#304 is safe either way).
 
 No Vapi configuration was read or changed.
 
@@ -260,8 +267,16 @@ Gaps (no refactor started):
 
 ## Dependencies for the release-gate owner (old account)
 
-- Incorporate the rows above. Only #295 and #297 have database evidence (run `38129755849`);
-  treat nothing mocked or compiler-level as database or live evidence.
+- Incorporate the rows above. Only #295 and #297 have database evidence: tested heads
+  `fe33e37` (#295) and `fcaace0` (#297), merged into evidence commit `8af176e`, run
+  <https://github.com/syveka/syveka-ai/actions/runs/38129755849>. Treat nothing mocked or
+  compiler-level as database or live evidence.
+- Candidate `dd796e9` (`integration/rc-2026-10-11b`), checked 2026-10-11, contains #294
+  `9d18627`, #295 `fe33e37`, #297 `fcaace0`, #300 `391e677` and #302 `041716b`. It does **not**
+  contain #304 (`fc8e922`), and contains nothing from #303.
+- **#302 once deployed:** every phone assistant stops answering from documents; signed-in chat is
+  unchanged.
+- **#304 before deploying:** the dashboard checklist in its description (read only).
 - No calendar, recurrence, booking or busy-query file was changed. `src/server/ai/tools/index.ts`
   was not changed (#296).
 - Shared-file conflict risks: `src/app/api/v1/voice/webhook/route.ts` (#294, #295, #302);
