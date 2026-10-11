@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * R2: queued jobs for a missing or soft-deleted organization skip (HTTP 200,
@@ -477,6 +477,72 @@ describe("embed-document", () => {
     await embedJob();
     await embedJob();
     expect(fx.embed).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A document's status and error are what its owner sees on the Knowledge page
+ * (document-table.tsx renders `error` verbatim). They must say what happened without
+ * exposing provider or database detail (CLAUDE.md §4), the failure must reach the
+ * logs (ids and error class only), and a document whose chunks are all stored must
+ * not be reported as failed because a later bookkeeping step failed.
+ */
+describe("embed-document — failures are truthful and safe", () => {
+  const embedJob = (inlineContent = "one|two|three") =>
+    embedDocument(job({ documentId: DOC_A, orgId: ORG_A, inlineContent }));
+  const doc = () => s.documents.find((d) => d.id === DOC_A)!;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => errorSpy.mockRestore());
+  const logged = () => errorSpy.mock.calls.flat().map(String).join("\n");
+
+  it("a provider error is stored and notified as a generic message, and logged without its text", async () => {
+    fx.embed.mockRejectedValueOnce(
+      new Error("401 Incorrect API key provided: sk-proj-abc123 at https://api.openai.com/v1"),
+    );
+
+    const res = await embedJob();
+
+    expect(res.status).toBe(200);
+    expect(doc().status).toBe("FAILED");
+    expect(doc().error).toBe("Processing failed. Please try again.");
+    const failed = s.notifications.find((n) => n.type === "document.failed")!;
+    expect(failed.body).toBe("Processing failed. Please try again.");
+    expect(JSON.stringify(await res.json())).not.toContain("sk-proj");
+    expect(JSON.parse(logged())).toEqual({
+      event: "document_embed_failed",
+      orgId: ORG_A,
+      documentId: DOC_A,
+      name: "Error",
+    });
+    expect(logged()).not.toContain("sk-proj");
+  });
+
+  it("a reason written for the user is kept: a blocked URL says so", async () => {
+    const { extractFromUrl } = await import("@/server/ai/extract");
+    vi.mocked(extractFromUrl).mockRejectedValueOnce(
+      Object.assign(new Error("URL destination is not public"), { name: "UrlIngestionError" }),
+    );
+    Object.assign(doc(), { sourceType: "URL", sourceUrl: "https://intranet.example/doc" });
+
+    await embedDocument(job({ documentId: DOC_A, orgId: ORG_A }));
+
+    expect(doc().status).toBe("FAILED");
+    expect(doc().error).toBe("URL destination is not public");
+  });
+
+  it("usage recording failing after the chunks are stored leaves the document READY", async () => {
+    fx.recordUsage.mockRejectedValueOnce(new Error("connection terminated"));
+
+    const res = await embedJob();
+
+    expect(await res.json()).toEqual({ ok: true, chunks: 3 });
+    expect(doc().status).toBe("READY");
+    expect(doc().error ?? null).toBeNull();
+    expect(s.notifications.map((n) => n.type)).toEqual(["document.ready"]);
+    expect(logged()).toContain("document_embed_usage_failed");
   });
 });
 
