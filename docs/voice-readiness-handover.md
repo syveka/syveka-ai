@@ -31,7 +31,7 @@ Each claim below is labelled with the strongest evidence behind it:
 | #297 | `fcaace0` | Post-call summary failures hidden; CRM activity lost; simultaneous runs double-record         | P2                    | **db** (concurrency, retry, rollback); mocked (summary) |
 | #300 | `391e677` | Knowledge ingestion: raw provider/parser errors shown; READY flipped to FAILED; stuck Pending | P2 (raw errors: §4)   | mocked                                                  |
 | #302 | `041716b` | Anonymous phone callers could search every document of the organization                       | P1                    | mocked (real route and tool registry)                   |
-| #304 | `52193ae` | Recording requested in an undocumented top-level field instead of `artifactPlan`              | P3                    | docs + mocked                                           |
+| #304 | `fc8e922` | Recording requested in an undocumented top-level field; dashboard `artifactPlan` options kept | P3                    | docs + mocked                                           |
 | #303 | `8af176e` | Evidence only (#295 + #297 on Postgres in PR CI). **Not for merge.**                          | n/a                   | db                                                      |
 
 All are based on main `a72fa7d`. #294, #295 and #302 each touch
@@ -53,7 +53,7 @@ webhook's two upserts differently (compiler evidence, `voice-call-rows-prisma.te
 
 So on the first version the 409 / `voice_call_org_conflict` path never ran for an end-of-call
 report, and the post-call job was still enqueued (it then found no call in the wrong
-organization and skipped). Another organization's row was never changed in either version. The
+organization and skipped). Another organization's row was never changed in either version of the #295 fix; vulnerable main did overwrite it, as the table below shows. The
 correction treats both a `null` result and an unexplained P2002 as "foreign".
 
 **Real-Postgres results** (`tests/unit/voice-call-binding.postgres.test.ts`, run `38129755849`):
@@ -161,13 +161,13 @@ is not proposed.
 | Control                    | Behaviour (main `a72fa7d` + draft PRs)                                                                                                                                                                                                                                                                                                         | Evidence                                    | Live configuration / owner decision                            |
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------- | -------------------------------------------------------------- |
 | Webhook authentication     | HMAC-SHA256 of the raw body, hex, timing-safe, from `x-vapi-signature` (or `x-vapi-secret`), before parsing and before any database access. `VAPI_WEBHOOK_SECRET` ≥ 16 chars or the route fails closed. No timestamp: a captured request stays valid; tool-call ids, write caps, the ended-call refusal and end-of-call markers limit replays. | mocked (merged)                             | **Unverified live.** See "Provider configuration".             |
-| Tenant isolation           | Org only from the signed assistant. Call rows written only within that org (#295).                                                                                                                                                                                                                                                             | compiler + mocked; db test written, not run | none                                                           |
-| Duplicate / retry handling | Tool calls: Redis claim per tool-call id, per-call write caps, refusal after the call ends. End-of-call: QStash dedupe id + Redis marker. Post-call: per-step guards, serialized per call (#297).                                                                                                                                              | mocked                                      | Optional migration: unique indexes on the call key.            |
+| Tenant isolation           | Org only from the signed assistant. Call rows written only within that org (#295).                                                                                                                                                                                                                                                             | db + compiler + mocked | none                                                           |
+| Duplicate / retry handling | Tool calls: Redis claim per tool-call id, per-call write caps, refusal after the call ends. End-of-call: QStash dedupe id + Redis marker. Post-call: per-step guards, serialized per call (#297).                                                                                                                                              | db (post-call rows); mocked (other paths) | Optional migration: unique indexes on the call key.            |
 | Usage limits               | Plan minutes checked at `status-update` in-progress (ends the call via Live Call Control) and at every `tool-calls`. Read-only orgs refused (#294). No gate at call start (`assistant-request` not used).                                                                                                                                      | mocked                                      | Test once on staging (procedure below).                        |
 | Concurrency (calls)        | No cap on simultaneous calls; N parallel calls can each overrun the remaining minutes (bounded by `maxDurationSeconds` 900).                                                                                                                                                                                                                   | code                                        | **Policy:** a per-plan cap, or accept the overrun.             |
 | Failed / short calls       | Every call with an end-of-call report is billed at least 1 minute, including zero-length and our own quota hang-ups.                                                                                                                                                                                                                           | code                                        | **Policy** (unchanged by this work).                           |
 | AI / recording notice      | A model instruction, after the owner-written `firstMessage`; Arabic gets the English instruction. #265 speaks the notice first. Vapi also has `compliancePlan.recordingConsentPlan` (docs), unused.                                                                                                                                            | mocked                                      | Approve the wording and #265.                                  |
-| Recordings and retention   | Recording is on (Vapi default). The raw `recordingUrl` is stored and played directly. Nothing deletes Vapi-side recordings on erasure.                                                                                                                                                                                                         | docs                                        | See "Provider configuration".                                  |
+| Recordings and retention   | Live recording state is unverified; the documented default is not proof. The raw `recordingUrl` is stored and played directly. Nothing deletes Vapi-side recordings on erasure.                                                                                                                                                                                                         | docs                                        | See "Provider configuration".                                  |
 | Knowledge base exposure    | Phone callers refused (#302); signed-in chat unchanged.                                                                                                                                                                                                                                                                                        | mocked                                      | **P1:** approve #302; decide on public content as a follow-up. |
 | Failure reporting          | `voice_tool_call_failed`, `voice_quota_end_call_skipped`, `voice_call_org_conflict` (#295), `post_call_summary_failed` (#297), `document_embed_failed`, `document_embed_usage_failed`, `document_ready_notification_failed` (#300). Ids and error class only. No alerting.                                                                     | mocked                                      | Which events to alert on.                                      |
 
@@ -198,12 +198,18 @@ is not proposed.
   `controlUrl` should be present without setting `monitorPlan`. Still to confirm live.
 - **Recording** (OpenAPI): the setting is `artifactPlan.recordingEnabled`, default true.
   Neither `CreateAssistantDTO` nor `UpdateAssistantDTO` has a top-level `recordingEnabled`, which
-  `src/server/integrations/vapi.ts` sends; recording happens only because the documented field
-  defaults to on. Draft #304 sends the same intent (recording on) as
-  `artifactPlan: { recordingEnabled: true }`. No policy change. Review risk: it is the first
-  `artifactPlan` the sync sends, so if Vapi treats a nested object in a PATCH as a replacement,
-  hand-set `artifactPlan` options on a synced assistant would be reset. Check one staging
-  assistant's `artifactPlan` in the dashboard (read only) before deploying.
+  `src/server/integrations/vapi.ts` sends on main. Its live effect is unverified; the documented
+  default does not establish that any deployed assistant records calls. Draft #304 sends the same intent (recording on) as
+  `artifactPlan: { recordingEnabled: true }`. No policy change.
+  - **Merge or replace: unresolved.** Neither Vapi's OpenAPI spec nor its Update Assistant page
+    says whether `PATCH /assistant/{id}` merges or replaces a nested object. #304 doesn't depend
+    on the answer: an update reads the assistant first and sends its current `artifactPlan` back
+    with only `recordingEnabled` set (nothing is updated if that read fails); create is
+    unchanged.
+  - **Live state: unverified.** No staging assistant was read: no browser session was connected,
+    and reading the API key from the environment is off-limits. Whether recording works today is
+    unknown; the documented default being on is not evidence. Dashboard checklist: #304's
+    description.
 - **Recording URLs** (OpenAPI `Artifact`): presigned URLs expire; the raw `recordingUrl` "remain[s]
   the stable identifier and do[es] not expire". Whether the raw URL needs authentication is not
   stated.
@@ -216,8 +222,9 @@ is not proposed.
 - the actual credential settings;
 - the subscription's retention days;
 - whether raw recording URLs are publicly fetchable;
-- whether Vapi ignores or rejects the top-level `recordingEnabled` main sends today, and what
-  `artifactPlan` the live assistants have.
+- whether Vapi ignores or rejects the top-level `recordingEnabled` main sends today, what
+  `artifactPlan` the live assistants have, and whether recording is actually on;
+- whether `PATCH /assistant/{id}` merges or replaces a nested object (#304 preserves the artifactPlan snapshot it reads, but concurrent dashboard edits between GET and PATCH are not protected).
 
 No Vapi configuration was read or changed.
 
@@ -260,8 +267,16 @@ Gaps (no refactor started):
 
 ## Dependencies for the release-gate owner (old account)
 
-- Incorporate the rows above. Only #295 and #297 have database evidence (run `38129755849`);
-  treat nothing mocked or compiler-level as database or live evidence.
+- Incorporate the rows above. Only #295 and #297 have database evidence: tested heads
+  `fe33e37` (#295) and `fcaace0` (#297), merged into evidence commit `8af176e`, run
+  <https://github.com/syveka/syveka-ai/actions/runs/38129755849>. Treat nothing mocked or
+  compiler-level as database or live evidence.
+- Candidate `dd796e9` (`integration/rc-2026-10-11b`), checked 2026-10-11, contains #294
+  `9d18627`, #295 `fe33e37`, #297 `fcaace0`, #300 `391e677` and #302 `041716b`. It does **not**
+  contain #304 (`fc8e922`), and contains nothing from #303.
+- **#302 once deployed:** every phone assistant stops answering from documents; signed-in chat is
+  unchanged.
+- **#304 before deploying:** the dashboard checklist in its description (read only).
 - No calendar, recurrence, booking or busy-query file was changed. `src/server/ai/tools/index.ts`
   was not changed (#296).
 - Shared-file conflict risks: `src/app/api/v1/voice/webhook/route.ts` (#294, #295, #302);
@@ -282,3 +297,26 @@ Gaps (no refactor started):
 - Vitest harness constraint: two first lazy imports of a route in flight at once can bypass
   `vi.mock`. The Postgres tests start the second request after the first's imports, then force
   the overlap with gates.
+
+## Verification follow-up (2026-10-11)
+
+GitHub Actions CI succeeded on #294 `9d18627`, #295 `fe33e37`, #297 `fcaace0`,
+#300 `391e677`, #302 `041716b`, #304 `fc8e922`, and the pre-update #299 `873bf92`.
+Both reported Vercel status contexts succeeded for these code PRs. At this check,
+#299's production-project preview status alone was pending; its staging-project preview
+and Actions CI succeeded. Preview statuses do not establish a staging or production release.
+The documentation commit adding this section requires its own fresh checks.
+
+The evidence-only #303 `8af176e` has successful database run
+<https://github.com/syveka/syveka-ai/actions/runs/38129755849>.
+This is evidence for the tested Voice composition, not a new database run on the full calendar integration candidate.
+
+#304 preserves the fetched artifactPlan options, except recordingEnabled, which it explicitly
+sets to true. A dashboard value of false would therefore change after sync; review the confirmed
+staging assistant's actual value before deploying. GET followed by PATCH is not an atomic update:
+concurrent dashboard changes can be overwritten. No live assistant was inspected in this follow-up.
+
+Read-only owner checklist: identify the assistant as staging from trusted project mapping;
+note recordingEnabled, recording format, storage/path and other artifactPlan options;
+inspect whether an existing synthetic staging call has a recording artifact without sharing its URL.
+Do not re-sync as part of a read-only check: sync issues a mutating PATCH and needs separate authorization.
