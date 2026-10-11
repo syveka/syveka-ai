@@ -125,7 +125,8 @@ async function resolveAssistant(
 
 /**
  * Usage is recorded only after a call ends, so calls running in parallel all
- * pass this check until the first of them is billed.
+ * pass this check until the first of them is billed. A read-only workspace
+ * (past due beyond the grace period) may not use anything, as in assertWithinLimit.
  */
 async function voiceQuotaExceeded(orgId: string): Promise<boolean> {
   const { getMonthUsage, getEntitlements } = await import("@/server/services/billing/entitlements");
@@ -133,7 +134,7 @@ async function voiceQuotaExceeded(orgId: string): Promise<boolean> {
     getMonthUsage(orgId, "VOICE_MINUTES"),
     getEntitlements(orgId),
   ]);
-  return used >= ent.voiceMinutesMonth;
+  return ent.readOnly || used >= ent.voiceMinutesMonth;
 }
 
 /** Spoken before an over-quota call ends, in the assistant's language. */
