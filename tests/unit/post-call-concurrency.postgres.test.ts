@@ -279,11 +279,12 @@ describe.skipIf(!PG_URL)("post-call job on real Postgres", () => {
 
     expect(responses.map((r) => r.status)).toEqual([200, 200]);
     const s = await state(c);
-    expect(s.usage).toBe(1);
-    expect(s.contacts).toHaveLength(1);
+    // Labelled: the evidence workflow checks which of these fails on previous code.
+    expect(s.usage, "usage rows").toBe(1);
+    expect(s.contacts, "contact rows").toHaveLength(1);
     expect(s.contactId).toBe(s.contacts[0]!.id);
-    expect(s.activities).toBe(1);
-    expect(s.notifications).toBe(1);
+    expect(s.activities, "activity rows").toBe(1);
+    expect(s.notifications, "notification rows").toBe(1);
     expect(s.processed).toBe(true);
     // The runs really met at each guarded check: one waited on the other's lock.
     for (const name of ["usage", "contact", "activity", "notification"]) {
