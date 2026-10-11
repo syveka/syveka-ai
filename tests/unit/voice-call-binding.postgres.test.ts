@@ -6,9 +6,14 @@ import { randomUUID } from "node:crypto";
  * real Prisma upserts, the real unique vapi_call_id and real concurrency. Only the
  * signature check, Redis, the job queue and the plan lookup are mocked.
  *
+ * Concurrent requests start one after the other's assistant lookup: the route imports its
+ * dependencies lazily, and two of those imports in flight at once can bypass vi.mock in
+ * Vitest (seen as the real signature check running). A gate then holds both at the
+ * upsert, so the database writes really overlap.
+ *
  * Skipped unless VOICE_PG_URL points at a scratch database prepared as in CI:
- * tests/migrations/supabase-compatibility.sql, then `prisma migrate deploy`. Not run
- * in CI. Synthetic organizations only.
+ * tests/migrations/supabase-compatibility.sql, then `prisma migrate deploy`. Synthetic
+ * organizations only.
  */
 
 const PG_URL = process.env.VOICE_PG_URL;
@@ -17,6 +22,9 @@ const holder = vi.hoisted(() => ({
   client: undefined as unknown,
   redis: new Map<string, string>(),
   enqueued: [] as { orgId: string; vapiCallId: string }[],
+  failEnqueueOnce: false,
+  onAssistantLookup: null as null | (() => void),
+  upsertGate: null as null | (() => Promise<void>),
 }));
 
 vi.mock("@/server/db/tenant", () => ({
@@ -34,6 +42,10 @@ vi.mock("@/server/services/billing/entitlements", () => ({
 }));
 vi.mock("@/server/jobs/queue", () => ({
   enqueue: vi.fn(async (_job: string, payload: { orgId: string; vapiCallId: string }) => {
+    if (holder.failEnqueueOnce) {
+      holder.failEnqueueOnce = false;
+      throw new Error("synthetic queue outage");
+    }
     holder.enqueued.push(payload);
   }),
 }));
@@ -60,6 +72,7 @@ type Db = {
     findUnique: (a: object) => Promise<Row | null>;
     findMany: (a: object) => Promise<Row[]>;
   };
+  $executeRawUnsafe: (sql: string) => Promise<number>;
   $disconnect: () => Promise<void>;
 };
 
@@ -73,10 +86,26 @@ describe.skipIf(!PG_URL)("Vapi webhook call rows on real Postgres", () => {
       import("@prisma/adapter-pg"),
     ]);
     // Several connections stand in for concurrent serverless instances.
-    db = new PrismaClient({
+    const prisma = new PrismaClient({
       adapter: new PrismaPg({ connectionString: PG_URL!, max: 4 }),
-    }) as unknown as Db;
-    holder.client = db;
+    });
+    db = prisma as unknown as Db;
+    holder.client = prisma.$extends({
+      query: {
+        voiceAssistant: {
+          async findFirst({ args, query }) {
+            holder.onAssistantLookup?.();
+            return query(args);
+          },
+        },
+        voiceCall: {
+          async upsert({ args, query }) {
+            await holder.upsertGate?.();
+            return query(args);
+          },
+        },
+      },
+    });
     ({ POST } = await import("@/app/api/v1/voice/webhook/route"));
   });
 
@@ -84,11 +113,16 @@ describe.skipIf(!PG_URL)("Vapi webhook call rows on real Postgres", () => {
     await db?.$disconnect();
   });
 
+  let errorSpy: ReturnType<typeof vi.spyOn>;
   beforeEach(() => {
     holder.redis.clear();
     holder.enqueued.length = 0;
-    vi.spyOn(console, "error").mockImplementation(() => {});
+    holder.failEnqueueOnce = false;
+    errorSpy?.mockRestore();
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
   });
+  const conflictLogged = () =>
+    errorSpy.mock.calls.flat().map(String).join(" ").includes("voice_call_org_conflict");
 
   /** A synthetic organization with one active assistant; returns its Vapi assistant id. */
   async function seedOrg(label: string) {
@@ -135,7 +169,8 @@ describe.skipIf(!PG_URL)("Vapi webhook call rows on real Postgres", () => {
     });
   const callRow = (vapiCallId: string) => db.voiceCall.findUnique({ where: { vapiCallId } });
 
-  it("organization B can't change organization A's call or start post-call work for it", async () => {
+  /** Organization A's completed call, its row as committed, and organization B. */
+  async function aCallAndB() {
     const a = await seedOrg("a");
     const b = await seedOrg("b");
     const callId = `call-${randomUUID()}`;
@@ -145,30 +180,91 @@ describe.skipIf(!PG_URL)("Vapi webhook call rows on real Postgres", () => {
     expect(before).toMatchObject({ organizationId: a.orgId, status: "COMPLETED" });
     holder.enqueued.length = 0;
     holder.redis.clear();
+    errorSpy.mockClear();
+    return { a, b, callId, before };
+  }
 
-    const forgedReport = await report(b.vapiAssistantId, callId, {
+  it("B's end-of-call report for A's call id changes nothing, is refused 409 and queues nothing", async () => {
+    const { b, callId, before } = await aCallAndB();
+
+    // Prisma runs this as INSERT ... ON CONFLICT DO UPDATE ... WHERE organization_id = B:
+    // A's row is not updated and no row comes back (the null outcome).
+    const forged = await report(b.vapiAssistantId, callId, {
       durationSeconds: 999,
       endedReason: "forged",
       artifact: { messages: [{ role: "user", message: "forged" }] },
     });
-    const forgedStatus = await statusUpdate(b.vapiAssistantId, callId);
 
-    expect(forgedReport.status).toBe(409);
-    await expect(forgedReport.json()).resolves.toEqual({ error: "call_conflict" });
-    expect(forgedStatus.status).toBe(200);
+    expect(forged.status).toBe(409);
+    await expect(forged.json()).resolves.toEqual({ error: "call_conflict" });
     expect(await callRow(callId)).toEqual(before);
     expect(holder.enqueued).toEqual([]);
+    expect(conflictLogged()).toBe(true);
     expect(await db.voiceCall.findMany({ where: { organizationId: b.orgId } })).toEqual([]);
+  });
+
+  it("B's status update for A's call id changes nothing and records nothing", async () => {
+    const { b, callId, before } = await aCallAndB();
+
+    // Nothing to update: Prisma runs SELECT (within B) then INSERT, which fails on the
+    // unique call id (the P2002 outcome).
+    const forged = await statusUpdate(b.vapiAssistantId, callId);
+
+    expect(forged.status).toBe(200);
+    expect(await callRow(callId)).toEqual(before);
+    expect(conflictLogged()).toBe(true);
+    expect(await db.voiceCall.findMany({ where: { organizationId: b.orgId } })).toEqual([]);
+  });
+
+  it("A's own retries are accepted: a redelivered report, and a report whose enqueue failed", async () => {
+    const a = await seedOrg("retry");
+    const callId = `call-${randomUUID()}`;
+    holder.failEnqueueOnce = true;
+
+    expect((await report(a.vapiAssistantId, callId)).status).toBe(500);
+    const afterFailure = await callRow(callId);
+    expect(afterFailure).toMatchObject({ organizationId: a.orgId, status: "COMPLETED" });
+    expect(holder.enqueued).toEqual([]);
+
+    expect((await report(a.vapiAssistantId, callId)).status).toBe(200);
+    const redelivered = await report(a.vapiAssistantId, callId);
+
+    await expect(redelivered.json()).resolves.toMatchObject({ duplicate: true });
+    expect(holder.enqueued).toEqual([{ vapiCallId: callId, orgId: a.orgId }]);
+    expect(await callRow(callId)).toEqual(afterFailure);
+    expect(conflictLogged()).toBe(false);
   });
 
   it("concurrent first writes for one call within one organization leave exactly one complete row", async () => {
     const a = await seedOrg("race");
     for (let i = 0; i < 10; i++) {
       const callId = `call-${randomUUID()}`;
-      const responses = await Promise.all([
-        statusUpdate(a.vapiAssistantId, callId),
-        report(a.vapiAssistantId, callId),
-      ]);
+      // Both orders: the status update first on even rounds, the report first on odd ones.
+      const [first, second] =
+        i % 2 === 0
+          ? [() => statusUpdate(a.vapiAssistantId, callId), () => report(a.vapiAssistantId, callId)]
+          : [
+              () => report(a.vapiAssistantId, callId),
+              () => statusUpdate(a.vapiAssistantId, callId),
+            ];
+      let arrivals = 0;
+      let release = () => {};
+      const bothAtUpsert = new Promise<void>((resolve) => (release = resolve));
+      holder.upsertGate = async () => {
+        arrivals += 1;
+        if (arrivals === 2) release();
+        await bothAtUpsert;
+      };
+      let looked = () => {};
+      const firstLookedUp = new Promise<void>((resolve) => (looked = resolve));
+      holder.onAssistantLookup = looked;
+      const firstResponse = first();
+      await firstLookedUp;
+      holder.onAssistantLookup = null;
+      const responses = await Promise.all([firstResponse, second()]);
+      holder.upsertGate = null;
+      // Both reached the upsert together (a P2002 retry upserts a third time).
+      expect(arrivals).toBeGreaterThanOrEqual(2);
 
       expect(responses.map((r) => r.status)).toEqual([200, 200]);
       const rows = await db.voiceCall.findMany({ where: { vapiCallId: callId } });
@@ -184,13 +280,29 @@ describe.skipIf(!PG_URL)("Vapi webhook call rows on real Postgres", () => {
     }
   });
 
-  it("a genuine database failure fails the request so Vapi retries, with no post-call work", async () => {
+  it("a genuine database failure fails the request so Vapi retries; it isn't called a conflict", async () => {
     const a = await seedOrg("failure");
-    const callId = `call-${randomUUID()}`;
+    const callId = `fail-${randomUUID()}`;
+    // A failure raised by the database itself, only for this test's call ids.
+    await db.$executeRawUnsafe(`
+      create or replace function voice_test_reject_call() returns trigger language plpgsql as $$
+      begin
+        if new.vapi_call_id like 'fail-%' then raise exception 'synthetic database failure'; end if;
+        return new;
+      end $$`);
+    await db.$executeRawUnsafe(`
+      create trigger voice_test_reject_call before insert or update on voice_calls
+      for each row execute function voice_test_reject_call()`);
+    try {
+      await expect(report(a.vapiAssistantId, callId)).rejects.toThrow();
+      await expect(statusUpdate(a.vapiAssistantId, callId)).rejects.toThrow();
+    } finally {
+      await db.$executeRawUnsafe("drop trigger voice_test_reject_call on voice_calls");
+      await db.$executeRawUnsafe("drop function voice_test_reject_call()");
+    }
 
-    // duration_seconds is a Postgres integer: this value is out of range.
-    await expect(report(a.vapiAssistantId, callId, { durationSeconds: 1e12 })).rejects.toThrow();
     expect(holder.enqueued).toEqual([]);
     expect(await callRow(callId)).toBeNull();
+    expect(conflictLogged()).toBe(false);
   });
 });
