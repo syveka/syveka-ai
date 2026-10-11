@@ -500,7 +500,9 @@ describe("embed-document — failures are truthful and safe", () => {
 
   it("a provider error is stored and notified as a generic message, and logged without its text", async () => {
     fx.embed.mockRejectedValueOnce(
-      new Error("401 Incorrect API key provided: sk-proj-abc123 at https://api.openai.com/v1"),
+      new Error(
+        "401 provider rejected request PROVIDER-INTERNAL-DETAIL at https://api.openai.com/v1",
+      ),
     );
 
     const res = await embedJob();
@@ -510,14 +512,14 @@ describe("embed-document — failures are truthful and safe", () => {
     expect(doc().error).toBe("Processing failed. Please try again.");
     const failed = s.notifications.find((n) => n.type === "document.failed")!;
     expect(failed.body).toBe("Processing failed. Please try again.");
-    expect(JSON.stringify(await res.json())).not.toContain("sk-proj");
+    expect(JSON.stringify(await res.json())).not.toContain("PROVIDER-INTERNAL-DETAIL");
     expect(JSON.parse(logged())).toEqual({
       event: "document_embed_failed",
       orgId: ORG_A,
       documentId: DOC_A,
       name: "Error",
     });
-    expect(logged()).not.toContain("sk-proj");
+    expect(logged()).not.toContain("PROVIDER-INTERNAL-DETAIL");
   });
 
   it("a reason written for the user is kept: a blocked URL says so", async () => {
