@@ -55,29 +55,24 @@ jobs:
           tests/unit/voice-call-binding.postgres.test.ts
           tests/unit/post-call-concurrency.postgres.test.ts
 
-      # Each previous-code run must fail its named regression test; the job fails if it
-      # passes. Every test of the file runs (verbose), so the log shows which ones fail.
+      # Each previous-code run must fail its regression test on the labelled assertion that
+      # shows the defect (a failure on any other assertion does not count), or the job
+      # fails. The whole file also runs verbosely, so the log shows every result.
       - name: "Previous code: main's webhook (a72fa7d) lets B overwrite A's call"
         run: |
           git show a72fa7d:src/app/api/v1/voice/webhook/route.ts > src/app/api/v1/voice/webhook/route.ts
           npx vitest run --reporter=verbose tests/unit/voice-call-binding.postgres.test.ts || true
-          if npx vitest run tests/unit/voice-call-binding.postgres.test.ts -t "B's end-of-call report for A's call id"; then
-            echo "::error::main's webhook unexpectedly passed the cross-organization report test"; exit 1
-          fi
+          bash scripts/ci/expect-test-failure.sh tests/unit/voice-call-binding.postgres.test.ts             "B's end-of-call report for A's call id" "A's row unchanged"
           git checkout -- src/app/api/v1/voice/webhook/route.ts
-      - name: "Previous code: #295 first version (5c468f7) misses the null outcome"
+      - name: "Previous code: #295 first version (5c468f7) queues work for B"
         run: |
           git show 5c468f7:src/app/api/v1/voice/webhook/route.ts > src/app/api/v1/voice/webhook/route.ts
           npx vitest run --reporter=verbose tests/unit/voice-call-binding.postgres.test.ts || true
-          if npx vitest run tests/unit/voice-call-binding.postgres.test.ts -t "B's end-of-call report for A's call id"; then
-            echo "::error::#295's first version unexpectedly passed the cross-organization report test"; exit 1
-          fi
+          bash scripts/ci/expect-test-failure.sh tests/unit/voice-call-binding.postgres.test.ts             "B's end-of-call report for A's call id" "nothing queued for B"
           git checkout -- src/app/api/v1/voice/webhook/route.ts
       - name: "Previous code: #297 before the locks (a9f1b43) double-records"
         run: |
           git show a9f1b43:src/app/api/v1/jobs/post-call/route.ts > src/app/api/v1/jobs/post-call/route.ts
           npx vitest run --reporter=verbose tests/unit/post-call-concurrency.postgres.test.ts || true
-          if npx vitest run tests/unit/post-call-concurrency.postgres.test.ts -t "two simultaneous runs"; then
-            echo "::error::the pre-lock post-call job unexpectedly passed the simultaneous-runs test"; exit 1
-          fi
+          bash scripts/ci/expect-test-failure.sh tests/unit/post-call-concurrency.postgres.test.ts             "two simultaneous runs" "usage rows"
           git checkout -- src/app/api/v1/jobs/post-call/route.ts
