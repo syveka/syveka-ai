@@ -303,7 +303,7 @@ async function getOwnerBusy(
         busyWindowWhere(from, to),
       ],
     },
-    select: { startsAt: true, endsAt: true, recurrenceRule: true },
+    select: { startsAt: true, endsAt: true, recurrenceRule: true, timezone: true },
     // Newest first: if the cap is reached, old (often ended) series are what is left out.
     orderBy: { startsAt: "desc" },
     take: 1000,
@@ -389,7 +389,7 @@ async function assertSlotStillFree(
       ...recurringSeriesWhere(guardEnd),
       ...(excludeEventId ? { id: { not: excludeEventId } } : {}),
     },
-    select: { startsAt: true, endsAt: true, recurrenceRule: true },
+    select: { startsAt: true, endsAt: true, recurrenceRule: true, timezone: true },
     orderBy: { startsAt: "desc" }, // newest first if the cap is reached
     take: 500,
   });

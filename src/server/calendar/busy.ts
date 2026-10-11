@@ -2,7 +2,13 @@ import type { Prisma } from "@/generated/prisma/client/client";
 import { expandOccurrences, validateRecurrenceRule } from "./recurrence";
 import type { BusyInterval } from "./slots";
 
-export type BusyEventRow = { startsAt: Date; endsAt: Date; recurrenceRule?: string | null };
+export type BusyEventRow = {
+  startsAt: Date;
+  endsAt: Date;
+  recurrenceRule?: string | null;
+  /** The event's own zone: a series keeps its wall-clock time across DST. */
+  timezone?: string | null;
+};
 
 /**
  * The events that can occupy part of [from, to): one-off events overlapping
@@ -53,6 +59,7 @@ export function busyIntervals(rows: BusyEventRow[], from: Date, to: Date): BusyI
         rangeFrom: from,
         rangeTo: to,
         max: 500,
+        timeZone: row.timezone,
       }),
     );
   }

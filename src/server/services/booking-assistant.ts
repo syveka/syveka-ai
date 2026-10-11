@@ -67,7 +67,7 @@ export async function suggestAvailableTimes(
           busyWindowWhere(now, to),
         ],
       },
-      select: { startsAt: true, endsAt: true, recurrenceRule: true },
+      select: { startsAt: true, endsAt: true, recurrenceRule: true, timezone: true },
       orderBy: { startsAt: "desc" }, // newest first if the cap is reached
       take: 500,
     }),

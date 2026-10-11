@@ -817,6 +817,40 @@ describe("recurring calendar events", () => {
     expect(offered).toContain("2026-02-02T08:00:00.000Z"); // right after it: free
   });
 
+  it("a series started in summer still blocks its local time in winter (DST)", async () => {
+    // Monday 09:00 Helsinki since October 2025 (06:00Z in EEST); VALID_START is
+    // Monday 09:00 Helsinki in February (07:00Z in EET).
+    storeEvents([
+      weeklySeries({
+        startsAt: new Date("2025-10-13T06:00:00Z"),
+        endsAt: new Date("2025-10-13T07:00:00Z"),
+        timezone: "Europe/Helsinki",
+      }),
+    ]);
+
+    const { slots } = await getPublicSlots({
+      orgSlug: "acme",
+      typeSlug: "intro-call",
+      from: new Date("2026-02-02T00:00:00Z"),
+      to: new Date("2026-02-03T00:00:00Z"),
+    });
+    expect(slots.map((s) => s.toISOString())).not.toContain(VALID_START);
+    await expect(
+      createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
+    ).rejects.toMatchObject({ code: "invalid_slot" });
+
+    unscopedMock.calendarEvent.findMany.mockResolvedValue([]); // isolate the in-transaction check
+    await expect(
+      createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
+    ).rejects.toMatchObject({ code: "slot_taken" });
+
+    for (const findMany of [unscopedMock.calendarEvent.findMany, txMock.calendarEvent.findMany]) {
+      expect(findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ select: expect.objectContaining({ timezone: true }) }),
+      );
+    }
+  });
+
   it("a guest can't book a series occurrence", async () => {
     storeEvents([weeklySeries()]);
 

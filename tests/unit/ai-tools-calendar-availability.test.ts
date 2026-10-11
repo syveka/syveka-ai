@@ -138,6 +138,33 @@ describe("getCalendarAvailability tool", () => {
     expect(result.freeSlots).toContain("2026-08-17T06:30:00.000Z");
   });
 
+  it("a series started in winter is busy at its local time in summer (DST)", async () => {
+    scheduleFindFirstMock.mockResolvedValueOnce(null); // default Mon-Fri 09-17
+    // Monday 09:00-09:30 Helsinki from March (07:00Z in EET); in August 09:00 is 06:00Z.
+    eventFindManyMock.mockImplementation(
+      findManyOver([
+        {
+          deletedAt: null,
+          status: "CONFIRMED",
+          startsAt: new Date("2026-03-16T07:00:00.000Z"),
+          endsAt: new Date("2026-03-16T07:30:00.000Z"),
+          recurrenceRule: "FREQ=WEEKLY",
+          timezone: "Europe/Helsinki",
+        },
+      ]) as never,
+    );
+
+    const result = (await getCalendarAvailability.execute(identity(), {
+      date: "2026-08-17",
+    })) as { freeSlots: string[] };
+
+    expect(result.freeSlots).not.toContain("2026-08-17T06:00:00.000Z");
+    expect(result.freeSlots).toContain("2026-08-17T07:00:00.000Z");
+    expect(eventFindManyMock).toHaveBeenCalledWith(
+      expect.objectContaining({ select: expect.objectContaining({ timezone: true }) }),
+    );
+  });
+
   it("applies a date override marking the day fully unavailable", async () => {
     scheduleFindFirstMock.mockResolvedValueOnce({
       timezone: "Europe/Helsinki",

@@ -137,6 +137,7 @@ export async function findConflicts(
       startsAt: true,
       endsAt: true,
       recurrenceRule: true,
+      timezone: true,
     },
     take: 500,
   });
@@ -158,6 +159,7 @@ export async function findConflicts(
         rangeFrom: params.startsAt,
         rangeTo: params.endsAt,
         max: 5,
+        timeZone: e.timezone,
       });
       const hit = occurrences.find((o) =>
         intervalsOverlap(params.startsAt, params.endsAt, o.startsAt, o.endsAt),
@@ -229,6 +231,7 @@ export async function listEvents(
         rangeFrom: range.from,
         rangeTo: range.to,
         max: 100,
+        timeZone: e.timezone,
       }).map((occ) => ({
         ...e,
         startsAt: occ.startsAt,

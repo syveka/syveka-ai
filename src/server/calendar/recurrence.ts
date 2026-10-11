@@ -5,6 +5,8 @@
  * instances; this rule engine only powers internally created events.
  */
 
+import { isValidTimeZone, toZonedWallTime, zonedWallTimeToUtc } from "@/lib/date-time";
+
 const WEEKDAY_CODES = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"] as const;
 
 export type RecurrenceRule = {
@@ -116,19 +118,71 @@ export type Occurrence = { startsAt: Date; endsAt: Date };
 
 const HARD_OCCURRENCE_CAP = 500;
 
-/**
- * Expand occurrences of a recurring event intersecting [rangeFrom, rangeTo).
- * Day stepping happens in UTC on the series start instant, which keeps the
- * event's wall-clock start stable for whole-day intervals.
- */
-export function expandOccurrences(params: {
+type ExpandParams = {
   seriesStart: Date;
   seriesEnd: Date;
   rule: RecurrenceRule;
   rangeFrom: Date;
   rangeTo: Date;
   max?: number;
-}): Occurrence[] {
+};
+
+const DAY_MS = 86_400_000;
+const MINUTE_MS = 60_000;
+
+/**
+ * Expand occurrences of a recurring event intersecting [rangeFrom, rangeTo).
+ *
+ * With `timeZone` (the event's own zone), days are stepped in that zone's
+ * wall-clock time, so a weekly 14:00 Helsinki meeting stays at 14:00 across a
+ * DST change and weekdays/days-of-month are the zone's. Without it (or with an
+ * unknown zone) days are stepped in UTC, which drifts by the DST offset.
+ */
+export function expandOccurrences(
+  params: ExpandParams & { timeZone?: string | null },
+): Occurrence[] {
+  const { timeZone } = params;
+  if (!timeZone || !isValidTimeZone(timeZone)) return expandInUtc(params);
+
+  // Run the UTC algorithm on "naive" wall-clock instants (the zone's local
+  // time written as if it were UTC), then map each back to a real instant.
+  const subMinute = (d: Date) => ((d.getTime() % MINUTE_MS) + MINUTE_MS) % MINUTE_MS;
+  const toNaive = (d: Date) =>
+    new Date(new Date(`${toZonedWallTime(d, timeZone)}:00Z`).getTime() + subMinute(d));
+  const fromNaive = (d: Date) =>
+    new Date(zonedWallTimeToUtc(d.toISOString().slice(0, 16), timeZone).getTime() + subMinute(d));
+
+  const { seriesStart, seriesEnd, rule, rangeFrom, rangeTo } = params;
+  const max = Math.min(params.max ?? 100, HARD_OCCURRENCE_CAP);
+  const durationMs = seriesEnd.getTime() - seriesStart.getTime();
+  const naiveStart = toNaive(seriesStart);
+  // Zone offsets are under a day: widen the naive range by a day each side and
+  // filter on real instants. UNTIL is a real instant too, so it is applied here.
+  const naive = expandInUtc({
+    seriesStart: naiveStart,
+    seriesEnd: new Date(naiveStart.getTime() + durationMs),
+    rule: { ...rule, until: undefined },
+    rangeFrom: new Date(rangeFrom.getTime() - DAY_MS),
+    rangeTo: new Date(rangeTo.getTime() + DAY_MS),
+    max: HARD_OCCURRENCE_CAP,
+  });
+
+  const out: Occurrence[] = [];
+  for (const occ of naive) {
+    // The first occurrence is the stored start itself: a wall time repeated by
+    // a DST change (e.g. 03:30 on the autumn night) would otherwise map back to
+    // the later of its two instants.
+    const start =
+      occ.startsAt.getTime() === naiveStart.getTime() ? seriesStart : fromNaive(occ.startsAt);
+    if (rule.until && start > rule.until) break;
+    const end = new Date(start.getTime() + durationMs);
+    if (start < rangeTo && end > rangeFrom) out.push({ startsAt: start, endsAt: end });
+    if (out.length >= max) break;
+  }
+  return out;
+}
+
+function expandInUtc(params: ExpandParams): Occurrence[] {
   const { seriesStart, seriesEnd, rule, rangeFrom, rangeTo } = params;
   const max = Math.min(params.max ?? 100, HARD_OCCURRENCE_CAP);
   const durationMs = seriesEnd.getTime() - seriesStart.getTime();
