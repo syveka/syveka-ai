@@ -9,10 +9,11 @@ on any line here.
 
 Each claim below is labelled with the strongest evidence behind it:
 
-- **db**: run against a real PostgreSQL. **None of this work has db evidence.** No disposable
-  database could be started on the workstation: the Docker engine did not respond, WSL is
-  unavailable, and unsigned Postgres binaries are blocked by Windows code integrity. Staging and
-  production were not used as a substitute.
+- **db**: run against a real, disposable PostgreSQL (`pgvector/pgvector:pg15`, the complete
+  migration history, synthetic data). This exists for #295 and #297 only, through the draft
+  evidence PR #303, because no database could be started on the workstation (Docker engine
+  unresponsive, WSL unavailable, unsigned Postgres binaries blocked). Staging and production were
+  not used. Evidence run: `38129755849`.
 - **compiler**: the real Prisma client and query compiler over a scripted driver adapter. It
   proves the SQL Prisma emits and how it reports results; the database's answers are scripted,
   following documented Postgres behaviour.
@@ -23,17 +24,21 @@ Each claim below is labelled with the strongest evidence behind it:
 
 ## Draft PRs (none merged, none deployed)
 
-| PR   | Head      | Concern                                                                                       | Severity              | Evidence                              |
-| ---- | --------- | --------------------------------------------------------------------------------------------- | --------------------- | ------------------------------------- |
-| #294 | `9d18627` | Read-only (past-due) orgs still had calls answered, tools run, minutes billed                 | P2                    | mocked                                |
-| #295 | `2d7b5ff` | Call-row writes not bound to the signed assistant's org                                       | P3 (defence in depth) | compiler + mocked; db test written    |
-| #297 | `928abbd` | Post-call summary failures hidden; CRM activity lost; simultaneous runs double-record         | P2                    | mocked (deterministic interleaving)   |
-| #300 | `391e677` | Knowledge ingestion: raw provider/parser errors shown; READY flipped to FAILED; stuck Pending | P2 (raw errors: §4)   | mocked                                |
-| #302 | `041716b` | Anonymous phone callers could search every document of the organization                       | P1                    | mocked (real route and tool registry) |
+| PR   | Head      | Concern                                                                                       | Severity              | Evidence                                                |
+| ---- | --------- | --------------------------------------------------------------------------------------------- | --------------------- | ------------------------------------------------------- |
+| #294 | `9d18627` | Read-only (past-due) orgs still had calls answered, tools run, minutes billed                 | P2                    | mocked                                                  |
+| #295 | `fe33e37` | Call-row writes not bound to the signed assistant's org; same-org first-write race            | P3 (defence in depth) | **db** + compiler + mocked                              |
+| #297 | `fcaace0` | Post-call summary failures hidden; CRM activity lost; simultaneous runs double-record         | P2                    | **db** (concurrency, retry, rollback); mocked (summary) |
+| #300 | `391e677` | Knowledge ingestion: raw provider/parser errors shown; READY flipped to FAILED; stuck Pending | P2 (raw errors: §4)   | mocked                                                  |
+| #302 | `041716b` | Anonymous phone callers could search every document of the organization                       | P1                    | mocked (real route and tool registry)                   |
+| #304 | `52193ae` | Recording requested in an undocumented top-level field instead of `artifactPlan`              | P3                    | docs + mocked                                           |
+| #303 | `8af176e` | Evidence only (#295 + #297 on Postgres in PR CI). **Not for merge.**                          | n/a                   | db                                                      |
 
 All are based on main `a72fa7d`. #294, #295 and #302 each touch
 `src/app/api/v1/voice/webhook/route.ts` in different places; whichever merges later needs main
-merged in first. #302 also changes `src/server/services/voice.ts` and the assistant form.
+merged in first. #302 also changes `src/server/services/voice.ts` and the assistant form; #304
+changes `src/server/integrations/vapi.ts`. #297 adds an optional transaction parameter to
+`recordUsage` (`src/server/services/billing/entitlements.ts`; default unchanged).
 
 ## #295: tenant binding, and what Prisma actually does
 
@@ -51,41 +56,65 @@ report, and the post-call job was still enqueued (it then found no call in the w
 organization and skipped). Another organization's row was never changed in either version. The
 correction treats both a `null` result and an unexplained P2002 as "foreign".
 
-`tests/unit/voice-call-binding.postgres.test.ts` covers the requested real-database cases:
-organizations A and B, A's whole row unchanged after B's report and status update, no post-call
-work, 409 vs 200, ten rounds of concurrent first writes within one organization, and an
-out-of-range integer as a genuine database failure. It follows the existing
-`invitation-seat-limit.postgres.test.ts` pattern: skipped unless `VOICE_PG_URL` is set. **It has
-never been run.** To run it: a scratch `pgvector/pgvector:pg15` database,
+**Real-Postgres results** (`tests/unit/voice-call-binding.postgres.test.ts`, run `38129755849`):
+
+| Test (real route, real Prisma, real Postgres)                                    | main `a72fa7d`                                                            | #295 v1 `5c468f7`                                     | #295 `fe33e37` |
+| -------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------- | -------------- |
+| B's end-of-call report for A's call id: A's row unchanged, nothing queued, 409   | ❌ **A's row overwritten** (duration 999, reason and transcript "forged") | ❌ row unchanged, but **post-call queued for B**, 200 | ✅             |
+| B's status update for A's call id: A's row unchanged, conflict logged            | ❌ row unchanged; no conflict logged                                      | ✅                                                    | ✅             |
+| A's own retries: redelivered report; report whose enqueue failed                 | ✅                                                                        | ✅                                                    | ✅             |
+| Concurrent first writes (status update + report, both orders, 10 rounds)         | ❌ **unhandled P2002**: one request errors                                | ✅                                                    | ✅             |
+| A genuine database failure (temporary trigger) propagates; not called a conflict | ✅                                                                        | ✅                                                    | ✅             |
+
+The previous-code steps must fail on the labelled assertion that shows the defect ("A's row
+unchanged" on main, "nothing queued for B" on v1); a failure on any other assertion does not
+count. Main's concurrent first-write failure is a second, same-organization defect: when the
+in-progress update and the end-of-call report race, one of them fails with P2002 and relies on a
+Vapi retry. The P2002 handling in #295 fixes it.
+
+To rerun locally once a database exists: a scratch `pgvector/pgvector:pg15` database,
 `tests/migrations/supabase-compatibility.sql`, `npx prisma migrate deploy`, then
 `VOICE_PG_URL=… npx vitest run tests/unit/voice-call-binding.postgres.test.ts`.
 
 ## Post-call concurrency (#297)
 
-Confirmed by code inspection; reproduced only with mocks. Every "already recorded?" guard in the
-post-call job (usage, contact, CRM activity, owner notification) was a separate SELECT then
-INSERT, with no unique constraint behind it (`usage_records`, `activities` and `notifications`
-have none on the call). Two runs of the job for the same call at the same moment both pass each
-check under READ COMMITTED. QStash's `deduplicationId` reduces how often that happens; it does not
-make the job run once (a duplicate report outside its window, or a retry overlapping a slow
-first attempt).
+Every "already recorded?" guard in the post-call job (usage, contact, CRM activity, owner
+notification) was a separate SELECT then INSERT, with no unique constraint behind it. QStash's
+`deduplicationId` reduces how often two runs overlap; it does not make the job run once.
 
-- **Reproduced (mocked):** with run A paused inside its usage check until run B reaches the same
-  step, the previous head records the minutes twice.
-- **Fix (no schema change):** each check-then-insert runs in its own transaction holding
-  `pg_advisory_xact_lock(hashtext('post_call'), hashtext(call.id))`, the pattern already used for
-  bookings, contacts by email and phone numbers. The second run waits, then sees the first run's
-  row. Each step commits on its own, so a retry after a partial failure redoes only what is
-  missing and loses nothing.
-- **Not proven:** no real-Postgres run, so this is **not** a demonstrated exactly-once guarantee.
-- **Residual:**
-  - Two simultaneous runs can each pay for a summary call. The last summary written wins; only
-    one activity is created.
-  - Two different calls from the same new number at the same moment can still create two
-    contacts. `contacts` has no unique (org, phone); that is pre-existing and per-number, not
-    per-call.
-- **Durable alternative (needs a migration, not proposed here):** a unique index on the call key
-  for `usage_records` and `activities`. The lock is enough without a schema change.
+**Fix (no schema change):** each check-then-insert runs in its own transaction holding
+`pg_advisory_xact_lock(hashtext('post_call'), hashtext(call.id))`, the pattern already used for
+bookings and phone numbers. Each step commits on its own.
+
+**Real-Postgres results** (`tests/unit/post-call-concurrency.postgres.test.ts`, run
+`38129755849`; independent connections; summary provider, Redis, QStash and workflow queue
+mocked; assertions on committed rows):
+
+| Test                                                                                                                 | before the locks `a9f1b43`                                                       | #297 `fcaace0`                                      |
+| -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------- | --------------------------------------------------- |
+| Two simultaneous runs for one call: usage, contact, activity, notification each once                                 | ❌ **usage recorded twice**                                                      | ✅ the second run waited on the lock at every check |
+| Retry after a failure part-way (activity insert fails): only unfinished steps run                                    | ✅                                                                               | ✅                                                  |
+| A step failing inside its transaction (contact link) rolls back its contact; the retry completes                     | ❌ contact left behind (no transaction; a retry finds it by phone, no duplicate) | ✅                                                  |
+| Two orgs' calls at once: each completes in its own org, neither waited on the other's lock; B can't process A's call | ✅                                                                               | ✅                                                  |
+
+How the race is forced: run A, having read "nothing recorded yet", is held before it may insert,
+until run B has made the same read (no serialization) or is seen in `pg_locks` waiting for A's
+advisory lock (serialization). The second run starts once the first has reached that check,
+because two lazy route imports in flight at once can bypass `vi.mock` in Vitest (seen in an
+earlier run as the real QStash verifier answering 401). An earlier version of this harness held
+run A before its read, which let the pre-lock code pass the counts; that run is not counted.
+
+**Not established:** exactly-once delivery, or anything about external side effects.
+
+**Residual, unchanged:**
+
+- two simultaneous runs can each pay for a summary call (the last one written wins; one
+  activity);
+- two different calls from the same new number at the same moment can still create two contacts
+  (`contacts` has no unique (org, phone)).
+
+A unique index on the call key would make the guarantee schema-backed; that needs a migration and
+is not proposed.
 
 ## Anonymous knowledge-base access (#302)
 
@@ -105,7 +134,10 @@ first attempt).
   - missing or malformed settings allow nothing;
   - the next sync stops offering the tool;
   - the knowledge-base toggle leaves the assistant form (the column stays).
-  - Signed-in chat is unchanged. `src/server/ai/tools/index.ts` is not touched.
+  - Signed-in chat is unchanged: same tool, same organization-scoped retrieval, same role
+    permissions (`kb:read`); no chat code and not `src/server/ai/tools/index.ts` changed.
+- **Deploying #302 turns off document answers on every phone assistant.** Callers asking about
+  something only in an uploaded document will hear that the assistant doesn't know.
 - **Follow-up for the owner:** per-document or per-collection public visibility, set
   deliberately and enforced inside retrieval (`match_chunks`). It needs a migration and its own
   review.
@@ -165,9 +197,13 @@ first attempt).
   is read from `call.monitor.controlUrl`; the end-call message is `{"type":"end-call"}`. So
   `controlUrl` should be present without setting `monitorPlan`. Still to confirm live.
 - **Recording** (OpenAPI): the setting is `artifactPlan.recordingEnabled`, default true.
-  `CreateAssistantDTO` has **no** top-level `recordingEnabled`, which
-  `src/server/integrations/vapi.ts` sends. Recording happens anyway by default. Whether Vapi
-  ignores the unknown field or rejects the request is not established. Not changed here.
+  Neither `CreateAssistantDTO` nor `UpdateAssistantDTO` has a top-level `recordingEnabled`, which
+  `src/server/integrations/vapi.ts` sends; recording happens only because the documented field
+  defaults to on. Draft #304 sends the same intent (recording on) as
+  `artifactPlan: { recordingEnabled: true }`. No policy change. Review risk: it is the first
+  `artifactPlan` the sync sends, so if Vapi treats a nested object in a PATCH as a replacement,
+  hand-set `artifactPlan` options on a synced assistant would be reset. Check one staging
+  assistant's `artifactPlan` in the dashboard (read only) before deploying.
 - **Recording URLs** (OpenAPI `Artifact`): presigned URLs expire; the raw `recordingUrl` "remain[s]
   the stable identifier and do[es] not expire". Whether the raw URL needs authentication is not
   stated.
@@ -180,7 +216,8 @@ first attempt).
 - the actual credential settings;
 - the subscription's retention days;
 - whether raw recording URLs are publicly fetchable;
-- whether the top-level `recordingEnabled` is accepted.
+- whether Vapi ignores or rejects the top-level `recordingEnabled` main sends today, and what
+  `artifactPlan` the live assistants have.
 
 No Vapi configuration was read or changed.
 
@@ -223,16 +260,25 @@ Gaps (no refactor started):
 
 ## Dependencies for the release-gate owner (old account)
 
-- Incorporate the rows above. Treat nothing mocked or compiler-level as database or live
-  evidence.
+- Incorporate the rows above. Only #295 and #297 have database evidence (run `38129755849`);
+  treat nothing mocked or compiler-level as database or live evidence.
 - No calendar, recurrence, booking or busy-query file was changed. `src/server/ai/tools/index.ts`
   was not changed (#296).
+- Shared-file conflict risks: `src/app/api/v1/voice/webhook/route.ts` (#294, #295, #302);
+  `src/server/services/billing/entitlements.ts` (#297 adds an optional parameter to
+  `recordUsage`); `tests/unit/voice-webhook.test.ts` (#294, #295, #302). Each PR is based on
+  `a72fa7d` and was not tested combined with the others or with the integration candidate.
+- #303 is evidence only: it merges #295 and #297 and adds a PR-only workflow. Don't merge it,
+  and don't bring its workflow or `scripts/ci/expect-test-failure.sh` into the candidate.
 - `executeTool` returns tool errors to the model but logs nothing (its catch). A one-line
   structured log there (`{event: "ai_tool_failed", tool, actorType, name}`, ids only) belongs
   with whoever owns that file.
 - #302 changes what live assistants can do once deployed, and their Vapi tool lists at their
   next sync.
-- Flaky under heavy parallel load, both passing alone:
-  - `tests/unit/voice-conversation-flow.test.ts`;
-  - `tests/unit/hook-config-protection.test.ts` (one 5 s timeout seen once on #295; about 0.9 s
-    alone on both main and the branch).
+- Flaky under heavy parallel load, both passing alone on main and the branches (not changed;
+  no synchronization defect reproduced, and neither is in these PRs):
+  - `tests/unit/voice-conversation-flow.test.ts` (in-app live voice; 5 s timeouts, 21/21 alone);
+  - `tests/unit/hook-config-protection.test.ts` (one 5 s timeout once; about 0.9 s alone).
+- Vitest harness constraint: two first lazy imports of a route in flight at once can bypass
+  `vi.mock`. The Postgres tests start the second request after the first's imports, then force
+  the overlap with gates.
