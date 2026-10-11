@@ -1,0 +1,78 @@
+# Database evidence for the Voice PRs #295 and #297. Lives only on the draft evidence
+# branch (ci/voice-postgres-evidence); not for merge. Disposable PostgreSQL service,
+# synthetic data, read-only token, no secrets, no deployment, no external services.
+name: Voice database evidence
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  voice-postgres:
+    name: Voice tests on real PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      DIRECT_URL: postgresql://postgres:postgres@localhost:5432/postgres
+      VOICE_PG_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - name: Checkout (full history, for the previous-code runs)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+      - name: Deploy the complete migration history to the empty database
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/migrations/supabase-compatibility.sql
+          npx prisma migrate deploy
+          npx prisma migrate status
+
+      - name: "Fixed code: #295 tenant binding and #297 post-call concurrency"
+        run: >-
+          npx vitest run --reporter=verbose
+          tests/unit/voice-call-binding.postgres.test.ts
+          tests/unit/post-call-concurrency.postgres.test.ts
+
+      # Each previous-code run must fail its regression test on the labelled assertion that
+      # shows the defect (a failure on any other assertion does not count), or the job
+      # fails. The whole file also runs verbosely, so the log shows every result.
+      - name: "Previous code: main's webhook (a72fa7d) lets B overwrite A's call"
+        run: |
+          git show a72fa7d:src/app/api/v1/voice/webhook/route.ts > src/app/api/v1/voice/webhook/route.ts
+          npx vitest run --reporter=verbose tests/unit/voice-call-binding.postgres.test.ts || true
+          bash scripts/ci/expect-test-failure.sh tests/unit/voice-call-binding.postgres.test.ts             "B's end-of-call report for A's call id" "A's row unchanged"
+          git checkout -- src/app/api/v1/voice/webhook/route.ts
+      - name: "Previous code: #295 first version (5c468f7) queues work for B"
+        run: |
+          git show 5c468f7:src/app/api/v1/voice/webhook/route.ts > src/app/api/v1/voice/webhook/route.ts
+          npx vitest run --reporter=verbose tests/unit/voice-call-binding.postgres.test.ts || true
+          bash scripts/ci/expect-test-failure.sh tests/unit/voice-call-binding.postgres.test.ts             "B's end-of-call report for A's call id" "nothing queued for B"
+          git checkout -- src/app/api/v1/voice/webhook/route.ts
+      - name: "Previous code: #297 before the locks (a9f1b43) double-records"
+        run: |
+          git show a9f1b43:src/app/api/v1/jobs/post-call/route.ts > src/app/api/v1/jobs/post-call/route.ts
+          npx vitest run --reporter=verbose tests/unit/post-call-concurrency.postgres.test.ts || true
+          bash scripts/ci/expect-test-failure.sh tests/unit/post-call-concurrency.postgres.test.ts             "two simultaneous runs" "usage rows"
+          git checkout -- src/app/api/v1/jobs/post-call/route.ts
