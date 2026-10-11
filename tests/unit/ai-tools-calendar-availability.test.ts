@@ -16,7 +16,7 @@ vi.mock("@/server/services/audit", () => ({ audit: auditMock }));
 vi.mock("@/server/ai/rag", () => ({ retrieveChunks: vi.fn() }));
 
 import { TOOL_REGISTRY, type ToolIdentity } from "@/server/ai/tools";
-import { findManyOver } from "./helpers/calendar-event-where";
+import { findManyOver, findManyPagedOver } from "./helpers/calendar-event-where";
 
 const getCalendarAvailability = TOOL_REGISTRY.find((t) => t.name === "getCalendarAvailability")!;
 
@@ -163,6 +163,62 @@ describe("getCalendarAvailability tool", () => {
     expect(eventFindManyMock).toHaveBeenCalledWith(
       expect.objectContaining({ select: expect.objectContaining({ timezone: true }) }),
     );
+  });
+
+  it("an old series stays busy when the org has more rows than one query returns", async () => {
+    scheduleFindFirstMock.mockResolvedValueOnce(null); // default Mon-Fri 09-17
+    // 1,500 newer series that ended in 2025, plus Monday 09:00 Helsinki since 2014.
+    const ended = Array.from({ length: 1500 }, (_, i) => ({
+      id: `ended-${String(i).padStart(4, "0")}`,
+      deletedAt: null,
+      status: "CONFIRMED",
+      startsAt: new Date(Date.UTC(2025, 0, 1) + i * 3_600_000),
+      endsAt: new Date(Date.UTC(2025, 0, 1) + i * 3_600_000 + 1_800_000),
+      recurrenceRule: "FREQ=WEEKLY;COUNT=1",
+      timezone: "Europe/Helsinki",
+    }));
+    eventFindManyMock.mockImplementation(
+      findManyPagedOver([
+        ...ended,
+        {
+          id: "old-weekly",
+          deletedAt: null,
+          status: "CONFIRMED",
+          startsAt: new Date("2014-01-06T07:00:00.000Z"),
+          endsAt: new Date("2014-01-06T07:30:00.000Z"),
+          recurrenceRule: "FREQ=WEEKLY",
+          timezone: "Europe/Helsinki",
+        },
+      ]) as never,
+    );
+
+    const result = (await getCalendarAvailability.execute(identity(), {
+      date: "2026-08-17",
+    })) as { freeSlots: string[] };
+
+    expect(result.freeSlots).not.toContain("2026-08-17T06:00:00.000Z"); // 09:00 EEST
+    expect(result.freeSlots).toContain("2026-08-17T06:30:00.000Z");
+  });
+
+  it("offers no slot when the busy rows can't all be read", async () => {
+    scheduleFindFirstMock.mockResolvedValueOnce(null);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    // Every page comes back full: the loader stops at its page limit.
+    eventFindManyMock.mockImplementation((async (args: { take: number }) =>
+      Array.from({ length: args.take }, (_, i) => ({
+        id: `row-${i}`,
+        startsAt: new Date("2026-01-01T00:00:00.000Z"),
+        endsAt: new Date("2026-01-01T00:30:00.000Z"),
+        recurrenceRule: null,
+        timezone: "UTC",
+      }))) as never);
+
+    const result = (await getCalendarAvailability.execute(identity(), {
+      date: "2026-08-17",
+    })) as { freeSlots: string[] };
+
+    expect(result.freeSlots).toEqual([]);
+    warn.mockRestore();
   });
 
   it("applies a date override marking the day fully unavailable", async () => {

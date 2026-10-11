@@ -25,7 +25,7 @@ vi.mock("@/server/services/audit", () => ({ audit: auditMock }));
 vi.mock("@/server/ai/rag", () => ({ retrieveChunks: vi.fn() }));
 
 import { TOOL_REGISTRY, type ToolIdentity } from "@/server/ai/tools";
-import { findFirstOver, findManyOver } from "./helpers/calendar-event-where";
+import { findFirstOver, findManyOver, findManyPagedOver } from "./helpers/calendar-event-where";
 
 const bookMeeting = TOOL_REGISTRY.find((t) => t.name === "bookMeeting")!;
 
@@ -99,6 +99,38 @@ describe("bookMeeting tool", () => {
 
     const result = await bookMeeting.execute(identity(), input()); // Mon 2026-08-17 10:00Z
 
+    expect(result).toEqual({ booked: false, reason: "slot_taken" });
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects a slot an old series occupies even when the org has more rows than one query returns", async () => {
+    // 1,500 newer series that ended in 2025, plus Monday 10:00Z weekly since 2014.
+    const ended = Array.from({ length: 1500 }, (_, i) => ({
+      id: `ended-${String(i).padStart(4, "0")}`,
+      organizationId: "org-a",
+      deletedAt: null,
+      status: "CONFIRMED",
+      startsAt: new Date(Date.UTC(2025, 0, 1) + i * 3_600_000),
+      endsAt: new Date(Date.UTC(2025, 0, 1) + i * 3_600_000 + 1_800_000),
+      recurrenceRule: "FREQ=WEEKLY;COUNT=1",
+      timezone: "UTC",
+    }));
+    txMock.calendarEvent.findMany.mockImplementation(
+      findManyPagedOver([
+        ...ended,
+        {
+          id: "old-weekly",
+          organizationId: "org-a",
+          deletedAt: null,
+          status: "CONFIRMED",
+          startsAt: new Date("2014-01-06T10:00:00.000Z"),
+          endsAt: new Date("2014-01-06T10:30:00.000Z"),
+          recurrenceRule: "FREQ=WEEKLY",
+          timezone: "UTC",
+        },
+      ]) as never,
+    );
+    const result = await bookMeeting.execute(identity(), input()); // Mon 2026-08-17 10:00Z
     expect(result).toEqual({ booked: false, reason: "slot_taken" });
     expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
   });

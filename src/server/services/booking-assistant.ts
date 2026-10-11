@@ -4,7 +4,13 @@ import { routeModel } from "@/server/ai/router";
 import { anthropic } from "@/server/integrations/anthropic";
 import { tenantDb } from "@/server/db/tenant";
 import { computeAvailableSlots, type WeeklyRule } from "@/server/calendar/slots";
-import { busyIntervals, busyWindowWhere } from "@/server/calendar/busy";
+import {
+  BUSY_ROW_ORDER,
+  BUSY_ROW_SELECT,
+  busyIntervals,
+  busyWindowWhere,
+  loadBusyRows,
+} from "@/server/calendar/busy";
 import { DEFAULT_WEEKLY_RULES } from "./booking";
 import { neutralizeTagBreakout } from "@/server/ai/prompts/untrusted";
 import { buildBusinessDnaPromptBlock, getBusinessDnaContext } from "@/server/business-dna/context";
@@ -56,28 +62,30 @@ export async function suggestAvailableTimes(
   const now = new Date();
   const to = new Date(now.getTime() + (params.daysAhead ?? 10) * 86_400_000);
 
-  const [parts, events] = await Promise.all([
+  const [parts, { rows: events, complete }] = await Promise.all([
     getOwnerScheduleParts(ctx),
-    db.calendarEvent.findMany({
-      where: {
-        deletedAt: null,
-        status: { not: "CANCELED" },
-        AND: [
-          { OR: [{ ownerId: ctx.userId }, { ownerId: null, createdById: ctx.userId }] },
-          busyWindowWhere(now, to),
-        ],
-      },
-      select: { startsAt: true, endsAt: true, recurrenceRule: true, timezone: true },
-      orderBy: { startsAt: "desc" }, // newest first if the cap is reached
-      take: 500,
-    }),
+    loadBusyRows((page) =>
+      db.calendarEvent.findMany({
+        where: {
+          deletedAt: null,
+          status: { not: "CANCELED" },
+          AND: [
+            { OR: [{ ownerId: ctx.userId }, { ownerId: null, createdById: ctx.userId }] },
+            busyWindowWhere(now, to),
+          ],
+        },
+        select: BUSY_ROW_SELECT,
+        orderBy: BUSY_ROW_ORDER,
+        ...page,
+      }),
+    ),
   ]);
 
   const slots = computeAvailableSlots({
     timezone: parts.timezone,
     rules: parts.rules,
     overrides: [],
-    busy: busyIntervals(events, now, to),
+    busy: busyIntervals(events, now, to, { complete }),
     from: now,
     to,
     now,
