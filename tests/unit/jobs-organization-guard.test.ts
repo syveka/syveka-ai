@@ -229,6 +229,8 @@ const db = {
 };
 
 vi.mock("@/server/jobs/verify", () => ({ verifyJobRequest: async (r: Request) => r.text() }));
+// publish-creator-post schedules a delayed stale-publish check after each claim.
+vi.mock("@/server/jobs/queue", () => ({ enqueue: vi.fn(async () => undefined) }));
 vi.mock("@/server/db/tenant", () => ({
   get unscopedPrisma() {
     return db;

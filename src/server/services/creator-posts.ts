@@ -239,6 +239,10 @@ export async function schedulePost(
       scheduledFor: params.scheduledFor,
       socialAccountId: params.socialAccountId,
       publishStatus: "SCHEDULED",
+      // Scheduling again is the person's decision to retry, including after a
+      // failure that may have published (checked by them on the platform).
+      lastErrorCode: null,
+      lastErrorSafe: null,
     },
   });
   if (claimed.count !== 1) {

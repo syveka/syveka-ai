@@ -40,6 +40,16 @@ export interface SocialPublishResult {
 
 export type SocialPublishStatus = "processing" | "published" | "failed";
 
+/**
+ * The request that would publish failed without a definite answer (no
+ * response, a timeout, a server error, or a success without an id): the
+ * platform may have published. Publishing again could post twice, so the
+ * post waits for a person to check the platform instead of being retried.
+ */
+export class PublishOutcomeUnknownError extends Error {
+  readonly code = "publish_outcome_unknown";
+}
+
 /** Thrown by a real-platform adapter that has no working API integration yet. */
 export class SocialProviderNotImplementedError extends Error {
   readonly code = "social_provider_not_implemented";
