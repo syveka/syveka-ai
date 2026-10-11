@@ -5,6 +5,7 @@ import { audit } from "./audit";
 import {
   validateRecurrenceRule,
   expandOccurrences,
+  expandOccurrencesWithStatus,
   RecurrenceError,
 } from "@/server/calendar/recurrence";
 import { isValidTimezone } from "@/server/calendar/timezone";
@@ -137,6 +138,7 @@ export async function findConflicts(
       startsAt: true,
       endsAt: true,
       recurrenceRule: true,
+      timezone: true,
     },
     take: 500,
   });
@@ -151,19 +153,28 @@ export async function findConflicts(
     }
     try {
       const rule = validateRecurrenceRule(e.recurrenceRule);
-      const occurrences = expandOccurrences({
+      const { occurrences, truncated } = expandOccurrencesWithStatus({
         seriesStart: e.startsAt,
         seriesEnd: e.endsAt,
         rule,
         rangeFrom: params.startsAt,
         rangeTo: params.endsAt,
         max: 5,
+        timeZone: e.timezone,
       });
       const hit = occurrences.find((o) =>
         intervalsOverlap(params.startsAt, params.endsAt, o.startsAt, o.endsAt),
       );
       if (hit)
         conflicts.push({ id: e.id, title: e.title, startsAt: hit.startsAt, endsAt: hit.endsAt });
+      // An expansion cut short can't prove the slot free: report it.
+      else if (truncated)
+        conflicts.push({
+          id: e.id,
+          title: e.title,
+          startsAt: params.startsAt,
+          endsAt: params.endsAt,
+        });
     } catch {
       // Unparseable legacy rule: treat series anchor only.
       if (intervalsOverlap(params.startsAt, params.endsAt, e.startsAt, e.endsAt)) {
@@ -229,6 +240,7 @@ export async function listEvents(
         rangeFrom: range.from,
         rangeTo: range.to,
         max: 100,
+        timeZone: e.timezone,
       }).map((occ) => ({
         ...e,
         startsAt: occ.startsAt,
