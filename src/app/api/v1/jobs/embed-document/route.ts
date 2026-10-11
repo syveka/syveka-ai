@@ -13,6 +13,35 @@ const payloadSchema = z.object({
 
 const EMBED_BATCH = 64;
 
+const GENERIC_FAILURE = "Processing failed. Please try again.";
+const UNREADABLE_DOCUMENT = "The document could not be read.";
+
+/** A failure of this job whose message is written for the document's owner. */
+class DocumentProcessingError extends Error {
+  override name = "DocumentProcessingError";
+}
+
+/**
+ * What the owner sees (document.error, rendered as-is, and the failure notification).
+ * Only errors this codebase raises with fixed text written for the owner keep their
+ * message, matched by class rather than by `name`, which any error can set. The
+ * parser's own failure (`parser_failed`) carries the PDF/DOCX library's message, which
+ * can include file paths, so it gets a fixed text. Anything else -- a provider, storage
+ * or database error -- can carry keys, URLs or query detail (CLAUDE.md §4), so it
+ * becomes a generic message and is only logged by class name.
+ */
+function failureMessage(
+  err: unknown,
+  ownerFacing: ReadonlyArray<abstract new (...args: never[]) => Error>,
+): string {
+  if (!(err instanceof Error)) return GENERIC_FAILURE;
+  if ("code" in err && err.code === "parser_failed") return UNREADABLE_DOCUMENT;
+  if (err instanceof DocumentProcessingError || ownerFacing.some((type) => err instanceof type)) {
+    return err.message.slice(0, 500);
+  }
+  return GENERIC_FAILURE;
+}
+
 export async function POST(request: Request): Promise<NextResponse> {
   const [
     { Prisma },
@@ -23,8 +52,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     { chunkText },
     { embed },
     { recordUsage },
-    { assertExtractionLimits, assertTenantStoragePath, verifyUploadObject },
+    { assertExtractionLimits, assertTenantStoragePath, verifyUploadObject, DocumentIngestionError },
     { isOrganizationActive, ORGANIZATION_INACTIVE },
+    { ParserSecurityError },
+    { UrlIngestionError },
   ] = await Promise.all([
     import("@/generated/prisma/client/client"),
     import("@/server/jobs/verify"),
@@ -36,6 +67,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/services/billing/entitlements"),
     import("@/server/security/document-ingestion"),
     import("@/server/jobs/organization-guard"),
+    import("@/server/security/parser-security"),
+    import("@/server/security/url-ingestion"),
   ]);
 
   const rawBody = await verifyJobRequest(request);
@@ -61,6 +94,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     data: { status: "PROCESSING", error: null },
   });
 
+  let chunkCount = 0;
   try {
     // 1. Extract
     let text: string;
@@ -89,7 +123,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     // 2. Chunk
     assertExtractionLimits(text);
     const chunks = chunkText(text);
-    if (chunks.length === 0) throw new Error("Document produced no extractable text");
+    if (chunks.length === 0) {
+      throw new DocumentProcessingError("Document produced no extractable text");
+    }
     assertExtractionLimits(text, chunks.length);
 
     // 3. Embed in batches + insert (replace any previous chunks: reprocess-safe)
@@ -123,24 +159,23 @@ export async function POST(request: Request): Promise<NextResponse> {
       where: { id: documentId },
       data: { status: "READY", chunkCount: chunks.length },
     });
-    await recordUsage(orgId, "EMBEDDINGS", chunks.length, { documentId });
-
-    // Notify uploader (in-app; Realtime picks it up from the table insert)
-    await unscopedPrisma.notification.create({
-      data: {
-        organizationId: orgId,
-        userId: document.uploadedById,
-        type: "document.ready",
-        title: document.title,
-        href: "/knowledge",
-      },
-    });
-
-    return NextResponse.json({ ok: true, chunks: chunks.length });
+    chunkCount = chunks.length;
   } catch (err) {
     // Deleted meanwhile: no failure record or notification (no retry either).
     if (!(await isOrganizationActive(orgId))) return NextResponse.json(ORGANIZATION_INACTIVE);
-    const message = err instanceof Error ? err.message.slice(0, 500) : "processing failed";
+    console.error(
+      JSON.stringify({
+        event: "document_embed_failed",
+        orgId,
+        documentId,
+        name: err instanceof Error ? err.name : "unknown",
+      }),
+    );
+    const message = failureMessage(err, [
+      DocumentIngestionError,
+      ParserSecurityError,
+      UrlIngestionError,
+    ]);
     await unscopedPrisma.document.update({
       where: { id: documentId },
       data: { status: "FAILED", error: message },
@@ -158,4 +193,44 @@ export async function POST(request: Request): Promise<NextResponse> {
     // 200: extraction failures are terminal, don't burn QStash retries
     return NextResponse.json({ ok: false, error: message });
   }
+
+  // The document is READY: its chunks are stored and searchable. Bookkeeping after that
+  // must not report it as failed, so a failure here is logged instead. Nothing retries or
+  // reconciles a lost EMBEDDINGS record; today that metric is recorded but not read by any
+  // limit, invoice or usage page.
+  try {
+    await recordUsage(orgId, "EMBEDDINGS", chunkCount, { documentId });
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "document_embed_usage_failed",
+        orgId,
+        documentId,
+        name: err instanceof Error ? err.name : "unknown",
+      }),
+    );
+  }
+  try {
+    // Notify uploader (in-app; Realtime picks it up from the table insert)
+    await unscopedPrisma.notification.create({
+      data: {
+        organizationId: orgId,
+        userId: document.uploadedById,
+        type: "document.ready",
+        title: document.title,
+        href: "/knowledge",
+      },
+    });
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "document_ready_notification_failed",
+        orgId,
+        documentId,
+        name: err instanceof Error ? err.name : "unknown",
+      }),
+    );
+  }
+
+  return NextResponse.json({ ok: true, chunks: chunkCount });
 }

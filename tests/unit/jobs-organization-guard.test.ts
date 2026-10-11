@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * R2: queued jobs for a missing or soft-deleted organization skip (HTTP 200,
@@ -246,7 +246,9 @@ vi.mock("@/server/ai/chunking", () => ({
   chunkText: (text: string) =>
     text.split("|").map((content, index) => ({ index, content, tokenCount: 3 })),
 }));
-vi.mock("@/server/security/document-ingestion", () => ({
+vi.mock("@/server/security/document-ingestion", async (importActual) => ({
+  DocumentIngestionError: (await importActual<{ DocumentIngestionError: unknown }>())
+    .DocumentIngestionError,
   assertExtractionLimits: () => undefined,
   assertTenantStoragePath: () => undefined,
   verifyUploadObject: () => undefined,
@@ -489,6 +491,103 @@ describe("embed-document", () => {
     await embedJob();
     await embedJob();
     expect(fx.embed).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A document's status and error are what its owner sees on the Knowledge page
+ * (document-table.tsx renders `error` verbatim). They must say what happened without
+ * exposing provider or database detail (CLAUDE.md §4), the failure must reach the
+ * logs (ids and error class only), and a document whose chunks are all stored must
+ * not be reported as failed because a later bookkeeping step failed.
+ */
+describe("embed-document — failures are truthful and safe", () => {
+  const embedJob = (inlineContent = "one|two|three") =>
+    embedDocument(job({ documentId: DOC_A, orgId: ORG_A, inlineContent }));
+  const doc = () => s.documents.find((d) => d.id === DOC_A)!;
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => errorSpy.mockRestore());
+  const logged = () => errorSpy.mock.calls.flat().map(String).join("\n");
+
+  it("a provider error is stored and notified as a generic message, and logged without its text", async () => {
+    fx.embed.mockRejectedValueOnce(
+      new Error(
+        "401 provider rejected request PROVIDER-INTERNAL-DETAIL at https://api.openai.com/v1",
+      ),
+    );
+
+    const res = await embedJob();
+
+    expect(res.status).toBe(200);
+    expect(doc().status).toBe("FAILED");
+    expect(doc().error).toBe("Processing failed. Please try again.");
+    const failed = s.notifications.find((n) => n.type === "document.failed")!;
+    expect(failed.body).toBe("Processing failed. Please try again.");
+    expect(JSON.stringify(await res.json())).not.toContain("PROVIDER-INTERNAL-DETAIL");
+    expect(JSON.parse(logged())).toEqual({
+      event: "document_embed_failed",
+      orgId: ORG_A,
+      documentId: DOC_A,
+      name: "Error",
+    });
+    expect(logged()).not.toContain("PROVIDER-INTERNAL-DETAIL");
+  });
+
+  const failUrlExtraction = async (err: Error) => {
+    const { extractFromUrl } = await import("@/server/ai/extract");
+    vi.mocked(extractFromUrl).mockRejectedValueOnce(err);
+    Object.assign(doc(), { sourceType: "URL", sourceUrl: "https://intranet.example/doc" });
+    await embedDocument(job({ documentId: DOC_A, orgId: ORG_A }));
+    expect(doc().status).toBe("FAILED");
+  };
+
+  it("a reason written for the user is kept: a blocked URL says so", async () => {
+    const { UrlIngestionError } = await import("@/server/security/url-ingestion");
+
+    await failUrlExtraction(
+      new UrlIngestionError("blocked_destination", "URL destination is not public"),
+    );
+
+    expect(doc().error).toBe("URL destination is not public");
+  });
+
+  it("a parser failure doesn't show the PDF library's own message", async () => {
+    const { ParserSecurityError } = await import("@/server/security/parser-security");
+
+    await failUrlExtraction(
+      new ParserSecurityError(
+        "parser_failed",
+        "ENOENT: no such file or directory, open '/var/task/node_modules/pdf-parse/PARSER-INTERNAL-DETAIL'",
+      ),
+    );
+
+    expect(doc().error).toBe("The document could not be read.");
+    expect(JSON.stringify(s.notifications)).not.toContain("PARSER-INTERNAL-DETAIL");
+  });
+
+  it("an error that only borrows an owner-facing name is not trusted", async () => {
+    await failUrlExtraction(
+      Object.assign(new Error("upstream detail PROVIDER-INTERNAL-DETAIL"), {
+        name: "UrlIngestionError",
+      }),
+    );
+
+    expect(doc().error).toBe("Processing failed. Please try again.");
+  });
+
+  it("usage recording failing after the chunks are stored leaves the document READY", async () => {
+    fx.recordUsage.mockRejectedValueOnce(new Error("connection terminated"));
+
+    const res = await embedJob();
+
+    expect(await res.json()).toEqual({ ok: true, chunks: 3 });
+    expect(doc().status).toBe("READY");
+    expect(doc().error ?? null).toBeNull();
+    expect(s.notifications.map((n) => n.type)).toEqual(["document.ready"]);
+    expect(logged()).toContain("document_embed_usage_failed");
   });
 });
 
