@@ -7,10 +7,10 @@ import { randomUUID } from "node:crypto";
  * connections. Mocked: the QStash signature, Redis, the summary provider (no paid call)
  * and the workflow event queue (no notification leaves the database).
  *
- * Two runs of the job are interleaved deterministically: the first run to reach a guarded
- * "already recorded?" check waits there until the second run either reaches the same
- * check (no serialization) or is seen waiting for an advisory lock in pg_locks
- * (serialization). Assertions are on committed rows.
+ * Two runs of the job are interleaved deterministically: the first run to finish a guarded
+ * "already recorded?" read waits, before it may insert, until the second run has made the
+ * same read (no serialization: both see nothing) or is seen waiting for an advisory lock
+ * in pg_locks (serialization). Assertions are on committed rows.
  *
  * The second run starts once the first has reached its usage check: the route imports its
  * dependencies lazily, and two of those imports in flight at once can bypass vi.mock in
@@ -70,7 +70,7 @@ vi.mock("@/server/integrations/anthropic", () => ({
 }));
 vi.mock("@/server/services/workflow-events", () => ({ emitWorkflowEvent: vi.fn(async () => {}) }));
 
-/** The first run to reach a gated check waits until the second run catches up there. */
+/** The first run to finish a gated check waits until the second run catches up there. */
 async function passGate(name: string): Promise<void> {
   if (name === "usage") holder.onUsageCheck?.();
   const gates = holder.gates;
@@ -129,8 +129,11 @@ describe.skipIf(!PG_URL)("post-call job on real Postgres", () => {
     const gated =
       (name: string) =>
       async ({ args, query }: { args: unknown; query: (a: unknown) => Promise<unknown> }) => {
+        // Held after the read: the other run must also read (no serialization) or be
+        // waiting for this run's lock (serialization) before this run may insert.
+        const result = await query(args);
         await passGate(name);
-        return query(args);
+        return result;
       };
     holder.client = prisma.$extends({
       query: {
