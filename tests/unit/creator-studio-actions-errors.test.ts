@@ -21,8 +21,15 @@ vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/server/auth/guard", () => ({
   requirePermission: vi.fn(async () => ({ orgId: "org-a", userId: "user-1" })),
 }));
-vi.mock("@/server/integrations/redis", () => ({
-  rateLimiters: { creatorGenerate: { limit: vi.fn(async () => ({ success: true })) } },
+// The real limit helpers (checkRateLimit, fail closed) run against a mocked Upstash.
+vi.mock("@upstash/redis", () => ({ Redis: class Redis {} }));
+vi.mock("@upstash/ratelimit", () => ({
+  Ratelimit: class Ratelimit {
+    static slidingWindow() {
+      return {};
+    }
+    limit = vi.fn(async (_key: string) => ({ success: true }));
+  },
 }));
 vi.mock("@/server/services/creator-generations", async (importOriginal) => ({
   ...(await importOriginal<object>()),

@@ -42,8 +42,15 @@ vi.mock("@/server/auth/guard", async () => {
     }),
   };
 });
-vi.mock("@/server/integrations/redis", () => ({
-  rateLimiters: { businessDnaWrite: { limit: m.limit } },
+// The real limit helpers (checkRateLimit, fail closed) run against a mocked Upstash.
+vi.mock("@upstash/redis", () => ({ Redis: class Redis {} }));
+vi.mock("@upstash/ratelimit", () => ({
+  Ratelimit: class Ratelimit {
+    static slidingWindow() {
+      return {};
+    }
+    limit = m.limit;
+  },
 }));
 vi.mock("@/server/services/business-dna", () => ({
   getBusinessDNA: vi.fn(),

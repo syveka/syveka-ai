@@ -8,6 +8,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 const inviteMember = vi.hoisted(() => vi.fn());
 
+// Within its rate limit (the limits themselves: rate-limit-gaps.test.ts).
+vi.mock("@/server/security/rate-limit", () => ({
+  actionRateLimitError: vi.fn(async () => null),
+  emailKey: (email: string) => email,
+}));
 vi.mock("@/server/auth/guard", () => ({
   requirePermission: vi.fn(async () => ({
     orgId: "11111111-1111-4111-8111-111111111111",

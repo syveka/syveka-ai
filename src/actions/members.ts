@@ -15,6 +15,7 @@ import {
 import { EntitlementError } from "@/server/services/billing/entitlements";
 import { inviteMemberSchema, changeRoleSchema } from "@/lib/validators/members";
 import { createSupabaseServer } from "@/server/supabase/server";
+import { actionRateLimitError, emailKey } from "@/server/security/rate-limit";
 
 export type MemberActionState = { error?: string; message?: string };
 
@@ -23,7 +24,8 @@ export type MemberActionState = { error?: string; message?: string };
  * exception text is never returned to the form: it is untranslated and may
  * carry internal detail.
  */
-type InviteErrorCode = "invalid_input" | "already_member" | "plan_limit" | "invite_failed";
+type InviteErrorCode =
+  "invalid_input" | "already_member" | "plan_limit" | "rate_limited" | "invite_failed";
 
 function inviteErrorCode(error: unknown): InviteErrorCode {
   if (error instanceof MemberError) return error.code;
@@ -47,6 +49,15 @@ export async function inviteMemberAction(
 
   const parsed = inviteMemberSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
+
+  // Every invitation sends an email. Checked before anything is looked up, so
+  // the answer is the same whether or not the address has an account.
+  const limited = await actionRateLimitError(
+    ["memberInviteOrg", ctx.orgId],
+    ["memberInviteRecipient", `${ctx.orgId}:${emailKey(parsed.data.email)}`],
+  );
+  if (limited === "rate_limited") return { error: "rate_limited" };
+  if (limited) return { error: "invite_failed" };
 
   try {
     await inviteMember(ctx, { email: parsed.data.email, role: parsed.data.role as Role });

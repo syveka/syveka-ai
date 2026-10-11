@@ -162,7 +162,11 @@ function ServiceForm({
             {t("services.cancel")}
           </Button>
         ) : null}
-        {state.error ? <p className="text-sm text-destructive">{t("invalidInput")}</p> : null}
+        {state.error ? (
+          <p className="text-sm text-destructive">
+            {t(state.error === "rate_limited" ? "rateLimited" : "invalidInput")}
+          </p>
+        ) : null}
       </div>
     </form>
   );

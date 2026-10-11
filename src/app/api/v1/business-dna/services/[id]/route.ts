@@ -8,14 +8,19 @@ export async function PATCH(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  const [{ requirePermission }, { AuthError }, { updateBusinessDnaService }] = await Promise.all([
-    import("@/server/auth/guard"),
-    import("@/server/auth/session"),
-    import("@/server/services/business-dna-services"),
-  ]);
+  const [{ requirePermission }, { AuthError }, { updateBusinessDnaService }, { rateLimitRefusal }] =
+    await Promise.all([
+      import("@/server/auth/guard"),
+      import("@/server/auth/session"),
+      import("@/server/services/business-dna-services"),
+      import("@/server/security/rate-limit"),
+    ]);
 
   try {
     const ctx = await requirePermission("business-dna:write");
+    // Re-syncs the organization's voice assistants, like a profile save.
+    const refusal = await rateLimitRefusal("businessDnaWrite", ctx.orgId);
+    if (refusal) return refusal;
     const { id } = await params;
     const body = businessDnaServiceSchema
       .partial()
@@ -46,15 +51,22 @@ export async function DELETE(
   _request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  const [{ requirePermission }, { AuthError }, { deactivateBusinessDnaService }] =
-    await Promise.all([
-      import("@/server/auth/guard"),
-      import("@/server/auth/session"),
-      import("@/server/services/business-dna-services"),
-    ]);
+  const [
+    { requirePermission },
+    { AuthError },
+    { deactivateBusinessDnaService },
+    { rateLimitRefusal },
+  ] = await Promise.all([
+    import("@/server/auth/guard"),
+    import("@/server/auth/session"),
+    import("@/server/services/business-dna-services"),
+    import("@/server/security/rate-limit"),
+  ]);
 
   try {
     const ctx = await requirePermission("business-dna:write");
+    const refusal = await rateLimitRefusal("businessDnaWrite", ctx.orgId);
+    if (refusal) return refusal;
     const { id } = await params;
     const service = await deactivateBusinessDnaService(ctx, id);
     return NextResponse.json({ data: service });

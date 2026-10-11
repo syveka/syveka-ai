@@ -55,6 +55,8 @@ function firstIssue(error: { issues: { message: string }[] }): string {
 
 export async function createCreatorProfileAction(payload: unknown): Promise<CreatorActionState> {
   const ctx = await requirePermission("creator:write");
+  const limited = await limitError(ctx, "api", "creator-profiles-create");
+  if (limited) return { error: limited };
   const parsed = createCreatorProfileSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
   const profile = await createCreatorProfile(ctx, parsed.data);
@@ -67,6 +69,8 @@ export async function createReferenceAssetUploadUrlAction(
   payload: unknown,
 ): Promise<{ error?: string; uploadIntentId?: string; signedUrl?: string }> {
   const ctx = await requirePermission("creator:write");
+  const limited = await limitError(ctx, "api", "creator-reference-upload-url");
+  if (limited) return { error: limited };
   const parsed = referenceAssetUploadUrlSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
   const result = await createReferenceAssetUploadUrl(ctx, profileId, parsed.data);
@@ -94,19 +98,27 @@ export async function confirmConsentAction(profileId: string): Promise<CreatorAc
   return {};
 }
 
-// The same per-user generation limit as the /api/v1/creator-studio/generations/* routes: each
-// generation is a paid provider call, whichever entry point starts it.
-async function generationRateLimited(ctx: { orgId: string; userId: string }): Promise<boolean> {
-  const { rateLimiters } = await import("@/server/integrations/redis");
-  const rateLimit = await rateLimiters.creatorGenerate.limit(`${ctx.orgId}:${ctx.userId}`);
-  return !rateLimit.success;
+/**
+ * The limit an action shares with its /api/v1/creator-studio route (same limiter and key, so
+ * the two entry points draw on one allowance), failing closed. Generations use the per-user
+ * creatorGenerate limit: each is a paid provider call, whichever entry point starts it.
+ */
+async function limitError(
+  ctx: { orgId: string; userId: string },
+  limiter: "creatorGenerate" | "creatorPostWorkflow" | "api",
+  routeKey?: string,
+): Promise<"rate_limited" | "service_unavailable" | null> {
+  const { actionRateLimitError } = await import("@/server/security/rate-limit");
+  const key = routeKey ? `${routeKey}:${ctx.orgId}:${ctx.userId}` : `${ctx.orgId}:${ctx.userId}`;
+  return actionRateLimitError([limiter, key]);
 }
 
 export async function generateCharacterImageAction(payload: unknown): Promise<CreatorActionState> {
   const ctx = await requirePermission("creator:generate");
   const parsed = generateCharacterImageSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
-  if (await generationRateLimited(ctx)) return { error: "rate_limited" };
+  const limited = await limitError(ctx, "creatorGenerate");
+  if (limited) return { error: limited };
   try {
     const { generation } = await requestCharacterImageGeneration(ctx, parsed.data);
     revalidatePath("/creator-studio/library");
@@ -122,7 +134,8 @@ export async function generateImageFromCharacterAction(
   const ctx = await requirePermission("creator:generate");
   const parsed = generateImageFromCharacterSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
-  if (await generationRateLimited(ctx)) return { error: "rate_limited" };
+  const limited = await limitError(ctx, "creatorGenerate");
+  if (limited) return { error: limited };
   try {
     const { generation } = await requestImageFromCharacterGeneration(ctx, parsed.data);
     revalidatePath("/creator-studio/library");
@@ -136,7 +149,8 @@ export async function generateVideoFromImageAction(payload: unknown): Promise<Cr
   const ctx = await requirePermission("creator:generate");
   const parsed = generateVideoFromImageSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
-  if (await generationRateLimited(ctx)) return { error: "rate_limited" };
+  const limited = await limitError(ctx, "creatorGenerate");
+  if (limited) return { error: limited };
   try {
     const { generation } = await requestVideoFromImageGeneration(ctx, parsed.data);
     revalidatePath("/creator-studio/library");
@@ -150,7 +164,8 @@ export async function generateCaptionAction(payload: unknown): Promise<CreatorAc
   const ctx = await requirePermission("creator:generate");
   const parsed = generateCaptionSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
-  if (await generationRateLimited(ctx)) return { error: "rate_limited" };
+  const limited = await limitError(ctx, "creatorGenerate");
+  if (limited) return { error: limited };
   try {
     const { generation } = await requestCaptionGeneration(ctx, parsed.data);
     revalidatePath("/creator-studio/library");
@@ -162,6 +177,8 @@ export async function generateCaptionAction(payload: unknown): Promise<CreatorAc
 
 export async function createCampaignAction(payload: unknown): Promise<CreatorActionState> {
   const ctx = await requirePermission("creator:write");
+  const limited = await limitError(ctx, "api", "creator-campaigns-create");
+  if (limited) return { error: limited };
   const parsed = createCampaignSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
   const campaign = await createCreatorCampaign(ctx, parsed.data);
@@ -187,6 +204,8 @@ export async function setCampaignAutopilotAction(
 
 export async function createCreatorPostAction(payload: unknown): Promise<CreatorActionState> {
   const ctx = await requirePermission("creator:write");
+  const limited = await limitError(ctx, "api", "creator-posts-create");
+  if (limited) return { error: limited };
   const parsed = createPostSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
   const post = await createCreatorPost(ctx, parsed.data);
@@ -213,6 +232,8 @@ export async function updatePostContentAction(
 
 export async function requestPostApprovalAction(postId: string): Promise<CreatorActionState> {
   const ctx = await requirePermission("creator:write");
+  const limited = await limitError(ctx, "creatorPostWorkflow");
+  if (limited) return { error: limited };
   await requestPostApproval(ctx, postId);
   revalidatePath("/creator-studio/approvals");
   revalidatePath("/creator-studio/library");
@@ -224,6 +245,8 @@ export async function reviewCreatorPostAction(
   payload: unknown,
 ): Promise<CreatorActionState> {
   const ctx = await requirePermission("creator:approve");
+  const limited = await limitError(ctx, "creatorPostWorkflow");
+  if (limited) return { error: limited };
   const parsed = reviewPostSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
   await reviewCreatorPost(ctx, postId, parsed.data);
@@ -237,6 +260,8 @@ export async function schedulePostAction(
   payload: unknown,
 ): Promise<CreatorActionState> {
   const ctx = await requirePermission("creator:publish");
+  const limited = await limitError(ctx, "creatorPostWorkflow");
+  if (limited) return { error: limited };
   const parsed = schedulePostSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
   try {
@@ -257,6 +282,8 @@ export async function cancelScheduledPostAction(postId: string): Promise<Creator
 
 export async function connectSocialAccountAction(payload: unknown): Promise<CreatorActionState> {
   const ctx = await requirePermission("creator:manage-social-accounts");
+  const limited = await limitError(ctx, "api", "creator-social-connect");
+  if (limited) return { error: limited };
   const parsed = connectSocialAccountSchema.safeParse(payload);
   if (!parsed.success) return { error: firstIssue(parsed.error) };
   try {
@@ -272,6 +299,8 @@ export async function disconnectSocialAccountAction(
   accountId: string,
 ): Promise<CreatorActionState> {
   const ctx = await requirePermission("creator:manage-social-accounts");
+  const limited = await limitError(ctx, "creatorPostWorkflow");
+  if (limited) return { error: limited };
   await disconnectSocialAccount(ctx, accountId);
   revalidatePath("/creator-studio/social-accounts");
   return {};

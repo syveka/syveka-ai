@@ -8,7 +8,13 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 const ROLES = ["ADMIN", "MANAGER", "MEMBER", "VIEWER"] as const;
-const INVITE_ERRORS = new Set(["invalid_input", "already_member", "plan_limit", "invite_failed"]);
+const INVITE_ERRORS = new Set([
+  "invalid_input",
+  "already_member",
+  "plan_limit",
+  "rate_limited",
+  "invite_failed",
+]);
 
 export function InviteForm() {
   const t = useTranslations("settingsMembers");

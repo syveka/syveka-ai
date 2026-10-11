@@ -89,6 +89,7 @@
       "invalid_input": "Check the email address and role.",
       "already_member": "This person is already a member of the organization.",
       "plan_limit": "Your plan doesn't allow more members right now: all seats are in use or the subscription needs attention. See Billing.",
+      "rate_limited": "Too many invitations in a short time. Try again later.",
       "invite_failed": "The invitation could not be sent. Please try again."
     }
   },
