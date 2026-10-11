@@ -12,6 +12,11 @@ import { randomUUID } from "node:crypto";
  * check (no serialization) or is seen waiting for an advisory lock in pg_locks
  * (serialization). Assertions are on committed rows.
  *
+ * The second run starts once the first has reached its usage check: the route imports its
+ * dependencies lazily, and two of those imports in flight at once can bypass vi.mock in
+ * Vitest (seen as the real QStash verifier answering 401). The gates then make the runs
+ * meet at each check.
+ *
  * Skipped unless VOICE_PG_URL points at a scratch database prepared as in CI:
  * tests/migrations/supabase-compatibility.sql, then `prisma migrate deploy`. Synthetic
  * organizations only.
@@ -25,6 +30,7 @@ const holder = vi.hoisted(() => ({
   gates: null as Map<string, Gate> | null,
   contended: async () => false,
   failOnce: null as null | "activity.create" | "contact.link",
+  onUsageCheck: null as null | (() => void),
   summaries: 0,
 }));
 
@@ -66,6 +72,7 @@ vi.mock("@/server/services/workflow-events", () => ({ emitWorkflowEvent: vi.fn(a
 
 /** The first run to reach a gated check waits until the second run catches up there. */
 async function passGate(name: string): Promise<void> {
+  if (name === "usage") holder.onUsageCheck?.();
   const gates = holder.gates;
   if (!gates) return;
   const gate = gates.get(name) ?? { arrivals: 0, second: false };
@@ -206,6 +213,17 @@ describe.skipIf(!PG_URL)("post-call job on real Postgres", () => {
     return { orgId: org.id, callId: call.id, vapiCallId: call.vapiCallId, phone };
   }
 
+  /** Starts `second` once `first` has reached its usage check (its imports are done). */
+  async function staggered(first: () => Promise<Response>, second: () => Promise<Response>) {
+    let reached = () => {};
+    const atUsageCheck = new Promise<void>((resolve) => (reached = resolve));
+    holder.onUsageCheck = reached;
+    const firstRun = first();
+    await Promise.race([atUsageCheck, firstRun.catch(() => undefined)]);
+    holder.onUsageCheck = null;
+    return Promise.all([firstRun, second()]);
+  }
+
   const run = (orgId: string, vapiCallId: string) =>
     POST(
       new Request("http://localhost/api/v1/jobs/post-call", {
@@ -251,7 +269,10 @@ describe.skipIf(!PG_URL)("post-call job on real Postgres", () => {
     const c = await seedCall("race");
     holder.gates = new Map();
 
-    const responses = await Promise.all([run(c.orgId, c.vapiCallId), run(c.orgId, c.vapiCallId)]);
+    const responses = await staggered(
+      () => run(c.orgId, c.vapiCallId),
+      () => run(c.orgId, c.vapiCallId),
+    );
 
     expect(responses.map((r) => r.status)).toEqual([200, 200]);
     const s = await state(c);
@@ -267,7 +288,7 @@ describe.skipIf(!PG_URL)("post-call job on real Postgres", () => {
     }
     // Known limit: each run may pay for its own summary (both here); one activity results.
     expect(holder.summaries).toBeGreaterThanOrEqual(1);
-  });
+  }, 30_000);
 
   it("a retry after a failure part-way runs only the unfinished steps", async () => {
     const c = await seedCall("partial");
@@ -314,7 +335,16 @@ describe.skipIf(!PG_URL)("post-call job on real Postgres", () => {
     const a = await seedCall("tenant-a");
     const b = await seedCall("tenant-b");
 
-    await Promise.all([run(a.orgId, a.vapiCallId), run(b.orgId, b.vapiCallId)]);
+    holder.gates = new Map();
+    await staggered(
+      () => run(a.orgId, a.vapiCallId),
+      () => run(b.orgId, b.vapiCallId),
+    );
+    // Different calls take different locks: neither run waited for the other.
+    for (const name of ["usage", "contact", "activity", "notification"]) {
+      expect(holder.gates.get(name)?.outcome, name).toBe("both_checked");
+    }
+    holder.gates = null;
     // Organization B naming organization A's call finds nothing to process.
     const crossed = await run(b.orgId, a.vapiCallId);
 
@@ -329,5 +359,5 @@ describe.skipIf(!PG_URL)("post-call job on real Postgres", () => {
       where: { organizationId: b.orgId, metadata: { path: ["callId"], equals: a.callId } },
     });
     expect(leaked).toBe(0);
-  });
+  }, 30_000);
 });
