@@ -851,6 +851,30 @@ describe("recurring calendar events", () => {
     }
   });
 
+  it("a series running since 2014 (over 500 weeks) still blocks its slot", async () => {
+    // Monday 09:00 Helsinki since Jan 2014. Expansion used to stop 500 steps
+    // after the origin, so the slot showed as free.
+    for (const timezone of ["Europe/Helsinki", null]) {
+      storeEvents([
+        weeklySeries({
+          startsAt: new Date("2014-01-06T07:00:00Z"),
+          endsAt: new Date("2014-01-06T08:00:00Z"),
+          timezone,
+        }),
+      ]);
+      const { slots } = await getPublicSlots({
+        orgSlug: "acme",
+        typeSlug: "intro-call",
+        from: new Date("2026-02-02T00:00:00Z"),
+        to: new Date("2026-02-03T00:00:00Z"),
+      });
+      expect(slots.map((s) => s.toISOString())).not.toContain(VALID_START);
+      await expect(
+        createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
+      ).rejects.toMatchObject({ code: "invalid_slot" });
+    }
+  });
+
   it("a guest can't book a series occurrence", async () => {
     storeEvents([weeklySeries()]);
 

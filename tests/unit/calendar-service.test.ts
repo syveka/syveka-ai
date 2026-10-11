@@ -613,3 +613,30 @@ describe("recurring series expand in the event's own zone (DST)", () => {
     );
   });
 });
+
+describe("conflicts with old recurring series", () => {
+  it("a daily series running since 2024 (over 500 days) conflicts on Oct 12, 2026", async () => {
+    db.calendarEvent.findMany.mockResolvedValueOnce([
+      {
+        id: "daily-1",
+        title: "Daily since 2024",
+        startsAt: new Date("2024-01-01T10:00:00Z"),
+        endsAt: new Date("2024-01-01T11:00:00Z"),
+        timezone: "UTC",
+        recurrenceRule: "FREQ=DAILY",
+      },
+    ]);
+    const conflicts = await findConflicts(ctx(), {
+      startsAt: new Date("2026-10-12T10:30:00Z"),
+      endsAt: new Date("2026-10-12T11:30:00Z"),
+    });
+    expect(conflicts).toEqual([
+      {
+        id: "daily-1",
+        title: "Daily since 2024",
+        startsAt: new Date("2026-10-12T10:00:00Z"),
+        endsAt: new Date("2026-10-12T11:00:00Z"),
+      },
+    ]);
+  });
+});
