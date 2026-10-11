@@ -179,10 +179,11 @@ export async function recordUsage(
   metric: UsageMetric,
   quantity: number,
   metadata: Record<string, unknown> = {},
+  db: Prisma.TransactionClient = unscopedPrisma,
 ): Promise<void> {
   const periodStart = new Date();
   periodStart.setUTCHours(0, 0, 0, 0);
-  await unscopedPrisma.usageRecord.create({
+  await db.usageRecord.create({
     data: {
       organizationId: orgId,
       metric,

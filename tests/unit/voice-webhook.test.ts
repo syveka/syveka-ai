@@ -1015,6 +1015,53 @@ describe("Vapi voice webhook — over-quota calls are actually ended", () => {
     });
   });
 
+  // Billing policy (§14.4, entitlements.ts assertWithinLimit): a read-only org --
+  // PAST_DUE beyond the grace period -- may not consume any usage, whatever
+  // minutes remain on its plan.
+  describe("a read-only organization (past due) is refused like an over-quota one", () => {
+    const readOnly = () =>
+      mocks.getEntitlements.mockResolvedValue({ voiceMinutesMonth: 1000, readOnly: true } as never);
+
+    it("status-update ends the call through the control URL and records no call", async () => {
+      readOnly();
+
+      const response = await POST(statusUpdate());
+
+      expect(response.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(JSON.parse((fetchMock.mock.calls[0]![1] as RequestInit).body as string)).toEqual({
+        type: "end-call",
+      });
+      expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    });
+
+    it("tool-calls runs no tool and ends the call after the goodbye", async () => {
+      readOnly();
+
+      const response = await POST(toolCalls("FI"));
+
+      const body = await response.json();
+      expect(body.results.map((r: { error: string }) => r.error)).toEqual([
+        "quota_exceeded",
+        "quota_exceeded",
+      ]);
+      expect(mocks.executeTool).not.toHaveBeenCalled();
+    });
+
+    it("an org that is not read-only and has minutes left is served as before", async () => {
+      mocks.getEntitlements.mockResolvedValue({
+        voiceMinutesMonth: 1000,
+        readOnly: false,
+      } as never);
+
+      const response = await POST(statusUpdate());
+
+      expect(response.status).toBe(200);
+      expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(1);
+      expect(fetchMock).not.toHaveBeenCalled();
+    });
+  });
+
   it("under quota, tool-calls executes the tools with the existing result shape and never calls the control URL", async () => {
     mocks.executeTool.mockResolvedValue(JSON.stringify({ booked: true }));
 
@@ -1217,5 +1264,101 @@ describe("Vapi voice webhook — request hardening", () => {
     const results = await runTools("call-7", [{ id: "c1", name: "createContact" }]);
     expect(results).toEqual([err("execution_failed")]);
     expect(results.join("")).not.toContain("prisma");
+  });
+});
+
+/**
+ * vapiCallId is unique across all organizations, but every Vapi webhook is
+ * attributed to the organization of the signed assistant. A report whose call id
+ * already belongs to another organization must never update that organization's
+ * call (transcript, recording, cost) nor start its post-call pipeline.
+ */
+describe("Vapi voice webhook — a call row is only ever written within the assistant's organization", () => {
+  const uniqueViolation = () =>
+    Object.assign(new Error("Unique constraint failed on the fields: (`vapi_call_id`)"), {
+      code: "P2002",
+    });
+
+  function statusUpdate() {
+    return new Request("http://localhost/api/v1/voice/webhook", {
+      method: "POST",
+      headers: { "x-vapi-signature": "sig" },
+      body: JSON.stringify({
+        message: {
+          type: "status-update",
+          status: "in-progress",
+          call: { id: "call-1", assistantId: "assistant-1" },
+        },
+      }),
+    });
+  }
+
+  const upsertWhere = (n = 0) =>
+    (mocks.voiceCallUpsert.mock.calls[n]![0] as { where: Record<string, unknown> }).where;
+
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => errorSpy.mockRestore());
+
+  it("end-of-call-report writes the call only where it belongs to the assistant's organization", async () => {
+    await POST(eocrRequest());
+
+    expect(upsertWhere()).toEqual({ vapiCallId: "call-1", organizationId: "org-a" });
+  });
+
+  it("status-update writes the call only where it belongs to the assistant's organization", async () => {
+    await POST(statusUpdate());
+
+    expect(upsertWhere()).toEqual({ vapiCallId: "call-1", organizationId: "org-a" });
+  });
+
+  it("a report for another organization's call id changes nothing there and starts no post-call work", async () => {
+    // Prisma runs this upsert as INSERT ... ON CONFLICT DO UPDATE ... WHERE
+    // organization_id: another organization's row is not updated and no row comes back.
+    mocks.voiceCallUpsert.mockResolvedValueOnce(null as never);
+
+    const response = await POST(eocrRequest());
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({ error: "call_conflict" });
+    expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(1);
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    expect(mocks.redisSet).not.toHaveBeenCalled();
+    const logged = errorSpy.mock.calls.flat().join("\n");
+    expect(logged).toContain("voice_call_org_conflict");
+  });
+
+  it("a status-update for another organization's call id records nothing and answers 200", async () => {
+    // With nothing to update, Prisma runs SELECT-then-INSERT: the INSERT hits the
+    // unique call id.
+    mocks.voiceCallUpsert.mockRejectedValueOnce(uniqueViolation());
+
+    const response = await POST(statusUpdate());
+
+    expect(response.status).toBe(200);
+    expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(1);
+    expect(errorSpy.mock.calls.flat().join("\n")).toContain("voice_call_org_conflict");
+  });
+
+  it("a status-update racing this organization's own first write retries once, with no conflict logged", async () => {
+    mocks.voiceCallUpsert.mockRejectedValueOnce(uniqueViolation());
+    // The conflict check finds the row this organization's end-of-call-report just created.
+    mocks.voiceCallFindFirst.mockResolvedValueOnce({ id: "row-1" } as never);
+
+    const response = await POST(statusUpdate());
+
+    expect(response.status).toBe(200);
+    expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(2);
+    expect(upsertWhere(1)).toEqual({ vapiCallId: "call-1", organizationId: "org-a" });
+    expect(errorSpy.mock.calls.flat().join("\n")).not.toContain("voice_call_org_conflict");
+  });
+
+  it("any other database error still fails the request so Vapi retries it", async () => {
+    mocks.voiceCallUpsert.mockRejectedValueOnce(new Error("connection reset"));
+
+    await expect(POST(eocrRequest())).rejects.toThrow("connection reset");
+    expect(mocks.enqueue).not.toHaveBeenCalled();
   });
 });

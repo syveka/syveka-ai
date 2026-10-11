@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicBookingInput } from "@/lib/validators/booking";
-import { findFirstOver, findManyOver } from "./helpers/calendar-event-where";
+import { findFirstOver, findManyOver, findManyPagedOver } from "./helpers/calendar-event-where";
 
 const {
   unscopedMock,
@@ -815,6 +815,127 @@ describe("recurring calendar events", () => {
     const offered = slots.map((s) => s.toISOString());
     expect(offered).not.toContain(VALID_START);
     expect(offered).toContain("2026-02-02T08:00:00.000Z"); // right after it: free
+  });
+
+  it("a series started in summer still blocks its local time in winter (DST)", async () => {
+    // Monday 09:00 Helsinki since October 2025 (06:00Z in EEST); VALID_START is
+    // Monday 09:00 Helsinki in February (07:00Z in EET).
+    storeEvents([
+      weeklySeries({
+        startsAt: new Date("2025-10-13T06:00:00Z"),
+        endsAt: new Date("2025-10-13T07:00:00Z"),
+        timezone: "Europe/Helsinki",
+      }),
+    ]);
+
+    const { slots } = await getPublicSlots({
+      orgSlug: "acme",
+      typeSlug: "intro-call",
+      from: new Date("2026-02-02T00:00:00Z"),
+      to: new Date("2026-02-03T00:00:00Z"),
+    });
+    expect(slots.map((s) => s.toISOString())).not.toContain(VALID_START);
+    await expect(
+      createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
+    ).rejects.toMatchObject({ code: "invalid_slot" });
+
+    unscopedMock.calendarEvent.findMany.mockResolvedValue([]); // isolate the in-transaction check
+    await expect(
+      createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
+    ).rejects.toMatchObject({ code: "slot_taken" });
+
+    for (const findMany of [unscopedMock.calendarEvent.findMany, txMock.calendarEvent.findMany]) {
+      expect(findMany).toHaveBeenCalledWith(
+        expect.objectContaining({ select: expect.objectContaining({ timezone: true }) }),
+      );
+    }
+  });
+
+  describe("more busy-time rows than one query returns", () => {
+    // 1,500 newer series that ended long ago (COUNT=1 in 2025) plus the
+    // owner's weekly Monday 09:00 series since 2014. Ordered newest first, a
+    // single capped query never reaches the 2014 series.
+    function crowdedOwner() {
+      const ended = Array.from({ length: 1500 }, (_, i) =>
+        weeklySeries({
+          id: `ended-${String(i).padStart(4, "0")}`,
+          startsAt: new Date(Date.UTC(2025, 0, 1) + i * 3_600_000),
+          endsAt: new Date(Date.UTC(2025, 0, 1) + i * 3_600_000 + 1_800_000),
+          recurrenceRule: "FREQ=WEEKLY;COUNT=1",
+        }),
+      );
+      const old = weeklySeries({
+        id: "old-weekly",
+        startsAt: new Date("2014-01-06T07:00:00Z"),
+        endsAt: new Date("2014-01-06T08:00:00Z"),
+        timezone: "Europe/Helsinki",
+      });
+      const rows = [...ended, old];
+      unscopedMock.calendarEvent.findMany.mockImplementation(findManyPagedOver(rows) as never);
+      txMock.calendarEvent.findMany.mockImplementation(findManyPagedOver(rows) as never);
+      txMock.calendarEvent.findFirst.mockImplementation(findFirstOver(rows) as never);
+    }
+
+    it("public slots don't offer the old series' time", async () => {
+      crowdedOwner();
+      const { slots } = await getPublicSlots({
+        orgSlug: "acme",
+        typeSlug: "intro-call",
+        from: new Date("2026-02-02T00:00:00Z"),
+        to: new Date("2026-02-03T00:00:00Z"),
+      });
+      expect(slots.map((s) => s.toISOString())).not.toContain(VALID_START);
+      expect(slots.map((s) => s.toISOString())).toContain("2026-02-02T08:00:00.000Z");
+    });
+
+    it("no slot is offered when the busy rows can't all be read", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      unscopedMock.calendarEvent.findMany.mockImplementation((async (args: { take: number }) =>
+        Array.from({ length: args.take }, (_, i) =>
+          weeklySeries({ id: `row-${i}`, recurrenceRule: "FREQ=WEEKLY;COUNT=1" }),
+        )) as never);
+      const { slots } = await getPublicSlots({
+        orgSlug: "acme",
+        typeSlug: "intro-call",
+        from: new Date("2026-02-02T00:00:00Z"),
+        to: new Date("2026-02-03T00:00:00Z"),
+      });
+      expect(slots).toEqual([]);
+      warn.mockRestore();
+    });
+
+    it("the in-transaction re-check refuses the old series' time", async () => {
+      crowdedOwner();
+      unscopedMock.calendarEvent.findMany.mockResolvedValue([]); // slots computed before
+      await expect(
+        createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
+      ).rejects.toMatchObject({ code: "slot_taken" });
+      expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+    });
+  });
+
+  it("a series running since 2014 (over 500 weeks) still blocks its slot", async () => {
+    // Monday 09:00 Helsinki since Jan 2014. Expansion used to stop 500 steps
+    // after the origin, so the slot showed as free.
+    for (const timezone of ["Europe/Helsinki", null]) {
+      storeEvents([
+        weeklySeries({
+          startsAt: new Date("2014-01-06T07:00:00Z"),
+          endsAt: new Date("2014-01-06T08:00:00Z"),
+          timezone,
+        }),
+      ]);
+      const { slots } = await getPublicSlots({
+        orgSlug: "acme",
+        typeSlug: "intro-call",
+        from: new Date("2026-02-02T00:00:00Z"),
+        to: new Date("2026-02-03T00:00:00Z"),
+      });
+      expect(slots.map((s) => s.toISOString())).not.toContain(VALID_START);
+      await expect(
+        createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
+      ).rejects.toMatchObject({ code: "invalid_slot" });
+    }
   });
 
   it("a guest can't book a series occurrence", async () => {

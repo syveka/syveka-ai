@@ -12,7 +12,14 @@ import {
   type WeeklyRule,
 } from "@/server/calendar/slots";
 import { isValidTimezone } from "@/server/calendar/timezone";
-import { busyIntervals, busyWindowWhere, recurringSeriesWhere } from "@/server/calendar/busy";
+import {
+  BUSY_ROW_ORDER,
+  BUSY_ROW_SELECT,
+  busyIntervals,
+  busyWindowWhere,
+  loadBusyRows,
+  recurringSeriesWhere,
+} from "@/server/calendar/busy";
 import {
   lockBookableBookingType,
   lockCalendarMember,
@@ -293,22 +300,23 @@ async function getOwnerBusy(
   from: Date,
   to: Date,
 ): Promise<BusyInterval[]> {
-  const events = await unscopedPrisma.calendarEvent.findMany({
-    where: {
-      organizationId: orgId,
-      deletedAt: null,
-      status: { not: "CANCELED" },
-      AND: [
-        { OR: [{ ownerId }, { ownerId: null, createdById: ownerId }] },
-        busyWindowWhere(from, to),
-      ],
-    },
-    select: { startsAt: true, endsAt: true, recurrenceRule: true },
-    // Newest first: if the cap is reached, old (often ended) series are what is left out.
-    orderBy: { startsAt: "desc" },
-    take: 1000,
-  });
-  return busyIntervals(events, from, to);
+  const { rows, complete } = await loadBusyRows((page) =>
+    unscopedPrisma.calendarEvent.findMany({
+      where: {
+        organizationId: orgId,
+        deletedAt: null,
+        status: { not: "CANCELED" },
+        AND: [
+          { OR: [{ ownerId }, { ownerId: null, createdById: ownerId }] },
+          busyWindowWhere(from, to),
+        ],
+      },
+      select: BUSY_ROW_SELECT,
+      orderBy: BUSY_ROW_ORDER,
+      ...page,
+    }),
+  );
+  return busyIntervals(rows, from, to, { complete });
 }
 
 export async function getPublicSlots(params: {
@@ -380,20 +388,22 @@ async function assertSlotStillFree(
   if (conflict) throw new BookingError("Slot no longer available", "slot_taken");
 
   // A recurring series is stored once: check its occurrences in the window too.
-  const series = await tx.calendarEvent.findMany({
-    where: {
-      organizationId: orgId,
-      deletedAt: null,
-      status: { not: "CANCELED" },
-      OR: [{ ownerId }, { ownerId: null, createdById: ownerId }],
-      ...recurringSeriesWhere(guardEnd),
-      ...(excludeEventId ? { id: { not: excludeEventId } } : {}),
-    },
-    select: { startsAt: true, endsAt: true, recurrenceRule: true },
-    orderBy: { startsAt: "desc" }, // newest first if the cap is reached
-    take: 500,
-  });
-  if (busyIntervals(series, guardStart, guardEnd).length > 0) {
+  const { rows: series, complete } = await loadBusyRows((page) =>
+    tx.calendarEvent.findMany({
+      where: {
+        organizationId: orgId,
+        deletedAt: null,
+        status: { not: "CANCELED" },
+        OR: [{ ownerId }, { ownerId: null, createdById: ownerId }],
+        ...recurringSeriesWhere(guardEnd),
+        ...(excludeEventId ? { id: { not: excludeEventId } } : {}),
+      },
+      select: BUSY_ROW_SELECT,
+      orderBy: BUSY_ROW_ORDER,
+      ...page,
+    }),
+  );
+  if (busyIntervals(series, guardStart, guardEnd, { complete }).length > 0) {
     throw new BookingError("Slot no longer available", "slot_taken");
   }
 }

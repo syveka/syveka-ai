@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 type CallRow = {
   id: string;
@@ -34,6 +34,26 @@ function freshCallRow(): CallRow {
   };
 }
 
+const locks = vi.hoisted(() => {
+  const held = new Map<string, Promise<void>>();
+  const locks = {
+    statements: [] as string[],
+    /** Waits until no other holder has `key`, then holds it; returns the release. */
+    onContention: undefined as (() => void) | undefined,
+    acquire: async (key: string): Promise<() => void> => {
+      if (held.has(key)) locks.onContention?.();
+      while (held.has(key)) await held.get(key);
+      let release = () => {};
+      held.set(key, new Promise<void>((resolve) => (release = resolve)));
+      return () => {
+        held.delete(key);
+        release();
+      };
+    },
+  };
+  return locks;
+});
+
 const mocks = vi.hoisted(() => ({
   verifyJobRequest: vi.fn(async (req: Request): Promise<string | null> => await req.text()),
   voiceCallFindFirst: vi.fn(async (): Promise<unknown> => null),
@@ -42,6 +62,7 @@ const mocks = vi.hoisted(() => ({
   contactFindFirst: vi.fn(async (): Promise<{ id: string } | null> => null),
   contactCreate: vi.fn(async () => ({ id: "contact-new-1" })),
   activityCreate: vi.fn(async () => ({ id: "activity-1" })),
+  activityFindFirst: vi.fn(async (): Promise<{ id: string } | null> => null),
   organizationMemberFindFirst: vi.fn(async () => ({ userId: "owner-1" })),
   notificationFindFirst: vi.fn(async (): Promise<{ id: string } | null> => null),
   notificationCreate: vi.fn(async () => ({ id: "notif-1" })),
@@ -68,16 +89,34 @@ vi.mock("@/server/jobs/organization-guard", () => ({
   isOrganizationActive: vi.fn(async () => true),
   ORGANIZATION_INACTIVE: { skipped: "organization_inactive" },
 }));
-vi.mock("@/server/db/tenant", () => ({
-  unscopedPrisma: {
+vi.mock("@/server/db/tenant", () => {
+  const client: Record<string, unknown> = {
     voiceCall: { findFirst: mocks.voiceCallFindFirst, update: mocks.voiceCallUpdate },
     usageRecord: { findFirst: mocks.usageRecordFindFirst },
     contact: { findFirst: mocks.contactFindFirst, create: mocks.contactCreate },
-    activity: { create: mocks.activityCreate },
+    activity: { create: mocks.activityCreate, findFirst: mocks.activityFindFirst },
     organizationMember: { findFirst: mocks.organizationMemberFindFirst },
     notification: { findFirst: mocks.notificationFindFirst, create: mocks.notificationCreate },
-  },
-}));
+  };
+  // Advisory locks are modelled as one mutex per lock key, held until the transaction ends.
+  client.$transaction = async (step: (tx: unknown) => Promise<unknown>) => {
+    let release = () => {};
+    const tx = {
+      ...client,
+      $executeRaw: async (sql: TemplateStringsArray, ...values: unknown[]) => {
+        locks.statements.push(sql.join("?"));
+        release = await locks.acquire(String(values.join(":")));
+        return 1;
+      },
+    };
+    try {
+      return await step(tx);
+    } finally {
+      release();
+    }
+  };
+  return { unscopedPrisma: client };
+});
 vi.mock("@/server/integrations/anthropic", () => ({
   anthropic: { messages: { create: mocks.anthropicCreate } },
 }));
@@ -102,11 +141,14 @@ type UpdateCall = [{ where: { id: string }; data: Record<string, unknown> }];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  locks.statements.length = 0;
+  locks.onContention = undefined;
   mocks.verifyJobRequest.mockImplementation(async (req: Request) => await req.text());
   mocks.voiceCallFindFirst.mockResolvedValue(freshCallRow());
   mocks.usageRecordFindFirst.mockResolvedValue(null);
   mocks.contactFindFirst.mockResolvedValue(null);
   mocks.notificationFindFirst.mockResolvedValue(null);
+  mocks.activityFindFirst.mockResolvedValue(null);
 });
 
 describe("post-call job — workflow event", () => {
@@ -203,6 +245,8 @@ describe("post-call job — idempotency against QStash-level retry", () => {
         sentiment: "positive",
       });
       mocks.usageRecordFindFirst.mockResolvedValue({ id: "usage-record-1" });
+      // The prior attempt created the call's activity too.
+      mocks.activityFindFirst.mockResolvedValue({ id: "activity-1" });
 
       const response = await POST(jobRequest());
       expect(response.status).toBe(200);
@@ -242,5 +286,176 @@ describe("post-call job — idempotency against QStash-level retry", () => {
       const markerCall = calls.find(([args]) => "postCallProcessedAt" in args.data);
       expect(markerCall).toBeDefined();
     });
+  });
+});
+
+/**
+ * The summary is best-effort -- a call record stands without it -- but a failure must
+ * be visible in the logs (ids only, never the transcript), and a database failure while
+ * saving the summary or its CRM activity must not be marked done: postCallProcessedAt
+ * would stop every later attempt, losing that activity for good.
+ */
+describe("post-call job — summary failures are reported, not hidden", () => {
+  let errorSpy: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+  });
+  afterEach(() => errorSpy.mockRestore());
+
+  const logged = () =>
+    errorSpy.mock.calls.flat().map((a) => (typeof a === "string" ? a : JSON.stringify(a)));
+  const marked = () =>
+    (mocks.voiceCallUpdate.mock.calls as UpdateCall[]).some(
+      ([args]) => "postCallProcessedAt" in args.data,
+    );
+
+  it("a provider failure is logged with ids only and the call is still completed without a summary", async () => {
+    mocks.anthropicCreate.mockRejectedValueOnce(new Error("upstream 529 overloaded"));
+
+    const response = await POST(jobRequest());
+
+    expect(response.status).toBe(200);
+    const lines = logged();
+    expect(lines).toHaveLength(1);
+    expect(JSON.parse(lines[0]!)).toEqual({
+      event: "post_call_summary_failed",
+      orgId: ORG_ID,
+      callId: "call-row-1",
+      reason: "provider_error",
+    });
+    expect(lines.join(" ")).not.toContain("strawberry");
+    expect(mocks.activityCreate).not.toHaveBeenCalled();
+    expect(mocks.notificationCreate).toHaveBeenCalledTimes(1);
+    expect(marked()).toBe(true);
+  });
+
+  it("a reply that is not the expected JSON is logged as invalid_response", async () => {
+    mocks.anthropicCreate.mockResolvedValueOnce({
+      content: [{ type: "text", text: "Sure! Here is a summary of the call." }],
+    });
+
+    const response = await POST(jobRequest());
+
+    expect(response.status).toBe(200);
+    expect(JSON.parse(logged()[0]!)).toMatchObject({
+      event: "post_call_summary_failed",
+      reason: "invalid_response",
+    });
+    expect(marked()).toBe(true);
+  });
+
+  it("a database failure creating the activity fails the job so QStash retries it", async () => {
+    mocks.activityCreate.mockRejectedValueOnce(new Error("connection terminated"));
+
+    await expect(POST(jobRequest())).rejects.toThrow("connection terminated");
+
+    expect(marked()).toBe(false);
+  });
+
+  it("the retry after that creates the missing activity once, from the saved summary, without a second paid summary", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValue({
+      ...freshCallRow(),
+      contactId: "contact-existing-1",
+      summary: "Caller asked about the strawberry toy.",
+      sentiment: "positive",
+      actionsTaken: ["Send catalog link"],
+    });
+    mocks.usageRecordFindFirst.mockResolvedValue({ id: "usage-record-1" });
+
+    const response = await POST(jobRequest());
+
+    expect(response.status).toBe(200);
+    expect(mocks.anthropicCreate).not.toHaveBeenCalled();
+    expect(mocks.activityCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.activityCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organizationId: ORG_ID,
+        contactId: "contact-existing-1",
+        type: "VOICE_AI_CALL",
+        body: "Caller asked about the strawberry toy.",
+        metadata: { voiceCallId: "call-row-1", followUps: ["Send catalog link"] },
+      }),
+    });
+    expect(marked()).toBe(true);
+  });
+});
+
+/**
+ * QStash's dedupe id does not make the job run exactly once: a duplicate end-of-call
+ * report outside its window, or a retry overlapping a slow first attempt, runs it twice
+ * at the same time. Each "already recorded?" check must then be serialized with its
+ * insert, or both runs pass it. This models the database's interleaving and advisory
+ * locks with mocks; it is not a real-Postgres test.
+ */
+describe("post-call job — two simultaneous runs for the same call", () => {
+  const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  it("record the minutes, the contact, the CRM activity and the owner notification once", async () => {
+    const usage: unknown[] = [];
+    const contacts: { id: string }[] = [];
+    const activities: unknown[] = [];
+    const notifications: unknown[] = [];
+    // Run A pauses inside its usage check until run B reaches the same step: B either
+    // waits for A's lock (with the lock) or runs the same check (without it).
+    let aArrived = () => {};
+    let bArrived = () => {};
+    const aAtUsageCheck = new Promise<void>((resolve) => (aArrived = resolve));
+    const bAtUsageStep = new Promise<void>((resolve) => (bArrived = resolve));
+    locks.onContention = () => bArrived();
+    let usageChecks = 0;
+    mocks.usageRecordFindFirst.mockImplementation(async () => {
+      usageChecks += 1;
+      if (usageChecks === 1) {
+        aArrived();
+        await bAtUsageStep;
+      } else {
+        bArrived();
+      }
+      return usage.length ? { id: "usage-1" } : null;
+    });
+    mocks.recordUsage.mockImplementation(async () => {
+      await tick();
+      usage.push({});
+    });
+    mocks.contactFindFirst.mockImplementation(async () => {
+      await tick();
+      return contacts[0] ?? null;
+    });
+    mocks.contactCreate.mockImplementation(async () => {
+      await tick();
+      const row = { id: `contact-${contacts.length + 1}` };
+      contacts.push(row);
+      return row;
+    });
+    mocks.activityFindFirst.mockImplementation(async () => {
+      await tick();
+      return activities.length ? { id: "activity-1" } : null;
+    });
+    mocks.activityCreate.mockImplementation(async () => {
+      await tick();
+      activities.push({});
+      return { id: "activity-1" };
+    });
+    mocks.notificationFindFirst.mockImplementation(async () => {
+      await tick();
+      return notifications.length ? { id: "notif-1" } : null;
+    });
+    mocks.notificationCreate.mockImplementation(async () => {
+      await tick();
+      notifications.push({});
+      return { id: "notif-1" };
+    });
+
+    const runA = POST(jobRequest());
+    await aAtUsageCheck;
+    const responses = await Promise.all([runA, POST(jobRequest())]);
+
+    expect(responses.map((r) => r.status)).toEqual([200, 200]);
+    expect(usage).toHaveLength(1);
+    expect(contacts).toHaveLength(1);
+    expect(activities).toHaveLength(1);
+    expect(notifications).toHaveLength(1);
+    expect(locks.statements.length).toBeGreaterThan(0);
+    expect(locks.statements.every((sql) => sql.includes("pg_advisory_xact_lock"))).toBe(true);
   });
 });
