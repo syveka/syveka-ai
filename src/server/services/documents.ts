@@ -154,11 +154,20 @@ export async function createDocument(ctx: TenantContext, input: CreateDocumentIn
     });
   }
 
-  await enqueue("embed-document", {
-    documentId: document.id,
-    orgId: ctx.orgId,
-    ...(input.sourceType === "NOTE" ? { inlineContent: input.content } : {}),
-  });
+  try {
+    await enqueue("embed-document", {
+      documentId: document.id,
+      orgId: ctx.orgId,
+      ...(input.sourceType === "NOTE" ? { inlineContent: input.content } : {}),
+    });
+  } catch (err) {
+    // No job will run for it: say so rather than leave it "Pending" forever.
+    await unscopedPrisma.document.update({
+      where: { id: document.id },
+      data: { status: "FAILED", error: "Processing could not be started. Please try again." },
+    });
+    throw err;
+  }
 
   await audit(ctx, {
     action: "document.create",
