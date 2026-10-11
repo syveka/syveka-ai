@@ -151,9 +151,20 @@ export async function upsertVapiAssistant(
   existingId?: string | null,
 ): Promise<{ id: string }> {
   if (existingId) {
+    // Vapi doesn't document whether PATCH merges or replaces a nested object. The
+    // assistant's current artifactPlan is sent back with only recordingEnabled set, so
+    // options set in the Vapi dashboard (recording format, storage, transcript...) survive
+    // either way.
+    const current = await vapiFetch<{ artifactPlan?: Record<string, unknown> | null }>(
+      `/assistant/${existingId}`,
+    );
+    const payload = toVapiPayload(cfg);
     return vapiFetch(`/assistant/${existingId}`, {
       method: "PATCH",
-      body: JSON.stringify(toVapiPayload(cfg)),
+      body: JSON.stringify({
+        ...payload,
+        artifactPlan: { ...(current.artifactPlan ?? {}), ...payload.artifactPlan },
+      }),
     });
   }
   return vapiFetch("/assistant", { method: "POST", body: JSON.stringify(toVapiPayload(cfg)) });
