@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import type { Prisma } from "@/generated/prisma/client/client";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -15,6 +16,24 @@ const analysisSchema = z.object({
   sentiment: z.enum(["positive", "neutral", "negative"]),
   followUps: z.array(z.string()).max(5),
 });
+
+/** The model's reply as an analysis, or null when it is not the requested JSON. */
+function parseAnalysis(reply: string): z.infer<typeof analysisSchema> | null {
+  try {
+    const json = analysisSchema.safeParse(JSON.parse(reply.replace(/^```json?|```$/g, "").trim()));
+    return json.success ? json.data : null;
+  } catch {
+    return null;
+  }
+}
+
+function logSummaryFailure(
+  orgId: string,
+  callId: string,
+  reason: "provider_error" | "invalid_response",
+): void {
+  console.error(JSON.stringify({ event: "post_call_summary_failed", orgId, callId, reason }));
+}
 
 export async function POST(request: Request): Promise<NextResponse> {
   const [
@@ -62,6 +81,20 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ ok: true, alreadyProcessed: true });
   }
 
+  // Two runs of this job for the same call can overlap: a duplicate end-of-call report
+  // that QStash's dedupe window misses, or a retry while a slow first attempt is still
+  // running. Under READ COMMITTED both would pass each "already recorded?" check below
+  // before either inserts, and record the minutes, the activity or the notification
+  // twice. Each check-then-insert therefore runs in its own transaction holding a lock
+  // on the call (transaction-scoped: released at commit or rollback, no schema change),
+  // so the second run waits and then sees the first's row. Each step commits on its
+  // own, so a retry after a partial failure redoes only what is missing.
+  const lockedStep = <T>(step: (tx: Prisma.TransactionClient) => Promise<T>): Promise<T> =>
+    unscopedPrisma.$transaction(async (tx) => {
+      await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('post_call'), hashtext(${call.id}))`;
+      return step(tx);
+    });
+
   // 1. Usage metering — minutes rounded up (§14.2)
   //
   // The postCallProcessedAt guard above only catches a retry of a call that
@@ -77,57 +110,68 @@ export async function POST(request: Request): Promise<NextResponse> {
   // prior result, and emitWorkflowEvent has its own sourceEventKey-based
   // idempotency (see workflow-events.ts).
   const minutes = Math.max(1, Math.ceil((call.durationSeconds ?? 0) / 60));
-  const usageAlreadyRecorded = await unscopedPrisma.usageRecord.findFirst({
-    where: {
-      organizationId: orgId,
-      metric: "VOICE_MINUTES",
-      metadata: { path: ["callId"], equals: call.id },
-    },
-    select: { id: true },
+  await lockedStep(async (tx) => {
+    const usageAlreadyRecorded = await tx.usageRecord.findFirst({
+      where: {
+        organizationId: orgId,
+        metric: "VOICE_MINUTES",
+        metadata: { path: ["callId"], equals: call.id },
+      },
+      select: { id: true },
+    });
+    if (!usageAlreadyRecorded) {
+      await recordUsage(orgId, "VOICE_MINUTES", minutes, { callId: call.id }, tx);
+    }
   });
-  if (!usageAlreadyRecorded) {
-    await recordUsage(orgId, "VOICE_MINUTES", minutes, { callId: call.id });
-  }
 
   // 2. Contact match/create from caller number (§16.4)
   let contactId = call.contactId;
   if (!contactId && call.callerNumber) {
     const normalized = call.callerNumber.replace(/\s/g, "");
-    const existing = await unscopedPrisma.contact.findFirst({
-      where: { organizationId: orgId, phone: normalized, deletedAt: null },
-    });
-    if (existing) {
-      contactId = existing.id;
-    } else if (call.status === "COMPLETED") {
-      const created = await unscopedPrisma.contact.create({
-        data: {
-          organizationId: orgId,
-          firstName: normalized, // placeholder until enriched
-          phone: normalized,
-          source: "voice-ai",
-          status: "LEAD",
-        },
+    contactId = await lockedStep(async (tx) => {
+      let matched: string | null = null;
+      const existing = await tx.contact.findFirst({
+        where: { organizationId: orgId, phone: normalized, deletedAt: null },
       });
-      contactId = created.id;
-    }
-    if (contactId) {
-      await unscopedPrisma.voiceCall.update({ where: { id: call.id }, data: { contactId } });
-    }
+      if (existing) {
+        matched = existing.id;
+      } else if (call.status === "COMPLETED") {
+        const created = await tx.contact.create({
+          data: {
+            organizationId: orgId,
+            firstName: normalized, // placeholder until enriched
+            phone: normalized,
+            source: "voice-ai",
+            status: "LEAD",
+          },
+        });
+        matched = created.id;
+      }
+      if (matched) {
+        await tx.voiceCall.update({ where: { id: call.id }, data: { contactId: matched } });
+      }
+      return matched;
+    });
   }
 
   // 3. AI summary + sentiment (Haiku-class, §15.2)
   //
   // `!call.summary` guards against the same partial-failure retry as step 1:
-  // if this step already succeeded on a prior attempt (summary/sentiment/
-  // actionsTaken written, activity created) but a *later* step failed, a
-  // retry must not re-run it and create a second VOICE_AI_CALL activity for
-  // the same call. Safe for calls whose transcript is too short to summarize
-  // in the first place too: call.summary stays null and this block is
-  // skipped identically on every attempt, so there's nothing to duplicate.
+  // a summary saved by a prior attempt is never paid for again. Safe for calls
+  // whose transcript is too short to summarize too: call.summary stays null and
+  // this block is skipped identically on every attempt.
+  //
+  // The summary is best-effort: a provider failure or an unusable reply leaves the
+  // call without one (logged with ids only, never the transcript). A database
+  // failure saving it, or its activity below, fails the job so QStash retries --
+  // marking the call processed would lose them for good.
   const transcriptText = JSON.stringify(call.transcript ?? []).slice(0, 30_000);
   // The workflow event below reports the sentiment computed here, not the value loaded before it.
   let sentiment = call.sentiment;
+  let summary = call.summary;
+  let followUps: unknown = call.actionsTaken;
   if (transcriptText.length > 10 && !call.summary) {
+    let reply: string | null = null;
     try {
       const { model, maxTokens } = routeModel("summary");
       const res = await anthropic.messages.create({
@@ -142,39 +186,58 @@ export async function POST(request: Request): Promise<NextResponse> {
           },
         ],
       });
-      // The summary call can take a while: nothing more for an organization
-      // deleted meanwhile (the call itself can't be recalled).
-      if (!(await isOrganizationActive(orgId))) return NextResponse.json(ORGANIZATION_INACTIVE);
-      const text = res.content[0]?.type === "text" ? res.content[0].text : "{}";
-      const json = analysisSchema.safeParse(JSON.parse(text.replace(/^```json?|```$/g, "").trim()));
+      reply = res.content[0]?.type === "text" ? res.content[0].text : "";
+    } catch {
+      logSummaryFailure(orgId, call.id, "provider_error");
+    }
+    // The summary call can take a while: nothing more for an organization
+    // deleted meanwhile (the call itself can't be recalled).
+    if (!(await isOrganizationActive(orgId))) return NextResponse.json(ORGANIZATION_INACTIVE);
 
-      if (json.success) {
-        await unscopedPrisma.voiceCall.update({
-          where: { id: call.id },
+    const analysis = reply === null ? null : parseAnalysis(reply);
+    if (reply !== null && !analysis) logSummaryFailure(orgId, call.id, "invalid_response");
+    if (analysis) {
+      await unscopedPrisma.voiceCall.update({
+        where: { id: call.id },
+        data: {
+          summary: analysis.summary,
+          sentiment: analysis.sentiment,
+          actionsTaken: analysis.followUps,
+        },
+      });
+      summary = analysis.summary;
+      sentiment = analysis.sentiment;
+      followUps = analysis.followUps;
+    }
+  }
+
+  // The call's CRM activity, keyed by the call (not by the summary) so a retry after
+  // the summary was saved but the activity was not still creates it, exactly once.
+  if (summary && contactId) {
+    const activityContactId = contactId;
+    const activityBody = summary;
+    await lockedStep(async (tx) => {
+      const activityExists = await tx.activity.findFirst({
+        where: {
+          organizationId: orgId,
+          type: "VOICE_AI_CALL",
+          metadata: { path: ["voiceCallId"], equals: call.id },
+        },
+        select: { id: true },
+      });
+      if (!activityExists) {
+        await tx.activity.create({
           data: {
-            summary: json.data.summary,
-            sentiment: json.data.sentiment,
-            actionsTaken: json.data.followUps,
+            organizationId: orgId,
+            contactId: activityContactId,
+            type: "VOICE_AI_CALL",
+            subject: `${call.assistant.name}: ${sentiment ?? "neutral"} call (${minutes} min)`,
+            body: activityBody,
+            metadata: { voiceCallId: call.id, followUps: followUps as string[] },
           },
         });
-        sentiment = json.data.sentiment;
-
-        if (contactId) {
-          await unscopedPrisma.activity.create({
-            data: {
-              organizationId: orgId,
-              contactId,
-              type: "VOICE_AI_CALL",
-              subject: `${call.assistant.name}: ${json.data.sentiment} call (${minutes} min)`,
-              body: json.data.summary,
-              metadata: { voiceCallId: call.id, followUps: json.data.followUps },
-            },
-          });
-        }
       }
-    } catch {
-      // summary is best-effort — the call record stands without it
-    }
+    });
   }
 
   // 4. Notify org owner + workflow trigger (§16.4)
@@ -193,22 +256,24 @@ export async function POST(request: Request): Promise<NextResponse> {
     select: { userId: true },
   });
   if (owner) {
-    const notificationAlreadySent = await unscopedPrisma.notification.findFirst({
-      where: { organizationId: orgId, type: "call.completed", href: `/voice/calls/${call.id}` },
-      select: { id: true },
-    });
-    if (!notificationAlreadySent) {
-      await unscopedPrisma.notification.create({
-        data: {
-          organizationId: orgId,
-          userId: owner.userId,
-          type: "call.completed",
-          title: call.assistant.name,
-          body: `${call.callerNumber ?? "Unknown"} · ${minutes} min`,
-          href: `/voice/calls/${call.id}`,
-        },
+    await lockedStep(async (tx) => {
+      const notificationAlreadySent = await tx.notification.findFirst({
+        where: { organizationId: orgId, type: "call.completed", href: `/voice/calls/${call.id}` },
+        select: { id: true },
       });
-    }
+      if (!notificationAlreadySent) {
+        await tx.notification.create({
+          data: {
+            organizationId: orgId,
+            userId: owner.userId,
+            type: "call.completed",
+            title: call.assistant.name,
+            body: `${call.callerNumber ?? "Unknown"} · ${minutes} min`,
+            href: `/voice/calls/${call.id}`,
+          },
+        });
+      }
+    });
   }
 
   await emitWorkflowEvent(

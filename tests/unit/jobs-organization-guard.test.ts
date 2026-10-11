@@ -127,7 +127,10 @@ const db = {
     s.chunks.push({ documentId: "inserted" });
     return 1;
   }),
-  $transaction: vi.fn(async (ops: unknown[]) => Promise.all(ops)),
+  // Array form (embed-document's chunk inserts) and callback form (post-call's locked steps).
+  $transaction: vi.fn(async (ops: unknown[] | ((tx: unknown) => Promise<unknown>)) =>
+    typeof ops === "function" ? ops(db) : Promise.all(ops),
+  ),
   notification: {
     create: vi.fn(async ({ data }: { data: Row }) => {
       s.notifications.push(data);
@@ -171,6 +174,15 @@ const db = {
     }),
   },
   activity: {
+    // The post-call job looks up the call's activity by metadata.voiceCallId.
+    findFirst: vi.fn(
+      async ({ where }: { where: Row & { metadata?: { equals?: unknown } } }) =>
+        s.activities.find(
+          (a) =>
+            a.organizationId === where.organizationId &&
+            (a.metadata as Row | undefined)?.voiceCallId === where.metadata?.equals,
+        ) ?? null,
+    ),
     create: vi.fn(async ({ data }: { data: Row }) => {
       s.activities.push(data);
       return data;
