@@ -34,6 +34,26 @@ function freshCallRow(): CallRow {
   };
 }
 
+const locks = vi.hoisted(() => {
+  const held = new Map<string, Promise<void>>();
+  const locks = {
+    statements: [] as string[],
+    /** Waits until no other holder has `key`, then holds it; returns the release. */
+    onContention: undefined as (() => void) | undefined,
+    acquire: async (key: string): Promise<() => void> => {
+      if (held.has(key)) locks.onContention?.();
+      while (held.has(key)) await held.get(key);
+      let release = () => {};
+      held.set(key, new Promise<void>((resolve) => (release = resolve)));
+      return () => {
+        held.delete(key);
+        release();
+      };
+    },
+  };
+  return locks;
+});
+
 const mocks = vi.hoisted(() => ({
   verifyJobRequest: vi.fn(async (req: Request): Promise<string | null> => await req.text()),
   voiceCallFindFirst: vi.fn(async (): Promise<unknown> => null),
@@ -69,16 +89,34 @@ vi.mock("@/server/jobs/organization-guard", () => ({
   isOrganizationActive: vi.fn(async () => true),
   ORGANIZATION_INACTIVE: { skipped: "organization_inactive" },
 }));
-vi.mock("@/server/db/tenant", () => ({
-  unscopedPrisma: {
+vi.mock("@/server/db/tenant", () => {
+  const client: Record<string, unknown> = {
     voiceCall: { findFirst: mocks.voiceCallFindFirst, update: mocks.voiceCallUpdate },
     usageRecord: { findFirst: mocks.usageRecordFindFirst },
     contact: { findFirst: mocks.contactFindFirst, create: mocks.contactCreate },
     activity: { create: mocks.activityCreate, findFirst: mocks.activityFindFirst },
     organizationMember: { findFirst: mocks.organizationMemberFindFirst },
     notification: { findFirst: mocks.notificationFindFirst, create: mocks.notificationCreate },
-  },
-}));
+  };
+  // Advisory locks are modelled as one mutex per lock key, held until the transaction ends.
+  client.$transaction = async (step: (tx: unknown) => Promise<unknown>) => {
+    let release = () => {};
+    const tx = {
+      ...client,
+      $executeRaw: async (sql: TemplateStringsArray, ...values: unknown[]) => {
+        locks.statements.push(sql.join("?"));
+        release = await locks.acquire(String(values.join(":")));
+        return 1;
+      },
+    };
+    try {
+      return await step(tx);
+    } finally {
+      release();
+    }
+  };
+  return { unscopedPrisma: client };
+});
 vi.mock("@/server/integrations/anthropic", () => ({
   anthropic: { messages: { create: mocks.anthropicCreate } },
 }));
@@ -103,6 +141,8 @@ type UpdateCall = [{ where: { id: string }; data: Record<string, unknown> }];
 
 beforeEach(() => {
   vi.clearAllMocks();
+  locks.statements.length = 0;
+  locks.onContention = undefined;
   mocks.verifyJobRequest.mockImplementation(async (req: Request) => await req.text());
   mocks.voiceCallFindFirst.mockResolvedValue(freshCallRow());
   mocks.usageRecordFindFirst.mockResolvedValue(null);
@@ -337,5 +377,85 @@ describe("post-call job — summary failures are reported, not hidden", () => {
       }),
     });
     expect(marked()).toBe(true);
+  });
+});
+
+/**
+ * QStash's dedupe id does not make the job run exactly once: a duplicate end-of-call
+ * report outside its window, or a retry overlapping a slow first attempt, runs it twice
+ * at the same time. Each "already recorded?" check must then be serialized with its
+ * insert, or both runs pass it. This models the database's interleaving and advisory
+ * locks with mocks; it is not a real-Postgres test.
+ */
+describe("post-call job — two simultaneous runs for the same call", () => {
+  const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+
+  it("record the minutes, the contact, the CRM activity and the owner notification once", async () => {
+    const usage: unknown[] = [];
+    const contacts: { id: string }[] = [];
+    const activities: unknown[] = [];
+    const notifications: unknown[] = [];
+    // Run A pauses inside its usage check until run B reaches the same step: B either
+    // waits for A's lock (with the lock) or runs the same check (without it).
+    let aArrived = () => {};
+    let bArrived = () => {};
+    const aAtUsageCheck = new Promise<void>((resolve) => (aArrived = resolve));
+    const bAtUsageStep = new Promise<void>((resolve) => (bArrived = resolve));
+    locks.onContention = () => bArrived();
+    let usageChecks = 0;
+    mocks.usageRecordFindFirst.mockImplementation(async () => {
+      usageChecks += 1;
+      if (usageChecks === 1) {
+        aArrived();
+        await bAtUsageStep;
+      } else {
+        bArrived();
+      }
+      return usage.length ? { id: "usage-1" } : null;
+    });
+    mocks.recordUsage.mockImplementation(async () => {
+      await tick();
+      usage.push({});
+    });
+    mocks.contactFindFirst.mockImplementation(async () => {
+      await tick();
+      return contacts[0] ?? null;
+    });
+    mocks.contactCreate.mockImplementation(async () => {
+      await tick();
+      const row = { id: `contact-${contacts.length + 1}` };
+      contacts.push(row);
+      return row;
+    });
+    mocks.activityFindFirst.mockImplementation(async () => {
+      await tick();
+      return activities.length ? { id: "activity-1" } : null;
+    });
+    mocks.activityCreate.mockImplementation(async () => {
+      await tick();
+      activities.push({});
+      return { id: "activity-1" };
+    });
+    mocks.notificationFindFirst.mockImplementation(async () => {
+      await tick();
+      return notifications.length ? { id: "notif-1" } : null;
+    });
+    mocks.notificationCreate.mockImplementation(async () => {
+      await tick();
+      notifications.push({});
+      return { id: "notif-1" };
+    });
+
+    const runA = POST(jobRequest());
+    await aAtUsageCheck;
+    const responses = await Promise.all([runA, POST(jobRequest())]);
+
+    expect(responses.map((r) => r.status)).toEqual([200, 200]);
+    expect(usage).toHaveLength(1);
+    expect(contacts).toHaveLength(1);
+    expect(activities).toHaveLength(1);
+    expect(notifications).toHaveLength(1);
+    expect(locks.statements.length).toBeGreaterThan(0);
+    expect(locks.statements.every((sql) => sql.includes("pg_advisory_xact_lock"))).toBe(true);
   });
 });
