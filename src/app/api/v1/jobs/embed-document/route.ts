@@ -13,6 +13,31 @@ const payloadSchema = z.object({
 
 const EMBED_BATCH = 64;
 
+/** Errors raised deliberately with text written for the document's owner. */
+const USER_FACING_ERRORS = new Set([
+  "DocumentIngestionError",
+  "ParserSecurityError",
+  "UrlIngestionError",
+  "DocumentProcessingError",
+]);
+const GENERIC_FAILURE = "Processing failed. Please try again.";
+
+function processingError(message: string): Error {
+  return Object.assign(new Error(message), { name: "DocumentProcessingError" });
+}
+
+/**
+ * What the owner sees (document.error, rendered as-is, and the failure notification).
+ * Anything else -- a provider, storage or database error -- can carry keys, URLs or
+ * query detail (CLAUDE.md §4), so it becomes a generic message and is only logged by
+ * class name.
+ */
+function failureMessage(err: unknown): string {
+  return err instanceof Error && USER_FACING_ERRORS.has(err.name)
+    ? err.message.slice(0, 500)
+    : GENERIC_FAILURE;
+}
+
 export async function POST(request: Request): Promise<NextResponse> {
   const [
     { Prisma },
@@ -61,6 +86,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     data: { status: "PROCESSING", error: null },
   });
 
+  let chunkCount = 0;
   try {
     // 1. Extract
     let text: string;
@@ -89,7 +115,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     // 2. Chunk
     assertExtractionLimits(text);
     const chunks = chunkText(text);
-    if (chunks.length === 0) throw new Error("Document produced no extractable text");
+    if (chunks.length === 0) throw processingError("Document produced no extractable text");
     assertExtractionLimits(text, chunks.length);
 
     // 3. Embed in batches + insert (replace any previous chunks: reprocess-safe)
@@ -123,24 +149,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       where: { id: documentId },
       data: { status: "READY", chunkCount: chunks.length },
     });
-    await recordUsage(orgId, "EMBEDDINGS", chunks.length, { documentId });
-
-    // Notify uploader (in-app; Realtime picks it up from the table insert)
-    await unscopedPrisma.notification.create({
-      data: {
-        organizationId: orgId,
-        userId: document.uploadedById,
-        type: "document.ready",
-        title: document.title,
-        href: "/knowledge",
-      },
-    });
-
-    return NextResponse.json({ ok: true, chunks: chunks.length });
+    chunkCount = chunks.length;
   } catch (err) {
     // Deleted meanwhile: no failure record or notification (no retry either).
     if (!(await isOrganizationActive(orgId))) return NextResponse.json(ORGANIZATION_INACTIVE);
-    const message = err instanceof Error ? err.message.slice(0, 500) : "processing failed";
+    console.error(
+      JSON.stringify({
+        event: "document_embed_failed",
+        orgId,
+        documentId,
+        name: err instanceof Error ? err.name : "unknown",
+      }),
+    );
+    const message = failureMessage(err);
     await unscopedPrisma.document.update({
       where: { id: documentId },
       data: { status: "FAILED", error: message },
@@ -158,4 +179,42 @@ export async function POST(request: Request): Promise<NextResponse> {
     // 200: extraction failures are terminal, don't burn QStash retries
     return NextResponse.json({ ok: false, error: message });
   }
+
+  // The document is READY: its chunks are stored and searchable. Bookkeeping after that
+  // must not report it as failed, so a failure here is logged instead.
+  try {
+    await recordUsage(orgId, "EMBEDDINGS", chunkCount, { documentId });
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "document_embed_usage_failed",
+        orgId,
+        documentId,
+        name: err instanceof Error ? err.name : "unknown",
+      }),
+    );
+  }
+  try {
+    // Notify uploader (in-app; Realtime picks it up from the table insert)
+    await unscopedPrisma.notification.create({
+      data: {
+        organizationId: orgId,
+        userId: document.uploadedById,
+        type: "document.ready",
+        title: document.title,
+        href: "/knowledge",
+      },
+    });
+  } catch (err) {
+    console.error(
+      JSON.stringify({
+        event: "document_ready_notification_failed",
+        orgId,
+        documentId,
+        name: err instanceof Error ? err.name : "unknown",
+      }),
+    );
+  }
+
+  return NextResponse.json({ ok: true, chunks: chunkCount });
 }
