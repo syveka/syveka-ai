@@ -13,29 +13,33 @@ const payloadSchema = z.object({
 
 const EMBED_BATCH = 64;
 
-/** Errors raised deliberately with text written for the document's owner. */
-const USER_FACING_ERRORS = new Set([
-  "DocumentIngestionError",
-  "ParserSecurityError",
-  "UrlIngestionError",
-  "DocumentProcessingError",
-]);
 const GENERIC_FAILURE = "Processing failed. Please try again.";
+const UNREADABLE_DOCUMENT = "The document could not be read.";
 
-function processingError(message: string): Error {
-  return Object.assign(new Error(message), { name: "DocumentProcessingError" });
+/** A failure of this job whose message is written for the document's owner. */
+class DocumentProcessingError extends Error {
+  override name = "DocumentProcessingError";
 }
 
 /**
  * What the owner sees (document.error, rendered as-is, and the failure notification).
- * Anything else -- a provider, storage or database error -- can carry keys, URLs or
- * query detail (CLAUDE.md §4), so it becomes a generic message and is only logged by
- * class name.
+ * Only errors this codebase raises with fixed text written for the owner keep their
+ * message, matched by class rather than by `name`, which any error can set. The
+ * parser's own failure (`parser_failed`) carries the PDF/DOCX library's message, which
+ * can include file paths, so it gets a fixed text. Anything else -- a provider, storage
+ * or database error -- can carry keys, URLs or query detail (CLAUDE.md §4), so it
+ * becomes a generic message and is only logged by class name.
  */
-function failureMessage(err: unknown): string {
-  return err instanceof Error && USER_FACING_ERRORS.has(err.name)
-    ? err.message.slice(0, 500)
-    : GENERIC_FAILURE;
+function failureMessage(
+  err: unknown,
+  ownerFacing: ReadonlyArray<abstract new (...args: never[]) => Error>,
+): string {
+  if (!(err instanceof Error)) return GENERIC_FAILURE;
+  if ("code" in err && err.code === "parser_failed") return UNREADABLE_DOCUMENT;
+  if (err instanceof DocumentProcessingError || ownerFacing.some((type) => err instanceof type)) {
+    return err.message.slice(0, 500);
+  }
+  return GENERIC_FAILURE;
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -48,8 +52,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     { chunkText },
     { embed },
     { recordUsage },
-    { assertExtractionLimits, assertTenantStoragePath, verifyUploadObject },
+    { assertExtractionLimits, assertTenantStoragePath, verifyUploadObject, DocumentIngestionError },
     { isOrganizationActive, ORGANIZATION_INACTIVE },
+    { ParserSecurityError },
+    { UrlIngestionError },
   ] = await Promise.all([
     import("@/generated/prisma/client/client"),
     import("@/server/jobs/verify"),
@@ -61,6 +67,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/services/billing/entitlements"),
     import("@/server/security/document-ingestion"),
     import("@/server/jobs/organization-guard"),
+    import("@/server/security/parser-security"),
+    import("@/server/security/url-ingestion"),
   ]);
 
   const rawBody = await verifyJobRequest(request);
@@ -115,7 +123,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     // 2. Chunk
     assertExtractionLimits(text);
     const chunks = chunkText(text);
-    if (chunks.length === 0) throw processingError("Document produced no extractable text");
+    if (chunks.length === 0) {
+      throw new DocumentProcessingError("Document produced no extractable text");
+    }
     assertExtractionLimits(text, chunks.length);
 
     // 3. Embed in batches + insert (replace any previous chunks: reprocess-safe)
@@ -161,7 +171,11 @@ export async function POST(request: Request): Promise<NextResponse> {
         name: err instanceof Error ? err.name : "unknown",
       }),
     );
-    const message = failureMessage(err);
+    const message = failureMessage(err, [
+      DocumentIngestionError,
+      ParserSecurityError,
+      UrlIngestionError,
+    ]);
     await unscopedPrisma.document.update({
       where: { id: documentId },
       data: { status: "FAILED", error: message },
@@ -181,7 +195,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // The document is READY: its chunks are stored and searchable. Bookkeeping after that
-  // must not report it as failed, so a failure here is logged instead.
+  // must not report it as failed, so a failure here is logged instead. Nothing retries or
+  // reconciles a lost EMBEDDINGS record; today that metric is recorded but not read by any
+  // limit, invoice or usage page.
   try {
     await recordUsage(orgId, "EMBEDDINGS", chunkCount, { documentId });
   } catch (err) {

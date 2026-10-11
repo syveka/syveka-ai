@@ -234,7 +234,9 @@ vi.mock("@/server/ai/chunking", () => ({
   chunkText: (text: string) =>
     text.split("|").map((content, index) => ({ index, content, tokenCount: 3 })),
 }));
-vi.mock("@/server/security/document-ingestion", () => ({
+vi.mock("@/server/security/document-ingestion", async (importActual) => ({
+  DocumentIngestionError: (await importActual<{ DocumentIngestionError: unknown }>())
+    .DocumentIngestionError,
   assertExtractionLimits: () => undefined,
   assertTenantStoragePath: () => undefined,
   verifyUploadObject: () => undefined,
@@ -522,17 +524,46 @@ describe("embed-document — failures are truthful and safe", () => {
     expect(logged()).not.toContain("PROVIDER-INTERNAL-DETAIL");
   });
 
-  it("a reason written for the user is kept: a blocked URL says so", async () => {
+  const failUrlExtraction = async (err: Error) => {
     const { extractFromUrl } = await import("@/server/ai/extract");
-    vi.mocked(extractFromUrl).mockRejectedValueOnce(
-      Object.assign(new Error("URL destination is not public"), { name: "UrlIngestionError" }),
-    );
+    vi.mocked(extractFromUrl).mockRejectedValueOnce(err);
     Object.assign(doc(), { sourceType: "URL", sourceUrl: "https://intranet.example/doc" });
-
     await embedDocument(job({ documentId: DOC_A, orgId: ORG_A }));
-
     expect(doc().status).toBe("FAILED");
+  };
+
+  it("a reason written for the user is kept: a blocked URL says so", async () => {
+    const { UrlIngestionError } = await import("@/server/security/url-ingestion");
+
+    await failUrlExtraction(
+      new UrlIngestionError("blocked_destination", "URL destination is not public"),
+    );
+
     expect(doc().error).toBe("URL destination is not public");
+  });
+
+  it("a parser failure doesn't show the PDF library's own message", async () => {
+    const { ParserSecurityError } = await import("@/server/security/parser-security");
+
+    await failUrlExtraction(
+      new ParserSecurityError(
+        "parser_failed",
+        "ENOENT: no such file or directory, open '/var/task/node_modules/pdf-parse/PARSER-INTERNAL-DETAIL'",
+      ),
+    );
+
+    expect(doc().error).toBe("The document could not be read.");
+    expect(JSON.stringify(s.notifications)).not.toContain("PARSER-INTERNAL-DETAIL");
+  });
+
+  it("an error that only borrows an owner-facing name is not trusted", async () => {
+    await failUrlExtraction(
+      Object.assign(new Error("upstream detail PROVIDER-INTERNAL-DETAIL"), {
+        name: "UrlIngestionError",
+      }),
+    );
+
+    expect(doc().error).toBe("Processing failed. Please try again.");
   });
 
   it("usage recording failing after the chunks are stored leaves the document READY", async () => {
