@@ -6,9 +6,14 @@ import { randomUUID } from "node:crypto";
  * real Prisma upserts, the real unique vapi_call_id and real concurrency. Only the
  * signature check, Redis, the job queue and the plan lookup are mocked.
  *
+ * Concurrent requests start one after the other's assistant lookup: the route imports its
+ * dependencies lazily, and two of those imports in flight at once can bypass vi.mock in
+ * Vitest (seen as the real signature check running). A gate then holds both at the
+ * upsert, so the database writes really overlap.
+ *
  * Skipped unless VOICE_PG_URL points at a scratch database prepared as in CI:
- * tests/migrations/supabase-compatibility.sql, then `prisma migrate deploy`. Not run
- * in CI. Synthetic organizations only.
+ * tests/migrations/supabase-compatibility.sql, then `prisma migrate deploy`. Synthetic
+ * organizations only.
  */
 
 const PG_URL = process.env.VOICE_PG_URL;
@@ -18,6 +23,8 @@ const holder = vi.hoisted(() => ({
   redis: new Map<string, string>(),
   enqueued: [] as { orgId: string; vapiCallId: string }[],
   failEnqueueOnce: false,
+  onAssistantLookup: null as null | (() => void),
+  upsertGate: null as null | (() => Promise<void>),
 }));
 
 vi.mock("@/server/db/tenant", () => ({
@@ -79,10 +86,26 @@ describe.skipIf(!PG_URL)("Vapi webhook call rows on real Postgres", () => {
       import("@prisma/adapter-pg"),
     ]);
     // Several connections stand in for concurrent serverless instances.
-    db = new PrismaClient({
+    const prisma = new PrismaClient({
       adapter: new PrismaPg({ connectionString: PG_URL!, max: 4 }),
-    }) as unknown as Db;
-    holder.client = db;
+    });
+    db = prisma as unknown as Db;
+    holder.client = prisma.$extends({
+      query: {
+        voiceAssistant: {
+          async findFirst({ args, query }) {
+            holder.onAssistantLookup?.();
+            return query(args);
+          },
+        },
+        voiceCall: {
+          async upsert({ args, query }) {
+            await holder.upsertGate?.();
+            return query(args);
+          },
+        },
+      },
+    });
     ({ POST } = await import("@/app/api/v1/voice/webhook/route"));
   });
 
@@ -216,10 +239,32 @@ describe.skipIf(!PG_URL)("Vapi webhook call rows on real Postgres", () => {
     const a = await seedOrg("race");
     for (let i = 0; i < 10; i++) {
       const callId = `call-${randomUUID()}`;
-      const responses = await Promise.all([
-        statusUpdate(a.vapiAssistantId, callId),
-        report(a.vapiAssistantId, callId),
-      ]);
+      // Both orders: the status update first on even rounds, the report first on odd ones.
+      const [first, second] =
+        i % 2 === 0
+          ? [() => statusUpdate(a.vapiAssistantId, callId), () => report(a.vapiAssistantId, callId)]
+          : [
+              () => report(a.vapiAssistantId, callId),
+              () => statusUpdate(a.vapiAssistantId, callId),
+            ];
+      let arrivals = 0;
+      let release = () => {};
+      const bothAtUpsert = new Promise<void>((resolve) => (release = resolve));
+      holder.upsertGate = async () => {
+        arrivals += 1;
+        if (arrivals === 2) release();
+        await bothAtUpsert;
+      };
+      let looked = () => {};
+      const firstLookedUp = new Promise<void>((resolve) => (looked = resolve));
+      holder.onAssistantLookup = looked;
+      const firstResponse = first();
+      await firstLookedUp;
+      holder.onAssistantLookup = null;
+      const responses = await Promise.all([firstResponse, second()]);
+      holder.upsertGate = null;
+      // Both reached the upsert together (a P2002 retry upserts a third time).
+      expect(arrivals).toBeGreaterThanOrEqual(2);
 
       expect(responses.map((r) => r.status)).toEqual([200, 200]);
       const rows = await db.voiceCall.findMany({ where: { vapiCallId: callId } });
