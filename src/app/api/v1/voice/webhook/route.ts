@@ -5,6 +5,7 @@ import type { unscopedPrisma as prismaClient } from "@/server/db/tenant";
 import type { ToolIdentity } from "@/server/ai/tools";
 import type { redis as redisClient } from "@/server/integrations/redis";
 import { allowedVoiceTools } from "@/lib/validators/voice";
+import { upsertOwnCall } from "@/server/voice/call-rows";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -465,8 +466,9 @@ export async function POST(request: Request): Promise<NextResponse> {
           });
           return NextResponse.json({ ok: true });
         }
-        await unscopedPrisma.voiceCall.upsert({
-          where: { vapiCallId: message.call.id },
+        // Another organization's call id: nothing is recorded (logged in upsertOwnCall).
+        await upsertOwnCall(unscopedPrisma, orgId, {
+          vapiCallId: message.call.id,
           create: {
             organizationId: orgId,
             assistantId: assistant.id,
@@ -510,8 +512,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       // Ended but not yet processed (e.g. the first delivery's enqueue failed): keep the
       // recorded details and fall through so a legitimate retry can still enqueue.
       if (!existing?.endedAt) {
-        await unscopedPrisma.voiceCall.upsert({
-          where: { vapiCallId: message.call.id },
+        const written = await upsertOwnCall(unscopedPrisma, orgId, {
+          vapiCallId: message.call.id,
           create: {
             organizationId: orgId,
             assistantId: assistant.id,
@@ -522,6 +524,10 @@ export async function POST(request: Request): Promise<NextResponse> {
           },
           update: callResult,
         });
+        // Not this organization's call: no post-call work. A retry cannot change that.
+        if (written === "foreign") {
+          return NextResponse.json({ error: "call_conflict" }, { status: 409 });
+        }
       }
 
       // Replay/idempotency guard for the post-call side effect only — the voiceCall
