@@ -150,6 +150,26 @@ describe("assistScheduling", () => {
     expect(tenantDbMock).toHaveBeenCalledWith("org-b");
   });
 
+  it("suggests no time when the busy rows can't all be read", async () => {
+    const db = baseDb();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    db.calendarEvent.findMany.mockImplementation((async (args: { take: number }) =>
+      Array.from({ length: args.take }, (_, i) => ({
+        id: `row-${i}`,
+        startsAt: new Date("2026-01-01T00:00:00.000Z"),
+        endsAt: new Date("2026-01-01T00:30:00.000Z"),
+        recurrenceRule: null,
+        timezone: "UTC",
+      }))) as never);
+    tenantDbMock.mockReturnValue(db);
+
+    const result = await assistScheduling(ctx(), "book 30 min");
+
+    expect(result.suggestedSlots).toEqual([]);
+    expect(anthropicCreateMock).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
   it("reads each busy event's zone so recurring series keep their local time across DST", async () => {
     const db = baseDb();
     tenantDbMock.mockReturnValue(db);

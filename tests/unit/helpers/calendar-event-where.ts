@@ -59,3 +59,43 @@ export function findFirstOver<T extends Row>(rows: T[]) {
   return async (args?: { where?: Record<string, unknown> }) =>
     rows.find((row) => matchesWhere(row, args?.where)) ?? null;
 }
+
+type OrderBy = Record<string, "asc" | "desc">;
+
+/**
+ * A `findMany` that behaves like the database for paged busy-time queries:
+ * filters by `where`, sorts by `orderBy` (object or array), then applies
+ * `cursor` (with `skip`) and `take`. A test then fails if a row cap would
+ * leave out an event.
+ */
+export function findManyPagedOver<T extends Row>(rows: T[]) {
+  return async (args?: {
+    where?: Record<string, unknown>;
+    orderBy?: OrderBy | OrderBy[];
+    take?: number;
+    skip?: number;
+    cursor?: { id: string };
+  }) => {
+    const orders = args?.orderBy ? [args.orderBy].flat() : [];
+    const sorted = rows
+      .filter((row) => matchesWhere(row, args?.where))
+      .sort((a, b) => {
+        for (const order of orders) {
+          const [field, direction] = Object.entries(order)[0]!;
+          const x = a[field];
+          const y = b[field];
+          const diff =
+            typeof x === "string" && typeof y === "string" ? x.localeCompare(y) : compare(x, y);
+          if (diff !== 0) return direction === "desc" ? -diff : diff;
+        }
+        return 0;
+      });
+    let start = 0;
+    if (args?.cursor) {
+      start = sorted.findIndex((row) => row.id === args.cursor!.id);
+      if (start === -1) return [];
+    }
+    start += args?.skip ?? 0;
+    return sorted.slice(start, args?.take === undefined ? undefined : start + args.take);
+  };
+}

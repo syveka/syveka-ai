@@ -16,7 +16,14 @@ import {
   zonedTimeToUtc,
 } from "@/server/calendar/timezone";
 import { lockOrgCalendar } from "@/server/calendar/locks";
-import { busyIntervals, busyWindowWhere, recurringSeriesWhere } from "@/server/calendar/busy";
+import {
+  BUSY_ROW_ORDER,
+  BUSY_ROW_SELECT,
+  busyIntervals,
+  busyWindowWhere,
+  loadBusyRows,
+  recurringSeriesWhere,
+} from "@/server/calendar/busy";
 import type { ProposedActionView } from "@/lib/validators/chat";
 import { DEFAULT_WEEKLY_RULES } from "@/server/services/booking";
 import {
@@ -309,22 +316,24 @@ const getCalendarAvailability = defineTool({
     const durationMinutes =
       (await resolveServiceDurationMinutes(id.orgId, input.serviceName)) ?? 30;
 
-    const events = await db.calendarEvent.findMany({
-      where: {
-        deletedAt: null,
-        status: { not: "CANCELED" },
-        ...busyWindowWhere(dayStart, dayEnd),
-      },
-      select: { startsAt: true, endsAt: true, recurrenceRule: true, timezone: true },
-      orderBy: { startsAt: "desc" }, // newest first if the cap is reached
-      take: 1000,
-    });
+    const { rows: events, complete } = await loadBusyRows((page) =>
+      db.calendarEvent.findMany({
+        where: {
+          deletedAt: null,
+          status: { not: "CANCELED" },
+          ...busyWindowWhere(dayStart, dayEnd),
+        },
+        select: BUSY_ROW_SELECT,
+        orderBy: BUSY_ROW_ORDER,
+        ...page,
+      }),
+    );
 
     const slots = computeAvailableSlots({
       timezone,
       rules,
       overrides,
-      busy: busyIntervals(events, dayStart, dayEnd),
+      busy: busyIntervals(events, dayStart, dayEnd, { complete }),
       from: dayStart,
       to: dayEnd,
       now: new Date(),
@@ -417,18 +426,20 @@ const bookMeeting = defineTool({
       });
       if (conflict) return { ok: false, reason: "slot_taken" };
       // A recurring series is stored once: check its occurrences too.
-      const series = await tx.calendarEvent.findMany({
-        where: {
-          organizationId: id.orgId,
-          deletedAt: null,
-          status: { not: "CANCELED" },
-          ...recurringSeriesWhere(endsAt),
-        },
-        select: { startsAt: true, endsAt: true, recurrenceRule: true, timezone: true },
-        orderBy: { startsAt: "desc" }, // newest first if the cap is reached
-        take: 500,
-      });
-      if (busyIntervals(series, startsAt, endsAt).length > 0) {
+      const { rows: series, complete } = await loadBusyRows((page) =>
+        tx.calendarEvent.findMany({
+          where: {
+            organizationId: id.orgId,
+            deletedAt: null,
+            status: { not: "CANCELED" },
+            ...recurringSeriesWhere(endsAt),
+          },
+          select: BUSY_ROW_SELECT,
+          orderBy: BUSY_ROW_ORDER,
+          ...page,
+        }),
+      );
+      if (busyIntervals(series, startsAt, endsAt, { complete }).length > 0) {
         return { ok: false, reason: "slot_taken" };
       }
 
