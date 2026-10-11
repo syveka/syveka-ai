@@ -195,10 +195,11 @@ describe.skipIf(!PG_URL)("Vapi webhook call rows on real Postgres", () => {
       artifact: { messages: [{ role: "user", message: "forged" }] },
     });
 
+    // Labelled: the evidence workflow checks which of these fails on previous code.
+    expect(await callRow(callId), "A's row unchanged").toEqual(before);
+    expect(holder.enqueued, "nothing queued for B").toEqual([]);
     expect(forged.status).toBe(409);
     await expect(forged.json()).resolves.toEqual({ error: "call_conflict" });
-    expect(await callRow(callId)).toEqual(before);
-    expect(holder.enqueued).toEqual([]);
     expect(conflictLogged()).toBe(true);
     expect(await db.voiceCall.findMany({ where: { organizationId: b.orgId } })).toEqual([]);
   });
