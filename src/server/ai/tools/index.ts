@@ -25,6 +25,7 @@ import {
   recurringSeriesWhere,
 } from "@/server/calendar/busy";
 import type { ProposedActionView } from "@/lib/validators/chat";
+import { toZonedWallTime } from "@/lib/date-time";
 import { DEFAULT_WEEKLY_RULES } from "@/server/services/booking";
 import {
   businessDnaPatchSchema,
@@ -296,10 +297,17 @@ async function resolveServiceDurationMinutes(
   return service?.durationMinutes ?? null;
 }
 
+/**
+ * More slots than a whole day of 30-minute slots are listed only as a count
+ * (`moreSlotsAvailable`), so a voice turn's tool result (4 kB, see
+ * fitToolResult) never has to cut `freeSlots` and `localTimes` apart.
+ */
+export const MAX_LISTED_FREE_SLOTS = 48;
+
 const getCalendarAvailability = defineTool({
   name: "getCalendarAvailability",
   description:
-    "Get free booking slots for a given date (ISO yyyy-mm-dd). Pass serviceName (matching a name from the business's services) whenever the customer is asking about a specific service, so slots reflect its real duration - otherwise defaults to 30-minute slots. Computed from the organization's actual configured availability schedule (or a generic Mon-Fri 09:00-17:00 default if none is configured yet — the response flags which one was used).",
+    "Always call this tool before stating free times or availability for a specific date/time. Never answer availability from memory or an earlier assistant reply. Returns the free booking slots for one date (ISO yyyy-mm-dd), computed from the organization's calendar and availability schedule: freeSlots (UTC instants, use these to book) and localTimes (the same slots as HH:mm in the returned timezone, use these when telling the user). usingOrgConfiguredHours is false when no schedule is configured yet and default hours were used; say so. Pass serviceName (matching a name from the business's services) whenever the customer is asking about a specific service, so slots reflect its real duration - otherwise defaults to 30-minute slots.",
   schema: z.object({
     date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
     serviceName: z.string().max(200).optional(),
@@ -340,11 +348,17 @@ const getCalendarAvailability = defineTool({
       durationMinutes,
     });
 
+    const listed = slots.slice(0, MAX_LISTED_FREE_SLOTS);
     return {
       date: input.date,
       timezone,
       durationMinutes,
-      freeSlots: slots.slice(0, 12).map((s) => s.toISOString()),
+      freeSlotCount: slots.length,
+      freeSlots: listed.map((s) => s.toISOString()),
+      // The same slots as the user reads them, so the model never converts
+      // UTC (or DST) itself.
+      localTimes: listed.map((s) => toZonedWallTime(s, timezone).slice(11, 16)),
+      moreSlotsAvailable: slots.length > listed.length,
       // When false, these are generic default hours, not the org's real
       // schedule — the system prompt instructs the model to caveat this.
       usingOrgConfiguredHours: isOrgConfigured,

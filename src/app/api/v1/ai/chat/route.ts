@@ -1,11 +1,8 @@
 import { NextResponse } from "next/server";
 import { describeAiChatStreamError } from "@/server/ai/stream-error-log";
-import {
-  chatRequestSchema,
-  type ChatStreamEvent,
-  type ProposedActionView,
-} from "@/lib/validators/chat";
+import { chatRequestSchema, type ChatStreamEvent } from "@/lib/validators/chat";
 import type { RetrievedChunk } from "@/server/ai/rag";
+import { toolCallDetails, type ToolCallLogEntry } from "@/server/ai/tool-call-log";
 import type { ToolIdentity } from "@/server/ai/tools";
 import type { EvalClient } from "@/server/ai/voice-conversation";
 import { estimateAiCost } from "@/server/ai/cost";
@@ -389,7 +386,7 @@ export async function POST(request: Request): Promise<Response> {
       };
       // Saved with the reply. A proposed write keeps its action view, so a
       // reopened conversation can show it with its recorded outcome.
-      const toolCallLog: Array<{ name: string; ok: boolean; action?: ProposedActionView }> = [];
+      const toolCallLog: ToolCallLogEntry[] = [];
       const assistantMessageId = crypto.randomUUID();
 
       send({ type: "meta", conversationId: conversation.id, messageId: assistantMessageId });
@@ -437,7 +434,12 @@ export async function POST(request: Request): Promise<Response> {
               const result = await executeTool(identity, name, toolInput, {
                 readOnly: voiceTurn,
               });
-              toolCallLog.push({ name, ok: !result.includes('"error"') });
+              const details = toolCallDetails(name, toolInput, result);
+              toolCallLog.push({
+                name,
+                ok: !result.includes('"error"'),
+                ...(details ? { details } : {}),
+              });
               send({ type: "tool", name, status: "done" });
               // Structural fit: stays valid JSON for this tool call.
               return voiceTurn ? budget.fitToolResult(result) : result;
