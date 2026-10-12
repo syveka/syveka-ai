@@ -113,7 +113,6 @@ async function resolveAssistant(
       id: true,
       organizationId: true,
       enabledTools: true,
-      useKnowledgeBase: true,
       isActive: true,
       language: true,
       organization: {
@@ -370,9 +369,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         role: "MANAGER",
         actorType: "voice_ai",
       };
-      const enabled = new Set(
-        allowedVoiceTools(assistant.enabledTools, assistant.useKnowledgeBase),
-      );
+      const enabled = new Set(allowedVoiceTools(assistant.enabledTools));
 
       // Replay guard: the HMAC covers the body but carries no timestamp, so a
       // captured tool-calls request stays validly signed forever. Each Vapi

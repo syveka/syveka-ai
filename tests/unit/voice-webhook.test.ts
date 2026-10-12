@@ -202,7 +202,7 @@ describe("Vapi voice webhook — unrelated message types are unchanged", () => {
     mocks.voiceAssistantFindFirst.mockResolvedValueOnce({
       id: "assistant-1",
       organizationId: "org-a",
-      enabledTools: ["searchKnowledgeBase"],
+      enabledTools: ["getCalendarAvailability"],
       useKnowledgeBase: false,
       isActive: true,
       organization: { members: [{ userId: "owner-1" }] },
@@ -217,7 +217,7 @@ describe("Vapi voice webhook — unrelated message types are unchanged", () => {
           message: {
             type: "tool-calls",
             call: { id: "call-3", assistantId: "assistant-1" },
-            toolCallList: [{ id: "tc-1", name: "searchKnowledgeBase", arguments: {} }],
+            toolCallList: [{ id: "tc-1", name: "getCalendarAvailability", arguments: {} }],
           },
         }),
       }),
@@ -428,7 +428,7 @@ describe("Vapi voice webhook — deactivated assistant refuses tool-call writes 
     mocks.voiceAssistantFindFirst.mockResolvedValueOnce({
       id: "assistant-1",
       organizationId: "org-a",
-      enabledTools: ["searchKnowledgeBase", "bookMeeting"],
+      enabledTools: ["getCalendarAvailability", "bookMeeting"],
       useKnowledgeBase: false,
       isActive: false,
       organization: { members: [{ userId: "owner-1" }] },
@@ -443,7 +443,7 @@ describe("Vapi voice webhook — deactivated assistant refuses tool-call writes 
             type: "tool-calls",
             call: { id: "call-4", assistantId: "assistant-1" },
             toolCallList: [
-              { id: "tc-1", name: "searchKnowledgeBase", arguments: {} },
+              { id: "tc-1", name: "getCalendarAvailability", arguments: {} },
               {
                 id: "tc-2",
                 name: "bookMeeting",
@@ -469,13 +469,7 @@ function writeAssistant(organizationId = "org-a") {
   return {
     id: `assistant-${organizationId}`,
     organizationId,
-    enabledTools: [
-      "bookMeeting",
-      "createContact",
-      "logActivity",
-      "getCalendarAvailability",
-      "searchKnowledgeBase",
-    ],
+    enabledTools: ["bookMeeting", "createContact", "logActivity", "getCalendarAvailability"],
     useKnowledgeBase: true,
     isActive: true,
     organization: { members: [{ userId: "owner-1" }] },
@@ -567,7 +561,7 @@ describe("Vapi voice webhook — per-call write caps", () => {
   it("never caps read tools", async () => {
     const reads = Array.from({ length: 12 }, (_, i) => ({
       id: `r${i}`,
-      name: i % 2 ? "searchKnowledgeBase" : "getCalendarAvailability",
+      name: "getCalendarAvailability",
     }));
     const results = await runTools("call-7", reads);
 
@@ -691,14 +685,14 @@ describe("Vapi voice webhook — per-call write caps", () => {
 
     const results = await runTools("call-7", [
       { id: "b1", name: "bookMeeting" },
-      { id: "r1", name: "searchKnowledgeBase" },
+      { id: "r1", name: "getCalendarAvailability" },
     ]);
 
     expect(results).toEqual([err("call_write_limit_unavailable"), OK]);
     expect(mocks.executeTool).toHaveBeenCalledTimes(1);
     expect(mocks.executeTool).toHaveBeenCalledWith(
       expect.anything(),
-      "searchKnowledgeBase",
+      "getCalendarAvailability",
       expect.anything(),
     );
     // The claim is released so a retry can run once Redis is back.
@@ -708,7 +702,7 @@ describe("Vapi voice webhook — per-call write caps", () => {
   it("refuses writes without a call id (nothing to key the cap on); reads still run", async () => {
     const results = await runTools("", [
       { id: "b1", name: "bookMeeting" },
-      { id: "r1", name: "searchKnowledgeBase" },
+      { id: "r1", name: "getCalendarAvailability" },
     ]);
 
     expect(results).toEqual([err("call_required"), OK]);
@@ -734,7 +728,7 @@ describe("Vapi voice webhook — writes refused after the call has ended", () =>
     const results = await runTools("call-7", [
       { id: "b1", name: "bookMeeting" },
       { id: "c1", name: "createContact" },
-      { id: "r1", name: "searchKnowledgeBase" },
+      { id: "r1", name: "getCalendarAvailability" },
     ]);
 
     expect(results).toEqual([err("call_ended"), err("call_ended"), OK]);
@@ -1086,7 +1080,7 @@ describe("Vapi voice webhook — tool-calls payload shapes", () => {
   const assistant = {
     id: "assistant-1",
     organizationId: "org-a",
-    enabledTools: ["bookMeeting"],
+    enabledTools: ["bookMeeting", "getCalendarAvailability"],
     useKnowledgeBase: true,
     isActive: true,
     organization: { members: [{ userId: "owner-1" }] },
@@ -1116,7 +1110,7 @@ describe("Vapi voice webhook — tool-calls payload shapes", () => {
       {
         id: "tc-spec",
         type: "function",
-        function: { name: "searchKnowledgeBase", arguments: '{"query":"opening hours"}' },
+        function: { name: "getCalendarAvailability", arguments: '{"query":"opening hours"}' },
       },
     ]);
 
@@ -1126,7 +1120,7 @@ describe("Vapi voice webhook — tool-calls payload shapes", () => {
     ]);
     expect(mocks.executeTool).toHaveBeenCalledWith(
       expect.objectContaining({ orgId: "org-a", actorType: "voice_ai" }),
-      "searchKnowledgeBase",
+      "getCalendarAvailability",
       { query: "opening hours" },
     );
   });
@@ -1136,10 +1130,10 @@ describe("Vapi voice webhook — tool-calls payload shapes", () => {
     mocks.executeTool.mockResolvedValueOnce(JSON.stringify({ ok: true }));
 
     await toolCalls([
-      { id: "tc-flat", name: "searchKnowledgeBase", parameters: { query: "prices" } },
+      { id: "tc-flat", name: "getCalendarAvailability", parameters: { query: "prices" } },
     ]);
 
-    expect(mocks.executeTool).toHaveBeenCalledWith(expect.anything(), "searchKnowledgeBase", {
+    expect(mocks.executeTool).toHaveBeenCalledWith(expect.anything(), "getCalendarAvailability", {
       query: "prices",
     });
   });
@@ -1193,7 +1187,7 @@ describe("Vapi voice webhook — request hardening", () => {
   it("refuses a request asking for more than 20 tool calls, running none of them", async () => {
     const calls = Array.from({ length: 21 }, (_, i) => ({
       id: `r${i}`,
-      name: "searchKnowledgeBase",
+      name: "getCalendarAvailability",
       arguments: {},
     }));
     const res = await POST(
@@ -1216,7 +1210,7 @@ describe("Vapi voice webhook — request hardening", () => {
     mocks.voiceAssistantFindFirst.mockResolvedValueOnce(writeAssistant());
     const reads = Array.from({ length: 20 }, (_, i) => ({
       id: `r${i}`,
-      name: "searchKnowledgeBase",
+      name: "getCalendarAvailability",
     }));
     const res = await POST(toolRequest("call-9", reads));
     expect(res.status).toBe(200);
@@ -1360,5 +1354,89 @@ describe("Vapi voice webhook — a call row is only ever written within the assi
 
     await expect(POST(eocrRequest())).rejects.toThrow("connection reset");
     expect(mocks.enqueue).not.toHaveBeenCalled();
+  });
+});
+
+/**
+ * A phone caller is anonymous, and searchKnowledgeBase searches every document of the
+ * organization. Nothing marks a document as approved for the public, so the webhook
+ * refuses the tool whatever an assistant stored: the previous defaults
+ * (useKnowledgeBase true, enabledTools ["searchKnowledgeBase"]), or nothing at all.
+ */
+describe("Vapi voice webhook — a phone caller can't search the organization's knowledge base", () => {
+  const kbCall = {
+    id: "tc-kb",
+    function: { name: "searchKnowledgeBase", arguments: '{"query":"salary table"}' },
+  };
+  const toolCalls = (toolCallList: unknown[]) =>
+    POST(
+      new Request("http://localhost/api/v1/voice/webhook", {
+        method: "POST",
+        headers: { "x-vapi-signature": "sig" },
+        body: JSON.stringify({
+          message: {
+            type: "tool-calls",
+            call: { id: "call-kb", assistantId: "assistant-1" },
+            toolCallList,
+          },
+        }),
+      }),
+    );
+  const assistantWith = (settings: Record<string, unknown>) =>
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce({
+      id: "assistant-1",
+      organizationId: "org-a",
+      isActive: true,
+      organization: { members: [{ userId: "owner-1" }] },
+      ...settings,
+    } as never);
+
+  it("an assistant saved with the previous defaults is refused it; its other tools still run", async () => {
+    assistantWith({
+      enabledTools: ["searchKnowledgeBase", "getCalendarAvailability"],
+      useKnowledgeBase: true,
+    });
+    mocks.executeTool.mockResolvedValueOnce(JSON.stringify({ slots: [] }));
+
+    const response = await toolCalls([
+      kbCall,
+      { id: "tc-cal", function: { name: "getCalendarAvailability", arguments: "{}" } },
+    ]);
+
+    const body = await response.json();
+    expect(body.results).toEqual([
+      { toolCallId: "tc-kb", result: JSON.stringify({ error: "tool_not_enabled" }) },
+      { toolCallId: "tc-cal", result: JSON.stringify({ slots: [] }) },
+    ]);
+    expect(mocks.executeTool).toHaveBeenCalledTimes(1);
+    expect(mocks.executeTool).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: "org-a", actorType: "voice_ai" }),
+      "getCalendarAvailability",
+      {},
+    );
+  });
+
+  it("a tool call naming it is refused even when the assistant was never offered it", async () => {
+    assistantWith({ enabledTools: [], useKnowledgeBase: false });
+
+    const body = await (await toolCalls([kbCall])).json();
+
+    expect(body.results).toEqual([
+      { toolCallId: "tc-kb", result: JSON.stringify({ error: "tool_not_enabled" }) },
+    ]);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing", {}],
+    ["null", { enabledTools: null, useKnowledgeBase: null }],
+    ["malformed", { enabledTools: "searchKnowledgeBase", useKnowledgeBase: "true" }],
+  ])("%s stored settings allow no tool", async (_, settings) => {
+    assistantWith(settings);
+
+    const body = await (await toolCalls([kbCall])).json();
+
+    expect(body.results[0].result).toBe(JSON.stringify({ error: "tool_not_enabled" }));
+    expect(mocks.executeTool).not.toHaveBeenCalled();
   });
 });
