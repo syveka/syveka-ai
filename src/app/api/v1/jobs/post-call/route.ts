@@ -128,15 +128,16 @@ export async function POST(request: Request): Promise<NextResponse> {
   let contactId = call.contactId;
   if (!contactId && call.callerNumber) {
     const normalized = call.callerNumber.replace(/\s/g, "");
-    contactId = await lockedStep(async (tx) => {
+    const step = await lockedStep(async (tx) => {
       let matched: string | null = null;
+      let created: Awaited<ReturnType<typeof tx.contact.create>> | null = null;
       const existing = await tx.contact.findFirst({
         where: { organizationId: orgId, phone: normalized, deletedAt: null },
       });
       if (existing) {
         matched = existing.id;
       } else if (call.status === "COMPLETED") {
-        const created = await tx.contact.create({
+        created = await tx.contact.create({
           data: {
             organizationId: orgId,
             firstName: normalized, // placeholder until enriched
@@ -150,8 +151,38 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (matched) {
         await tx.voiceCall.update({ where: { id: call.id }, data: { contactId: matched } });
       }
-      return matched;
+      return { matched, created };
     });
+    contactId = step.matched;
+    // `contact.created` only for a contact this run created, once its step has committed.
+    // A retry finds call.contactId already set and skips this step, so it never emits
+    // again; the contact id is also the event's dedupe key. A queue failure is logged
+    // and never fails the job (the contact is already saved).
+    if (step.created) {
+      const created = step.created;
+      await emitWorkflowEvent(
+        orgId,
+        "contact.created",
+        {
+          contactId: created.id,
+          firstName: created.firstName,
+          lastName: created.lastName,
+          email: created.email,
+          phone: created.phone,
+          source: created.source,
+        },
+        created.id,
+      ).catch((error: unknown) => {
+        console.error(
+          JSON.stringify({
+            event: "contact_created_workflow_event_failed",
+            orgId,
+            contactId: created.id,
+            errorName: error instanceof Error ? error.name : typeof error,
+          }),
+        );
+      });
+    }
   }
 
   // 3. AI summary + sentiment (Haiku-class, §15.2)

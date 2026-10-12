@@ -116,6 +116,26 @@ const db = {
         data,
       ),
     ),
+    // The embed job's claim: PENDING/FAILED, or PROCESSING last updated before `lt`.
+    updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
+      const claimable = (d: Row) =>
+        (where.OR as Row[]).some((c) =>
+          typeof c.status === "string"
+            ? d.status === c.status &&
+              (d.updatedAt as Date) < ((c.updatedAt as { lt: Date }).lt as Date)
+            : (c.status as { in: string[] }).in.includes(d.status as string),
+        );
+      const d = s.documents.find(
+        (x) =>
+          x.id === where.id &&
+          x.organizationId === where.organizationId &&
+          !x.deletedAt &&
+          claimable(x),
+      );
+      if (!d) return { count: 0 };
+      Object.assign(d, data);
+      return { count: 1 };
+    }),
   },
   documentChunk: {
     deleteMany: vi.fn(async ({ where }: { where: Row }) => {
@@ -591,10 +611,133 @@ describe("embed-document — failures are truthful and safe", () => {
   });
 });
 
+/**
+ * QStash can deliver an embed job again while or after a run works on it. Only the
+ * delivery that claims the document replaces its chunks and pays for embeddings; a
+ * finished document is not redone; a run the platform stopped (timeout, out of memory)
+ * left the document PROCESSING, and a later delivery takes it over instead of leaving
+ * it stuck.
+ */
+describe("embed-document — one run at a time, nothing left stuck", () => {
+  const embedJob = (orgId = ORG_A, documentId = DOC_A) =>
+    embedDocument(job({ documentId, orgId, inlineContent: "one|two|three" }));
+  const doc = (docId = DOC_A) => s.documents.find((d) => d.id === docId)!;
+  const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000);
+
+  it("a redelivery after the document is READY does nothing: no paid call, chunks kept", async () => {
+    await embedJob();
+    const chunksAfterFirstRun = [...s.chunks];
+    vi.clearAllMocks();
+
+    const res = await embedJob();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ skipped: "already processed" });
+    expect(fx.embed).not.toHaveBeenCalled();
+    expect(db.documentChunk.deleteMany).not.toHaveBeenCalled();
+    expect(s.chunks).toEqual(chunksAfterFirstRun);
+    expect(doc().status).toBe("READY");
+    expect(fx.recordUsage).not.toHaveBeenCalled();
+    expect(s.notifications.filter((n) => n.type === "document.ready")).toHaveLength(1);
+  });
+
+  it("a second delivery during a run is refused for a retry (409), and the run's chunks aren't duplicated", async () => {
+    let release!: () => void;
+    fx.embed.mockImplementationOnce(async (texts: string[]) => {
+      await new Promise<void>((r) => (release = r));
+      return texts.map(() => [0.1]);
+    });
+
+    const first = embedJob();
+    await vi.waitFor(() => expect(fx.embed).toHaveBeenCalledTimes(1));
+    const second = await embedJob();
+    release();
+    const done = await first;
+
+    expect(second.status).toBe(409);
+    expect(await second.json()).toEqual({ error: "processing_in_progress" });
+    expect(fx.embed).toHaveBeenCalledTimes(1);
+    expect(db.documentChunk.deleteMany).toHaveBeenCalledTimes(1);
+    expect(await done.json()).toEqual({ ok: true, chunks: 3 });
+    expect(s.chunks).toHaveLength(3);
+    expect(doc().status).toBe("READY");
+  });
+
+  it("a PROCESSING claim within the reclaim window is left to its run (409, nothing done)", async () => {
+    Object.assign(doc(), { status: "PROCESSING", updatedAt: minutesAgo(5) });
+
+    const res = await embedJob();
+
+    expect(res.status).toBe(409);
+    expect(fx.embed).not.toHaveBeenCalled();
+    expect(db.documentChunk.deleteMany).not.toHaveBeenCalled();
+    expect(doc().status).toBe("PROCESSING");
+  });
+
+  it("a run the platform stopped is taken over: stale PROCESSING becomes READY, old partial chunks replaced", async () => {
+    Object.assign(doc(), { status: "PROCESSING", updatedAt: minutesAgo(8) });
+    s.chunks = [{ documentId: DOC_A }, { documentId: DOC_A }]; // left by the stopped run
+
+    const res = await embedJob();
+
+    expect(await res.json()).toEqual({ ok: true, chunks: 3 });
+    expect(doc().status).toBe("READY");
+    expect(s.chunks).toHaveLength(3);
+    expect(s.chunks.filter((c) => c.documentId === DOC_A)).toHaveLength(0);
+  });
+
+  it("a FAILED document is processed again by a later delivery", async () => {
+    Object.assign(doc(), { status: "FAILED", error: "Processing failed. Please try again." });
+
+    expect(await (await embedJob()).json()).toEqual({ ok: true, chunks: 3 });
+    expect(doc().status).toBe("READY");
+    expect(doc().error).toBeNull();
+  });
+
+  it("the claim marks the document PROCESSING with a fresh timestamp, scoped to its organization", async () => {
+    const before = Date.now();
+    fx.embed.mockImplementationOnce(async (texts: string[]) => {
+      expect(doc().status).toBe("PROCESSING");
+      expect((doc().updatedAt as Date).getTime()).toBeGreaterThanOrEqual(before);
+      return texts.map(() => [0.1]);
+    });
+
+    await embedJob();
+
+    expect(db.document.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: DOC_A, organizationId: ORG_A, deletedAt: null }),
+      }),
+    );
+  });
+
+  it("another organization's document is never claimed through this org", async () => {
+    expect(await (await embedJob(ORG_A, DOC_B)).json()).toEqual({ skipped: "document gone" });
+    expect(db.document.updateMany).not.toHaveBeenCalled();
+    expect(doc(DOC_B).status).toBe("PENDING");
+  });
+
+  it("a document deleted just before the claim is skipped, not processed", async () => {
+    db.document.updateMany.mockImplementationOnce(async () => {
+      doc().deletedAt = new Date();
+      return { count: 0 };
+    });
+
+    const res = await embedJob();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ skipped: "document gone" });
+    expect(fx.embed).not.toHaveBeenCalled();
+  });
+});
+
 // ── post-call ──────────────────────────────────────────────────────────────
 describe("post-call", () => {
   const run = (orgId = ORG_A) => postCall(job({ vapiCallId: "vapi-a", orgId }));
   const call = () => s.calls.find((c) => c.id === "call-a")!;
+  // The workflow events emitted, by type: a contact the run creates emits `contact.created`.
+  const emitted = () =>
+    (fx.emitWorkflowEvent.mock.calls as unknown as unknown[][]).map((args) => args[1]);
 
   it("active organization: usage, contact, summary, activity, notification, workflow, processed (unchanged)", async () => {
     expect(await (await run()).json()).toEqual({ ok: true });
@@ -604,7 +747,7 @@ describe("post-call", () => {
     expect(call().summary).toBe("Synthetic summary.");
     expect(s.activities).toHaveLength(1);
     expect(s.notifications).toHaveLength(1);
-    expect(fx.emitWorkflowEvent).toHaveBeenCalledTimes(1);
+    expect(emitted()).toEqual(["contact.created", "call.completed"]);
     expect(call().postCallProcessedAt).toBeInstanceOf(Date);
   });
 
@@ -639,7 +782,8 @@ describe("post-call", () => {
     expect(call().summary).toBeNull();
     expect(s.activities).toHaveLength(0);
     expect(s.notifications).toHaveLength(0);
-    expect(fx.emitWorkflowEvent).not.toHaveBeenCalled();
+    // The contact was committed before the summary call; nothing after it is emitted.
+    expect(emitted()).toEqual(["contact.created"]);
     expect(call().postCallProcessedAt).toBeNull();
   });
 
@@ -658,7 +802,7 @@ describe("post-call", () => {
     await run();
     await run();
     expect(fx.anthropic).toHaveBeenCalledTimes(1);
-    expect(fx.emitWorkflowEvent).toHaveBeenCalledTimes(1);
+    expect(emitted()).toEqual(["contact.created", "call.completed"]);
   });
 });
 
