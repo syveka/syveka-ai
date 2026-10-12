@@ -44,6 +44,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     { recordUsage },
     { emitWorkflowEvent },
     { isOrganizationActive, ORGANIZATION_INACTIVE },
+    { callerPhoneIdentity, PHONE_SEPARATOR_SQL_PATTERN },
+    { lockContactPhone },
   ] = await Promise.all([
     import("@/server/jobs/verify"),
     import("@/server/db/tenant"),
@@ -52,6 +54,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/services/billing/entitlements"),
     import("@/server/services/workflow-events"),
     import("@/server/jobs/organization-guard"),
+    import("@/lib/crm/phone-identity"),
+    import("@/server/calendar/locks"),
   ]);
 
   const rawBody = await verifyJobRequest(request);
@@ -125,23 +129,44 @@ export async function POST(request: Request): Promise<NextResponse> {
   });
 
   // 2. Contact match/create from caller number (§16.4)
+  //
+  // A caller whose number identifies no one (anonymous, invalid) gets no contact.
+  // Otherwise an existing contact with the same number in any formatting is linked
+  // (phone-identity.ts says which formats are certainly the same number). Two
+  // different calls from the same new caller can be processed at once, and the
+  // per-call lock doesn't serialize them, so the lookup and create also hold a
+  // lock on the (organization, number): the second waits, then finds the first's
+  // contact. Lock order is always call, then number.
   let contactId = call.contactId;
-  if (!contactId && call.callerNumber) {
-    const normalized = call.callerNumber.replace(/\s/g, "");
+  const identity = contactId ? null : callerPhoneIdentity(call.callerNumber);
+  if (identity) {
     const step = await lockedStep(async (tx) => {
+      await lockContactPhone(tx, orgId, identity.canonical);
       let matched: string | null = null;
       let created: Awaited<ReturnType<typeof tx.contact.create>> | null = null;
-      const existing = await tx.contact.findFirst({
-        where: { organizationId: orgId, phone: normalized, deletedAt: null },
-      });
-      if (existing) {
-        matched = existing.id;
+      // Oldest first, so every call from this number links to the same contact.
+      const existing = await tx.$queryRaw<Array<{ id: string }>>`
+        SELECT id FROM contacts
+        WHERE organization_id = ${orgId}::uuid
+          AND deleted_at IS NULL
+          AND regexp_replace(phone, ${PHONE_SEPARATOR_SQL_PATTERN}, '', 'g') = ANY(${identity.matchForms}::text[])
+        ORDER BY created_at ASC, id ASC
+        LIMIT 2`;
+      if (existing.length > 1) {
+        // Several contacts share the number (a household or a switchboard). They are
+        // never merged; the call goes to the oldest. Ids only, never the number.
+        console.warn(
+          JSON.stringify({ event: "post_call_contact_multiple_matches", orgId, callId: call.id }),
+        );
+      }
+      if (existing[0]) {
+        matched = existing[0].id;
       } else if (call.status === "COMPLETED") {
         created = await tx.contact.create({
           data: {
             organizationId: orgId,
-            firstName: normalized, // placeholder until enriched
-            phone: normalized,
+            firstName: identity.canonical, // placeholder until enriched
+            phone: identity.canonical,
             source: "voice-ai",
             status: "LEAD",
           },

@@ -59,7 +59,8 @@ const mocks = vi.hoisted(() => ({
   voiceCallFindFirst: vi.fn(async (): Promise<unknown> => null),
   voiceCallUpdate: vi.fn(async (..._args: unknown[]) => ({})),
   usageRecordFindFirst: vi.fn(async (): Promise<{ id: string } | null> => null),
-  contactFindFirst: vi.fn(async (): Promise<{ id: string } | null> => null),
+  // The contact lookup by phone (a raw query): the matching contacts, oldest first.
+  contactMatches: vi.fn(async (..._args: unknown[]): Promise<{ id: string }[]> => []),
   contactCreate: vi.fn(async () => ({ id: "contact-new-1" })),
   activityCreate: vi.fn(async () => ({ id: "activity-1" })),
   activityFindFirst: vi.fn(async (): Promise<{ id: string } | null> => null),
@@ -93,26 +94,28 @@ vi.mock("@/server/db/tenant", () => {
   const client: Record<string, unknown> = {
     voiceCall: { findFirst: mocks.voiceCallFindFirst, update: mocks.voiceCallUpdate },
     usageRecord: { findFirst: mocks.usageRecordFindFirst },
-    contact: { findFirst: mocks.contactFindFirst, create: mocks.contactCreate },
+    contact: { create: mocks.contactCreate },
+    $queryRaw: mocks.contactMatches,
     activity: { create: mocks.activityCreate, findFirst: mocks.activityFindFirst },
     organizationMember: { findFirst: mocks.organizationMemberFindFirst },
     notification: { findFirst: mocks.notificationFindFirst, create: mocks.notificationCreate },
   };
   // Advisory locks are modelled as one mutex per lock key, held until the transaction ends.
+  // Every lock a transaction takes is held until it ends, as with pg_advisory_xact_lock.
   client.$transaction = async (step: (tx: unknown) => Promise<unknown>) => {
-    let release = () => {};
+    const releases: Array<() => void> = [];
     const tx = {
       ...client,
       $executeRaw: async (sql: TemplateStringsArray, ...values: unknown[]) => {
         locks.statements.push(sql.join("?"));
-        release = await locks.acquire(String(values.join(":")));
+        releases.push(await locks.acquire(String(values.join(":"))));
         return 1;
       },
     };
     try {
       return await step(tx);
     } finally {
-      release();
+      for (const release of releases) release();
     }
   };
   return { unscopedPrisma: client };
@@ -146,7 +149,7 @@ beforeEach(() => {
   mocks.verifyJobRequest.mockImplementation(async (req: Request) => await req.text());
   mocks.voiceCallFindFirst.mockResolvedValue(freshCallRow());
   mocks.usageRecordFindFirst.mockResolvedValue(null);
-  mocks.contactFindFirst.mockResolvedValue(null);
+  mocks.contactMatches.mockResolvedValue([]);
   mocks.notificationFindFirst.mockResolvedValue(null);
   mocks.activityFindFirst.mockResolvedValue(null);
 });
@@ -182,7 +185,7 @@ describe("post-call job — contact.created workflow event", () => {
   });
 
   it("a caller matched to an existing contact emits no contact.created", async () => {
-    mocks.contactFindFirst.mockResolvedValue({ id: "contact-existing-1" });
+    mocks.contactMatches.mockResolvedValue([{ id: "contact-existing-1" }]);
 
     await POST(jobRequest());
 
@@ -267,7 +270,7 @@ describe("post-call job — idempotency against QStash-level retry", () => {
   });
 
   it("existing contact by phone: matches instead of creating a duplicate", async () => {
-    mocks.contactFindFirst.mockResolvedValue({ id: "contact-existing-2" });
+    mocks.contactMatches.mockResolvedValue([{ id: "contact-existing-2" }]);
     const response = await POST(jobRequest());
     expect(response.status).toBe(200);
 
@@ -479,9 +482,9 @@ describe("post-call job — two simultaneous runs for the same call", () => {
       await tick();
       usage.push({});
     });
-    mocks.contactFindFirst.mockImplementation(async () => {
+    mocks.contactMatches.mockImplementation(async () => {
       await tick();
-      return contacts[0] ?? null;
+      return contacts.slice(0, 2);
     });
     mocks.contactCreate.mockImplementation(async () => {
       await tick();

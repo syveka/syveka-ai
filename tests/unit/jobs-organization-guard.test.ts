@@ -147,6 +147,19 @@ const db = {
     s.chunks.push({ documentId: "inserted" });
     return 1;
   }),
+  // post-call's contact lookup by phone: (organization, formatting pattern, accepted forms).
+  $queryRaw: vi.fn(
+    async (_sql: TemplateStringsArray, orgId: unknown, pattern: unknown, forms: unknown) =>
+      s.contacts
+        .filter(
+          (c) =>
+            c.organizationId === orgId &&
+            !c.deletedAt &&
+            typeof c.phone === "string" &&
+            (forms as string[]).includes(c.phone.replace(new RegExp(pattern as string, "g"), "")),
+        )
+        .map((c) => ({ id: c.id })),
+  ),
   // Array form (embed-document's chunk inserts) and callback form (post-call's locked steps).
   $transaction: vi.fn(async (ops: unknown[] | ((tx: unknown) => Promise<unknown>)) =>
     typeof ops === "function" ? ops(db) : Promise.all(ops),
@@ -186,7 +199,6 @@ const db = {
     ),
   },
   contact: {
-    findFirst: vi.fn(async () => null),
     create: vi.fn(async ({ data }: { data: Row }) => {
       const row = { id: id("contact"), ...data };
       s.contacts.push(row);

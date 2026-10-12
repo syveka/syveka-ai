@@ -107,7 +107,10 @@ type Db = {
   usageRecord: { count: (a: object) => Promise<number> };
   activity: { count: (a: object) => Promise<number> };
   notification: { count: (a: object) => Promise<number> };
-  contact: { findMany: (a: object) => Promise<Row[]> };
+  contact: {
+    findMany: (a: object) => Promise<Row[]>;
+    create: (a: object) => Promise<{ id: string }>;
+  };
   $queryRaw: (strings: TemplateStringsArray, ...values: unknown[]) => Promise<Row[]>;
   $disconnect: () => Promise<void>;
 };
@@ -137,8 +140,9 @@ describe.skipIf(!PG_URL)("post-call job on real Postgres", () => {
       };
     holder.client = prisma.$extends({
       query: {
+        // The job's only raw query is its contact lookup by phone.
+        $queryRaw: gated("contact"),
         usageRecord: { findFirst: gated("usage") },
-        contact: { findFirst: gated("contact") },
         activity: {
           findFirst: gated("activity"),
           async create({ args, query }) {
@@ -180,7 +184,7 @@ describe.skipIf(!PG_URL)("post-call job on real Postgres", () => {
   });
 
   /** A synthetic organization with an owner, an assistant and one ended, unprocessed call. */
-  async function seedCall(label: string) {
+  async function seedCall(label: string, callerNumber?: string) {
     const org = await base.organization.create({
       data: { name: `Synthetic post-call ${label}`, slug: `post-call-${label}-${randomUUID()}` },
     });
@@ -199,13 +203,25 @@ describe.skipIf(!PG_URL)("post-call job on real Postgres", () => {
         language: "EN",
       },
     });
-    const phone = `+35840${Math.floor(1_000_000 + Math.random() * 8_999_999)}`;
-    const call = await base.voiceCall.create({
+    const phone = callerNumber ?? `+35840${Math.floor(1_000_000 + Math.random() * 8_999_999)}`;
+    const call = await addCall(org.id, assistant.id, phone);
+    return {
+      orgId: org.id,
+      assistantId: assistant.id,
+      callId: call.id,
+      vapiCallId: call.vapiCallId,
+      phone,
+    };
+  }
+
+  /** Another ended, unprocessed call to the same assistant. */
+  async function addCall(orgId: string, assistantId: string, callerNumber: string) {
+    return base.voiceCall.create({
       data: {
-        organizationId: org.id,
-        assistantId: assistant.id,
+        organizationId: orgId,
+        assistantId,
         vapiCallId: `call-${randomUUID()}`,
-        callerNumber: phone,
+        callerNumber,
         status: "COMPLETED",
         startedAt: new Date(Date.now() - 120_000),
         endedAt: new Date(),
@@ -213,7 +229,6 @@ describe.skipIf(!PG_URL)("post-call job on real Postgres", () => {
         transcript: [{ role: "user", message: "synthetic transcript of a call" }],
       },
     });
-    return { orgId: org.id, callId: call.id, vapiCallId: call.vapiCallId, phone };
   }
 
   /** Starts `second` once `first` has reached its usage check (its imports are done). */
@@ -364,4 +379,68 @@ describe.skipIf(!PG_URL)("post-call job on real Postgres", () => {
     });
     expect(leaked).toBe(0);
   }, 30_000);
+
+  it("two different calls from the same new caller, processed at the same time, create one contact", async () => {
+    const first = await seedCall("same-caller", "+358401230001");
+    const second = await addCall(first.orgId, first.assistantId, "+358 40 123 0001");
+    holder.gates = new Map();
+
+    await staggered(
+      () => run(first.orgId, first.vapiCallId),
+      () => run(first.orgId, second.vapiCallId),
+    );
+
+    const contacts = await base.contact.findMany({
+      where: { organizationId: first.orgId },
+      select: { id: true },
+    });
+    expect(contacts, "contact rows").toHaveLength(1);
+    // The second run waited for the first run's lock on the caller's number.
+    expect(holder.gates.get("contact")?.outcome, "contact").toBe("contention");
+    for (const id of [first.callId, second.id]) {
+      const call = await base.voiceCall.findUnique({ where: { id } });
+      expect(call?.contactId).toBe(contacts[0]!.id);
+    }
+  }, 30_000);
+
+  it("a contact saved with formatting is linked; a national-format or deleted one is not", async () => {
+    const c = await seedCall("formatted", "+358401230002");
+    const formatted = await base.contact.create({
+      data: { organizationId: c.orgId, firstName: "Formatted", phone: "+358 (40) 123-00.02" },
+    });
+    await base.contact.create({
+      data: { organizationId: c.orgId, firstName: "National", phone: "040 123 0002" },
+    });
+    await base.contact.create({
+      data: {
+        organizationId: c.orgId,
+        firstName: "Deleted",
+        phone: "+358401230002",
+        deletedAt: new Date(),
+      },
+    });
+
+    expect((await run(c.orgId, c.vapiCallId)).status).toBe(200);
+
+    const call = await base.voiceCall.findUnique({ where: { id: c.callId } });
+    expect(call?.contactId).toBe(formatted.id);
+    const all = await base.contact.findMany({ where: { organizationId: c.orgId } });
+    expect(all, "no contact created").toHaveLength(3);
+  });
+
+  it("Postgres removes exactly the formatting characters the JavaScript comparison removes", async () => {
+    const { PHONE_SEPARATOR_SQL_PATTERN, compactPhone } = await import("@/lib/crm/phone-identity");
+    const samples = [
+      "+358 (40) 123-45.67/8",
+      `040\t123${String.fromCharCode(0xa0)}4567`,
+      "+358401234567;ext=1",
+      "a-b_c",
+      "[0]40\\1",
+    ];
+    for (const sample of samples) {
+      const rows = await base.$queryRaw`
+        select regexp_replace(${sample}, ${PHONE_SEPARATOR_SQL_PATTERN}, '', 'g') as compact`;
+      expect(rows[0]?.compact, JSON.stringify(sample)).toBe(compactPhone(sample));
+    }
+  });
 });
