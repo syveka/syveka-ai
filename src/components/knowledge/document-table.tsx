@@ -16,6 +16,8 @@ export type DocumentRow = {
   chunkCount: number;
   sizeBytes: number | null;
   createdAt: string;
+  /** Queued or processing with nothing left to finish it: shown as failed. */
+  stalled?: boolean;
 };
 
 const SOURCE_ICON = { UPLOAD: FileText, URL: Globe, NOTE: StickyNote } as const;
@@ -45,6 +47,7 @@ export function DocumentTable({ documents }: { documents: DocumentRow[] }) {
       <CardContent className="divide-y p-0">
         {documents.map((doc) => {
           const Icon = SOURCE_ICON[doc.sourceType as keyof typeof SOURCE_ICON] ?? FileText;
+          const status = doc.stalled ? "FAILED" : doc.status;
           return (
             <div key={doc.id} className="flex items-center gap-3 p-4">
               <Icon className="size-4 shrink-0 text-muted-foreground" />
@@ -55,17 +58,21 @@ export function DocumentTable({ documents }: { documents: DocumentRow[] }) {
                   {doc.sizeBytes ? `${(doc.sizeBytes / 1024).toFixed(0)} kB · ` : ""}
                   {new Date(doc.createdAt).toLocaleDateString()}
                 </p>
-                {doc.error ? <p className="text-xs text-destructive">{doc.error}</p> : null}
+                {doc.stalled ? (
+                  <p className="text-xs text-destructive">{t("stalled")}</p>
+                ) : doc.error ? (
+                  <p className="text-xs text-destructive">{doc.error}</p>
+                ) : null}
               </div>
               <span
                 className={cn(
                   "rounded-full px-2 py-0.5 text-xs font-medium",
-                  STATUS_STYLE[doc.status] ?? STATUS_STYLE.PENDING,
+                  STATUS_STYLE[status] ?? STATUS_STYLE.PENDING,
                 )}
               >
-                {t(`status.${doc.status}` as never)}
+                {t(`status.${status}` as never)}
               </span>
-              {doc.status === "PROCESSING" || doc.status === "PENDING" ? (
+              {status === "PROCESSING" || status === "PENDING" ? (
                 <Button variant="ghost" size="icon" onClick={() => router.refresh()}>
                   <RefreshCw className="size-4" />
                 </Button>
