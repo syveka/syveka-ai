@@ -152,8 +152,8 @@ describe("conversation page: saved actions come back with their recorded outcome
   });
 });
 
-describe("conversation page: a reopened reply shows the tool chips it showed live", () => {
-  it("restores the names of the tools a reply used, and none for the user's messages", async () => {
+describe("conversation page: a reopened reply shows no tool chips", () => {
+  it("passes no tool names to the view, though the reply's saved toolCalls keep them", async () => {
     m.messages = [
       {
         id: "u1",
@@ -180,7 +180,7 @@ describe("conversation page: a reopened reply shows the tool chips it showed liv
 
     const messages = (await open()) as Array<{ id: string; tools?: string[] }>;
 
-    expect(messages.find((x) => x.id === "a1")!.tools).toEqual(["getCalendarAvailability"]);
+    expect(messages.find((x) => x.id === "a1")!.tools).toBeUndefined();
     expect(messages.find((x) => x.id === "a2")!.tools).toBeUndefined();
     expect(messages.find((x) => x.id === "u1")!.tools).toBeUndefined();
   });

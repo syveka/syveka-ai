@@ -57,7 +57,7 @@ vi.mock("@/server/ai/rag", () => ({ retrieveChunks: vi.fn() }));
 
 import { TOOL_REGISTRY, anthropicToolsFor, type ToolIdentity } from "@/server/ai/tools";
 import { buildSystemPrompt } from "@/server/ai/prompts/system";
-import { toolCallDetails, savedToolNames } from "@/server/ai/tool-call-log";
+import { toolCallDetails } from "@/server/ai/tool-call-log";
 import { getPublicSlots } from "@/server/services/booking";
 
 const tool = TOOL_REGISTRY.find((t) => t.name === "getCalendarAvailability")!;
@@ -270,19 +270,6 @@ describe("G: what a reply saves about an availability lookup", () => {
     expect(
       toolCallDetails("getCalendarAvailability", { date: "Jane Doe" }, '{"error":"invalid_input"}'),
     ).toEqual({});
-  });
-
-  it("restores chip names from saved calls and ignores malformed entries", () => {
-    expect(
-      savedToolNames([
-        { name: "getCalendarAvailability", ok: true, details: { date: "2026-10-19" } },
-        { name: "createContact", ok: true },
-        null,
-        { ok: true },
-        "x",
-      ]),
-    ).toEqual(["getCalendarAvailability", "createContact"]);
-    expect(savedToolNames(null)).toEqual([]);
   });
 });
 

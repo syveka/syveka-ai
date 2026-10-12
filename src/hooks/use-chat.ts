@@ -13,6 +13,11 @@ export type UiMessage = {
   role: "user" | "assistant";
   content: string;
   citations?: Array<{ documentId: string; title: string }>;
+  /**
+   * Tools running right now, while the reply streams; shown only as a plain
+   * status ("Checking calendar…"). Which tools a reply used is saved server-side
+   * (Message.toolCalls), never shown on the finished reply.
+   */
   tools?: string[];
   /**
    * Writes the assistant proposed; each runs only if the user confirms it.
@@ -21,6 +26,12 @@ export type UiMessage = {
   actions?: Array<ProposedActionView & { restored?: RestoredActionState }>;
   streaming?: boolean;
 };
+
+/** `names` without its first `name` (one tool call finished). */
+function withoutFirst(names: string[], name: string): string[] {
+  const i = names.indexOf(name);
+  return i === -1 ? names : [...names.slice(0, i), ...names.slice(i + 1)];
+}
 
 /** Consumes the SSE stream from /api/v1/ai/chat (§15.1). */
 export function useChat(params: {
@@ -121,7 +132,7 @@ export function useChat(params: {
             error?: { code?: string };
           } | null;
           setError(body?.error?.code ?? "request_failed");
-          patchAssistant({ streaming: false });
+          patchAssistant({ streaming: false, tools: [] });
           setIsStreaming(false);
           return null;
         }
@@ -154,6 +165,8 @@ export function useChat(params: {
               case "tool":
                 if (event.status === "start") {
                   patchAssistant((m) => ({ tools: [...(m.tools ?? []), event.name] }));
+                } else {
+                  patchAssistant((m) => ({ tools: withoutFirst(m.tools ?? [], event.name) }));
                 }
                 break;
               case "citations":
@@ -173,7 +186,7 @@ export function useChat(params: {
           }
         }
 
-        patchAssistant({ streaming: false });
+        patchAssistant({ streaming: false, tools: [] });
         if (isNewConversation && conversationIdRef.current) {
           if (mustDefer()) {
             pendingRouteRef.current = `/chat/${conversationIdRef.current}`;
@@ -191,7 +204,7 @@ export function useChat(params: {
         } else {
           setError("network_error");
         }
-        patchAssistant({ streaming: false });
+        patchAssistant({ streaming: false, tools: [] });
         return null;
       } finally {
         abortControllerRef.current = null;

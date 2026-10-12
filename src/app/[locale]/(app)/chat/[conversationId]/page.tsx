@@ -7,7 +7,6 @@ import {
   restoredState,
   savedActions,
 } from "@/server/ai/tool-action-history";
-import { savedToolNames } from "@/server/ai/tool-call-log";
 import { redis } from "@/server/integrations/redis";
 import { requirePermission } from "@/server/auth/guard";
 import { listConversations, getConversationWithMessages } from "@/server/services/conversations";
@@ -54,14 +53,11 @@ export default async function ConversationPage({
         const state = restoredState(action, recorded, now, live.get(action.id));
         return state === "pending" ? action : { ...action, restored: state };
       });
-      // The same chips the reply showed live ("Checked calendar availability"...).
-      const tools = m.role === "ASSISTANT" ? savedToolNames(m.toolCalls) : [];
       return {
         id: m.id,
         role: m.role === "USER" ? "user" : "assistant",
         content: m.content,
         citations: (m.citations as UiMessage["citations"]) ?? undefined,
-        ...(tools.length > 0 ? { tools } : {}),
         ...(actions.length > 0 ? { actions } : {}),
       };
     });
