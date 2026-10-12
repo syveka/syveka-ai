@@ -286,7 +286,9 @@ export async function POST(request: Request): Promise<Response> {
     locale: ctx.locale,
     org: {
       name: org.name,
-      industry: settings.industry,
+      // Business DNA is the profile the owner edits. `settings.industry` is an
+      // older copy from onboarding that nothing can edit: only a fallback.
+      industry: businessDna?.industry?.trim() || settings.industry,
       customInstructions: settings.aiInstructions,
     },
     businessDna,
