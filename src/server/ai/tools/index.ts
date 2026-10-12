@@ -27,6 +27,7 @@ import {
 import type { ProposedActionView } from "@/lib/validators/chat";
 import { toZonedWallTime } from "@/lib/date-time";
 import { DEFAULT_WEEKLY_RULES } from "@/server/services/booking";
+import { emitContactCreated } from "@/server/services/contacts";
 import {
   businessDnaPatchSchema,
   confirmedBusinessDnaPatchSchema,
@@ -180,6 +181,9 @@ const createContact = defineTool({
         after: input,
       },
     );
+    // The same `contact.created` event as every other way of creating a contact
+    // (after the insert commits, keyed by the contact id; never throws).
+    await emitContactCreated(id.orgId, contact);
     return { id: contact.id, created: true };
   },
 });
