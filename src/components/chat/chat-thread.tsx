@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useTranslations } from "next-intl";
-import { Sparkles, Wrench, FileText, Volume2, Square } from "lucide-react";
+import { Sparkles, FileText, Volume2, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UiMessage } from "@/hooks/use-chat";
 import type { PlaybackError } from "@/hooks/use-speech-playback";
@@ -68,8 +68,8 @@ function precedingUserText(messages: UiMessage[], index: number): string | undef
   return undefined;
 }
 
-/** Tools whose activity chip has a localized label (chat.toolLabels); others show their name. */
-const LABELED_TOOLS = [
+/** Tools with their own status line (chat.toolStatus); any other shows the default. */
+const TOOLS_WITH_STATUS = [
   "searchKnowledgeBase",
   "searchContacts",
   "createContact",
@@ -79,8 +79,8 @@ const LABELED_TOOLS = [
   "proposeBusinessDnaUpdate",
 ] as const;
 
-const isLabeledTool = (name: string): name is (typeof LABELED_TOOLS)[number] =>
-  (LABELED_TOOLS as readonly string[]).includes(name);
+const hasStatus = (name: string): name is (typeof TOOLS_WITH_STATUS)[number] =>
+  (TOOLS_WITH_STATUS as readonly string[]).includes(name);
 
 function MessageBubble({
   message,
@@ -93,8 +93,9 @@ function MessageBubble({
   turn?: string;
   onActionSettled?: (actionId: string) => void;
 }) {
-  const toolLabel = useTranslations("chat.toolLabels");
+  const toolStatus = useTranslations("chat.toolStatus");
   const isUser = message.role === "user";
+  const runningTool = message.streaming ? message.tools?.at(-1) : undefined;
   return (
     <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
       <div
@@ -103,17 +104,11 @@ function MessageBubble({
           isUser ? "bg-primary text-primary-foreground" : "bg-muted",
         )}
       >
-        {message.tools && message.tools.length > 0 ? (
-          <div className="mb-2 flex flex-wrap gap-1.5">
-            {message.tools.map((tool, i) => (
-              <span
-                key={`${tool}-${i}`}
-                className="inline-flex items-center gap-1 rounded-full bg-background/60 px-2 py-0.5 text-xs text-muted-foreground"
-              >
-                {tool === "proposeBusinessDnaUpdate" ? null : <Wrench className="size-3" />}
-                {isLabeledTool(tool) ? toolLabel(tool) : tool}
-              </span>
-            ))}
+        {/* Only while a tool runs, in plain words: never a tool name, and
+            nothing stays on the finished reply. */}
+        {runningTool ? (
+          <div role="status" className="mb-2 text-xs text-muted-foreground">
+            {toolStatus(hasStatus(runningTool) ? runningTool : "default")}
           </div>
         ) : null}
 

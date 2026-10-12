@@ -56,6 +56,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     { isOrganizationActive, ORGANIZATION_INACTIVE },
     { ParserSecurityError },
     { UrlIngestionError },
+    { DOCUMENT_PROCESSING_RECLAIM_MS },
   ] = await Promise.all([
     import("@/generated/prisma/client/client"),
     import("@/server/jobs/verify"),
@@ -69,6 +70,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/jobs/organization-guard"),
     import("@/server/security/parser-security"),
     import("@/server/security/url-ingestion"),
+    import("@/lib/knowledge/processing"),
   ]);
 
   const rawBody = await verifyJobRequest(request);
@@ -89,10 +91,39 @@ export async function POST(request: Request): Promise<NextResponse> {
   });
   if (!document) return NextResponse.json({ skipped: "document gone" });
 
-  await unscopedPrisma.document.update({
-    where: { id: documentId },
-    data: { status: "PROCESSING", error: null },
+  // Claim the document, so one delivery at a time replaces its chunks and
+  // pays for embeddings. QStash can deliver a job again (a retry after a
+  // lost response, or at-least-once redelivery) while or after a run works
+  // on it; two runs interleaving deleteMany and their inserts would leave
+  // duplicate chunks. A PROCESSING claim past the reclaim window belongs to
+  // a run the platform already stopped, so it is taken over.
+  const claimed = await unscopedPrisma.document.updateMany({
+    where: {
+      id: documentId,
+      organizationId: orgId,
+      deletedAt: null,
+      OR: [
+        { status: { in: ["PENDING", "FAILED"] } },
+        {
+          status: "PROCESSING",
+          updatedAt: { lt: new Date(Date.now() - DOCUMENT_PROCESSING_RECLAIM_MS) },
+        },
+      ],
+    },
+    data: { status: "PROCESSING", error: null, updatedAt: new Date() },
   });
+  if (claimed.count === 0) {
+    const current = await unscopedPrisma.document.findFirst({
+      where: { id: documentId, organizationId: orgId, deletedAt: null },
+      select: { status: true },
+    });
+    if (!current) return NextResponse.json({ skipped: "document gone" });
+    // Already searchable: a redelivery of a finished job redoes nothing.
+    if (current.status === "READY") return NextResponse.json({ skipped: "already processed" });
+    // Another delivery is working on it now. Non-2xx makes QStash retry later,
+    // when that run has finished (READY) or is past the reclaim window.
+    return NextResponse.json({ error: "processing_in_progress" }, { status: 409 });
+  }
 
   let chunkCount = 0;
   try {

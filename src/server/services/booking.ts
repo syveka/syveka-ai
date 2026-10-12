@@ -4,6 +4,7 @@ import { Prisma } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { audit } from "./audit";
 import { emitWorkflowEvent } from "./workflow-events";
+import { emitContactCreated } from "./contacts";
 import { issueToken, invalidateBookingTokens } from "./booking-tokens";
 import {
   computeAvailableSlots,
@@ -501,9 +502,12 @@ export async function createPublicBooking(params: {
       where: { organizationId: orgId, email: input.email, deletedAt: null },
       select: { id: true },
     });
+    // Set only when this booking creates the contact: its `contact.created` event is
+    // emitted after the transaction commits, never for a matched existing contact.
+    let newContact: Parameters<typeof emitContactCreated>[1] | null = null;
     if (!matchedContact) {
       const { firstName, lastName } = splitGuestName(input.name);
-      matchedContact = await tx.contact.create({
+      newContact = await tx.contact.create({
         data: {
           organizationId: orgId,
           firstName,
@@ -513,8 +517,16 @@ export async function createPublicBooking(params: {
           source: "public-booking",
           gdprConsentAt: input.consent ? new Date() : null,
         },
-        select: { id: true },
+        select: {
+          id: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+          phone: true,
+          source: true,
+        },
       });
+      matchedContact = { id: newContact.id };
     }
 
     await tx.eventAttendee.create({
@@ -557,7 +569,7 @@ export async function createPublicBooking(params: {
       },
     });
 
-    return { booking, event, contactId: matchedContact.id };
+    return { booking, event, contactId: matchedContact.id, newContact };
   });
 
   const manageToken = await issueToken(
@@ -591,7 +603,10 @@ export async function createPublicBooking(params: {
     created.booking.id,
   ).catch(() => undefined);
 
-  return { ...created, manageToken, bookingType };
+  const { newContact, ...booked } = created;
+  if (newContact) await emitContactCreated(orgId, newContact);
+
+  return { ...booked, manageToken, bookingType };
 }
 
 // ── Cancel / reschedule via secure tokens ────────────────────────────────
