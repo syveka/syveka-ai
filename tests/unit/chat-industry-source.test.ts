@@ -4,8 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * Chat's "## Organization" line takes the industry from Business DNA, the
  * profile the owner edits. The legacy `organization.settings.industry`
  * (written by onboarding before Business DNA got it, and editable nowhere) is
- * used only when the profile has none -- so a Business DNA edit is never
- * contradicted by the old value in the same prompt. The real system prompt is
+ * used only by an organization with no profile at all -- so a Business DNA
+ * edit, including clearing the industry, is never contradicted by the old value. The real system prompt is
  * built; only data access and the model are mocked.
  */
 const m = vi.hoisted(() => ({
@@ -158,15 +158,23 @@ describe("chat's organization industry", () => {
     expect(system).not.toContain("Retail");
   });
 
+  it("falls back to the old onboarding copy only when there is no Business DNA", async () => {
+    m.settings = { industry: "Retail" };
+    m.businessDna = null;
+
+    expect(organizationLine(await systemPrompt())).toBe('You work for "Acme" (industry: Retail).');
+  });
+
   it.each([
-    ["no Business DNA", null],
-    ["no industry in Business DNA", profile(null)],
+    ["an industry cleared in Business DNA", profile(null)],
     ["a blank industry in Business DNA", profile("   ")],
-  ])("falls back to the old onboarding copy with %s", async (_case, dna) => {
+  ])("never brings the old onboarding copy back with %s", async (_case, dna) => {
     m.settings = { industry: "Retail" };
     m.businessDna = dna;
 
-    expect(organizationLine(await systemPrompt())).toBe('You work for "Acme" (industry: Retail).');
+    const system = await systemPrompt();
+    expect(organizationLine(system)).toBe('You work for "Acme".');
+    expect(system).not.toContain("Retail");
   });
 
   it("names no industry when neither has one", async () => {
