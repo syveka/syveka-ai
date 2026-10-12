@@ -412,6 +412,7 @@
       "PENDING": "Queued",
       "FAILED": "Failed"
     },
+    "stalled": "Processing didn't finish. Delete the document and add it again.",
     "errors": {
       "unsupported_type": "Unsupported file type.",
       "too_large": "File exceeds the 25 MB limit.",

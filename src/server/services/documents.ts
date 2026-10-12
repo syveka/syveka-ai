@@ -16,6 +16,7 @@ import {
   verifyUploadObject,
 } from "@/server/security/document-ingestion";
 import { assertSupportedUrl, UrlIngestionError } from "@/server/security/url-ingestion";
+import { isDocumentStalled } from "@/lib/knowledge/processing";
 
 const DOCUMENTS_BUCKET = "documents";
 
@@ -179,9 +180,13 @@ export async function createDocument(ctx: TenantContext, input: CreateDocumentIn
   return document;
 }
 
+/**
+ * The organization's documents. `stalled`: still queued or processing long after
+ * every retry of its job ran out (see isDocumentStalled), so it will never finish.
+ */
 export async function listDocuments(ctx: TenantContext) {
   const db = tenantDb(ctx.orgId);
-  return db.document.findMany({
+  const documents = await db.document.findMany({
     where: { deletedAt: null },
     orderBy: { createdAt: "desc" },
     take: 100,
@@ -194,9 +199,15 @@ export async function listDocuments(ctx: TenantContext) {
       chunkCount: true,
       sizeBytes: true,
       createdAt: true,
+      updatedAt: true,
       mimeType: true,
     },
   });
+  const now = new Date();
+  return documents.map(({ updatedAt, ...document }) => ({
+    ...document,
+    stalled: isDocumentStalled({ status: document.status, updatedAt }, now),
+  }));
 }
 
 export async function deleteDocument(ctx: TenantContext, documentId: string): Promise<void> {

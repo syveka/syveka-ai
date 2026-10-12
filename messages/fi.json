@@ -412,6 +412,7 @@
       "PENDING": "Jonossa",
       "FAILED": "Epäonnistui"
     },
+    "stalled": "Käsittely ei valmistunut. Poista dokumentti ja lisää se uudelleen.",
     "errors": {
       "unsupported_type": "Tiedostotyyppiä ei tueta.",
       "too_large": "Tiedosto ylittää 25 Mt rajan.",
