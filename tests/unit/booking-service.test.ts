@@ -239,6 +239,94 @@ describe("createPublicBooking", () => {
     expect(txMock.contact.create).not.toHaveBeenCalled();
   });
 
+  describe("contact.created workflow event", () => {
+    const contactCreatedCalls = () =>
+      (emitMock.mock.calls as unknown as unknown[][]).filter(
+        (args) => args[1] === "contact.created",
+      );
+
+    it("a brand-new guest's contact emits contact.created once, after the booking transaction commits", async () => {
+      txMock.contact.findFirst.mockResolvedValue(null);
+      txMock.contact.create.mockResolvedValue({
+        id: "contact-new",
+        firstName: "Jane",
+        lastName: "Customer",
+        email: "guest@example.com",
+        phone: "+358401234567",
+        source: "public-booking",
+      });
+      let committed = false;
+      unscopedMock.$transaction.mockImplementationOnce(
+        async (fn: (tx: typeof txMock) => Promise<unknown>) => {
+          const result = await fn(txMock);
+          committed = true;
+          return result;
+        },
+      );
+      emitMock.mockImplementation(async (...args: unknown[]) => {
+        if (args[1] === "contact.created") expect(committed).toBe(true);
+      });
+
+      await createPublicBooking({
+        orgSlug: "acme",
+        typeSlug: "intro-call",
+        input: input({ name: "Jane Customer", phone: "+358401234567" }),
+      });
+
+      expect(contactCreatedCalls()).toEqual([
+        [
+          "org-a",
+          "contact.created",
+          {
+            contactId: "contact-new",
+            firstName: "Jane",
+            lastName: "Customer",
+            email: "guest@example.com",
+            phone: "+358401234567",
+            source: "public-booking",
+          },
+          "contact-new",
+        ],
+      ]);
+      emitMock.mockImplementation(async () => undefined);
+    });
+
+    it("a guest matched to an existing contact emits no contact.created", async () => {
+      txMock.contact.findFirst.mockResolvedValue({ id: "contact-9" });
+      await createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() });
+      expect(contactCreatedCalls()).toEqual([]);
+      expect(emitMock).toHaveBeenCalledWith(
+        "org-a",
+        "booking.created",
+        expect.anything(),
+        expect.anything(),
+      );
+    });
+
+    it("a failing workflow queue still completes the booking with its new contact", async () => {
+      const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+      txMock.contact.findFirst.mockResolvedValue(null);
+      emitMock.mockImplementation(async (...args: unknown[]) => {
+        if (args[1] === "contact.created") throw new Error("queue unavailable");
+      });
+
+      const result = await createPublicBooking({
+        orgSlug: "acme",
+        typeSlug: "intro-call",
+        input: input(),
+      });
+
+      expect(result.booking).toBeDefined();
+      expect(result.contactId).toBe("contact-new");
+      expect(result).not.toHaveProperty("newContact");
+      const logged = errorSpy.mock.calls.flat().join(" ");
+      expect(logged).toContain("contact_created_workflow_event_failed");
+      expect(logged).not.toContain("guest@example.com");
+      emitMock.mockImplementation(async () => undefined);
+      errorSpy.mockRestore();
+    });
+  });
+
   it("creates a new CRM contact (as a LEAD) for a brand-new guest, splitting name into first/last", async () => {
     // Regression test for the First Customer Readiness audit finding: a
     // brand-new guest's public booking previously never created a Contact

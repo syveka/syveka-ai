@@ -4,6 +4,7 @@ import type { Prisma } from "@/generated/prisma/client/client";
 import { tenantDb } from "@/server/db/tenant";
 import { assertWithinLimit } from "./billing/entitlements";
 import { audit } from "./audit";
+import { emitWorkflowEvent } from "./workflow-events";
 import type { TenantContext } from "@/server/auth/session";
 import type {
   ArchivedFilter,
@@ -85,6 +86,51 @@ async function assertCompanyInTenant(db: ReturnType<typeof tenantDb>, companyId:
   });
 }
 
+/**
+ * Starts the organization's `contact.created` workflows for a contact that was just
+ * created. Call it only for a new contact (not one matched to an existing record) and
+ * only after the transaction that created it has committed. The contact id is the
+ * event's dedupe key, so a redelivered or retried event can't start a workflow twice.
+ * Never throws: a queue failure leaves the saved contact as it is and is logged
+ * without personal data.
+ */
+export async function emitContactCreated(
+  orgId: string,
+  contact: {
+    id: string;
+    firstName: string;
+    lastName: string | null;
+    email: string | null;
+    phone: string | null;
+    source: string | null;
+  },
+): Promise<void> {
+  try {
+    await emitWorkflowEvent(
+      orgId,
+      "contact.created",
+      {
+        contactId: contact.id,
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+        email: contact.email,
+        phone: contact.phone,
+        source: contact.source,
+      },
+      contact.id,
+    );
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: "contact_created_workflow_event_failed",
+        orgId,
+        contactId: contact.id,
+        errorName: error instanceof Error ? error.name : typeof error,
+      }),
+    );
+  }
+}
+
 export async function createContact(ctx: TenantContext, input: ContactInput) {
   const db = tenantDb(ctx.orgId);
   const current = await db.contact.count({ where: { deletedAt: null } });
@@ -113,6 +159,7 @@ export async function createContact(ctx: TenantContext, input: ContactInput) {
     resourceId: contact.id,
     after: { firstName: input.firstName, email: input.email },
   });
+  await emitContactCreated(ctx.orgId, contact);
   return contact;
 }
 

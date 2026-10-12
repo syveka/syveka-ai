@@ -595,6 +595,9 @@ describe("embed-document — failures are truthful and safe", () => {
 describe("post-call", () => {
   const run = (orgId = ORG_A) => postCall(job({ vapiCallId: "vapi-a", orgId }));
   const call = () => s.calls.find((c) => c.id === "call-a")!;
+  // The workflow events emitted, by type: a contact the run creates emits `contact.created`.
+  const emitted = () =>
+    (fx.emitWorkflowEvent.mock.calls as unknown as unknown[][]).map((args) => args[1]);
 
   it("active organization: usage, contact, summary, activity, notification, workflow, processed (unchanged)", async () => {
     expect(await (await run()).json()).toEqual({ ok: true });
@@ -604,7 +607,7 @@ describe("post-call", () => {
     expect(call().summary).toBe("Synthetic summary.");
     expect(s.activities).toHaveLength(1);
     expect(s.notifications).toHaveLength(1);
-    expect(fx.emitWorkflowEvent).toHaveBeenCalledTimes(1);
+    expect(emitted()).toEqual(["contact.created", "call.completed"]);
     expect(call().postCallProcessedAt).toBeInstanceOf(Date);
   });
 
@@ -639,7 +642,8 @@ describe("post-call", () => {
     expect(call().summary).toBeNull();
     expect(s.activities).toHaveLength(0);
     expect(s.notifications).toHaveLength(0);
-    expect(fx.emitWorkflowEvent).not.toHaveBeenCalled();
+    // The contact was committed before the summary call; nothing after it is emitted.
+    expect(emitted()).toEqual(["contact.created"]);
     expect(call().postCallProcessedAt).toBeNull();
   });
 
@@ -658,7 +662,7 @@ describe("post-call", () => {
     await run();
     await run();
     expect(fx.anthropic).toHaveBeenCalledTimes(1);
-    expect(fx.emitWorkflowEvent).toHaveBeenCalledTimes(1);
+    expect(emitted()).toEqual(["contact.created", "call.completed"]);
   });
 });
 
