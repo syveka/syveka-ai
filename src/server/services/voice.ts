@@ -320,7 +320,7 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
     where: { id: assistantId, organizationId: orgId },
   });
 
-  const toolNames = allowedVoiceTools(assistant.enabledTools, assistant.useKnowledgeBase);
+  const toolNames = allowedVoiceTools(assistant.enabledTools);
 
   // Mandatory AI disclosure (§13.3, §16.5) is prepended server-side.
   const disclosure =

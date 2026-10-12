@@ -159,17 +159,7 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
             <CardDescription>{t("toolsDescription")}</CardDescription>
           </CardHeader>
           <CardContent className="space-y-2">
-            <label className="flex items-center gap-2 text-sm font-medium">
-              <input
-                type="checkbox"
-                name="useKnowledgeBase"
-                value="true"
-                defaultChecked={initial?.useKnowledgeBase ?? true}
-                className="size-4"
-              />
-              {t("useKb")}
-            </label>
-            {VOICE_TOOL_NAMES.filter((n) => n !== "searchKnowledgeBase").map((tool) => (
+            {VOICE_TOOL_NAMES.map((tool) => (
               <label key={tool} className="flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
