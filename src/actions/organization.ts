@@ -59,8 +59,8 @@ export async function createOrganizationAction(
   const supabase = await createSupabaseServer();
   await supabase.auth.refreshSession();
 
-  // A brand-new org has no Business DNA yet — send the owner there first
-  // (skippable) rather than straight to an empty dashboard.
+  // A brand-new org's Business DNA holds at most the industry given above —
+  // send the owner there first (skippable) rather than straight to the dashboard.
   redirect("/settings/business-dna");
 }
 
