@@ -5,9 +5,11 @@ const mocks = vi.hoisted(() => ({
   tenantDb: vi.fn(),
   voiceAssistantFindFirstOrThrow: vi.fn(),
   voiceAssistantUpdate: vi.fn(async () => ({})),
-  upsertVapiAssistant: vi.fn(async (_config: { systemPrompt: string }) => ({
-    id: "vapi-assistant-1",
-  })),
+  upsertVapiAssistant: vi.fn(
+    async (_config: { systemPrompt: string; tools: { name: string }[] }) => ({
+      id: "vapi-assistant-1",
+    }),
+  ),
   buyPhoneNumber: vi.fn(async () => ({ id: "num-1", number: "+358401234567" })),
   auditMock: vi.fn(async () => undefined),
 }));
@@ -26,7 +28,11 @@ vi.mock("@/server/integrations/vapi", () => ({
   buyPhoneNumber: mocks.buyPhoneNumber,
 }));
 vi.mock("@/server/ai/tools", () => ({
-  TOOL_REGISTRY: [],
+  TOOL_REGISTRY: ["searchKnowledgeBase", "createContact"].map((name) => ({
+    name,
+    description: name,
+    schema: {},
+  })),
   zodToJsonSchema: vi.fn(() => ({})),
 }));
 vi.mock("@/server/services/audit", () => ({ audit: mocks.auditMock }));
@@ -242,5 +248,26 @@ describe("resyncActiveAssistants — Business DNA staleness fix", () => {
     await resyncActiveAssistants("org-a");
 
     expect(mocks.upsertVapiAssistant).not.toHaveBeenCalled();
+  });
+});
+
+describe("voice assistant sync — tools offered to phone callers", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it("an assistant saved with knowledge-base access is not offered the knowledge base", async () => {
+    mocks.tenantDb.mockReturnValue(businessDnaMock("org-a", null));
+    mocks.voiceAssistantFindFirstOrThrow.mockResolvedValue(
+      assistantRow("org-a", {
+        enabledTools: ["searchKnowledgeBase", "createContact"],
+        useKnowledgeBase: true,
+      }),
+    );
+
+    await activateAssistant(ctx("org-a"), "assistant-1");
+
+    const config = mocks.upsertVapiAssistant.mock.calls[0]![0];
+    expect(config.tools.map((t) => t.name)).toEqual(["createContact"]);
   });
 });

@@ -154,7 +154,7 @@ describe("Vapi voice webhook — unrelated message types are unchanged", () => {
     mocks.voiceAssistantFindFirst.mockResolvedValueOnce({
       id: "assistant-1",
       organizationId: "org-a",
-      enabledTools: ["searchKnowledgeBase"],
+      enabledTools: ["getCalendarAvailability"],
       useKnowledgeBase: false,
       isActive: true,
       organization: { members: [{ userId: "owner-1" }] },
@@ -169,7 +169,7 @@ describe("Vapi voice webhook — unrelated message types are unchanged", () => {
           message: {
             type: "tool-calls",
             call: { id: "call-3", assistantId: "assistant-1" },
-            toolCallList: [{ id: "tc-1", name: "searchKnowledgeBase", arguments: {} }],
+            toolCallList: [{ id: "tc-1", name: "getCalendarAvailability", arguments: {} }],
           },
         }),
       }),
@@ -375,7 +375,7 @@ describe("Vapi voice webhook — deactivated assistant refuses tool-call writes 
     mocks.voiceAssistantFindFirst.mockResolvedValueOnce({
       id: "assistant-1",
       organizationId: "org-a",
-      enabledTools: ["searchKnowledgeBase", "bookMeeting"],
+      enabledTools: ["getCalendarAvailability", "bookMeeting"],
       useKnowledgeBase: false,
       isActive: false,
       organization: { members: [{ userId: "owner-1" }] },
@@ -390,7 +390,7 @@ describe("Vapi voice webhook — deactivated assistant refuses tool-call writes 
             type: "tool-calls",
             call: { id: "call-4", assistantId: "assistant-1" },
             toolCallList: [
-              { id: "tc-1", name: "searchKnowledgeBase", arguments: {} },
+              { id: "tc-1", name: "getCalendarAvailability", arguments: {} },
               {
                 id: "tc-2",
                 name: "bookMeeting",
