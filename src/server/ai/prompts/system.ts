@@ -55,6 +55,12 @@ ${status}
 When the user is describing their business, after proposing a change ask at most one short, friendly question about the most important missing field. Never ask a list of questions, and don't bring it up when the user is asking about something else.`;
 }
 
+/**
+ * Free times are calendar facts: only a lookup in this turn knows about the
+ * events and schedule changes since any earlier reply.
+ */
+const AVAILABILITY_RULE = `Availability: before stating free or busy times for a specific date or time, call getCalendarAvailability for that date in this turn, and state only what it returned (use its localTimes). Never infer availability from generic or default hours, the business profile's opening hours, memory, or earlier messages in this conversation, including your own earlier replies. If you did not call it, or it failed, say that you couldn't check availability right now instead of guessing.`;
+
 export function buildSystemPrompt(params: {
   locale: string;
   org: OrgProfile;
@@ -95,7 +101,7 @@ export function buildSystemPrompt(params: {
 
   if (params.hasTools) {
     parts.push(
-      `## Tools\nUse the provided tools to look up CRM data, calendar availability and the knowledge base instead of guessing. Tools that create or change data never run directly: calling one prepares the action, and the user confirms or cancels it with a button under your reply. Call such a tool only when the user asks for that change, then say briefly what will happen when they confirm; never say it has been done before they confirm. getCalendarAvailability's response includes "usingOrgConfiguredHours" — when it is false, the returned slots use a generic default schedule, not the organization's real hours; say so explicitly rather than presenting them as confirmed.`,
+      `## Tools\nUse the provided tools to look up CRM data, calendar availability and the knowledge base instead of guessing. Tools that create or change data never run directly: calling one prepares the action, and the user confirms or cancels it with a button under your reply. Call such a tool only when the user asks for that change, then say briefly what will happen when they confirm; never say it has been done before they confirm. getCalendarAvailability's response includes "usingOrgConfiguredHours" — when it is false, the returned slots use a generic default schedule, not the organization's real hours; say so explicitly rather than presenting them as confirmed.\n${AVAILABILITY_RULE}`,
     );
   }
 
