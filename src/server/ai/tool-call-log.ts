@@ -46,14 +46,3 @@ export function toolCallDetails(
   }
   return details;
 }
-
-/** The tools a saved reply used, in order, as its chips show them live. */
-export function savedToolNames(toolCalls: unknown): string[] {
-  if (!Array.isArray(toolCalls)) return [];
-  const names: string[] = [];
-  for (const entry of toolCalls) {
-    const name = (entry as { name?: unknown } | null)?.name;
-    if (typeof name === "string") names.push(name);
-  }
-  return names;
-}
