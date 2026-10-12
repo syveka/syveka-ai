@@ -12,15 +12,16 @@ recursive delete) before removing this worktree, or the other worktree's package
 
 ## 1. Verified state (read 2026-10-13, GitHub API / `git`)
 
-| Item                                | Value                                                                         |
-| ----------------------------------- | ----------------------------------------------------------------------------- |
-| `main`                              | `526f3779d5c6a551f015fd6b07e3bd0bbdaf7150` (#315), unchanged since 2026-10-12 |
-| Staging                             | `526f377`, staging-release run 38294065687, success, 2026-10-12 18:54 UTC     |
-| Production                          | `fc645727c`, last Production deployment 2026-09-25 13:38 UTC; untouched       |
-| #309 head                           | `ff776ab1428632960f4a3517dad2f0fff85d7371`, base `ba79a1a`, 6 commits behind  |
-| #310 head                           | `d2ccdf26184f93abb6a6e233eff04b9fc324de5d`, base `ba79a1a`, 6 commits behind  |
-| This branch                         | `fix/voice-contact-phone-identity`, from `526f377`                            |
-| Run 35914082059 (staging env audit) | still `waiting` since 2026-09-23; separate concurrency group; left alone      |
+| Item                                | Value                                                                                            |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `main`                              | `526f3779d5c6a551f015fd6b07e3bd0bbdaf7150` (#315), unchanged since 2026-10-12                    |
+| Staging                             | `526f377`, staging-release run 38294065687, success, 2026-10-12 18:54 UTC                        |
+| Production                          | `fc645727c`, last Production deployment 2026-09-25 13:38 UTC; untouched                          |
+| #309 head                           | `8a2eccceaf12fbfe4d5bc87a718f48b8cc76d40b`: `ff776ab` plus a merge of `main` 526f377             |
+| #310 head                           | `0bdd97d5cdc6f75f6c56e038172b0ee8c70d6663`: `d2ccdf2` plus a merge of `main` 526f377             |
+| #310 amendment (branch only, no PR) | `fix/chat-industry-no-stale-fallback` `4280308f7df4e1e7f0aac49ae7acddc640929468`, on top of #310 |
+| This branch                         | `fix/voice-contact-phone-identity`, from `526f377`                                               |
+| Run 35914082059 (staging env audit) | still `waiting` since 2026-09-23; separate concurrency group; left alone                         |
 
 No merge, deployment, workflow dispatch, environment approval, configuration or data
 change was made tonight.
@@ -36,6 +37,9 @@ already contains. The repository has no phone-number library.
 
 ### Findings (on `main` 526f377)
 
+F1-F3 are **still open on `main`, staging and production.** #316 is a proposed fix: Draft,
+not reviewed, not merged, not deployed.
+
 | #   | Severity | Finding                                                                                                                                                                                                                                                                                            | Reference                                                                |
 | --- | -------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------ |
 | F1  | P1       | A caller is matched by exact `phone` equality after removing whitespace only. A contact saved as `+358 40-123 4567`, `(…)`-formatted or `00…` is never found for `+358401234567`, and a duplicate contact is created on every first call. P1: it corrupts the pilot's CRM on the most common path. | `src/app/api/v1/jobs/post-call/route.ts` step 2                          |
@@ -46,7 +50,7 @@ already contains. The repository has no phone-number library.
 
 There is no contact import path in the codebase.
 
-### Implemented (commit on this branch, Draft PR)
+### Proposed fix: Draft PR #316 (awaiting review; not merged or deployed)
 
 - `src/lib/crm/phone-identity.ts` (pure). What a caller number identifies:
   - formatting is ignored: spaces (incl. non-breaking), dots, dashes, slashes, parentheses;
@@ -92,12 +96,18 @@ There is no contact import path in the codebase.
   and pulling an image isn't safe with ~5.5 GB free. The scenarios are written into
   `tests/unit/post-call-concurrency.postgres.test.ts`; it runs only with `VOICE_PG_URL`,
   and CI does not set that today.
-- **Staging: NOT VERIFIED.** Nothing deployed.
+- **Staging: NOT VERIFIED.** #316 is not merged or deployed; staging still runs the old
+  matching.
 
 ## 3. Priority 2 — Business DNA consistency (#309, #310)
 
-Both are Draft, mergeable (CLEAN), with 18 checks passed on their heads, and 6 commits
-behind `main`.
+Both are Draft. On 2026-10-13 both were brought up to date with a normal merge of `main`
+526f377 (no rebase, no force-push); the merges had no conflicts. Locally after the refresh:
+
+- #309: 20 Business DNA, onboarding and organization test files (307 tests) and 6 form and
+  prompt files (36 tests) pass; Prettier and ESLint pass; `tsc` reports the known 24
+  missing-package errors only;
+- #310: 7 chat and prompt files (83 tests) pass.
 
 - **#309** (onboarding industry → Business DNA). It creates the profile in the
   organization's own transaction, trims the value, stops writing `settings.industry` for
@@ -115,8 +125,12 @@ behind `main`.
   - It is not worse than `main`, where chat always shows the legacy value next to the DNA
     one, but it does not fully fix the drift.
   - **Recommendation: do not merge as is.** Fall back only when no Business DNA record
-    exists (`businessDna ? businessDna.industry : settings.industry`), and update the two
-    fallback test cases.
+    exists.
+  - The change is prepared on branch `fix/chat-industry-no-stale-fallback` (`4280308`,
+    pushed, **no PR**) and waits for the product decision below. The two fallback cases now
+    assert that no legacy text appears; both fail with #310's previous line. 83 chat and
+    prompt tests pass.
+  - If the decision is approved, apply it to #310 by merging that branch into it.
   - Trade-off: older organizations whose profile exists without an industry no longer show
     the onboarding value in chat; the owner can enter it in Business DNA.
   - A reviewed one-time copy of `settings.industry` into empty profiles would avoid that.
@@ -127,31 +141,57 @@ behind `main`.
 
 ## 4. Priority 3 — #315 staging QA evidence
 
-The OLD account reported its browser-only QA as **NOT RUN**. No other report exists on the
-PR or in local reports. The only runtime evidence comes from this account's session on
-2026-10-12 (staging, one test document, then deleted). Graded strictly:
+**Overall verdict: PARTIALLY VERIFIED.**
 
-| Evidence                                   | Status         | Basis                                                                                                                           |
-| ------------------------------------------ | -------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Deployed SHA                               | **VERIFIED**   | Staging health reported build `526f377`; release run 38294065687 success                                                        |
-| Initial processing                         | **VERIFIED**   | Uploaded document reached READY, `chunkCount` 1, one "ready" notification                                                       |
-| `chunkCount` field before/after redelivery | **VERIFIED**   | 1 → 1 via the Knowledge API                                                                                                     |
-| Actual chunk rows before/after             | **UNVERIFIED** | No database read; `chunkCount` is the stored field, not a row count                                                             |
-| Ready notifications before/after           | **VERIFIED**   | Exactly one before and after (notifications page)                                                                               |
-| Redelivery skipped ("already processed")   | **UNVERIFIED** | One republished message delivered HTTP 200 in 1 s; the console does not show the body; inferred by elimination only             |
-| No second embedding / usage charge         | **UNVERIFIED** | Inferred from no new notification; no usage record or provider dashboard was read                                               |
-| Cleanup                                    | **PARTIAL**    | Document deleted in the UI and the list is empty (verified); chunk and storage removal are inferred from the code, not observed |
+The OLD account reported its browser-only QA as NOT RUN. The browser QA run by this account
+on 2026-10-12 is the only runtime evidence. It used staging, one test document and one
+approved republish. Times below are UTC; the QStash console showed UTC+3.
 
-**Correction:** this account's report on 2026-10-12 called the redelivery test a PASS. On
-the evidence above, the accurate status is **partially verified**.
+### Observed
 
-Smallest owner action that would close it, with no new delivery and no provider call: in the
-staging database (read-only), check for the test document id from the 2026-10-12 session:
+- The deployed staging build was `526f377`: health endpoint and release run 38294065687.
+- The test document was uploaded and reached READY. Its first QStash delivery at 20:13:52
+  returned HTTP 200.
+- **One approved republish** of the same job body (QStash Request Builder, 20:20:38)
+  returned **HTTP 200** in about 1 s.
+- The document **remained READY**, with a **displayed chunk count of 1 before and after**
+  the republish.
+- **Exactly one ready notification** was visible after the republish.
+- After deletion in the UI, the **document disappeared from the list**, and the Knowledge
+  API then listed none.
 
-- `document_chunks` rows: expect 0 after the deletion;
-- `usage_records` with metric `EMBEDDINGS`: expect exactly one, from the first run.
+### Unverified
 
-The record count can also be read on the staging Usage page if it shows EMBEDDINGS.
+- **The exact response body.** The QStash console does not show it.
+- **Whether chunk rows were replaced.** A full reprocess deletes and re-inserts the same
+  number of chunks, so an unchanged displayed count cannot rule out replacement.
+- **Whether a second embedding request or usage charge occurred.** The ready notification
+  is written in a separate step that only logs its own failure. No new notification is
+  therefore not proof that no paid call was made.
+- **Physical removal of the chunks and the stored file** after the deletion.
+
+**Correction:** the 2026-10-12 report's "only possible outcome" and "no notification
+means no paid call" conclusions were inferences, not evidence. Its PASS is withdrawn.
+
+### Existing evidence that could close the gaps
+
+No new delivery, paid call, credential access or database query is needed for any of these.
+Each is a read of an existing dashboard or log by the owner.
+
+| Gap                          | Existing source                                                                                                                 | What decides it                                                                                                                                                          | Caveat                                                                                                                                                  |
+| ---------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Second embedding / paid call | OpenAI platform → Usage, for the project or key staging uses, model `text-embedding-3-small`, 2026-10-12 20:13–20:22 UTC        | One embeddings request (the first run) means no second paid call. Two means a reprocess                                                                                  | Decisive only if staging has its own project or key and nothing else embedded in that window. A Knowledge-base chat query also makes one embedding call |
+| Chunk replacement            | Same as above                                                                                                                   | A reprocess has to call the embedding API before it re-inserts chunks (the document stayed READY, so a failed partial run is excluded). One request means no replacement | The chunks were deleted with the document, so the rows themselves no longer show it                                                                     |
+| Response body                | Vercel runtime logs, staging deployment of `526f377`: `POST /api/v1/jobs/embed-document` near 20:20:38                          | Execution time and any outgoing request to `api.openai.com`, if Vercel Observability records outgoing requests on this plan, separate a skip from a run                  | The success path writes no log line, so the body itself is never logged. Log retention depends on the plan (possibly only about a day), so check soon   |
+| Usage charge record          | `usage_records` (metric `EMBEDDINGS`, `metadata.documentId`)                                                                    | One row means one charged run                                                                                                                                            | Database read: deferred under the current instruction. No app page shows EMBEDDINGS usage                                                               |
+| File removal                 | Supabase dashboard → Storage, `documents` bucket, the organization's folder; or the Supabase Storage logs for the deletion time | Object absent, or a successful delete request logged                                                                                                                     | Storage log retention depends on the plan                                                                                                               |
+| Chunk removal                | Supabase Logs Explorer (Postgres)                                                                                               | Probably not decisive: statement logging is not on by default                                                                                                            | A database read of `document_chunks` would decide it (deferred)                                                                                         |
+
+Recommended order:
+
+1. The OpenAI usage view: it decides the paid call and the chunk replacement together.
+2. The Vercel logs, before their retention runs out.
+3. The Storage view.
 
 ## 5. Validation run tonight (this branch)
 
@@ -167,14 +207,14 @@ The record count can also be read on the staging Usage page if it shows EMBEDDIN
 
 ## 6. Remaining pilot and production gates
 
-| Gate                                                                                                               | Source (date)                                                  |
-| ------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------------------- |
-| Review and merge this branch, then a staging release, then one supervised test call from a formatted saved contact | this file (2026-10-13)                                         |
-| Real-Postgres run of the post-call concurrency file (disposable database or the #303-style workflow)               | this file; #303 (2026-10-11)                                   |
-| #315 evidence gaps in §4                                                                                           | this file (2026-10-13)                                         |
-| #309 merge; #310 amendment                                                                                         | this file (2026-10-13)                                         |
-| Fruppi supervised pilot: pre-call checklist and 35-case matrix                                                     | `docs/fruppi-voice-pilot-runbook.md` (last changed 2026-10-10) |
-| Production has not been deployed since 2026-09-25; any production release needs its own authorization              | GitHub deployments API (read 2026-10-13); `CLAUDE.md` §2/§9    |
+| Gate                                                                                                                | Source (date)                                                  |
+| ------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Voice F1-F3 open: review and merge #316 (proposed), a staging release, one supervised call from a formatted contact | #316 (2026-10-13)                                              |
+| Real-Postgres run of the post-call concurrency file (disposable database or the #303-style workflow)                | this file; #303 (2026-10-11)                                   |
+| #315: PARTIALLY VERIFIED; close the gaps in §4 from existing logs and dashboards                                    | this file (2026-10-13)                                         |
+| #309 merge; #310 amendment                                                                                          | this file (2026-10-13)                                         |
+| Fruppi supervised pilot: pre-call checklist and 35-case matrix                                                      | `docs/fruppi-voice-pilot-runbook.md` (last changed 2026-10-10) |
+| Production has not been deployed since 2026-09-25; any production release needs its own authorization               | GitHub deployments API (read 2026-10-13); `CLAUDE.md` §2/§9    |
 
 ## 7. Next three owner actions
 
@@ -182,6 +222,6 @@ The record count can also be read on the staging Usage page if it shows EMBEDDIN
    separate staging release.
 2. Decide #310: approve the "fallback only without a Business DNA record" change, or the
    reviewed one-time industry copy. Approve the #309 merge after its refresh.
-3. Close the #315 gaps with the read-only staging check in §4. Choose whether national
-   ↔ international phone matching (with a phone library and an organization country) is
-   wanted before the pilot.
+3. Read the OpenAI usage view for the #315 window, then the staging Vercel logs, as in §4.
+   Choose whether national ↔ international phone matching (with a phone library and an
+   organization country) is wanted before the pilot.
