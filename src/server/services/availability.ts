@@ -66,12 +66,16 @@ export async function saveSchedule(
   const db = tenantDb(ctx.orgId);
 
   let id = scheduleId;
+  // The editor isn't always the owner: anyone with booking:manage can edit an
+  // org schedule, and the single-default rule applies to the owner's schedules.
+  let ownerId = ctx.userId;
   if (id) {
     const existing = await db.availabilitySchedule.findFirst({
       where: { id },
       select: { id: true, userId: true },
     });
     if (!existing) throw new AvailabilityError("Schedule not found", "not_found");
+    ownerId = existing.userId;
     await db.availabilitySchedule.update({
       where: { id },
       data: { name: input.name, timezone: input.timezone, isDefault: input.isDefault },
@@ -92,7 +96,7 @@ export async function saveSchedule(
   if (input.isDefault) {
     // Single default per user.
     await db.availabilitySchedule.updateMany({
-      where: { userId: ctx.userId, id: { not: id } },
+      where: { userId: ownerId, id: { not: id } },
       data: { isDefault: false },
     });
   }
