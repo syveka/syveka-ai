@@ -17,6 +17,7 @@ const INVITATION_ID = "3f0c2b9e-8a41-4d2e-9b7c-1e5f6a7b8c9d";
 const mocks = vi.hoisted(() => {
   class InvitationAccountMismatchError extends Error {}
   return {
+    locale: "en",
     InvitationAccountMismatchError,
     redirect: vi.fn((path: string) => {
       throw new Error(`NEXT_REDIRECT:${path}`);
@@ -36,6 +37,21 @@ vi.mock("@/i18n/routing", () => ({
   Link: ({ href, children }: { href: string; children: ReactNode }) =>
     createElement("a", { href }, children),
 }));
+vi.mock("next-intl/server", async () => {
+  const { createTranslator } = await import("next-intl");
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  return {
+    getTranslations: async (namespace: string) =>
+      createTranslator({
+        locale: mocks.locale,
+        messages: JSON.parse(
+          fs.readFileSync(path.resolve(__dirname, `../../messages/${mocks.locale}.json`), "utf8"),
+        ),
+        namespace,
+      }),
+  };
+});
 vi.mock("@/server/integrations/redis", () => ({ rateLimiters: {} }));
 vi.mock("@/server/auth/session", () => ({
   getSessionUser: mocks.getSessionUser,
@@ -77,11 +93,12 @@ const pendingInvitation = {
   organization: { name: "Synthetic Org" },
 };
 
-async function renderInvite(sessionEmail: string): Promise<string> {
+async function renderInvite(sessionEmail: string, locale = "en"): Promise<string> {
+  mocks.locale = locale;
   mocks.findInvitation.mockResolvedValue(pendingInvitation);
   mocks.getSessionUser.mockResolvedValue({ id: "user-1", email: sessionEmail });
   const element = await InvitePage({
-    params: Promise.resolve({ locale: "en", token: INVITATION_ID }),
+    params: Promise.resolve({ locale, token: INVITATION_ID }),
   });
   return renderToStaticMarkup(element);
 }
@@ -165,4 +182,33 @@ describe("signing out to the invitation", () => {
       expect(mocks.signOut).toHaveBeenCalledOnce();
     },
   );
+});
+
+describe("invitation page language", () => {
+  it("Finnish: the page and the role are in Finnish", async () => {
+    const html = await renderInvite("invitee@example.test", "fi");
+
+    expect(html).toContain("Liity organisaatioon Synthetic Org");
+    expect(html).toContain("Jäsen");
+    expect(html).toContain("Hyväksy kutsu");
+    expect(html).not.toContain("MEMBER");
+  });
+
+  it("Arabic: the other-account notice keeps each address in its own direction", async () => {
+    const html = await renderInvite("someone-else@example.test", "ar");
+
+    expect(html).toContain('<strong dir="auto">invitee@example.test</strong>');
+    expect(html).toContain('<strong dir="auto">someone-else@example.test</strong>');
+    expect(html).toContain("تسجيل الخروج والمتابعة");
+  });
+
+  it("an invalid invitation is reported in the page's language", async () => {
+    mocks.locale = "fi";
+    mocks.findInvitation.mockResolvedValue(null);
+    const element = await InvitePage({
+      params: Promise.resolve({ locale: "fi", token: INVITATION_ID }),
+    });
+
+    expect(renderToStaticMarkup(element)).toContain("Kutsu on virheellinen tai vanhentunut.");
+  });
 });

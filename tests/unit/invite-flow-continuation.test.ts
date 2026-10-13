@@ -62,6 +62,21 @@ vi.mock("@/server/db/tenant", () => ({
 }));
 vi.mock("@/actions/members", () => ({ acceptInvitationAction: mocks.acceptInvitationAction }));
 vi.mock("@/i18n/routing", () => ({ Link: () => null }));
+vi.mock("next-intl/server", async () => {
+  const { createTranslator } = await import("next-intl");
+  const fs = await import("node:fs");
+  const path = await import("node:path");
+  return {
+    getTranslations: async (namespace: string) =>
+      createTranslator({
+        locale: "en",
+        messages: JSON.parse(
+          fs.readFileSync(path.resolve(__dirname, "../../messages/en.json"), "utf8"),
+        ),
+        namespace,
+      }),
+  };
+});
 vi.mock("@/server/services/billing/entitlements", () => ({
   assertWithinLimit: vi.fn(),
   getEntitlements: vi.fn(async () => ({ maxSeats: 10, readOnly: false })),
