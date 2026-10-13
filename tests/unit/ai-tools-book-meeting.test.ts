@@ -177,7 +177,11 @@ describe("bookMeeting tool", () => {
     );
     expect(result).toMatchObject({ booked: true });
     expect(txMock.contact.findFirstOrThrow).toHaveBeenCalledWith({
-      where: { id: "33333333-3333-4333-8333-333333333333", organizationId: "org-a" },
+      where: {
+        id: "33333333-3333-4333-8333-333333333333",
+        organizationId: "org-a",
+        deletedAt: null,
+      },
     });
     expect(txMock.calendarEvent.create).toHaveBeenCalledWith(
       expect.objectContaining({

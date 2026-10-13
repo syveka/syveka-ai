@@ -201,7 +201,8 @@ const logActivity = defineTool({
   permission: "crm:write",
   execute: async (id, input) => {
     const db = tenantDb(id.orgId);
-    await db.contact.findFirstOrThrow({ where: { id: input.contactId } }); // tenancy check
+    // Tenancy check; the id comes from the model, so a deleted contact is refused too.
+    await db.contact.findFirstOrThrow({ where: { id: input.contactId, deletedAt: null } });
     const activity = await db.activity.create({
       data: {
         organizationId: id.orgId,
@@ -214,6 +215,18 @@ const logActivity = defineTool({
         metadata: { via: id.actorType },
       },
     });
+    // A phone call runs this without a confirmed chat action, so this row is
+    // the only record of a voice write.
+    await audit(
+      { orgId: id.orgId, userId: id.userId },
+      {
+        action: "activity.create",
+        resourceType: "activity",
+        resourceId: activity.id,
+        actorType: id.actorType,
+        after: { contactId: input.contactId, type: input.type, subject: input.subject },
+      },
+    );
     return { id: activity.id, created: true };
   },
 });
@@ -466,7 +479,7 @@ const bookMeeting = defineTool({
         // untrusted input and CalendarEvent.contactId has no DB-level FK, so
         // nothing else would catch a cross-tenant or nonexistent id here.
         await tx.contact.findFirstOrThrow({
-          where: { id: input.contactId, organizationId: id.orgId },
+          where: { id: input.contactId, organizationId: id.orgId, deletedAt: null },
         });
       }
 
@@ -768,10 +781,18 @@ export async function executeTool(
     const result = await tool.execute(identity, prepared.input, options.action ?? {});
     return JSON.stringify(result);
   } catch (e) {
-    return JSON.stringify({
-      error: "execution_failed",
-      message: e instanceof Error ? e.message : "",
-    });
+    // The result goes to the model, which can repeat it to the user: the error's
+    // text (e.g. Prisma's) stays out of it, and the log carries only its name.
+    console.error(
+      JSON.stringify({
+        event: "ai_tool_execution_failed",
+        tool: tool.name,
+        orgId: identity.orgId,
+        actorType: identity.actorType,
+        errorName: e instanceof Error ? e.name : "unknown",
+      }),
+    );
+    return JSON.stringify({ error: "execution_failed" });
   }
 }
 
