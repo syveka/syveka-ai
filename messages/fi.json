@@ -115,6 +115,16 @@
     "showPassword": "Näytä salasana",
     "hidePassword": "Piilota salasana"
   },
+  "invite": {
+    "invalid": "Kutsu on virheellinen tai vanhentunut.",
+    "title": "Liity organisaatioon {organization}",
+    "invitedAs": "Sinut on kutsuttu rooliin <b>{role}</b> ({email}).",
+    "accept": "Hyväksy kutsu",
+    "wrongAccount": "Väärä tili?",
+    "switchAccount": "Vaihda tiliä",
+    "otherAccount": "Tämä kutsu lähetettiin osoitteeseen <b>{invited}</b>, mutta olet kirjautunut osoitteella <b>{current}</b>. Kirjaudu ulos ja kirjaudu sitten sisään tai rekisteröidy kutsutulla osoitteella hyväksyäksesi kutsun.",
+    "signOutAndContinue": "Kirjaudu ulos ja jatka"
+  },
   "dashboard": {
     "title": "Työpöytä",
     "greeting": "Hei, {name}",

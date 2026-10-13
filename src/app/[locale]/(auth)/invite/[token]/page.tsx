@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { redirect } from "next/navigation";
+import { getTranslations } from "next-intl/server";
 import { getSessionUser } from "@/server/auth/session";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { acceptInvitationAction } from "@/actions/members";
@@ -15,6 +16,7 @@ export default async function InvitePage({
   params: Promise<{ locale: string; token: string }>;
 }) {
   const { locale, token } = await params;
+  const t = await getTranslations("invite");
 
   const invitation = await unscopedPrisma.invitation.findUnique({
     where: { token },
@@ -24,9 +26,7 @@ export default async function InvitePage({
   if (!invitation || invitation.status !== "PENDING" || invitation.expiresAt < new Date()) {
     return (
       <Card>
-        <CardContent className="pt-6 text-center text-sm">
-          This invitation is invalid or has expired.
-        </CardContent>
+        <CardContent className="pt-6 text-center text-sm">{t("invalid")}</CardContent>
       </Card>
     );
   }
@@ -39,6 +39,9 @@ export default async function InvitePage({
   }
 
   const signOut = signOutToInvitationAction.bind(null, invitation.token);
+  const tRoles = await getTranslations("roles");
+  // Email addresses keep their own direction inside right-to-left text.
+  const b = (chunks: React.ReactNode) => <strong dir="auto">{chunks}</strong>;
 
   // Only the invited address can accept (acceptInvitation); offering Accept to
   // anyone else ended on an error page.
@@ -46,17 +49,15 @@ export default async function InvitePage({
     return (
       <Card>
         <CardHeader>
-          <CardTitle>Join {invitation.organization.name}</CardTitle>
+          <CardTitle>{t("title", { organization: invitation.organization.name })}</CardTitle>
         </CardHeader>
         <CardContent className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            This invitation was sent to <strong>{invitation.email}</strong>, but you are signed in
-            as <strong>{user.email}</strong>. Sign out, then sign in or register with the invited
-            address to accept it.
+            {t.rich("otherAccount", { invited: invitation.email, current: user.email ?? "", b })}
           </p>
           <form action={signOut}>
             <Button type="submit" className="w-full">
-              Sign out and continue
+              {t("signOutAndContinue")}
             </Button>
           </form>
         </CardContent>
@@ -67,21 +68,21 @@ export default async function InvitePage({
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Join {invitation.organization.name}</CardTitle>
+        <CardTitle>{t("title", { organization: invitation.organization.name })}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          You were invited as <strong>{invitation.role}</strong> ({invitation.email}).
+          {t.rich("invitedAs", { role: tRoles(invitation.role), email: invitation.email, b })}
         </p>
         <form action={acceptInvitationAction.bind(null, token)}>
           <Button type="submit" className="w-full">
-            Accept invitation
+            {t("accept")}
           </Button>
         </form>
         <form action={signOut} className="text-center text-xs text-muted-foreground">
-          Wrong account?{" "}
+          {t("wrongAccount")}{" "}
           <Button type="submit" variant="link" className="h-auto p-0 text-xs">
-            Switch account
+            {t("switchAccount")}
           </Button>
         </form>
       </CardContent>
