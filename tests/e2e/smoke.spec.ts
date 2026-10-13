@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page } from "@playwright/test";
 import { openAuthenticatedE2EDashboard, requireE2EUserCredentials } from "./helpers/auth";
 import type { ChatStreamEvent } from "../../src/lib/validators/chat";
 
@@ -6,6 +6,39 @@ import type { ChatStreamEvent } from "../../src/lib/validators/chat";
  * Critical-journey smoke suite (§23). Runs against preview/staging.
  * Auth journeys need E2E_USER_EMAIL / E2E_USER_PASSWORD seeded on the target env.
  */
+
+/** Names the contact smoke test gives its contacts; nothing else is ever deleted. */
+const SMOKE_TEST_CONTACT_NAME = /^E2E-\d{13}-[a-z]+-r\d+$/;
+
+/**
+ * Deletes the contact a smoke-test attempt created, through the UI. Only a name
+ * this suite generated, and only when exactly one contact has it; no match means
+ * the create never happened (for example the plan's contact limit refused it).
+ */
+async function deleteSmokeTestContact(page: Page, name: string): Promise<void> {
+  if (!SMOKE_TEST_CONTACT_NAME.test(name)) {
+    throw new Error(`Refusing to delete "${name}": not a smoke-test contact name`);
+  }
+  const search = `/crm/contacts?q=${encodeURIComponent(name)}`;
+  await page.goto(search);
+  const matches = page.getByRole("link", { name, exact: true });
+  const count = await matches.count();
+  if (count === 0) return;
+  expect(count, `contacts named ${name}`).toBe(1);
+
+  await matches.click();
+  await expect(page.getByRole("heading", { level: 1, name, exact: true })).toBeVisible();
+  const deleteButton = page.getByRole("button", { name: /^(poista|delete)$/i });
+  await deleteButton.click();
+  await expect(page.getByText(/poistetaanko pysyvästi|delete permanently/i)).toBeVisible();
+  await deleteButton.click();
+  // The app returns to the list once the delete has finished; leaving earlier
+  // could abort it.
+  await expect(page).toHaveURL(/\/crm\/contacts(\?.*)?$/);
+
+  await page.goto(search);
+  await expect(page.getByRole("link", { name, exact: true })).toHaveCount(0);
+}
 
 test.describe("public", () => {
   test.use({ storageState: { cookies: [], origins: [] } });
@@ -99,10 +132,25 @@ test.describe("authenticated", () => {
     expect(intercepted).toBe(1);
   });
 
-  test("CRM contact create → visible in list", async ({ page }) => {
+  // Every run of the contact test creates a contact in the shared E2E
+  // organization. Left behind, they filled the plan's contact limit and new
+  // creates were refused (staging release run 38419326935). The contact made by
+  // an attempt is deleted after it, pass or fail, so retries leave none behind.
+  let createdContactName: string | undefined;
+
+  test.afterEach(async ({ page }) => {
+    const name = createdContactName;
+    createdContactName = undefined;
+    if (name) await deleteSmokeTestContact(page, name);
+  });
+
+  test("CRM contact create → visible in list", async ({ page }, testInfo) => {
+    // Unique per run, project (desktop/mobile) and retry: cleanup deletes only
+    // a contact with exactly this name.
+    const name = `E2E-${Date.now()}-${testInfo.project.name}-r${testInfo.retry}`;
+    createdContactName = name;
     await page.goto("/crm/contacts");
     await page.getByRole("button", { name: /uusi kontakti|new contact/i }).click();
-    const name = `E2E-${Date.now()}`;
     await page.fill("#firstName", name);
     await page.getByRole("button", { name: /^luo$|^create$/i }).click();
     await expect(page.getByText(name)).toBeVisible();
