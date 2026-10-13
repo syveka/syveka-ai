@@ -55,7 +55,7 @@ there was no way to switch. Which account was signed in is **unknown**: the logs
 sign-in. It does not handle a browser already signed in to another account, so it doesn't fix
 this.
 
-**Fix:** draft #322 (stacked on #306). For another signed-in account, the page names both
+**Fix:** draft #323 (stacked on #306). For another signed-in account, the page names both
 addresses and offers "Sign out and continue" instead of Accept. "Switch account" signs out and
 returns to the invitation, and a mismatch on Accept returns to the page instead of a 500. Not
 merged or deployed.
@@ -76,7 +76,7 @@ Without #306, P2 must reopen the invitation link after registering and verifying
 - **F-4, shared E2E data could block a release.** Leftover smoke-test contacts filled the E2E
   organization's contact limit. Fixed by #318.
 - **F-5, an invitation opened while signed in to another account dead-ends** (UX gap, high for
-  onboarding). The person sees a generic error and can't switch accounts. Fix in draft #322.
+  onboarding). The person sees a generic error and can't switch accounts. Fix in draft #323.
 - **F-6, logged-out traffic is logged as errors** (observability gap, medium). The middleware
   and `getSessionUser` log `AuthSessionMissingError`, the ordinary no-session state, with
   `console.error`. On staging a request to `/` every minute logs one such entry; Vercel counted
