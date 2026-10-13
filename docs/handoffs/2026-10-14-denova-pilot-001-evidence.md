@@ -25,6 +25,45 @@ had reached the FREE 200-contact limit. Fixed by #318; it never deployed the sta
 **A2 is complete only after P2 accepts**: P2 is shown as a Member and the audit log has
 `member.join`. Acceptance is a human step by P2; nobody signs in or accepts on P2's behalf.
 
+### A2 acceptance: FAIL (2026-10-13 22:32 UTC, `c0972b0`)
+
+P2 opened the invitation link on mobile and saw "Something went wrong / This page could not be
+loaded."
+
+**Staging logs** (Vercel, project `syveka-ai-staging`, read-only; token redacted):
+
+| Time (Helsinki) | Request                   | Result                                                                                  |
+| --------------- | ------------------------- | --------------------------------------------------------------------------------------- |
+| 01:32:03        | `GET /invite/<token>`     | 307 to `/en/invite/<token>`                                                             |
+| 01:32:04        | `GET /en/invite/<token>`  | 200, no session error logged: the browser was **signed in**, so the page showed Accept  |
+| 01:32:05        | `GET /en/login`           | 307 to `/dashboard` (prefetch of the page's "Switch account" link)                      |
+| 01:32:06        | `GET /en/invite/<token>`  | 307 to `/register`, `AuthSessionMissingError` (a request without cookies)               |
+| 01:32:07        | `POST /en/invite/<token>` | **500** `Error: Invitation was sent to a different email address` (digest `2077601389`) |
+| 01:32:16–17     | `GET /en/invite/<token>`  | 307 to `/register`, then `/en/register` 200; no registration followed                   |
+
+**Root cause: CONFIRMED.** Accept was clicked while signed in to an account whose address isn't
+P2's. `acceptInvitation` refused it (correctly) by throwing; `acceptInvitationAction` doesn't
+catch it, so the server action failed with 500 and `[locale]/error.tsx` showed the generic
+message. The page offered Accept without checking the account. Its "Switch account" link goes to
+`/login`, which the middleware redirects a signed-in person away from (to `/dashboard`), so
+there was no way to switch. Which account was signed in is **unknown**: the logs don't show it.
+
+**State afterwards** (P1's Members page and audit log, 22:40 UTC): one invitation, still
+"Invitation pending · Member"; no `member.join`. Nothing was written.
+
+**Relation to #306:** #306 (draft, not in `c0972b0`) carries an invitation through sign-up and
+sign-in. It does not handle a browser already signed in to another account, so it doesn't fix
+this.
+
+**Fix:** draft #322 (stacked on #306). For another signed-in account, the page names both
+addresses and offers "Sign out and continue" instead of Accept. "Switch account" signs out and
+returns to the invitation, and a mismatch on Accept returns to the page instead of a 500. Not
+merged or deployed.
+
+**Workaround without a deploy** (not yet tried): P2 opens the link in a browser with no Syveka
+session (a private window), or signs out of Syveka first. The page then sends P2 to register.
+Without #306, P2 must reopen the invitation link after registering and verifying the email.
+
 ## Findings
 
 - **F-1, invitation failure is invisible.** After a failed send, the Members page shows
@@ -36,3 +75,13 @@ had reached the FREE 200-contact limit. Fixed by #318; it never deployed the sta
 - **F-3, Preview has no `EMAIL_FROM`.** This is a recorded follow-up; nothing was changed.
 - **F-4, shared E2E data could block a release.** Leftover smoke-test contacts filled the E2E
   organization's contact limit. Fixed by #318.
+- **F-5, an invitation opened while signed in to another account dead-ends** (UX gap, high for
+  onboarding). The person sees a generic error and can't switch accounts. Fix in draft #322.
+- **F-6, logged-out traffic is logged as errors** (observability gap, medium). The middleware
+  and `getSessionUser` log `AuthSessionMissingError`, the ordinary no-session state, with
+  `console.error`. On staging a request to `/` every minute logs one such entry; Vercel counted
+  35 error-level entries in the window viewed, and the one real 500 was among them. Recommended fix: don't log
+  `AuthSessionMissingError` as an error. Not changed: `middleware.ts` affects every request, so
+  this needs its own decision.
+- **F-7, the invitation page isn't translated** (UX gap, low). Its text is hardcoded English,
+  while the email and the rest of the app follow the organization's language.
