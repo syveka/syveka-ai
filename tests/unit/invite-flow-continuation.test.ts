@@ -77,7 +77,7 @@ vi.mock("../../emails/invitation", () => ({ InvitationEmail: () => null }));
 
 import { loginAction, registerAction } from "@/actions/auth";
 import { inviteContinuation } from "@/lib/auth-redirect";
-import { acceptInvitation } from "@/server/services/members";
+import { acceptInvitation, InvitationAccountMismatchError } from "@/server/services/members";
 import InvitePage from "@/app/[locale]/(auth)/invite/[token]/page";
 
 function loginForm(next?: string, locale = "en") {
@@ -218,7 +218,7 @@ describe("invitation page", () => {
 
   it("signed in: shows the invitation without accepting it", async () => {
     mocks.findInvitation.mockResolvedValue(pendingInvitation);
-    mocks.getSessionUser.mockResolvedValue({ id: "user-1" });
+    mocks.getSessionUser.mockResolvedValue({ id: "user-1", email: "invitee@example.test" });
 
     await expect(page()).resolves.toBeTruthy();
     expect(mocks.redirect).not.toHaveBeenCalled();
@@ -246,6 +246,9 @@ describe("accepting still requires the invited account", () => {
 
     await expect(acceptInvitation(INVITATION_ID, "user-2")).rejects.toThrow(
       "Invitation was sent to a different email address",
+    );
+    await expect(acceptInvitation(INVITATION_ID, "user-2")).rejects.toBeInstanceOf(
+      InvitationAccountMismatchError,
     );
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
