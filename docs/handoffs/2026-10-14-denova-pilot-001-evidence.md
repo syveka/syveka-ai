@@ -64,6 +64,10 @@ merged or deployed.
 session (a private window), or signs out of Syveka first. The page then sends P2 to register.
 Without #306, P2 must reopen the invitation link after registering and verifying the email.
 
+**A2 status: BLOCKED — FIX READY, REQUIRES MERGE/DEPLOY APPROVAL** (#306 → #323 → #324,
+CI green on #323). P2 can still complete A2 earlier with the workaround above, which needs no
+deploy or new email.
+
 ## Findings
 
 - **F-1, invitation failure is invisible.** After a failed send, the Members page shows
@@ -82,6 +86,8 @@ Without #306, P2 must reopen the invitation link after registering and verifying
   `console.error`. On staging a request to `/` every minute logs one such entry; Vercel counted
   35 error-level entries in the window viewed, and the one real 500 was among them. Recommended fix: don't log
   `AuthSessionMissingError` as an error. Not changed: `middleware.ts` affects every request, so
-  this needs its own decision.
+  this needs its own decision. Also skipped tonight because error and logging hygiene is
+  the other Claude account's active work.
 - **F-7, the invitation page isn't translated** (UX gap, low). Its text is hardcoded English,
-  while the email and the rest of the app follow the organization's language.
+  while the email and the rest of the app follow the organization's language. Fix in draft
+  #324 (stacked on #323): en, fi and ar, with the role shown by its label.
