@@ -24,6 +24,14 @@ export class MemberError extends Error {
   }
 }
 
+/** The signed-in account isn't the one the invitation was sent to. */
+export class InvitationAccountMismatchError extends Error {
+  constructor() {
+    super("Invitation was sent to a different email address");
+    this.name = "InvitationAccountMismatchError";
+  }
+}
+
 export async function inviteMember(
   ctx: TenantContext,
   input: { email: string; role: Role },
@@ -105,7 +113,7 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
 
   const user = await unscopedPrisma.user.findUniqueOrThrow({ where: { id: userId } });
   if (user.email.toLowerCase() !== invitation.email.toLowerCase()) {
-    throw new Error("Invitation was sent to a different email address");
+    throw new InvitationAccountMismatchError();
   }
 
   const ent = await getEntitlements(invitation.organizationId);

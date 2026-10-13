@@ -11,6 +11,7 @@ import {
   changeMemberRole,
   removeMember,
   MemberError,
+  InvitationAccountMismatchError,
 } from "@/server/services/members";
 import { EntitlementError } from "@/server/services/billing/entitlements";
 import { inviteMemberSchema, changeRoleSchema } from "@/lib/validators/members";
@@ -62,7 +63,15 @@ export async function acceptInvitationAction(token: string): Promise<void> {
   const user = await getSessionUser();
   if (!user) throw new AuthError("Not authenticated");
 
-  await acceptInvitation(token, user.id);
+  try {
+    await acceptInvitation(token, user.id);
+  } catch (e) {
+    // Signed in as someone else (for example another account in the same
+    // browser): back to the invitation, which says so and offers to sign out,
+    // instead of an error page.
+    if (e instanceof InvitationAccountMismatchError) redirect(`/invite/${token}`);
+    throw e;
+  }
 
   const supabase = await createSupabaseServer();
   await supabase.auth.refreshSession();
