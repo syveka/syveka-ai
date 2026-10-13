@@ -98,6 +98,18 @@ export async function logoutAction(): Promise<void> {
   redirect("/login");
 }
 
+/**
+ * Signs out the account an invitation was opened with when it isn't the
+ * invited one, then returns to the invitation, which sends the invitee to
+ * register or sign in and back. "/login" can't do this: it sends a signed-in
+ * person to the dashboard.
+ */
+export async function signOutToInvitationAction(token: string): Promise<void> {
+  const supabase = await createSupabaseServer();
+  await supabase.auth.signOut();
+  redirect(inviteContinuation(`/invite/${token}`) ?? "/login");
+}
+
 export async function forgotPasswordAction(
   _prev: AuthActionState,
   formData: FormData,
