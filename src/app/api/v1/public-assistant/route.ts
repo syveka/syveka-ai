@@ -91,7 +91,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     console.error(
       JSON.stringify({
         event: "public_assistant_failed",
-        message: error instanceof Error ? error.message : "unknown error",
+        // Provider error text can quote request details; the name is enough to triage.
+        errorName: error instanceof Error ? error.name : "unknown",
       }),
     );
     return NextResponse.json({ error: "generic" }, { status: 500 });

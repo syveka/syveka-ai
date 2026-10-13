@@ -237,4 +237,19 @@ describe("POST /api/v1/public-assistant", () => {
     expect(body.error).toBe("generic");
     expect(JSON.stringify(body)).not.toContain("sk-secret-leak-abc123");
   });
+
+  it("logs the provider failure by error name only, never its raw message", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.streamClaude.mockRejectedValueOnce(new Error("upstream 500: sk-secret-leak-abc123"));
+
+    await POST(req({ message: "hi" }));
+
+    expect(errorSpy).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(errorSpy.mock.calls[0]![0] as string)).toEqual({
+      event: "public_assistant_failed",
+      errorName: "Error",
+    });
+    expect(errorSpy.mock.calls.flat().join(" ")).not.toContain("sk-secret-leak-abc123");
+    errorSpy.mockRestore();
+  });
 });
