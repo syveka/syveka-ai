@@ -132,7 +132,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   //
   // A caller whose number identifies no one (anonymous, invalid) gets no contact.
   // Otherwise an existing contact with the same number in any formatting is linked
-  // (phone-identity.ts says which formats are certainly the same number). Two
+  // (phone-identity.ts says which formats are certainly the same number). When
+  // several contacts have the number, which one called is unknown: the call is
+  // linked to none and no contact is created; the rest of the job still runs. Two
   // different calls from the same new caller can be processed at once, and the
   // per-call lock doesn't serialize them, so the lookup and create also hold a
   // lock on the (organization, number): the second waits, then finds the first's
@@ -144,22 +146,21 @@ export async function POST(request: Request): Promise<NextResponse> {
       await lockContactPhone(tx, orgId, identity.canonical);
       let matched: string | null = null;
       let created: Awaited<ReturnType<typeof tx.contact.create>> | null = null;
-      // Oldest first, so every call from this number links to the same contact.
+      // Two rows are enough to tell one match from several.
       const existing = await tx.$queryRaw<Array<{ id: string }>>`
         SELECT id FROM contacts
         WHERE organization_id = ${orgId}::uuid
           AND deleted_at IS NULL
           AND regexp_replace(phone, ${PHONE_SEPARATOR_SQL_PATTERN}, '', 'g') = ANY(${identity.matchForms}::text[])
-        ORDER BY created_at ASC, id ASC
         LIMIT 2`;
       if (existing.length > 1) {
-        // Several contacts share the number (a household or a switchboard). They are
-        // never merged; the call goes to the oldest. Ids only, never the number.
+        // Several contacts share the number (a household or a switchboard). Picking
+        // one could attach this call to the wrong person, and creating another would
+        // add a duplicate, so the call stays unlinked. Ids only, never the number.
         console.warn(
           JSON.stringify({ event: "post_call_contact_multiple_matches", orgId, callId: call.id }),
         );
-      }
-      if (existing[0]) {
+      } else if (existing[0]) {
         matched = existing[0].id;
       } else if (call.status === "COMPLETED") {
         created = await tx.contact.create({

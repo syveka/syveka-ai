@@ -60,9 +60,10 @@ There is no contact import path in the codebase.
     or trunk prefix is assumed, so `040 1234567` and `+358401234567` remain different;
   - anonymous, SIP, extensions (`;ext=`, `x`, `#`), letters, too short or too long numbers
     identify no one: no lookup, no contact; the call is still processed.
-- Post-call step 2: one raw query in the organization, not deleted, oldest first, at most
-  two rows. Several matches: the oldest is linked; nothing is merged or changed; a
-  warning with ids only. A created contact stores the canonical number.
+- Post-call step 2: one raw query in the organization, not deleted, at most two rows.
+  Several matches (owner decision, 2026-10-13): the call is linked to none, no contact is
+  created, nothing is merged or changed, a warning with ids only, and the rest of the job
+  still runs. A created contact stores the canonical number.
 - `lockContactPhone` (`src/server/calendar/locks.ts`, second key `4`): held with the call
   lock (order: call, then number) around the lookup and create.
 - No schema change, migration, backfill or change to any stored contact.
@@ -74,8 +75,8 @@ There is no contact import path in the codebase.
    country per organization. Without it, any rule guesses a country. Design: store the
    organization's country explicitly; match national forms only when it is set; record the
    rule in `docs/DECISIONS.md`.
-2. **Several contacts with one number** link to the oldest. The alternative is to link none
-   and flag it for the owner. A product decision.
+2. **Several contacts with one number**: decided 2026-10-13, link none and create none
+   (implemented). Still open: surfacing these calls to the owner (today only a log line).
 3. **A DB-level guarantee** (an expression index or a normalized `phone_e164` column with a
    per-organization unique constraint) needs a migration plus a backfill that would expose
    existing duplicates. It cannot be unique while legitimate shared numbers exist. Not
@@ -86,8 +87,9 @@ There is no contact import path in the codebase.
 ### Tested locally vs. verified on staging
 
 - **Local, PASS:**
-  - `tests/unit/post-call-contact-identity.test.ts`: 45 new tests;
-  - the post-call idempotency and organization-guard suites: 104 in all across the 3 files.
+  - `tests/unit/post-call-contact-identity.test.ts`: 47 new tests (ambiguous-match
+    tests fail against the earlier link-the-oldest code);
+  - the post-call idempotency and organization-guard suites: 106 in all across the 3 files.
 - **Mutation-checked:**
   - without the number lock, the 2 same-caller concurrency tests fail;
   - with whitespace-only formatting, 7 tests fail;

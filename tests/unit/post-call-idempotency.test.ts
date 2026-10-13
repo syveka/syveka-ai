@@ -59,7 +59,7 @@ const mocks = vi.hoisted(() => ({
   voiceCallFindFirst: vi.fn(async (): Promise<unknown> => null),
   voiceCallUpdate: vi.fn(async (..._args: unknown[]) => ({})),
   usageRecordFindFirst: vi.fn(async (): Promise<{ id: string } | null> => null),
-  // The contact lookup by phone (a raw query): the matching contacts, oldest first.
+  // The contact lookup by phone (a raw query): the matching contacts, at most two.
   contactMatches: vi.fn(async (..._args: unknown[]): Promise<{ id: string }[]> => []),
   contactCreate: vi.fn(async () => ({ id: "contact-new-1" })),
   activityCreate: vi.fn(async () => ({ id: "activity-1" })),

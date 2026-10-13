@@ -101,7 +101,7 @@ vi.mock("@/server/db/tenant", () => {
     activity: { findFirst: async () => null, create: async ({ data }: { data: Row }) => data },
     organizationMember: { findFirst: async () => null },
     notification: { findFirst: async () => null, create: async () => ({}) },
-    // The post-call job's only raw query: contacts by phone, oldest first, at most two.
+    // The post-call job's only raw query: contacts by phone, at most two.
     $queryRaw: async (
       sql: TemplateStringsArray,
       orgId: unknown,
@@ -294,7 +294,7 @@ describe("post-call contact linking", () => {
     },
   );
 
-  it("the lookup is scoped to the organization and to contacts not deleted, oldest first", async () => {
+  it("the lookup is scoped to the organization and to contacts not deleted, at most two rows", async () => {
     // The in-memory model applies these rules itself; this pins them in the query.
     await run(seedCall(ORG_A, "+358401234567"));
 
@@ -302,7 +302,7 @@ describe("post-call contact linking", () => {
     expect(sql).toContain("WHERE organization_id = ?::uuid");
     expect(sql).toContain("AND deleted_at IS NULL");
     expect(sql).toContain("regexp_replace(phone, ?, '', 'g') = ANY(?::text[])");
-    expect(sql).toContain("ORDER BY created_at ASC, id ASC");
+    expect(sql).toContain("LIMIT 2");
   });
 
   it("a caller number in another formatting finds the contact the same way", async () => {
@@ -360,19 +360,46 @@ describe("post-call contact linking", () => {
     expect(contactsIn(ORG_A).find((c) => c.id === deleted.id)).toEqual(deleted);
   });
 
-  it("several contacts with the number: the oldest is linked, none are merged or changed, and the log has no number", async () => {
+  it("several contacts with the number: the call is linked to none, no contact is created or changed, and the call still completes", async () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    const oldest = seedContact(ORG_A, "+358 40 123 4567");
+    const older = seedContact(ORG_A, "+358 40 123 4567");
     const newer = seedContact(ORG_A, "00358401234567");
+    const call = seedCall(ORG_A, "+358401234567");
+
+    const response = await run(call);
+
+    expect(await response.json()).toEqual({ ok: true });
+    expect(contactOf(call)).toBeNull();
+    expect(contactsIn(ORG_A)).toEqual([older, newer]);
+    expect(h.calls[0]!.postCallProcessedAt).toBeInstanceOf(Date);
+    const logged = warn.mock.calls.flat().join(" ");
+    expect(logged).toContain("post_call_contact_multiple_matches");
+    expect(logged).not.toMatch(/358|4567/);
+  });
+
+  it("several contacts with the number: a retry of the same call still links none and creates none", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    const older = seedContact(ORG_A, "+358401234567");
+    const newer = seedContact(ORG_A, "+358 40 123 4567");
+    const call = seedCall(ORG_A, "+358401234567");
+
+    await run(call);
+    h.calls[0]!.postCallProcessedAt = null;
+    await run(call);
+
+    expect(contactOf(call)).toBeNull();
+    expect(contactsIn(ORG_A)).toEqual([older, newer]);
+  });
+
+  it("several contacts with an international number: a national-format contact is not one of them", async () => {
+    const national = seedContact(ORG_A, "040 123 4567");
+    const international = seedContact(ORG_A, "+358 40 123 4567");
     const call = seedCall(ORG_A, "+358401234567");
 
     await run(call);
 
-    expect(contactOf(call)).toBe(oldest.id);
-    expect(contactsIn(ORG_A)).toEqual([oldest, newer]);
-    const logged = warn.mock.calls.flat().join(" ");
-    expect(logged).toContain("post_call_contact_multiple_matches");
-    expect(logged).not.toMatch(/358|4567/);
+    expect(contactOf(call)).toBe(international.id);
+    expect(contactsIn(ORG_A)).toEqual([national, international]);
   });
 
   it.each([[null], ["anonymous"], ["sip:caller@example.test"], ["+358401234567;ext=5"]])(
