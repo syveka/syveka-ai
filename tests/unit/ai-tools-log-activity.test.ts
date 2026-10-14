@@ -122,4 +122,42 @@ describe("executeTool failure result", () => {
     expect(errorSpy.mock.calls.flat().join(" ")).not.toContain("secret_internal");
     errorSpy.mockRestore();
   });
+
+  it("keeps Prisma's error code in the log (never its message), so the failure stays diagnosable", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    // Shaped like Prisma's known-request error; its message can quote input.
+    const notFound = Object.assign(new Error("No record found for 'aino@example.com'"), {
+      name: "PrismaClientKnownRequestError",
+      code: "P2025",
+    });
+    m.activityCreate.mockRejectedValueOnce(notFound);
+
+    const text = await executeTool(voiceAi, "logActivity", note(LIVE));
+
+    expect(JSON.parse(text)).toEqual({ error: "execution_failed" });
+    expect(JSON.parse(errorSpy.mock.calls[0]![0] as string)).toEqual({
+      event: "ai_tool_execution_failed",
+      tool: "logActivity",
+      orgId: "org-a",
+      actorType: "voice_ai",
+      errorName: "PrismaClientKnownRequestError",
+      errorCode: "P2025",
+    });
+    expect(errorSpy.mock.calls.flat().join(" ")).not.toContain("aino@example.com");
+    errorSpy.mockRestore();
+  });
+
+  it("drops a code that isn't Prisma's format rather than logging arbitrary text", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    m.activityCreate.mockRejectedValueOnce(
+      Object.assign(new Error("boom"), { code: "user typed: aino@example.com" }),
+    );
+
+    await executeTool(voiceAi, "logActivity", note(LIVE));
+
+    const logged = JSON.parse(errorSpy.mock.calls[0]![0] as string) as Record<string, unknown>;
+    expect(logged).not.toHaveProperty("errorCode");
+    expect(errorSpy.mock.calls.flat().join(" ")).not.toContain("aino@example.com");
+    errorSpy.mockRestore();
+  });
 });

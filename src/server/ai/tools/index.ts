@@ -751,6 +751,11 @@ export async function describeWriteToolCall(
   };
 }
 
+function prismaErrorCode(e: unknown): string | undefined {
+  const code = typeof e === "object" && e !== null && "code" in e ? e.code : undefined;
+  return typeof code === "string" && /^P\d{4}$/.test(code) ? code : undefined;
+}
+
 /** Validated, permission-checked execution. Returns JSON string for the model. */
 export async function executeTool(
   identity: ToolIdentity,
@@ -790,6 +795,9 @@ export async function executeTool(
         orgId: identity.orgId,
         actorType: identity.actorType,
         errorName: e instanceof Error ? e.name : "unknown",
+        // Prisma's error code (e.g. P2025, record not found) says what failed
+        // without quoting any data; omitted for every other error.
+        errorCode: prismaErrorCode(e),
       }),
     );
     return JSON.stringify({ error: "execution_failed" });
