@@ -15,8 +15,11 @@ declare
     '20260718000000_calendar_booking_rls',
     '20260719000000_initial_security_baseline',
     '20260726000000_normalize_list_column_nullability',
-    '20260826000000_harden_business_dna_table_privileges'
+    '20260826000000_harden_business_dna_table_privileges',
+    '20261014000000_secure_prisma_migrations_table'
   ];
+  -- Every application table, so a dropped or renamed one fails here too. The
+  -- generic check below also covers any public table not listed.
   protected_tables text[] := array[
     'users', 'organizations', 'organization_members', 'teams', 'invitations',
     'subscriptions', 'usage_records', 'companies', 'contacts', 'pipelines',
@@ -29,7 +32,15 @@ declare
     'document_upload_intents', 'prompts', 'voice_assistants', 'voice_calls',
     'workflows', 'workflow_runs', 'notifications', 'api_keys',
     'webhook_endpoints', 'audit_logs', 'inbox_threads', 'inbox_messages',
-    'inbox_mailboxes'
+    'inbox_mailboxes', 'business_dna', 'business_dna_services',
+    'stripe_webhook_events', 'workflow_step_executions', 'creator_profiles',
+    'creator_reference_assets', 'creator_campaigns', 'creator_generations',
+    'creator_posts', 'creator_templates', 'social_accounts',
+    'creator_credit_balances', 'creator_credit_grants',
+    'creator_credit_transactions', 'entitlement_grants'
+  ];
+  table_privileges text[] := array[
+    'SELECT', 'INSERT', 'UPDATE', 'DELETE', 'TRUNCATE', 'REFERENCES', 'TRIGGER'
   ];
   missing_name text;
   contract_table text;
@@ -55,6 +66,7 @@ declare
 begin
   if current_setting('server_version_num')::integer >= 170000 then
     checked_privileges := array_append(checked_privileges, 'MAINTAIN');
+    table_privileges := array_append(table_privileges, 'MAINTAIN');
   end if;
 
   select expected.migration_name
@@ -127,6 +139,33 @@ begin
   if missing_name is not null then
     raise exception 'STAGING RELEASE FAIL: RLS is not enabled on public.%', missing_name;
   end if;
+
+  -- Any public table, including ones added after this list: Prisma's own
+  -- _prisma_migrations went unprotected because it wasn't on a list.
+  select c.relname
+  into missing_name
+  from pg_class as c
+  join pg_namespace as n on n.oid = c.relnamespace
+  where n.nspname = 'public'
+    and c.relkind in ('r', 'p')
+    and not c.relrowsecurity
+  order by c.relname
+  limit 1;
+
+  if missing_name is not null then
+    raise exception 'STAGING RELEASE FAIL: RLS is not enabled on public.%', missing_name;
+  end if;
+
+  -- Only the migration role may touch the migration history.
+  foreach checked_role in array array['anon', 'authenticated'] loop
+    foreach checked_privilege in array table_privileges loop
+      if has_table_privilege(checked_role, 'public._prisma_migrations', checked_privilege) then
+        raise exception
+          'STAGING RELEASE FAIL: role % has % privilege on public._prisma_migrations',
+          checked_role, checked_privilege;
+      end if;
+    end loop;
+  end loop;
 
   if exists (
     select 1

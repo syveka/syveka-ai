@@ -190,6 +190,60 @@ describe("staging release migration contract", () => {
     expect(contract).toContain("'[()]'");
   });
 
+  it("closes Prisma's own migration table to anon and authenticated, and keeps it closed", () => {
+    const migration = read(
+      "prisma/migrations/20261014000000_secure_prisma_migrations_table/migration.sql",
+    );
+    expect(migration).toContain("ALTER TABLE public._prisma_migrations ENABLE ROW LEVEL SECURITY;");
+    expect(migration).toContain("REVOKE ALL ON TABLE public._prisma_migrations FROM %I");
+    expect(migration).toContain("ARRAY['anon', 'authenticated']");
+    // Prisma applies each migration in its own transaction; no policy may
+    // give anon or authenticated rows back, and forcing RLS would lock out
+    // the migration role that owns the table.
+    expect(migration).not.toMatch(/^\s*(BEGIN|COMMIT)\s*;/im);
+    expect(migration).not.toMatch(/CREATE\s+POLICY/i);
+    expect(migration).not.toMatch(/FORCE\s+ROW\s+LEVEL\s+SECURITY/i);
+
+    expect(releaseInvariants).toContain("'20261014000000_secure_prisma_migrations_table'");
+    // RLS on every public table, not only the listed ones.
+    expect(releaseInvariants).toMatch(
+      /where n\.nspname = 'public'\s+and c\.relkind in \('r', 'p'\)\s+and not c\.relrowsecurity/,
+    );
+    expect(releaseInvariants).toContain("has % privilege on public._prisma_migrations");
+    const checkedPrivileges = betweenMarkers(
+      releaseInvariants,
+      "table_privileges text[] := array[",
+      "];",
+      "table_privileges",
+    );
+    for (const privilege of [
+      "SELECT",
+      "INSERT",
+      "UPDATE",
+      "DELETE",
+      "TRUNCATE",
+      "REFERENCES",
+      "TRIGGER",
+    ]) {
+      expect(checkedPrivileges).toContain(`'${privilege}'`);
+    }
+  });
+
+  it("lists every application table as RLS-protected in the release checks", () => {
+    const schema = read("prisma/schema.prisma");
+    const tables = [...schema.matchAll(/@@map\("([a-z_]+)"\)/g)].map((match) => match[1]!);
+    expect(tables.length).toBeGreaterThan(50);
+    const protectedList = betweenMarkers(
+      releaseInvariants,
+      "protected_tables text[] := array[",
+      "];",
+      "protected_tables",
+    );
+    for (const table of tables) {
+      expect(protectedList, table).toContain(`'${table}'`);
+    }
+  });
+
   it("fails closed on same-name tenant and storage policy drift", () => {
     expect(security.trimStart()).toMatch(/^BEGIN;/);
     expect(security.trimEnd()).toMatch(/COMMIT;$/);
