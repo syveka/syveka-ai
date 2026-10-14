@@ -5,6 +5,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
+/** The provider SDK error's HTTP status, when it has one (a number only). */
+function providerStatus(error: unknown): number | undefined {
+  const status =
+    typeof error === "object" && error !== null && "status" in error ? error.status : undefined;
+  return typeof status === "number" ? status : undefined;
+}
+
 /**
  * Public, unauthenticated marketing-site assistant. No session, no tenant
  * context, no tools passed to the model -- this route cannot read or write
@@ -90,8 +97,10 @@ export async function POST(request: Request): Promise<NextResponse> {
     console.error(
       JSON.stringify({
         event: "public_assistant_failed",
-        // Provider error text can quote request details; the name is enough to triage.
+        // Provider error text can quote request details; the name and the
+        // provider's HTTP status (e.g. 429, 529) are enough to triage.
         errorName: error instanceof Error ? error.name : "unknown",
+        status: providerStatus(error),
       }),
     );
     return NextResponse.json({ error: "generic" }, { status: 500 });
