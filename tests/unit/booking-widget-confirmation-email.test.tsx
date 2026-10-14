@@ -41,7 +41,7 @@ function stubApi(confirmationEmailSent: boolean | undefined) {
   );
 }
 
-async function book() {
+async function fillAndSubmit() {
   render(
     <NextIntlClientProvider locale="en" messages={messages} timeZone="Europe/Helsinki">
       <BookingWidget
@@ -68,6 +68,10 @@ async function book() {
   fireEvent.change(await screen.findByLabelText("Name"), { target: { value: "Guest" } });
   fireEvent.change(screen.getByLabelText("Email"), { target: { value: "guest@example.com" } });
   fireEvent.submit(screen.getByLabelText("Name").closest("form")!);
+}
+
+async function book() {
+  await fillAndSubmit();
   await screen.findByText(messages.booking.confirmedTitle);
 }
 
@@ -93,5 +97,25 @@ describe("booking confirmation email note", () => {
     stubApi(undefined);
     await book();
     expect(screen.getByText(messages.booking.confirmationEmailNote)).toBeTruthy();
+  });
+});
+
+describe("booking refused because the rate limit can't be verified (503)", () => {
+  it("shows the guest the retry message, never the raw error, and no confirmation", async () => {
+    const slot = new Date(Date.now() + 3 * 86_400_000).toISOString();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        String(url).includes("/slots")
+          ? new Response(JSON.stringify({ slots: [slot] }), { status: 200 })
+          : new Response(JSON.stringify({ error: { code: "service_unavailable" } }), {
+              status: 503,
+            }),
+      ),
+    );
+    await fillAndSubmit();
+    expect(await screen.findByText(messages.booking.errors.bookingFailed)).toBeTruthy();
+    expect(screen.queryByText(messages.booking.confirmedTitle)).toBeNull();
+    expect(document.body.textContent).not.toContain("service_unavailable");
   });
 });

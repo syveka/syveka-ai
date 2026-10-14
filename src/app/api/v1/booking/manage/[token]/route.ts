@@ -8,18 +8,25 @@ export const dynamic = "force-dynamic";
  * GET → booking details, POST → reschedule, DELETE → cancel.
  * Tokens are single-purpose, hashed at rest and expiring; every route is
  * rate-limited per IP to stop token brute-forcing.
+ *
+ * Reschedule and cancel change a booking and send email, so their limit
+ * fails closed: when it can't be verified (Redis timed out or errored)
+ * nothing changes (503). Reading the booking only shows it to the token's
+ * holder, so GET keeps working when Redis doesn't answer in time.
  */
 
 async function deps() {
-  const [redis, booking, tokens, validators, notifications, reminders] = await Promise.all([
-    import("@/server/integrations/redis"),
-    import("@/server/services/booking"),
-    import("@/server/services/booking-tokens"),
-    import("@/lib/validators/booking"),
-    import("@/server/services/booking-notifications"),
-    import("@/server/services/reminders"),
-  ]);
-  return { redis, booking, tokens, validators, notifications, reminders };
+  const [redis, rateLimit, booking, tokens, validators, notifications, reminders] =
+    await Promise.all([
+      import("@/server/integrations/redis"),
+      import("@/server/security/rate-limit"),
+      import("@/server/services/booking"),
+      import("@/server/services/booking-tokens"),
+      import("@/lib/validators/booking"),
+      import("@/server/services/booking-notifications"),
+      import("@/server/services/reminders"),
+    ]);
+  return { redis, rateLimit, booking, tokens, validators, notifications, reminders };
 }
 
 function limitKey(request: Request): string {
@@ -52,9 +59,9 @@ export async function GET(request: Request, { params }: { params: Promise<{ toke
 }
 
 export async function POST(request: Request, { params }: { params: Promise<{ token: string }> }) {
-  const { redis, booking, tokens, validators, notifications, reminders } = await deps();
-  const { success } = await redis.rateLimiters.auth.limit(limitKey(request));
-  if (!success) return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+  const { rateLimit, booking, tokens, validators, notifications, reminders } = await deps();
+  const refused = await rateLimit.rateLimitRefusal("auth", limitKey(request));
+  if (refused) return refused;
 
   let body: unknown;
   try {
@@ -98,9 +105,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
 }
 
 export async function DELETE(request: Request, { params }: { params: Promise<{ token: string }> }) {
-  const { redis, booking, tokens, validators, notifications } = await deps();
-  const { success } = await redis.rateLimiters.auth.limit(limitKey(request));
-  if (!success) return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+  const { rateLimit, booking, tokens, validators, notifications } = await deps();
+  const refused = await rateLimit.rateLimitRefusal("auth", limitKey(request));
+  if (refused) return refused;
 
   let reason: string | undefined;
   try {
