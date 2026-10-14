@@ -91,3 +91,14 @@ deploy or new email.
 - **F-7, the invitation page isn't translated** (UX gap, low). Its text is hardcoded English,
   while the email and the rest of the app follow the organization's language. Fix in draft
   #324 (stacked on #323): en, fi and ar, with the role shown by its label.
+- **F-8, an email link opened in another browser loses the invitation** (bug, high for mobile
+  onboarding). Supabase's SSR client uses PKCE (`@supabase/ssr` 0.6.1, `flowType: "pkce"`), so a
+  verification link only completes in the browser that registered. Elsewhere (typically a
+  phone's mail app) `/api/auth/callback` sends the person to `/login?error=auth_callback_failed`;
+  the login page ignores the error and the invitation is dropped, so an invitee without an
+  organization lands on "Create your organization". Derived from the code, not observed on
+  staging. Fix in draft #325 (stacked on #306). The A2 procedure in the runbook avoids it.
+- **F-9, a pending invitation can't be cancelled** (product gap, medium). `InviteStatus` has
+  `REVOKED`, but nothing in the app sets it and the Members page has no cancel action. A pending
+  invitation holds a seat for 7 days, so on FREE (2 seats) a mistaken invitation blocks the
+  second seat until it expires. Not implemented (a feature; needs a product decision).
