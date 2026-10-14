@@ -153,14 +153,14 @@ From draft PRs #306, #323, #324 and #325 (unit tests; nothing here ran against s
 
 ## 6. Release dependency map (for the pilot only)
 
-| Order | PR   | Purpose                                                | Depends on          | CI     | Staging verification after release                                       |
-| ----- | ---- | ------------------------------------------------------ | ------------------- | ------ | ------------------------------------------------------------------------ |
-| 1     | #306 | Return to the invitation after sign-up / sign-in       | —                   | 20/20  | Logged-out invitation → register → verify → lands on the invitation      |
-| 2     | #323 | Wrong signed-in account: clear notice and sign-out     | #306                | 20/20  | Invitation opened as another account shows the notice, no 500            |
-| 3     | #324 | Invitation page translated                             | #323                | 20/20  | `/fi/invite/…` in Finnish                                                |
-| 3′    | #325 | Failed email link keeps the invitation and explains it | #306                | see PR | Verification link in another browser → login notice → back to invitation |
-| 4     | #309 | Onboarding industry lands in Business DNA              | —                   | 20/20  | Part 2 AT-1 (optional)                                                   |
-| 5     | #310 | Chat takes industry only from Business DNA             | #309 (same release) | 20/20  | Part 2 AT-3, AT-2                                                        |
+| Order | PR   | Purpose                                                | Depends on          | CI    | Staging verification after release                                       |
+| ----- | ---- | ------------------------------------------------------ | ------------------- | ----- | ------------------------------------------------------------------------ |
+| 1     | #306 | Return to the invitation after sign-up / sign-in       | —                   | 20/20 | Logged-out invitation → register → verify → lands on the invitation      |
+| 2     | #323 | Wrong signed-in account: clear notice and sign-out     | #306                | 20/20 | Invitation opened as another account shows the notice, no 500            |
+| 3     | #324 | Invitation page translated                             | #323                | 20/20 | `/fi/invite/…` in Finnish                                                |
+| 3′    | #325 | Failed email link keeps the invitation and explains it | #306                | 20/20 | Verification link in another browser → login notice → back to invitation |
+| 4     | #309 | Onboarding industry lands in Business DNA              | —                   | 20/20 | Part 2 AT-1 (optional)                                                   |
+| 5     | #310 | Chat takes industry only from Business DNA             | #309 (same release) | 20/20 | Part 2 AT-3, AT-2                                                        |
 
 #306–#325 aren't needed for A2 if P2 follows section 1. #309 and #310 are needed only for Part 2.
 Every merge and the staging release need separate approval.
