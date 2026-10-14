@@ -72,12 +72,32 @@ type ToolDef<S extends z.ZodTypeAny> = {
    * one (see toolRequiresConfirmation).
    */
   requiresConfirmation?: boolean;
+  /**
+   * For a tool that requires confirmation: resolves exactly what would happen,
+   * for the user to confirm (see describeToolCall). It gets input already
+   * checked against the tool's schema and the role's permission. It's built
+   * from data only, never from model text. A tool that requires confirmation
+   * without one can't be proposed.
+   */
+  describe?: (identity: ToolIdentity, input: z.infer<S>) => Promise<ToolDescription>;
   execute: (
     identity: ToolIdentity,
     input: z.infer<S>,
     context?: ToolActionContext,
   ) => Promise<unknown>;
 };
+
+/** A write tool's proposal: what runs on confirmation, and what the user is shown. */
+type ToolDescription =
+  | {
+      ok: true;
+      /** What runs on confirmation (e.g. with a booking's duration resolved now). */
+      input: Record<string, unknown>;
+      details: WriteActionDetails;
+      /** Extra facts for the model about the proposal (never the confirmation itself). */
+      modelNote?: Record<string, unknown>;
+    }
+  | { ok: false; error: string };
 
 /**
  * Whether a user's call of this tool needs a confirmed chat action to run:
@@ -93,6 +113,17 @@ export function toolRequiresConfirmation(tool: {
 
 function defineTool<S extends z.ZodTypeAny>(def: ToolDef<S>): ToolDef<S> {
   return def;
+}
+
+const contactName = (c: { firstName: string; lastName: string | null }) =>
+  [c.firstName, c.lastName].filter(Boolean).join(" ");
+
+/** A contact of this organization that isn't deleted, for a proposal to name. */
+async function findLiveContact(orgId: string, contactId: string) {
+  return tenantDb(orgId).contact.findFirst({
+    where: { id: contactId, deletedAt: null },
+    select: { firstName: true, lastName: true },
+  });
 }
 
 const searchKnowledgeBase = defineTool({
@@ -152,6 +183,17 @@ const createContact = defineTool({
     source: z.string().max(50).default("ai-assistant"),
   }),
   permission: "crm:write",
+  describe: async (_id, input) => ({
+    ok: true,
+    input,
+    details: {
+      tool: "createContact",
+      firstName: input.firstName,
+      lastName: input.lastName,
+      email: input.email,
+      phone: input.phone,
+    },
+  }),
   execute: async (id, input) => {
     const db = tenantDb(id.orgId);
     // The same plan check as creating a contact in the app
@@ -199,6 +241,22 @@ const logActivity = defineTool({
     dueAt: z.string().datetime().optional(),
   }),
   permission: "crm:write",
+  describe: async (id, input) => {
+    const contact = await findLiveContact(id.orgId, input.contactId);
+    if (!contact) return { ok: false, error: "contact_not_found" };
+    return {
+      ok: true,
+      input,
+      details: {
+        tool: "logActivity",
+        type: input.type,
+        subject: input.subject,
+        contactName: contactName(contact),
+        dueAt: input.dueAt,
+        body: input.body,
+      },
+    };
+  },
   execute: async (id, input) => {
     const db = tenantDb(id.orgId);
     // Tenancy check; the id comes from the model, so a deleted contact is refused too.
@@ -424,6 +482,29 @@ const bookMeeting = defineTool({
     notes: z.string().max(2000).optional(),
   }),
   permission: "calendar:write",
+  describe: async (id, input) => {
+    const durationMinutes =
+      input.durationMinutes ??
+      (await resolveServiceDurationMinutes(id.orgId, input.serviceName)) ??
+      30;
+    const contact = input.contactId ? await findLiveContact(id.orgId, input.contactId) : null;
+    if (input.contactId && !contact) return { ok: false, error: "contact_not_found" };
+    const { timezone } = await resolveOrgDefaultSchedule(id.orgId);
+    return {
+      ok: true,
+      // The resolved duration is part of what the user confirms.
+      input: { ...input, durationMinutes },
+      details: {
+        tool: "bookMeeting",
+        title: input.title,
+        startsAt: input.startsAt,
+        durationMinutes,
+        timezone,
+        contactName: contact ? contactName(contact) : undefined,
+        notes: input.notes,
+      },
+    };
+  },
   execute: async (id, input) => {
     // A phone caller is anonymous: they can book only an offered slot (see
     // getCalendarAvailability) and only for the service's own length, never a past, night-time
@@ -528,6 +609,23 @@ const proposeBusinessDnaUpdate = defineTool({
   schema: businessDnaPatchSchema,
   confirmedSchema: confirmedBusinessDnaPatchSchema,
   permission: "business-dna:write",
+  describe: async (id, patch) => {
+    const preview = await previewBusinessDnaPatch(id.orgId, patch);
+    if (!preview.ok) return { ok: false, error: "no_changes" };
+    return {
+      ok: true,
+      // What runs on confirmation: exactly this patch, bound to the values
+      // the user is shown now. The model can't supply them: its schema has
+      // no basis, and the confirmed schema accepts nothing else.
+      input: { ...patch, basis: preview.basis },
+      details: {
+        tool: "proposeBusinessDnaUpdate",
+        changes: preview.changes,
+        missingAfter: preview.missingAfter,
+      },
+      modelNote: { missingAfterChange: preview.missingAfter.slice(0, 3) },
+    };
+  },
   execute: async (id, input, context) => {
     // Only a user's confirmed chat action runs this (decideToolAction passes
     // its id). Any other caller -- a direct model call, or voice, whose
@@ -638,117 +736,32 @@ function prepareToolCall(
 /** What the user is asked to confirm (no free-form model text; rendered by the client). */
 export type WriteActionDetails = ProposedActionView["details"];
 
-const contactName = (c: { firstName: string; lastName: string | null }) =>
-  [c.firstName, c.lastName].filter(Boolean).join(" ");
-
 /**
  * Validates a write tool call and resolves exactly what would happen, for
  * the user to confirm: the final input (e.g. a booking's duration resolved
  * now, so what runs is what was shown) and display details. Same checks as
- * executeTool (permission, input) plus tenancy of any referenced contact.
+ * executeTool (permission, input), then the tool's own describe (e.g.
+ * tenancy of a referenced contact). Only a tool that requires confirmation
+ * and has a describe can be proposed.
  */
-export async function describeWriteToolCall(
+export async function describeToolCall(
   identity: ToolIdentity,
   name: string,
   rawInput: unknown,
 ): Promise<
-  | {
-      ok: true;
-      tool: string;
-      input: Record<string, unknown>;
-      details: WriteActionDetails;
-      /** Extra facts for the model about the proposal (never the confirmation itself). */
-      modelNote?: Record<string, unknown>;
-    }
-  | { ok: false; error: string }
+  ({ tool: string } & Extract<ToolDescription, { ok: true }>) | { ok: false; error: string }
 > {
   if (!WRITE_TOOL_NAMES.includes(name)) {
     return { ok: false, error: JSON.stringify({ error: "unknown_tool" }) };
   }
   const prepared = prepareToolCall(identity, name, rawInput, "propose");
   if (!prepared.ok) return prepared;
-  const db = tenantDb(identity.orgId);
-  const findContact = async (id: unknown) =>
-    typeof id === "string"
-      ? db.contact.findFirst({
-          where: { id, deletedAt: null },
-          select: { firstName: true, lastName: true },
-        })
-      : null;
-
-  if (name === "proposeBusinessDnaUpdate") {
-    const patch = prepared.input as z.infer<typeof businessDnaPatchSchema>;
-    const preview = await previewBusinessDnaPatch(identity.orgId, patch);
-    if (!preview.ok) return { ok: false, error: JSON.stringify({ error: "no_changes" }) };
-    return {
-      ok: true,
-      tool: name,
-      // What runs on confirmation: exactly this patch, bound to the values
-      // the user is shown now. The model can't supply them: its schema has
-      // no basis, and the confirmed schema accepts nothing else.
-      input: { ...patch, basis: preview.basis },
-      details: { tool: name, changes: preview.changes, missingAfter: preview.missingAfter },
-      modelNote: { missingAfterChange: preview.missingAfter.slice(0, 3) },
-    };
+  if (!prepared.tool.describe) {
+    return { ok: false, error: JSON.stringify({ error: "unknown_tool" }) };
   }
-  if (name === "createContact") {
-    const input = prepared.input as z.infer<typeof createContact.schema>;
-    return {
-      ok: true,
-      tool: name,
-      input,
-      details: {
-        tool: name,
-        firstName: input.firstName,
-        lastName: input.lastName,
-        email: input.email,
-        phone: input.phone,
-      },
-    };
-  }
-  if (name === "logActivity") {
-    const input = prepared.input as z.infer<typeof logActivity.schema>;
-    const contact = await findContact(input.contactId);
-    if (!contact) return { ok: false, error: JSON.stringify({ error: "contact_not_found" }) };
-    return {
-      ok: true,
-      tool: name,
-      input,
-      details: {
-        tool: name,
-        type: input.type,
-        subject: input.subject,
-        contactName: contactName(contact),
-        dueAt: input.dueAt,
-        body: input.body,
-      },
-    };
-  }
-  const input = prepared.input as z.infer<typeof bookMeeting.schema>;
-  const durationMinutes =
-    input.durationMinutes ??
-    (await resolveServiceDurationMinutes(identity.orgId, input.serviceName)) ??
-    30;
-  const contact = input.contactId ? await findContact(input.contactId) : null;
-  if (input.contactId && !contact) {
-    return { ok: false, error: JSON.stringify({ error: "contact_not_found" }) };
-  }
-  const { timezone } = await resolveOrgDefaultSchedule(identity.orgId);
-  return {
-    ok: true,
-    tool: name,
-    // The resolved duration is part of what the user confirms.
-    input: { ...input, durationMinutes },
-    details: {
-      tool: "bookMeeting",
-      title: input.title,
-      startsAt: input.startsAt,
-      durationMinutes,
-      timezone,
-      contactName: contact ? contactName(contact) : undefined,
-      notes: input.notes,
-    },
-  };
+  const described = await prepared.tool.describe(identity, prepared.input);
+  if (!described.ok) return { ok: false, error: JSON.stringify({ error: described.error }) };
+  return { ...described, tool: name };
 }
 
 function prismaErrorCode(e: unknown): string | undefined {
