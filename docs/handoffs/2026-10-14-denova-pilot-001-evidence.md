@@ -23,6 +23,7 @@ had reached the FREE 200-contact limit. Fixed by #318; it never deployed the sta
 | A2  | 2026-10-13 22:12 | `c0972b0` | PASS (invite sent; acceptance pending) | One owner-approved retry, one send attempt. Precheck: `/api/health` healthy, build `c0972b0` (22:11:35); org "DENOVA Pilot 001 (synthetic)"; recipient P2; role Member. UI "Invitation sent."; Members page still one pending invitation for P2 (re-invite updates the existing row; no duplicate). Audit `member.invite` 01:12:19 Helsinki (22:12:19 UTC), invitation `a7647774…`. Resend email `01a13752-dac1-742f-b4d9-8c3b31fa1f24`: `POST /emails`, Sent then Delivered at 22:12 UTC, from `Syveka AI <no-reply@mail.syveka.com>`, the only email to P2 in the 15-day list |
 | A2  | 2026-10-14 11:06 | `c0972b0` | **PASS**                               | P2 accepted the existing invitation (human step, runbook §1). Verified read-only as P1 at 11:10 UTC; details below                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | B1  | 2026-10-14 11:19 | `c0972b0` | **PASS**                               | Business DNA created and persisted after reload; one `business_dna.create`; details below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| B2  | 2026-10-14 11:29 | `c0972b0` | **PASS**                               | 2 services created, 1 deactivated; persisted after reload; audit 2 × `.create`, 1 × `.deactivate`; details below                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 **A2 is complete only after P2 accepts**: P2 is shown as a Member and the audit log has
 `member.join`. Acceptance is a human step by P2; nobody signs in or accepts on P2's behalf.
@@ -80,6 +81,31 @@ with no other field set.
 **Audit:** one new row, `business_dna.create`, 14:19:50 Helsinki (11:19:50 UTC), actor P1,
 `business_dna` `2ae05708…`. No other new rows (no `.update`, no duplicate).
 
+### B2 Services and deactivation: PASS (2026-10-14 11:29–11:31 UTC, `c0972b0`)
+
+Owner-approved, B2 only. P1 in "DENOVA Pilot 001 (synthetic)" (header checked), Settings →
+Business DNA → Services.
+
+**Before:** "No services added yet"; newest audit row `business_dna.create` (four rows in all).
+
+| #   | Name                          | Price / note              | Duration | Description                                     | Created (UTC) | Id          |
+| --- | ----------------------------- | ------------------------- | -------- | ----------------------------------------------- | ------------- | ----------- |
+| 1   | PILOT-001 Portrait session    | 150.00 EUR, starting from | 60 min   | Synthetic pilot test service, not a real offer. | 11:29:24      | `b164aed6…` |
+| 2   | PILOT-001 Event video package | 400.00 EUR, starting from | 120 min  | Synthetic pilot test service, not a real offer. | 11:30:20      | `8ac9cfc3…` |
+
+Each was added once with "Active" on; both were listed as active. Service 2 was deactivated once
+(11:31:00 UTC).
+
+**After reload:** two services listed, no duplicate. Portrait session active (Edit, Deactivate);
+Event video package marked "Inactive" with Edit and **Reactivate**. Reactivate was not pressed.
+In the code, deactivation only sets `isActive: false` (no delete) and `reactivateBusinessDnaService`
+sets it back with a `business_dna_service.reactivate` audit row, so the service is restorable.
+
+**Audit:** three new rows, all by P1: `business_dna_service.create` `b164aed6…` (14:29:24
+Helsinki), `business_dna_service.create` `8ac9cfc3…` (14:30:20), `business_dna_service.deactivate`
+`8ac9cfc3…` (14:31:00). No `.update` or `.reactivate`, nothing else new. The organization has no
+voice assistants, so the deactivation's assistant re-sync had nothing to call.
+
 ### A2 acceptance: FAIL (2026-10-13 22:32 UTC, `c0972b0`)
 
 P2 opened the invitation link on mobile and saw "Something went wrong / This page could not be
@@ -124,8 +150,8 @@ Without #306, P2 must reopen the invitation link after registering and verifying
 no deploy or new email. **Superseded:** P2 completed A2 with the workaround on 2026-10-14 (A2
 acceptance: PASS, above). The fixes are still needed for real customers.
 
-**Pilot completion after B1:** 3 of 28 (10.7%); Part 1 alone 3 of 26 (11.5%). Next in plan
-order: B2.
+**Pilot completion after B2:** 4 of 28 (14.3%); Part 1 alone 4 of 26 (15.4%). Next in plan
+order: B3.
 
 ## Findings
 
