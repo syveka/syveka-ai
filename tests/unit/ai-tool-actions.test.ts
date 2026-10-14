@@ -318,6 +318,81 @@ describe("proposing a write (what the model's tool call does)", () => {
   });
 });
 
+describe("each write tool describes its own proposal (ToolDef.describe)", () => {
+  it("every tool requiring confirmation has a describe; no read-only tool has one", () => {
+    for (const tool of TOOL_REGISTRY) {
+      expect(typeof tool.describe, tool.name).toBe(
+        WRITE_TOOL_NAMES.includes(tool.name) ? "function" : "undefined",
+      );
+    }
+  });
+
+  it("createContact and logActivity show exactly the values they will store", async () => {
+    const contact = await propose("createContact", {
+      firstName: "Maija",
+      lastName: "M",
+      email: "m@example.com",
+      phone: "+358401",
+    });
+    expect(contact.action?.details).toEqual({
+      tool: "createContact",
+      firstName: "Maija",
+      lastName: "M",
+      email: "m@example.com",
+      phone: "+358401",
+    });
+    const activity = await propose("logActivity", {
+      contactId: OTHER_CONV,
+      type: "TASK",
+      subject: "Soita",
+      body: "Muista hinta",
+      dueAt: "2026-10-06T08:00:00.000Z",
+    });
+    expect(activity.action?.details).toEqual({
+      tool: "logActivity",
+      type: "TASK",
+      subject: "Soita",
+      contactName: "Maija Meikäläinen",
+      dueAt: "2026-10-06T08:00:00.000Z",
+      body: "Muista hinta",
+    });
+  });
+
+  it("a referenced contact must be this organization's and not deleted", async () => {
+    await propose("logActivity", { contactId: OTHER_CONV, type: "NOTE", subject: "x" });
+    expect(m.contactFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { id: OTHER_CONV, deletedAt: null } }),
+    );
+    m.contactFindFirst.mockResolvedValueOnce(null);
+    const p = await propose("bookMeeting", booking({ contactId: OTHER_CONV }));
+    expect(JSON.parse(p.modelResult).error).toBe("contact_not_found");
+    expect(m.store.size).toBe(1);
+  });
+
+  it("a write tool without a describe can't be proposed (fails closed, nothing stored)", async () => {
+    const tool = TOOL_REGISTRY.find((t) => t.name === "createContact")!;
+    const describe = tool.describe;
+    tool.describe = undefined;
+    try {
+      const p = await propose("createContact", { firstName: "Maija" });
+      expect(p.action).toBeNull();
+      expect(JSON.parse(p.modelResult).error).toBe("unknown_tool");
+    } finally {
+      tool.describe = describe;
+    }
+    expect(m.store.size).toBe(0);
+    nothingWritten();
+  });
+
+  it("a describe that fails never leaks its message; nothing is stored", async () => {
+    m.contactFindFirst.mockRejectedValueOnce(new Error("relation contacts: secret detail"));
+    const p = await propose("logActivity", { contactId: OTHER_CONV, type: "NOTE", subject: "x" });
+    expect(p.action).toBeNull();
+    expect(p.modelResult).toBe(JSON.stringify({ error: "confirmation_unavailable" }));
+    expect(m.store.size).toBe(0);
+  });
+});
+
 describe("deciding (only the user, only once, only that action)", () => {
   it("10. confirm runs exactly the stored action once (happy path)", async () => {
     const { action } = await propose("bookMeeting", booking());

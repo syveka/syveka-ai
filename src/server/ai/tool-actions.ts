@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash } from "node:crypto";
 import {
-  describeWriteToolCall,
+  describeToolCall,
   executeTool,
   type ToolIdentity,
   type WriteActionDetails,
@@ -155,9 +155,9 @@ export async function proposeToolAction(
   rawInput: unknown,
   now: Date = new Date(),
 ): Promise<{ modelResult: string; action: ProposedAction | null }> {
-  let described: Awaited<ReturnType<typeof describeWriteToolCall>>;
+  let described: Awaited<ReturnType<typeof describeToolCall>>;
   try {
-    described = await describeWriteToolCall(identity, name, rawInput);
+    described = await describeToolCall(identity, name, rawInput);
   } catch (e) {
     logAction({
       phase: "proposal_unavailable",

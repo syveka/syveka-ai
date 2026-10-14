@@ -93,10 +93,11 @@ Code: `src/server/ai/tool-actions.ts`, `src/app/api/v1/ai/actions/[id]/route.ts`
 `src/components/chat/action-confirmation.tsx`.
 
 1. **Proposal.** In typed chat, a write tool call (`createContact`, `logActivity`, `bookMeeting`) never
-   runs on the model's call. `describeWriteToolCall` validates it with the same checks as
-   `executeTool`: role permission and input schema. It also checks that any referenced contact
-   belongs to the organization, and resolves what would happen, such as a booking's duration and the
-   calendar timezone.
+   runs on the model's call. `describeToolCall` validates it with the same checks as
+   `executeTool`: role permission and input schema. Then the tool's own `describe` (in its
+   definition in `src/server/ai/tools/index.ts`) checks that any referenced contact belongs to the
+   organization, and resolves what would happen, such as a booking's duration and the calendar
+   timezone. A write tool without `describe` can't be proposed.
 2. **Pending action.** The action is stored in Redis with a TTL of 10 minutes. It is bound to the
    organization, user and conversation, and carries a SHA-256 digest of the exact tool and
    canonical input.
