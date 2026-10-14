@@ -164,6 +164,64 @@ describe("post-call job — workflow event", () => {
   });
 });
 
+describe("post-call job — contact.created workflow event", () => {
+  const contactCreatedCalls = () =>
+    (mocks.emitWorkflowEvent.mock.calls as unknown as unknown[][]).filter(
+      (args) => args[1] === "contact.created",
+    );
+
+  it("a contact the call creates emits contact.created once, for this organization, keyed by the contact id", async () => {
+    await POST(jobRequest());
+
+    const calls = contactCreatedCalls();
+    expect(calls).toHaveLength(1);
+    const [orgId, , data, sourceEventId] = calls[0]!;
+    expect(orgId).toBe(ORG_ID);
+    expect(data).toMatchObject({ contactId: "contact-new-1" });
+    expect(sourceEventId).toBe("contact-new-1");
+  });
+
+  it("a caller matched to an existing contact emits no contact.created", async () => {
+    mocks.contactFindFirst.mockResolvedValue({ id: "contact-existing-1" });
+
+    await POST(jobRequest());
+
+    expect(mocks.contactCreate).not.toHaveBeenCalled();
+    expect(contactCreatedCalls()).toEqual([]);
+  });
+
+  it("a retry after the contact step committed creates and emits nothing again", async () => {
+    // A prior attempt created and linked the contact, then failed before the marker.
+    mocks.voiceCallFindFirst.mockResolvedValue({ ...freshCallRow(), contactId: "contact-new-1" });
+
+    await POST(jobRequest());
+
+    expect(mocks.contactCreate).not.toHaveBeenCalled();
+    expect(contactCreatedCalls()).toEqual([]);
+  });
+
+  it("a failing workflow queue never fails the job or loses the saved contact", async () => {
+    const errorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    mocks.emitWorkflowEvent.mockImplementation(async (...args: unknown[]) => {
+      if (args[1] === "contact.created") throw new Error("queue unavailable");
+    });
+
+    const response = await POST(jobRequest());
+
+    expect(response.status).toBe(200);
+    expect(mocks.contactCreate).toHaveBeenCalledTimes(1);
+    const marked = (mocks.voiceCallUpdate.mock.calls as UpdateCall[]).some(
+      ([args]) => "postCallProcessedAt" in args.data,
+    );
+    expect(marked).toBe(true);
+    const logged = errorSpy.mock.calls.flat().join(" ");
+    expect(logged).toContain("contact_created_workflow_event_failed");
+    expect(logged).not.toContain("+358");
+    mocks.emitWorkflowEvent.mockImplementation(async () => {});
+    errorSpy.mockRestore();
+  });
+});
+
 describe("post-call job — idempotency against QStash-level retry", () => {
   it("first invocation: runs every step and marks the call processed at the end", async () => {
     const response = await POST(jobRequest());
@@ -174,7 +232,11 @@ describe("post-call job — idempotency against QStash-level retry", () => {
     expect(mocks.contactCreate).toHaveBeenCalledTimes(1);
     expect(mocks.activityCreate).toHaveBeenCalledTimes(1);
     expect(mocks.notificationCreate).toHaveBeenCalledTimes(1);
-    expect(mocks.emitWorkflowEvent).toHaveBeenCalledTimes(1);
+    // The new contact's `contact.created`, then `call.completed`: one each.
+    expect(mocks.emitWorkflowEvent.mock.calls.map((args) => args[1])).toEqual([
+      "contact.created",
+      "call.completed",
+    ]);
 
     // The completion marker must be the last write, using the row's own id.
     const calls = mocks.voiceCallUpdate.mock.calls as UpdateCall[];

@@ -151,3 +151,37 @@ describe("conversation page: saved actions come back with their recorded outcome
     expect(state("u1")).toBeUndefined();
   });
 });
+
+describe("conversation page: a reopened reply shows no tool chips", () => {
+  it("passes no tool names to the view, though the reply's saved toolCalls keep them", async () => {
+    m.messages = [
+      {
+        id: "u1",
+        role: "USER",
+        content: "What times am I free on October 19, 2026?",
+        citations: null,
+        toolCalls: null,
+      },
+      {
+        id: "a1",
+        role: "ASSISTANT",
+        content: "You're free at 09:00 …",
+        citations: null,
+        toolCalls: [
+          {
+            name: "getCalendarAvailability",
+            ok: true,
+            details: { date: "2026-10-19", freeSlotCount: 15, usingOrgConfiguredHours: false },
+          },
+        ],
+      },
+      { id: "a2", role: "ASSISTANT", content: "Hello", citations: null, toolCalls: null },
+    ];
+
+    const messages = (await open()) as Array<{ id: string; tools?: string[] }>;
+
+    expect(messages.find((x) => x.id === "a1")!.tools).toBeUndefined();
+    expect(messages.find((x) => x.id === "a2")!.tools).toBeUndefined();
+    expect(messages.find((x) => x.id === "u1")!.tools).toBeUndefined();
+  });
+});

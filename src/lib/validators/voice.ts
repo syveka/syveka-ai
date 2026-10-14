@@ -1,9 +1,12 @@
 import { z } from "zod";
 
-// Tools a phone assistant may run on behalf of an anonymous caller. searchContacts is
-// deliberately absent: it returns any contact's name, email and phone to whoever dials in.
+// Tools a phone assistant may run on behalf of an anonymous caller. Deliberately absent:
+// - searchContacts: it returns any contact's name, email and phone to whoever dials in;
+// - searchKnowledgeBase: it searches every document in the organization, and nothing
+//   marks a document as approved for the public. An assistant's useKnowledgeBase
+//   setting is not that approval: it defaulted to on. Assistants that stored it are
+//   refused it by allowedVoiceTools below.
 export const VOICE_TOOL_NAMES = [
-  "searchKnowledgeBase",
   "createContact",
   "logActivity",
   "getCalendarAvailability",
@@ -25,8 +28,9 @@ export const voiceAssistantSchema = z.object({
   voiceId: z.string().max(100).optional().or(z.literal("")),
   firstMessage: z.string().min(1).max(500),
   systemPrompt: z.string().min(10).max(8000),
-  enabledTools: z.array(z.enum(VOICE_TOOL_NAMES)).default(["searchKnowledgeBase"]),
-  useKnowledgeBase: z.boolean().default(true),
+  enabledTools: z.array(z.enum(VOICE_TOOL_NAMES)).default([]),
+  // Kept for stored assistants; it no longer gives phone callers knowledge-base access.
+  useKnowledgeBase: z.boolean().default(false),
   // Accept the human-friendly format the UI historically suggested, but
   // persist and send only canonical E.164 to Vapi's transferCall tool.
   transferNumber: optionalFormattedE164.optional(),
@@ -35,17 +39,16 @@ export const voiceAssistantSchema = z.object({
 export type VoiceAssistantInput = z.infer<typeof voiceAssistantSchema>;
 
 /**
- * The tools a stored assistant may actually run. Assistants saved before a tool was removed
- * from VOICE_TOOL_NAMES can still list it in their stored enabledTools; it is dropped here.
+ * The tools a stored assistant may actually run: what is offered to Vapi and what the
+ * webhook will execute. Assistants saved before a tool was removed from VOICE_TOOL_NAMES
+ * can still list it in their stored enabledTools (or have useKnowledgeBase set); it is
+ * dropped here.
  */
-export function allowedVoiceTools(enabledTools: unknown, useKnowledgeBase: boolean): string[] {
+export function allowedVoiceTools(enabledTools: unknown): string[] {
   const stored = Array.isArray(enabledTools) ? enabledTools : [];
   const allowed: readonly string[] = VOICE_TOOL_NAMES;
   return [
-    ...new Set([
-      ...(useKnowledgeBase ? ["searchKnowledgeBase"] : []),
-      ...stored.filter((t): t is string => typeof t === "string" && allowed.includes(t)),
-    ]),
+    ...new Set(stored.filter((t): t is string => typeof t === "string" && allowed.includes(t))),
   ];
 }
 

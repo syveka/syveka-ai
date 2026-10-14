@@ -369,14 +369,15 @@
         "unknown": "Tulosta ei voitu vahvistaa. Tarkista tiedot ennen kuin pyydät uudelleen."
       }
     },
-    "toolLabels": {
-      "searchKnowledgeBase": "Tietopankki",
-      "searchContacts": "Yhteystiedot",
-      "createContact": "Uusi yhteystieto",
-      "logActivity": "Aktiviteetti",
-      "getCalendarAvailability": "Kalenterin vapaat ajat",
-      "bookMeeting": "Varaus",
-      "proposeBusinessDnaUpdate": "Business DNA"
+    "toolStatus": {
+      "searchKnowledgeBase": "Haetaan dokumenteista…",
+      "searchContacts": "Haetaan yhteystietoja…",
+      "createContact": "Valmistellaan yhteystietoa…",
+      "logActivity": "Valmistellaan aktiviteettia…",
+      "getCalendarAvailability": "Tarkistetaan kalenteria…",
+      "bookMeeting": "Valmistellaan varausta…",
+      "proposeBusinessDnaUpdate": "Valmistellaan päivitystä…",
+      "default": "Hetkinen…"
     }
   },
   "publicAssistant": {
@@ -412,6 +413,7 @@
       "PENDING": "Jonossa",
       "FAILED": "Epäonnistui"
     },
+    "stalled": "Käsittely ei valmistunut. Poista dokumentti ja lisää se uudelleen.",
     "errors": {
       "unsupported_type": "Tiedostotyyppiä ei tueta.",
       "too_large": "Tiedosto ylittää 25 Mt rajan.",

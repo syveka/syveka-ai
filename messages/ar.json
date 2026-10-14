@@ -369,14 +369,15 @@
         "unknown": "تعذّر التأكد من النتيجة. تحقّق من سجلاتك قبل أن تطلب مرة أخرى."
       }
     },
-    "toolLabels": {
-      "searchKnowledgeBase": "قاعدة المعرفة",
-      "searchContacts": "جهات الاتصال",
-      "createContact": "جهة اتصال جديدة",
-      "logActivity": "نشاط",
-      "getCalendarAvailability": "المواعيد المتاحة في التقويم",
-      "bookMeeting": "حجز",
-      "proposeBusinessDnaUpdate": "Business DNA"
+    "toolStatus": {
+      "searchKnowledgeBase": "جارٍ البحث في مستنداتك…",
+      "searchContacts": "جارٍ البحث عن جهات الاتصال…",
+      "createContact": "جارٍ تجهيز جهة الاتصال…",
+      "logActivity": "جارٍ تجهيز النشاط…",
+      "getCalendarAvailability": "جارٍ التحقق من التقويم…",
+      "bookMeeting": "جارٍ تجهيز الحجز…",
+      "proposeBusinessDnaUpdate": "جارٍ تجهيز التحديث…",
+      "default": "جارٍ العمل…"
     }
   },
   "publicAssistant": {
@@ -412,6 +413,7 @@
       "PENDING": "في الانتظار",
       "FAILED": "فشل"
     },
+    "stalled": "لم تكتمل المعالجة. احذف المستند وأضفه مرة أخرى.",
     "errors": {
       "unsupported_type": "نوع الملف غير مدعوم.",
       "too_large": "الملف يتجاوز حد ٢٥ ميغابايت.",
