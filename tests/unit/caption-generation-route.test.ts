@@ -23,8 +23,15 @@ vi.mock("@/server/services/creator-generations", () => ({
 vi.mock("@/server/services/creator-studio-http", () => ({
   handleCreatorStudioError: mocks.handleCreatorStudioError,
 }));
-vi.mock("@/server/integrations/redis", () => ({
-  rateLimiters: { creatorGenerate: { limit: mocks.limit } },
+// The real limit helpers (checkRateLimit, fail closed) run against a mocked Upstash.
+vi.mock("@upstash/redis", () => ({ Redis: class Redis {} }));
+vi.mock("@upstash/ratelimit", () => ({
+  Ratelimit: class Ratelimit {
+    static slidingWindow() {
+      return {};
+    }
+    limit = mocks.limit;
+  },
 }));
 
 import { POST } from "@/app/api/v1/creator-studio/generations/caption/route";

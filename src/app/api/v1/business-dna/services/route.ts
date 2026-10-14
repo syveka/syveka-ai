@@ -23,14 +23,19 @@ export async function GET(): Promise<NextResponse> {
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
-  const [{ requirePermission }, { AuthError }, { createBusinessDnaService }] = await Promise.all([
-    import("@/server/auth/guard"),
-    import("@/server/auth/session"),
-    import("@/server/services/business-dna-services"),
-  ]);
+  const [{ requirePermission }, { AuthError }, { createBusinessDnaService }, { rateLimitRefusal }] =
+    await Promise.all([
+      import("@/server/auth/guard"),
+      import("@/server/auth/session"),
+      import("@/server/services/business-dna-services"),
+      import("@/server/security/rate-limit"),
+    ]);
 
   try {
     const ctx = await requirePermission("business-dna:write");
+    // Re-syncs the organization's voice assistants, like a profile save.
+    const refusal = await rateLimitRefusal("businessDnaWrite", ctx.orgId);
+    if (refusal) return refusal;
     const body = businessDnaServiceSchema.safeParse(await request.json().catch(() => null));
     if (!body.success) {
       return NextResponse.json(

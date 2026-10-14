@@ -9,8 +9,18 @@ import {
   updateBusinessDnaService,
 } from "@/server/services/business-dna-services";
 import { businessDnaServiceSchema } from "@/lib/validators/business-dna";
+import { actionRateLimitError } from "@/server/security/rate-limit";
 
 export type BusinessDnaServiceActionState = { error?: string; message?: string };
+
+/**
+ * Each service change re-syncs every active voice assistant of the
+ * organization with the voice provider, like a profile save: the same
+ * per-organization limit (businessDnaWrite), failing closed.
+ */
+function serviceWriteLimit(orgId: string) {
+  return actionRateLimitError(["businessDnaWrite", orgId]);
+}
 
 /**
  * The form collects price as a decimal major-unit string ("10.50", the
@@ -47,6 +57,8 @@ export async function createBusinessDnaServiceAction(
   formData: FormData,
 ): Promise<BusinessDnaServiceActionState> {
   const ctx = await requirePermission("business-dna:write");
+  const limited = await serviceWriteLimit(ctx.orgId);
+  if (limited) return { error: limited === "rate_limited" ? "rate_limited" : "failed" };
 
   const parsed = parseServiceFormData(formData);
   if (!parsed.success) return { error: "invalid_input" };
@@ -66,6 +78,8 @@ export async function updateBusinessDnaServiceAction(
   formData: FormData,
 ): Promise<BusinessDnaServiceActionState> {
   const ctx = await requirePermission("business-dna:write");
+  const limited = await serviceWriteLimit(ctx.orgId);
+  if (limited) return { error: limited === "rate_limited" ? "rate_limited" : "failed" };
 
   const parsed = parseServiceFormData(formData);
   if (!parsed.success) return { error: "invalid_input" };
@@ -79,14 +93,18 @@ export async function updateBusinessDnaServiceAction(
   return { message: "saved" };
 }
 
+// Form actions without a result: when limited, nothing changes and the list
+// shows the service unchanged.
 export async function deactivateBusinessDnaServiceAction(id: string): Promise<void> {
   const ctx = await requirePermission("business-dna:write");
+  if (await serviceWriteLimit(ctx.orgId)) return;
   await deactivateBusinessDnaService(ctx, id);
   revalidatePath("/settings/business-dna");
 }
 
 export async function reactivateBusinessDnaServiceAction(id: string): Promise<void> {
   const ctx = await requirePermission("business-dna:write");
+  if (await serviceWriteLimit(ctx.orgId)) return;
   await reactivateBusinessDnaService(ctx, id);
   revalidatePath("/settings/business-dna");
 }

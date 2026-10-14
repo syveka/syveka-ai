@@ -21,6 +21,11 @@ const mocks = vi.hoisted(() => ({
   reactivateBusinessDnaService: vi.fn(async () => undefined),
 }));
 
+// Within its rate limit (the limits themselves: rate-limit-gaps.test.ts).
+vi.mock("@/server/security/rate-limit", () => ({
+  actionRateLimitError: vi.fn(async () => null),
+  emailKey: (email: string) => email,
+}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/server/auth/guard", () => ({ requirePermission: mocks.requirePermission }));
 vi.mock("@/server/services/business-dna-services", () => ({

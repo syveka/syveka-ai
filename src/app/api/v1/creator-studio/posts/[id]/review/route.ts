@@ -7,14 +7,21 @@ export async function POST(
   request: Request,
   { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
-  const [{ requirePermission }, { reviewCreatorPost }, { handleCreatorStudioError }] =
-    await Promise.all([
-      import("@/server/auth/guard"),
-      import("@/server/services/creator-posts"),
-      import("@/server/services/creator-studio-http"),
-    ]);
+  const [
+    { requirePermission },
+    { reviewCreatorPost },
+    { handleCreatorStudioError },
+    { rateLimitRefusal },
+  ] = await Promise.all([
+    import("@/server/auth/guard"),
+    import("@/server/services/creator-posts"),
+    import("@/server/services/creator-studio-http"),
+    import("@/server/security/rate-limit"),
+  ]);
   try {
     const ctx = await requirePermission("creator:approve");
+    const refusal = await rateLimitRefusal("creatorPostWorkflow", `${ctx.orgId}:${ctx.userId}`);
+    if (refusal) return refusal;
     const { id } = await params;
     const body = reviewPostSchema.safeParse(await request.json().catch(() => null));
     if (!body.success)

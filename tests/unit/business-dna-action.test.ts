@@ -22,8 +22,15 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
-vi.mock("@/server/integrations/redis", () => ({
-  rateLimiters: { businessDnaWrite: { limit: mocks.businessDnaWriteLimit } },
+// The real limit helpers (checkRateLimit, fail closed) run against a mocked Upstash.
+vi.mock("@upstash/redis", () => ({ Redis: class Redis {} }));
+vi.mock("@upstash/ratelimit", () => ({
+  Ratelimit: class Ratelimit {
+    static slidingWindow() {
+      return {};
+    }
+    limit = mocks.businessDnaWriteLimit;
+  },
 }));
 vi.mock("@/server/auth/guard", () => ({ requirePermission: mocks.requirePermission }));
 vi.mock("@/server/services/business-dna", () => ({

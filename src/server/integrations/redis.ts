@@ -37,6 +37,9 @@ export type RateLimiters = {
   aiVoiceTurnUser: Ratelimit;
   businessDnaWrite: Ratelimit;
   workflowTestRun: Ratelimit;
+  memberInviteOrg: Ratelimit;
+  memberInviteRecipient: Ratelimit;
+  creatorPostWorkflow: Ratelimit;
 };
 
 let rateLimitersClient: RateLimiters | null = null;
@@ -132,6 +135,29 @@ function getRateLimiters(): RateLimiters {
       limiter: Ratelimit.slidingWindow(10, "1 h"),
       prefix: "rl:workflow-test-run:org",
     }),
+    // Invitations: each one sends an email from the platform domain to any
+    // address. Capped per organization (bulk sending), and per organization and
+    // recipient (re-inviting the same address doesn't count against seats, so
+    // nothing else stops one inbox from being flooded).
+    memberInviteOrg: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(20, "1 h"),
+      prefix: "rl:member-invite:org",
+    }),
+    memberInviteRecipient: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(3, "1 d"),
+      prefix: "rl:member-invite:recipient",
+    }),
+    // Creator Studio post workflow steps that fan out: scheduling enqueues a
+    // QStash publish job, requesting approval notifies every approver, a
+    // review notifies the author, disconnecting calls the platform. Per user,
+    // generous for someone working through a queue of posts by hand.
+    creatorPostWorkflow: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(60, "10 m"),
+      prefix: "rl:creator-post-workflow",
+    }),
   };
   return rateLimitersClient;
 }
@@ -178,6 +204,15 @@ export const rateLimiters = {
   },
   get workflowTestRun() {
     return getRateLimiters().workflowTestRun;
+  },
+  get memberInviteOrg() {
+    return getRateLimiters().memberInviteOrg;
+  },
+  get memberInviteRecipient() {
+    return getRateLimiters().memberInviteRecipient;
+  },
+  get creatorPostWorkflow() {
+    return getRateLimiters().creatorPostWorkflow;
   },
 } satisfies RateLimiters;
 

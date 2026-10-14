@@ -8,19 +8,18 @@ export async function POST(request: Request): Promise<NextResponse> {
     { requirePermission },
     { requestCaptionGeneration },
     { handleCreatorStudioError },
-    { rateLimiters },
+    { rateLimitRefusal },
   ] = await Promise.all([
     import("@/server/auth/guard"),
     import("@/server/services/creator-generations"),
     import("@/server/services/creator-studio-http"),
-    import("@/server/integrations/redis"),
+    import("@/server/security/rate-limit"),
   ]);
   try {
     const ctx = await requirePermission("creator:generate");
-    const rateLimit = await rateLimiters.creatorGenerate.limit(`${ctx.orgId}:${ctx.userId}`);
-    if (!rateLimit.success) {
-      return NextResponse.json({ error: { code: "rate_limited" } }, { status: 429 });
-    }
+    // A paid provider call: refused when the limit can't be verified (fail closed).
+    const refusal = await rateLimitRefusal("creatorGenerate", `${ctx.orgId}:${ctx.userId}`);
+    if (refusal) return refusal;
     const body = generateCaptionSchema.safeParse(await request.json().catch(() => null));
     if (!body.success)
       return NextResponse.json({ error: { code: "invalid_input" } }, { status: 400 });

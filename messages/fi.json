@@ -89,6 +89,7 @@
       "invalid_input": "Tarkista sähköpostiosoite ja rooli.",
       "already_member": "Henkilö on jo organisaation jäsen.",
       "plan_limit": "Tilauksesi ei salli lisää jäseniä juuri nyt: kaikki käyttäjäpaikat ovat käytössä tai tilaus vaatii toimenpiteitä. Katso Laskutus.",
+      "rate_limited": "Liian monta kutsua lyhyessä ajassa. Yritä myöhemmin uudelleen.",
       "invite_failed": "Kutsua ei voitu lähettää. Yritä uudelleen."
     }
   },

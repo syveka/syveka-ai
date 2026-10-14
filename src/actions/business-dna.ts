@@ -22,15 +22,11 @@ export async function updateBusinessDnaAction(
   formData: FormData,
 ): Promise<BusinessDnaActionState> {
   const ctx = await requirePermission("business-dna:write");
-  const { rateLimiters } = await import("@/server/integrations/redis");
-  try {
-    const rateLimit = await rateLimiters.businessDnaWrite.limit(ctx.orgId);
-    if (!rateLimit.success) return { error: "rate_limited" };
-  } catch {
-    // The limit can't be checked: refuse the save (fail closed) with the
-    // form's own message, not an error page.
-    return { error: "failed" };
-  }
+  const { actionRateLimitError } = await import("@/server/security/rate-limit");
+  const limited = await actionRateLimitError(["businessDnaWrite", ctx.orgId]);
+  // The limit can't be checked (Redis error or timeout): refuse the save (fail
+  // closed) with the form's own message, not an error page.
+  if (limited) return { error: limited === "rate_limited" ? "rate_limited" : "failed" };
 
   const raw = Object.fromEntries(formData);
   // The version of the profile the form was loaded with ("" = no profile yet).
