@@ -66,3 +66,25 @@ describe.each([
     expect(html).not.toContain("evil.example");
   });
 });
+
+describe("login page after an email link that couldn't be completed", () => {
+  const renderLogin = async (searchParams: Record<string, string>) =>
+    renderToStaticMarkup(
+      <NextIntlClientProvider locale="en" messages={messages} timeZone="UTC">
+        {await LoginPage({ searchParams: Promise.resolve(searchParams) })}
+      </NextIntlClientProvider>,
+    );
+
+  it("says so and keeps the invitation", async () => {
+    const html = await renderLogin({ error: "auth_callback_failed", next: INVITE });
+    expect(html).toContain(messages.auth.callbackFailed);
+    expect(hiddenNext(html)).toContain(`value="${INVITE}"`);
+  });
+
+  it("an ordinary login shows no notice", async () => {
+    expect(await renderLogin({})).not.toContain(messages.auth.callbackFailed);
+    expect(await renderLogin({ error: "something_else" })).not.toContain(
+      messages.auth.callbackFailed,
+    );
+  });
+});

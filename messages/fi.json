@@ -102,6 +102,7 @@
     "details": "Muutokset"
   },
   "auth": {
+    "callbackFailed": "Linkkiä ei voitu viimeistellä tässä selaimessa. Jatka kirjautumalla sisään sähköpostiosoitteellasi ja salasanallasi.",
     "login": "Kirjaudu sisään",
     "register": "Luo tili",
     "email": "Sähköposti",

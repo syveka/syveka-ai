@@ -102,6 +102,7 @@
     "details": "Changes"
   },
   "auth": {
+    "callbackFailed": "This link could not be completed in this browser. Log in with your email and password to continue.",
     "login": "Log in",
     "register": "Create account",
     "email": "Email",
