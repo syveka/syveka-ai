@@ -10,9 +10,10 @@ export async function generateMetadata() {
 export default async function LoginPage({
   searchParams,
 }: {
-  searchParams: Promise<{ next?: string | string[] }>;
+  searchParams: Promise<{ next?: string | string[]; error?: string | string[] }>;
 }) {
+  const params = await searchParams;
   // Only an invitation is carried through login; see inviteContinuation.
-  const next = inviteContinuation((await searchParams).next);
-  return <LoginForm next={next} />;
+  const next = inviteContinuation(params.next);
+  return <LoginForm next={next} linkFailed={params.error === "auth_callback_failed"} />;
 }
