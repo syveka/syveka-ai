@@ -24,6 +24,7 @@ had reached the FREE 200-contact limit. Fixed by #318; it never deployed the sta
 | A2  | 2026-10-14 11:06 | `c0972b0` | **PASS**                               | P2 accepted the existing invitation (human step, runbook §1). Verified read-only as P1 at 11:10 UTC; details below                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | B1  | 2026-10-14 11:19 | `c0972b0` | **PASS**                               | Business DNA created and persisted after reload; one `business_dna.create`; details below                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | B2  | 2026-10-14 11:29 | `c0972b0` | **PASS**                               | 2 services created, 1 deactivated; persisted after reload; audit 2 × `.create`, 1 × `.deactivate`; details below                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| B3  | 2026-10-14 11:49 | `c0972b0` | **PASS**                               | Stale save from a second tab refused; tab 1's value kept; exactly one `business_dna.update`; details below                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
 
 **A2 is complete only after P2 accepts**: P2 is shown as a Member and the audit log has
 `member.join`. Acceptance is a human step by P2; nobody signs in or accepts on P2's behalf.
@@ -106,6 +107,31 @@ Helsinki), `business_dna_service.create` `8ac9cfc3…` (14:30:20), `business_dna
 `8ac9cfc3…` (14:31:00). No `.update` or `.reactivate`, nothing else new. The organization has no
 voice assistants, so the deactivation's assistant re-sync had nothing to call.
 
+### B3 Stale save is refused: PASS (2026-10-14 11:49 UTC, `c0972b0`)
+
+Owner-approved, B3 only. P1 in "DENOVA Pilot 001 (synthetic)" (header checked), two tabs on
+Settings → Business DNA.
+
+**Before:** both tabs loaded version `2026-10-14T11:19:50.104Z` with identical values (the B1
+values; Brand tone "Friendly and professional"). Audit log: 7 rows, newest
+`business_dna_service.deactivate`.
+
+**Harness note (no data effect):** the first attempt to edit tab 1 didn't reach the page (the
+browser-automation input went to a background tab); the Save click did nothing. Checked before
+continuing: the field still held the old value, the version was unchanged, no "Saved." message,
+and the audit log still had 7 rows. The edit was then repeated and confirmed before saving.
+
+| Step | Tab | Action                                                                                 | Result                                                                                                                                                                                                    |
+| ---- | --- | -------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 1    | 1   | Brand tone "Friendly and professional" → "Warm and professional"; Save once            | "Saved."; version `11:49:17.236Z`; no other field changed                                                                                                                                                 |
+| 2    | 2   | Not refreshed (still `11:19:50.104Z`); Brand tone → "Calm and professional"; Save once | Refused: "Business DNA was changed elsewhere (in chat or another tab) after you opened this page. Your changes were not saved and are still here." Offers to open or load the latest version. Not retried |
+
+**After reload:** Brand tone "Warm and professional", version `11:49:17.236Z`; every other field
+unchanged from B1.
+
+**Audit:** 8 rows; one new `business_dna.update`, 14:49:17 Helsinki (11:49:17 UTC), actor P1,
+`business_dna` `2ae05708…`. No second update from tab 2 and nothing else new.
+
 ### A2 acceptance: FAIL (2026-10-13 22:32 UTC, `c0972b0`)
 
 P2 opened the invitation link on mobile and saw "Something went wrong / This page could not be
@@ -150,8 +176,8 @@ Without #306, P2 must reopen the invitation link after registering and verifying
 no deploy or new email. **Superseded:** P2 completed A2 with the workaround on 2026-10-14 (A2
 acceptance: PASS, above). The fixes are still needed for real customers.
 
-**Pilot completion after B2:** 4 of 28 (14.3%); Part 1 alone 4 of 26 (15.4%). Next in plan
-order: B3.
+**Pilot completion after B3:** 5 of 28 (17.9%); Part 1 alone 5 of 26 (19.2%). Next in plan
+order: B4.
 
 ## Findings
 
