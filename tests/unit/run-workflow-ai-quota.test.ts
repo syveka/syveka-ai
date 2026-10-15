@@ -160,6 +160,8 @@ vi.mock("@/server/db/tenant", () => ({
       $transaction: async (fn: (tx: unknown) => unknown) => fn(fakeDb),
     };
   },
+  // ai.generate reads Business DNA; this org has none.
+  tenantDb: () => ({ businessDNA: { findFirst: async () => null } }),
 }));
 vi.mock("@/server/jobs/organization-guard", () => ({
   isOrganizationActive: async () => true,
@@ -185,6 +187,7 @@ vi.mock("../../emails/workflow-notification", () => ({ WorkflowNotificationEmail
 // concurrent dynamic import of a mocked module can resolve the real one.
 import "@/server/jobs/organization-guard";
 import "@/server/services/ai-spend";
+import "@/server/business-dna/context";
 import { POST } from "@/app/api/v1/jobs/run-workflow/route";
 
 const ORG = "11111111-1111-4111-8111-111111111111";
