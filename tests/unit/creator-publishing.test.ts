@@ -48,6 +48,7 @@ vi.mock("@/server/supabase/server", () => ({
   }),
 }));
 vi.mock("@/server/services/audit", () => ({ audit: auditMock }));
+vi.mock("@/server/jobs/queue", () => ({ enqueue: vi.fn(async () => undefined) }));
 vi.mock("@/server/services/creator-notifications", () => ({ notifyUser: notifyUserMock }));
 
 import { publishCreatorPost, PublishGuardError } from "@/server/services/creator-publishing";
