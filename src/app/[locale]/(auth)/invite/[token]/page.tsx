@@ -1,15 +1,22 @@
 export const dynamic = "force-dynamic";
 
 import { redirect } from "next/navigation";
+import { getTranslations } from "next-intl/server";
 import { getSessionUser } from "@/server/auth/session";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { acceptInvitationAction } from "@/actions/members";
+import { signOutToInvitationAction } from "@/actions/auth";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Link } from "@/i18n/routing";
+import { localizedPath, normalizeLocale } from "@/lib/auth-redirect";
 
-export default async function InvitePage({ params }: { params: Promise<{ token: string }> }) {
-  const { token } = await params;
+export default async function InvitePage({
+  params,
+}: {
+  params: Promise<{ locale: string; token: string }>;
+}) {
+  const { locale, token } = await params;
+  const t = await getTranslations("invite");
 
   const invitation = await unscopedPrisma.invitation.findUnique({
     where: { token },
@@ -19,39 +26,65 @@ export default async function InvitePage({ params }: { params: Promise<{ token: 
   if (!invitation || invitation.status !== "PENDING" || invitation.expiresAt < new Date()) {
     return (
       <Card>
-        <CardContent className="pt-6 text-center text-sm">
-          This invitation is invalid or has expired.
-        </CardContent>
+        <CardContent className="pt-6 text-center text-sm">{t("invalid")}</CardContent>
       </Card>
     );
   }
 
   const user = await getSessionUser();
   if (!user) {
-    // Register first, then come back (§11.3)
-    redirect(`/register?next=/invite/${token}`);
+    // Register (or sign in from there) first, then come back here (§11.3)
+    const next = encodeURIComponent(`/invite/${invitation.token}`);
+    redirect(`${localizedPath(normalizeLocale(locale), "/register")}?next=${next}`);
+  }
+
+  const signOut = signOutToInvitationAction.bind(null, invitation.token);
+  const tRoles = await getTranslations("roles");
+  // Email addresses keep their own direction inside right-to-left text.
+  const b = (chunks: React.ReactNode) => <strong dir="auto">{chunks}</strong>;
+
+  // Only the invited address can accept (acceptInvitation); offering Accept to
+  // anyone else ended on an error page.
+  if (user.email?.toLowerCase() !== invitation.email.toLowerCase()) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle>{t("title", { organization: invitation.organization.name })}</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <p className="text-sm text-muted-foreground">
+            {t.rich("otherAccount", { invited: invitation.email, current: user.email ?? "", b })}
+          </p>
+          <form action={signOut}>
+            <Button type="submit" className="w-full">
+              {t("signOutAndContinue")}
+            </Button>
+          </form>
+        </CardContent>
+      </Card>
+    );
   }
 
   return (
     <Card>
       <CardHeader>
-        <CardTitle>Join {invitation.organization.name}</CardTitle>
+        <CardTitle>{t("title", { organization: invitation.organization.name })}</CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">
-          You were invited as <strong>{invitation.role}</strong> ({invitation.email}).
+          {t.rich("invitedAs", { role: tRoles(invitation.role), email: invitation.email, b })}
         </p>
         <form action={acceptInvitationAction.bind(null, token)}>
           <Button type="submit" className="w-full">
-            Accept invitation
+            {t("accept")}
           </Button>
         </form>
-        <p className="text-center text-xs text-muted-foreground">
-          Wrong account?{" "}
-          <Link href="/login" className="text-primary hover:underline">
-            Switch account
-          </Link>
-        </p>
+        <form action={signOut} className="text-center text-xs text-muted-foreground">
+          {t("wrongAccount")}{" "}
+          <Button type="submit" variant="link" className="h-auto p-0 text-xs">
+            {t("switchAccount")}
+          </Button>
+        </form>
       </CardContent>
     </Card>
   );

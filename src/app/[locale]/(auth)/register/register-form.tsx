@@ -10,7 +10,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "@/i18n/routing";
 
-export function RegisterForm() {
+export function RegisterForm({ next }: { next?: string | null }) {
   const t = useTranslations("auth");
   const tc = useTranslations("common");
   const locale = useLocale();
@@ -32,6 +32,7 @@ export function RegisterForm() {
       <CardContent>
         <form action={action} className="space-y-4">
           <input type="hidden" name="locale" value={locale} />
+          {next ? <input type="hidden" name="next" value={next} /> : null}
           <div className="space-y-2">
             <Label htmlFor="fullName">Name</Label>
             <Input id="fullName" name="fullName" autoComplete="name" required />
@@ -61,7 +62,10 @@ export function RegisterForm() {
           </Button>
           <p className="text-center text-sm text-muted-foreground">
             {t("hasAccount")}{" "}
-            <Link href="/login" className="text-primary hover:underline">
+            <Link
+              href={next ? `/login?next=${encodeURIComponent(next)}` : "/login"}
+              className="text-primary hover:underline"
+            >
               {t("login")}
             </Link>
           </p>
