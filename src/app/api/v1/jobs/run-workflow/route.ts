@@ -411,12 +411,26 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const steps = workflow.steps as unknown as WorkflowStep[];
   const results: StepResult[] = (run.stepResults as StepResult[]) ?? [];
+  // A resume rebuilds the variables from the persisted results. An
+  // ai.generate step's text is used as {{vars.<outputVar>}}, so it is restored
+  // under that name too, not only under its step id.
+  const outputVarByStepId = new Map(
+    steps.flatMap((s) => (s.type === "ai.generate" ? [[s.id, s.outputVar] as const] : [])),
+  );
   const ctx: Ctx = {
     trigger: triggerData,
     vars: Object.fromEntries(
       results
         .filter((r) => r.status === "ok" && r.output !== undefined)
-        .map((r) => [r.stepId, r.output]),
+        .flatMap((r) => {
+          const outputVar = outputVarByStepId.get(r.stepId);
+          return outputVar
+            ? [
+                [r.stepId, r.output],
+                [outputVar, r.output],
+              ]
+            : [[r.stepId, r.output]];
+        }),
     ),
   };
 
