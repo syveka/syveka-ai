@@ -3,6 +3,7 @@ import "server-only";
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { getVapiEnv } from "@/env";
 import { routeModel } from "@/server/ai/router";
+import { transferCallNumber } from "@/lib/validators/voice";
 
 const VAPI_BASE = "https://api.vapi.ai";
 
@@ -98,11 +99,10 @@ export function toVapiPayload(cfg: VapiAssistantConfig) {
     type: "function",
     function: { name: t.name, description: t.description, parameters: t.parameters },
   }));
-  // Existing rows predate strict validation and may use the UI's former
-  // human-friendly formatting. Normalize those safely at the provider boundary;
-  // an invalid legacy value must not make the entire assistant sync fail.
-  const transferNumber = cfg.transferNumber?.replace(/[\s().-]/g, "");
-  if (transferNumber && /^\+[1-9]\d{1,14}$/.test(transferNumber)) {
+  // An invalid legacy value must not make the entire assistant sync fail; it
+  // just gets no transfer tool (and the prompt then offers no transfer).
+  const transferNumber = transferCallNumber(cfg.transferNumber);
+  if (transferNumber) {
     tools.push({
       type: "transferCall",
       destinations: [
