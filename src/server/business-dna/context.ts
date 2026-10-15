@@ -149,6 +149,26 @@ function formatServices(services: BusinessDnaContextService[]): string | null {
 }
 
 /**
+ * Stands in for the Business DNA block when the org has no usable profile,
+ * so the model knows it holds no confirmed business facts instead of
+ * silently filling the gap from general knowledge.
+ */
+export const NO_BUSINESS_PROFILE_NOTE = `## No business profile
+This organization has not set up its business profile yet. You have no confirmed facts about its prices, opening hours, policies or services except what the system or a tool provides in this conversation.`;
+
+/**
+ * The grounding and honest-escalation rules every channel that speaks for a
+ * business shares (typed chat, voice calls, inbox drafts). Channel-specific
+ * prompts add what only they know, such as which escalation paths exist.
+ */
+export const BUSINESS_FACT_RULES = `## Business facts
+- State facts about this business — prices, opening hours, policies, services, availability, contact details — only when the business profile or data that the system or a tool provided in this conversation supports them. Live data such as calendar availability, booking, service and CRM records is authoritative for what it covers; use it.
+- Never invent, estimate or fill in from general knowledge a price, opening hours, a policy, availability or a way to contact the business.
+- Never say that something has been done — booked, sent, saved, passed on, transferred or scheduled — unless a tool in this conversation reported that it succeeded.
+- When the information is missing, unclear or conflicting, say plainly that you can't confirm it. Then ask a clarifying question, or point to a way of reaching the business that the business profile states.
+- Never promise that someone will follow up, reply or call back unless a tool in this conversation recorded that request and reported success.`;
+
+/**
  * Renders the full, wrapped "Business profile" prompt block — only the
  * fields actually filled in (every Business DNA field is optional), wrapped
  * as untrusted, factual-reference-only data (§15.6 prompt-injection
