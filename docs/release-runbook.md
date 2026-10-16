@@ -189,6 +189,7 @@ Production requires a verified backup before approving the GitHub `production` E
 
 - **Option A (point-in-time recovery) is the required default.**
 - **Option B is an exception** for narrow releases only. It applies only when every eligibility condition below holds and the owner accepts its risk in writing.
+- **Option B-M is an exception for metadata-only migrations; see below.**
 - If any condition isn't met, Option A is required.
 
 Whichever option applies, its records go in the private change record before the `production` Environment is approved.
@@ -250,11 +251,15 @@ A narrow exception for a release whose only database change is access-control me
      - `ENABLE ROW LEVEL SECURITY` / `DISABLE ROW LEVEL SECURITY`;
      - `CREATE POLICY` / `DROP POLICY`;
      - `GRANT` / `REVOKE`.
+   - A PL/pgSQL `DO` block is also permitted when its only effects are the statements listed above, whether it runs them directly or through `EXECUTE`. The block may also read the system catalogs (`SELECT` from `pg_catalog`, for example `pg_roles`), but only to decide whether to run those statements.
+   - All other data reads and writes are forbidden, and so is all DDL outside the list above.
    - It contains no `INSERT`, `UPDATE` or `DELETE`, no `DROP TABLE` or `DROP COLUMN`, no `ALTER COLUMN`, no type change, no backfill and no other data rewrite.
    - A reviewer confirms this in writing for the exact release SHA, naming each pending migration reviewed.
 2. **A passing restore drill.**
    - It follows `docs/recovery-drill-checklist.md` sections 0–10: logical dump → sanitize → restore into a disposable, isolated Supabase project.
    - It never restores into the active staging project (vendor guidance, Supabase ticket SU-494644).
+   - It ran against the current production database, after that database's most recently applied migration.
+   - It completed no more than 30 days before the `production` gate is approved.
    - Its recorded results show all of the following:
      - all ten sanitization counts are 0;
      - `tests/staging/release-invariants.sql` passes;
@@ -270,6 +275,7 @@ All are recorded before approval:
 3. **Pre-release logical backup.**
    - Taken no more than 60 minutes before approving the gate, and after the production write-freeze announcement.
    - Stored in an approved encrypted destination.
+   - Record its UTC timestamp, so the 60-minute limit can be audited.
    - Record its SHA-256 checksum and size.
    - Verified readable (`pg_restore --list` succeeds).
 4. **Daily backup.** The latest Supabase daily **PHYSICAL** backup is less than 24 hours old when the gate is approved. Record its timestamp.
@@ -291,7 +297,7 @@ All are recorded before approval:
 - Option B-M never applies to a migration containing anything outside condition 1.
 - Option B-M doesn't remove the restore-test requirement. Condition 2 is that requirement.
 
-### Both options
+### All options
 
 - Never store a backup in the repository, Actions artifacts, PRs, or unencrypted developer folders.
 
