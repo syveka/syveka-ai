@@ -237,7 +237,59 @@ All are recorded before approval:
    - **Storage objects** are excluded from database backups. If separate Storage backup coverage isn't verified, Storage loss is unrecoverable.
    - **Confirmation** that the release contains no migrations or schema changes (condition 1).
 
-Option B never applies to a release that changes the schema or migrations, and it doesn't remove the restore-test requirement when the backup process or schema has changed.
+Option B never applies to a release that changes the schema or migrations. The only exception for such a release is Option B-M below, under its own conditions. Option B doesn't remove the restore-test requirement when the backup process or schema has changed.
+
+### Option B-M (exception): metadata-only migration, without PITR
+
+A narrow exception for a release whose only database change is access-control metadata. It applies only when **every** condition below holds for the exact release SHA and the owner accepts its risk in writing. If any condition isn't met, Option A is required.
+
+#### Eligibility
+
+1. **Metadata-only migrations.**
+   - Every pending migration contains only these statements:
+     - `ENABLE ROW LEVEL SECURITY` / `DISABLE ROW LEVEL SECURITY`;
+     - `CREATE POLICY` / `DROP POLICY`;
+     - `GRANT` / `REVOKE`.
+   - It contains no `INSERT`, `UPDATE` or `DELETE`, no `DROP TABLE` or `DROP COLUMN`, no `ALTER COLUMN`, no type change, no backfill and no other data rewrite.
+   - A reviewer confirms this in writing for the exact release SHA, naming each pending migration reviewed.
+2. **A passing restore drill.**
+   - It follows `docs/recovery-drill-checklist.md` sections 0–10: logical dump → sanitize → restore into a disposable, isolated Supabase project.
+   - It never restores into the active staging project (vendor guidance, Supabase ticket SU-494644).
+   - Its recorded results show all of the following:
+     - all ten sanitization counts are 0;
+     - `tests/staging/release-invariants.sql` passes;
+     - the RLS scripts pass;
+     - per-table row counts match;
+     - the time to restore is recorded;
+     - the disposable project is destroyed.
+
+#### Requirements
+
+All are recorded before approval:
+
+3. **Pre-release logical backup.**
+   - Taken no more than 60 minutes before approving the gate, and after the production write-freeze announcement.
+   - Stored in an approved encrypted destination.
+   - Record its SHA-256 checksum and size.
+   - Verified readable (`pg_restore --list` succeeds).
+4. **Daily backup.** The latest Supabase daily **PHYSICAL** backup is less than 24 hours old when the gate is approved. Record its timestamp.
+5. **Release identity.** Record:
+   - the exact release SHA;
+   - the production SHA it replaces;
+   - the rollback target;
+   - a **named rollback owner**, present for the whole release window.
+6. **The owner's explicit written risk acceptance.** It must name this release SHA and acknowledge each of the following individually; a general approval is not enough:
+   - **PITR is not available** for this release.
+   - **Up to about 24 hours of data can be lost** for a problem found late.
+   - **Recovery time is measured only by the drill** (condition 2), not by an in-place restore.
+   - **Storage objects** are excluded from database backups.
+   - **The migration was reviewed as metadata-only** (condition 1).
+7. **24-hour post-deploy watch.** Billing, calendar, and `contact.created` workflow errors are watched for 24 hours after the deploy, before the write freeze ends.
+
+#### Limits
+
+- Option B-M never applies to a migration containing anything outside condition 1.
+- Option B-M doesn't remove the restore-test requirement. Condition 2 is that requirement.
 
 ### Both options
 
