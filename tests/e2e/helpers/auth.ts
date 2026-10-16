@@ -109,7 +109,15 @@ export async function loginAsE2EUser(
   page: Page,
   options: { timeoutMs?: number } = {},
 ): Promise<void> {
-  await page.goto("/login");
+  const navigationResponse = await page.goto("/login");
+  // Diagnostic only: origin + pathname (query/fragment stripped) and the
+  // navigation's HTTP status, so a run can be told apart from landing on
+  // e.g. Vercel's own SSO/Deployment Protection page without ever logging
+  // headers, cookies, credentials, or page content.
+  const finalUrl = new URL(page.url());
+  console.log(
+    `E2E_DIAG login_nav: url=${finalUrl.origin}${finalUrl.pathname} status=${navigationResponse?.status() ?? "unknown"}`,
+  );
   await page.fill("#email", process.env.E2E_USER_EMAIL!);
   await page.fill("#password", process.env.E2E_USER_PASSWORD!);
   const initialUrl = page.url();
