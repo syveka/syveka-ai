@@ -11,21 +11,20 @@ export async function POST(
     { requirePermission },
     { createReferenceAssetUploadUrl },
     { handleCreatorStudioError },
-    { rateLimiters },
+    { rateLimitRefusal },
   ] = await Promise.all([
     import("@/server/auth/guard"),
     import("@/server/services/creator-profiles"),
     import("@/server/services/creator-studio-http"),
-    import("@/server/integrations/redis"),
+    import("@/server/security/rate-limit"),
   ]);
   try {
     const ctx = await requirePermission("creator:write");
-    const rateLimit = await rateLimiters.api.limit(
+    const refused = await rateLimitRefusal(
+      "api",
       `creator-reference-upload-url:${ctx.orgId}:${ctx.userId}`,
     );
-    if (!rateLimit.success) {
-      return NextResponse.json({ error: { code: "rate_limited" } }, { status: 429 });
-    }
+    if (refused) return refused;
     const { id } = await params;
     const body = referenceAssetUploadUrlSchema.safeParse(await request.json().catch(() => null));
     if (!body.success)

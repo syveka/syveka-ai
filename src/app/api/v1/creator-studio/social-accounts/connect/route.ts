@@ -8,21 +8,20 @@ export async function POST(request: Request): Promise<NextResponse> {
     { requirePermission },
     { connectSocialAccount },
     { handleCreatorStudioError },
-    { rateLimiters },
+    { rateLimitRefusal },
   ] = await Promise.all([
     import("@/server/auth/guard"),
     import("@/server/services/creator-social-accounts"),
     import("@/server/services/creator-studio-http"),
-    import("@/server/integrations/redis"),
+    import("@/server/security/rate-limit"),
   ]);
   try {
     const ctx = await requirePermission("creator:manage-social-accounts");
-    const rateLimit = await rateLimiters.api.limit(
+    const refused = await rateLimitRefusal(
+      "api",
       `creator-social-connect:${ctx.orgId}:${ctx.userId}`,
     );
-    if (!rateLimit.success) {
-      return NextResponse.json({ error: { code: "rate_limited" } }, { status: 429 });
-    }
+    if (refused) return refused;
     const body = connectSocialAccountSchema.safeParse(await request.json().catch(() => null));
     if (!body.success)
       return NextResponse.json({ error: { code: "invalid_input" } }, { status: 400 });

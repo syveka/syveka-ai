@@ -69,11 +69,11 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: { code: "unauthorized" } }, { status: 401 });
   }
 
-  const { rateLimiters } = await import("@/server/integrations/redis");
-  const rateLimit = await rateLimiters.inboxEmailWebhook.limit(orgId);
-  if (!rateLimit.success) {
-    return NextResponse.json({ error: { code: "rate_limited" } }, { status: 429 });
-  }
+  // Fails closed: an unverifiable limit is a 503, which Resend retries, and a
+  // redelivery is deduplicated, so nothing is lost and nothing is stored unchecked.
+  const { rateLimitRefusal } = await import("@/server/security/rate-limit");
+  const refused = await rateLimitRefusal("inboxEmailWebhook", orgId);
+  if (refused) return refused;
 
   const { getResendEnv } = await import("@/env");
   const { RESEND_API_KEY } = getResendEnv();

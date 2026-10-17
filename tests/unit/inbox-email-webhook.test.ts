@@ -37,8 +37,18 @@ vi.mock("@/server/services/inbox", () => ({
 vi.mock("@/server/services/inbox-mailbox", () => ({
   resolveOrgIdByMailboxAddress: mocks.resolveOrgIdByMailboxAddress,
 }));
-vi.mock("@/server/integrations/redis", () => ({
-  rateLimiters: { inboxEmailWebhook: { limit: mocks.limit } },
+// The real checkRateLimit / rateLimitRefusal run against a fake Upstash whose
+// limit() is mocks.limit, so timeouts and Redis errors take the production path.
+vi.mock("@upstash/redis", () => ({ Redis: class {} }));
+vi.mock("@upstash/ratelimit", () => ({
+  Ratelimit: class {
+    static slidingWindow() {
+      return {};
+    }
+    limit(key: string) {
+      return (mocks.limit as unknown as (key: string) => Promise<unknown>)(key);
+    }
+  },
 }));
 
 import { POST } from "@/app/api/v1/webhooks/inbox-email/route";
@@ -135,6 +145,30 @@ describe("POST /api/v1/webhooks/inbox-email", () => {
     expect(mocks.limit).toHaveBeenCalledWith(ORG_ID);
     expect(mocks.recordInboundMessage).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [
+      "times out (Upstash then reports success)",
+      () =>
+        mocks.limit.mockResolvedValueOnce({
+          success: true,
+          reason: "timeout",
+          reset: 0,
+          limit: 0,
+          remaining: 0,
+        } as never),
+    ],
+    ["errors", () => mocks.limit.mockRejectedValueOnce(new Error("fetch failed"))],
+  ])(
+    "fails closed with a retryable 503 when Redis %s, storing nothing",
+    async (_label, arrange) => {
+      arrange();
+      const response = await POST(request(validPayload));
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({ error: { code: "service_unavailable" } });
+      expect(mocks.recordInboundMessage).not.toHaveBeenCalled();
+    },
+  );
 
   it("accepts a valid signed payload and records the inbound message under the mailbox-resolved org", async () => {
     const response = await POST(request(validPayload));
