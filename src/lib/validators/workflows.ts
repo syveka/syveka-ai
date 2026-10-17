@@ -5,6 +5,9 @@ export const triggerSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("deal.stage_changed"), toStage: z.string().optional() }),
   z.object({ type: z.literal("deal.won") }),
   z.object({ type: z.literal("call.completed") }),
+  z.object({ type: z.literal("booking.created") }),
+  z.object({ type: z.literal("booking.canceled") }),
+  z.object({ type: z.literal("booking.rescheduled") }),
   z.object({ type: z.literal("schedule.cron"), cron: z.string().min(9) }),
   z.object({ type: z.literal("manual") }),
 ]);
