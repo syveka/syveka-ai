@@ -239,6 +239,17 @@ describe("createPublicBooking", () => {
     expect(txMock.contact.create).not.toHaveBeenCalled();
   });
 
+  it("passes the guest's contact to booking.created workflows, so their CRM steps have a target", async () => {
+    txMock.contact.findFirst.mockResolvedValue({ id: "contact-9" });
+    await createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() });
+    expect(emitMock).toHaveBeenCalledWith(
+      "org-a",
+      "booking.created",
+      expect.objectContaining({ bookingId: "bk-1", contactId: "contact-9" }),
+      "bk-1",
+    );
+  });
+
   describe("contact.created workflow event", () => {
     const contactCreatedCalls = () =>
       (emitMock.mock.calls as unknown as unknown[][]).filter(

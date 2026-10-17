@@ -2,17 +2,11 @@ import "server-only";
 
 import { unscopedPrisma } from "@/server/db/tenant";
 import { enqueue } from "@/server/jobs/queue";
+import type { WorkflowTrigger } from "@/lib/validators/workflows";
 
-export type WorkflowTriggerType =
-  | "contact.created"
-  | "deal.stage_changed"
-  | "deal.won"
-  | "call.completed"
-  | "booking.created"
-  | "booking.canceled"
-  | "booking.rescheduled"
-  | "schedule.cron"
-  | "manual";
+// Derived from the saveable trigger schema, so an event can't be emitted that
+// no workflow is allowed to subscribe to (booking.* once was).
+export type WorkflowTriggerType = WorkflowTrigger["type"];
 
 /**
  * Emits a domain event: every active workflow with a matching trigger gets

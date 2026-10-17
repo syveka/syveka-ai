@@ -595,6 +595,7 @@ export async function createPublicBooking(params: {
     "booking.created",
     {
       bookingId: created.booking.id,
+      contactId: created.contactId,
       bookingType: bookingType.name,
       guestName: input.name,
       guestEmail: input.email,

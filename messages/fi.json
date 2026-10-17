@@ -803,6 +803,11 @@
       "call": {
         "completed": "Puhelu päättyi"
       },
+      "booking": {
+        "created": "Ajanvaraus tehty",
+        "canceled": "Ajanvaraus peruttu",
+        "rescheduled": "Ajanvaraus siirretty"
+      },
       "manual": "Manuaalinen"
     },
     "stepTypes": {
