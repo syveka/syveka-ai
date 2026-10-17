@@ -41,10 +41,23 @@ vi.mock("@/server/services/inbox", () => ({
 vi.mock("@/server/services/inbox-mailbox", () => ({
   resolveOrgIdByMailboxAddress: mocks.resolveOrgIdByMailboxAddress,
 }));
-vi.mock("@/server/integrations/redis", () => ({
-  rateLimiters: { inboxEmailWebhook: { limit: mocks.limit } },
+// The real checkRateLimit / rateLimitRefusal run against a fake Upstash whose
+// limit() is mocks.limit, so timeouts and Redis errors take the production path.
+vi.mock("@upstash/redis", () => ({ Redis: class {} }));
+vi.mock("@upstash/ratelimit", () => ({
+  Ratelimit: class {
+    static slidingWindow() {
+      return {};
+    }
+    limit(key: string) {
+      return (mocks.limit as unknown as (key: string) => Promise<unknown>)(key);
+    }
+  },
 }));
-vi.mock("@/env", () => ({ getResendEnv: mocks.getResendEnv }));
+vi.mock("@/env", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  getResendEnv: mocks.getResendEnv,
+}));
 vi.mock("@/server/channels/email/resend-inbound", async (importOriginal) => {
   const actual = await importOriginal<typeof ResendInboundModule>();
   return {
@@ -177,6 +190,31 @@ describe("POST /api/v1/webhooks/inbox-email/resend", () => {
     expect(response.status).toBe(429);
     expect(mocks.fetchReceivedEmailContent).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [
+      "times out (Upstash then reports success)",
+      () =>
+        mocks.limit.mockResolvedValueOnce({
+          success: true,
+          reason: "timeout",
+          reset: 0,
+          limit: 0,
+          remaining: 0,
+        } as never),
+    ],
+    ["errors", () => mocks.limit.mockRejectedValueOnce(new Error("fetch failed"))],
+  ])(
+    "fails closed with a retryable 503 when Redis %s, fetching and storing nothing",
+    async (_label, arrange) => {
+      arrange();
+      const response = await POST(request(validEvent));
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({ error: { code: "service_unavailable" } });
+      expect(mocks.fetchReceivedEmailContent).not.toHaveBeenCalled();
+      expect(mocks.recordInboundMessage).not.toHaveBeenCalled();
+    },
+  );
 
   it("surfaces webhook redelivery as a 200 duplicate", async () => {
     mocks.recordInboundMessage.mockResolvedValueOnce({

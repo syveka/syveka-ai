@@ -3,7 +3,7 @@
 import { redirect } from "next/navigation";
 import { headers } from "next/headers";
 import { createSupabaseServer } from "@/server/supabase/server";
-import { rateLimiters } from "@/server/integrations/redis";
+import { actionRateLimitError } from "@/server/security/rate-limit";
 import { loginSchema, registerSchema } from "@/lib/validators/auth";
 import { getAppUrlEnv } from "@/env";
 import { localizedPath, normalizeLocale } from "@/lib/auth-redirect";
@@ -26,8 +26,8 @@ export async function loginAction(
   _prev: AuthActionState,
   formData: FormData,
 ): Promise<AuthActionState> {
-  const { success } = await rateLimiters.auth.limit(`login:${await clientIp()}`);
-  if (!success) return { error: "rate_limited" };
+  const limited = await actionRateLimitError(["auth", `login:${await clientIp()}`]);
+  if (limited) return { error: limited };
 
   const parsed = loginSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
@@ -43,8 +43,8 @@ export async function registerAction(
   _prev: AuthActionState,
   formData: FormData,
 ): Promise<AuthActionState> {
-  const { success } = await rateLimiters.auth.limit(`register:${await clientIp()}`);
-  if (!success) return { error: "rate_limited" };
+  const limited = await actionRateLimitError(["auth", `register:${await clientIp()}`]);
+  if (limited) return { error: limited };
 
   const parsed = registerSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
@@ -68,8 +68,8 @@ export async function magicLinkAction(
   _prev: AuthActionState,
   formData: FormData,
 ): Promise<AuthActionState> {
-  const { success } = await rateLimiters.auth.limit(`magic:${await clientIp()}`);
-  if (!success) return { error: "rate_limited" };
+  const limited = await actionRateLimitError(["auth", `magic:${await clientIp()}`]);
+  if (limited) return { error: limited };
 
   const email = String(formData.get("email") ?? "");
   if (!email.includes("@")) return { error: "invalid_input" };
@@ -94,8 +94,8 @@ export async function forgotPasswordAction(
   _prev: AuthActionState,
   formData: FormData,
 ): Promise<AuthActionState> {
-  const { success } = await rateLimiters.auth.limit(`forgot:${await clientIp()}`);
-  if (!success) return { error: "rate_limited" };
+  const limited = await actionRateLimitError(["auth", `forgot:${await clientIp()}`]);
+  if (limited) return { error: limited };
 
   const email = String(formData.get("email") ?? "");
   if (!email.includes("@")) return { error: "invalid_input" };

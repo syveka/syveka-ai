@@ -8,15 +8,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  */
 
 const mocks = vi.hoisted(() => ({
-  limit: vi.fn(async () => ({ success: true })),
   createPublicBooking: vi.fn(),
   notify: vi.fn(),
   reminders: vi.fn(async () => undefined),
 }));
 
-vi.mock("@/server/integrations/redis", () => ({
-  rateLimiters: { auth: { limit: mocks.limit } },
-}));
+// Rate limiting is covered by public-booking-rate-limit.test.ts; here it always allows.
+vi.mock("@/server/security/rate-limit", () => ({ rateLimitRefusal: vi.fn(async () => null) }));
 vi.mock("@/server/services/booking", () => ({
   createPublicBooking: mocks.createPublicBooking,
   BookingError: class BookingError extends Error {
