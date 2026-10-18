@@ -46,6 +46,13 @@ export default async function BillingPage({
           <CardContent className="pt-6 text-sm text-success">{t("checkoutSuccess")}</CardContent>
         </Card>
       ) : null}
+      {status === "busy" || status === "unavailable" ? (
+        <Card className="border-warning/40">
+          <CardContent role="status" className="pt-6 text-sm">
+            {t(status === "busy" ? "planChangeBusy" : "planChangeUnavailable")}
+          </CardContent>
+        </Card>
+      ) : null}
       {ent.status === "PAST_DUE" ? (
         <Card className="border-destructive/40">
           <CardContent className="pt-6 text-sm text-destructive">{t("pastDue")}</CardContent>

@@ -865,7 +865,9 @@
       "contacts": "{count} contacts",
       "apiWebhooks": "API + webhooks",
       "auditRetention": "{years, plural, one {{yearsText} year} other {{yearsText} years}} of audit log history"
-    }
+    },
+    "planChangeBusy": "A plan change for this organization is already in progress. Wait a moment and try again.",
+    "planChangeUnavailable": "Plan changes can't be started right now. Please try again shortly."
   },
   "booking": {
     "durationLabel": "{minutes} min",

@@ -865,7 +865,9 @@
       "contacts": "{count} kontaktia",
       "apiWebhooks": "API + webhookit",
       "auditRetention": "Tapahtumaloki {yearsText} vuoden ajalta"
-    }
+    },
+    "planChangeBusy": "Tämän organisaation tilauksen muutos on jo käynnissä. Odota hetki ja yritä uudelleen.",
+    "planChangeUnavailable": "Tilauksen muutosta ei voi aloittaa juuri nyt. Yritä hetken kuluttua uudelleen."
   },
   "booking": {
     "durationLabel": "{minutes} min",

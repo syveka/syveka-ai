@@ -865,7 +865,9 @@
       "contacts": "{count} جهة اتصال",
       "apiWebhooks": "API + Webhooks",
       "auditRetention": "سجل تدقيق لمدة {years, plural, one {سنة واحدة} two {سنتين} few {{yearsText} سنوات} many {{yearsText} سنة} other {{yearsText} سنة}}"
-    }
+    },
+    "planChangeBusy": "يجري حاليًا تغيير خطة هذه المؤسسة. انتظر قليلًا ثم حاول مرة أخرى.",
+    "planChangeUnavailable": "لا يمكن بدء تغيير الخطة الآن. يُرجى المحاولة مرة أخرى بعد قليل."
   },
   "booking": {
     "durationLabel": "{minutes} دقيقة",
