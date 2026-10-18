@@ -63,14 +63,56 @@ type RuntimeDeps = {
   invalidateEntitlements: typeof invalidateBillingEntitlements;
 };
 
-/** Runs inside the caller's transaction -- no external (Stripe API) calls here. */
+function customerIdOf(sub: Stripe.Subscription): string | null {
+  return typeof sub.customer === "string" ? sub.customer : (sub.customer?.id ?? null);
+}
+
+/**
+ * Whether `sub` may be written as the organization's current subscription.
+ * The org has one row, so an event for any other live subscription -- an
+ * older one still being retired, a stale retry, a second checkout -- must not
+ * replace it; that only happens once the current one has ended (CANCELED, or
+ * cleared by customer.subscription.deleted). A subscription whose customer
+ * isn't the org's own Stripe customer never touches it, whatever its
+ * metadata says.
+ */
+async function mayBecomeCurrent(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+  sub: Stripe.Subscription,
+): Promise<boolean> {
+  const org = await tx.organization.findUnique({
+    where: { id: orgId },
+    select: { stripeCustomerId: true },
+  });
+  if (!org) return false;
+  const customerId = customerIdOf(sub);
+  if (org.stripeCustomerId && customerId && org.stripeCustomerId !== customerId) return false;
+
+  const current = await tx.subscription.findUnique({
+    where: { organizationId: orgId },
+    select: { stripeSubscriptionId: true, status: true },
+  });
+  return (
+    !current?.stripeSubscriptionId ||
+    current.stripeSubscriptionId === sub.id ||
+    current.status === "CANCELED"
+  );
+}
+
+/**
+ * Runs inside the caller's transaction -- no external (Stripe API) calls here.
+ * Returns the org id, and whether the subscription was written (see
+ * mayBecomeCurrent); a skipped event is still completed, never retried.
+ */
 async function applySubscriptionUpsert(
   tx: Prisma.TransactionClient,
   sub: Stripe.Subscription,
   deps: RuntimeDeps,
-): Promise<string> {
+): Promise<{ orgId: string; applied: boolean }> {
   const orgId = sub.metadata.orgId;
   if (!orgId) throw new Error(`Subscription ${sub.id} missing orgId metadata`);
+  if (!(await mayBecomeCurrent(tx, orgId, sub))) return { orgId, applied: false };
 
   const item = sub.items.data[0];
   const priceId = item?.price.id ?? "";
@@ -98,7 +140,7 @@ async function applySubscriptionUpsert(
       trialEndsAt: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
     },
   });
-  return orgId;
+  return { orgId, applied: true };
 }
 
 export async function POST(request: Request): Promise<NextResponse> {
@@ -227,7 +269,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             sub.metadata.orgId = session.metadata.orgId;
           }
           await unscopedPrisma.$transaction(async (tx) => {
-            resolvedOrgId = await applySubscriptionUpsert(tx, sub, deps);
+            ({ orgId: resolvedOrgId } = await applySubscriptionUpsert(tx, sub, deps));
             await tx.stripeWebhookEvent.update({
               where: { stripeEventId: event.id },
               data: {
@@ -259,7 +301,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           break;
         }
         await unscopedPrisma.$transaction(async (tx) => {
-          resolvedOrgId = await applySubscriptionUpsert(tx, sub, deps);
+          ({ orgId: resolvedOrgId } = await applySubscriptionUpsert(tx, sub, deps));
           await tx.stripeWebhookEvent.update({
             where: { stripeEventId: event.id },
             data: {
@@ -278,9 +320,13 @@ export async function POST(request: Request): Promise<NextResponse> {
         const orgId = sub.metadata.orgId;
         if (orgId) {
           await unscopedPrisma.$transaction(async (tx) => {
-            // Downgrade to FREE; data kept, over-limit features go read-only (§14.4)
-            await tx.subscription.update({
-              where: { organizationId: orgId },
+            // Downgrade to FREE; data kept, over-limit features go read-only (§14.4).
+            // Only when the deleted subscription is the org's current one: ending
+            // an older or second subscription must not downgrade an org that is
+            // still paying through another. No row to match is a no-op, not a
+            // failure Stripe would retry forever.
+            await tx.subscription.updateMany({
+              where: { organizationId: orgId, stripeSubscriptionId: sub.id },
               data: { plan: "FREE", status: "CANCELED", stripeSubscriptionId: null },
             });
             await tx.stripeWebhookEvent.update({
@@ -308,7 +354,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         if (subId) {
           const sub = await stripe.subscriptions.retrieve(subId);
           await unscopedPrisma.$transaction(async (tx) => {
-            resolvedOrgId = await applySubscriptionUpsert(tx, sub, deps); // clears PAST_DUE
+            ({ orgId: resolvedOrgId } = await applySubscriptionUpsert(tx, sub, deps)); // clears PAST_DUE
             await tx.stripeWebhookEvent.update({
               where: { stripeEventId: event.id },
               data: {
@@ -331,15 +377,19 @@ export async function POST(request: Request): Promise<NextResponse> {
           typeof invoice.subscription === "string"
             ? invoice.subscription
             : invoice.subscription?.id;
-        if (failedSubId) {
-          // Same ordering hazard as subscription updates: a retried failure
-          // delivered after invoice.paid must not mark a paid-up subscription
-          // PAST_DUE. Only act while Stripe still reports it as unpaid.
-          const current = await stripe.subscriptions.retrieve(failedSubId);
-          if (!["past_due", "unpaid", "incomplete"].includes(current.status)) {
-            await markCompleted(unscopedPrisma, event.id, resolvedOrgId, invoice.id ?? null);
-            break;
-          }
+        if (!failedSubId) {
+          // A one-off invoice belongs to no subscription, so it can't make
+          // the org's subscription PAST_DUE.
+          await markCompleted(unscopedPrisma, event.id, resolvedOrgId, invoice.id ?? null);
+          break;
+        }
+        // Same ordering hazard as subscription updates: a retried failure
+        // delivered after invoice.paid must not mark a paid-up subscription
+        // PAST_DUE. Only act while Stripe still reports it as unpaid.
+        const current = await stripe.subscriptions.retrieve(failedSubId);
+        if (!["past_due", "unpaid", "incomplete"].includes(current.status)) {
+          await markCompleted(unscopedPrisma, event.id, resolvedOrgId, invoice.id ?? null);
+          break;
         }
         const customerId =
           typeof invoice.customer === "string" ? invoice.customer : invoice.customer?.id;
@@ -351,8 +401,10 @@ export async function POST(request: Request): Promise<NextResponse> {
           : null;
         if (org) {
           await unscopedPrisma.$transaction(async (tx) => {
-            await tx.subscription.update({
-              where: { organizationId: org.id },
+            // Only the subscription this invoice is for: a failure on an
+            // older or second subscription leaves the current one alone.
+            await tx.subscription.updateMany({
+              where: { organizationId: org.id, stripeSubscriptionId: failedSubId },
               data: { status: "PAST_DUE" },
             });
             await tx.stripeWebhookEvent.update({
