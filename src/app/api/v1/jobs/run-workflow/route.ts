@@ -46,8 +46,15 @@ const payloadSchema = z.object({
 type StepResult = { stepId: string; status: "ok" | "skipped" | "failed"; output?: unknown };
 type Ctx = { trigger: Record<string, unknown>; vars: Record<string, unknown> };
 
-/** {{trigger.x}} / {{vars.y}} interpolation. */
-function interpolate(template: string, ctx: Ctx): string {
+/**
+ * {{trigger.x}} / {{vars.y}} interpolation. `format` lets an ai.generate
+ * prompt mark each value as data (see formatWorkflowDataValue).
+ */
+function interpolate(
+  template: string,
+  ctx: Ctx,
+  format: (path: string, value: string) => string = (_path, value) => value,
+): string {
   return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path: string) => {
     const value = path
       .split(".")
@@ -56,7 +63,7 @@ function interpolate(template: string, ctx: Ctx): string {
           acc && typeof acc === "object" ? (acc as Record<string, unknown>)[key] : undefined,
         { trigger: ctx.trigger, vars: ctx.vars } as Record<string, unknown>,
       );
-    return value === undefined || value === null ? "" : String(value);
+    return format(path, value === undefined || value === null ? "" : String(value));
   });
 }
 
@@ -249,6 +256,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     { recordUsage, getEntitlements },
     { isOrganizationActive, ORGANIZATION_INACTIVE },
     { assertAiQuotaAvailable, AiSpendError },
+    { WORKFLOW_DATA_SYSTEM_PROMPT, formatWorkflowDataValue },
   ] = await Promise.all([
     import("@/server/jobs/verify"),
     import("@/server/db/tenant"),
@@ -259,6 +267,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/services/billing/entitlements"),
     import("@/server/jobs/organization-guard"),
     import("@/server/services/ai-spend"),
+    import("@/server/ai/prompts/workflow-data"),
   ]);
 
   const rawBody = await verifyJobRequest(request);
@@ -500,7 +509,13 @@ export async function POST(request: Request): Promise<NextResponse> {
               {
                 model,
                 max_tokens: maxTokens,
-                messages: [{ role: "user", content: interpolate(step.prompt, ctx) }],
+                system: WORKFLOW_DATA_SYSTEM_PROMPT,
+                messages: [
+                  {
+                    role: "user",
+                    content: interpolate(step.prompt, ctx, formatWorkflowDataValue),
+                  },
+                ],
               },
               // Stable across retries of this exact claim (see claimStep) -
               // lets the provider itself dedupe a resend after a crash
