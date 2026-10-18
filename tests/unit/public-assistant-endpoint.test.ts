@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
     limit: 10,
     remaining: 9,
   })),
-  // When true, getting the limiter throws (as getRateLimiters() does when Redis isn't configured).
+  // When true, the limiter throws its missing-configuration error.
   limiterUnconfigured: false,
   isFlaggedByModeration: vi.fn(async () => false),
   streamClaude: vi.fn(async (params: { callbacks: { onText: (d: string) => void } }) => {
@@ -22,12 +22,20 @@ const mocks = vi.hoisted(() => ({
   }),
 }));
 
-vi.mock("@/server/integrations/redis", () => ({
-  rateLimiters: {
-    get publicAssistant() {
+// The real checkRateLimit runs against a fake Upstash whose limit() is
+// mocks.rateLimit. A missing Redis configuration surfaces as the limiter
+// throwing its configuration error (the getter-throws path itself is covered
+// in rate-limit-check.test.ts).
+vi.mock("@upstash/redis", () => ({ Redis: class {} }));
+vi.mock("@upstash/ratelimit", () => ({
+  Ratelimit: class {
+    static slidingWindow() {
+      return {};
+    }
+    limit(key: string) {
       if (mocks.limiterUnconfigured) throw new Error("UPSTASH_REDIS_REST_URL is not set");
-      return { limit: mocks.rateLimit };
-    },
+      return (mocks.rateLimit as unknown as (key: string) => Promise<unknown>)(key);
+    }
   },
 }));
 vi.mock("@/server/integrations/openai", () => ({

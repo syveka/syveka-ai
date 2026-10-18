@@ -10,19 +10,22 @@ const querySchema = z.object({
   duration: z.coerce.number().int().min(5).max(480).optional(),
 });
 
-/** Public: available slots for a booking page. Rate-limited per IP. */
+/**
+ * Public: available slots for a booking page. Rate-limited per IP, failing
+ * closed (503) when the limit can't be verified.
+ */
 export async function GET(
   request: Request,
   { params }: { params: Promise<{ org: string; slug: string }> },
 ) {
-  const [{ rateLimiters }, { getPublicSlots, BookingError }] = await Promise.all([
-    import("@/server/integrations/redis"),
+  const [{ rateLimitRefusal }, { getPublicSlots, BookingError }] = await Promise.all([
+    import("@/server/security/rate-limit"),
     import("@/server/services/booking"),
   ]);
 
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "anon";
-  const { success } = await rateLimiters.api.limit(`booking-slots:${ip}`);
-  if (!success) return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+  const refused = await rateLimitRefusal("api", `booking-slots:${ip}`);
+  if (refused) return refused;
 
   const { org, slug } = await params;
   const url = new URL(request.url);

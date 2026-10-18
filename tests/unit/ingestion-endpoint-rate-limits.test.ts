@@ -39,8 +39,18 @@ vi.mock("@/server/auth/session", () => ({
   AuthError: FakeAuthError,
 }));
 
-vi.mock("@/server/integrations/redis", () => ({
-  rateLimiters: { api: { limit: rateLimitMock } },
+// The real checkRateLimit / rateLimitRefusal run against a fake Upstash whose
+// limit() is rateLimitMock, so timeouts and Redis errors take the production path.
+vi.mock("@upstash/redis", () => ({ Redis: class {} }));
+vi.mock("@upstash/ratelimit", () => ({
+  Ratelimit: class {
+    static slidingWindow() {
+      return {};
+    }
+    limit(key: string) {
+      return rateLimitMock(key);
+    }
+  },
 }));
 
 vi.mock("@/server/services/documents", () => ({
@@ -138,7 +148,7 @@ const routes = [
 describe.each(routes)(
   "$name rate limiting",
   ({ handler, keyPrefix, body, expectedSuccessStatus }) => {
-    it("invokes rateLimiters.api, keyed by org+user, before doing any work", async () => {
+    it("checks the api limiter, keyed by org+user,, before doing any work", async () => {
       await handler(body());
       expect(rateLimitMock).toHaveBeenCalledTimes(1);
       expect(rateLimitMock).toHaveBeenCalledWith(`${keyPrefix}:${ORG_A}:${USER_A}`);
@@ -152,6 +162,24 @@ describe.each(routes)(
       expect(response.headers.get("Retry-After")).toBeTruthy();
       expect(response.headers.get("X-RateLimit-Limit")).toBe("100");
       expect(response.headers.get("X-RateLimit-Remaining")).toBe("0");
+      expect(createDocumentMock).not.toHaveBeenCalled();
+      expect(createUploadUrlMock).not.toHaveBeenCalled();
+    });
+
+    it("fails closed with 503 when Redis times out (Upstash then reports success)", async () => {
+      rateLimitMock.mockResolvedValue({ ...ALLOWED, reason: "timeout" });
+      const response = await handler(body());
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({ error: { code: "service_unavailable" } });
+      expect(createDocumentMock).not.toHaveBeenCalled();
+      expect(createUploadUrlMock).not.toHaveBeenCalled();
+    });
+
+    it("fails closed with 503 when Redis errors", async () => {
+      rateLimitMock.mockRejectedValue(new Error("fetch failed"));
+      const response = await handler(body());
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.toEqual({ error: { code: "service_unavailable" } });
       expect(createDocumentMock).not.toHaveBeenCalled();
       expect(createUploadUrlMock).not.toHaveBeenCalled();
     });

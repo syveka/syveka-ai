@@ -7,19 +7,22 @@ export const dynamic = "force-dynamic";
  * Public: create a booking. Abuse controls: strict per-IP rate limit,
  * Zod validation, honeypot field, consent enforcement, availability
  * re-validation inside a transaction (double-booking safe).
+ *
+ * The rate limit fails closed: when it can't be verified (Redis timed out or
+ * errored) nothing is booked, emailed or scheduled (503).
  */
 export async function POST(
   request: Request,
   { params }: { params: Promise<{ org: string; slug: string }> },
 ) {
   const [
-    { rateLimiters },
+    { rateLimitRefusal },
     { createPublicBooking, BookingError },
     { publicBookingSchema },
     { sendBookingLifecycleNotifications },
     { scheduleEventReminders },
   ] = await Promise.all([
-    import("@/server/integrations/redis"),
+    import("@/server/security/rate-limit"),
     import("@/server/services/booking"),
     import("@/lib/validators/booking"),
     import("@/server/services/booking-notifications"),
@@ -27,8 +30,8 @@ export async function POST(
   ]);
 
   const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "anon";
-  const { success } = await rateLimiters.auth.limit(`booking-create:${ip}`);
-  if (!success) return NextResponse.json({ error: "rate_limited" }, { status: 429 });
+  const refused = await rateLimitRefusal("auth", `booking-create:${ip}`);
+  if (refused) return refused;
 
   let body: unknown;
   try {
