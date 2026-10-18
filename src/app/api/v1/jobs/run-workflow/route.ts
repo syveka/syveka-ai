@@ -256,7 +256,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     { recordUsage, getEntitlements },
     { isOrganizationActive, ORGANIZATION_INACTIVE },
     { assertAiQuotaAvailable, AiSpendError },
-    { WORKFLOW_DATA_SYSTEM_PROMPT, formatWorkflowDataValue },
+    { WORKFLOW_DATA_SYSTEM_PROMPT, formatWorkflowDataValue, stripWorkflowDataMarkers },
   ] = await Promise.all([
     import("@/server/jobs/verify"),
     import("@/server/db/tenant"),
@@ -523,7 +523,7 @@ export async function POST(request: Request): Promise<NextResponse> {
               { idempotencyKey: claim.stepExecutionId },
             );
             const text = res.content[0]?.type === "text" ? res.content[0].text : "";
-            const truncated = text.slice(0, 2000);
+            const truncated = stripWorkflowDataMarkers(text).slice(0, 2000);
             ctx.vars[step.outputVar] = truncated;
             let completedHere = true;
             try {
