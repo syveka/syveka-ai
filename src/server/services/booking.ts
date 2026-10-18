@@ -685,7 +685,44 @@ async function cancelBookingCore(
       metadata: { bookingId: fresh.id, kind: "canceled" },
     },
   });
-  return fresh;
+  return { ...fresh, contactId: await guestContactId(tx, fresh) };
+}
+
+/**
+ * The guest's CRM contact for a booking. It is linked only through the
+ * attendee row (see createPublicBooking), and only within the booking's own
+ * organization.
+ */
+async function guestContactId(
+  tx: Prisma.TransactionClient,
+  booking: { eventId: string | null; guestEmail: string; organizationId: string },
+): Promise<string | null> {
+  if (!booking.eventId) return null;
+  const attendee = await tx.eventAttendee.findFirst({
+    where: {
+      eventId: booking.eventId,
+      email: booking.guestEmail,
+      event: { organizationId: booking.organizationId },
+    },
+    select: { contactId: true },
+  });
+  return attendee?.contactId ?? null;
+}
+
+/** The workflow payload for booking.canceled, identical for the guest and owner cancel paths. */
+function canceledEventData(
+  booking: Awaited<ReturnType<typeof cancelBookingCore>>,
+  reason: string | undefined,
+) {
+  return {
+    bookingId: booking.id,
+    contactId: booking.contactId,
+    bookingType: booking.bookingType.name,
+    guestName: booking.guestName,
+    guestEmail: booking.guestEmail,
+    startsAt: booking.startsAt.toISOString(),
+    reason: reason ?? null,
+  };
 }
 
 export async function cancelBookingViaToken(raw: string, reason?: string) {
@@ -721,7 +758,7 @@ export async function cancelBookingViaToken(raw: string, reason?: string) {
   await emitWorkflowEvent(
     booking.organizationId,
     "booking.canceled",
-    { bookingId: booking.id, guestEmail: booking.guestEmail },
+    canceledEventData(booking, reason),
     booking.id,
   ).catch(() => undefined);
 
@@ -764,7 +801,7 @@ export async function cancelBookingAsOwner(ctx: TenantContext, bookingId: string
   await emitWorkflowEvent(
     booking.organizationId,
     "booking.canceled",
-    { bookingId: booking.id, guestEmail: booking.guestEmail },
+    canceledEventData(booking, reason),
     booking.id,
   ).catch(() => undefined);
 
@@ -929,7 +966,7 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
         metadata: { bookingId: booking.id, previousBookingId: oldBooking.id, kind: "rescheduled" },
       },
     });
-    return { booking, event };
+    return { booking, event, contactId: previousGuest?.contactId ?? null };
   });
 
   // Belt-and-braces: also invalidate any OTHER outstanding tokens for the
@@ -960,8 +997,13 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
     "booking.rescheduled",
     {
       bookingId: result.booking.id,
+      previousBookingId: oldBooking.id,
+      contactId: result.contactId,
+      bookingType: bookingType.name,
+      guestName: oldBooking.guestName,
       guestEmail: oldBooking.guestEmail,
       startsAt: startsAt.toISOString(),
+      previousStartsAt: oldBooking.startsAt.toISOString(),
     },
     // The successor booking's own id - fresh per reschedule occurrence, so
     // this is naturally distinct from both the original booking and any

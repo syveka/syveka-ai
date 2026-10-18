@@ -250,6 +250,35 @@ describe("createPublicBooking", () => {
     );
   });
 
+  it("booking.created carries exactly the booking, contact, type, guest and time, keyed by the booking id", async () => {
+    txMock.contact.findFirst.mockResolvedValue({ id: "contact-9" });
+    await createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() });
+    expect(emitMock).toHaveBeenCalledTimes(1);
+    expect(emitMock).toHaveBeenCalledWith(
+      "org-a",
+      "booking.created",
+      {
+        bookingId: "bk-1",
+        contactId: "contact-9",
+        bookingType: "Intro call",
+        guestName: "Guest One",
+        guestEmail: "guest@example.com",
+        startsAt: VALID_START,
+      },
+      "bk-1",
+    );
+  });
+
+  it("a brand-new guest's booking.created carries the contact this booking just created", async () => {
+    await createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() });
+    expect(emitMock).toHaveBeenCalledWith(
+      "org-a",
+      "booking.created",
+      expect.objectContaining({ contactId: "contact-new" }),
+      "bk-1",
+    );
+  });
+
   describe("contact.created workflow event", () => {
     const contactCreatedCalls = () =>
       (emitMock.mock.calls as unknown as unknown[][]).filter(
@@ -533,6 +562,41 @@ describe("rescheduleBookingViaToken", () => {
     });
   });
 
+  it("booking.rescheduled carries the contact, guest, type, and both times, keyed by the successor booking", async () => {
+    txMock.eventAttendee.findFirst.mockResolvedValueOnce({ contactId: "contact-guest" });
+
+    await rescheduleBookingViaToken("raw-token", NEW_START);
+
+    expect(emitMock).toHaveBeenCalledTimes(1);
+    expect(emitMock).toHaveBeenCalledWith(
+      "org-a",
+      "booking.rescheduled",
+      {
+        bookingId: "bk-1",
+        previousBookingId: "bk-old",
+        contactId: "contact-guest",
+        bookingType: "Intro call",
+        guestName: "Guest One",
+        guestEmail: "guest@example.com",
+        startsAt: NEW_START,
+        previousStartsAt: VALID_START,
+      },
+      // The successor's own id: each reschedule is a distinct event, and a
+      // retry of the same one is deduplicated (sourceEventKey).
+      "bk-1",
+    );
+  });
+
+  it("booking.rescheduled has a null contactId when the guest has no contact", async () => {
+    await rescheduleBookingViaToken("raw-token", NEW_START);
+    expect(emitMock).toHaveBeenCalledWith(
+      "org-a",
+      "booking.rescheduled",
+      expect.objectContaining({ contactId: null }),
+      "bk-1",
+    );
+  });
+
   it("consumes the token INSIDE the same transaction as the mutation, before any write", async () => {
     const callOrder: string[] = [];
     consumeTokenAtomicMock.mockImplementationOnce(async () => {
@@ -684,6 +748,64 @@ describe("cancelBookingViaToken", () => {
     expect(result.id).toBe("bk-old");
   });
 
+  it("booking.canceled carries the contact, guest, type, time and reason, keyed by the booking id", async () => {
+    txMock.eventAttendee.findFirst.mockResolvedValueOnce({ contactId: "contact-guest" });
+
+    await cancelBookingViaToken("raw-token", "change of plans");
+
+    // The contact is looked up only through this booking's own event, within
+    // the booking's organization.
+    expect(txMock.eventAttendee.findFirst).toHaveBeenCalledWith({
+      where: { eventId: "evt-old", email: "guest@example.com", event: { organizationId: "org-a" } },
+      select: { contactId: true },
+    });
+    expect(emitMock).toHaveBeenCalledTimes(1);
+    expect(emitMock).toHaveBeenCalledWith(
+      "org-a",
+      "booking.canceled",
+      {
+        bookingId: "bk-old",
+        contactId: "contact-guest",
+        bookingType: "Intro call",
+        guestName: "Guest One",
+        guestEmail: "guest@example.com",
+        startsAt: VALID_START,
+        reason: "change of plans",
+      },
+      "bk-old",
+    );
+  });
+
+  it("booking.canceled has a null contactId and reason when neither exists", async () => {
+    await cancelBookingViaToken("raw-token");
+    expect(emitMock).toHaveBeenCalledWith(
+      "org-a",
+      "booking.canceled",
+      expect.objectContaining({ contactId: null, reason: null }),
+      "bk-old",
+    );
+  });
+
+  it("a booking without a calendar event looks up no contact", async () => {
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(confirmedBooking({ eventId: null }));
+    await cancelBookingViaToken("raw-token");
+    expect(txMock.eventAttendee.findFirst).not.toHaveBeenCalled();
+    expect(emitMock).toHaveBeenCalledWith(
+      "org-a",
+      "booking.canceled",
+      expect.objectContaining({ contactId: null }),
+      "bk-old",
+    );
+  });
+
+  it("emits nothing when the cancel loses the race (no duplicate booking.canceled)", async () => {
+    txMock.booking.updateMany.mockResolvedValueOnce({ count: 0 });
+    await expect(cancelBookingViaToken("raw-token")).rejects.toMatchObject({
+      code: "already_canceled",
+    });
+    expect(emitMock).not.toHaveBeenCalled();
+  });
+
   it("rejects (rolls back, no mutation) when the token was already consumed by a concurrent request", async () => {
     const { BookingTokenError } = await import("@/server/services/booking-tokens");
     consumeTokenAtomicMock.mockRejectedValueOnce(
@@ -791,6 +913,42 @@ describe("cancelBookingAsOwner", () => {
       bookingId: "bk-old",
     });
     expect(result.id).toBe("bk-old");
+  });
+
+  it("booking.canceled from the owner carries the same payload as the guest path", async () => {
+    txMock.eventAttendee.findFirst.mockResolvedValueOnce({ contactId: "contact-guest" });
+
+    await cancelBookingAsOwner(ownerCtx(), "bk-old", "owner canceled by phone");
+
+    expect(txMock.eventAttendee.findFirst).toHaveBeenCalledWith({
+      where: { eventId: "evt-old", email: "guest@example.com", event: { organizationId: "org-a" } },
+      select: { contactId: true },
+    });
+    expect(emitMock).toHaveBeenCalledTimes(1);
+    expect(emitMock).toHaveBeenCalledWith(
+      "org-a",
+      "booking.canceled",
+      {
+        bookingId: "bk-old",
+        contactId: "contact-guest",
+        bookingType: "Intro call",
+        guestName: "Guest One",
+        guestEmail: "guest@example.com",
+        startsAt: VALID_START,
+        reason: "owner canceled by phone",
+      },
+      "bk-old",
+    );
+  });
+
+  it("an owner cancel from the calendar (no reason given) sends reason null", async () => {
+    await cancelBookingAsOwner(ownerCtx(), "bk-old");
+    expect(emitMock).toHaveBeenCalledWith(
+      "org-a",
+      "booking.canceled",
+      expect.objectContaining({ reason: null }),
+      "bk-old",
+    );
   });
 
   it("attributes the audit entry to the real owner, not a system actor (unlike the token path)", async () => {
