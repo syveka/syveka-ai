@@ -38,7 +38,7 @@ export default async function InvitePage({
     redirect(`${localizedPath(normalizeLocale(locale), "/register")}?next=${next}`);
   }
 
-  const signOut = signOutToInvitationAction.bind(null, invitation.token);
+  const signOut = signOutToInvitationAction.bind(null, invitation.token, locale);
   const tRoles = await getTranslations("roles");
   // Email addresses keep their own direction inside right-to-left text.
   const b = (chunks: React.ReactNode) => <strong dir="auto">{chunks}</strong>;
@@ -74,7 +74,7 @@ export default async function InvitePage({
         <p className="text-sm text-muted-foreground">
           {t.rich("invitedAs", { role: tRoles(invitation.role), email: invitation.email, b })}
         </p>
-        <form action={acceptInvitationAction.bind(null, token)}>
+        <form action={acceptInvitationAction.bind(null, invitation.token, locale)}>
           <Button type="submit" className="w-full">
             {t("accept")}
           </Button>

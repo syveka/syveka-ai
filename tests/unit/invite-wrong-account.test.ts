@@ -140,8 +140,8 @@ describe("accepting as another account", () => {
     mocks.getSessionUser.mockResolvedValue({ id: "user-2", email: "someone-else@example.test" });
     mocks.acceptInvitation.mockRejectedValue(new mocks.InvitationAccountMismatchError());
 
-    await expect(acceptInvitationAction(INVITATION_ID)).rejects.toThrow(
-      `NEXT_REDIRECT:/invite/${INVITATION_ID}`,
+    await expect(acceptInvitationAction(INVITATION_ID, "ar")).rejects.toThrow(
+      `NEXT_REDIRECT:/ar/invite/${INVITATION_ID}`,
     );
     expect(mocks.refreshSession).not.toHaveBeenCalled();
   });
@@ -150,35 +150,66 @@ describe("accepting as another account", () => {
     mocks.getSessionUser.mockResolvedValue({ id: "user-1", email: "invitee@example.test" });
     mocks.acceptInvitation.mockRejectedValue(new Error("Invalid invitation"));
 
-    await expect(acceptInvitationAction(INVITATION_ID)).rejects.toThrow("Invalid invitation");
+    await expect(acceptInvitationAction(INVITATION_ID, "en")).rejects.toThrow("Invalid invitation");
     expect(mocks.redirect).not.toHaveBeenCalled();
   });
 
-  it("the invited account joins and goes to the dashboard", async () => {
-    mocks.getSessionUser.mockResolvedValue({ id: "user-1", email: "invitee@example.test" });
-    mocks.acceptInvitation.mockResolvedValue("org-1");
+  it.each(["fi", "en", "ar"])(
+    "the invited account joins and goes to the dashboard in the page's language (%s)",
+    async (locale) => {
+      mocks.getSessionUser.mockResolvedValue({ id: "user-1", email: "invitee@example.test" });
+      mocks.acceptInvitation.mockResolvedValue("org-1");
 
-    await expect(acceptInvitationAction(INVITATION_ID)).rejects.toThrow("NEXT_REDIRECT:/dashboard");
-    expect(mocks.acceptInvitation).toHaveBeenCalledWith(INVITATION_ID, "user-1");
-    expect(mocks.refreshSession).toHaveBeenCalledOnce();
-  });
+      await expect(acceptInvitationAction(INVITATION_ID, locale)).rejects.toThrow(
+        `NEXT_REDIRECT:/${locale}/dashboard`,
+      );
+      expect(mocks.acceptInvitation).toHaveBeenCalledWith(INVITATION_ID, "user-1");
+      expect(mocks.refreshSession).toHaveBeenCalledOnce();
+    },
+  );
+
+  it.each([undefined, "xx", "//evil.example", "../en"])(
+    "a missing or unknown locale (%j) falls back to the default locale",
+    async (locale) => {
+      mocks.getSessionUser.mockResolvedValue({ id: "user-1", email: "invitee@example.test" });
+      mocks.acceptInvitation.mockResolvedValue("org-1");
+
+      await expect(acceptInvitationAction(INVITATION_ID, locale)).rejects.toThrow(
+        "NEXT_REDIRECT:/fi/dashboard",
+      );
+    },
+  );
 });
 
 describe("signing out to the invitation", () => {
-  it("signs out, then returns to the invitation", async () => {
-    await expect(signOutToInvitationAction(INVITATION_ID)).rejects.toThrow(
-      `NEXT_REDIRECT:/invite/${INVITATION_ID}`,
-    );
-    expect(mocks.signOut).toHaveBeenCalledOnce();
-    expect(mocks.signOut.mock.invocationCallOrder[0]).toBeLessThan(
-      mocks.redirect.mock.invocationCallOrder[0]!,
-    );
-  });
+  it.each(["fi", "en", "ar"])(
+    "signs out, then returns to the invitation in the page's language (%s)",
+    async (locale) => {
+      await expect(signOutToInvitationAction(INVITATION_ID, locale)).rejects.toThrow(
+        `NEXT_REDIRECT:/${locale}/invite/${INVITATION_ID}`,
+      );
+      expect(mocks.signOut).toHaveBeenCalledOnce();
+      expect(mocks.signOut.mock.invocationCallOrder[0]).toBeLessThan(
+        mocks.redirect.mock.invocationCallOrder[0]!,
+      );
+    },
+  );
+
+  it.each([undefined, "xx", "//evil.example"])(
+    "a missing or unknown locale (%j) falls back to the default locale",
+    async (locale) => {
+      await expect(signOutToInvitationAction(INVITATION_ID, locale)).rejects.toThrow(
+        `NEXT_REDIRECT:/fi/invite/${INVITATION_ID}`,
+      );
+    },
+  );
 
   it.each(["not-a-token", `${INVITATION_ID}/../../dashboard`, "//evil.example"])(
-    "a token that isn't one (%j) goes to /login",
+    "a token that isn't one (%j) goes to the login page",
     async (token) => {
-      await expect(signOutToInvitationAction(token)).rejects.toThrow("NEXT_REDIRECT:/login");
+      await expect(signOutToInvitationAction(token, "en")).rejects.toThrow(
+        "NEXT_REDIRECT:/en/login",
+      );
       expect(mocks.signOut).toHaveBeenCalledOnce();
     },
   );

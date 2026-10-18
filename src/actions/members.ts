@@ -16,6 +16,7 @@ import {
 import { EntitlementError } from "@/server/services/billing/entitlements";
 import { inviteMemberSchema, changeRoleSchema } from "@/lib/validators/members";
 import { createSupabaseServer } from "@/server/supabase/server";
+import { inviteContinuation, localizedPath, normalizeLocale } from "@/lib/auth-redirect";
 import { actionRateLimitError, emailKey } from "@/server/security/rate-limit";
 
 export type MemberActionState = { error?: string; message?: string };
@@ -70,9 +71,11 @@ export async function inviteMemberAction(
   return { message: "invited" };
 }
 
-export async function acceptInvitationAction(token: string): Promise<void> {
+/** `locale` comes from the invitation page and is checked against the app's locales. */
+export async function acceptInvitationAction(token: string, locale?: string): Promise<void> {
   const user = await getSessionUser();
   if (!user) throw new AuthError("Not authenticated");
+  const pageLocale = normalizeLocale(locale ?? null);
 
   try {
     await acceptInvitation(token, user.id);
@@ -80,14 +83,16 @@ export async function acceptInvitationAction(token: string): Promise<void> {
     // Signed in as someone else (for example another account in the same
     // browser): back to the invitation, which says so and offers to sign out,
     // instead of an error page.
-    if (e instanceof InvitationAccountMismatchError) redirect(`/invite/${token}`);
+    if (e instanceof InvitationAccountMismatchError) {
+      redirect(localizedPath(pageLocale, inviteContinuation(`/invite/${token}`) ?? "/dashboard"));
+    }
     throw e;
   }
 
   const supabase = await createSupabaseServer();
   await supabase.auth.refreshSession();
 
-  redirect("/dashboard");
+  redirect(localizedPath(pageLocale, "/dashboard"));
 }
 
 export async function changeRoleAction(
