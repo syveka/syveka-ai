@@ -16,9 +16,15 @@ const INVITATION_ID = "3f0c2b9e-8a41-4d2e-9b7c-1e5f6a7b8c9d";
 
 const mocks = vi.hoisted(() => {
   class InvitationAccountMismatchError extends Error {}
+  class InvitationAcceptError extends Error {
+    constructor(readonly code: string) {
+      super(code);
+    }
+  }
   return {
     locale: "en",
     InvitationAccountMismatchError,
+    InvitationAcceptError,
     redirect: vi.fn((path: string) => {
       throw new Error(`NEXT_REDIRECT:${path}`);
     }),
@@ -69,6 +75,7 @@ vi.mock("@/server/supabase/server", () => ({
 }));
 vi.mock("@/server/services/members", () => ({
   InvitationAccountMismatchError: mocks.InvitationAccountMismatchError,
+  InvitationAcceptError: mocks.InvitationAcceptError,
   MemberError: class MemberError extends Error {},
   acceptInvitation: mocks.acceptInvitation,
   inviteMember: vi.fn(),
@@ -99,6 +106,7 @@ async function renderInvite(sessionEmail: string, locale = "en"): Promise<string
   mocks.getSessionUser.mockResolvedValue({ id: "user-1", email: sessionEmail });
   const element = await InvitePage({
     params: Promise.resolve({ locale, token: INVITATION_ID }),
+    searchParams: Promise.resolve({}),
   });
   return renderToStaticMarkup(element);
 }
@@ -238,6 +246,7 @@ describe("invitation page language", () => {
     mocks.findInvitation.mockResolvedValue(null);
     const element = await InvitePage({
       params: Promise.resolve({ locale: "fi", token: INVITATION_ID }),
+      searchParams: Promise.resolve({}),
     });
 
     expect(renderToStaticMarkup(element)).toContain("Kutsu on virheellinen tai vanhentunut.");
