@@ -218,6 +218,43 @@ describe("login returns an invited user to the invitation", () => {
   });
 });
 
+describe("an invitation never bypasses the auth rate limit", () => {
+  it.each([
+    [
+      "limit reached",
+      () => mocks.rateLimit.mockResolvedValueOnce({ success: false }),
+      "rate_limited",
+    ],
+    [
+      "Redis unavailable",
+      () => mocks.rateLimit.mockRejectedValueOnce(new Error("redis down")),
+      "service_unavailable",
+    ],
+  ])("login, %s: refused before sign-in, no redirect", async (_label, arrange, error) => {
+    arrange();
+    await expect(loginAction({}, loginForm(INVITE, "en"))).resolves.toEqual({ error });
+    expect(mocks.signInWithPassword).not.toHaveBeenCalled();
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "limit reached",
+      () => mocks.rateLimit.mockResolvedValueOnce({ success: false }),
+      "rate_limited",
+    ],
+    [
+      "Redis unavailable",
+      () => mocks.rateLimit.mockRejectedValueOnce(new Error("redis down")),
+      "service_unavailable",
+    ],
+  ])("register, %s: refused before sign-up", async (_label, arrange, error) => {
+    arrange();
+    await expect(registerAction({}, registerForm(INVITE, "en"))).resolves.toEqual({ error });
+    expect(mocks.signUp).not.toHaveBeenCalled();
+  });
+});
+
 describe("invitation page", () => {
   const page = (locale = "en", token = INVITATION_ID) =>
     InvitePage({ params: Promise.resolve({ locale, token }) });
