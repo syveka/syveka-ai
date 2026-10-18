@@ -86,6 +86,10 @@ vi.mock("@/server/db/tenant", () => ({
   get unscopedPrisma() {
     return db;
   },
+  // Not read by the route today. Once ai.generate reads Business DNA (#330),
+  // it does so through tenantDb; this org has none, and the suite keeps
+  // passing instead of failing on a missing mock export.
+  tenantDb: () => ({ businessDNA: { findFirst: async () => null } }),
 }));
 vi.mock("@/server/jobs/organization-guard", () => ({
   isOrganizationActive: async () => true,
