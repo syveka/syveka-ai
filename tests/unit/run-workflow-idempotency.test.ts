@@ -414,6 +414,64 @@ describe("trigger-level idempotency: resumes are unaffected by the claim path", 
   });
 });
 
+describe("booking triggers: the default CRM step reaches the trigger's contact", () => {
+  // The builder's default for crm.create_activity is contactIdVar "trigger.contactId".
+  const crmWorkflow = () =>
+    activeWorkflow({
+      steps: [
+        {
+          id: "s1",
+          type: "crm.create_activity",
+          contactIdVar: "trigger.contactId",
+          activityType: "TASK",
+          subject: "Follow up",
+        },
+      ],
+    });
+
+  it.each(["booking.created", "booking.canceled", "booking.rescheduled"])(
+    "%s: creates the activity on the trigger's contact, in this organization",
+    async (triggerType) => {
+      mocks.workflowFindFirst.mockResolvedValue(crmWorkflow());
+
+      await post(
+        freshTriggerPayload({
+          triggerType,
+          triggerData: { bookingId: "bk-1", contactId: "contact-1" },
+          sourceEventKey: `${triggerType}:bk-1`,
+        }),
+      );
+
+      expect(mocks.contactFindFirst).toHaveBeenCalledWith({
+        where: { id: "contact-1", organizationId: ORG },
+      });
+      expect(mocks.activityCreate).toHaveBeenCalledTimes(1);
+      expect(mocks.activityCreate).toHaveBeenCalledWith({
+        data: expect.objectContaining({ organizationId: ORG, contactId: "contact-1" }),
+      });
+    },
+  );
+
+  it("a contactId that isn't in this organization creates no activity", async () => {
+    mocks.workflowFindFirst.mockResolvedValue(crmWorkflow());
+    // The org-scoped lookup finds nothing for another organization's contact.
+    mocks.contactFindFirst.mockResolvedValueOnce(null as never);
+
+    await post(
+      freshTriggerPayload({
+        triggerType: "booking.canceled",
+        triggerData: { bookingId: "bk-1", contactId: "contact-of-another-org" },
+        sourceEventKey: "booking.canceled:bk-1",
+      }),
+    ).catch(() => undefined);
+
+    expect(mocks.contactFindFirst).toHaveBeenCalledWith({
+      where: { id: "contact-of-another-org", organizationId: ORG },
+    });
+    expect(mocks.activityCreate).not.toHaveBeenCalled();
+  });
+});
+
 describe("trigger-level idempotency: representative side-effect proof", () => {
   it("crm.create_activity runs exactly once across a duplicate delivery pair", async () => {
     mocks.workflowFindFirst.mockResolvedValue(
