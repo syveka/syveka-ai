@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { buildSystemPrompt } from "@/server/ai/prompts/system";
-import type { BusinessDnaContext } from "@/server/business-dna/context";
+import {
+  BUSINESS_FACT_RULES,
+  NO_BUSINESS_PROFILE_NOTE,
+  type BusinessDnaContext,
+} from "@/server/business-dna/context";
 
 function baseParams() {
   return {
@@ -224,5 +228,62 @@ describe("buildSystemPrompt — Business DNA from conversation", () => {
     expect(buildSystemPrompt({ ...setup(["timezone"]), responseMode: "voice" })).not.toContain(
       "Business DNA from conversation",
     );
+  });
+});
+
+describe("buildSystemPrompt — business fact grounding", () => {
+  it("says there is no business profile when Business DNA is missing, and still applies the fact rules", () => {
+    for (const businessDna of [undefined, null, dna()]) {
+      const prompt = buildSystemPrompt({ ...baseParams(), businessDna });
+      expect(prompt).toContain(NO_BUSINESS_PROFILE_NOTE);
+      expect(prompt).toContain(BUSINESS_FACT_RULES);
+    }
+  });
+
+  it("with a profile missing a fact, adds no value for it and tells the model to say it can't confirm it", () => {
+    const prompt = buildSystemPrompt({
+      ...baseParams(),
+      businessDna: dna({ displayName: "Acme" }),
+    });
+    expect(prompt).toContain("<business_profile>");
+    expect(prompt).not.toContain(NO_BUSINESS_PROFILE_NOTE);
+    expect(prompt).not.toContain("Opening hours:");
+    expect(prompt).not.toContain("Refund policy:");
+    expect(prompt).toContain(
+      "Never invent, estimate or fill in from general knowledge a price, opening hours, a policy, availability or a way to contact the business.",
+    );
+    expect(prompt).toContain("say plainly that you can't confirm it");
+  });
+
+  it("keeps verified system data usable: tools, live availability and knowledge-base sources", () => {
+    const prompt = buildSystemPrompt({
+      ...baseParams(),
+      businessDna: dna({ displayName: "Acme" }),
+      hasTools: true,
+      ragContext: [{ documentId: "doc-1", title: "Price list", content: "Haircut 30 EUR" }],
+    });
+    expect(prompt).toContain("call getCalendarAvailability for that date in this turn");
+    expect(prompt).toContain("Haircut 30 EUR");
+    expect(prompt).toContain(
+      "Live data such as calendar availability, booking, service and CRM records is authoritative for what it covers; use it.",
+    );
+    // The fact rules come after every data section, before the final rules.
+    expect(prompt.indexOf("Haircut 30 EUR")).toBeLessThan(prompt.indexOf(BUSINESS_FACT_RULES));
+    expect(prompt.indexOf(BUSINESS_FACT_RULES)).toBeLessThan(prompt.indexOf("## Rules"));
+  });
+
+  it("never lets the model claim an action or promise a follow-up a tool didn't report", () => {
+    const prompt = buildSystemPrompt(baseParams());
+    expect(prompt).toContain(
+      "Never say that something has been done — booked, sent, saved, passed on, transferred or scheduled — unless a tool in this conversation reported that it succeeded.",
+    );
+    expect(prompt).toContain(
+      "Never promise that someone will follow up, reply or call back unless a tool in this conversation recorded that request and reported success.",
+    );
+  });
+
+  it("applies the same rules in a live voice conversation", () => {
+    const prompt = buildSystemPrompt({ ...baseParams(), responseMode: "voice" });
+    expect(prompt).toContain(BUSINESS_FACT_RULES);
   });
 });
