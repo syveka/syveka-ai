@@ -172,7 +172,8 @@ async function existingSubscriptionDestination(
  * 5. a new Checkout, with an idempotency key for this attempt, created only
  *    after the claim is confirmed still ours;
  * 6. a sweep, so only one usable Checkout can survive even if two attempts
- *    overlapped anyway (see settleAfterCreate).
+ *    overlapped anyway (see settleAfterCreate), then a last look at Stripe's
+ *    subscriptions: one created meanwhile wins over the new Checkout.
  */
 export async function startPlanChange(
   ctx: Pick<TenantContext, "orgId" | "userId" | "email" | "locale">,
@@ -189,19 +190,23 @@ export async function startPlanChange(
   const held = await claim(ctx.orgId);
   if (held === "busy" || held === "unavailable") return { kind: "refused", reason: held };
 
+  let keepClaim = false;
   try {
     return await underClaim(ctx, plan, interval, held);
   } catch (err) {
     if (err instanceof Refused) return { kind: "refused", reason: err.reason };
     if (err instanceof StripeCallTimeoutError) {
       // Nothing it might still create is handed out; the next attempt's
-      // Checkout handling deals with it.
+      // Checkout handling deals with it. The claim isn't released: it lapses
+      // on its own TTL, so the next attempt gives the abandoned request that
+      // long to land in Stripe before looking.
+      keepClaim = true;
       logBillingEvent("billing_stripe_timeout", { orgId: ctx.orgId, step: "plan_change" });
       return { kind: "refused", reason: "unavailable" };
     }
     throw err;
   } finally {
-    await release(ctx.orgId, held.token);
+    if (!keepClaim) await release(ctx.orgId, held.token);
   }
 }
 
@@ -345,7 +350,7 @@ async function settleAfterCreate(
     open = (await listOpenCheckoutSessions(customerId)).sort(byAge);
   } catch {
     // Can't see what else is open: don't hand ours out.
-    await expireCheckoutSession(mine.id);
+    await expireOwn(orgId, mine.id);
     logBillingEvent("billing_checkout_sweep_failed", { orgId, sessionId: mine.id });
     throw new Refused("unavailable");
   }
@@ -355,8 +360,11 @@ async function settleAfterCreate(
     throw new Refused("busy");
   }
   if (oldest.id !== mine.id) {
-    await expireCheckoutSession(mine.id);
-    if (reusable(oldest) && oldest.url) return { kind: "checkout", url: oldest.url };
+    await expireOwn(orgId, mine.id);
+    if (reusable(oldest) && oldest.url) {
+      const existing = await subscriptionCreatedMeanwhile(orgId, customerId, null);
+      return existing ?? { kind: "checkout", url: oldest.url };
+    }
     throw new Refused("busy");
   }
   try {
@@ -369,10 +377,50 @@ async function settleAfterCreate(
   } catch (err) {
     // A newer session we couldn't expire, or one that got paid: ours can't
     // safely be handed out next to it.
-    await expireCheckoutSession(mine.id);
+    await expireOwn(orgId, mine.id);
     throw err;
   }
-  return { kind: "checkout", url: mine.url };
+  const existing = await subscriptionCreatedMeanwhile(orgId, customerId, mine.id);
+  return existing ?? { kind: "checkout", url: mine.url };
+}
+
+/**
+ * The last check before a Checkout URL is handed out. Another tab's open
+ * Checkout that was paid after step 3 is no longer an open session, so the
+ * sweep can't see it; only Stripe's subscriptions show the result. If the
+ * customer now has a live subscription, our new session (if any) is expired
+ * and the member goes to that subscription instead (portal, or its payment
+ * page), never to a second Checkout. Can't check → our session is expired
+ * and the attempt is "unavailable". Null: nothing appeared.
+ */
+async function subscriptionCreatedMeanwhile(
+  orgId: string,
+  customerId: string,
+  ownSessionId: string | null,
+): Promise<PlanChangeResult | null> {
+  let live: Awaited<ReturnType<typeof findLiveSubscription>>;
+  try {
+    live = await findLiveSubscription(customerId);
+  } catch {
+    if (ownSessionId) await expireOwn(orgId, ownSessionId);
+    logBillingEvent("billing_checkout_recheck_failed", { orgId });
+    throw new Refused("unavailable");
+  }
+  if (!live) return null;
+  if (ownSessionId) await expireOwn(orgId, ownSessionId);
+  logBillingEvent("billing_checkout_superseded_by_subscription", {
+    orgId,
+    subscriptionStatus: live.status,
+  });
+  return existingSubscriptionDestination(customerId, live.status === "incomplete" ? live.id : null);
+}
+
+/** Expires a session this attempt created; a failure is logged, never silent. */
+async function expireOwn(orgId: string, sessionId: string): Promise<void> {
+  const outcome = await expireCheckoutSession(sessionId);
+  if (outcome !== "expired") {
+    logBillingEvent("billing_checkout_self_expire_failed", { orgId, sessionId, outcome });
+  }
 }
 
 /**

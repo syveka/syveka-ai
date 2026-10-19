@@ -51,6 +51,8 @@ const s = vi.hoisted(() => ({
   storeRace: null as string | null,
   /** Runs inside Checkout creation, once Stripe has the request. */
   onCreate: null as null | (() => void),
+  /** Runs right after a subscriptions.list answer was taken (what that call saw stays as it was). */
+  afterSubscriptionsList: null as null | (() => void),
   calls: { customersCreate: 0, sessionsCreate: 0, portal: 0 },
   createOptions: [] as Array<Record<string, unknown>>,
   clock: 1_800_000_000,
@@ -88,7 +90,9 @@ vi.mock("stripe", () => ({
     subscriptions = {
       list: async ({ customer }: { customer: string }) => {
         await respond("subscriptions.list");
-        return { data: s.stripeSubs.get(customer) ?? [] };
+        const data = [...(s.stripeSubs.get(customer) ?? [])];
+        s.afterSubscriptionsList?.();
+        return { data };
       },
       retrieve: async (id: string) => {
         await respond("subscriptions.retrieve");
@@ -293,6 +297,7 @@ beforeEach(() => {
   s.expireRefused = new Map();
   s.storeRace = null;
   s.onCreate = null;
+  s.afterSubscriptionsList = null;
   s.calls = { customersCreate: 0, sessionsCreate: 0, portal: 0 };
   s.createOptions = [];
   s.clock = Math.floor(Date.now() / 1000);
@@ -695,6 +700,95 @@ describe("the Stripe customer", () => {
     const keys = [...s.idempotency.keys()];
     expect(keys).toContain("org-customer:org-a");
     expect(keys.filter((k) => /^checkout:org-a:[0-9a-f-]{36}$/.test(k))).toHaveLength(1);
+  });
+});
+
+describe("a Checkout paid in another tab while this one is being created", () => {
+  // Tab 1 already has open Checkout cs_tab1 (Starter). Tab 2 starts a plan
+  // change, and Stripe shows no live subscription yet. Right after that
+  // look, Tab 1's customer pays: cs_tab1 becomes complete (so it's no
+  // longer an open session) and sub_paid exists. Tab 2 then creates its own
+  // session; its sweep only sees open sessions.
+  function tab1PaysAfterTab2LooksAtSubscriptions(status = "active") {
+    s.afterSubscriptionsList = () => {
+      s.afterSubscriptionsList = null;
+      s.sessions.find((x) => x.id === "cs_tab1")!.status = "complete";
+      s.stripeSubs.set("cus_a", [{ id: "sub_paid", status }]);
+    };
+  }
+
+  beforeEach(() => {
+    s.orgs.get("org-a")!.stripeCustomerId = "cus_a";
+    s.sessions.push(
+      openSession({
+        id: "cs_tab1",
+        customer: "cus_a",
+        metadata: { orgId: "org-a", plan: "STARTER", priceId: "price_starter_m", seats: "2" },
+      }),
+    );
+  });
+
+  it("Tab 2 never receives a second Checkout URL: its new session is expired and it goes to the portal", async () => {
+    tab1PaysAfterTab2LooksAtSubscriptions();
+    const tab2 = await startPlanChange(ctxA, "PRO", "monthly");
+
+    expect(tab2).toEqual({ kind: "portal", url: "https://portal.test/cus_a" });
+    // Tab 2 did create a session, which was then expired, never handed out.
+    expect(s.calls.sessionsCreate).toBe(1);
+    const created = s.sessions.find((x) => x.id !== "cs_tab1")!;
+    expect(created.status).toBe("expired");
+    expect(openSessions()).toEqual([]);
+    expect(usable([tab2])).toEqual([]);
+    // Only the already-paid subscription exists.
+    expect(s.stripeSubs.get("cus_a")).toEqual([{ id: "sub_paid", status: "active" }]);
+    expect(events()).toContainEqual({
+      event: "billing_checkout_superseded_by_subscription",
+      orgId: "org-a",
+      subscriptionStatus: "active",
+    });
+    expect(s.locks.size).toBe(0);
+  });
+
+  it("Tab 1's payment is still pending (incomplete): Tab 2 goes to that subscription's payment page", async () => {
+    s.invoices.set("sub_paid", { status: "open", hosted_invoice_url: "https://invoice.test/in_p" });
+    tab1PaysAfterTab2LooksAtSubscriptions("incomplete");
+    expect(await startPlanChange(ctxA, "PRO", "monthly")).toEqual({
+      kind: "payment",
+      url: "https://invoice.test/in_p",
+    });
+    expect(openSessions()).toEqual([]);
+  });
+
+  it("the re-check can't reach Stripe: the new session is expired and the attempt is unavailable", async () => {
+    let lists = 0;
+    s.afterSubscriptionsList = () => {
+      if (++lists === 1) s.delay = { "subscriptions.list": 120_000 };
+    };
+    vi.useFakeTimers();
+    const attempt = startPlanChange(ctxA, "PRO", "monthly");
+    await vi.advanceTimersByTimeAsync(STRIPE_BILLING_CALL_HARD_LIMIT_MS + 1_000);
+    expect(await attempt).toEqual({ kind: "refused", reason: "unavailable" });
+    expect(openSessions()).toEqual([]);
+    expect(events()).toContainEqual({ event: "billing_checkout_recheck_failed", orgId: "org-a" });
+  });
+
+  it("the new session can't be expired either: still no Checkout URL, and the failure is logged", async () => {
+    tab1PaysAfterTab2LooksAtSubscriptions();
+    s.onCreate = () => {
+      s.onCreate = null;
+      s.expireRefused.set(s.sessions.at(-1)!.id, "open");
+    };
+    const tab2 = await startPlanChange(ctxA, "PRO", "monthly");
+    expect(tab2.kind).toBe("portal");
+    expect(events()).toContainEqual(
+      expect.objectContaining({ event: "billing_checkout_self_expire_failed", outcome: "failed" }),
+    );
+  });
+
+  it("with nothing paid meanwhile, Tab 2 still gets its Checkout (the re-check finds nothing)", async () => {
+    const tab2 = await startPlanChange(ctxA, "PRO", "monthly");
+    expect(tab2.kind).toBe("checkout");
+    expect(usable([tab2])).toHaveLength(1);
   });
 });
 
