@@ -1,5 +1,6 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { buildSystemPrompt } from "@/server/ai/prompts/system";
+import { buildBusinessDnaPromptBlock } from "@/server/business-dna/context";
 
 /**
  * Aggregate input budget for live-voice model calls.
@@ -121,6 +122,9 @@ export function planVoiceContext(input: {
     orgInstructions: Boolean(input.prompt.org.customInstructions),
   };
 
+  // Only a profile that would actually render counts as left out: one with
+  // every field empty is "no profile" either way.
+  const hasRenderedProfile = buildBusinessDnaPromptBlock(dna) !== null;
   const systemFor = (s: typeof state) => {
     const prompt = buildSystemPrompt({
       ...input.prompt,
@@ -130,6 +134,13 @@ export function planVoiceContext(input: {
       },
       businessDna:
         s.businessDna && dna ? { ...dna, services: services.slice(0, s.services) } : null,
+      businessDnaOmitted: !hasRenderedProfile
+        ? null
+        : !s.businessDna
+          ? "profile"
+          : s.services < services.length
+            ? "services"
+            : null,
       ragContext: s.rag,
     });
     return s.summary

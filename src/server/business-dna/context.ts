@@ -149,6 +149,40 @@ function formatServices(services: BusinessDnaContextService[]): string | null {
 }
 
 /**
+ * Stands in for the Business DNA block when the org has no usable profile,
+ * so the model knows it holds no confirmed business facts instead of
+ * silently filling the gap from general knowledge.
+ */
+export const NO_BUSINESS_PROFILE_NOTE = `## No business profile
+This organization has not set up its business profile yet. You have no confirmed facts about its prices, opening hours, policies or services except what the system or a tool provides in this conversation.`;
+
+/**
+ * Stands in for the Business DNA block when the org has a profile but it was
+ * left out of this request to fit an input budget (live voice). Unlike
+ * NO_BUSINESS_PROFILE_NOTE it must not tell the model there is no profile.
+ */
+export const BUSINESS_PROFILE_OMITTED_NOTE = `## Business profile not included
+This organization has a business profile, but it was left out of this conversation turn to keep the request short. Its absence here says nothing about what the profile contains. You have no confirmed facts about the business's prices, opening hours, policies or services except what the system or a tool provides in this conversation.`;
+
+/**
+ * Follows a Business DNA block whose services list was shortened to fit an
+ * input budget, so a missing service isn't read as "not offered".
+ */
+export const BUSINESS_SERVICES_TRIMMED_NOTE = `Some services in the business profile were left out of this conversation turn to keep the request short. A service that isn't listed above may still be offered; don't say it isn't.`;
+
+/**
+ * The grounding and honest-escalation rules every channel that speaks for a
+ * business shares (typed chat, voice calls, inbox drafts). Channel-specific
+ * prompts add what only they know, such as which escalation paths exist.
+ */
+export const BUSINESS_FACT_RULES = `## Business facts
+- State facts about this business — prices, opening hours, policies, services, availability, contact details — only when the business profile or data that the system or a tool provided in this conversation supports them. Live data such as calendar availability, booking, service and CRM records is authoritative for what it covers; use it.
+- Never invent, estimate or fill in from general knowledge a price, opening hours, a policy, availability or a way to contact the business.
+- Never say that something has been done — booked, sent, saved, passed on, transferred or scheduled — unless a tool in this conversation reported that it succeeded.
+- When the information is missing, unclear or conflicting, say plainly that you can't confirm it. Then ask a clarifying question, or point to a way of reaching the business that the business profile states.
+- Never promise that someone will follow up, reply or call back unless a tool in this conversation recorded that request and reported success.`;
+
+/**
  * Renders the full, wrapped "Business profile" prompt block — only the
  * fields actually filled in (every Business DNA field is optional), wrapped
  * as untrusted, factual-reference-only data (§15.6 prompt-injection
