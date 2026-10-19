@@ -125,7 +125,15 @@
     "wrongAccount": "Väärä tili?",
     "switchAccount": "Vaihda tiliä",
     "otherAccount": "Tämä kutsu lähetettiin osoitteeseen <b>{invited}</b>, mutta olet kirjautunut osoitteella <b>{current}</b>. Kirjaudu ulos ja kirjaudu sitten sisään tai rekisteröidy kutsutulla osoitteella hyväksyäksesi kutsun.",
-    "signOutAndContinue": "Kirjaudu ulos ja jatka"
+    "signOutAndContinue": "Kirjaudu ulos ja jatka",
+    "goToDashboard": "Siirry hallintapaneeliin",
+    "errors": {
+      "invalid": "Tämä kutsu ei ole enää voimassa. Se on ehkä jo käytetty tai peruttu.",
+      "expired": "Tämä kutsu on vanhentunut. Pyydä kutsujaa lähettämään uusi kutsu.",
+      "seat_limit": "Tähän työtilaan ei voi juuri nyt lisätä jäseniä. Ota yhteyttä työtilan ylläpitäjään.",
+      "read_only": "Tähän työtilaan ei voi tällä hetkellä liittyä uusia jäseniä. Ota yhteyttä työtilan ylläpitäjään.",
+      "already_member": "Olet jo tämän työtilan jäsen."
+    }
   },
   "dashboard": {
     "title": "Työpöytä",

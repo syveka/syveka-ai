@@ -59,6 +59,12 @@ function makeTx(held: string[]) {
         await yieldNow();
         return count;
       }),
+      findFirst: vi.fn(
+        async ({ where }: { where: Row }) =>
+          s.members.find(
+            (m) => m.organizationId === where.organizationId && m.userId === where.userId,
+          ) ?? null,
+      ),
       create: vi.fn(async ({ data }: { data: Row }) => {
         const row = { id: `m-${++s.seq}`, role: "MEMBER", ...data } as (typeof s.members)[number];
         s.members.push(row);
@@ -66,6 +72,9 @@ function makeTx(held: string[]) {
       }),
     },
     invitation: {
+      findUnique: vi.fn(
+        async ({ where }: { where: Row }) => s.invitations.find((i) => i.id === where.id) ?? null,
+      ),
       update: vi.fn(async ({ where, data }: { where: Row; data: Row }) =>
         Object.assign(
           s.invitations.find((i) => i.id === where.id)!,
@@ -157,7 +166,7 @@ vi.mock("@/env", () => ({
   getAppUrlEnv: () => ({ NEXT_PUBLIC_APP_URL: "https://app.example.test" }),
 }));
 
-import { acceptInvitation, inviteMember } from "@/server/services/members";
+import { acceptInvitation, InvitationAcceptError, inviteMember } from "@/server/services/members";
 
 function invite(orgId: string, userId: string) {
   const token = `tok-${userId}`;
@@ -216,7 +225,9 @@ describe("acceptInvitation seat limit", () => {
   it("refuses a join that would exceed the plan, and changes nothing", async () => {
     seed(ORG_A, 2);
     const token = invite(ORG_A, "u1");
-    await expect(acceptInvitation(token, "u1")).rejects.toBeInstanceOf(EntitlementErrorMock);
+    await expect(acceptInvitation(token, "u1")).rejects.toEqual(
+      new InvitationAcceptError("seat_limit"),
+    );
     expect(membersOf(ORG_A)).toHaveLength(2);
     expect(s.invitations[0]!.status).toBe("PENDING");
   });
@@ -230,7 +241,8 @@ describe("acceptInvitation seat limit", () => {
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     const rejected = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
     expect(rejected).toHaveLength(1);
-    expect(rejected[0]!.reason).toBeInstanceOf(EntitlementErrorMock);
+    expect(rejected[0]!.reason).toBeInstanceOf(InvitationAcceptError);
+    expect((rejected[0]!.reason as InvitationAcceptError).code).toBe("seat_limit");
     expect(membersOf(ORG_A)).toHaveLength(2);
   });
 
@@ -243,16 +255,41 @@ describe("acceptInvitation seat limit", () => {
 
   it("refuses to join a deleted organization", async () => {
     s.orgs.set(ORG_A, { deletedAt: new Date() });
-    await expect(acceptInvitation(invite(ORG_A, "u1"), "u1")).rejects.toThrow("Invalid invitation");
+    await expect(acceptInvitation(invite(ORG_A, "u1"), "u1")).rejects.toMatchObject({
+      code: "invalid",
+    });
     expect(s.members).toHaveLength(0);
   });
 
   it("refuses to join a read-only (long past-due) workspace", async () => {
     s.ent = { maxSeats: 50, readOnly: true };
-    await expect(acceptInvitation(invite(ORG_A, "u1"), "u1")).rejects.toBeInstanceOf(
-      EntitlementErrorMock,
-    );
+    await expect(acceptInvitation(invite(ORG_A, "u1"), "u1")).rejects.toMatchObject({
+      code: "read_only",
+    });
     expect(s.members).toHaveLength(0);
+  });
+
+  it("an existing member gets already_member, not a seat or database error", async () => {
+    seed(ORG_A, 2); // full: the seat check must not be what answers
+    const token = invite(ORG_A, "u1");
+    s.members.push({ id: "m-existing", organizationId: ORG_A, userId: "u1", role: "MEMBER" });
+    await expect(acceptInvitation(token, "u1")).rejects.toMatchObject({ code: "already_member" });
+    expect(s.invitations[0]!.status).toBe("PENDING");
+  });
+
+  it("the same invitation accepted twice at once: one joins, the other is a safe invalid", async () => {
+    seed(ORG_A, 0);
+    const token = invite(ORG_A, "u1");
+    const results = await Promise.allSettled([
+      acceptInvitation(token, "u1"),
+      acceptInvitation(token, "u1"),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const rejected = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
+    expect(rejected[0]!.reason).toBeInstanceOf(InvitationAcceptError);
+    expect((rejected[0]!.reason as InvitationAcceptError).code).toBe("invalid");
+    expect(membersOf(ORG_A).filter((m) => m.userId === "u1")).toHaveLength(1);
+    expect(s.invitations[0]!.status).toBe("ACCEPTED");
   });
 });
 

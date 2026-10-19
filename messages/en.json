@@ -125,7 +125,15 @@
     "wrongAccount": "Wrong account?",
     "switchAccount": "Switch account",
     "otherAccount": "This invitation was sent to <b>{invited}</b>, but you are signed in as <b>{current}</b>. Sign out, then sign in or register with the invited address to accept it.",
-    "signOutAndContinue": "Sign out and continue"
+    "signOutAndContinue": "Sign out and continue",
+    "goToDashboard": "Go to dashboard",
+    "errors": {
+      "invalid": "This invitation is no longer valid. It may have been used or withdrawn.",
+      "expired": "This invitation has expired. Ask the person who invited you to send a new one.",
+      "seat_limit": "This workspace can't add members right now. Contact a workspace admin.",
+      "read_only": "This workspace can't accept new members at the moment. Contact a workspace admin.",
+      "already_member": "You're already a member of this workspace."
+    }
   },
   "dashboard": {
     "title": "Dashboard",

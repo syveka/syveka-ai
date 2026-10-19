@@ -257,7 +257,7 @@ describe("an invitation never bypasses the auth rate limit", () => {
 
 describe("invitation page", () => {
   const page = (locale = "en", token = INVITATION_ID) =>
-    InvitePage({ params: Promise.resolve({ locale, token }) });
+    InvitePage({ params: Promise.resolve({ locale, token }), searchParams: Promise.resolve({}) });
 
   it("signed out: sends to register in the page's locale, carrying the invitation", async () => {
     mocks.findInvitation.mockResolvedValue(pendingInvitation);
@@ -311,7 +311,10 @@ describe("accepting still requires the invited account", () => {
       expiresAt: new Date(Date.now() - 1000),
     });
 
-    await expect(acceptInvitation(INVITATION_ID, "user-1")).rejects.toThrow("Invitation expired");
+    await expect(acceptInvitation(INVITATION_ID, "user-1")).rejects.toMatchObject({
+      name: "InvitationAcceptError",
+      code: "expired",
+    });
     expect(mocks.updateInvitation).toHaveBeenCalledWith({
       where: { id: "inv-1" },
       data: { status: "EXPIRED" },
@@ -320,12 +323,17 @@ describe("accepting still requires the invited account", () => {
   });
 
   it.each([
-    ["unknown", null],
-    ["already accepted", { ...pendingInvitation, status: "ACCEPTED" }],
-  ])("an %s invitation is refused", async (_label, invitation) => {
+    ["unknown", null, "invalid"],
+    ["already accepted", { ...pendingInvitation, status: "ACCEPTED" }, "invalid"],
+    ["revoked", { ...pendingInvitation, status: "REVOKED" }, "invalid"],
+    ["already expired", { ...pendingInvitation, status: "EXPIRED" }, "expired"],
+  ])("an %s invitation is refused with a fixed code", async (_label, invitation, code) => {
     mocks.findInvitation.mockResolvedValue(invitation);
 
-    await expect(acceptInvitation(INVITATION_ID, "user-1")).rejects.toThrow("Invalid invitation");
+    await expect(acceptInvitation(INVITATION_ID, "user-1")).rejects.toMatchObject({
+      name: "InvitationAcceptError",
+      code,
+    });
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 });

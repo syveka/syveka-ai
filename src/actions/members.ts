@@ -12,6 +12,7 @@ import {
   removeMember,
   MemberError,
   InvitationAccountMismatchError,
+  InvitationAcceptError,
 } from "@/server/services/members";
 import { EntitlementError } from "@/server/services/billing/entitlements";
 import { inviteMemberSchema, changeRoleSchema } from "@/lib/validators/members";
@@ -76,18 +77,27 @@ export async function acceptInvitationAction(token: string, locale?: string): Pr
   const user = await getSessionUser();
   if (!user) throw new AuthError("Not authenticated");
   const pageLocale = normalizeLocale(locale ?? null);
+  const invitationPath = inviteContinuation(`/invite/${token}`);
+  // A token that isn't one can't have an invitation; it fails as "invalid"
+  // and lands on the dashboard instead of an invitation page.
+  const invitationPage = invitationPath
+    ? localizedPath(pageLocale, invitationPath)
+    : localizedPath(pageLocale, "/dashboard");
 
+  // Only acceptInvitation's own expected failures are turned into a page;
+  // the redirects happen outside the try so nothing here can swallow them.
+  let failure: "wrong_account" | InvitationAcceptError["code"] | null = null;
   try {
     await acceptInvitation(token, user.id);
   } catch (e) {
-    // Signed in as someone else (for example another account in the same
-    // browser): back to the invitation, which says so and offers to sign out,
-    // instead of an error page.
-    if (e instanceof InvitationAccountMismatchError) {
-      redirect(localizedPath(pageLocale, inviteContinuation(`/invite/${token}`) ?? "/dashboard"));
-    }
-    throw e;
+    if (e instanceof InvitationAccountMismatchError) failure = "wrong_account";
+    else if (e instanceof InvitationAcceptError) failure = e.code;
+    else throw e;
   }
+  // Signed in as someone else (for example another account in the same
+  // browser): back to the invitation, which says so and offers to sign out.
+  if (failure === "wrong_account") redirect(invitationPage);
+  if (failure) redirect(invitationPath ? `${invitationPage}?error=${failure}` : invitationPage);
 
   const supabase = await createSupabaseServer();
   await supabase.auth.refreshSession();
