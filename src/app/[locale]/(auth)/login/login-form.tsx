@@ -10,7 +10,14 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "@/i18n/routing";
 
-export function LoginForm() {
+export function LoginForm({
+  next,
+  linkFailed = false,
+}: {
+  next?: string | null;
+  /** Arrived from an email link that couldn't be completed (/api/auth/callback). */
+  linkFailed?: boolean;
+}) {
   const t = useTranslations("auth");
   const tc = useTranslations("common");
   const locale = useLocale();
@@ -24,6 +31,12 @@ export function LoginForm() {
       <CardContent>
         <form action={action} className="space-y-4">
           <input type="hidden" name="locale" value={locale} />
+          {next ? <input type="hidden" name="next" value={next} /> : null}
+          {linkFailed ? (
+            <p role="status" className="text-sm text-muted-foreground">
+              {t("callbackFailed")}
+            </p>
+          ) : null}
           <div className="space-y-2">
             <Label htmlFor="email">{t("email")}</Label>
             <Input id="email" name="email" type="email" autoComplete="email" required />
@@ -53,7 +66,10 @@ export function LoginForm() {
           </Button>
           <p className="text-center text-sm text-muted-foreground">
             {t("noAccount")}{" "}
-            <Link href="/register" className="text-primary hover:underline">
+            <Link
+              href={next ? `/register?next=${encodeURIComponent(next)}` : "/register"}
+              className="text-primary hover:underline"
+            >
               {t("register")}
             </Link>
           </p>

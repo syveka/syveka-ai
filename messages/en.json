@@ -103,6 +103,7 @@
     "details": "Changes"
   },
   "auth": {
+    "callbackFailed": "This link could not be completed in this browser. Log in with your email and password to continue.",
     "login": "Log in",
     "register": "Create account",
     "email": "Email",
@@ -115,6 +116,16 @@
     "verifyEmailSent": "Check your inbox — we sent you a verification link.",
     "showPassword": "Show password",
     "hidePassword": "Hide password"
+  },
+  "invite": {
+    "invalid": "This invitation is invalid or has expired.",
+    "title": "Join {organization}",
+    "invitedAs": "You were invited as <b>{role}</b> ({email}).",
+    "accept": "Accept invitation",
+    "wrongAccount": "Wrong account?",
+    "switchAccount": "Switch account",
+    "otherAccount": "This invitation was sent to <b>{invited}</b>, but you are signed in as <b>{current}</b>. Sign out, then sign in or register with the invited address to accept it.",
+    "signOutAndContinue": "Sign out and continue"
   },
   "dashboard": {
     "title": "Dashboard",
