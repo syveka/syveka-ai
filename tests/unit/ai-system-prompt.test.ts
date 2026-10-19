@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { buildSystemPrompt } from "@/server/ai/prompts/system";
 import {
   BUSINESS_FACT_RULES,
+  BUSINESS_PROFILE_OMITTED_NOTE,
+  BUSINESS_SERVICES_TRIMMED_NOTE,
   NO_BUSINESS_PROFILE_NOTE,
   type BusinessDnaContext,
 } from "@/server/business-dna/context";
@@ -285,5 +287,49 @@ describe("buildSystemPrompt — business fact grounding", () => {
   it("applies the same rules in a live voice conversation", () => {
     const prompt = buildSystemPrompt({ ...baseParams(), responseMode: "voice" });
     expect(prompt).toContain(BUSINESS_FACT_RULES);
+  });
+});
+
+describe("buildSystemPrompt — Business DNA left out to fit a budget", () => {
+  it("a profile left out says so, never that the business has no profile", () => {
+    const prompt = buildSystemPrompt({
+      ...baseParams(),
+      responseMode: "voice",
+      businessDna: null,
+      businessDnaOmitted: "profile",
+    });
+    expect(prompt).toContain(BUSINESS_PROFILE_OMITTED_NOTE);
+    expect(prompt).not.toContain(NO_BUSINESS_PROFILE_NOTE);
+    expect(prompt).toContain(BUSINESS_FACT_RULES);
+  });
+
+  it("without the flag, a missing profile is still 'no profile'", () => {
+    const prompt = buildSystemPrompt({ ...baseParams(), businessDna: null });
+    expect(prompt).toContain(NO_BUSINESS_PROFILE_NOTE);
+    expect(prompt).not.toContain(BUSINESS_PROFILE_OMITTED_NOTE);
+  });
+
+  it("a rendered profile always wins over the omission note", () => {
+    const prompt = buildSystemPrompt({
+      ...baseParams(),
+      businessDna: dna({ displayName: "Acme" }),
+      businessDnaOmitted: "profile",
+    });
+    expect(prompt).toContain("<business_profile>");
+    expect(prompt).not.toContain(BUSINESS_PROFILE_OMITTED_NOTE);
+    expect(prompt).not.toContain(NO_BUSINESS_PROFILE_NOTE);
+  });
+
+  it("trimmed services keep the profile and add the trimmed note right after it", () => {
+    const prompt = buildSystemPrompt({
+      ...baseParams(),
+      businessDna: dna({ displayName: "Acme" }),
+      businessDnaOmitted: "services",
+    });
+    expect(prompt).toContain(`</business_profile>
+${BUSINESS_SERVICES_TRIMMED_NOTE}`);
+    expect(
+      buildSystemPrompt({ ...baseParams(), businessDna: dna({ displayName: "Acme" }) }),
+    ).not.toContain(BUSINESS_SERVICES_TRIMMED_NOTE);
   });
 });

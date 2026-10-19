@@ -2,6 +2,8 @@ import "server-only";
 
 import {
   BUSINESS_FACT_RULES,
+  BUSINESS_PROFILE_OMITTED_NOTE,
+  BUSINESS_SERVICES_TRIMMED_NOTE,
   buildBusinessDnaPromptBlock,
   NO_BUSINESS_PROFILE_NOTE,
   type BusinessDnaContext,
@@ -74,6 +76,12 @@ export function buildSystemPrompt(params: {
    * proposeBusinessDnaUpdate tool is available): the still-empty important fields.
    */
   businessDnaSetup?: { missing: string[] } | null;
+  /**
+   * Set by the live-voice input budget when it left out an existing Business
+   * DNA ("profile") or some of its services ("services") to fit, so the
+   * prompt doesn't claim the business has no profile or doesn't offer them.
+   */
+  businessDnaOmitted?: "profile" | "services" | null;
   responseMode?: "text" | "voice";
   /**
    * Live voice: the language of this turn's transcript, when it is clear
@@ -98,7 +106,20 @@ export function buildSystemPrompt(params: {
     );
   }
 
-  parts.push(buildBusinessDnaPromptBlock(params.businessDna) ?? NO_BUSINESS_PROFILE_NOTE);
+  const businessDnaBlock = buildBusinessDnaPromptBlock(params.businessDna);
+  if (businessDnaBlock) {
+    parts.push(
+      params.businessDnaOmitted === "services"
+        ? `${businessDnaBlock}\n${BUSINESS_SERVICES_TRIMMED_NOTE}`
+        : businessDnaBlock,
+    );
+  } else {
+    parts.push(
+      params.businessDnaOmitted === "profile"
+        ? BUSINESS_PROFILE_OMITTED_NOTE
+        : NO_BUSINESS_PROFILE_NOTE,
+    );
+  }
 
   if (params.hasTools) {
     parts.push(
