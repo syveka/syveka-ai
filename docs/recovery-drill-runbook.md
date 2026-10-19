@@ -14,7 +14,9 @@ is not used for drills.
 The database itself has no outbound path today: the owner-run read-only preflight
 (2026-10-04 18:18 UTC) found `pg_cron`, `pg_net`, `http`, `dblink`, `postgres_fdw` and `wrappers`
 absent, `supabase_functions.hooks` missing, and zero outbound triggers, foreign servers and
-subscriptions; Vault had 0 secrets. Re-run that preflight before every drill. The remaining risk
+subscriptions; its one function-pattern match, Supabase's permission-only
+`extensions.grant_pg_net_access()` helper, is explained in `docs/release-runbook.md`; Vault had 0
+secrets. Re-run that preflight before every drill. The remaining risk
 is **the data**: a restored copy holds working credentials and scheduled work that any app or
 script pointed at it could act on.
 
@@ -42,8 +44,11 @@ receives them, which is a second line of defense, not the first.
 
 1. **Approve and prepare.** Owner approves the run; create an empty disposable Supabase project
    (same Postgres major version) with no Auth SMTP, no Edge Functions, no integrations.
-2. **Preflight.** Run the read-only outbound preflight (see `docs/release-runbook.md`) on
-   production. Stop if any outbound-capable extension, hook, job or subscription appears.
+2. **Preflight.** Run the read-only outbound preflight (`docs/release-runbook.md`, "Read-only
+   outbound preflight (Supabase SQL Editor)") on production, in the SQL Editor. Stop if its
+   session rows aren't read-only, if any outbound-capable extension, hook, job or subscription
+   appears, or if a function match is anything other than the known
+   `extensions.grant_pg_net_access()` result recorded there.
 3. **Logical dump.** From an approved operator session with the Supabase CLI:
    `supabase db dump` for roles, schema and data, written only to an approved encrypted
    destination. Record UTC time, size and SHA-256.

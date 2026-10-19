@@ -311,6 +311,280 @@ psql "$PROD_DIRECT_URL" -v ON_ERROR_STOP=1 -f prisma/sql/006_legacy_baseline_pre
 npx prisma migrate status
 ```
 
+### Read-only outbound preflight (Supabase SQL Editor)
+
+Used by `docs/recovery-drill-runbook.md` (step 2) and `docs/recovery-drill-checklist.md` (section 3) before every recovery drill. It reports whether the database has any outbound-capable
+extension, scheduled job, HTTP queue, webhook hook, trigger, foreign server or subscription. It
+reads catalogs and counts only.
+
+**Where and how to run it.** In the Supabase dashboard **SQL Editor**, as `postgres`:
+
+- Paste the whole script, with nothing selected, and run it once. The SQL Editor sends it as one
+  query string, which PostgreSQL runs as a single transaction, so `set transaction read only`
+  and the two `set local` timeouts apply to every statement in it.
+- The results panel shows one grid: `section`, `item`, `result`. The three `SET` lines produce no
+  grid.
+- **Trust the output only if the first rows show** `transaction_read_only = on`,
+  `statement_timeout = 15s` and `lock_timeout = 2s`. Otherwise stop: the settings weren't applied.
+- **Don't run it statement by statement** (for example `psql -f` with autocommit, or a selected
+  part of the script). Each statement is then its own transaction, `SET TRANSACTION` and
+  `SET LOCAL` only warn, and the session row shows `transaction_read_only = off`, which the rule
+  above treats as a stop.
+
+**What it does:**
+
+- It creates no objects and writes nothing; its settings last only for that transaction.
+- It prints counts and statuses only: never job commands, function bodies, URLs, headers or
+  customer rows.
+- Every `result` is one of:
+  - a number, including `0`: counted;
+  - `MISSING`: the object is absent;
+  - `NO PERMISSION (schema)` or `NO PERMISSION (table)`: present but not readable by this role;
+  - a count marked `(RLS-FILTERED)`, where row-level security may hide rows.
+
+```sql
+-- Restore-drill preflight for the Supabase SQL Editor (read-only).
+-- Run the whole script at once. Output: one grid of (section, item, result).
+-- Prints counts and statuses only: never job commands, function bodies, URLs,
+-- headers, request or response bodies, server options, connection strings or
+-- customer rows. Creates no objects; the settings below last only for this
+-- transaction.
+-- result values: a number (including 0) = counted; MISSING = object absent;
+-- NO PERMISSION (schema|table) = present but not readable by this role;
+-- "(RLS-FILTERED)" = row-level security may hide rows, so the count may be low.
+-- If the session rows don't show transaction_read_only = on and the timeouts
+-- below, the settings weren't applied: stop and report.
+set transaction read only;
+set local statement_timeout = '15s';
+set local lock_timeout = '2s';
+
+with
+me as (
+  select r.rolsuper, r.rolbypassrls from pg_roles r where r.rolname = current_user
+),
+obj(ord, name, sch, rel) as (
+  values (30, 'cron.job', 'cron', 'job'),
+         (31, 'cron.job_run_details', 'cron', 'job_run_details'),
+         (32, 'net.http_request_queue', 'net', 'http_request_queue'),
+         (33, 'net._http_response', 'net', '_http_response'),
+         (34, 'supabase_functions.hooks', 'supabase_functions', 'hooks')
+),
+o as (
+  -- Catalog lookup: unlike to_regclass, it doesn't fail without schema USAGE.
+  select obj.ord, obj.name,
+         case when c.oid is null then 'MISSING'
+              when not has_schema_privilege(n.oid, 'USAGE') then 'NO PERMISSION (schema)'
+              when not has_table_privilege(c.oid, 'SELECT') then 'NO PERMISSION (table)'
+              else 'readable' end as access,
+         case when c.oid is null then null
+              when not c.relrowsecurity then 'all rows'
+              when me.rolsuper or me.rolbypassrls then 'all rows (bypasses RLS)'
+              when pg_has_role(current_user, c.relowner, 'USAGE') and not c.relforcerowsecurity
+                then 'all rows (owner)'
+              else 'RLS-FILTERED' end as visibility
+  from obj
+  cross join me
+  left join pg_namespace n on n.nspname = obj.sch
+  left join pg_class c on c.relnamespace = n.oid and c.relname = obj.rel
+),
+metric(ord, obj, item, q) as (
+  values
+    (40, 'cron.job', 'cron_jobs_visible', 'select count(*) as n from cron.job'),
+    (41, 'cron.job', 'cron_jobs_active', 'select count(*) as n from cron.job where active'),
+    (42, 'cron.job', 'active_jobs_with_direct_http_call',
+     $q$select count(*) as n from cron.job where active and command ~* '(net\.http_|http_(get|post|put|patch|delete|request)\s*\(|dblink)'$q$),
+    (43, 'cron.job_run_details', 'cron_runs_last_7_days',
+     $q$select count(*) as n from cron.job_run_details where start_time > now() - interval '7 days'$q$),
+    (44, 'cron.job_run_details', 'cron_runs_failed_last_7_days',
+     $q$select count(*) as n from cron.job_run_details where start_time > now() - interval '7 days' and status = 'failed'$q$),
+    (50, 'net.http_request_queue', 'pg_net_requests_pending', 'select count(*) as n from net.http_request_queue'),
+    (51, 'net._http_response', 'pg_net_responses_retained', 'select count(*) as n from net._http_response'),
+    (52, 'net._http_response', 'pg_net_responses_last_24h',
+     $q$select count(*) as n from net._http_response where created > now() - interval '24 hours'$q$),
+    (60, 'supabase_functions.hooks', 'webhook_hook_rows', 'select count(*) as n from supabase_functions.hooks')
+),
+http_fn as (
+  -- Bodies are only pattern-matched here; they are never selected for output.
+  select p.oid, n.nspname, p.proname,
+         p.prosrc ~* '(net\.http_|http_(get|post|put|patch|delete|request)\s*\(|dblink)' as calls_out
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+),
+result(ord, section, item, result) as (
+  select 1, 'session', 'transaction_read_only', current_setting('transaction_read_only')
+  union all select 2, 'session', 'statement_timeout', current_setting('statement_timeout')
+  union all select 3, 'session', 'lock_timeout', current_setting('lock_timeout')
+  union all select 4, 'session', 'checked_as', current_user::text
+  union all select 5, 'session', 'checked_at_utc', to_char(now() at time zone 'utc', 'YYYY-MM-DD HH24:MI')
+
+  union all
+  select x.ord, 'extension', x.name,
+         case when e.extname is null then 'not installed' else 'INSTALLED' end
+  from (values (10, 'pg_cron'), (11, 'pg_net'), (12, 'http'), (13, 'dblink'),
+               (14, 'postgres_fdw'), (15, 'wrappers')) as x(ord, name)
+  left join pg_extension e on e.extname = x.name
+  union all
+  select 16, 'extension', 'extensions_installed_total', count(*)::text from pg_extension
+
+  union all
+  select o.ord, 'object', o.name,
+         case when o.access = 'readable' then 'readable, ' || o.visibility else o.access end
+  from o
+
+  union all
+  -- query_to_xml runs only in the 'readable' branch, so a missing or
+  -- unreadable table yields its status instead of an error.
+  select m.ord, 'count', m.item,
+         case when o.access <> 'readable' then o.access
+              else (xpath('/row/n/text()', query_to_xml(m.q, false, true, '')))[1]::text
+                   || case when o.visibility = 'RLS-FILTERED' then ' (RLS-FILTERED)' else '' end
+         end
+  from metric m
+  join o on o.name = m.obj
+
+  union all
+  select 70, 'count', 'outbound_triggers', count(*)::text
+  from pg_trigger t join http_fn f on f.oid = t.tgfoid
+  where not t.tgisinternal
+    and ((f.nspname = 'supabase_functions' and f.proname = 'http_request') or f.calls_out)
+  union all
+  select 71, 'count', 'outbound_triggers_enabled', count(*)::text
+  from pg_trigger t join http_fn f on f.oid = t.tgfoid
+  where not t.tgisinternal and t.tgenabled <> 'D'
+    and ((f.nspname = 'supabase_functions' and f.proname = 'http_request') or f.calls_out)
+  union all
+  select 72, 'count', 'other_functions_with_direct_http_call', count(*)::text
+  from http_fn f
+  where f.calls_out
+    and f.nspname not in ('pg_catalog', 'information_schema', 'net', 'cron', 'supabase_functions')
+    and not exists (select 1 from pg_depend d
+                    where d.classid = 'pg_proc'::regclass and d.objid = f.oid and d.deptype = 'e')
+
+  union all select 80, 'count', 'foreign_data_wrappers', (select count(*) from pg_foreign_data_wrapper)::text
+  union all select 81, 'count', 'foreign_servers', (select count(*) from pg_foreign_server)::text
+  union all select 82, 'count', 'foreign_tables', (select count(*) from pg_foreign_table)::text
+  union all
+  select 83, 'count', 'subscriptions',
+         case when has_column_privilege('pg_catalog.pg_subscription', 'subenabled', 'SELECT')
+              then (xpath('/row/n/text()', query_to_xml('select count(*) as n from pg_catalog.pg_subscription', false, true, '')))[1]::text
+              else 'NO PERMISSION (table)' end
+  union all
+  select 84, 'count', 'subscriptions_enabled',
+         case when has_column_privilege('pg_catalog.pg_subscription', 'subenabled', 'SELECT')
+              then (xpath('/row/n/text()', query_to_xml('select count(*) as n from pg_catalog.pg_subscription where subenabled', false, true, '')))[1]::text
+              else 'NO PERMISSION (table)' end
+)
+select section, item, result
+from result
+order by ord;
+```
+
+**A clean result:**
+
+- all six extensions `not installed`;
+- all five objects `MISSING`, so every count that depends on them is `MISSING` too;
+- `outbound_triggers`, `outbound_triggers_enabled`, `foreign_data_wrappers`, `foreign_servers`,
+  `foreign_tables`, `subscriptions` and `subscriptions_enabled` all `0`;
+- `other_functions_with_direct_http_call` `0`, **or** `1` when the identification query below
+  shows that the only match is Supabase's own `extensions.grant_pg_net_access()` helper (see
+  "Known result" below);
+- no `NO PERMISSION` or `RLS-FILTERED`.
+
+Anything else is an outbound-capable item: stop the drill and report it.
+
+**What it can't establish:**
+
+- **A backup's state:** it shows the database at that moment, not a historical snapshot.
+- **Queued `pg_net` requests in a physical backup.** The `pg_net` request queue is an unlogged
+  table, "not preserved during a crash or unclean shutdown" per the `pg_net` docs. Supabase doesn't
+  document whether a physical backup carries queued rows, so a restored copy may hold requests
+  that `pg_net_requests_pending` never showed here. Treat them as possible.
+- **Indirect outbound calls**, through dynamic SQL or helpers its text match doesn't catch.
+- **Restorability:** anything about a backup's integrity or whether it can be restored.
+
+**Identifying a matching function.** Run this, the same way, if
+`other_functions_with_direct_http_call` isn't `0`. It returns names, language, references, match
+statistics and an MD5 of the body. It never returns the body itself, and it calls nothing.
+
+```sql
+-- Identify the function(s) counted as other_functions_with_direct_http_call.
+-- Read-only. Returns names, language, references and match statistics only:
+-- never the function body, URLs, credentials or customer data. Calls nothing.
+-- body_md5 lets the body be compared with Supabase's published definitions
+-- without revealing it.
+set transaction read only;
+set local statement_timeout = '15s';
+set local lock_timeout = '2s';
+
+with f as (
+  -- Same filter as the preflight's other_functions_with_direct_http_call.
+  select p.oid, n.nspname, p.proname, l.lanname, p.prorettype, p.proowner, p.prosecdef, p.prosrc
+  from pg_proc p
+  join pg_namespace n on n.oid = p.pronamespace
+  join pg_language l on l.oid = p.prolang
+  where n.nspname not in ('pg_catalog', 'information_schema', 'net', 'cron', 'supabase_functions')
+    and not exists (select 1 from pg_depend d
+                    where d.classid = 'pg_proc'::regclass and d.objid = p.oid and d.deptype = 'e')
+    and p.prosrc ~* '(net\.http_|http_(get|post|put|patch|delete|request)\s*\(|dblink)'
+)
+select
+  current_setting('transaction_read_only') as read_only,
+  f.nspname as schema,
+  f.proname as function_name,
+  f.lanname as language,
+  format_type(f.prorettype, null) as returns,
+  pg_get_userbyid(f.proowner) as owner,
+  f.prosecdef as security_definer,
+  (select count(*) from pg_trigger t
+    where t.tgfoid = f.oid and not t.tgisinternal) as table_triggers,
+  coalesce((select string_agg(e.evtname || ' on ' || e.evtevent
+                              || case e.evtenabled when 'D' then ' (disabled)' else ' (enabled)' end,
+                              '; ' order by e.evtname)
+            from pg_event_trigger e where e.evtfoid = f.oid), 'none') as event_triggers,
+  (select count(*) from regexp_matches(f.prosrc, 'net\.http_', 'gi')) as net_http_mentions,
+  (select count(*) from regexp_matches(f.prosrc, 'function\s+net\.http_', 'gi')) as net_http_in_grant_alter_ddl,
+  (select count(*) from regexp_matches(f.prosrc, '(^|[^a-z_.])http_(get|post|put|patch|delete|request)\s*\(', 'gi'))
+    as unqualified_http_calls,
+  (select count(*) from regexp_matches(f.prosrc, 'dblink', 'gi')) as dblink_mentions,
+  (select count(*) from regexp_matches(f.prosrc, '\mexecute\M(?!\s+on\M)', 'gi')) as dynamic_execute_statements,
+  md5(f.prosrc) as body_md5
+from f
+order by schema, function_name;
+```
+
+**Known result: `extensions.grant_pg_net_access()`.** The owner-run production preflight
+(2026-10-04 18:18 UTC) reported `other_functions_with_direct_http_call = 1`; every other item was
+clean. The identification query showed:
+
+- `extensions.grant_pg_net_access()`, `plpgsql`, returns `event_trigger`, owner `supabase_admin`;
+- no table triggers; one event trigger, `issue_pg_net_access`;
+- 8 `net.http_*` mentions, all 8 inside permission statements; no direct HTTP calls, `dblink` or
+  dynamic `EXECUTE`;
+- `body_md5 = 2ee4e6920eeba3068bcfa838105352e2`.
+
+That MD5 is an exact match for a Supabase-authored definition in `supabase/postgres` (for example
+[`88de835` schema-15.sql L271](https://github.com/supabase/postgres/blob/88de835f0eb1a8a7299fa2696026769fe27b9943/migrations/schema-15.sql#L271)).
+That definition only creates the `supabase_functions_admin` role if missing and grants or revokes
+usage on `net.http_get` and `net.http_post` when `pg_net` is created; it makes no HTTP call. So
+this finding is **explained, not outbound code**. Treat it as clean only when the identification
+query again returns exactly this one function with this `body_md5`. A different function, a
+different hash, or any direct call is a stop. Whether this exact definition is a Supabase hosted
+release was not established.
+
+**Tested** only on throwaway local Postgres containers, never against staging or production:
+
+- **2026-10-04 (Postgres 17, no network):** sent as one query string, as the SQL Editor does.
+  Every absent object reported `MISSING`; as a non-superuser it distinguished schema denial,
+  table denial, `0`, `RLS-FILTERED` and `MISSING`; settings reverted after the run and catalog
+  object counts were unchanged; a write was rejected; no planted URL, command or function text
+  appeared in the output.
+- **2026-10-18 (pgvector Postgres 15, this repository's migrations applied):** as one query
+  string, the session rows showed `on`, `15s` and `2s`, every absent object reported `MISSING`,
+  every count was `0`, and the identification query returned no rows. A write after
+  `set transaction read only` in one query string was rejected. Run statement by statement
+  (`psql -f`), the session row showed `transaction_read_only = off`, so the stop rule above
+  catches it.
+
 ## Production deployment order
 
 1. Freeze schema-changing writes and notify the release owner.
