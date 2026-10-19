@@ -75,4 +75,40 @@ describe("Supabase PKCE callback", () => {
       "https://staging.example.test/fi/login?error=auth_callback_failed",
     );
   });
+
+  describe("a failed link for an invitation keeps the invitation", () => {
+    // The verification link opened in another browser than the one that
+    // registered (a phone's mail app) has no PKCE verifier there.
+    const INVITATION_ID = "3f0c2b9e-8a41-4d2e-9b7c-1e5f6a7b8c9d";
+    const KEPT = `next=${encodeURIComponent(`/invite/${INVITATION_ID}`)}`;
+
+    it("exchange fails: login in the link's locale, carrying the invitation", async () => {
+      mocks.exchangeCodeForSession.mockResolvedValue({ error: new Error("no code verifier") });
+      const next = encodeURIComponent(`/ar/invite/${INVITATION_ID}`);
+      const response = await GET(request(`?code=code&next=${next}`));
+      expect(response.headers.get("location")).toBe(
+        `https://staging.example.test/ar/login?error=auth_callback_failed&${KEPT}`,
+      );
+    });
+
+    it("code missing: the same", async () => {
+      const next = encodeURIComponent(`/fi/invite/${INVITATION_ID}`);
+      const response = await GET(request(`?next=${next}`));
+      expect(mocks.exchangeCodeForSession).not.toHaveBeenCalled();
+      expect(response.headers.get("location")).toBe(
+        `https://staging.example.test/fi/login?error=auth_callback_failed&${KEPT}`,
+      );
+    });
+
+    it.each([
+      `/en/invite/${INVITATION_ID}/extra`,
+      "/en/invite/not-a-token",
+      "/en/settings/members",
+      `//evil.example/en/invite/${INVITATION_ID}`,
+    ])("anything else (%s) is not carried", async (target) => {
+      mocks.exchangeCodeForSession.mockResolvedValue({ error: new Error("expired") });
+      const response = await GET(request(`?code=code&next=${encodeURIComponent(target)}`));
+      expect(response.headers.get("location")).toMatch(/\/login\?error=auth_callback_failed$/);
+    });
+  });
 });
