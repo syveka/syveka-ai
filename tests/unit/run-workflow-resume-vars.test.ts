@@ -113,7 +113,12 @@ vi.mock("../../emails/workflow-notification", () => ({
   WorkflowNotificationEmail: (props: unknown) => props,
 }));
 
+// Loaded up front, as in the sibling run-workflow suites: a first-time
+// concurrent dynamic import of a mocked module can resolve the real one. The
+// Business DNA context is imported by the route once ai.generate is grounded
+// (#330).
 import "@/server/jobs/organization-guard";
+import "@/server/business-dna/context";
 import { POST } from "@/app/api/v1/jobs/run-workflow/route";
 
 function deliver(body: Record<string, unknown>) {
@@ -209,5 +214,59 @@ describe("wait.duration resume keeps ai.generate output variables", () => {
 
     expect(fx.sendEmail).toHaveBeenCalledTimes(1);
     expect(state.runs[0]).toMatchObject({ status: "SUCCEEDED" });
+  });
+
+  it("an output variable named like another step's id keeps the generated text, as live", async () => {
+    // A live run sets only output variables, so {{vars.c1}} is the generated
+    // text. The condition step c1 records `true` as its result; on resume that
+    // must not replace the output variable of the same name.
+    state.workflow!.steps = [
+      { id: "a1", type: "ai.generate", prompt: "Welcome {{trigger.firstName}}", outputVar: "c1" },
+      { id: "c1", type: "condition", field: "trigger.firstName", comparator: "eq", value: "Maija" },
+      { id: "w1", type: "wait.duration", seconds: 3600 },
+      {
+        id: "e1",
+        type: "email.send",
+        to: "{{trigger.email}}",
+        subject: "Welcome",
+        body: "{{vars.c1}}",
+      },
+    ];
+
+    await runThroughWait();
+
+    expect(fx.sendEmail).toHaveBeenCalledTimes(1);
+    expect(fx.sendEmail.mock.calls[0]![0]).toMatchObject({
+      react: { body: "Thanks for your interest!" },
+    });
+  });
+
+  it("two ai.generate steps sharing an output variable: the later one wins after the wait, as live", async () => {
+    fx.anthropic
+      .mockResolvedValueOnce({
+        content: [{ type: "text", text: "first" }],
+        usage: { output_tokens: 1 },
+      })
+      .mockResolvedValueOnce({
+        content: [{ type: "text", text: "second" }],
+        usage: { output_tokens: 1 },
+      });
+    state.workflow!.steps = [
+      { id: "a1", type: "ai.generate", prompt: "One", outputVar: "text" },
+      { id: "a2", type: "ai.generate", prompt: "Two", outputVar: "text" },
+      { id: "w1", type: "wait.duration", seconds: 3600 },
+      {
+        id: "e1",
+        type: "email.send",
+        to: "{{trigger.email}}",
+        subject: "Welcome",
+        body: "{{vars.text}}",
+      },
+    ];
+
+    await runThroughWait();
+
+    expect(fx.anthropic).toHaveBeenCalledTimes(2);
+    expect(fx.sendEmail.mock.calls[0]![0]).toMatchObject({ react: { body: "second" } });
   });
 });

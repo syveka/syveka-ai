@@ -413,25 +413,22 @@ export async function POST(request: Request): Promise<NextResponse> {
   const results: StepResult[] = (run.stepResults as StepResult[]) ?? [];
   // A resume rebuilds the variables from the persisted results. An
   // ai.generate step's text is used as {{vars.<outputVar>}}, so it is restored
-  // under that name too, not only under its step id.
+  // under that name too, not only under its step id. A live run only ever sets
+  // outputVar names, so those win over a step id of the same name, and a later
+  // ai.generate overwrites an earlier one with the same outputVar, as live.
   const outputVarByStepId = new Map(
     steps.flatMap((s) => (s.type === "ai.generate" ? [[s.id, s.outputVar] as const] : [])),
   );
+  const okResults = results.filter((r) => r.status === "ok" && r.output !== undefined);
   const ctx: Ctx = {
     trigger: triggerData,
-    vars: Object.fromEntries(
-      results
-        .filter((r) => r.status === "ok" && r.output !== undefined)
-        .flatMap((r) => {
-          const outputVar = outputVarByStepId.get(r.stepId);
-          return outputVar
-            ? [
-                [r.stepId, r.output],
-                [outputVar, r.output],
-              ]
-            : [[r.stepId, r.output]];
-        }),
-    ),
+    vars: Object.fromEntries([
+      ...okResults.map((r) => [r.stepId, r.output] as const),
+      ...okResults.flatMap((r) => {
+        const outputVar = outputVarByStepId.get(r.stepId);
+        return outputVar ? [[outputVar, r.output] as const] : [];
+      }),
+    ]),
   };
 
   const persist = (status?: "SUCCEEDED" | "FAILED" | "WAITING", error?: string) =>
