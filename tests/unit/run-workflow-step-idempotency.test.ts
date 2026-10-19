@@ -277,6 +277,8 @@ vi.mock("@/server/db/tenant", () => ({
       $transaction: async (fn: (tx: unknown) => unknown) => fn(db),
     };
   },
+  // ai.generate reads Business DNA; this org has none.
+  tenantDb: () => ({ businessDNA: { findFirst: async () => null } }),
 }));
 // The organization is active (soft-deleted organizations are covered by
 // run-workflow-deactivation.test.ts).
@@ -310,6 +312,7 @@ vi.mock("../../emails/workflow-notification", () => ({
   WorkflowNotificationEmail: (props: unknown) => props,
 }));
 
+import "@/server/business-dna/context";
 import { POST } from "@/app/api/v1/jobs/run-workflow/route";
 
 const ORG = "11111111-1111-4111-8111-111111111111";

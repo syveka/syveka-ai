@@ -121,6 +121,8 @@ vi.mock("@/server/db/tenant", () => ({
   get unscopedPrisma() {
     return db;
   },
+  // ai.generate reads Business DNA; this org has none.
+  tenantDb: () => ({ businessDNA: { findFirst: async () => null } }),
 }));
 vi.mock("@/server/jobs/queue", () => ({ enqueue: fx.enqueue }));
 vi.mock("@/server/integrations/anthropic", () => ({
@@ -143,6 +145,7 @@ vi.mock("../../emails/workflow-notification", () => ({ WorkflowNotificationEmail
 // Loaded up front, as in jobs-organization-guard.test.ts: a first-time
 // concurrent dynamic import of a mocked module can resolve the real one.
 import "@/server/jobs/organization-guard";
+import "@/server/business-dna/context";
 import { POST } from "@/app/api/v1/jobs/run-workflow/route";
 
 // wait -> email.send -> ai.generate: the resume after the wait runs the last two.

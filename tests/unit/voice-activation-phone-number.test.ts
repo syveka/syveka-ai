@@ -43,6 +43,8 @@ vi.mock("@/server/ai/tools", () => ({
 vi.mock("@/server/business-dna/context", () => ({
   getBusinessDnaContext: mocks.getBusinessDnaContext,
   buildBusinessDnaPromptBlock: vi.fn(() => null),
+  NO_BUSINESS_PROFILE_NOTE: "No business profile.",
+  BUSINESS_FACT_RULES: "Business facts.",
 }));
 vi.mock("@/server/services/audit", () => ({ audit: mocks.auditMock }));
 vi.mock("@/env", () => ({

@@ -249,6 +249,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     { recordUsage, getEntitlements },
     { isOrganizationActive, ORGANIZATION_INACTIVE },
     { assertAiQuotaAvailable, AiSpendError },
+    { getBusinessDnaContext },
+    { buildWorkflowSystemPrompt },
   ] = await Promise.all([
     import("@/server/jobs/verify"),
     import("@/server/db/tenant"),
@@ -259,6 +261,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/services/billing/entitlements"),
     import("@/server/jobs/organization-guard"),
     import("@/server/services/ai-spend"),
+    import("@/server/business-dna/context"),
+    import("@/server/ai/prompts/workflow"),
   ]);
 
   const rawBody = await verifyJobRequest(request);
@@ -495,11 +499,19 @@ export async function POST(request: Request): Promise<NextResponse> {
               }
               throw quotaErr;
             }
+            // The workflow's own organization (loaded above for this orgId),
+            // never anything from the trigger data. Read per claimed step, so
+            // a later step or a retry sees the profile as it is then.
+            const businessDna = await getBusinessDnaContext(workflow.organizationId);
             const { model, maxTokens } = routeModel("utility");
             const res = await anthropic.messages.create(
               {
                 model,
                 max_tokens: maxTokens,
+                system: buildWorkflowSystemPrompt({
+                  businessDna,
+                  triggerType: parsed.data.triggerType,
+                }),
                 messages: [{ role: "user", content: interpolate(step.prompt, ctx) }],
               },
               // Stable across retries of this exact claim (see claimStep) -

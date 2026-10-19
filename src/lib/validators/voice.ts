@@ -39,6 +39,17 @@ export const voiceAssistantSchema = z.object({
 export type VoiceAssistantInput = z.infer<typeof voiceAssistantSchema>;
 
 /**
+ * The canonical E.164 number given to Vapi's transferCall tool for a stored transfer
+ * number, or null when none is stored or it isn't valid. Existing rows predate strict
+ * validation and may use the UI's former human-friendly formatting. Null means the call
+ * has no transfer tool, so the assistant must not offer a transfer.
+ */
+export function transferCallNumber(stored: string | null | undefined): string | null {
+  const number = stored?.replace(/[\s().-]/g, "");
+  return number && /^\+[1-9]\d{1,14}$/.test(number) ? number : null;
+}
+
+/**
  * The tools a stored assistant may actually run: what is offered to Vapi and what the
  * webhook will execute. Assistants saved before a tool was removed from VOICE_TOOL_NAMES
  * can still list it in their stored enabledTools (or have useKnowledgeBase set); it is
