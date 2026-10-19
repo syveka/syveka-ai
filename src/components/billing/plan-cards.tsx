@@ -4,10 +4,10 @@ import { useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import type { Plan } from "@/generated/prisma/client/client";
 import { startCheckoutAction } from "@/actions/billing";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatCount, PLAN_NAMES } from "./plan-display";
+import { PendingSubmitButton } from "./pending-submit-button";
 import {
   displayedMonthlyPriceEur,
   PLAN_CARD_EXTRAS,
@@ -118,14 +118,13 @@ export function PlanCards({ currentPlan }: { currentPlan: Plan }) {
                   ))}
                 </ul>
                 <form action={startCheckoutAction.bind(null, plan, interval)}>
-                  <Button
-                    type="submit"
+                  <PendingSubmitButton
                     className="w-full"
                     disabled={isCurrent}
                     variant={isCurrent ? "outline" : "default"}
                   >
                     {isCurrent ? t("current") : t("choosePlan")}
-                  </Button>
+                  </PendingSubmitButton>
                 </form>
               </CardContent>
             </Card>
