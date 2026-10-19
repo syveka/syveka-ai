@@ -67,14 +67,31 @@ function customerIdOf(sub: Stripe.Subscription): string | null {
   return typeof sub.customer === "string" ? sub.customer : (sub.customer?.id ?? null);
 }
 
+/** Stripe statuses of a subscription that is paying (or in its trial). */
+const PAYING_STRIPE_STATUSES: ReadonlySet<string> = new Set(["active", "trialing"]);
+/** Our stored statuses of a current subscription that pays nothing and can be superseded. */
+const SUPERSEDABLE_BY_PAYING: ReadonlySet<string> = new Set(["CANCELED", "INCOMPLETE"]);
+
+/** Structured, non-sensitive alert: ids and statuses only, never customer data. */
+function alertSkippedSubscription(fields: Record<string, string | null>): void {
+  console.warn(JSON.stringify({ alert: "stripe_subscription_event_skipped", ...fields }));
+}
+
 /**
  * Whether `sub` may be written as the organization's current subscription.
- * The org has one row, so an event for any other live subscription -- an
- * older one still being retired, a stale retry, a second checkout -- must not
- * replace it; that only happens once the current one has ended (CANCELED, or
- * cleared by customer.subscription.deleted). A subscription whose customer
- * isn't the org's own Stripe customer never touches it, whatever its
- * metadata says.
+ * The org has one row, so an event for any other subscription -- an older
+ * one still being retired, a stale retry, a second checkout -- replaces it
+ * only when the current one doesn't pay:
+ * - no current subscription, or the same one: yes;
+ * - the current one has ended (CANCELED): yes;
+ * - the current one is INCOMPLETE (its first payment never went through) and
+ *   `sub` is ACTIVE or TRIALING: yes, the paying one takes over;
+ * - otherwise (the current one is ACTIVE, TRIALING, PAST_DUE or PAUSED, or
+ *   `sub` itself isn't paying): no. A live `sub` skipped this way raises a
+ *   structured alert, since the customer may be paying for two.
+ * A subscription whose customer isn't the org's own Stripe customer never
+ * touches it, whatever its metadata says. `sub` is Stripe's current state,
+ * retrieved by the caller, so its status isn't a stale event copy.
  */
 async function mayBecomeCurrent(
   tx: Prisma.TransactionClient,
@@ -87,17 +104,36 @@ async function mayBecomeCurrent(
   });
   if (!org) return false;
   const customerId = customerIdOf(sub);
-  if (org.stripeCustomerId && customerId && org.stripeCustomerId !== customerId) return false;
+  if (org.stripeCustomerId && customerId && org.stripeCustomerId !== customerId) {
+    alertSkippedSubscription({
+      reason: "customer_mismatch",
+      organizationId: orgId,
+      subscriptionId: sub.id,
+      subscriptionStatus: sub.status,
+    });
+    return false;
+  }
 
   const current = await tx.subscription.findUnique({
     where: { organizationId: orgId },
     select: { stripeSubscriptionId: true, status: true },
   });
-  return (
-    !current?.stripeSubscriptionId ||
-    current.stripeSubscriptionId === sub.id ||
-    current.status === "CANCELED"
-  );
+  if (!current?.stripeSubscriptionId || current.stripeSubscriptionId === sub.id) return true;
+  if (current.status === "CANCELED") return true;
+  if (PAYING_STRIPE_STATUSES.has(sub.status) && SUPERSEDABLE_BY_PAYING.has(current.status)) {
+    return true;
+  }
+  if (sub.status !== "canceled" && sub.status !== "incomplete_expired") {
+    alertSkippedSubscription({
+      reason: "other_subscription_current",
+      organizationId: orgId,
+      subscriptionId: sub.id,
+      subscriptionStatus: sub.status,
+      currentSubscriptionId: current.stripeSubscriptionId,
+      currentStatus: current.status,
+    });
+  }
+  return false;
 }
 
 /**

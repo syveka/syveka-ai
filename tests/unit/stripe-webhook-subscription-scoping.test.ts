@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * An organization has one subscription row, but a Stripe customer can have
@@ -173,7 +173,19 @@ function stripeSub(id: string, overrides: Partial<StripeSub> = {}): StripeSub {
 
 const row = (orgId = "org-a") => where(state.subs, orgId);
 
+let warn: ReturnType<typeof vi.spyOn>;
+/** The structured alerts the route raised, parsed. */
+function alerts(): Array<Record<string, unknown>> {
+  return warn.mock.calls
+    .map((c) => String(c[0]))
+    .filter((line) => line.includes('"alert"'))
+    .map((line) => JSON.parse(line) as Record<string, unknown>);
+}
+
+afterEach(() => warn.mockRestore());
+
 beforeEach(() => {
+  warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
   state.orgs = new Map([
     ["org-a", { stripeCustomerId: "cus_a" }],
     ["org-b", { stripeCustomerId: "cus_b" }],
@@ -288,6 +300,9 @@ describe("stale or second subscriptions never replace the current one", () => {
     await deliver("invoice.paid", { id: "in_5", customer: "cus_a", subscription: "sub_old" });
     expect(row()!.stripeSubscriptionId).toBe("sub_new");
     expect(row()!.plan).toBe("PRO");
+    expect(alerts()).toEqual([
+      expect.objectContaining({ reason: "other_subscription_current", subscriptionId: "sub_old" }),
+    ]);
   });
 
   it("a second checkout's subscription waits until the current one has ended", async () => {
@@ -325,7 +340,43 @@ describe("stale or second subscriptions never replace the current one", () => {
     });
   });
 
-  it("an INCOMPLETE subscription stays current until Stripe expires it, then a new one can replace it", async () => {
+  it("an ACTIVE subscription doesn't replace another ACTIVE current one, and raises a safe alert", async () => {
+    stripeSub("sub_second", {
+      items: { data: [{ price: { id: "price_starter_annual" }, quantity: 1 }] },
+    });
+    await deliver("customer.subscription.updated", state.stripeSubs.get("sub_second")!);
+    expect(row()).toEqual({
+      stripeSubscriptionId: "sub_new",
+      plan: "PRO",
+      status: "ACTIVE",
+      seats: 1,
+    });
+    expect(alerts()).toEqual([
+      {
+        alert: "stripe_subscription_event_skipped",
+        reason: "other_subscription_current",
+        organizationId: "org-a",
+        subscriptionId: "sub_second",
+        subscriptionStatus: "active",
+        currentSubscriptionId: "sub_new",
+        currentStatus: "ACTIVE",
+      },
+    ]);
+  });
+
+  it.each(["TRIALING", "PAST_DUE", "PAUSED"])(
+    "a second ACTIVE subscription doesn't replace a current %s one",
+    async (status) => {
+      row()!.status = status;
+      await deliver("customer.subscription.created", stripeSub("sub_second"));
+      expect(row()).toMatchObject({ stripeSubscriptionId: "sub_new", status });
+      expect(alerts()).toHaveLength(1);
+    },
+  );
+});
+
+describe("a paying subscription replaces a current one that never paid (INCOMPLETE)", () => {
+  beforeEach(() => {
     state.subs.set("org-a", {
       stripeSubscriptionId: "sub_inc",
       plan: "PRO",
@@ -333,17 +384,81 @@ describe("stale or second subscriptions never replace the current one", () => {
       seats: 1,
     });
     stripeSub("sub_inc", { status: "incomplete" });
-    const retry = stripeSub("sub_retry");
-    await deliver("customer.subscription.created", retry);
-    expect(row()!.stripeSubscriptionId).toBe("sub_inc");
+  });
 
+  it.each(["active", "trialing"])("a %s subscription takes over immediately", async (status) => {
+    const paying = stripeSub("sub_paid", {
+      status,
+      items: { data: [{ price: { id: "price_starter_monthly" }, quantity: 2 }] },
+    });
+    const res = await deliver("customer.subscription.created", paying);
+    expect(res).toEqual({ status: 200, ledger: "COMPLETED" });
+    expect(row()).toMatchObject({
+      stripeSubscriptionId: "sub_paid",
+      plan: "STARTER",
+      status: status.toUpperCase(),
+      seats: 2,
+    });
+    expect(alerts()).toEqual([]);
+  });
+
+  it("through checkout.session.completed and invoice.paid as well", async () => {
+    stripeSub("sub_paid");
+    await deliver("checkout.session.completed", {
+      id: "cs_2",
+      mode: "subscription",
+      subscription: "sub_paid",
+      metadata: { orgId: "org-a" },
+    });
+    expect(row()!.stripeSubscriptionId).toBe("sub_paid");
+
+    state.subs.get("org-a")!.stripeSubscriptionId = "sub_inc";
+    state.subs.get("org-a")!.status = "INCOMPLETE";
+    await deliver("invoice.paid", { id: "in_9", customer: "cus_a", subscription: "sub_paid" });
+    expect(row()).toMatchObject({ stripeSubscriptionId: "sub_paid", status: "ACTIVE" });
+  });
+
+  it("the old INCOMPLETE one expiring later changes nothing", async () => {
+    await deliver("customer.subscription.created", stripeSub("sub_paid"));
     await deliver(
       "customer.subscription.updated",
       stripeSub("sub_inc", { status: "incomplete_expired" }),
     );
-    expect(row()).toMatchObject({ stripeSubscriptionId: "sub_inc", status: "CANCELED" });
-    await deliver("customer.subscription.updated", retry);
-    expect(row()).toMatchObject({ stripeSubscriptionId: "sub_retry", status: "ACTIVE" });
+    await deliver(
+      "customer.subscription.deleted",
+      stripeSub("sub_inc", { status: "incomplete_expired" }),
+    );
+    expect(row()).toMatchObject({ stripeSubscriptionId: "sub_paid", status: "ACTIVE" });
+  });
+
+  it("another subscription that isn't paying either doesn't replace it (and alerts)", async () => {
+    await deliver("customer.subscription.created", stripeSub("sub_inc2", { status: "incomplete" }));
+    expect(row()).toMatchObject({ stripeSubscriptionId: "sub_inc", status: "INCOMPLETE" });
+    expect(alerts()).toEqual([
+      expect.objectContaining({
+        reason: "other_subscription_current",
+        subscriptionId: "sub_inc2",
+        subscriptionStatus: "incomplete",
+        currentStatus: "INCOMPLETE",
+      }),
+    ]);
+  });
+
+  it("a paying subscription of another customer never replaces it", async () => {
+    await deliver(
+      "customer.subscription.created",
+      stripeSub("sub_foreign", { customer: "cus_other" }),
+    );
+    expect(row()!.stripeSubscriptionId).toBe("sub_inc");
+    expect(alerts()).toEqual([
+      {
+        alert: "stripe_subscription_event_skipped",
+        reason: "customer_mismatch",
+        organizationId: "org-a",
+        subscriptionId: "sub_foreign",
+        subscriptionStatus: "active",
+      },
+    ]);
   });
 });
 
@@ -358,6 +473,15 @@ describe("no cross-organization effect", () => {
       status: "ACTIVE",
       seats: 1,
     });
+    expect(alerts()).toEqual([
+      expect.objectContaining({
+        reason: "customer_mismatch",
+        organizationId: "org-b",
+        subscriptionId: "sub_x",
+      }),
+    ]);
+    // Ids and statuses only.
+    expect(JSON.stringify(warn.mock.calls)).not.toMatch(/cus_a|price_|metadata/);
   });
 
   it("an unknown organization in metadata is completed without creating a row", async () => {
