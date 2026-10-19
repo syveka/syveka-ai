@@ -46,8 +46,9 @@ receives them, which is a second line of defense, not the first.
    (same Postgres major version) with no Auth SMTP, no Edge Functions, no integrations.
 2. **Preflight.** Run the read-only outbound preflight (`docs/release-runbook.md`, "Read-only
    outbound preflight (Supabase SQL Editor)") on production, in the SQL Editor. Stop if its
-   session rows aren't read-only, or if any outbound-capable extension, hook, job or
-   subscription appears.
+   session rows aren't read-only, if any outbound-capable extension, hook, job or subscription
+   appears, or if a function match is anything other than the known
+   `extensions.grant_pg_net_access()` result recorded there.
 3. **Logical dump.** From an approved operator session with the Supabase CLI:
    `supabase db dump` for roles, schema and data, written only to an approved encrypted
    destination. Record UTC time, size and SHA-256.

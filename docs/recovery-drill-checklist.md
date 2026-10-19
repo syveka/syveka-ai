@@ -59,7 +59,15 @@ path starts outbound extensions immediately.
       identification query returns just `extensions.grant_pg_net_access()` with the `body_md5`
       recorded in that section.
 
-**Abort if** any outbound-capable extension, hook, job or subscription appears.
+**Abort if:**
+
+- any outbound-capable extension, hook, job or subscription appears;
+- `other_functions_with_direct_http_call` is non-zero and the identification query returns any
+  function other than `extensions.grant_pg_net_access()`, a different `body_md5`, or more than
+  one row;
+- the session rows don't show `transaction_read_only = on`, `15s` and `2s`: the session wasn't
+  actually read-only, so the result can't be trusted;
+- any result is `NO PERMISSION` or `RLS-FILTERED`.
 
 ## 4. Dump and inspect
 

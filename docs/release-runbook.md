@@ -495,6 +495,10 @@ Anything else is an outbound-capable item: stop the drill and report it.
 **What it can't establish:**
 
 - **A backup's state:** it shows the database at that moment, not a historical snapshot.
+- **Queued `pg_net` requests in a physical backup.** The `pg_net` request queue is an unlogged
+  table, "not preserved during a crash or unclean shutdown" per the `pg_net` docs. Supabase doesn't
+  document whether a physical backup carries queued rows, so a restored copy may hold requests
+  that `pg_net_requests_pending` never showed here. Treat them as possible.
 - **Indirect outbound calls**, through dynamic SQL or helpers its text match doesn't catch.
 - **Restorability:** anything about a backup's integrity or whether it can be restored.
 
