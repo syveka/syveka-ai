@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   voiceAssistantFindFirstOrThrow: vi.fn(),
   voiceAssistantUpdate: vi.fn(async () => ({})),
   upsertVapiAssistant: vi.fn(
-    async (_config: { systemPrompt: string; tools: { name: string }[] }) => ({
+    async (_config: { systemPrompt: string; firstMessage: string; tools: { name: string }[] }) => ({
       id: "vapi-assistant-1",
     }),
   ),
@@ -165,6 +165,39 @@ describe("voice assistant sync — Business DNA context", () => {
     expect(config.systemPrompt).not.toContain("business_profile");
   });
 
+  it("speaks the AI and recording notice before the owner's greeting", async () => {
+    mocks.tenantDb.mockReturnValue(businessDnaMock("org-a", null));
+    mocks.voiceAssistantFindFirstOrThrow.mockResolvedValue(assistantRow("org-a"));
+
+    await activateAssistant(ctx("org-a"), "assistant-1");
+
+    const config = mocks.upsertVapiAssistant.mock.calls[0]![0];
+    expect(config.firstMessage).toBe(
+      "You are speaking with an AI assistant, and this call may be recorded. Hi there!",
+    );
+  });
+
+  it.each([
+    ["FI", "Hei!", "Puhut tekoälyavustajan kanssa, ja puhelu voidaan tallentaa. Hei!"],
+    [
+      "AR",
+      "مرحباً",
+      "أنت تتحدث مع مساعد يعمل بالذكاء الاصطناعي، وقد يتم تسجيل هذه المكالمة. مرحباً",
+    ],
+  ])(
+    "the %s assistant speaks the notice in its own language before the greeting",
+    async (language, greeting, expected) => {
+      mocks.tenantDb.mockReturnValue(businessDnaMock("org-a", null));
+      mocks.voiceAssistantFindFirstOrThrow.mockResolvedValue(
+        assistantRow("org-a", { language, firstMessage: greeting }),
+      );
+
+      await activateAssistant(ctx("org-a"), "assistant-1");
+
+      expect(mocks.upsertVapiAssistant.mock.calls[0]![0].firstMessage).toBe(expected);
+    },
+  );
+
   it("still includes the mandatory AI disclosure ahead of Business DNA context", async () => {
     mocks.tenantDb.mockReturnValue(
       businessDnaMock("org-a", {
@@ -208,6 +241,24 @@ describe("resyncActiveAssistants — Business DNA staleness fix", () => {
       select: { id: true },
     });
     expect(mocks.upsertVapiAssistant).toHaveBeenCalledTimes(1);
+  });
+
+  it("a Business DNA resync keeps the spoken notice ahead of the greeting", async () => {
+    mocks.tenantDb.mockReturnValue(businessDnaMock("org-a", null, ["assistant-1"]));
+    mocks.voiceAssistantFindFirstOrThrow.mockResolvedValue(
+      assistantRow("org-a", { vapiAssistantId: "vapi-assistant-1" }),
+    );
+
+    await resyncActiveAssistants("org-a");
+
+    const [config, existingId] = mocks.upsertVapiAssistant.mock.calls[0]! as unknown as [
+      { firstMessage: string },
+      string,
+    ];
+    expect(existingId).toBe("vapi-assistant-1");
+    expect(config.firstMessage).toBe(
+      "You are speaking with an AI assistant, and this call may be recorded. Hi there!",
+    );
   });
 
   it("syncs every already-live assistant for the org independently — one failing does not stop another", async () => {
