@@ -21,6 +21,10 @@ const m = vi.hoisted(() => ({
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/server/auth/guard", () => ({ requirePermission: m.requirePermission }));
+// In limit: the write limit itself is covered by rate-limit-write-actions.test.ts.
+vi.mock("@/server/security/rate-limit", () => ({
+  actionWriteLimitError: vi.fn(async () => null),
+}));
 vi.mock("@/server/services/calendar", () => ({
   CalendarError: class CalendarError extends Error {},
   cancelEvent: vi.fn(),
