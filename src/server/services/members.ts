@@ -119,23 +119,32 @@ export async function inviteMember(
  * working (acceptInvitation treats anything but PENDING as invalid). The token
  * is replaced as well, because re-inviting the same address later upserts the
  * row back to PENDING (inviteMember) and must not revive a link that may have
- * reached the wrong inbox. Only this organization's invitations are visible
- * through tenantDb; one that was accepted or revoked meanwhile is refused.
+ * reached the wrong inbox.
+ *
+ * Withdrawal and acceptance change the same row and the same seat count, so
+ * they take the same per-organization lock that acceptInvitation holds from
+ * its re-read of the status to its commit. Whichever arrives second waits,
+ * then sees the other's committed status and is refused: an invitation can't
+ * be both withdrawn and accepted. Only this organization's invitations are
+ * reachable (organizationId in every clause, as elsewhere in a transaction).
  */
 export async function revokeInvitation(ctx: TenantContext, invitationId: string): Promise<void> {
-  const db = tenantDb(ctx.orgId);
-  const invitation = await db.invitation.findFirst({
-    where: { id: invitationId },
-    select: { id: true, email: true, role: true, status: true },
+  const invitation = await unscopedPrisma.$transaction(async (tx) => {
+    await lockOrgSeats(tx, ctx.orgId);
+    // Unknown here, or another organization's: nothing to withdraw.
+    const current = await tx.invitation.findFirst({
+      where: { id: invitationId, organizationId: ctx.orgId },
+      select: { id: true, email: true, role: true },
+    });
+    if (!current) throw new MemberError("Invitation is not pending", "not_pending");
+    // The state check is the write itself: only a PENDING row changes.
+    const revoked = await tx.invitation.updateMany({
+      where: { id: current.id, organizationId: ctx.orgId, status: "PENDING" },
+      data: { status: "REVOKED", token: randomUUID() },
+    });
+    if (revoked.count === 0) throw new MemberError("Invitation is not pending", "not_pending");
+    return current;
   });
-  if (!invitation || invitation.status !== "PENDING") {
-    throw new MemberError("Invitation is not pending", "not_pending");
-  }
-  const revoked = await db.invitation.updateMany({
-    where: { id: invitation.id, status: "PENDING" },
-    data: { status: "REVOKED", token: randomUUID() },
-  });
-  if (revoked.count === 0) throw new MemberError("Invitation is not pending", "not_pending");
 
   await audit(ctx, {
     action: "member.invite_revoke",

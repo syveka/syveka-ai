@@ -1,7 +1,13 @@
 "use client";
 
+import { useActionState } from "react";
 import { useTranslations } from "next-intl";
-import { changeRoleAction, removeMemberAction, revokeInvitationAction } from "@/actions/members";
+import {
+  changeRoleAction,
+  removeMemberAction,
+  revokeInvitationAction,
+  type MemberActionState,
+} from "@/actions/members";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -10,6 +16,51 @@ type Invite = { id: string; email: string; role: string };
 
 const ASSIGNABLE = ["ADMIN", "MANAGER", "MEMBER", "VIEWER"] as const;
 const ROLE_CODES = new Set(["OWNER", ...ASSIGNABLE]);
+const REVOKE_ERRORS = new Set([
+  "not_pending",
+  "revoke_failed",
+  "rate_limited",
+  "service_unavailable",
+]);
+
+/**
+ * The withdraw control for one pending invitation. A refusal is shown next to
+ * the control, in the reader's language, and named by the button's
+ * aria-describedby; a success removes the row when the page revalidates.
+ * Unknown codes fall back to the generic failure so no raw text reaches the page.
+ */
+function WithdrawInvitationForm({ invitation }: { invitation: Invite }) {
+  const t = useTranslations("settingsMembers");
+  const [state, action, pending] = useActionState<MemberActionState, FormData>(
+    () => revokeInvitationAction(invitation.id),
+    {},
+  );
+  const alertId = `withdraw-invitation-error-${invitation.id}`;
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <form action={action}>
+        <Button
+          variant="ghost"
+          size="sm"
+          type="submit"
+          disabled={pending}
+          className="text-destructive"
+          aria-label={t("revokeInviteLabel", { email: invitation.email })}
+          aria-describedby={state.error ? alertId : undefined}
+        >
+          {t("revokeInvite")}
+        </Button>
+      </form>
+      {state.error ? (
+        <p id={alertId} role="alert" className="max-w-xs text-end text-xs text-destructive">
+          {t(
+            `revokeErrors.${REVOKE_ERRORS.has(state.error) ? state.error : "revoke_failed"}` as never,
+          )}
+        </p>
+      ) : null}
+    </div>
+  );
+}
 
 export function MembersTable({
   members,
@@ -88,23 +139,7 @@ export function MembersTable({
                 {t("pending")} · {roleLabel(i.role)}
               </p>
             </div>
-            {canRevokeInvites ? (
-              <form
-                action={async () => {
-                  await revokeInvitationAction(i.id);
-                }}
-              >
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  type="submit"
-                  className="text-destructive"
-                  aria-label={t("revokeInviteLabel", { email: i.email })}
-                >
-                  {t("revokeInvite")}
-                </Button>
-              </form>
-            ) : null}
+            {canRevokeInvites ? <WithdrawInvitationForm invitation={i} /> : null}
           </div>
         ))}
       </CardContent>

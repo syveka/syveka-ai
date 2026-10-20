@@ -19,7 +19,11 @@ import { EntitlementError } from "@/server/services/billing/entitlements";
 import { inviteMemberSchema, changeRoleSchema } from "@/lib/validators/members";
 import { createSupabaseServer } from "@/server/supabase/server";
 import { inviteContinuation, localizedPath, normalizeLocale } from "@/lib/auth-redirect";
-import { actionRateLimitError, emailKey } from "@/server/security/rate-limit";
+import {
+  actionRateLimitError,
+  actionWriteLimitError,
+  emailKey,
+} from "@/server/security/rate-limit";
 
 export type MemberActionState = { error?: string; message?: string };
 
@@ -125,9 +129,14 @@ export async function changeRoleAction(
   return { message: "updated" };
 }
 
-/** Withdraws a pending invitation; the same permission that sent it. */
+/**
+ * Withdraws a pending invitation; the same permission that sent it. Outcomes
+ * are stable codes (settingsMembers.revokeErrors.*), never exception text.
+ */
 export async function revokeInvitationAction(invitationId: string): Promise<MemberActionState> {
   const ctx = await requirePermission("members:invite");
+  const limited = await actionWriteLimitError("members", ctx);
+  if (limited) return { error: limited };
   try {
     await revokeInvitation(ctx, invitationId);
   } catch (e) {

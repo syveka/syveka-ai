@@ -87,6 +87,12 @@
     "pending": "Invitation pending",
     "revokeInvite": "Withdraw",
     "revokeInviteLabel": "Withdraw the invitation to {email}",
+    "revokeErrors": {
+      "not_pending": "This invitation is no longer pending: it was already accepted or withdrawn.",
+      "revoke_failed": "The invitation could not be withdrawn. Please try again.",
+      "rate_limited": "Too many changes in a short time. Try again in a minute.",
+      "service_unavailable": "The change could not be verified right now. Try again in a moment."
+    },
     "errors": {
       "invalid_input": "Check the email address and role.",
       "already_member": "This person is already a member of the organization.",
