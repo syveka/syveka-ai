@@ -283,7 +283,11 @@ export async function POST(request: Request): Promise<Response> {
     locale: ctx.locale,
     org: {
       name: org.name,
-      industry: settings.industry,
+      // Business DNA is the profile the owner edits. `settings.industry` is an
+      // older copy from onboarding that nothing can edit: used only by an org
+      // with no profile yet. Once a profile exists, an empty industry is the
+      // owner's choice and the old copy must not come back.
+      industry: businessDna ? businessDna.industry?.trim() || undefined : settings.industry,
       customInstructions: settings.aiInstructions,
     },
     businessDna,
