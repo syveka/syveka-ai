@@ -24,9 +24,27 @@ import { routeTemplate } from "@/lib/observability/routes";
 
 const WITHHELD = "Error message withheld";
 
+/**
+ * Vercel's platform error codes (fixed upper-case tokens) and Next.js's own
+ * error codes ("E" + digits, set as `__NEXT_ERROR_CODE` on framework errors).
+ * Both identify a failure class without quoting anything a person wrote;
+ * only the token from the fixed list, or the validated code, is ever copied.
+ */
+const VERCEL_ERROR_CODE =
+  /\b(FUNCTION_INVOCATION_TIMEOUT|FUNCTION_INVOCATION_FAILED|FUNCTION_PAYLOAD_TOO_LARGE|FUNCTION_RESPONSE_PAYLOAD_TOO_LARGE|FUNCTION_THROTTLED|NO_RESPONSE_FROM_FUNCTION|INTERNAL_FUNCTION_INVOCATION_FAILED|INTERNAL_FUNCTION_INVOCATION_TIMEOUT|INTERNAL_UNEXPECTED_ERROR|MIDDLEWARE_INVOCATION_FAILED|MIDDLEWARE_INVOCATION_TIMEOUT|EDGE_FUNCTION_INVOCATION_FAILED|EDGE_FUNCTION_INVOCATION_TIMEOUT|DEPLOYMENT_NOT_FOUND|DEPLOYMENT_PAUSED|DEPLOYMENT_DISABLED|DEPLOYMENT_BLOCKED|DEPLOYMENT_NOT_READY_REDIRECTING|RESOURCE_NOT_FOUND|ROUTER_CANNOT_MATCH|BODY_NOT_A_STRING_FROM_FUNCTION)\b/;
+const NEXT_ERROR_CODE = /^E\d{1,5}$/;
+
 /** Known error shapes -> fixed descriptions. Order matters: first match wins. */
 const SAFE_DESCRIPTIONS: Array<[RegExp, string | ((m: RegExpExecArray) => string)]> = [
   [/Minified React error #(\d{1,4})\b/, (m) => `React error #${m[1]}`],
+  // Next.js's own messages (fixed text, no user content). The App Router's
+  // server-action client throws these when a POST comes back as something
+  // other than a React payload or a redirect (for example a platform error
+  // page); the response body is never copied, see VERCEL_ERROR_CODE below.
+  [/^An unexpected response was received from the server\b/, "Unexpected server action response"],
+  [/Failed to find Server Action\b/, "Server action not found"],
+  [/^Failed to fetch RSC payload\b/, "RSC payload fetch failed"],
+  [/^An error occurred with your deployment\b/, "Vercel platform error"],
   [
     /^Cannot read propert(y|ies) of (undefined|null)/,
     "Cannot read a property of undefined or null",
@@ -58,12 +76,34 @@ const SAFE_DESCRIPTIONS: Array<[RegExp, string | ((m: RegExpExecArray) => string
 /** A fixed description for an untrusted message; the message itself is never returned. */
 export function safeErrorDescription(message: unknown): string {
   if (typeof message !== "string" || message === "") return WITHHELD;
+  // A platform error body carries its code on a later line.
+  const platform = VERCEL_ERROR_CODE.exec(message.slice(0, 2000));
+  if (platform) return `Vercel platform error ${platform[1]}`;
   const firstLine = message.split(/\r?\n/, 1)[0]!.slice(0, 2000);
   for (const [pattern, description] of SAFE_DESCRIPTIONS) {
     const match = pattern.exec(firstLine);
     if (match) return typeof description === "string" ? description : description(match);
   }
   return WITHHELD;
+}
+
+/** What the SDK hands to beforeSend next to the event. */
+export type ScrubHint = { originalException?: unknown };
+
+const safeNextCode = (code: unknown) =>
+  typeof code === "string" && NEXT_ERROR_CODE.test(code) ? code : undefined;
+
+/**
+ * The Next.js error code of the thrown error, when it is one ("E" + digits);
+ * on a pass without the thrown error (a re-scrub), the code kept as a tag.
+ */
+function nextErrorCode(hint: ScrubHint | undefined, tags: ErrorEvent["tags"]): string | undefined {
+  const thrown = hint?.originalException;
+  const fromThrown =
+    thrown && typeof thrown === "object"
+      ? safeNextCode((thrown as { __NEXT_ERROR_CODE?: unknown }).__NEXT_ERROR_CODE)
+      : undefined;
+  return fromThrown ?? safeNextCode(tags?.next_error_code);
 }
 
 const ERROR_TYPE = /^[A-Za-z_$][\w$]{0,63}$/;
@@ -218,7 +258,7 @@ function safeContexts(contexts: ErrorEvent["contexts"]): ErrorEvent["contexts"] 
 }
 
 /** SDK-set tags that are kept, with short, word-like values only. */
-const KEPT_TAGS = new Set(["runtime", "turbopack"]);
+const KEPT_TAGS = new Set(["runtime", "turbopack", "next_error_code"]);
 
 function safeTags(tags: ErrorEvent["tags"]): ErrorEvent["tags"] {
   return Object.fromEntries(
@@ -230,8 +270,16 @@ function safeTags(tags: ErrorEvent["tags"]): ErrorEvent["tags"] {
   );
 }
 
-export function scrubEvent(event: ErrorEvent): ErrorEvent {
+export function scrubEvent(event: ErrorEvent, hint?: ScrubHint): ErrorEvent {
   const request = event.request;
+  // The thrown error's Next.js code names the failure class (for example
+  // E394, a server action's response that wasn't a React payload) when its
+  // message, often a response body, can't be forwarded.
+  const code = nextErrorCode(hint, event.tags);
+  const describe = (value: unknown, first: boolean) => {
+    const description = safeErrorDescription(value);
+    return first && code && description === WITHHELD ? `Next.js error ${code}` : description;
+  };
   return {
     type: undefined,
     event_id: event.event_id,
@@ -244,7 +292,7 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent {
     sdk: event.sdk,
     debug_meta: event.debug_meta,
     contexts: safeContexts(event.contexts),
-    tags: safeTags(event.tags),
+    tags: safeTags(code ? { ...event.tags, next_error_code: code } : event.tags),
     transaction: safeTransaction(event.transaction),
     message: event.message === undefined ? undefined : safeErrorDescription(event.message),
     request: request
@@ -252,9 +300,9 @@ export function scrubEvent(event: ErrorEvent): ErrorEvent {
       : undefined,
     exception: event.exception
       ? {
-          values: event.exception.values?.map((exception) => ({
+          values: event.exception.values?.map((exception, index) => ({
             type: exception.type && ERROR_TYPE.test(exception.type) ? exception.type : "Error",
-            value: safeErrorDescription(exception.value),
+            value: describe(exception.value, index === 0),
             mechanism: exception.mechanism
               ? {
                   type: safeWord(exception.mechanism.type) ?? "generic",
