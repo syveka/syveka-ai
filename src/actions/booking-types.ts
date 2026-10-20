@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/server/auth/guard";
+import { actionWriteLimitError } from "@/server/security/rate-limit";
 import { BookingError, deleteBookingType, saveBookingType } from "@/server/services/booking";
 import { bookingTypeSchema } from "@/lib/validators/booking";
 
@@ -13,6 +14,8 @@ export async function saveBookingTypeAction(
   formData: FormData,
 ): Promise<BookingTypeActionState> {
   const ctx = await requirePermission("booking:manage");
+  const limited = await actionWriteLimitError("booking", ctx);
+  if (limited) return { error: limited };
   const parsed = bookingTypeSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
 
@@ -30,6 +33,8 @@ export async function deleteBookingTypeAction(
   bookingTypeId: string,
 ): Promise<BookingTypeActionState> {
   const ctx = await requirePermission("booking:manage");
+  const limited = await actionWriteLimitError("booking", ctx);
+  if (limited) return { error: limited };
   try {
     await deleteBookingType(ctx, bookingTypeId);
   } catch (e) {

@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/server/auth/guard";
+import { actionWriteLimitError } from "@/server/security/rate-limit";
 import {
   CalendarError,
   cancelEvent,
@@ -32,6 +33,8 @@ export async function saveEventAction(
   formData: FormData,
 ): Promise<CalendarActionState> {
   const ctx = await requirePermission("calendar:write");
+  const limited = await actionWriteLimitError("calendar", ctx);
+  if (limited) return { error: limited };
   const parsed = eventSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
 
@@ -81,6 +84,8 @@ export async function saveEventAction(
 
 export async function cancelEventAction(eventId: string): Promise<CalendarActionState> {
   const ctx = await requirePermission("calendar:write");
+  const limited = await actionWriteLimitError("calendar", ctx);
+  if (limited) return { error: limited };
   try {
     await cancelEvent(ctx, eventId);
   } catch (e) {
@@ -92,6 +97,8 @@ export async function cancelEventAction(eventId: string): Promise<CalendarAction
 
 export async function deleteEventAction(eventId: string): Promise<CalendarActionState> {
   const ctx = await requirePermission("calendar:delete");
+  const limited = await actionWriteLimitError("calendar", ctx);
+  if (limited) return { error: limited };
   try {
     await deleteEvent(ctx, eventId);
   } catch (e) {
