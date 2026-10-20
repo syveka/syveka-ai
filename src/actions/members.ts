@@ -10,6 +10,7 @@ import {
   acceptInvitation,
   changeMemberRole,
   removeMember,
+  revokeInvitation,
   MemberError,
   InvitationAccountMismatchError,
   InvitationAcceptError,
@@ -18,7 +19,11 @@ import { EntitlementError } from "@/server/services/billing/entitlements";
 import { inviteMemberSchema, changeRoleSchema } from "@/lib/validators/members";
 import { createSupabaseServer } from "@/server/supabase/server";
 import { inviteContinuation, localizedPath, normalizeLocale } from "@/lib/auth-redirect";
-import { actionRateLimitError, emailKey } from "@/server/security/rate-limit";
+import {
+  actionRateLimitError,
+  actionWriteLimitError,
+  emailKey,
+} from "@/server/security/rate-limit";
 
 export type MemberActionState = { error?: string; message?: string };
 
@@ -31,7 +36,7 @@ type InviteErrorCode =
   "invalid_input" | "already_member" | "plan_limit" | "rate_limited" | "invite_failed";
 
 function inviteErrorCode(error: unknown): InviteErrorCode {
-  if (error instanceof MemberError) return error.code;
+  if (error instanceof MemberError && error.code === "already_member") return error.code;
   // Seat limit reached, or a past-due (read-only) subscription: both come from
   // assertWithinLimit and both mean "the plan does not allow this right now".
   if (error instanceof EntitlementError) return "plan_limit";
@@ -122,6 +127,30 @@ export async function changeRoleAction(
 
   revalidatePath("/settings/members");
   return { message: "updated" };
+}
+
+/**
+ * Withdraws a pending invitation; the same permission that sent it. Outcomes
+ * are stable codes (settingsMembers.revokeErrors.*), never exception text.
+ */
+export async function revokeInvitationAction(invitationId: string): Promise<MemberActionState> {
+  const ctx = await requirePermission("members:invite");
+  const limited = await actionWriteLimitError("members", ctx);
+  if (limited) return { error: limited };
+  try {
+    await revokeInvitation(ctx, invitationId);
+  } catch (e) {
+    if (e instanceof MemberError) return { error: e.code };
+    console.error(
+      JSON.stringify({
+        event: "revoke_invitation_failed",
+        name: e instanceof Error ? e.name : "unknown",
+      }),
+    );
+    return { error: "revoke_failed" };
+  }
+  revalidatePath("/settings/members");
+  return { message: "revoked" };
 }
 
 export async function removeMemberAction(memberId: string): Promise<void> {

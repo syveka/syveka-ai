@@ -85,6 +85,14 @@
     "removeLabel": "Poista {name}",
     "changeRoleLabel": "Käyttäjän {name} rooli",
     "pending": "Kutsu odottaa",
+    "revokeInvite": "Peru kutsu",
+    "revokeInviteLabel": "Peru kutsu osoitteelle {email}",
+    "revokeErrors": {
+      "not_pending": "Kutsu ei ole enää odottamassa: se on jo hyväksytty tai peruttu.",
+      "revoke_failed": "Kutsua ei voitu perua. Yritä uudelleen.",
+      "rate_limited": "Liian monta muutosta lyhyessä ajassa. Yritä hetken kuluttua uudelleen.",
+      "service_unavailable": "Muutosta ei voitu vahvistaa juuri nyt. Yritä hetken kuluttua uudelleen."
+    },
     "errors": {
       "invalid_input": "Tarkista sähköpostiosoite ja rooli.",
       "already_member": "Henkilö on jo organisaation jäsen.",

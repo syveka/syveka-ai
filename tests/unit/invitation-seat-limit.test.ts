@@ -66,6 +66,8 @@ function makeTx(held: string[]) {
           ) ?? null,
       ),
       create: vi.fn(async ({ data }: { data: Row }) => {
+        // A slow insert: another transaction can commit while it runs.
+        await yieldNow();
         const row = { id: `m-${++s.seq}`, role: "MEMBER", ...data } as (typeof s.members)[number];
         s.members.push(row);
         return row;
@@ -75,12 +77,30 @@ function makeTx(held: string[]) {
       findUnique: vi.fn(
         async ({ where }: { where: Row }) => s.invitations.find((i) => i.id === where.id) ?? null,
       ),
+      // revokeInvitation's read: scoped by every given field, then a yield
+      // (like count above) so another transaction can commit in between.
+      findFirst: vi.fn(async ({ where }: { where: Row }) => {
+        const row =
+          s.invitations.find((i) =>
+            Object.entries(where).every(([k, v]) => v === undefined || i[k] === v),
+          ) ?? null;
+        await yieldNow();
+        return row ? { ...row } : null;
+      }),
       update: vi.fn(async ({ where, data }: { where: Row; data: Row }) =>
         Object.assign(
           s.invitations.find((i) => i.id === where.id)!,
           data,
         ),
       ),
+      // Like Prisma: a filter that isn't given matches every row.
+      updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
+        const rows = s.invitations.filter((i) =>
+          Object.entries(where).every(([k, v]) => v === undefined || i[k] === v),
+        );
+        for (const row of rows) Object.assign(row, data);
+        return { count: rows.length };
+      }),
     },
     bookingType: { updateMany: vi.fn(async () => ({ count: 0 })) },
   };
@@ -166,7 +186,14 @@ vi.mock("@/env", () => ({
   getAppUrlEnv: () => ({ NEXT_PUBLIC_APP_URL: "https://app.example.test" }),
 }));
 
-import { acceptInvitation, InvitationAcceptError, inviteMember } from "@/server/services/members";
+import {
+  acceptInvitation,
+  InvitationAcceptError,
+  inviteMember,
+  MemberError,
+  revokeInvitation,
+} from "@/server/services/members";
+import type { TenantContext } from "@/server/auth/session";
 
 function invite(orgId: string, userId: string) {
   const token = `tok-${userId}`;
@@ -317,5 +344,103 @@ describe("inviteMember seat check", () => {
         NOT: { email: "new@example.test" },
       },
     });
+  });
+});
+
+describe("withdrawal and acceptance are serialized by the same per-organization lock", () => {
+  const ctx = { orgId: ORG_A, userId: "owner-1", role: "OWNER" } as unknown as TenantContext;
+
+  /** One seated member, one pending invitation to "joiner" (token tok-joiner). */
+  function pendingInvitation() {
+    seed(ORG_A, 1);
+    const token = invite(ORG_A, "joiner");
+    return { token, id: "inv-joiner", userId: "joiner" };
+  }
+
+  /** Exactly one of the two succeeded, and the rows agree with the one that did. */
+  function expectOneWinner(
+    id: string,
+    userId: string,
+    accept: PromiseSettledResult<unknown>,
+    revoke: PromiseSettledResult<unknown>,
+  ) {
+    const row = s.invitations.find((i) => i.id === id)!;
+    const joined = s.members.filter((m) => m.organizationId === ORG_A && m.userId === userId);
+    expect([accept, revoke].filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    if (accept.status === "fulfilled") {
+      const refused = (revoke as PromiseRejectedResult).reason;
+      expect(refused).toBeInstanceOf(MemberError);
+      expect(refused.code).toBe("not_pending");
+      expect(row.status).toBe("ACCEPTED");
+      expect(row.token).toBe("tok-joiner");
+      expect(joined).toHaveLength(1);
+      expect(auditMock).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.objectContaining({ action: "member.invite_revoke" }),
+      );
+    } else {
+      const refused = (accept as PromiseRejectedResult).reason;
+      expect(refused).toBeInstanceOf(InvitationAcceptError);
+      expect(refused.code).toBe("invalid");
+      expect(row.status).toBe("REVOKED");
+      expect(row.token).not.toBe("tok-joiner");
+      expect(joined).toHaveLength(0);
+    }
+  }
+
+  it("a withdrawal arriving while the acceptance, past its re-read, holds the lock waits and is refused", async () => {
+    const { token, id, userId } = pendingInvitation();
+    const accept = acceptInvitation(token, userId);
+    // The acceptance now holds the lock, has re-read PENDING and is inside the
+    // seat count. Before the lock was shared, a withdrawal here committed
+    // REVOKED and the acceptance then overwrote it with ACCEPTED.
+    await yieldNow();
+    expect(s.lockCalls).toEqual([ORG_A]);
+    const revoke = revokeInvitation(ctx, id);
+
+    const [a, r] = await Promise.allSettled([accept, revoke]);
+    expectOneWinner(id, userId, a, r);
+    expect(a.status).toBe("fulfilled");
+    expect(s.lockCalls).toEqual([ORG_A, ORG_A]);
+  });
+
+  it("an acceptance arriving while the withdrawal, past its read, holds the lock waits and finds the invitation withdrawn", async () => {
+    const { token, id, userId } = pendingInvitation();
+    const revoke = revokeInvitation(ctx, id);
+    await yieldNow(); // the withdrawal holds the lock and has read the row
+    const accept = acceptInvitation(token, userId);
+
+    const [a, r] = await Promise.allSettled([accept, revoke]);
+    expectOneWinner(id, userId, a, r);
+    expect(r.status).toBe("fulfilled");
+    expect(s.lockCalls).toEqual([ORG_A, ORG_A]);
+  });
+
+  it("two concurrent withdrawals: one succeeds, the other is refused, the token changes once", async () => {
+    const { id } = pendingInvitation();
+    const results = await Promise.allSettled([
+      revokeInvitation(ctx, id),
+      revokeInvitation(ctx, id),
+    ]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    expect(
+      (results.find((r) => r.status === "rejected") as PromiseRejectedResult).reason.code,
+    ).toBe("not_pending");
+    const row = s.invitations.find((i) => i.id === id)!;
+    expect(row.status).toBe("REVOKED");
+    expect(row.token).not.toBe("tok-joiner");
+    expect(auditMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("sequentially: accept then withdraw is refused; withdraw then accept finds a dead link", async () => {
+    const first = pendingInvitation();
+    await acceptInvitation(first.token, first.userId);
+    await expect(revokeInvitation(ctx, first.id)).rejects.toMatchObject({ code: "not_pending" });
+    expect(s.invitations.find((i) => i.id === first.id)!.status).toBe("ACCEPTED");
+
+    const token = invite(ORG_A, "second");
+    await revokeInvitation(ctx, "inv-second");
+    await expect(acceptInvitation(token, "second")).rejects.toMatchObject({ code: "invalid" });
+    expect(s.members.filter((m) => m.userId === "second")).toHaveLength(0);
   });
 });

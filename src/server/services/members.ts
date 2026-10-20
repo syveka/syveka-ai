@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import type { Role } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { createSupabaseAdmin } from "@/server/supabase/server";
@@ -18,7 +19,7 @@ const INVITE_EXPIRY_DAYS = 7;
 export class MemberError extends Error {
   constructor(
     message: string,
-    public readonly code: "already_member",
+    public readonly code: "already_member" | "not_pending",
   ) {
     super(message);
     this.name = "MemberError";
@@ -110,6 +111,47 @@ export async function inviteMember(
     resourceType: "invitation",
     resourceId: invitation.id,
     after: { email: input.email, role: input.role },
+  });
+}
+
+/**
+ * Withdraws a pending invitation: its seat is free again and its link stops
+ * working (acceptInvitation treats anything but PENDING as invalid). The token
+ * is replaced as well, because re-inviting the same address later upserts the
+ * row back to PENDING (inviteMember) and must not revive a link that may have
+ * reached the wrong inbox.
+ *
+ * Withdrawal and acceptance change the same row and the same seat count, so
+ * they take the same per-organization lock that acceptInvitation holds from
+ * its re-read of the status to its commit. Whichever arrives second waits,
+ * then sees the other's committed status and is refused: an invitation can't
+ * be both withdrawn and accepted. Only this organization's invitations are
+ * reachable (organizationId in every clause, as elsewhere in a transaction).
+ */
+export async function revokeInvitation(ctx: TenantContext, invitationId: string): Promise<void> {
+  const invitation = await unscopedPrisma.$transaction(async (tx) => {
+    await lockOrgSeats(tx, ctx.orgId);
+    // Unknown here, or another organization's: nothing to withdraw.
+    const current = await tx.invitation.findFirst({
+      where: { id: invitationId, organizationId: ctx.orgId },
+      select: { id: true, email: true, role: true },
+    });
+    if (!current) throw new MemberError("Invitation is not pending", "not_pending");
+    // The state check is the write itself: only a PENDING row changes.
+    const revoked = await tx.invitation.updateMany({
+      where: { id: current.id, organizationId: ctx.orgId, status: "PENDING" },
+      data: { status: "REVOKED", token: randomUUID() },
+    });
+    if (revoked.count === 0) throw new MemberError("Invitation is not pending", "not_pending");
+    return current;
+  });
+
+  await audit(ctx, {
+    action: "member.invite_revoke",
+    resourceType: "invitation",
+    resourceId: invitation.id,
+    before: { email: invitation.email, role: invitation.role, status: "PENDING" },
+    after: { status: "REVOKED" },
   });
 }
 
