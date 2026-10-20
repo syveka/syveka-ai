@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/server/auth/guard";
+import { actionWriteLimitError } from "@/server/security/rate-limit";
 import {
   addDealNote,
   addDealTask,
@@ -39,6 +40,8 @@ export async function createDealAction(
   formData: FormData,
 ): Promise<DealActionState> {
   const ctx = await requirePermission("crm:write");
+  const limited = await actionWriteLimitError("crm", ctx);
+  if (limited) return { error: limited };
   const parsed = dealSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
 
@@ -57,6 +60,8 @@ export async function updateDealAction(
   formData: FormData,
 ): Promise<DealActionState> {
   const ctx = await requirePermission("crm:write");
+  const limited = await actionWriteLimitError("crm", ctx);
+  if (limited) return { error: limited };
   const parsed = dealSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
 
@@ -76,6 +81,7 @@ export async function moveDealAction(input: {
   position: number;
 }): Promise<void> {
   const ctx = await requirePermission("crm:write");
+  if (await actionWriteLimitError("crm", ctx)) return;
   const parsed = moveDealSchema.parse(input);
   await moveDeal(ctx, parsed);
   revalidatePath("/crm/deals");
@@ -83,6 +89,7 @@ export async function moveDealAction(input: {
 
 export async function deleteDealAction(dealId: string): Promise<void> {
   const ctx = await requirePermission("crm:delete");
+  if (await actionWriteLimitError("crm", ctx)) return;
   await deleteDeal(ctx, dealId);
   revalidatePath("/crm/deals");
 }
@@ -93,6 +100,8 @@ export async function addDealNoteAction(
   formData: FormData,
 ): Promise<DealActionState> {
   const ctx = await requirePermission("crm:write");
+  const limited = await actionWriteLimitError("crm", ctx);
+  if (limited) return { error: limited };
   const parsed = noteSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
 
@@ -111,6 +120,8 @@ export async function addDealTaskAction(
   formData: FormData,
 ): Promise<DealActionState> {
   const ctx = await requirePermission("crm:write");
+  const limited = await actionWriteLimitError("crm", ctx);
+  if (limited) return { error: limited };
   const parsed = dealTaskSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
 
@@ -129,6 +140,7 @@ export async function toggleDealTaskAction(
   completed: boolean,
 ): Promise<void> {
   const ctx = await requirePermission("crm:write");
+  if (await actionWriteLimitError("crm", ctx)) return;
   await toggleDealTask(ctx, dealId, taskId, completed);
   revalidatePath(`/crm/deals/${dealId}`);
 }
@@ -155,6 +167,8 @@ export async function createStageAction(
   formData: FormData,
 ): Promise<DealActionState> {
   const ctx = await requirePermission("crm:manage-pipeline");
+  const limited = await actionWriteLimitError("crm", ctx);
+  if (limited) return { error: limited };
   const parsed = pipelineStageSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
 
@@ -173,6 +187,8 @@ export async function updateStageAction(
   formData: FormData,
 ): Promise<DealActionState> {
   const ctx = await requirePermission("crm:manage-pipeline");
+  const limited = await actionWriteLimitError("crm", ctx);
+  if (limited) return { error: limited };
   const parsed = pipelineStageSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
 
@@ -187,6 +203,8 @@ export async function updateStageAction(
 
 export async function deleteStageAction(stageId: string): Promise<DealActionState> {
   const ctx = await requirePermission("crm:manage-pipeline");
+  const limited = await actionWriteLimitError("crm", ctx);
+  if (limited) return { error: limited };
   try {
     await deleteStage(ctx, stageId);
   } catch (e) {
