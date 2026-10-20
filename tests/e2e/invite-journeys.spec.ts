@@ -11,11 +11,14 @@ import {
   INVITE_ORG_KEYS,
   INVITE_ORGS,
   INVITE_USER_KEYS,
+  OPEN_PATH_PREFIX,
+  REDIRECT_PATH_PREFIX,
   fixtureEmails,
   redact,
   type InvitationKey,
   type InviteOrgKey,
   type InviteUserKey,
+  type JourneyLocale,
 } from "../../scripts/lib/invite-journeys";
 
 /**
@@ -31,12 +34,17 @@ import {
  * Tokens are read from the database here, never printed: every failure is
  * rethrown with UUIDs redacted (Playwright's own messages can quote the
  * navigated URL), and traces, screenshots and video are off.
+ *
+ * Locale prefixes: pages this spec opens use OPEN_PATH_PREFIX (Finnish
+ * unprefixed, as the router serves it); every destination the server
+ * redirects to, and the links the invitation page renders, use
+ * REDIRECT_PATH_PREFIX (always prefixed, /fi included). See the two maps in
+ * scripts/lib/invite-journeys.ts.
  */
 
 const JOURNEYS_ENABLED = process.env.E2E_INVITE_JOURNEYS === "1";
 
-type Locale = "en" | "fi" | "ar";
-const PREFIX: Record<Locale, string> = { en: "/en", fi: "", ar: "/ar" };
+type Locale = JourneyLocale;
 
 type InviteMessages = {
   invalid: string;
@@ -202,7 +210,7 @@ async function newSession(browser: Browser): Promise<BrowserContext> {
 async function signInTo(page: Page, locale: Locale, email: string, token: string): Promise<void> {
   const next = encodeURIComponent(`/invite/${token}`);
   await guarded("sign in", async () => {
-    await page.goto(`${PREFIX[locale]}/login?next=${next}`);
+    await page.goto(`${OPEN_PATH_PREFIX[locale]}/login?next=${next}`);
     await page.fill("#email", email);
     await page.fill("#password", requireEnv("INVITE_E2E_PASSWORD"));
     await page.locator('form button[type="submit"]').click();
@@ -242,7 +250,8 @@ async function expectAcceptError(
   code: keyof InviteMessages["errors"],
 ): Promise<void> {
   await guarded(`error page ${code}`, async () => {
-    expect(where(page)).toBe(`${PREFIX[locale]}/invite/<redacted>?error=${code}`);
+    // acceptInvitationAction redirects through localizedPath: prefixed for every locale.
+    expect(where(page)).toBe(`${REDIRECT_PATH_PREFIX[locale]}/invite/<redacted>?error=${code}`);
     // Filtered: Next.js also mounts an empty route-announcer role="alert".
     await expect(
       page.getByRole("alert").filter({ hasText: messages[locale].invite.errors[code] }),
@@ -365,7 +374,9 @@ test.describe("invitation acceptance journeys on staging (opt-in)", () => {
           await expect(page.getByText(messages.fi.roles.ADMIN!, { exact: true })).toBeVisible();
         });
         await acceptOn(page, "fi");
-        expect(where(page)).toBe("/dashboard");
+        // The server's redirect keeps the Finnish prefix (localizedPath), unlike
+        // the unprefixed Finnish pages this spec opens itself.
+        expect(where(page)).toBe(`${REDIRECT_PATH_PREFIX.fi}/dashboard`);
         expect(await membershipsOf(f.userId.existing)).toEqual(
           [
             { org: f.orgId.home, role: "OWNER" },
@@ -509,7 +520,8 @@ test.describe("invitation acceptance journeys on staging (opt-in)", () => {
         await expectAcceptError(page, "fi", "already_member");
         await guarded("H dashboard link", async () => {
           const link = page.getByRole("link", { name: messages.fi.invite.goToDashboard });
-          await expect(link).toHaveAttribute("href", "/dashboard");
+          // Rendered by the invitation page with localizedPath: /fi/dashboard.
+          await expect(link).toHaveAttribute("href", `${REDIRECT_PATH_PREFIX.fi}/dashboard`);
         });
         expect(await membershipsOf(f.userId.member)).toEqual(
           [

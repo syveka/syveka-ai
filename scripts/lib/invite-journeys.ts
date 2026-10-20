@@ -14,6 +14,30 @@
 /** app_metadata.e2e_fixture on every fixture identity, settings.e2e_fixture on every fixture org. */
 export const INVITE_FIXTURE_TAG = "invite-journeys";
 
+export type JourneyLocale = "fi" | "en" | "ar";
+
+/**
+ * Two different locale-prefix rules meet in the journeys, and a test must
+ * not mix them up (the first staging run did, on the Finnish dashboard):
+ *
+ * - Paths the test opens itself follow next-intl's `localePrefix:
+ *   "as-needed"` routing (src/i18n/routing.ts): the default locale, Finnish,
+ *   has no prefix.
+ * - Destinations the server redirects to, and links the invitation page
+ *   renders, come from localizedPath() (src/lib/auth-redirect.ts), which
+ *   always prefixes the locale, Finnish included: /fi/dashboard,
+ *   /fi/invite/<token>?error=..., /fi/register?next=....
+ *
+ * tests/unit/invite-journeys-locale-prefixes.test.ts proves both maps
+ * against the app's own rules.
+ */
+export const OPEN_PATH_PREFIX: Record<JourneyLocale, string> = { fi: "", en: "/en", ar: "/ar" };
+export const REDIRECT_PATH_PREFIX: Record<JourneyLocale, string> = {
+  fi: "/fi",
+  en: "/en",
+  ar: "/ar",
+};
+
 /**
  * Fixture identities, as `+<tag>` sub-addresses of the staging E2E email.
  * `wrongTarget` is an address only: it must never have an account, so the
