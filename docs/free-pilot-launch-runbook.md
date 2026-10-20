@@ -38,15 +38,15 @@ month, 200 contacts, 50 MB documents. See the grants runbook.
 The application fails closed without these; a missing one looks like a broken feature to the
 customer.
 
-| Needed for                                        | Configuration                                                                            | Symptom if missing                                                                                  |
-| ------------------------------------------------- | ---------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Sign-up and password reset emails                 | Supabase Auth SMTP; `/api/auth/callback` in the Auth redirect allow-list                 | "verify your email" never arrives                                                                   |
-| User rows                                         | `handle_new_user` trigger applied (migration `20260719000000_initial_security_baseline`) | organization creation fails after sign-up                                                           |
-| AI chat, website extraction                       | Anthropic key, `OPENAI_API_KEY` (moderation and embeddings), Upstash Redis               | chat returns an error; extraction returns 503/502                                                   |
-| Invitations, booking confirmations, notifications | `RESEND_API_KEY`, `EMAIL_FROM`                                                           | invite reports "failed" (and still holds a seat, §8); bookings succeed without a confirmation email |
-| Reminders, 30-day purge                           | QStash schedule registered                                                               | reminders never go out; soft-deleted rows are never purged                                          |
-| Public links                                      | `NEXT_PUBLIC_APP_URL` set to the customer-facing host                                    | booking links point at the wrong host                                                               |
-| Grants                                            | A superadmin user (`app_metadata.is_superadmin = true`, set in the Supabase dashboard)   | nobody can raise a limit                                                                            |
+| Needed for                                        | Configuration                                                                            | Symptom if missing                                                                                            |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
+| Sign-up and password reset emails                 | Supabase Auth SMTP; `/api/auth/callback` in the Auth redirect allow-list                 | "verify your email" never arrives                                                                             |
+| User rows                                         | `handle_new_user` trigger applied (migration `20260719000000_initial_security_baseline`) | organization creation fails after sign-up                                                                     |
+| AI chat, website extraction                       | Anthropic key, `OPENAI_API_KEY` (moderation and embeddings), Upstash Redis               | chat returns an error; extraction returns 503/502                                                             |
+| Invitations, booking confirmations, notifications | `RESEND_API_KEY`, `EMAIL_FROM`                                                           | invite reports "failed" (and holds a seat until withdrawn, §8); bookings succeed without a confirmation email |
+| Reminders, 30-day purge                           | QStash schedule registered                                                               | reminders never go out; soft-deleted rows are never purged                                                    |
+| Public links                                      | `NEXT_PUBLIC_APP_URL` set to the customer-facing host                                    | booking links point at the wrong host                                                                         |
+| Grants                                            | A superadmin user (`app_metadata.is_superadmin = true`, set in the Supabase dashboard)   | nobody can raise a limit                                                                                      |
 
 Also decide **which environment** hosts the pilot. Staging currently serves `6339063` and is
 validated by the release workflow; main has since moved to `7a8c354` (#347, #349) without a staging
@@ -116,11 +116,11 @@ equal to the pilot's end. Procedure, audit trail and rollback: `pilot-entitlemen
 
 - `/settings/members`: invite by email with a role. FREE allows 2 seats including the owner;
   pending invitations count as seats. The email goes through Resend.
-- Known friction: **a pending invitation cannot be revoked in the UI** on main (a fix is proposed
-  in #350, unmerged). A mistyped address, or an invitation whose email failed to send, holds its
-  seat until it expires after 7 days. Re-inviting the same address refreshes the same invitation
-  (no extra seat); inviting a different address needs a free seat. Workaround: grant `MAX_SEATS`
-  for the pilot, or wait 7 days.
+- A pending invitation can be **withdrawn** from the members list (#350, merged): its seat is
+  freed at once and its link stops working. Use that for a mistyped address or an invitation
+  whose email failed to send. An invitation that is not withdrawn holds its seat until it expires
+  after 7 days. Re-inviting the same address refreshes the same invitation (no extra seat);
+  inviting a different address needs a free seat.
 - Acceptance is self-service and handles sign-up, sign-in, a wrong account and another browser
   (#337, #338). The accept page explains every failure (expired, seat limit, read-only, already a
   member) in the reader's language.
@@ -162,7 +162,8 @@ Tell the customer up front that these four menu items are visible but not part o
 
 - 50 AI messages per organization per month on FREE unless granted more; the assistant tells the
   user when the quota is reached.
-- Invitations cannot be revoked (7-day expiry); seats are limited.
+- Seats are limited; a pending invitation holds a seat until it is withdrawn or expires after 7
+  days.
 - No CSV import.
 - Guest booking confirmations and invitation emails depend on the email provider; bookings still
   succeed without the email.
