@@ -132,6 +132,7 @@ vi.mock("@/actions/members", () => ({
   inviteMemberAction: vi.fn(),
   changeRoleAction: vi.fn(),
   removeMemberAction: { bind: () => vi.fn() },
+  revokeInvitationAction: vi.fn(),
 }));
 vi.mock("@/actions/billing", () => ({
   openPortalAction: vi.fn(),
@@ -266,6 +267,12 @@ describe.each(LOCALES)("Settings pages render real %s translations", (locale) =>
     expect(document.body.textContent).toContain(
       `${s("settingsMembers", "pending")} · ${roles.VIEWER}`,
     );
+
+    // A pending invitation can be withdrawn; the control names the address.
+    const revoke = screen.getByRole("button", {
+      name: t("revokeInviteLabel", { email: "pending@example.test" }),
+    });
+    expect(revoke.textContent).toBe(s("settingsMembers", "revokeInvite"));
   });
 
   it.each(["invalid_input", "already_member", "plan_limit", "invite_failed"])(

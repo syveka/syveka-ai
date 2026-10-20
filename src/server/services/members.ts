@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import type { Role } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { createSupabaseAdmin } from "@/server/supabase/server";
@@ -18,7 +19,7 @@ const INVITE_EXPIRY_DAYS = 7;
 export class MemberError extends Error {
   constructor(
     message: string,
-    public readonly code: "already_member",
+    public readonly code: "already_member" | "not_pending",
   ) {
     super(message);
     this.name = "MemberError";
@@ -110,6 +111,38 @@ export async function inviteMember(
     resourceType: "invitation",
     resourceId: invitation.id,
     after: { email: input.email, role: input.role },
+  });
+}
+
+/**
+ * Withdraws a pending invitation: its seat is free again and its link stops
+ * working (acceptInvitation treats anything but PENDING as invalid). The token
+ * is replaced as well, because re-inviting the same address later upserts the
+ * row back to PENDING (inviteMember) and must not revive a link that may have
+ * reached the wrong inbox. Only this organization's invitations are visible
+ * through tenantDb; one that was accepted or revoked meanwhile is refused.
+ */
+export async function revokeInvitation(ctx: TenantContext, invitationId: string): Promise<void> {
+  const db = tenantDb(ctx.orgId);
+  const invitation = await db.invitation.findFirst({
+    where: { id: invitationId },
+    select: { id: true, email: true, role: true, status: true },
+  });
+  if (!invitation || invitation.status !== "PENDING") {
+    throw new MemberError("Invitation is not pending", "not_pending");
+  }
+  const revoked = await db.invitation.updateMany({
+    where: { id: invitation.id, status: "PENDING" },
+    data: { status: "REVOKED", token: randomUUID() },
+  });
+  if (revoked.count === 0) throw new MemberError("Invitation is not pending", "not_pending");
+
+  await audit(ctx, {
+    action: "member.invite_revoke",
+    resourceType: "invitation",
+    resourceId: invitation.id,
+    before: { email: invitation.email, role: invitation.role, status: "PENDING" },
+    after: { status: "REVOKED" },
   });
 }
 

@@ -1,7 +1,7 @@
 "use client";
 
 import { useTranslations } from "next-intl";
-import { changeRoleAction, removeMemberAction } from "@/actions/members";
+import { changeRoleAction, removeMemberAction, revokeInvitationAction } from "@/actions/members";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 
@@ -16,11 +16,13 @@ export function MembersTable({
   pendingInvites,
   currentUserId,
   canManage,
+  canRevokeInvites,
 }: {
   members: Member[];
   pendingInvites: Invite[];
   currentUserId: string;
   canManage: boolean;
+  canRevokeInvites: boolean;
 }) {
   const t = useTranslations("settingsMembers");
   const tRoles = useTranslations("roles");
@@ -86,6 +88,23 @@ export function MembersTable({
                 {t("pending")} · {roleLabel(i.role)}
               </p>
             </div>
+            {canRevokeInvites ? (
+              <form
+                action={async () => {
+                  await revokeInvitationAction(i.id);
+                }}
+              >
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  type="submit"
+                  className="text-destructive"
+                  aria-label={t("revokeInviteLabel", { email: i.email })}
+                >
+                  {t("revokeInvite")}
+                </Button>
+              </form>
+            ) : null}
           </div>
         ))}
       </CardContent>

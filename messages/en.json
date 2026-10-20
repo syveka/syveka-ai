@@ -85,6 +85,8 @@
     "removeLabel": "Remove {name}",
     "changeRoleLabel": "Role for {name}",
     "pending": "Invitation pending",
+    "revokeInvite": "Withdraw",
+    "revokeInviteLabel": "Withdraw the invitation to {email}",
     "errors": {
       "invalid_input": "Check the email address and role.",
       "already_member": "This person is already a member of the organization.",

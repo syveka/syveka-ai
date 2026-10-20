@@ -30,6 +30,7 @@ export default async function MembersPage() {
       <MembersTable
         currentUserId={ctx.userId}
         canManage={can(ctx.role, "members:role")}
+        canRevokeInvites={can(ctx.role, "members:invite")}
         members={members.map((m) => ({
           id: m.id,
           role: m.role,

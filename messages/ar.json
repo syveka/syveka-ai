@@ -85,6 +85,8 @@
     "removeLabel": "إزالة {name}",
     "changeRoleLabel": "دور {name}",
     "pending": "الدعوة قيد الانتظار",
+    "revokeInvite": "إلغاء الدعوة",
+    "revokeInviteLabel": "إلغاء الدعوة المرسلة إلى {email}",
     "errors": {
       "invalid_input": "تحقق من البريد الإلكتروني والدور.",
       "already_member": "هذا الشخص عضو في المؤسسة بالفعل.",
