@@ -9,7 +9,7 @@ export async function startCheckoutAction(plan: Plan, interval: BillingInterval)
   const [
     { requirePermission },
     { unscopedPrisma },
-    { getOrCreateCustomer, createCheckoutSession },
+    { getOrCreateCustomer, createCheckoutSession, createPortalSession },
     { audit },
   ] = await Promise.all([
     import("@/server/auth/guard"),
@@ -24,6 +24,17 @@ export async function startCheckoutAction(plan: Plan, interval: BillingInterval)
     where: { id: ctx.orgId },
     include: { members: { select: { userId: true } } },
   });
+
+  // An organization that already pays changes plan in the billing portal. A second checkout
+  // would start a second subscription: double billing, and events for the older one would
+  // overwrite the newer one's state.
+  const current = await unscopedPrisma.subscription.findUnique({
+    where: { organizationId: ctx.orgId },
+    select: { stripeSubscriptionId: true, status: true },
+  });
+  if (org.stripeCustomerId && current?.stripeSubscriptionId && current.status !== "CANCELED") {
+    redirect(await createPortalSession(org.stripeCustomerId));
+  }
 
   const customerId = await getOrCreateCustomer({
     orgId: ctx.orgId,
