@@ -1,4 +1,4 @@
-# Free pilot demo script (as of main `6339063`)
+# Free pilot demo script (as of main `7a8c354`)
 
 A 10–15 minute customer demonstration using only functionality that exists on main and works on
 the FREE plan. Every claim below is backed by code; every item marked **VERIFY** depends on the
@@ -114,8 +114,11 @@ without a separate agreement. Billing is not part of the pilot.
 
 - Anything about phone/voice answering, automated workflows, a shared inbox or content generation
   being part of this pilot.
-- "GDPR compliant", automatic deletion, or self-service data export (see
+- "GDPR compliant", automatic deletion, complete erasure of a person by deleting a contact,
+  immediate removal from backups, or self-service data export (see
   `pilot-data-requests-runbook.md`).
+- That the privacy policy, terms or DPA on the website are final or list every subprocessor: they
+  are placeholders pending counsel.
 - CSV import, integrations beyond the calendar providers configured on the environment, or an
   external calendar connection unless VERIFIED on that environment.
 - Any price, discount or upgrade path (billing is not part of the pilot).

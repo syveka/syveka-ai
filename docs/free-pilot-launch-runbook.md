@@ -1,4 +1,4 @@
-# Free pilot launch runbook (as of main `6339063`)
+# Free pilot launch runbook (as of main `7a8c354`)
 
 How to put one real small business on Syveka as a controlled, free pilot using only what the code
 on main does today. Every step below was read from the repository; nothing here was executed
@@ -48,8 +48,9 @@ customer.
 | Public links                                      | `NEXT_PUBLIC_APP_URL` set to the customer-facing host                                    | booking links point at the wrong host                                                               |
 | Grants                                            | A superadmin user (`app_metadata.is_superadmin = true`, set in the Supabase dashboard)   | nobody can raise a limit                                                                            |
 
-Also decide **which environment** hosts the pilot. Staging currently serves main `6339063` and is
-validated by the release workflow; production has not been released in this series of batches.
+Also decide **which environment** hosts the pilot. Staging currently serves `6339063` and is
+validated by the release workflow; main has since moved to `7a8c354` (#347, #349) without a staging
+release, and production has not been released in this series of batches.
 
 ## 3. Create or identify the pilot organization
 
@@ -115,10 +116,11 @@ equal to the pilot's end. Procedure, audit trail and rollback: `pilot-entitlemen
 
 - `/settings/members`: invite by email with a role. FREE allows 2 seats including the owner;
   pending invitations count as seats. The email goes through Resend.
-- Known friction: **a pending invitation cannot be revoked in the UI.** A mistyped address, or an
-  invitation whose email failed to send, holds its seat until it expires after 7 days. Re-inviting
-  the same address refreshes the same invitation (no extra seat); inviting a different address
-  needs a free seat. Workaround: grant `MAX_SEATS` for the pilot, or wait 7 days.
+- Known friction: **a pending invitation cannot be revoked in the UI** on main (a fix is proposed
+  in #350, unmerged). A mistyped address, or an invitation whose email failed to send, holds its
+  seat until it expires after 7 days. Re-inviting the same address refreshes the same invitation
+  (no extra seat); inviting a different address needs a free seat. Workaround: grant `MAX_SEATS`
+  for the pilot, or wait 7 days.
 - Acceptance is self-service and handles sign-up, sign-in, a wrong account and another browser
   (#337, #338). The accept page explains every failure (expired, seat limit, read-only, already a
   member) in the reader's language.
@@ -166,7 +168,13 @@ Tell the customer up front that these four menu items are visible but not part o
   succeed without the email.
 - The assistant quotes only what the profile and connected data contain; it will say "I can't
   confirm" rather than guess.
-- Organization deletion and data export are manual (see the data-requests runbook).
+- Organization deletion, data export and the erasure of one person's data are manual (see the
+  data-requests runbook). Deleting a contact removes that record only; bookings, deals, messages
+  and audit entries about the same person are separate records.
+- Deleted data remains in database backups and recovery dumps until their retention expires; the
+  retention period is not yet confirmed (data-requests runbook §6).
+- The public privacy, terms and DPA pages are placeholders pending counsel; the subprocessor list
+  on them is incomplete (data-requests runbook §7).
 - English copy appears in a few places (for example the "Name" label on the registration form).
 
 ## 13. Rollback / disable procedure
@@ -199,6 +207,9 @@ Tell the customer up front that these four menu items are visible but not part o
 - Phone/voice answering, workflow automation, a shared inbox or content generation as part of this
   pilot.
 - Automatic or self-service data deletion or export, or "GDPR compliant".
+- That deleting a contact erases every record about that person, or that deleted data is removed
+  from backups at once.
+- That the website's privacy policy, terms or DPA are final, or that they list every subprocessor.
 - Email-based features working if the environment's email provider is not configured.
 - Uptime or support response times beyond what Ehab can personally keep.
 - A price or discount for a paid plan (billing is not part of the pilot).

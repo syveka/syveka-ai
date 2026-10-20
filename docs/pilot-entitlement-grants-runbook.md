@@ -1,4 +1,4 @@
-# Pilot entitlement grants runbook (as of main `6339063`)
+# Pilot entitlement grants runbook (as of main `7a8c354`)
 
 How to give a free-pilot organization only what it needs, using the entitlement grant mechanism
 that already exists. Everything here is read from the code; nothing in this document was executed
