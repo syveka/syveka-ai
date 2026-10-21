@@ -319,13 +319,39 @@ When a scan runs, Strix contacts:
   `host.docker.internal`, so a local target is reachable; so is anything else the container's
   network can reach.
 
+Sandbox network facts verified in the installed 1.7.0 source on 2026-10-22
+(`strix/runtime/docker_client.py`, `strix/runtime/session_manager.py`):
+
+- The container is created on Docker's default bridge with unrestricted egress, with
+  `cap_add` `NET_ADMIN` and `NET_RAW` added unconditionally, and with
+  `extra_hosts host.docker.internal=host-gateway`. The Caido proxy port is published on
+  `127.0.0.1`.
+- `STRIX_DOCKER_SANDBOX_NETWORK=<name>` attaches the sandbox to a user-defined network instead
+  and drops the port publish; the host then has to reach the container IP directly. The setting
+  exists only in source; it is not in the official configuration reference.
+- Model calls are made by the host process, never from the sandbox; `LLM_API_KEY` is not passed
+  into the container.
+- Probes with throwaway containers (no Strix, no model call): an `--internal` network blocked
+  egress; the Windows host could not reach a container IP on any network, so the restricted mode
+  is unusable on Docker Desktop for Windows. It is unverified on Linux.
+
+Consequence: an instruction file, a target list and Docker's defaults do not confine the agents.
+Network isolation has to be provided around Strix (runbook §4.5), and on the setup machine it
+cannot be.
+
 `strix --version` and `strix --help` were run with `STRIX_TELEMETRY=0`.
 
 ### Filesystem access
 
 - A local directory passed with `-t` is mounted into the sandbox **writable** (stated in
   `--help` and in the skills). Agents can modify or delete files there. Runs must therefore use a
-  clean, disposable checkout.
+  disposable snapshot, never a worktree.
+- Verified in `strix/runtime/session_manager.py` (1.7.0): `.git`, `.agents` and `.codex` inside
+  the mounted path are overlaid read-only; for a linked worktree whose `.git` is a file, the shared
+  git directory is mounted read-only only when it lies inside the tree, otherwise it is not
+  mounted at all. No Docker socket and no other host path is mounted. The container environment
+  is a fixed set (`PYTHONUNBUFFERED`, `HOST_GATEWAY`, proxy variables for the in-container Caido,
+  `NO_PROXY`, and uid/gid on Linux); host variables are not forwarded.
 - `--workspace-file` copies a host file into the sandbox; the host copy is not changed.
 - Output: `./strix_runs/<run>/` in the current directory (gitignored in this repository). State:
   `~/.strix/cli-config.json` and `~/.strix/mcp-servers.json` (neither was created by the
@@ -368,12 +394,17 @@ everything they read, so secret material must not be present in the target.
 - No published GitHub security advisories for `usestrix/strix`; no OSV entries for PyPI
   `strix-agent` or npm `skills` as of 2026-10-21.
 - Release tags are unsigned (commits on `main` are signed).
-- Budget enforcement is a best-effort estimate inside the CLI (`--max-budget` is a hard stop in
-  headless mode, but cost is computed from token usage and pricing, may overshoot slightly, and
-  can under-count providers that return no priced usage). There is no provider-side cap; one must
-  be configured at the provider.
-- A clean exit (`0`) is not proof of coverage; a run that was stopped by budget or turns still
-  exits `0`.
+- `--max-budget` is an estimated-cost stop, not a billing ceiling: cost is computed in the CLI
+  from token usage and its pricing table, may lag in-flight requests, and can under-count
+  providers that return no priced usage. Only an enforced limit at the provider bounds spend, and
+  the official provider pages reached for this review do not state exactly how a key behaves at
+  that limit, so it has to be verified in the provider console before use (runbook §5.3).
+- A clean exit (`0`) is not proof of coverage; a run stopped by budget or turns still exits `0`
+  (or `2` with findings) with `run.json` `status: "stopped"` (`strix/interface/main.py`,
+  `strix/report/state.py`). The gate script `security/strix/verify-run.sh` rejects such runs.
+- The sandbox has `NET_ADMIN`/`NET_RAW` and, by default, unrestricted egress and a route to the
+  host (see Network behavior); the only in-Strix restriction is undocumented and unusable on
+  Docker Desktop.
 
 ### Conditions attached to this PASS
 
@@ -386,15 +417,29 @@ everything they read, so secret material must not be present in the target.
    §4.3 checklist is complete for it.
 4. Dynamic targets run with mocked or test-mode integrations (runbook §4.2) so that no e-mail,
    call, charge or customer workflow can be triggered.
-5. `--max-budget` on every run, a dedicated LLM key with a provider-side spend cap, never the
-   application's keys; `STRIX_TELEMETRY=0`.
-6. Code targets are clean, disposable checkouts, never a working tree with uncommitted work.
-7. Findings stay private and are validated by a human before being treated as real; fixes follow
-   `CLAUDE.md` §2 and are retested.
-8. No `strix cloud` usage, no automatic scanning in CI; a manual workflow may be added only under
-   its own authorization (runbook §8).
-9. An agent following the installed skills must not run the upstream install commands they
-   contain; installation is governed by the runbook.
+5. `--max-budget` on every run, a dedicated LLM key whose provider-side **enforced** spend limit
+   has been verified in the provider console (alerts do not count), never the application's keys;
+   `STRIX_TELEMETRY=0`.
+6. Code targets are sanitized `git archive` snapshots of the authorized commit (or an independent
+   `git clone --no-local` when diff scope is needed) in an empty directory outside every
+   worktree, deleted after the run; never a working tree or a linked worktree.
+7. `security/strix/preflight.sh` passes from a clean `env -i` shell before every run: no
+   application, cloud or unexpected secret variables (including `OPENAI_API_KEY`, which Strix
+   reads as a fallback), pinned CLI and image, `DOCKER_HOST` unset.
+8. The sandbox runs on an `--internal` Docker network with no other containers
+   (`STRIX_DOCKER_SANDBOX_NETWORK`) on a Linux host whose own egress is limited to the model
+   provider. This is a first-run blocker on the setup machine (Docker Desktop for Windows) and
+   unverified on Linux; the first run on an isolated Linux runner must confirm it with a minimal
+   budget before any real assessment.
+9. Every headless run is gated by `security/strix/verify-run.sh` (exit code, fresh single
+   `run.json` with `status: "completed"`, report present); a `stopped`, `failed`, `interrupted`
+   or missing run never counts as a clean result.
+10. Findings stay private and are validated by a human before being treated as real; fixes follow
+    `CLAUDE.md` §2 and are retested.
+11. No `strix cloud` usage, no automatic scanning in CI; a manual workflow may be added only under
+    its own authorization (runbook §8).
+12. An agent following the installed skills must not run the upstream install commands they
+    contain; installation is governed by the runbook.
 
 ### Smoke test
 
@@ -402,3 +447,12 @@ Deliberately limited to non-scanning checks: `strix --version` (`strix 1.7.0`), 
 (flag set matches the CLI reference), a Docker SDK `ping()` from the tool environment (engine
 29.7.2, linux/amd64), and the sandbox image pull. No scan was started, no model call was made,
 no account was created.
+
+Follow-up on 2026-10-22, still without starting Strix: the runtime source of the installed
+package was read (facts above); throwaway `alpine` containers were used to confirm that an
+`--internal` network blocks egress and that the Windows host cannot reach container IPs; and the
+gate scripts `security/strix/verify-run.sh` and `security/strix/preflight.sh` were exercised
+with 39 synthetic fixture cases (stubbed `strix`, `docker` and `uname`; all passed, including
+stale, malformed, stopped and budget-terminated runs and inherited application keys). On the setup
+machine itself `preflight.sh` fails, as it should: the interactive shell carries unrelated tokens
+and the host is Docker Desktop for Windows.
