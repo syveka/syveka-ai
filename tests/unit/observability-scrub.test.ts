@@ -418,20 +418,45 @@ describe("scrubEvent", () => {
       expectClean(described);
     });
 
-    it("applies to the thrown error only, not to its causes", () => {
+    it("applies to the thrown error only, which the SDK lists last, not to its causes", () => {
+      // @sentry/core's applyAggregateErrorsToEvent prepends each cause, so a
+      // chained error arrives as [cause, thrown error].
       const event = {
         ...raw(),
         exception: {
           values: [
+            { type: "TypeError", value: ARABIC_CHAT },
             { type: "Error", value: CHAT_TEXT },
-            { type: "Error", value: ARABIC_CHAT },
           ],
         },
       };
-      const out = scrubEvent(event, { originalException: nextError(CHAT_TEXT, "E715") });
-      expect(out.exception!.values!.map((v) => v.value)).toEqual([
-        "Next.js error E715",
+      const thrown = nextError(CHAT_TEXT, "E715");
+      const out = scrubEvent(event, { originalException: thrown });
+      expect(out.exception!.values!.map((v) => [v.type, v.value])).toEqual([
+        ["TypeError", "Error message withheld"],
+        ["Error", "Next.js error E715"],
+      ]);
+      expectClean(out);
+      // A re-scrub without the thrown error reads the kept tag and lands on the same entry.
+      expect(scrubEvent(out)).toEqual(out);
+    });
+
+    it("a kept next_error_code tag is validated like the thrown error's code", () => {
+      for (const value of ["E394 extra", "notacode", "e394", "E123456", "E", ""]) {
+        const event = { ...raw(), tags: { ...raw().tags, next_error_code: value } };
+        const out = scrubEvent(event);
+        expect(out.tags).toEqual({ runtime: "node", turbopack: true });
+        for (const exception of out.exception!.values!) {
+          expect(exception.value).toBe("Error message withheld");
+        }
+        expectClean(out);
+      }
+      // raw() carries [cause, thrown error]: a valid kept tag describes the thrown error only.
+      const kept = scrubEvent({ ...raw(), tags: { ...raw().tags, next_error_code: "E394" } });
+      expect(kept.tags).toEqual({ runtime: "node", turbopack: true, next_error_code: "E394" });
+      expect(kept.exception!.values!.map((v) => v.value)).toEqual([
         "Error message withheld",
+        "Next.js error E394",
       ]);
     });
 

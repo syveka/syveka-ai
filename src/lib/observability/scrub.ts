@@ -258,14 +258,20 @@ function safeContexts(contexts: ErrorEvent["contexts"]): ErrorEvent["contexts"] 
 }
 
 /** SDK-set tags that are kept, with short, word-like values only. */
-const KEPT_TAGS = new Set(["runtime", "turbopack", "next_error_code"]);
+const KEPT_TAGS = new Set(["runtime", "turbopack"]);
 
+/**
+ * The kept tags, plus `next_error_code` in its exact "E" + digits shape only:
+ * a value an earlier pass kept, or anything else that arrives under that
+ * name, goes through the same validator as the thrown error's code.
+ */
 function safeTags(tags: ErrorEvent["tags"]): ErrorEvent["tags"] {
   return Object.fromEntries(
-    Object.entries(tags ?? {}).filter(
-      ([key, value]) =>
-        KEPT_TAGS.has(key) &&
-        (typeof value === "boolean" || (typeof value === "string" && WORD.test(value))),
+    Object.entries(tags ?? {}).filter(([key, value]) =>
+      key === "next_error_code"
+        ? safeNextCode(value) !== undefined
+        : KEPT_TAGS.has(key) &&
+          (typeof value === "boolean" || (typeof value === "string" && WORD.test(value))),
     ),
   );
 }
@@ -276,9 +282,13 @@ export function scrubEvent(event: ErrorEvent, hint?: ScrubHint): ErrorEvent {
   // E394, a server action's response that wasn't a React payload) when its
   // message, often a response body, can't be forwarded.
   const code = nextErrorCode(hint, event.tags);
-  const describe = (value: unknown, first: boolean) => {
+  // The code belongs to the thrown error only. The SDK lists that error LAST
+  // in exception.values and puts its causes before it (@sentry/core's
+  // applyAggregateErrorsToEvent prepends each cause), so causes keep their
+  // own descriptions.
+  const describe = (value: unknown, thrownError: boolean) => {
     const description = safeErrorDescription(value);
-    return first && code && description === WITHHELD ? `Next.js error ${code}` : description;
+    return thrownError && code && description === WITHHELD ? `Next.js error ${code}` : description;
   };
   return {
     type: undefined,
@@ -300,9 +310,9 @@ export function scrubEvent(event: ErrorEvent, hint?: ScrubHint): ErrorEvent {
       : undefined,
     exception: event.exception
       ? {
-          values: event.exception.values?.map((exception, index) => ({
+          values: event.exception.values?.map((exception, index, all) => ({
             type: exception.type && ERROR_TYPE.test(exception.type) ? exception.type : "Error",
-            value: describe(exception.value, index === 0),
+            value: describe(exception.value, index === all.length - 1),
             mechanism: exception.mechanism
               ? {
                   type: safeWord(exception.mechanism.type) ?? "generic",
