@@ -2,6 +2,8 @@ import "server-only";
 
 import { unscopedPrisma } from "@/server/db/tenant";
 import { getSocialPublishingProvider } from "@/server/social";
+import { PublishOutcomeUnknownError } from "@/server/social/types";
+import { enqueue } from "@/server/jobs/queue";
 import { decryptSocialToken } from "@/server/integrations/social/crypto";
 import { createSupabaseAdmin } from "@/server/supabase/server";
 import { isOrganizationActive } from "@/server/jobs/organization-guard";
@@ -65,6 +67,27 @@ function startOfMonth(from: Date): Date {
 // QStash may deliver a delayed message slightly early; only a clearly early job is skipped.
 const EARLY_DELIVERY_TOLERANCE_MS = 60_000;
 
+/**
+ * A publish run can't outlive the job's time limit (300s, see
+ * /api/v1/jobs/publish-creator-post), so a post still PUBLISHING this long
+ * after its claim was interrupted: the function was stopped mid-publish.
+ */
+export const STALE_PUBLISHING_AFTER_MS = 330_000;
+/** When the check for an interrupted run is delivered, after each claim. */
+export const STALE_CHECK_DELAY_SECONDS = 600;
+
+/**
+ * FAILED posts that may already be live on the platform. They are never
+ * claimed again automatically (a retry could post twice); a person checks the
+ * platform and reschedules, which clears the code.
+ */
+export const NEEDS_REVIEW_ERROR_CODES = ["publish_outcome_unknown", "publish_interrupted"];
+
+const OUTCOME_UNKNOWN_MESSAGE =
+  "We couldn't confirm whether the platform published this post. Check the account before scheduling it again.";
+const INTERRUPTED_MESSAGE =
+  "Publishing was interrupted and the post may already be live. Check the account before scheduling it again.";
+
 async function markPublished(postId: string, externalPostId: string): Promise<void> {
   await unscopedPrisma.creatorPost.update({
     where: { id: postId },
@@ -114,14 +137,24 @@ export async function publishCreatorPost(
   // Idempotent claim: only a SCHEDULED or previously-FAILED post can start
   // publishing, and the conditional UPDATE (like the credit ledger's
   // reserve) makes a concurrent duplicate delivery a safe no-op rather than
-  // a double-publish.
+  // a double-publish. A failure that may have published is never claimed.
   const claim = await unscopedPrisma.creatorPost.updateMany({
-    where: { id: postId, organizationId: orgId, publishStatus: { in: ["SCHEDULED", "FAILED"] } },
+    where: {
+      id: postId,
+      organizationId: orgId,
+      publishStatus: { in: ["SCHEDULED", "FAILED"] },
+      OR: [
+        { publishStatus: "SCHEDULED" },
+        { lastErrorCode: null },
+        { lastErrorCode: { notIn: NEEDS_REVIEW_ERROR_CODES } },
+      ],
+    },
     data: { publishStatus: "PUBLISHING", publishAttemptCount: { increment: 1 } },
   });
   if (claim.count !== 1) {
     return "done"; // already publishing/published/canceled/rejected — nothing to do
   }
+  await scheduleStaleCheck(orgId, postId);
 
   // Set once the provider has published: from then on the post is live and must never be
   // marked FAILED, because a FAILED post can be claimed again and would be published twice.
@@ -251,6 +284,19 @@ export async function publishCreatorPost(
     }
     return "done";
   } catch (error) {
+    if (externalPostId === null && error instanceof PublishOutcomeUnknownError) {
+      // Possibly live: recorded for a person to check, never retried (no throw).
+      await unscopedPrisma.creatorPost.update({
+        where: { id: postId },
+        data: {
+          publishStatus: "FAILED",
+          lastErrorCode: "publish_outcome_unknown",
+          lastErrorSafe: OUTCOME_UNKNOWN_MESSAGE,
+        },
+      });
+      await recordNeedsReview(ctx, postId, "publish_outcome_unknown", OUTCOME_UNKNOWN_MESSAGE);
+      return "done";
+    }
     if (externalPostId !== null) {
       // Live on the platform; only the bookkeeping after it failed. Record it as published if
       // that write was what failed, and finish without a retry.
@@ -293,4 +339,118 @@ export async function publishCreatorPost(
     });
     throw error; // let the job handler decide on QStash retry vs. terminal failure
   }
+}
+
+/**
+ * After each claim, a delayed check finds a run that was stopped mid-publish
+ * (recoverStalePublish). Without it, such a post stays PUBLISHING for good:
+ * a redelivered job can't claim it. Failing to schedule the check doesn't
+ * stop the publish; it is only needed if the run is also interrupted.
+ */
+async function scheduleStaleCheck(orgId: string, postId: string): Promise<void> {
+  try {
+    const claimed = await unscopedPrisma.creatorPost.findFirst({
+      where: { id: postId, organizationId: orgId },
+      select: { publishAttemptCount: true },
+    });
+    if (!claimed) return;
+    await enqueue(
+      "publish-creator-post",
+      { orgId, postId, staleCheck: claimed.publishAttemptCount },
+      {
+        delaySeconds: STALE_CHECK_DELAY_SECONDS,
+        deduplicationId: `publish-creator-post:stale-check:${postId}:${claimed.publishAttemptCount}`,
+      },
+    );
+  } catch (error) {
+    console.error("creator post stale-publish check not scheduled", { postId, orgId, error });
+  }
+}
+
+/** Marks a possibly-live post FAILED for a person to check; audited and notified. */
+async function recordNeedsReview(
+  ctx: { orgId: string; userId: string },
+  postId: string,
+  code: "publish_outcome_unknown" | "publish_interrupted",
+  safeMessage: string,
+  details: Record<string, unknown> = {},
+): Promise<void> {
+  await audit(ctx, {
+    action: `creator.post.${code}`,
+    resourceType: "creator_post",
+    resourceId: postId,
+    actorType: "system",
+    after: { errorCode: code, ...details },
+  });
+  if (await isOrganizationActive(ctx.orgId)) {
+    await notifyUser(ctx, ctx.userId, {
+      type: "creator_post_publish_failed",
+      title: "Check whether your post was published",
+      body: safeMessage,
+      href: "/creator-studio/calendar",
+    });
+  }
+}
+
+/** The run being checked may still be running; the check is delivered again later. */
+export class StaleCheckTooEarlyError extends Error {}
+
+/**
+ * Delayed check scheduled at each claim: if that same attempt is still
+ * PUBLISHING well past the job's time limit, its run was stopped mid-publish.
+ * Whether the platform published is unknown, so the post is never
+ * re-published here: it is marked FAILED for a person to check
+ * (publish_interrupted, never claimed again automatically). Only this
+ * organization's post, and only the attempt that scheduled the check.
+ */
+export async function recoverStalePublish(
+  orgId: string,
+  postId: string,
+  attempt: number,
+): Promise<"recovered" | "done" | "organization_inactive"> {
+  if (!(await isOrganizationActive(orgId))) return "organization_inactive";
+
+  const post = await unscopedPrisma.creatorPost.findFirst({
+    where: { id: postId, organizationId: orgId },
+    select: { publishStatus: true, publishAttemptCount: true, createdById: true },
+  });
+  if (!post || post.publishStatus !== "PUBLISHING" || post.publishAttemptCount !== attempt) {
+    return "done"; // that attempt finished, or a newer one owns the post
+  }
+
+  const recovered = await unscopedPrisma.creatorPost.updateMany({
+    where: {
+      id: postId,
+      organizationId: orgId,
+      publishStatus: "PUBLISHING",
+      publishAttemptCount: attempt,
+      updatedAt: { lt: new Date(Date.now() - STALE_PUBLISHING_AFTER_MS) },
+    },
+    data: {
+      publishStatus: "FAILED",
+      lastErrorCode: "publish_interrupted",
+      lastErrorSafe: INTERRUPTED_MESSAGE,
+    },
+  });
+  if (recovered.count !== 1) {
+    // Still within the run's time limit (an early delivery), or it finished meanwhile.
+    const current = await unscopedPrisma.creatorPost.findFirst({
+      where: { id: postId, organizationId: orgId },
+      select: { publishStatus: true, publishAttemptCount: true },
+    });
+    if (current?.publishStatus === "PUBLISHING" && current.publishAttemptCount === attempt) {
+      throw new StaleCheckTooEarlyError("The publish attempt may still be running.");
+    }
+    return "done";
+  }
+
+  console.error("creator post publish was interrupted", { postId, orgId, attempt });
+  await recordNeedsReview(
+    { orgId, userId: post.createdById },
+    postId,
+    "publish_interrupted",
+    INTERRUPTED_MESSAGE,
+    { attempt },
+  );
+  return "recovered";
 }
