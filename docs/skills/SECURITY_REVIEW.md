@@ -224,3 +224,181 @@ chromium`, and cleans apt caches — a conventional, readable, non-obfuscated bu
 See `docs/skills/scrapling-integration.md` — fetch → extract → structured output → AI-sanitized
 output all verified against `https://quotes.toscrape.com/` (the project's own public documentation
 example site; no login, no personal data).
+
+---
+
+## Review: Strix
+
+**Date reviewed:** 2026-10-21
+**Reviewed by:** automated review (Claude Code), Strix integration setup task
+**Verdict:** **PASS WITH CONDITIONS** (classification **EXPERIMENTAL**; installation and
+preparation only, no scan authorized)
+
+Scope of this review: the five official Agent Skills installed into `.claude/skills/`, the
+`strix-agent` CLI installed on the setup machine, the `strix-sandbox` Docker image, and the
+`skills` npm CLI used to install the skills. The runbook is
+`docs/strix-security-testing-runbook.md`.
+
+### Provenance
+
+- Repository: `https://github.com/usestrix/strix` — confirmed via the GitHub API as public,
+  non-fork, non-archived, created 2025-08-05, default branch `main`, 70,764 stars, 7,847 forks,
+  last push 2026-10-21, license `Apache-2.0`, homepage `https://strix.ai`.
+- Skills were taken from `main` at `a3c31236bd6305784a501a3102dab0bda83f2317`
+  (2026-10-21T15:30:08Z); that commit carries a valid GPG signature. Each installed `SKILL.md`
+  matched the file at that commit byte for byte after LF normalization (the clone on Windows
+  produced CRLF; the committed files are LF and Prettier-formatted).
+- CLI: PyPI `strix-agent` 1.7.0 (uploaded 2026-10-05) corresponds to GitHub release `v1.7.0`,
+  tag commit `55bc07991aacb1c26a81b43e7ca53148730d2019`. That tag commit is **unsigned**. The
+  package's `pyproject.toml` names the same repository and the `strix` console entry point.
+- Sandbox image `ghcr.io/usestrix/strix-sandbox:1.3.0` is published under the same GitHub
+  organization and is the default of `STRIX_IMAGE` in `strix/config/settings.py` at v1.7.0.
+- Documentation at `https://docs.strix.ai` and the README point back to the same repository; no
+  divergent mirror found.
+- Installer: npm `skills` 1.7.4 (`vercel-labs/skills`, MIT), maintainers `rauchg` and `quuu`,
+  published from GitHub Actions through npm trusted publishing (OIDC). The published package was
+  unpacked and read before use: dependencies `tar` and `yaml` only, no install-time script for
+  consumers, network calls to `api.github.com`/`github.com`/`raw.githubusercontent.com` for the
+  clone and to `skills.sh` for telemetry (disabled with `DO_NOT_TRACK=1`).
+
+**No provenance concerns**, with the note that release tags are not signed.
+
+### License
+
+Apache-2.0 for the repository, the skills (`license: Apache-2.0` in every frontmatter) and the
+PyPI package. Permissive; compatible with a proprietary product. The managed cloud
+(app.strix.ai) is a separate commercial service and is not used.
+
+### Version/commit reviewed
+
+- Skills: `main` @ `a3c31236bd6305784a501a3102dab0bda83f2317`.
+- CLI: `strix-agent==1.7.0` (`v1.7.0` @ `55bc07991aacb1c26a81b43e7ca53148730d2019`).
+- Image: `ghcr.io/usestrix/strix-sandbox:1.3.0` (about 1.4 GB compressed, linux/amd64).
+- Installer: `skills@1.7.4`.
+
+Any newer version requires a re-review of this section and of the conditions below.
+
+### Python requirements & dependencies
+
+`requires-python >= 3.12`. Seventeen direct dependencies: `openai-agents[litellm]`, `openai`,
+`litellm`, `google-auth`, `boto3`, `pydantic`, `pydantic-settings`, `rich`, `docker`,
+`requests`, `cvss`, `caido-sdk-client`, `markdown-it-py`, `reportlab`, `pypdf`, `cryptography`,
+`pyyaml`. `litellm` and `boto3`/`google-auth` are there for multi-provider model access; `docker`
+drives the sandbox; `caido-sdk-client` is the HTTP-proxy integration; `reportlab`/`pypdf` produce
+reports. The transitive set is large (the uv install resolved well over one hundred packages),
+which is why the CLI lives in its own uv tool environment and nowhere near the application's
+`package-lock.json`. The skills have no dependencies.
+
+### Install scripts / build process
+
+- The documented `curl -sSL https://strix.ai/install | bash` was downloaded to a scratch
+  directory and read in full, not executed. It downloads a prebuilt binary for the platform from
+  GitHub Releases into `~/.strix/bin`, deletes any other `strix` found on `PATH`, appends an
+  `export PATH=...` line to the shell rc file, and pulls the sandbox image. None of that was
+  wanted; the project also documents package-manager installs (`pipx`, `uv`, `pip`).
+- Installed with `uv tool install --python 3.12 "strix-agent==1.7.0"`: a plain wheel install
+  into an isolated environment, no post-install hooks observed, no change to global Claude Code
+  configuration or shell profiles.
+- Skills installed with `npx skills@1.7.4 add usestrix/strix -a claude-code -s ... -y --copy`.
+  The CLI clones the repository, copies the selected `SKILL.md` files into `.claude/skills/`
+  and writes `skills-lock.json`. No symlinks, no `.agents/` directory left behind.
+
+### Network behavior
+
+When a scan runs, Strix contacts:
+
+- The LLM provider selected by `STRIX_LLM` (via LiteLLM), with every file the agents read, every
+  request/response exchanged with a target, the instruction text and the agents' reasoning.
+- `ghcr.io` for the sandbox image (first run or `docker pull`).
+- Telemetry: PostHog (`https://us.i.posthog.com`) and Scarf (`https://strix.gateway.scarf.sh`),
+  per `strix/telemetry/{posthog,scarf}.py` and the project's telemetry README; disabled with
+  `STRIX_TELEMETRY=0`. Optional remote OpenTelemetry export only if `TRACELOOP_*` is set.
+- Optional web search (Perplexity/Exa) only if those keys are set.
+- `app.strix.ai` only for `strix cloud ...` commands, which are not authorized for Syveka.
+- The targets themselves, from inside the sandbox container. The sandbox reaches the host via
+  `host.docker.internal`, so a local target is reachable; so is anything else the container's
+  network can reach.
+
+`strix --version` and `strix --help` were run with `STRIX_TELEMETRY=0`.
+
+### Filesystem access
+
+- A local directory passed with `-t` is mounted into the sandbox **writable** (stated in
+  `--help` and in the skills). Agents can modify or delete files there. Runs must therefore use a
+  clean, disposable checkout.
+- `--workspace-file` copies a host file into the sandbox; the host copy is not changed.
+- Output: `./strix_runs/<run>/` in the current directory (gitignored in this repository). State:
+  `~/.strix/cli-config.json` and `~/.strix/mcp-servers.json` (neither was created by the
+  verification commands).
+- The skills write nothing.
+
+### Subprocess/shell execution
+
+The CLI talks to the Docker daemon through the Python SDK (create, exec, remove containers). The
+agents execute arbitrary security tooling and shell commands inside the sandbox container, which
+is the product's purpose. On the host the CLI itself runs no shell commands beyond Docker SDK
+calls. The skills instruct Claude Code to run `strix ...`, `docker info`, and (in the install
+step) the `curl | bash` line or `pipx install`; the latter two are superseded by this repository's
+runbook and must not be executed by an agent here.
+
+### Credential/cookie/secret handling
+
+- `LLM_API_KEY` is read from the environment or `~/.strix/cli-config.json` (the docs show the
+  key stored in that JSON in plaintext; prefer environment variables for the duration of a run).
+  `OPENAI_API_KEY` is accepted as a fallback alias, so the application's OpenAI key must not be
+  exported in the shell that runs Strix.
+- Test credentials for a dynamic target are passed through `--instruction` /
+  `--instruction-file`; they are sent to the model provider and should be throwaway values kept
+  in a gitignored file (`security/strix/instruction.local.md`), not on the command line.
+- Findings in `strix_runs/` include proofs of concept and data samples: sensitive, never
+  committed, never pasted into public channels.
+- No credentials are stored in the skills or in `skills-lock.json`.
+
+### Prompt-injection exposure
+
+High by design: the agents read untrusted content (target source, HTTP responses, documents) and
+act on it with tools. A hostile target could steer an agent. Mitigations are structural: the agent
+runs in a disposable container, the only writable host path is the mounted target directory, and
+the operator chooses the targets. For Syveka this means only targets we control are ever in
+scope, and a scan is never run from a working tree that matters. Agents also reach the LLM with
+everything they read, so secret material must not be present in the target.
+
+### Known security concerns
+
+- No published GitHub security advisories for `usestrix/strix`; no OSV entries for PyPI
+  `strix-agent` or npm `skills` as of 2026-10-21.
+- Release tags are unsigned (commits on `main` are signed).
+- Budget enforcement is a best-effort estimate inside the CLI (`--max-budget` is a hard stop in
+  headless mode, but cost is computed from token usage and pricing, may overshoot slightly, and
+  can under-count providers that return no priced usage). There is no provider-side cap; one must
+  be configured at the provider.
+- A clean exit (`0`) is not proof of coverage; a run that was stopped by budget or turns still
+  exits `0`.
+
+### Conditions attached to this PASS
+
+1. Pin to the versions above; re-review on any change to the skills, the CLI or the image.
+2. No scan of any kind without a written authorization naming commit, targets, budget, model and
+   recipient of the findings (`docs/strix-security-testing-runbook.md` §6).
+3. Targets come only from the explicit allowlist (`security/strix/targets.local.txt`). Production
+   hosts, the production Supabase project, real customer or pilot data, production credentials and
+   all third-party services are permanently excluded. Staging is excluded until the runbook's
+   §4.3 checklist is complete for it.
+4. Dynamic targets run with mocked or test-mode integrations (runbook §4.2) so that no e-mail,
+   call, charge or customer workflow can be triggered.
+5. `--max-budget` on every run, a dedicated LLM key with a provider-side spend cap, never the
+   application's keys; `STRIX_TELEMETRY=0`.
+6. Code targets are clean, disposable checkouts, never a working tree with uncommitted work.
+7. Findings stay private and are validated by a human before being treated as real; fixes follow
+   `CLAUDE.md` §2 and are retested.
+8. No `strix cloud` usage, no automatic scanning in CI; a manual workflow may be added only under
+   its own authorization (runbook §8).
+9. An agent following the installed skills must not run the upstream install commands they
+   contain; installation is governed by the runbook.
+
+### Smoke test
+
+Deliberately limited to non-scanning checks: `strix --version` (`strix 1.7.0`), `strix --help`
+(flag set matches the CLI reference), a Docker SDK `ping()` from the tool environment (engine
+29.7.2, linux/amd64), and the sandbox image pull. No scan was started, no model call was made,
+no account was created.
