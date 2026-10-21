@@ -281,3 +281,27 @@ actually prevented it: `bookMeeting` now calls
 `tx.contact.findFirstOrThrow({ where: { id: input.contactId, organizationId: id.orgId } })`
 inside its transaction before attaching a supplied `contactId`, matching `logActivity`'s pattern.
 Covered by `tests/unit/ai-tools-book-meeting.test.ts`.
+
+### Addendum (2026-10-21) — Production `_prisma_migrations` exposure remediated manually; Prisma migration still pending
+
+Found from the Supabase Security Advisor (`rls_disabled_in_public`, critical). A read-only check in
+the production SQL Editor showed `public._prisma_migrations` was the only public table without RLS,
+and `anon` and `authenticated` each held INSERT, SELECT, UPDATE, DELETE, TRUNCATE, REFERENCES and
+TRIGGER on it. Production ran `fc64572`, which predates #327; migration
+`20261014000000_secure_prisma_migrations_table` was not recorded in production.
+
+Remediation (owner-authorized, 2026-10-21): the migration's two statements, `ENABLE ROW LEVEL
+SECURITY` and `REVOKE ALL` from `anon` and `authenticated`, were run once, in one transaction, in
+the production SQL Editor as `postgres`. Pre-checks: owner = current_user = `postgres`,
+`relforcerowsecurity` = false, 31 migration rows. Post-checks: 0 public tables without RLS, RLS
+enabled and not forced, 0 anon/authenticated grants, 31 rows. Security Advisor: 0 errors,
+0 warnings.
+
+Deliberately not done: no row was inserted into or changed in `_prisma_migrations`. The migration
+remains pending in Prisma's history. The next authorized production release applies it (both
+statements are no-ops on the remediated table) and records it; `release-invariants.sql` then
+verifies the row, RLS and privileges. Never mark it applied by hand.
+
+Rollback, if Prisma could ever not read its history: `ALTER TABLE public._prisma_migrations
+DISABLE ROW LEVEL SECURITY;` (keep the revokes). This was a security remediation only, not a
+production release; the release remains subject to the recovery gate in `release-runbook.md`.

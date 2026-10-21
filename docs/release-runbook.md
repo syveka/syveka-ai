@@ -613,6 +613,13 @@ release was not established.
    the job summary prints the exact `vercel rollback <previous deployment>` command.
 10. Run the production smoke checklist. End the write freeze only after it passes.
 
+**Note (2026-10-21):** production already has RLS enabled and `anon`/`authenticated` privileges
+revoked on `public._prisma_migrations` (manual security remediation, see `SECURITY-AUDIT.md`).
+Migration `20261014000000_secure_prisma_migrations_table` is still pending in Prisma's history:
+step 6 applies it as a no-op and records it, and step 7's `release-invariants.sql` verifies the
+row. After the release, confirm `prisma migrate status` is clean. Do not insert or edit
+`_prisma_migrations` rows by hand. This remediation does not lift the backup/recovery gate above.
+
 Required production Environment secrets are `PROD_DATABASE_URL`,
 `PROD_DIRECT_URL`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, and
 `VERCEL_AUTOMATION_BYPASS_SECRET` (the production Vercel project's Protection
