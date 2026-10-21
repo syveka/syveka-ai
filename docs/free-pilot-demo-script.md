@@ -93,13 +93,13 @@ without a separate agreement. Billing is not part of the pilot.
 
 ## Fallbacks
 
-| If…                                   | Then…                                                                                               |
-| ------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| Chat returns an error                 | Stop the AI part; show Business DNA, CRM and booking. Do not retry in front of the customer.        |
-| Website extraction fails              | Skip it; the profile is already filled.                                                             |
-| No confirmation email arrives         | Show the booking in the calendar; say email delivery is being set up for their environment.         |
-| Invitation email does not arrive      | Show the pending invitation in the members list; accept it later. Note: it holds a seat for 7 days. |
-| A limit message appears (402 / quota) | Explain FREE limits honestly; grants exist for pilots.                                              |
+| If…                                   | Then…                                                                                              |
+| ------------------------------------- | -------------------------------------------------------------------------------------------------- |
+| Chat returns an error                 | Stop the AI part; show Business DNA, CRM and booking. Do not retry in front of the customer.       |
+| Website extraction fails              | Skip it; the profile is already filled.                                                            |
+| No confirmation email arrives         | Show the booking in the calendar; say email delivery is being set up for their environment.        |
+| Invitation email does not arrive      | Show the pending invitation in the members list; accept it later, or withdraw it to free the seat. |
+| A limit message appears (402 / quota) | Explain FREE limits honestly; grants exist for pilots.                                             |
 
 ## Claims Ehab can safely make
 
@@ -130,7 +130,7 @@ without a separate agreement. Billing is not part of the pilot.
 ## Known pilot limitations (say them before the customer finds them)
 
 - 50 AI messages per organization per month on FREE unless granted more.
-- 2 seats; pending invitations count and cannot be revoked for 7 days.
+- 2 seats; pending invitations count until they are withdrawn or expire after 7 days.
 - 200 contacts; no import.
 - Default availability is Helsinki time until a schedule is saved.
 - Four menu items are visible but not part of the pilot.
