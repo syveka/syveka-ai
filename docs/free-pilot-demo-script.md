@@ -1,4 +1,4 @@
-# Free pilot demo script (as of main `7a8c354`)
+# Free pilot demo script (as of main `f81450c`)
 
 A 10–15 minute customer demonstration using only functionality that exists on main and works on
 the FREE plan. Every claim below is backed by code; every item marked **VERIFY** depends on the
@@ -6,7 +6,9 @@ environment and must be rehearsed once before a customer sees it. Not marketing 
 
 ## Prerequisites (the day before)
 
-- A demo organization on the environment you will show (staging serves `6339063`), owned by your
+- A demo organization on the environment you will show (staging serves `14f12b8`, the last
+  successful staging release on 2026-10-20; the environment's Stripe keys must be test-mode or
+  absent, see the launch runbook §2), owned by your
   demo account, with:
   - Business DNA saved: description, 3–5 services with durations and prices, opening hours,
     contact details, one policy (for example cancellation);
