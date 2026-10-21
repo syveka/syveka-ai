@@ -1,6 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { requirePermission } from "@/server/auth/guard";
+import { can } from "@/server/auth/permissions";
 import { listConversations } from "@/server/services/conversations";
 import { ConversationList } from "@/components/chat/conversation-list";
 import { ChatView } from "@/components/chat/chat-view";
@@ -24,6 +25,7 @@ export default async function ChatPage() {
         <ChatView
           initialMessages={[]}
           voiceInputEnabled={isTranscriptionPilotMember(ctx)}
+          attachmentsEnabled={can(ctx.role, "kb:write")}
           voiceConversation={liveVoiceFor(ctx)}
         />
       </div>

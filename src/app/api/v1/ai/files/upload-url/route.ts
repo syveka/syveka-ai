@@ -18,7 +18,11 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/security/rate-limit"),
   ]);
   try {
-    const ctx = await requirePermission("chat:use");
+    // Same boundary as POST /api/v1/ai/files: the upload becomes an org-wide
+    // Knowledge Base document, so no upload intent or storage object is issued
+    // to a user who may not create one.
+    await requirePermission("chat:use");
+    const ctx = await requirePermission("kb:write");
     const refused = await rateLimitRefusal("api", `ai-files-upload-url:${ctx.orgId}:${ctx.userId}`);
     if (refused) return refused;
     const parsed = uploadUrlSchema.safeParse(await request.json().catch(() => null));

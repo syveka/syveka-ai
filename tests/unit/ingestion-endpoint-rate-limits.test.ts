@@ -190,9 +190,9 @@ describe.each(routes)(
     });
 
     it("uses distinct keys per organization/user pair -- no cross-tenant collision", async () => {
-      requirePermissionMock.mockResolvedValueOnce(ctxFor(ORG_A, USER_A));
+      requirePermissionMock.mockResolvedValue(ctxFor(ORG_A, USER_A));
       await handler(body());
-      requirePermissionMock.mockResolvedValueOnce(ctxFor(ORG_B, USER_B));
+      requirePermissionMock.mockResolvedValue(ctxFor(ORG_B, USER_B));
       await handler(body());
       const calledKeys = rateLimitMock.mock.calls.map((c) => c[0]);
       expect(calledKeys[0]).toBe(`${keyPrefix}:${ORG_A}:${USER_A}`);
@@ -205,7 +205,7 @@ describe.each(routes)(
 describe("cross-endpoint key isolation", () => {
   it("different endpoints use different key prefixes for the same org/user", async () => {
     for (const route of routes) {
-      requirePermissionMock.mockResolvedValueOnce(ctxFor(ORG_A, USER_A));
+      requirePermissionMock.mockResolvedValue(ctxFor(ORG_A, USER_A));
       await route.handler(route.body());
     }
     const keys = rateLimitMock.mock.calls.map((c) => c[0]);
