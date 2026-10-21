@@ -9,6 +9,7 @@ import {
 } from "@/server/ai/tool-action-history";
 import { redis } from "@/server/integrations/redis";
 import { requirePermission } from "@/server/auth/guard";
+import { can } from "@/server/auth/permissions";
 import { listConversations, getConversationWithMessages } from "@/server/services/conversations";
 import { ConversationList } from "@/components/chat/conversation-list";
 import { ChatView } from "@/components/chat/chat-view";
@@ -77,6 +78,7 @@ export default async function ConversationPage({
           conversationId={conversationId}
           initialMessages={initialMessages}
           voiceInputEnabled={isTranscriptionPilotMember(ctx)}
+          attachmentsEnabled={can(ctx.role, "kb:write")}
           voiceConversation={liveVoiceFor(ctx)}
         />
       </div>

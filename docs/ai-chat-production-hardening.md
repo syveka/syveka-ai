@@ -51,7 +51,7 @@ Rate-limit responses use HTTP 429, identify `user` or `organization` in `error.s
 
 ## Chat file APIs
 
-Chat uploads reuse the knowledge-base upload intent and embedding pipeline but require `chat:use`, allowing normal chat members to attach files without receiving general `kb:write` access.
+Chat uploads reuse the knowledge-base upload intent and embedding pipeline, and the resulting document is an ordinary organization document: it appears in the Knowledge Base for every member and is retrieved by organization-wide RAG once ready. Both chat file routes therefore require `chat:use` **and** `kb:write`, the same permission as creating a Knowledge Base document. A role without `kb:write` (MEMBER, VIEWER) is refused with 403 before any upload intent, storage object or document is created, and the chat composer hides the attach control for it.
 
 ### `POST /api/v1/ai/files/upload-url`
 

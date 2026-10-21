@@ -52,11 +52,14 @@ export function ChatView({
   conversationId,
   initialMessages,
   voiceInputEnabled = false,
+  attachmentsEnabled = false,
   voiceConversation = null,
 }: {
   conversationId?: string;
   initialMessages: UiMessage[];
   voiceInputEnabled?: boolean;
+  /** The user may create Knowledge Base documents, which chat attachments are. */
+  attachmentsEnabled?: boolean;
   /** Live voice conversation, when the server allows it for this user. */
   voiceConversation?: { sessionMinutes: number } | null;
 }) {
@@ -186,6 +189,7 @@ export function ChatView({
           onAbort={abort}
           disabled={isStreaming}
           voiceInputEnabled={voiceInputEnabled}
+          attachmentsEnabled={attachmentsEnabled}
           onRecordingStart={playback.stop}
           onVoiceBusyChange={setDictating}
         />
