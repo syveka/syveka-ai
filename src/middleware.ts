@@ -6,7 +6,16 @@ import { parseSentryDsn } from "@/lib/observability/dsn";
 
 const intlMiddleware = createIntlMiddleware(routing);
 
-const PROTECTED_PREFIXES = [
+/**
+ * Every route under the (app), (onboarding) and (superadmin) groups. A route
+ * missing here isn't exposed -- (app)/layout.tsx still refuses without a
+ * tenant context -- but a signed-out visitor is then bounced through
+ * /onboarding and arrives at /login with `next=/onboarding` instead of the
+ * page they asked for (that is how /inbox and /creator-studio behaved).
+ * tests/unit/middleware-route-coverage.test.ts checks this list against the
+ * route directories, so a new app route can't be left out.
+ */
+export const PROTECTED_PREFIXES = [
   "/dashboard",
   "/chat",
   "/voice",
@@ -18,6 +27,8 @@ const PROTECTED_PREFIXES = [
   "/workflows",
   "/notifications",
   "/settings",
+  "/inbox",
+  "/creator-studio",
   "/onboarding",
   "/admin",
 ];

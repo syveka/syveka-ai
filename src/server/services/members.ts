@@ -1,15 +1,17 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import type { Role } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { createSupabaseAdmin } from "@/server/supabase/server";
-import { assertWithinLimit, EntitlementError, getEntitlements } from "./billing/entitlements";
+import { assertWithinLimit, getEntitlements } from "./billing/entitlements";
 import { countActiveSeats, lockOrgSeats } from "./billing/seats";
 import { sendEmail } from "@/server/integrations/resend";
 import { InvitationEmail } from "../../../emails/invitation";
 import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
 import { getAppUrlEnv } from "@/env";
+import type { InvitationAcceptErrorCode } from "@/lib/invitation-errors";
 
 const INVITE_EXPIRY_DAYS = 7;
 
@@ -17,10 +19,30 @@ const INVITE_EXPIRY_DAYS = 7;
 export class MemberError extends Error {
   constructor(
     message: string,
-    public readonly code: "already_member",
+    public readonly code: "already_member" | "not_pending",
   ) {
     super(message);
     this.name = "MemberError";
+  }
+}
+
+/** The signed-in account isn't the one the invitation was sent to. */
+export class InvitationAccountMismatchError extends Error {
+  constructor() {
+    super("Invitation was sent to a different email address");
+    this.name = "InvitationAccountMismatchError";
+  }
+}
+
+/**
+ * An expected reason an invitation can't be accepted, as a fixed code the
+ * invitation page can show. The message is for logs only and never leaves
+ * the server.
+ */
+export class InvitationAcceptError extends Error {
+  constructor(public readonly code: InvitationAcceptErrorCode) {
+    super(`Invitation can't be accepted: ${code}`);
+    this.name = "InvitationAcceptError";
   }
 }
 
@@ -92,26 +114,67 @@ export async function inviteMember(
   });
 }
 
+/**
+ * Withdraws a pending invitation: its seat is free again and its link stops
+ * working (acceptInvitation treats anything but PENDING as invalid). The token
+ * is replaced as well, because re-inviting the same address later upserts the
+ * row back to PENDING (inviteMember) and must not revive a link that may have
+ * reached the wrong inbox.
+ *
+ * Withdrawal and acceptance change the same row and the same seat count, so
+ * they take the same per-organization lock that acceptInvitation holds from
+ * its re-read of the status to its commit. Whichever arrives second waits,
+ * then sees the other's committed status and is refused: an invitation can't
+ * be both withdrawn and accepted. Only this organization's invitations are
+ * reachable (organizationId in every clause, as elsewhere in a transaction).
+ */
+export async function revokeInvitation(ctx: TenantContext, invitationId: string): Promise<void> {
+  const invitation = await unscopedPrisma.$transaction(async (tx) => {
+    await lockOrgSeats(tx, ctx.orgId);
+    // Unknown here, or another organization's: nothing to withdraw.
+    const current = await tx.invitation.findFirst({
+      where: { id: invitationId, organizationId: ctx.orgId },
+      select: { id: true, email: true, role: true },
+    });
+    if (!current) throw new MemberError("Invitation is not pending", "not_pending");
+    // The state check is the write itself: only a PENDING row changes.
+    const revoked = await tx.invitation.updateMany({
+      where: { id: current.id, organizationId: ctx.orgId, status: "PENDING" },
+      data: { status: "REVOKED", token: randomUUID() },
+    });
+    if (revoked.count === 0) throw new MemberError("Invitation is not pending", "not_pending");
+    return current;
+  });
+
+  await audit(ctx, {
+    action: "member.invite_revoke",
+    resourceType: "invitation",
+    resourceId: invitation.id,
+    before: { email: invitation.email, role: invitation.role, status: "PENDING" },
+    after: { status: "REVOKED" },
+  });
+}
+
 export async function acceptInvitation(token: string, userId: string): Promise<string> {
   const invitation = await unscopedPrisma.invitation.findUnique({ where: { token } });
-  if (!invitation || invitation.status !== "PENDING") throw new Error("Invalid invitation");
+  if (!invitation) throw new InvitationAcceptError("invalid");
+  if (invitation.status === "EXPIRED") throw new InvitationAcceptError("expired");
+  if (invitation.status !== "PENDING") throw new InvitationAcceptError("invalid");
   if (invitation.expiresAt < new Date()) {
     await unscopedPrisma.invitation.update({
       where: { id: invitation.id },
       data: { status: "EXPIRED" },
     });
-    throw new Error("Invitation expired");
+    throw new InvitationAcceptError("expired");
   }
 
   const user = await unscopedPrisma.user.findUniqueOrThrow({ where: { id: userId } });
   if (user.email.toLowerCase() !== invitation.email.toLowerCase()) {
-    throw new Error("Invitation was sent to a different email address");
+    throw new InvitationAccountMismatchError();
   }
 
   const ent = await getEntitlements(invitation.organizationId);
-  if (ent.readOnly) {
-    throw new EntitlementError("maxSeats", "Subscription is past due — workspace is read-only.");
-  }
+  if (ent.readOnly) throw new InvitationAcceptError("read_only");
 
   const { rejoinDisabled, activeSeats } = await unscopedPrisma.$transaction(async (tx) => {
     // The seat check is authoritative here, where a seat is actually taken.
@@ -119,15 +182,26 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
     // can't all pass the same count; an invitation sent while seats were
     // free can't exceed the plan when it's accepted later.
     await lockOrgSeats(tx, invitation.organizationId);
+    // Re-read under the lock: a concurrent acceptance (another tab, a double
+    // submit) or a revocation since the read above leaves it no longer
+    // PENDING, and this attempt becomes a plain invalid result.
+    const current = await tx.invitation.findUnique({
+      where: { id: invitation.id },
+      select: { status: true },
+    });
+    if (current?.status !== "PENDING") throw new InvitationAcceptError("invalid");
     const org = await tx.organization.findUnique({
       where: { id: invitation.organizationId },
       select: { deletedAt: true },
     });
-    if (!org || org.deletedAt) throw new Error("Invalid invitation");
+    if (!org || org.deletedAt) throw new InvitationAcceptError("invalid");
+    const existing = await tx.organizationMember.findFirst({
+      where: { organizationId: invitation.organizationId, userId },
+      select: { id: true },
+    });
+    if (existing) throw new InvitationAcceptError("already_member");
     const seatsBefore = await countActiveSeats(invitation.organizationId, tx);
-    if (seatsBefore >= ent.maxSeats) {
-      throw new EntitlementError("maxSeats", "Seat limit reached for your plan.");
-    }
+    if (seatsBefore >= ent.maxSeats) throw new InvitationAcceptError("seat_limit");
 
     await tx.organizationMember.create({
       data: {

@@ -229,7 +229,10 @@ vi.mock("@/server/db/tenant", () => {
     },
   };
 });
-vi.mock("@/server/business-dna/context", () => ({
+// The real prompt-building exports (block, no-profile note, fact rules);
+// only the tenant read is faked.
+vi.mock("@/server/business-dna/context", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   getBusinessDnaContext: vi.fn(async () => null),
 }));
 vi.mock("@/server/ai/rag", () => ({

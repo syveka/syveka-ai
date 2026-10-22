@@ -48,6 +48,9 @@ const tx = {
     }),
   },
   invitation: {
+    findUnique: vi.fn(
+      async ({ where }: { where: Row }) => invitations.find((i) => i.id === where.id) ?? null,
+    ),
     update: vi.fn(async (args: { where: Row; data: Row }) => db.invitation.update(args)),
   },
   $queryRaw: vi.fn(async (strings: TemplateStringsArray, ...values: unknown[]) => {
@@ -80,6 +83,7 @@ const tx = {
       return s.members.splice(i, 1)[0];
     }),
     count: vi.fn(countMembers),
+    findFirst: vi.fn(async (args: { where: Row }) => db.organizationMember.findFirst(args)),
     create: vi.fn(async (args: { data: Row }) => db.organizationMember.create(args)),
   },
   bookingType: {
@@ -557,7 +561,7 @@ describe("legacy removal (before removal-time deactivation), then rejoin", () =>
     expect(s.members.some((m) => m.userId === NEW_USER)).toBe(true);
     expect(s.types.every((t) => t.ownerId !== NEW_USER)).toBe(true);
     // An existing member can't accept a second invitation (unique membership).
-    await expect(rejoin(ORG_A, OTHER)).rejects.toThrow();
+    await expect(rejoin(ORG_A, OTHER)).rejects.toMatchObject({ code: "already_member" });
     expect(s.types.find((t) => t.id === "bt-other-a")!.isActive).toBe(true);
   });
 });

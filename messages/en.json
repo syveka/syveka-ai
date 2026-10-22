@@ -85,6 +85,14 @@
     "removeLabel": "Remove {name}",
     "changeRoleLabel": "Role for {name}",
     "pending": "Invitation pending",
+    "revokeInvite": "Withdraw",
+    "revokeInviteLabel": "Withdraw the invitation to {email}",
+    "revokeErrors": {
+      "not_pending": "This invitation is no longer pending: it was already accepted or withdrawn.",
+      "revoke_failed": "The invitation could not be withdrawn. Please try again.",
+      "rate_limited": "Too many changes in a short time. Try again in a minute.",
+      "service_unavailable": "The change could not be verified right now. Try again in a moment."
+    },
     "errors": {
       "invalid_input": "Check the email address and role.",
       "already_member": "This person is already a member of the organization.",
@@ -103,6 +111,7 @@
     "details": "Changes"
   },
   "auth": {
+    "callbackFailed": "This link could not be completed in this browser. Log in with your email and password to continue.",
     "login": "Log in",
     "register": "Create account",
     "email": "Email",
@@ -115,6 +124,24 @@
     "verifyEmailSent": "Check your inbox — we sent you a verification link.",
     "showPassword": "Show password",
     "hidePassword": "Hide password"
+  },
+  "invite": {
+    "invalid": "This invitation is invalid or has expired.",
+    "title": "Join {organization}",
+    "invitedAs": "You were invited as <b>{role}</b> ({email}).",
+    "accept": "Accept invitation",
+    "wrongAccount": "Wrong account?",
+    "switchAccount": "Switch account",
+    "otherAccount": "This invitation was sent to <b>{invited}</b>, but you are signed in as <b>{current}</b>. Sign out, then sign in or register with the invited address to accept it.",
+    "signOutAndContinue": "Sign out and continue",
+    "goToDashboard": "Go to dashboard",
+    "errors": {
+      "invalid": "This invitation is no longer valid. It may have been used or withdrawn.",
+      "expired": "This invitation has expired. Ask the person who invited you to send a new one.",
+      "seat_limit": "This workspace can't add members right now. Contact a workspace admin.",
+      "read_only": "This workspace can't accept new members at the moment. Contact a workspace admin.",
+      "already_member": "You're already a member of this workspace."
+    }
   },
   "dashboard": {
     "title": "Dashboard",

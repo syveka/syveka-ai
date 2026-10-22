@@ -9,7 +9,12 @@ import {
   planVoiceContext,
   type BudgetMessage,
 } from "@/server/ai/voice-input-budget";
-import type { BusinessDnaContext } from "@/server/business-dna/context";
+import {
+  BUSINESS_PROFILE_OMITTED_NOTE,
+  BUSINESS_SERVICES_TRIMMED_NOTE,
+  NO_BUSINESS_PROFILE_NOTE,
+  type BusinessDnaContext,
+} from "@/server/business-dna/context";
 
 /**
  * The live-voice aggregate input budget: a byte-based upper-bound estimate
@@ -222,6 +227,93 @@ describe("planVoiceContext", () => {
     );
     expect(plan).toEqual({ ok: false, estimate: expect.any(Number) });
     expect((plan as { estimate: number }).estimate).toBeGreaterThan(10_000);
+  });
+});
+
+describe("planVoiceContext: what the prompt says about Business DNA", () => {
+  const PROFILE_BLOCK = "## Business profile (untrusted data";
+
+  it("A. no Business DNA exists: the prompt says there is no profile", () => {
+    const plan = planVoiceContext(input());
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.system).toContain(NO_BUSINESS_PROFILE_NOTE);
+    expect(plan.system).not.toContain(BUSINESS_PROFILE_OMITTED_NOTE);
+    expect(plan.system).not.toContain(PROFILE_BLOCK);
+    expect(plan.reduced.businessDna).toBe(false);
+  });
+
+  it("B. Business DNA exists and fits: the profile is included, with no omission note", () => {
+    const plan = planVoiceContext(input({ prompt: { ...input().prompt, businessDna: dna(3) } }));
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.system).toContain(PROFILE_BLOCK);
+    expect(plan.system).toContain("Service 2");
+    expect(plan.system).not.toContain(NO_BUSINESS_PROFILE_NOTE);
+    expect(plan.system).not.toContain(BUSINESS_PROFILE_OMITTED_NOTE);
+    expect(plan.system).not.toContain(BUSINESS_SERVICES_TRIMMED_NOTE);
+  });
+
+  it("C. Business DNA exists but is left out for budget: the prompt never says there is no profile", () => {
+    const withoutDna = planVoiceContext(input({ target: 1e9 }));
+    if (!withoutDna.ok) throw new Error("expected the request without Business DNA to fit");
+    const plan = planVoiceContext(
+      input({
+        prompt: { ...input().prompt, businessDna: dna(2) },
+        // Room for the required content and a short note, not for the profile.
+        target: withoutDna.estimate + 600,
+      }),
+    );
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.reduced.businessDna).toBe(true);
+    expect(plan.system).toContain(BUSINESS_PROFILE_OMITTED_NOTE);
+    expect(plan.system).not.toContain(NO_BUSINESS_PROFILE_NOTE);
+    expect(plan.system).not.toContain("has not set up its business profile");
+    expect(plan.system).not.toContain(PROFILE_BLOCK);
+    expect(plan.estimate).toBeLessThanOrEqual(withoutDna.estimate + 600);
+    expectRequiredIntact(plan.system);
+  });
+
+  it("services trimmed for budget: the profile stays and a missing service isn't read as not offered", () => {
+    const prompt = { ...input().prompt, businessDna: dna(4) };
+    const full = planVoiceContext(input({ prompt, target: 1e9 }));
+    if (!full.ok) throw new Error("expected the full request to fit");
+    const plan = planVoiceContext(input({ prompt, target: full.estimate - 1 }));
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.reduced.services).toBeGreaterThan(0);
+    expect(plan.reduced.businessDna).toBe(false);
+    expect(plan.system).toContain(PROFILE_BLOCK);
+    expect(plan.system).toContain(BUSINESS_SERVICES_TRIMMED_NOTE);
+    expect(plan.system).not.toContain(NO_BUSINESS_PROFILE_NOTE);
+    expect(plan.estimate).toBeLessThanOrEqual(full.estimate - 1);
+  });
+
+  it("a profile with every field empty is still 'no profile', even when the request is reduced", () => {
+    const empty = {
+      ...dna(0),
+      displayName: null,
+      industry: null,
+      description: null,
+      productsServices: null,
+      supportedLocales: [],
+      timezone: null,
+      responseInstructions: null,
+      cancellationPolicy: null,
+      currency: null,
+    } as unknown as BusinessDnaContext;
+    const history: BudgetMessage[] = Array.from({ length: 4 }, (_, i) => ({
+      role: i % 2 ? "assistant" : "user",
+      content: "ä".repeat(4_000),
+    }));
+    const plan = planVoiceContext(
+      input({ prompt: { ...input().prompt, businessDna: empty }, history, target: 6_000 }),
+    );
+    expect(plan.ok).toBe(true);
+    if (!plan.ok) return;
+    expect(plan.system).toContain(NO_BUSINESS_PROFILE_NOTE);
+    expect(plan.system).not.toContain(BUSINESS_PROFILE_OMITTED_NOTE);
   });
 });
 

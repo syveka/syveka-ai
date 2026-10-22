@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/server/auth/guard";
+import { actionWriteLimitError } from "@/server/security/rate-limit";
 import {
   addContactNote,
   archiveContact,
@@ -20,6 +21,8 @@ export async function createContactAction(
   formData: FormData,
 ): Promise<CrmActionState> {
   const ctx = await requirePermission("crm:write");
+  const limited = await actionWriteLimitError("crm", ctx);
+  if (limited) return { error: limited };
   const parsed = contactSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
 
@@ -39,6 +42,8 @@ export async function updateContactAction(
   formData: FormData,
 ): Promise<CrmActionState> {
   const ctx = await requirePermission("crm:write");
+  const limited = await actionWriteLimitError("crm", ctx);
+  if (limited) return { error: limited };
   const parsed = contactSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
 
@@ -54,6 +59,7 @@ export async function updateContactAction(
 
 export async function archiveContactAction(contactId: string): Promise<void> {
   const ctx = await requirePermission("crm:write");
+  if (await actionWriteLimitError("crm", ctx)) return;
   await archiveContact(ctx, contactId);
   revalidatePath(`/crm/contacts/${contactId}`);
   revalidatePath("/crm/contacts");
@@ -61,6 +67,7 @@ export async function archiveContactAction(contactId: string): Promise<void> {
 
 export async function restoreContactAction(contactId: string): Promise<void> {
   const ctx = await requirePermission("crm:write");
+  if (await actionWriteLimitError("crm", ctx)) return;
   await restoreContact(ctx, contactId);
   revalidatePath(`/crm/contacts/${contactId}`);
   revalidatePath("/crm/contacts");
@@ -68,6 +75,7 @@ export async function restoreContactAction(contactId: string): Promise<void> {
 
 export async function deleteContactAction(contactId: string): Promise<void> {
   const ctx = await requirePermission("crm:delete");
+  if (await actionWriteLimitError("crm", ctx)) return;
   await deleteContact(ctx, contactId);
   revalidatePath("/crm/contacts");
 }
@@ -78,6 +86,8 @@ export async function addContactNoteAction(
   formData: FormData,
 ): Promise<CrmActionState> {
   const ctx = await requirePermission("crm:write");
+  const limited = await actionWriteLimitError("crm", ctx);
+  if (limited) return { error: limited };
   const parsed = noteSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
 

@@ -6,7 +6,7 @@ import { createSupabaseServer } from "@/server/supabase/server";
 import { actionRateLimitError } from "@/server/security/rate-limit";
 import { loginSchema, registerSchema } from "@/lib/validators/auth";
 import { getAppUrlEnv } from "@/env";
-import { localizedPath, normalizeLocale } from "@/lib/auth-redirect";
+import { inviteContinuation, localizedPath, normalizeLocale } from "@/lib/auth-redirect";
 
 export type AuthActionState = { error?: string; message?: string };
 
@@ -36,7 +36,12 @@ export async function loginAction(
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
   if (error) return { error: "invalid_credentials" };
 
-  redirect(localizedPath(normalizeLocale(formData.get("locale")), "/dashboard"));
+  redirect(
+    localizedPath(
+      normalizeLocale(formData.get("locale")),
+      inviteContinuation(formData.get("next")) ?? "/dashboard",
+    ),
+  );
 }
 
 export async function registerAction(
@@ -56,7 +61,10 @@ export async function registerAction(
     password: parsed.data.password,
     options: {
       data: { full_name: parsed.data.fullName },
-      emailRedirectTo: authCallbackUrl(locale, "/onboarding"),
+      emailRedirectTo: authCallbackUrl(
+        locale,
+        inviteContinuation(formData.get("next")) ?? "/onboarding",
+      ),
     },
   });
   if (error) return { error: "signup_failed" };
@@ -88,6 +96,24 @@ export async function logoutAction(): Promise<void> {
   const supabase = await createSupabaseServer();
   await supabase.auth.signOut();
   redirect("/login");
+}
+
+/**
+ * Signs out the account an invitation was opened with when it isn't the
+ * invited one, then returns to the invitation, which sends the invitee to
+ * register or sign in and back. "/login" can't do this: it sends a signed-in
+ * person to the dashboard. Stays in the page's language: `locale` is checked
+ * against the app's locales, like every other client-supplied value here.
+ */
+export async function signOutToInvitationAction(token: string, locale?: string): Promise<void> {
+  const supabase = await createSupabaseServer();
+  await supabase.auth.signOut();
+  redirect(
+    localizedPath(
+      normalizeLocale(locale ?? null),
+      inviteContinuation(`/invite/${token}`) ?? "/login",
+    ),
+  );
 }
 
 export async function forgotPasswordAction(

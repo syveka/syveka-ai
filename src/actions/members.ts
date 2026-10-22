@@ -10,12 +10,20 @@ import {
   acceptInvitation,
   changeMemberRole,
   removeMember,
+  revokeInvitation,
   MemberError,
+  InvitationAccountMismatchError,
+  InvitationAcceptError,
 } from "@/server/services/members";
 import { EntitlementError } from "@/server/services/billing/entitlements";
 import { inviteMemberSchema, changeRoleSchema } from "@/lib/validators/members";
 import { createSupabaseServer } from "@/server/supabase/server";
-import { actionRateLimitError, emailKey } from "@/server/security/rate-limit";
+import { inviteContinuation, localizedPath, normalizeLocale } from "@/lib/auth-redirect";
+import {
+  actionRateLimitError,
+  actionWriteLimitError,
+  emailKey,
+} from "@/server/security/rate-limit";
 
 export type MemberActionState = { error?: string; message?: string };
 
@@ -28,7 +36,7 @@ type InviteErrorCode =
   "invalid_input" | "already_member" | "plan_limit" | "rate_limited" | "invite_failed";
 
 function inviteErrorCode(error: unknown): InviteErrorCode {
-  if (error instanceof MemberError) return error.code;
+  if (error instanceof MemberError && error.code === "already_member") return error.code;
   // Seat limit reached, or a past-due (read-only) subscription: both come from
   // assertWithinLimit and both mean "the plan does not allow this right now".
   if (error instanceof EntitlementError) return "plan_limit";
@@ -69,16 +77,37 @@ export async function inviteMemberAction(
   return { message: "invited" };
 }
 
-export async function acceptInvitationAction(token: string): Promise<void> {
+/** `locale` comes from the invitation page and is checked against the app's locales. */
+export async function acceptInvitationAction(token: string, locale?: string): Promise<void> {
   const user = await getSessionUser();
   if (!user) throw new AuthError("Not authenticated");
+  const pageLocale = normalizeLocale(locale ?? null);
+  const invitationPath = inviteContinuation(`/invite/${token}`);
+  // A token that isn't one can't have an invitation; it fails as "invalid"
+  // and lands on the dashboard instead of an invitation page.
+  const invitationPage = invitationPath
+    ? localizedPath(pageLocale, invitationPath)
+    : localizedPath(pageLocale, "/dashboard");
 
-  await acceptInvitation(token, user.id);
+  // Only acceptInvitation's own expected failures are turned into a page;
+  // the redirects happen outside the try so nothing here can swallow them.
+  let failure: "wrong_account" | InvitationAcceptError["code"] | null = null;
+  try {
+    await acceptInvitation(token, user.id);
+  } catch (e) {
+    if (e instanceof InvitationAccountMismatchError) failure = "wrong_account";
+    else if (e instanceof InvitationAcceptError) failure = e.code;
+    else throw e;
+  }
+  // Signed in as someone else (for example another account in the same
+  // browser): back to the invitation, which says so and offers to sign out.
+  if (failure === "wrong_account") redirect(invitationPage);
+  if (failure) redirect(invitationPath ? `${invitationPage}?error=${failure}` : invitationPage);
 
   const supabase = await createSupabaseServer();
   await supabase.auth.refreshSession();
 
-  redirect("/dashboard");
+  redirect(localizedPath(pageLocale, "/dashboard"));
 }
 
 export async function changeRoleAction(
@@ -98,6 +127,30 @@ export async function changeRoleAction(
 
   revalidatePath("/settings/members");
   return { message: "updated" };
+}
+
+/**
+ * Withdraws a pending invitation; the same permission that sent it. Outcomes
+ * are stable codes (settingsMembers.revokeErrors.*), never exception text.
+ */
+export async function revokeInvitationAction(invitationId: string): Promise<MemberActionState> {
+  const ctx = await requirePermission("members:invite");
+  const limited = await actionWriteLimitError("members", ctx);
+  if (limited) return { error: limited };
+  try {
+    await revokeInvitation(ctx, invitationId);
+  } catch (e) {
+    if (e instanceof MemberError) return { error: e.code };
+    console.error(
+      JSON.stringify({
+        event: "revoke_invitation_failed",
+        name: e instanceof Error ? e.name : "unknown",
+      }),
+    );
+    return { error: "revoke_failed" };
+  }
+  revalidatePath("/settings/members");
+  return { message: "revoked" };
 }
 
 export async function removeMemberAction(memberId: string): Promise<void> {

@@ -85,6 +85,14 @@
     "removeLabel": "Poista {name}",
     "changeRoleLabel": "Käyttäjän {name} rooli",
     "pending": "Kutsu odottaa",
+    "revokeInvite": "Peru kutsu",
+    "revokeInviteLabel": "Peru kutsu osoitteelle {email}",
+    "revokeErrors": {
+      "not_pending": "Kutsu ei ole enää odottamassa: se on jo hyväksytty tai peruttu.",
+      "revoke_failed": "Kutsua ei voitu perua. Yritä uudelleen.",
+      "rate_limited": "Liian monta muutosta lyhyessä ajassa. Yritä hetken kuluttua uudelleen.",
+      "service_unavailable": "Muutosta ei voitu vahvistaa juuri nyt. Yritä hetken kuluttua uudelleen."
+    },
     "errors": {
       "invalid_input": "Tarkista sähköpostiosoite ja rooli.",
       "already_member": "Henkilö on jo organisaation jäsen.",
@@ -103,6 +111,7 @@
     "details": "Muutokset"
   },
   "auth": {
+    "callbackFailed": "Linkkiä ei voitu viimeistellä tässä selaimessa. Jatka kirjautumalla sisään sähköpostiosoitteellasi ja salasanallasi.",
     "login": "Kirjaudu sisään",
     "register": "Luo tili",
     "email": "Sähköposti",
@@ -115,6 +124,24 @@
     "verifyEmailSent": "Tarkista sähköpostisi — lähetimme vahvistuslinkin.",
     "showPassword": "Näytä salasana",
     "hidePassword": "Piilota salasana"
+  },
+  "invite": {
+    "invalid": "Kutsu on virheellinen tai vanhentunut.",
+    "title": "Liity organisaatioon {organization}",
+    "invitedAs": "Sinut on kutsuttu rooliin <b>{role}</b> ({email}).",
+    "accept": "Hyväksy kutsu",
+    "wrongAccount": "Väärä tili?",
+    "switchAccount": "Vaihda tiliä",
+    "otherAccount": "Tämä kutsu lähetettiin osoitteeseen <b>{invited}</b>, mutta olet kirjautunut osoitteella <b>{current}</b>. Kirjaudu ulos ja kirjaudu sitten sisään tai rekisteröidy kutsutulla osoitteella hyväksyäksesi kutsun.",
+    "signOutAndContinue": "Kirjaudu ulos ja jatka",
+    "goToDashboard": "Siirry hallintapaneeliin",
+    "errors": {
+      "invalid": "Tämä kutsu ei ole enää voimassa. Se on ehkä jo käytetty tai peruttu.",
+      "expired": "Tämä kutsu on vanhentunut. Pyydä kutsujaa lähettämään uusi kutsu.",
+      "seat_limit": "Tähän työtilaan ei voi juuri nyt lisätä jäseniä. Ota yhteyttä työtilan ylläpitäjään.",
+      "read_only": "Tähän työtilaan ei voi tällä hetkellä liittyä uusia jäseniä. Ota yhteyttä työtilan ylläpitäjään.",
+      "already_member": "Olet jo tämän työtilan jäsen."
+    }
   },
   "dashboard": {
     "title": "Työpöytä",
