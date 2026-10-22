@@ -68,7 +68,7 @@ export function sentryOptions(dsn: string, release?: string): SharedOptions {
     maxBreadcrumbs: 20,
     integrations: (defaults) =>
       defaults.filter((integration) => !DISABLED_INTEGRATIONS.has(integration.name)),
-    beforeSend: (event) => scrubEvent(event),
+    beforeSend: (event, hint) => scrubEvent(event, hint),
     beforeSendLog: () => null,
     beforeSendMetric: () => null,
     beforeBreadcrumb: (breadcrumb) => scrubBreadcrumb(breadcrumb),

@@ -104,6 +104,35 @@ describe("safeErrorDescription: messages are replaced, never forwarded", () => {
     expect(safeErrorDescription(undefined)).toBe("Error message withheld");
     expect(safeErrorDescription({ toString: () => NAME })).toBe("Error message withheld");
   });
+
+  it.each([
+    ["An unexpected response was received from the server.", "Unexpected server action response"],
+    [
+      `Failed to find Server Action "${IDENTIFIER_SHAPED}". This request might be from an older or newer deployment.`,
+      "Server action not found",
+    ],
+    [
+      `Failed to fetch RSC payload for https://app.syveka.com/en/crm/${NAME}`,
+      "RSC payload fetch failed",
+    ],
+    ["An error occurred with your deployment", "Vercel platform error"],
+    [
+      // Vercel's text/plain error body: the code sits on its own line, after
+      // a sentence and before a request id.
+      `An error occurred with your deployment\n\nFUNCTION_INVOCATION_TIMEOUT\n\nfra1::abcde-1760000000000-${NAME}`,
+      "Vercel platform error FUNCTION_INVOCATION_TIMEOUT",
+    ],
+    [`${NAME}: DEPLOYMENT_NOT_FOUND`, "Vercel platform error DEPLOYMENT_NOT_FOUND"],
+  ])("framework and platform messages get a fixed description: %j", (message, expected) => {
+    expect(safeErrorDescription(message)).toBe(expected);
+    expectClean(safeErrorDescription(message));
+  });
+
+  it("a look-alike platform code inside ordinary text is not one", () => {
+    expect(safeErrorDescription(`${NAME} wrote NOT_FOUND and FUNCTION_INVOCATION`)).toBe(
+      "Error message withheld",
+    );
+  });
 });
 
 describe("safeUrl: app routes as templates, unknown paths omitted", () => {
@@ -365,5 +394,94 @@ describe("scrubEvent", () => {
       expect(frame).not.toHaveProperty("function");
       expect(frame).not.toHaveProperty("module");
     }
+  });
+
+  describe("the thrown error's Next.js code", () => {
+    /** A framework error as Next.js builds it: the code is a non-enumerable property. */
+    const nextError = (message: string, code: unknown) =>
+      Object.defineProperty(new Error(message), "__NEXT_ERROR_CODE", {
+        value: code,
+        enumerable: false,
+        configurable: true,
+      });
+
+    it("names the failure class when the message itself is withheld, and is kept as a tag", () => {
+      const body = `An error occurred with your deployment ${NAME}\n${CHAT_TEXT}`;
+      const event = { ...raw(), exception: { values: [{ type: "Error", value: body }] } };
+      const out = scrubEvent(event, { originalException: nextError(body, "E394") });
+      expect(out.exception!.values![0]!.value).toBe("Vercel platform error");
+      expect(out.tags).toEqual({ runtime: "node", turbopack: true, next_error_code: "E394" });
+
+      const opaque = { ...raw(), exception: { values: [{ type: "Error", value: CHAT_TEXT }] } };
+      const described = scrubEvent(opaque, { originalException: nextError(CHAT_TEXT, "E394") });
+      expect(described.exception!.values![0]!.value).toBe("Next.js error E394");
+      expectClean(described);
+    });
+
+    it("applies to the thrown error only, which the SDK lists last, not to its causes", () => {
+      // @sentry/core's applyAggregateErrorsToEvent prepends each cause, so a
+      // chained error arrives as [cause, thrown error].
+      const event = {
+        ...raw(),
+        exception: {
+          values: [
+            { type: "TypeError", value: ARABIC_CHAT },
+            { type: "Error", value: CHAT_TEXT },
+          ],
+        },
+      };
+      const thrown = nextError(CHAT_TEXT, "E715");
+      const out = scrubEvent(event, { originalException: thrown });
+      expect(out.exception!.values!.map((v) => [v.type, v.value])).toEqual([
+        ["TypeError", "Error message withheld"],
+        ["Error", "Next.js error E715"],
+      ]);
+      expectClean(out);
+      // A re-scrub without the thrown error reads the kept tag and lands on the same entry.
+      expect(scrubEvent(out)).toEqual(out);
+    });
+
+    it("a kept next_error_code tag is validated like the thrown error's code", () => {
+      for (const value of ["E394 extra", "notacode", "e394", "E123456", "E", ""]) {
+        const event = { ...raw(), tags: { ...raw().tags, next_error_code: value } };
+        const out = scrubEvent(event);
+        expect(out.tags).toEqual({ runtime: "node", turbopack: true });
+        for (const exception of out.exception!.values!) {
+          expect(exception.value).toBe("Error message withheld");
+        }
+        expectClean(out);
+      }
+      // raw() carries [cause, thrown error]: a valid kept tag describes the thrown error only.
+      const kept = scrubEvent({ ...raw(), tags: { ...raw().tags, next_error_code: "E394" } });
+      expect(kept.tags).toEqual({ runtime: "node", turbopack: true, next_error_code: "E394" });
+      expect(kept.exception!.values!.map((v) => v.value)).toEqual([
+        "Error message withheld",
+        "Next.js error E394",
+      ]);
+    });
+
+    it.each([
+      ["not a code", `E394 ${NAME}`],
+      ["too long", "E123456"],
+      ["lower case", "e394"],
+      ["a number", 394],
+      ["an object", { toString: () => "E394" }],
+    ])("ignores anything that isn't one (%s)", (_label, code) => {
+      const out = scrubEvent(raw(), { originalException: nextError(CHAT_TEXT, code) });
+      expect(out.tags).toEqual({ runtime: "node", turbopack: true });
+      expect(out.exception!.values![0]!.value).toBe("Error message withheld");
+      expectClean(out);
+    });
+
+    it("needs the thrown error: a missing or non-object hint changes nothing", () => {
+      expect(scrubEvent(raw(), undefined)).toEqual(scrubEvent(raw()));
+      expect(scrubEvent(raw(), { originalException: "E394" })).toEqual(scrubEvent(raw()));
+      expect(scrubEvent(raw(), { originalException: null })).toEqual(scrubEvent(raw()));
+    });
+
+    it("stays idempotent with the tag in place", () => {
+      const once = scrubEvent(raw(), { originalException: nextError(CHAT_TEXT, "E394") });
+      expect(scrubEvent(once)).toEqual(once);
+    });
   });
 });
