@@ -3,7 +3,7 @@ import { PlanCards } from "@/components/billing/plan-cards";
 import { UsageMeters } from "@/components/billing/usage-meters";
 import { PLAN_NAMES } from "@/components/billing/plan-display";
 import { openPortalAction } from "@/actions/billing";
-import { Button } from "@/components/ui/button";
+import { PendingSubmitButton } from "@/components/billing/pending-submit-button";
 import { Card, CardContent } from "@/components/ui/card";
 
 export const dynamic = "force-dynamic";
@@ -46,6 +46,25 @@ export default async function BillingPage({
           <CardContent className="pt-6 text-sm text-success">{t("checkoutSuccess")}</CardContent>
         </Card>
       ) : null}
+      {status === "busy" || status === "unavailable" ? (
+        <Card className="border-warning/40">
+          <CardContent role="status" className="pt-6 text-sm">
+            {t(status === "busy" ? "planChangeBusy" : "planChangeUnavailable")}
+          </CardContent>
+        </Card>
+      ) : null}
+      {ent.status === "INCOMPLETE" ? (
+        <Card className="border-warning/40">
+          <CardContent className="flex flex-col gap-3 pt-6 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <p role="status">{t("paymentPending")}</p>
+            {canManage ? (
+              <form action={openPortalAction}>
+                <PendingSubmitButton>{t("completePayment")}</PendingSubmitButton>
+              </form>
+            ) : null}
+          </CardContent>
+        </Card>
+      ) : null}
       {ent.status === "PAST_DUE" ? (
         <Card className="border-destructive/40">
           <CardContent className="pt-6 text-sm text-destructive">{t("pastDue")}</CardContent>
@@ -59,9 +78,7 @@ export default async function BillingPage({
         </div>
         {canManage && ent.plan !== "FREE" ? (
           <form action={openPortalAction}>
-            <Button type="submit" variant="outline">
-              {t("managePortal")}
-            </Button>
+            <PendingSubmitButton variant="outline">{t("managePortal")}</PendingSubmitButton>
           </form>
         ) : null}
       </div>

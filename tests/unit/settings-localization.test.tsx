@@ -29,6 +29,7 @@ const state = vi.hoisted(() => ({
   locale: "en" as "en" | "fi" | "ar",
   actionState: {} as { error?: string; message?: string },
   plan: "STARTER" as string,
+  status: "ACTIVE" as string,
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -114,7 +115,7 @@ vi.mock("@/server/db/tenant", () => ({
 vi.mock("@/server/services/billing/entitlements", () => ({
   getEntitlements: vi.fn(async () => ({
     plan: state.plan,
-    status: "ACTIVE",
+    status: state.status,
     aiMessagesPerOrgMonth: 1000,
     voiceMinutesMonth: 100,
     maxContacts: 5000,
@@ -193,6 +194,7 @@ function englishStrings(): string[] {
 beforeEach(() => {
   state.actionState = {};
   state.plan = "STARTER";
+  state.status = "ACTIVE";
 });
 afterEach(cleanup);
 
@@ -354,6 +356,15 @@ describe.each(LOCALES)("Settings pages render real %s translations", (locale) =>
     const features = m.billingPage!.features as Record<string, string>;
     // No plan card advertises a public API until one exists.
     expect(text).not.toContain(features.apiWebhooks);
+    expect(text).not.toContain(s("billingPage", "paymentPending"));
+  });
+
+  it("Billing: a subscription waiting for its first payment says so and offers to complete it", async () => {
+    state.plan = "FREE";
+    state.status = "INCOMPLETE";
+    await renderPage(locale, PAGES.billing);
+    expect(screen.getByRole("status").textContent).toBe(s("billingPage", "paymentPending"));
+    expect(screen.getByRole("button", { name: s("billingPage", "completePayment") })).toBeTruthy();
   });
 });
 
