@@ -12,16 +12,34 @@ type LedgerWriteArgs = { where?: unknown; data?: { status?: string; [key: string
 
 const mocks = vi.hoisted(() => {
   const txSubscriptionUpsert = vi.fn(async (_args: unknown) => ({}));
-  const txSubscriptionUpdate = vi.fn(async (_args: unknown) => ({}));
+  // Scoped writes (deletion, payment failure) use updateMany; one mock covers
+  // both so "no subscription write" assertions catch either.
+  const txSubscriptionUpdate = vi.fn(async (_args: unknown) => ({ count: 1 }));
+  const txSubscriptionFindUnique = vi.fn(
+    async (_args: unknown) => null as Record<string, unknown> | null,
+  );
+  // The org owns the fake subscription's customer: mayBecomeCurrent fails
+  // closed without a stored customer, so this is the legitimate default.
+  const txOrganizationFindUnique = vi.fn(
+    async (_args: unknown) => ({ stripeCustomerId: "cus_a" }) as Record<string, unknown> | null,
+  );
   const txStripeWebhookEventUpdate = vi.fn(async (_args: LedgerWriteArgs) => ({}));
   const tx = {
-    subscription: { upsert: txSubscriptionUpsert, update: txSubscriptionUpdate },
+    subscription: {
+      upsert: txSubscriptionUpsert,
+      update: txSubscriptionUpdate,
+      updateMany: txSubscriptionUpdate,
+      findUnique: txSubscriptionFindUnique,
+    },
+    organization: { findUnique: txOrganizationFindUnique },
     stripeWebhookEvent: { update: txStripeWebhookEventUpdate },
   };
   return {
     tx,
     txSubscriptionUpsert,
     txSubscriptionUpdate,
+    txSubscriptionFindUnique,
+    txOrganizationFindUnique,
     txStripeWebhookEventUpdate,
     ledgerCreate: vi.fn(async (_args: unknown) => ({})),
     ledgerFindUnique: vi.fn(async (_args: unknown) => null as Record<string, unknown> | null),
@@ -81,6 +99,7 @@ function fakeSubscription(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "sub_123",
     status: "active",
+    customer: "cus_a",
     metadata: { orgId: "org-a" },
     items: { data: [{ price: { id: "price_pro_monthly" }, quantity: 1 }] },
     current_period_end: 1_700_000_000,
@@ -103,7 +122,9 @@ beforeEach(() => {
     cb(mocks.tx),
   );
   mocks.txSubscriptionUpsert.mockResolvedValue({});
-  mocks.txSubscriptionUpdate.mockResolvedValue({});
+  mocks.txSubscriptionUpdate.mockResolvedValue({ count: 1 });
+  mocks.txSubscriptionFindUnique.mockResolvedValue(null);
+  mocks.txOrganizationFindUnique.mockResolvedValue({ stripeCustomerId: "cus_a" });
   mocks.txStripeWebhookEventUpdate.mockResolvedValue({});
   mocks.ledgerCreate.mockResolvedValue({});
   mocks.ledgerFindUnique.mockResolvedValue(null);
@@ -366,7 +387,7 @@ describe("existing subscription and entitlement behavior is unchanged", () => {
 
     expect(res.status).toBe(200);
     expect(mocks.txSubscriptionUpdate).toHaveBeenCalledWith({
-      where: { organizationId: "org-a" },
+      where: { organizationId: "org-a", stripeSubscriptionId: "sub_del" },
       data: { plan: "FREE", status: "CANCELED", stripeSubscriptionId: null },
     });
     expect(mocks.invalidateEntitlements).toHaveBeenCalledWith("org-a");
@@ -388,7 +409,7 @@ describe("existing subscription and entitlement behavior is unchanged", () => {
     expect(res.status).toBe(200);
     expect(mocks.subscriptionsRetrieve).toHaveBeenCalledWith("sub_123");
     expect(mocks.txSubscriptionUpdate).toHaveBeenCalledWith({
-      where: { organizationId: "org-a" },
+      where: { organizationId: "org-a", stripeSubscriptionId: "sub_123" },
       data: { status: "PAST_DUE" },
     });
     expect(mocks.invalidateEntitlements).toHaveBeenCalledWith("org-a");
