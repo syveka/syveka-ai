@@ -14,9 +14,11 @@ protected paths and were not edited; Strix was not invoked; #356 was not merged.
 | Runbook §4.5 isolation requirements and §6 procedure                                                              | **Documentation.** Correct, not enforced.                                                                                                                                                        |
 | Every item under "Proposed changes" and "Target enforcement" below (A–G, 1–4)                                     | **Proposed. Not implemented, not tested, not authorized.** Where an item says "block", "require" or "refuse", read "would, once implemented, reviewed and tested like the existing guard rules". |
 
-Two corrections from the 2026-10-22 review are folded into the items below: an environment-variable
-prefix on the command line does not prove network isolation (C), and a writable marker file is
-neither authorization nor trustworthy proof (E).
+Corrections from the 2026-10-22 reviews are folded into the items below: an environment-variable
+prefix on the command line does not prove network isolation (C); no marker or PASS file, of any
+name, is trusted as authorization or as proof of isolation (E); runbook §8 on the #356 branch must
+be rewritten before #356 can leave draft (E); and the target allowlist fails closed when it is
+missing or empty (Target enforcement 1–2).
 
 ## What was verified (head `63e0cb2`, read from the branch and the installed hook)
 
@@ -53,7 +55,9 @@ C. **Guard rules in `command-guard.mjs`** (unit-tested like the existing rules):
 
 D. **Permission deny list in `.claude/settings.json`** as defense in depth for the same commands (`Bash(strix *)`, `Bash(strix.exe *)`, `Bash(curl *| bash*)`, `Bash(uv tool install*)`, `Bash(pipx install*)`), so a guard regression does not reopen the path.
 
-E. **Isolation gate as code, with the verifier outside the scanner-writable tree.** Move the "phase 1 is blocked" decision out of prose. `preflight.sh` already refuses on a non-Linux host and a missing internal network; wire the proposed CI job (runbook §8) to call it first. What must **not** be done: have the guard trust a marker file such as `security/strix/.preflight-ok`. A file the agent (or the scanner, whose `-t` path is mounted writable) can create is neither authorization nor proof; the review is right that it would be forged by a single `Write`. The checks have to run inside the hook process at invocation time, reading live state (`uname`, `docker network inspect`, the environment of the command being inspected, the snapshot path's location outside every worktree and `$HOME`), and `preflight.sh` and `verify-run.sh` have to be executed from a copy that lives outside the snapshot and outside any path handed to Strix, as the runbook §6 step 2 already says ("next to it, not into it"). Authorization stays a human `!` command; no file stands in for it.
+E. **Isolation gate as code, with the verifier outside the scanner-writable tree.** Move the "phase 1 is blocked" decision out of prose. `preflight.sh` already refuses on a non-Linux host and a missing internal network. No marker, PASS or status file is trusted by any hook, workflow or person as authorization or as proof that isolation was checked: anything the agent or the scanner can write can be forged. The checks run inside the hook process at invocation time, reading live state (`uname`, `docker network inspect`, the environment of the command being inspected, the snapshot path's location outside every worktree and `$HOME`). `preflight.sh` and `verify-run.sh` run from a copy outside the snapshot and outside any path handed to Strix, as runbook §6 step 2 already says ("next to it, not into it"). Authorization stays a human `!` command.
+
+   **Required before #356 leaves draft: rewrite runbook §8** (`docs/strix-security-testing-runbook.md` on the #356 branch). The rewritten §8 must describe only the live-state checks above, must not reference any marker or PASS file, must state that a CI job may call `preflight.sh` only as a refusal gate (its success authorizes nothing), and must point to the human `!` command as the sole authorization. This proposal does not edit #356; the rewrite is an owner-authorized change to that branch.
 
 F. **Credential hygiene.** Add `OPENAI_API_KEY` and all `STRIPE_*`, `SUPABASE_*`, `DATABASE_URL`, `DIRECT_URL`, `RESEND_*`, `QSTASH_*`, `VAPI_*`, `ANTHROPIC_*` names to the names `preflight.sh` refuses (verify the current list; some are present), and document that Strix must run from a shell started with `env -i` only.
 
@@ -77,8 +81,11 @@ nothing checks it. Proposed, in order of effort:
    snapshot root (for example `/srv/strix/snapshot`) or `--target-list` pointing at
    `security/strix/targets.local.txt`; any other `-t` value (URL, host, IP, worktree path, `./`) is
    refused. Production hostnames (`syveka.com`, the production Supabase and Vercel hosts) are a
-   hard deny even inside the list.
-2. **`preflight.sh` reads the target list** and refuses when any entry is not on the committed
+   hard deny even inside the list. **Fail closed:** if the allowlisted snapshot root or
+   `targets.local.txt` is missing, unreadable, empty, or contains only comments/blank lines, every
+   `strix` invocation is refused. An absent or empty allowlist never means "no restriction".
+2. **`preflight.sh` reads the target list** and refuses when the file is missing, unreadable or
+   has no effective entries (fail closed, non-zero exit), when any entry is not on the committed
    allowlist pattern (`security/strix/targets.example.txt` documents the allowed shapes: the
    isolated staging-like test host and the snapshot path only), when a production host appears,
    or when the list contains credentials.
