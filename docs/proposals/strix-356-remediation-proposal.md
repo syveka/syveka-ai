@@ -5,6 +5,19 @@
 Proposal only. Nothing below was applied: `.claude/settings.json`, the hooks and the skills are
 protected paths and were not edited; Strix was not invoked; #356 was not merged.
 
+## Status: what is enforced today versus what this document proposes
+
+| Control                                                                                                           | Status                                                                                                                                                                                           |
+| ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `command-guard.mjs` and `config-protection.mjs` hooks (git, gh, vercel, supabase, rm, redirects, protected paths) | **Implemented and tested** on main. None of their rules names Strix, Docker bind mounts, `uv tool`, `pipx` or `curl \| bash`.                                                                    |
+| `security/strix/preflight.sh`, `security/strix/verify-run.sh`                                                     | **Exist on the #356 branch** (not on main). Run only when a person runs them; no hook calls them; their result binds nothing.                                                                    |
+| Runbook §4.5 isolation requirements and §6 procedure                                                              | **Documentation.** Correct, not enforced.                                                                                                                                                        |
+| Every item under "Proposed changes" and "Target enforcement" below (A–G, 1–4)                                     | **Proposed. Not implemented, not tested, not authorized.** Where an item says "block", "require" or "refuse", read "would, once implemented, reviewed and tested like the existing guard rules". |
+
+Two corrections from the 2026-10-22 review are folded into the items below: an environment-variable
+prefix on the command line does not prove network isolation (C), and a writable marker file is
+neither authorization nor trustworthy proof (E).
+
 ## What was verified (head `63e0cb2`, read from the branch and the installed hook)
 
 | Fact                                                                                                                                                                                                                                                                                                                                                                                                                       | Where                                                                 |
@@ -32,7 +45,7 @@ B. **Prepend a Syveka preamble to each skill** (above the upstream text, clearly
 
 C. **Guard rules in `command-guard.mjs`** (unit-tested like the existing rules):
 
-- block `strix` and `strix.exe` as a command name unless the invocation carries `STRIX_DOCKER_SANDBOX_NETWORK=` in its environment prefix and the target paths are outside every git worktree and the home directory; block `strix cloud` unconditionally;
+- block `strix` and `strix.exe` as a command name for the agent, full stop; block `strix cloud` unconditionally. A `STRIX_DOCKER_SANDBOX_NETWORK=…` prefix on the command line proves nothing about isolation (the variable can name a network that does not exist, is not `--internal`, or has other members, and the hook only sees text). If an agent-run assessment is ever wanted, the hook would have to verify the live Docker state itself at invocation time (`docker network inspect <name>`: `Internal: true`, zero attached containers, Linux engine) from the hook process, which the scanner cannot write to, and still only after a human `!` command carried the authorization. Until that exists, the only permitted invocation is the owner's own `!` command;
 - block `curl ... | bash`/`sh` and `wget ... | bash` (install scripts) unconditionally;
 - block `uv tool install`, `pipx install`, `pip install` of `strix-agent` outside an explicit human `!` command;
 - block `docker run`/`docker create` with `-v`, `--mount` or `--volume` whose source is inside a git worktree, `$HOME`, or a path containing `.env`, `.git`, `supabase/.temp`, `node_modules`;
@@ -40,7 +53,7 @@ C. **Guard rules in `command-guard.mjs`** (unit-tested like the existing rules):
 
 D. **Permission deny list in `.claude/settings.json`** as defense in depth for the same commands (`Bash(strix *)`, `Bash(strix.exe *)`, `Bash(curl *| bash*)`, `Bash(uv tool install*)`, `Bash(pipx install*)`), so a guard regression does not reopen the path.
 
-E. **Isolation gate as code.** Move the "phase 1 is blocked" decision out of prose: `preflight.sh` already refuses on a non-Linux host and a missing internal network; wire the proposed CI job (runbook §8) to call it first, and have the guard rule in C require that `preflight.sh` has written a fresh PASS marker file (for example `security/strix/.preflight-ok` with a timestamp under 10 minutes) before `strix` may run. The marker is gitignored.
+E. **Isolation gate as code, with the verifier outside the scanner-writable tree.** Move the "phase 1 is blocked" decision out of prose. `preflight.sh` already refuses on a non-Linux host and a missing internal network; wire the proposed CI job (runbook §8) to call it first. What must **not** be done: have the guard trust a marker file such as `security/strix/.preflight-ok`. A file the agent (or the scanner, whose `-t` path is mounted writable) can create is neither authorization nor proof; the review is right that it would be forged by a single `Write`. The checks have to run inside the hook process at invocation time, reading live state (`uname`, `docker network inspect`, the environment of the command being inspected, the snapshot path's location outside every worktree and `$HOME`), and `preflight.sh` and `verify-run.sh` have to be executed from a copy that lives outside the snapshot and outside any path handed to Strix, as the runbook §6 step 2 already says ("next to it, not into it"). Authorization stays a human `!` command; no file stands in for it.
 
 F. **Credential hygiene.** Add `OPENAI_API_KEY` and all `STRIPE_*`, `SUPABASE_*`, `DATABASE_URL`, `DIRECT_URL`, `RESEND_*`, `QSTASH_*`, `VAPI_*`, `ANTHROPIC_*` names to the names `preflight.sh` refuses (verify the current list; some are present), and document that Strix must run from a shell started with `env -i` only.
 
