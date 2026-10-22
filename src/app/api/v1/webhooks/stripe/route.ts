@@ -103,8 +103,12 @@ async function mayBecomeCurrent(
     select: { stripeCustomerId: true },
   });
   if (!org) return false;
+  // Ownership is proven only by the org's stored Stripe customer, which
+  // startCheckoutAction persists before any Checkout session exists. No
+  // stored customer, or a subscription without one, proves nothing, so the
+  // event is skipped (fail closed) rather than trusted on its metadata.
   const customerId = customerIdOf(sub);
-  if (org.stripeCustomerId && customerId && org.stripeCustomerId !== customerId) {
+  if (!org.stripeCustomerId || !customerId || org.stripeCustomerId !== customerId) {
     alertSkippedSubscription({
       reason: "customer_mismatch",
       organizationId: orgId,
@@ -421,9 +425,14 @@ export async function POST(request: Request): Promise<NextResponse> {
         }
         // Same ordering hazard as subscription updates: a retried failure
         // delivered after invoice.paid must not mark a paid-up subscription
-        // PAST_DUE. Only act while Stripe still reports it as unpaid.
+        // PAST_DUE. Only act while Stripe still reports an ESTABLISHED
+        // subscription as unpaid. An `incomplete` one never paid: its first
+        // invoice failing is not dunning, and PAST_DUE would keep the paid
+        // plan's limits (entitlements) and block a later paying subscription
+        // from becoming current (mayBecomeCurrent). It stays INCOMPLETE until
+        // it pays (invoice.paid) or expires (incomplete_expired).
         const current = await stripe.subscriptions.retrieve(failedSubId);
-        if (!["past_due", "unpaid", "incomplete"].includes(current.status)) {
+        if (!["past_due", "unpaid"].includes(current.status)) {
           await markCompleted(unscopedPrisma, event.id, resolvedOrgId, invoice.id ?? null);
           break;
         }

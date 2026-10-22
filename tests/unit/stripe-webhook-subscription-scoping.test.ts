@@ -431,6 +431,66 @@ describe("a paying subscription replaces a current one that never paid (INCOMPLE
     expect(row()).toMatchObject({ stripeSubscriptionId: "sub_paid", status: "ACTIVE" });
   });
 
+  // Review finding (#342): invoice.payment_failed used to accept an
+  // `incomplete` subscription, turn the row PAST_DUE (which keeps the paid
+  // plan's limits, see entitlements.ts PAYING_STATUSES) and, because PAST_DUE
+  // is not supersedable, block the customer's next successful checkout.
+  it("a failed FIRST payment leaves it INCOMPLETE: no PAST_DUE, so no paid limits", async () => {
+    const res = await deliver("invoice.payment_failed", {
+      id: "in_first_fail",
+      customer: "cus_a",
+      subscription: "sub_inc",
+    });
+    expect(res).toEqual({ status: 200, ledger: "COMPLETED" });
+    expect(row()).toEqual({
+      stripeSubscriptionId: "sub_inc",
+      plan: "PRO",
+      status: "INCOMPLETE",
+      seats: 1,
+    });
+    expect(alerts()).toEqual([]);
+  });
+
+  it("after a failed first payment, the customer's next paying subscription becomes current", async () => {
+    await deliver("invoice.payment_failed", {
+      id: "in_first_fail",
+      customer: "cus_a",
+      subscription: "sub_inc",
+    });
+    const paying = stripeSub("sub_paid", {
+      items: { data: [{ price: { id: "price_starter_monthly" }, quantity: 2 }] },
+    });
+    await deliver("customer.subscription.created", paying);
+    expect(row()).toMatchObject({
+      stripeSubscriptionId: "sub_paid",
+      plan: "STARTER",
+      status: "ACTIVE",
+    });
+    expect(alerts()).toEqual([]);
+  });
+
+  it("an ESTABLISHED subscription's failed renewal still goes PAST_DUE and keeps its place", async () => {
+    state.subs.set("org-a", {
+      stripeSubscriptionId: "sub_new",
+      plan: "PRO",
+      status: "ACTIVE",
+      seats: 1,
+    });
+    stripeSub("sub_new", { status: "past_due" });
+    await deliver("invoice.payment_failed", {
+      id: "in_renewal_fail",
+      customer: "cus_a",
+      subscription: "sub_new",
+    });
+    expect(row()).toMatchObject({ stripeSubscriptionId: "sub_new", status: "PAST_DUE" });
+    // Dunning in progress: a second checkout does not silently replace it.
+    await deliver("customer.subscription.created", stripeSub("sub_second"));
+    expect(row()).toMatchObject({ stripeSubscriptionId: "sub_new", status: "PAST_DUE" });
+    expect(alerts()).toEqual([
+      expect.objectContaining({ reason: "other_subscription_current", currentStatus: "PAST_DUE" }),
+    ]);
+  });
+
   it("another subscription that isn't paying either doesn't replace it (and alerts)", async () => {
     await deliver("customer.subscription.created", stripeSub("sub_inc2", { status: "incomplete" }));
     expect(row()).toMatchObject({ stripeSubscriptionId: "sub_inc", status: "INCOMPLETE" });
@@ -482,6 +542,40 @@ describe("no cross-organization effect", () => {
     ]);
     // Ids and statuses only.
     expect(JSON.stringify(warn.mock.calls)).not.toMatch(/cus_a|price_|metadata/);
+  });
+
+  // Review finding (#342): the ownership check used to pass when the org had
+  // no stored Stripe customer, trusting the subscription's metadata alone.
+  it("an org with no stored Stripe customer is never written on metadata alone (fail closed)", async () => {
+    state.orgs.set("org-a", { stripeCustomerId: null });
+    const changed = stripeSub("sub_new", {
+      items: { data: [{ price: { id: "price_pro_monthly" }, quantity: 7 }] },
+    });
+    const res = await deliver("customer.subscription.updated", changed);
+    expect(res).toEqual({ status: 200, ledger: "COMPLETED" });
+    expect(row()).toEqual({
+      stripeSubscriptionId: "sub_new",
+      plan: "PRO",
+      status: "ACTIVE",
+      seats: 1,
+    });
+    expect(alerts()).toEqual([
+      expect.objectContaining({
+        reason: "customer_mismatch",
+        organizationId: "org-a",
+        subscriptionId: "sub_new",
+      }),
+    ]);
+  });
+
+  it("a subscription without a customer is never written either", async () => {
+    const orphan = stripeSub("sub_new", {
+      customer: "" as never,
+      items: { data: [{ price: { id: "price_pro_monthly" }, quantity: 7 }] },
+    });
+    await deliver("customer.subscription.updated", orphan);
+    expect(row()!.seats).toBe(1);
+    expect(alerts()).toEqual([expect.objectContaining({ reason: "customer_mismatch" })]);
   });
 
   it("an unknown organization in metadata is completed without creating a row", async () => {

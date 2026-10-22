@@ -18,8 +18,10 @@ const mocks = vi.hoisted(() => {
   const txSubscriptionFindUnique = vi.fn(
     async (_args: unknown) => null as Record<string, unknown> | null,
   );
+  // The org owns the fake subscription's customer: mayBecomeCurrent fails
+  // closed without a stored customer, so this is the legitimate default.
   const txOrganizationFindUnique = vi.fn(
-    async (_args: unknown) => ({ stripeCustomerId: null }) as Record<string, unknown> | null,
+    async (_args: unknown) => ({ stripeCustomerId: "cus_a" }) as Record<string, unknown> | null,
   );
   const txStripeWebhookEventUpdate = vi.fn(async (_args: LedgerWriteArgs) => ({}));
   const tx = {
@@ -97,6 +99,7 @@ function fakeSubscription(overrides: Partial<Record<string, unknown>> = {}) {
   return {
     id: "sub_123",
     status: "active",
+    customer: "cus_a",
     metadata: { orgId: "org-a" },
     items: { data: [{ price: { id: "price_pro_monthly" }, quantity: 1 }] },
     current_period_end: 1_700_000_000,
@@ -121,7 +124,7 @@ beforeEach(() => {
   mocks.txSubscriptionUpsert.mockResolvedValue({});
   mocks.txSubscriptionUpdate.mockResolvedValue({ count: 1 });
   mocks.txSubscriptionFindUnique.mockResolvedValue(null);
-  mocks.txOrganizationFindUnique.mockResolvedValue({ stripeCustomerId: null });
+  mocks.txOrganizationFindUnique.mockResolvedValue({ stripeCustomerId: "cus_a" });
   mocks.txStripeWebhookEventUpdate.mockResolvedValue({});
   mocks.ledgerCreate.mockResolvedValue({});
   mocks.ledgerFindUnique.mockResolvedValue(null);
