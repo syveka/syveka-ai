@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import type { CalendarProvider } from "@/generated/prisma/client/client";
 import { requirePermission } from "@/server/auth/guard";
+import { actionWriteLimitError } from "@/server/security/rate-limit";
 import {
   checkConnectionHealth,
   ConnectionError,
@@ -19,6 +20,8 @@ const PROVIDERS = new Set<CalendarProvider>(["GOOGLE", "MICROSOFT", "MOCK"]);
 
 export async function connectCalendarAction(provider: string): Promise<IntegrationActionState> {
   const ctx = await requirePermission("integrations:manage");
+  const limited = await actionWriteLimitError("integrations", ctx);
+  if (limited) return { error: limited };
   const p = provider.toUpperCase() as CalendarProvider;
   if (!PROVIDERS.has(p)) return { error: "invalid_provider" };
 
@@ -36,6 +39,8 @@ export async function disconnectCalendarAction(
   connectionId: string,
 ): Promise<IntegrationActionState> {
   const ctx = await requirePermission("integrations:manage");
+  const limited = await actionWriteLimitError("integrations", ctx);
+  if (limited) return { error: limited };
   try {
     await disconnectConnection(ctx, connectionId);
   } catch (e) {
@@ -51,6 +56,8 @@ export async function toggleCalendarSyncAction(
   enabled: boolean,
 ): Promise<IntegrationActionState> {
   const ctx = await requirePermission("integrations:manage");
+  const limited = await actionWriteLimitError("integrations", ctx);
+  if (limited) return { error: limited };
   try {
     await setCalendarSyncEnabled(ctx, externalCalendarId, enabled);
     if (enabled) {
@@ -69,6 +76,8 @@ export async function checkConnectionHealthAction(
   connectionId: string,
 ): Promise<IntegrationActionState> {
   const ctx = await requirePermission("integrations:manage");
+  const limited = await actionWriteLimitError("integrations", ctx);
+  if (limited) return { error: limited };
   try {
     const result = await checkConnectionHealth(ctx, connectionId);
     revalidatePath("/settings/integrations");
@@ -81,6 +90,8 @@ export async function checkConnectionHealthAction(
 
 export async function syncNowAction(externalCalendarId: string): Promise<IntegrationActionState> {
   const ctx = await requirePermission("integrations:manage");
+  const limited = await actionWriteLimitError("integrations", ctx);
+  if (limited) return { error: limited };
   // Tenant check: the service verifies the calendar belongs to this org+user
   // through setCalendarSyncEnabled-style lookup; do a scoped existence check.
   const { tenantDb } = await import("@/server/db/tenant");

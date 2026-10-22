@@ -55,6 +55,26 @@ export async function actionRateLimitError(
   return null;
 }
 
+/** The areas whose plain write actions share one per-user allowance each. */
+export type WriteArea = "crm" | "calendar" | "booking" | "integrations" | "members";
+
+/**
+ * The limit for an authenticated write action that has no limiter of its
+ * own (CRM records, calendar events, booking set-up, calendar integrations,
+ * team changes that send nothing):
+ * one allowance per user and area on the shared `api` limiter, failing
+ * closed like every other action limit. Keyed by area so a burst in one
+ * place (a CRM import) doesn't block the same person's calendar. Actions
+ * that send email, call a paid provider or spend AI quota keep their own,
+ * tighter limits.
+ */
+export async function actionWriteLimitError(
+  area: WriteArea,
+  ctx: { orgId: string; userId: string },
+): Promise<"rate_limited" | "service_unavailable" | null> {
+  return actionRateLimitError(["api", `${area}-write:${ctx.orgId}:${ctx.userId}`]);
+}
+
 /**
  * A stable key part for an email address that doesn't store the address in
  * the limiter's keys (Redis).

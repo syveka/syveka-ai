@@ -78,7 +78,10 @@ vi.mock("@/server/db/tenant", () => ({
 vi.mock("@/server/ai/router", () => ({
   routeModel: vi.fn(() => ({ model: "claude-sonnet-4-5", maxTokens: 4096 })),
 }));
-vi.mock("@/server/business-dna/context", () => ({
+// The real prompt-building exports (block, no-profile note, fact rules);
+// only the tenant read is faked.
+vi.mock("@/server/business-dna/context", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
   getBusinessDnaContext: vi.fn(async () => mocks.dna),
 }));
 vi.mock("@/server/ai/rag", () => ({
@@ -165,6 +168,9 @@ describe("chat route voice mode", () => {
     expect(mocks.eventCreate).not.toHaveBeenCalled();
     expect(mocks.contactCreate).not.toHaveBeenCalled();
     expect(call.system).toContain("## Live voice conversation");
+    // The shared grounding rules reach the chat route's real prompt.
+    expect(call.system).toContain("## Business facts");
+    expect(call.system).not.toContain("undefined");
   });
 
   it("typed chat keeps its existing tools and behaviour (write tools still offered)", async () => {

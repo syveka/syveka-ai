@@ -133,6 +133,7 @@ vi.mock("@/actions/members", () => ({
   inviteMemberAction: vi.fn(),
   changeRoleAction: vi.fn(),
   removeMemberAction: { bind: () => vi.fn() },
+  revokeInvitationAction: vi.fn(),
 }));
 vi.mock("@/actions/billing", () => ({
   openPortalAction: vi.fn(),
@@ -268,7 +269,34 @@ describe.each(LOCALES)("Settings pages render real %s translations", (locale) =>
     expect(document.body.textContent).toContain(
       `${s("settingsMembers", "pending")} · ${roles.VIEWER}`,
     );
+
+    // A pending invitation can be withdrawn; the control names the address and,
+    // with nothing to report, points at no message.
+    const revoke = screen.getByRole("button", {
+      name: t("revokeInviteLabel", { email: "pending@example.test" }),
+    });
+    expect(revoke.textContent).toBe(s("settingsMembers", "revokeInvite"));
+    expect(revoke.getAttribute("aria-describedby")).toBeNull();
+    expect(screen.queryAllByRole("alert")).toHaveLength(0);
   });
+
+  // useActionState is mocked for every form on the page, so a driven error
+  // shows on both the invite form and the withdraw control. The withdraw
+  // control's message is the one its button describes; the invite form's is
+  // the other.
+  function withdrawAlert(): HTMLElement {
+    const button = screen.getAllByRole("button").find((b) => b.getAttribute("aria-describedby"))!;
+    expect(button).toBeDefined();
+    const alert = document.getElementById(button.getAttribute("aria-describedby")!)!;
+    expect(alert.getAttribute("role")).toBe("alert");
+    return alert;
+  }
+  function inviteAlert(): HTMLElement {
+    const withdraw = withdrawAlert();
+    const others = screen.getAllByRole("alert").filter((a) => a !== withdraw);
+    expect(others).toHaveLength(1);
+    return others[0]!;
+  }
 
   it.each(["invalid_input", "already_member", "plan_limit", "invite_failed"])(
     "Members: invite error %s renders its localized message as an alert",
@@ -276,15 +304,26 @@ describe.each(LOCALES)("Settings pages render real %s translations", (locale) =>
       state.actionState = { error: code };
       await renderPage(locale, PAGES.members);
       const errors = (m.settingsMembers as Record<string, Record<string, string>>).errors!;
-      expect(screen.getByRole("alert").textContent).toBe(errors[code]);
+      expect(inviteAlert().textContent).toBe(errors[code]);
+    },
+  );
+
+  it.each(["not_pending", "revoke_failed", "rate_limited", "service_unavailable"])(
+    "Members: withdraw refusal %s is shown next to the control, localized",
+    async (code) => {
+      state.actionState = { error: code };
+      await renderPage(locale, PAGES.members);
+      const errors = (m.settingsMembers as Record<string, Record<string, string>>).revokeErrors!;
+      expect(withdrawAlert().textContent).toBe(errors[code]);
     },
   );
 
   it("Members: an unknown error string never reaches the UI", async () => {
     state.actionState = { error: "Seat limit reached (3) — internal detail" };
     await renderPage(locale, PAGES.members);
-    const errors = (m.settingsMembers as Record<string, Record<string, string>>).errors!;
-    expect(screen.getByRole("alert").textContent).toBe(errors.invite_failed);
+    const messages = m.settingsMembers as Record<string, Record<string, string>>;
+    expect(inviteAlert().textContent).toBe(messages.errors!.invite_failed);
+    expect(withdrawAlert().textContent).toBe(messages.revokeErrors!.revoke_failed);
     expect(document.body.textContent).not.toContain("internal detail");
   });
 

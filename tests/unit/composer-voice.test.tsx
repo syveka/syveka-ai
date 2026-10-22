@@ -77,6 +77,7 @@ function renderComposer(
         onAbort={vi.fn()}
         disabled={false}
         voiceInputEnabled
+        attachmentsEnabled
         onRecordingStart={onRecordingStart}
         {...props}
       />

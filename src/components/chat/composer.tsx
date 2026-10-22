@@ -16,6 +16,7 @@ export function Composer({
   onAbort,
   disabled,
   voiceInputEnabled = false,
+  attachmentsEnabled = false,
   onRecordingStart,
   onVoiceBusyChange,
 }: {
@@ -24,6 +25,12 @@ export function Composer({
   disabled: boolean;
   /** Server-side speech-to-text is configured for this deployment. */
   voiceInputEnabled?: boolean;
+  /**
+   * The user may attach files. An attachment becomes an organization Knowledge
+   * Base document, so the server requires `kb:write` for it (see
+   * /api/v1/ai/files); this only hides a control that would be refused.
+   */
+  attachmentsEnabled?: boolean;
   /** Called when a recording starts (e.g. to stop reply playback). */
   onRecordingStart?: () => void;
   /** Reports whether dictation currently owns the microphone. */
@@ -190,26 +197,28 @@ export function Composer({
           rows={Math.min(6, Math.max(1, text.split("\n").length))}
           className="max-h-40 min-w-0 flex-1 resize-none bg-transparent px-2 py-1.5 text-sm outline-none placeholder:text-muted-foreground"
         />
-        <label
-          title={t("attachFile")}
-          className={cn(
-            "cursor-pointer rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent",
-            uploading && "pointer-events-none opacity-50",
-          )}
-        >
-          <Paperclip className="size-4" />
-          <input
-            type="file"
-            accept=".pdf,.docx,.txt"
-            className="hidden"
-            disabled={uploading || disabled}
-            onChange={(event) => {
-              const file = event.target.files?.[0];
-              if (file) void upload(file);
-              event.target.value = "";
-            }}
-          />
-        </label>
+        {attachmentsEnabled ? (
+          <label
+            title={t("attachFile")}
+            className={cn(
+              "cursor-pointer rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent",
+              uploading && "pointer-events-none opacity-50",
+            )}
+          >
+            <Paperclip className="size-4" />
+            <input
+              type="file"
+              accept=".pdf,.docx,.txt"
+              className="hidden"
+              disabled={uploading || disabled}
+              onChange={(event) => {
+                const file = event.target.files?.[0];
+                if (file) void upload(file);
+                event.target.value = "";
+              }}
+            />
+          </label>
+        ) : null}
         <button
           type="button"
           onClick={() => setUseKb((v) => !v)}

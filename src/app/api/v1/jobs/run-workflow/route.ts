@@ -46,8 +46,15 @@ const payloadSchema = z.object({
 type StepResult = { stepId: string; status: "ok" | "skipped" | "failed"; output?: unknown };
 type Ctx = { trigger: Record<string, unknown>; vars: Record<string, unknown> };
 
-/** {{trigger.x}} / {{vars.y}} interpolation. */
-function interpolate(template: string, ctx: Ctx): string {
+/**
+ * {{trigger.x}} / {{vars.y}} interpolation. `format` lets an ai.generate
+ * prompt mark each value as data (see formatWorkflowDataValue).
+ */
+function interpolate(
+  template: string,
+  ctx: Ctx,
+  format: (path: string, value: string) => string = (_path, value) => value,
+): string {
   return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (_, path: string) => {
     const value = path
       .split(".")
@@ -56,7 +63,7 @@ function interpolate(template: string, ctx: Ctx): string {
           acc && typeof acc === "object" ? (acc as Record<string, unknown>)[key] : undefined,
         { trigger: ctx.trigger, vars: ctx.vars } as Record<string, unknown>,
       );
-    return value === undefined || value === null ? "" : String(value);
+    return format(path, value === undefined || value === null ? "" : String(value));
   });
 }
 
@@ -249,6 +256,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     { recordUsage, getEntitlements },
     { isOrganizationActive, ORGANIZATION_INACTIVE },
     { assertAiQuotaAvailable, AiSpendError },
+    { WORKFLOW_DATA_SYSTEM_PROMPT, formatWorkflowDataValue, stripWorkflowDataMarkers },
   ] = await Promise.all([
     import("@/server/jobs/verify"),
     import("@/server/db/tenant"),
@@ -259,6 +267,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/services/billing/entitlements"),
     import("@/server/jobs/organization-guard"),
     import("@/server/services/ai-spend"),
+    import("@/server/ai/prompts/workflow-data"),
   ]);
 
   const rawBody = await verifyJobRequest(request);
@@ -411,13 +420,24 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   const steps = workflow.steps as unknown as WorkflowStep[];
   const results: StepResult[] = (run.stepResults as StepResult[]) ?? [];
+  // A resume rebuilds the variables from the persisted results. An
+  // ai.generate step's text is used as {{vars.<outputVar>}}, so it is restored
+  // under that name too, not only under its step id. A live run only ever sets
+  // outputVar names, so those win over a step id of the same name, and a later
+  // ai.generate overwrites an earlier one with the same outputVar, as live.
+  const outputVarByStepId = new Map(
+    steps.flatMap((s) => (s.type === "ai.generate" ? [[s.id, s.outputVar] as const] : [])),
+  );
+  const okResults = results.filter((r) => r.status === "ok" && r.output !== undefined);
   const ctx: Ctx = {
     trigger: triggerData,
-    vars: Object.fromEntries(
-      results
-        .filter((r) => r.status === "ok" && r.output !== undefined)
-        .map((r) => [r.stepId, r.output]),
-    ),
+    vars: Object.fromEntries([
+      ...okResults.map((r) => [r.stepId, r.output] as const),
+      ...okResults.flatMap((r) => {
+        const outputVar = outputVarByStepId.get(r.stepId);
+        return outputVar ? [[outputVar, r.output] as const] : [];
+      }),
+    ]),
   };
 
   const persist = (status?: "SUCCEEDED" | "FAILED" | "WAITING", error?: string) =>
@@ -500,7 +520,13 @@ export async function POST(request: Request): Promise<NextResponse> {
               {
                 model,
                 max_tokens: maxTokens,
-                messages: [{ role: "user", content: interpolate(step.prompt, ctx) }],
+                system: WORKFLOW_DATA_SYSTEM_PROMPT,
+                messages: [
+                  {
+                    role: "user",
+                    content: interpolate(step.prompt, ctx, formatWorkflowDataValue),
+                  },
+                ],
               },
               // Stable across retries of this exact claim (see claimStep) -
               // lets the provider itself dedupe a resend after a crash
@@ -508,7 +534,7 @@ export async function POST(request: Request): Promise<NextResponse> {
               { idempotencyKey: claim.stepExecutionId },
             );
             const text = res.content[0]?.type === "text" ? res.content[0].text : "";
-            const truncated = text.slice(0, 2000);
+            const truncated = stripWorkflowDataMarkers(text).slice(0, 2000);
             ctx.vars[step.outputVar] = truncated;
             let completedHere = true;
             try {

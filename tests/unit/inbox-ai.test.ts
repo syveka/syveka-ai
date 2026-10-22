@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@/server/auth/session";
+import { BUSINESS_FACT_RULES, NO_BUSINESS_PROFILE_NOTE } from "@/server/business-dna/context";
 
 const mocks = vi.hoisted(() => {
   class FakeInboxError extends Error {
@@ -130,6 +131,57 @@ describe("generateEmailDraft", () => {
     expect(call.system).toContain("No refunds after pickup");
     expect(call.system).toContain("Open since 1995");
     expect(call.system).toContain("untrusted data");
+    expect(call.system).not.toContain(NO_BUSINESS_PROFILE_NOTE);
+    // A fact the profile leaves empty gets no invented value.
+    expect(call.system).not.toContain("Opening hours:");
+    expect(call.system).not.toContain("Refund policy:");
+    expect(call.system).toContain(BUSINESS_FACT_RULES);
+  });
+
+  it("says there is no business profile when Business DNA is missing, and still applies the fact rules", async () => {
+    await generateEmailDraft(ctx(), "thread-1");
+
+    const call = mocks.streamClaude.mock.calls[0]![0];
+    expect(call.system).not.toContain("<business_profile>");
+    expect(call.system).toContain(NO_BUSINESS_PROFILE_NOTE);
+    expect(call.system).toContain(BUSINESS_FACT_RULES);
+    expect(call.system).toContain("say plainly that you can't confirm it");
+  });
+
+  it("never lets the draft promise a follow-up or a completed action that no tool reported", async () => {
+    await generateEmailDraft(ctx(), "thread-1");
+
+    const call = mocks.streamClaude.mock.calls[0]![0];
+    expect(call.system).toContain(
+      "Never promise that someone will follow up, reply or call back unless a tool in this conversation recorded that request and reported success.",
+    );
+    expect(call.system).toContain(
+      "Never say that something has been done — booked, sent, saved, passed on, transferred or scheduled — unless a tool in this conversation reported that it succeeded.",
+    );
+  });
+
+  it("keeps verified system data usable: the booking and CRM context come before the fact rules", async () => {
+    mocks.inboxThreadFindFirst.mockResolvedValueOnce({
+      id: "thread-1",
+      subject: "Order #42",
+      contact: { email: "jane@example.com" },
+    });
+    mocks.bookingFindFirst.mockResolvedValueOnce({
+      startsAt: new Date("2026-09-01T10:00:00.000Z"),
+      bookingType: { name: "Consultation" },
+    });
+
+    await generateEmailDraft(ctx(), "thread-1");
+
+    const system: string = mocks.streamClaude.mock.calls[0]![0].system;
+    expect(system).toContain("Consultation");
+    expect(system).toContain(
+      "Live data such as calendar availability, booking, service and CRM records is authoritative for what it covers; use it.",
+    );
+    expect(system.indexOf("Upcoming appointment")).toBeLessThan(
+      system.indexOf(BUSINESS_FACT_RULES),
+    );
+    expect(system.indexOf(BUSINESS_FACT_RULES)).toBeLessThan(system.indexOf("## Rules"));
   });
 
   it("persists the generated text as an AI-generated draft", async () => {

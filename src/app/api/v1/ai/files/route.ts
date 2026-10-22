@@ -16,7 +16,12 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/security/rate-limit"),
   ]);
   try {
-    const ctx = await requirePermission("chat:use");
+    // A chat attachment is persisted as an ordinary organization document: it
+    // is listed in the Knowledge Base and retrieved by org-wide RAG for every
+    // member. Creating one therefore needs the same permission as creating a
+    // Knowledge Base document, on top of using chat.
+    await requirePermission("chat:use");
+    const ctx = await requirePermission("kb:write");
     const refused = await rateLimitRefusal("api", `ai-files:${ctx.orgId}:${ctx.userId}`);
     if (refused) return refused;
     const parsed = chatFileFinalizeSchema.safeParse(await request.json().catch(() => null));
