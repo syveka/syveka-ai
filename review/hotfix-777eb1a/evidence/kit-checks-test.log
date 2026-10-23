@@ -1,0 +1,5 @@
+== pin check passed
+== installed: next 15.5.28, sharp 0.35.5 (single copy, linux-x64 binary 0.35.5), source-map-js 1.2.2
+== negative test: the same checks must reject an unpatched expectation
+== negative test ok (installed sharp/next are not the old 0.35.4/15.5.25)
+KIT-CHECKS-PASS
