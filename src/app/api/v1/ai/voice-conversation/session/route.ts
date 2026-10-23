@@ -32,8 +32,10 @@ async function guard(request: Request, { requireMember }: { requireMember: boole
   } catch {
     return { ok: false as const, response: error("unauthenticated", 401) };
   }
-  if (!can(ctx.role, "chat:use"))
+  if (!can(ctx.role, "chat:use")) {
+    await (await import("@/server/auth/guard")).auditDenial(ctx, "chat:use");
     return { ok: false as const, response: error("permission_denied", 403) };
+  }
   // Ending never requires membership: a session must always be closable,
   // even if the feature was switched off meanwhile.
   if (!requireMember) return { ok: true as const, ctx, config: null, conversation };

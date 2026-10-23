@@ -78,7 +78,10 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return error("unauthenticated", 401);
   }
-  if (!can(ctx.role, "chat:use")) return error("permission_denied", 403);
+  if (!can(ctx.role, "chat:use")) {
+    await (await import("@/server/auth/guard")).auditDenial(ctx, "chat:use");
+    return error("permission_denied", 403);
+  }
   if (!conversation.isVoiceConversationMember(ctx)) {
     return error("voice_conversation_not_enabled", 403);
   }
