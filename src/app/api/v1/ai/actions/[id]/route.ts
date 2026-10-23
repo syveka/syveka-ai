@@ -88,7 +88,10 @@ export async function POST(
   } catch {
     return error("unauthenticated", 401);
   }
-  if (!can(ctx.role, "chat:use")) return error("permission_denied", 403);
+  if (!can(ctx.role, "chat:use")) {
+    await (await import("@/server/auth/guard")).auditDenial(ctx, "chat:use");
+    return error("permission_denied", 403);
+  }
 
   const { id } = await params;
   if (!z.string().uuid().safeParse(id).success) return error("invalid_input", 400);

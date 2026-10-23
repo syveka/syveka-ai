@@ -1,9 +1,7 @@
 "use server";
 
 import { revalidatePath } from "next/cache";
-import { requirePermission } from "@/server/auth/guard";
-import { can } from "@/server/auth/permissions";
-import { AuthError } from "@/server/auth/session";
+import { assertPermission, requirePermission } from "@/server/auth/guard";
 import {
   approveMessage,
   assignThread,
@@ -168,9 +166,7 @@ export async function createContactFromThreadAction(
   formData: FormData,
 ): Promise<InboxActionState> {
   const ctx = await requirePermission("inbox:write");
-  if (!can(ctx.role, "crm:write")) {
-    throw new AuthError("Missing permission: crm:write", 403);
-  }
+  await assertPermission(ctx, "crm:write");
   const parsed = createContactFromThreadSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
 
@@ -194,9 +190,7 @@ export async function searchContactsForLinkAction(
   formData: FormData,
 ): Promise<ContactSearchState> {
   const ctx = await requirePermission("inbox:write");
-  if (!can(ctx.role, "crm:read")) {
-    throw new AuthError("Missing permission: crm:read", 403);
-  }
+  await assertPermission(ctx, "crm:read");
   const parsed = searchContactsForLinkSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { results: [] };
 
@@ -210,9 +204,7 @@ export async function linkThreadToContactAction(
   formData: FormData,
 ): Promise<InboxActionState> {
   const ctx = await requirePermission("inbox:write");
-  if (!can(ctx.role, "crm:read")) {
-    throw new AuthError("Missing permission: crm:read", 403);
-  }
+  await assertPermission(ctx, "crm:read");
   const parsed = linkThreadToContactSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
 

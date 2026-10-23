@@ -55,7 +55,10 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return error("unauthenticated", 401);
   }
-  if (!can(ctx.role, "chat:use")) return error("permission_denied", 403);
+  if (!can(ctx.role, "chat:use")) {
+    await (await import("@/server/auth/guard")).auditDenial(ctx, "chat:use");
+    return error("permission_denied", 403);
+  }
   if (!isChatTranscriptionEnabled()) return error("transcription_unavailable", 503);
   // Staging pilot: only allowlisted (organization, user) pairs, by server-verified IDs.
   if (!isTranscriptionPilotMember(ctx)) return error("voice_not_enabled", 403);

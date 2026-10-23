@@ -87,6 +87,7 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: { code: "unauthenticated" } }, { status: 401 });
   }
   if (!can(ctx.role, "chat:use")) {
+    await (await import("@/server/auth/guard")).auditDenial(ctx, "chat:use");
     return NextResponse.json({ error: { code: "permission_denied" } }, { status: 403 });
   }
 
