@@ -8,7 +8,7 @@ import {
   NO_BUSINESS_PROFILE_NOTE,
   type BusinessDnaContext,
 } from "@/server/business-dna/context";
-import { neutralizeTagBreakout } from "@/server/ai/prompts/untrusted";
+import { neutralizeAttributeValue, neutralizeTagBreakout } from "@/server/ai/prompts/untrusted";
 
 type OrgProfile = {
   name: string;
@@ -135,7 +135,7 @@ export function buildSystemPrompt(params: {
     const context = params.ragContext
       .map(
         (c) =>
-          `<source doc="${c.documentId}" title="${c.title}">\n${neutralizeTagBreakout(c.content)}\n</source>`,
+          `<source doc="${c.documentId}" title="${neutralizeAttributeValue(c.title)}">\n${neutralizeTagBreakout(c.content)}\n</source>`,
       )
       .join("\n\n");
     parts.push(

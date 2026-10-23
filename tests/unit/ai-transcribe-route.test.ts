@@ -21,7 +21,10 @@ const m = vi.hoisted(() => ({
   member: true,
   reserve: vi.fn(),
   order: [] as string[],
+  audit: vi.fn(async (..._args: unknown[]) => undefined),
 }));
+
+vi.mock("@/server/services/audit", () => ({ audit: m.audit }));
 
 vi.mock("@/server/auth/session", () => ({
   getTenantContext: vi.fn(async () => {
@@ -144,6 +147,7 @@ beforeEach(() => {
     return "Hei, varaa aika huomiselle";
   });
   m.recordUsage.mockClear();
+  m.audit.mockClear();
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -180,6 +184,18 @@ describe("POST /api/v1/ai/transcribe guardrails (checked before any paid call)",
     const res = await call(request(webm()));
     expect(res).toEqual({ status: 403, body: { error: { code: "permission_denied" } } });
     expect(m.transcribe).not.toHaveBeenCalled();
+    // The denial is audited (§12.3) with the permission name only.
+    expect(m.audit).toHaveBeenCalledTimes(1);
+    expect(m.audit).toHaveBeenCalledWith(expect.objectContaining({ orgId: ORG, userId: USER }), {
+      action: "authz.denied",
+      resourceType: "permission",
+      resourceId: "chat:use",
+    });
+  });
+
+  it("audits nothing for an allowed request", async () => {
+    expect((await call(request(webm()))).status).toBe(200);
+    expect(m.audit).not.toHaveBeenCalled();
   });
 
   it("503 when transcription is not enabled/configured", async () => {
