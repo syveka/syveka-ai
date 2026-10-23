@@ -16,7 +16,10 @@ vi.mock("@/server/services/audit", () => ({ audit: h.auditMock }));
 vi.mock("@/server/auth/session", () => ({
   AuthError: class AuthError extends Error {
     status: number;
-    constructor(m: string, s: number) { super(m); this.status = s; }
+    constructor(m: string, s: number) {
+      super(m);
+      this.status = s;
+    }
   },
   getTenantContext: h.getTenantContextMock,
 }));
@@ -26,7 +29,11 @@ import { requirePermission } from "@/server/auth/guard";
 beforeEach(() => {
   vi.clearAllMocks();
   h.getTenantContextMock.mockResolvedValue({
-    userId: "u1", email: "m@test", orgId: "o1", role: "MEMBER", locale: "en",
+    userId: "u1",
+    email: "m@test",
+    orgId: "o1",
+    role: "MEMBER",
+    locale: "en",
   });
 });
 
