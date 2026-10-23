@@ -1,0 +1,14 @@
+npm ci                             rc=0    103s
+installed versions                 rc=0      1s
+production audit (gate)            rc=0      2s
+full audit report (info)           rc=1      8s
+prisma generate                    rc=0      2s
+prisma validate                    rc=0      2s
+migrations:check                   rc=0      0s
+format:check                       rc=0     23s
+lint                               rc=0     19s
+typecheck                          rc=0     26s
+i18n:check                         rc=0      1s
+test                               rc=1     26s
+build                              rc=0    111s
+health route carries SHA           rc=0      0s

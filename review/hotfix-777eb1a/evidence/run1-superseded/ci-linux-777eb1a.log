@@ -1,0 +1,138 @@
+commit: 777eb1a4c5f7c2d1eb59ce24f5ae4516944112d5
+tar sha256: 12e6f3b575ff02c6028dd6ddc78a4d86a3914aaf049a7a616b00ddc86e91da2d
+node v22.23.4, npm 10.9.9, Linux 6.18.33.2-microsoft-standard-WSL2 x86_64, "Debian GNU/Linux 12 (bookworm)"
+
+===== npm ci: npm ci --no-audit --no-fund --loglevel=error
+
+added 845 packages in 2m
+npm ci                             rc=0    103s
+
+===== installed versions: bash -c for p in next sharp @img/sharp-linux-x64 @img/sharp-libvips-linux-x64 source-map-js; do printf "  %s=%s\n" "$p" "$(node -p "require(\"fs\").readFileSync(\"node_modules/$p/package.json\",\"utf8\").match(/\"version\": \"([^\"]+)\"/)[1]")"; done; echo "  sharp copies: $(find node_modules -path "*/sharp/package.json" | wc -l)"; node -e "const s=require(\"sharp\"); console.log(\"  runtime sharp\", s.versions.sharp, \"vips\", s.versions.vips)"
+  next=15.5.28
+  sharp=0.35.5
+  @img/sharp-linux-x64=0.35.5
+  @img/sharp-libvips-linux-x64=1.3.4
+  source-map-js=1.2.2
+  sharp copies: 1
+  runtime sharp 0.35.5 vips 8.18.7
+installed versions                 rc=0      1s
+
+===== production audit (gate): npx tsx scripts/run-npm-audit.ts --omit=dev --audit-level=high
+found 0 vulnerabilities
+production audit (gate)            rc=0      2s
+
+===== full audit report (info): bash -c npm audit --audit-level=critical >/tmp/full-audit.txt 2>&1; rc=$?; tail -n 4 /tmp/full-audit.txt; exit $rc
+  npm audit fix --force
+
+Some issues need review, and may require choosing
+a different dependency.
+full audit report (info)           rc=1      8s
+
+===== prisma generate: npx prisma generate
+Loaded Prisma config from prisma.config.ts.
+
+Prisma config detected, skipping environment variable loading.
+Prisma schema loaded from prisma/schema.prisma
+┌─────────────────────────────────────────────────────────┐
+│  Update available 6.19.3 -> 8.0.0-rc.27                 │
+│                                                         │
+│  This is a major update - please follow the guide at    │
+│  https://pris.ly/d/major-version-upgrade                │
+│                                                         │
+│  Run the following to update                            │
+│    npm i --save-dev prisma@latest                       │
+│    npm i @prisma/client@latest                          │
+└─────────────────────────────────────────────────────────┘
+
+✔ Generated Prisma Client (6.19.3) to ./src/generated/prisma/client in 710ms
+
+prisma generate                    rc=0      2s
+
+===== prisma validate: env DATABASE_URL=postgresql://ci:ci@localhost:5432/ci DIRECT_URL=postgresql://ci:ci@localhost:5432/ci npx prisma validate
+Loaded Prisma config from prisma.config.ts.
+
+Prisma config detected, skipping environment variable loading.
+Prisma schema loaded from prisma/schema.prisma
+The schema at prisma/schema.prisma is valid 🚀
+prisma validate                    rc=0      2s
+
+===== migrations:check: npm run migrations:check
+
+> syveka@0.1.0 migrations:check
+> node scripts/check-migration-history.mjs
+
+Migration history is ordered and 8 published checksums match.
+migrations:check                   rc=0      0s
+
+===== format:check: npm run format:check
+
+> syveka@0.1.0 format:check
+> prettier --check .
+
+Checking formatting...
+All matched files use Prettier code style!
+format:check                       rc=0     23s
+
+===== lint: npm run lint
+
+> syveka@0.1.0 lint
+> eslint .
+
+lint                               rc=0     19s
+
+===== typecheck: npm run typecheck
+
+> syveka@0.1.0 typecheck
+> tsc --noEmit
+
+typecheck                          rc=0     26s
+
+===== i18n:check: npm run i18n:check
+
+> syveka@0.1.0 i18n:check
+> node scripts/check-i18n-parity.mjs
+
+✓ fi: 880 keys in parity
+✓ ar: 880 keys in parity
+i18n:check                         rc=0      1s
+
+===== test: bash -c npm test 2>&1 | grep -E "Test Files|Tests |FAIL" ; exit ${PIPESTATUS[0]}
+[90mstderr[2m | tests/unit/stripe-webhook.test.ts[2m > [22m[2mfailure before completion, then a successful Stripe retry[2m > [22m[2mmarks FAILED (never COMPLETED) on the failing attempt, then lets the retry succeed
+[90mstderr[2m | tests/unit/stripe-webhook.test.ts[2m > [22m[2msubscription events are applied from Stripe's current state (out-of-order safety)[2m > [22m[2mmarks the event FAILED (retryable) when Stripe cannot be reached, never COMPLETED
+[90mstderr[2m | tests/unit/creator-generations-idempotency.test.ts[2m > [22m[2mCreator Studio generation request idempotency[2m > [22m[2mCASE 5 — same key retried after FAILED: returns the same failed generation, never retries the provider
+[90mstderr[2m | tests/unit/creator-generations.test.ts[2m > [22m[2mrunGeneration (via requestCharacterImageGeneration)[2m > [22m[2maborts the generation (FAILED + RELEASE) without submitting a second provider call if persisting the request identity fails
+[90mstderr[2m | tests/unit/creator-publishing.test.ts[2m > [22m[2mpublishCreatorPost[2m > [22m[2mmarks the post FAILED (not thrown-uncaught) with a sanitized message on a provider error
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 3 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+[41m[1m FAIL [22m[49m tests/unit/health-route.test.ts[2m > [22mGET /api/health[2m > [22mreports healthy with 200 when both checks succeed
+[41m[1m FAIL [22m[49m tests/unit/health-route.test.ts[2m > [22mGET /api/health[2m > [22mreports degraded with 503 when only the database check fails
+[41m[1m FAIL [22m[49m tests/unit/health-route.test.ts[2m > [22mGET /api/health[2m > [22mreports degraded with 503 when only the redis check fails
+[2m Test Files [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m161 passed[39m[22m[2m | [22m[33m1 skipped[39m[90m (163)[39m
+[2m      Tests [22m [1m[31m3 failed[39m[22m[2m | [22m[1m[32m1574 passed[39m[22m[2m | [22m[33m4 skipped[39m[90m (1581)[39m
+test                               rc=1     26s
+
+===== build: bash -c npm run build 2>&1 | grep -E "Next.js|Compiled|Generating static pages \(1[0-9]+/|rror" | tail -n 5; exit ${PIPESTATUS[0]}
+   ▲ Next.js 15.5.28
+ ⚠ Compiled with warnings in 46s
+   Generating static pages (108/145) 
+ ✓ Generating static pages (145/145)
+build                              rc=0    111s
+
+===== health route carries SHA: grep -qs -- 777eb1a4c5f7c2d1eb59ce24f5ae4516944112d5 .next/server/app/api/health/route.js
+health route carries SHA           rc=0      0s
+
+===== SUMMARY (777eb1a4c5f7c2d1eb59ce24f5ae4516944112d5)
+npm ci                             rc=0    103s
+installed versions                 rc=0      1s
+production audit (gate)            rc=0      2s
+full audit report (info)           rc=1      8s
+prisma generate                    rc=0      2s
+prisma validate                    rc=0      2s
+migrations:check                   rc=0      0s
+format:check                       rc=0     23s
+lint                               rc=0     19s
+typecheck                          rc=0     26s
+i18n:check                         rc=0      1s
+test                               rc=1     26s
+build                              rc=0    111s
+health route carries SHA           rc=0      0s
+container exit=0
