@@ -31,11 +31,11 @@ const STALE_RUNNING_MS = 6 * 60_000;
 const STALE_STEP_CLAIM_MS = STALE_RUNNING_MS;
 
 const payloadSchema = z.object({
-  workflowId: z.string().uuid(),
-  orgId: z.string().uuid(),
+  workflowId: z.string().guid(),
+  orgId: z.string().guid(),
   triggerType: z.string(),
-  triggerData: z.record(z.unknown()),
-  runId: z.string().uuid().optional(), // resume after wait step
+  triggerData: z.record(z.string(), z.unknown()),
+  runId: z.string().guid().optional(), // resume after wait step
   resumeFromIndex: z.number().int().optional(),
   // Present on every fresh, event-driven trigger (emitWorkflowEvent) -
   // absent for manual/test runs and wait-step resumes, both of which always

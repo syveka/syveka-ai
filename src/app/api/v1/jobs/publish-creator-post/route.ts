@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const payloadSchema = z.object({ orgId: z.string().uuid(), postId: z.string().uuid() });
+const payloadSchema = z.object({ orgId: z.string().guid(), postId: z.string().guid() });
 
 /**
  * QStash job: Creator Studio publishing engine entry point (Phase 13).

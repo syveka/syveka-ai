@@ -26,7 +26,7 @@ export const referenceAssetUploadUrlSchema = z
 
 export const confirmReferenceAssetSchema = z
   .object({
-    uploadIntentId: z.string().uuid(),
+    uploadIntentId: z.string().guid(),
   })
   .strict();
 
@@ -41,8 +41,8 @@ const QUALITY = ["standard", "high"] as const;
 
 export const generateCharacterImageSchema = z
   .object({
-    creatorProfileId: z.string().uuid(),
-    templateId: z.string().uuid().optional(),
+    creatorProfileId: z.string().guid(),
+    templateId: z.string().guid().optional(),
     prompt: z.string().min(1).max(2_000),
     aspectRatio: z.enum(ASPECT_RATIOS),
     quality: z.enum(QUALITY).optional(),
@@ -51,20 +51,20 @@ export const generateCharacterImageSchema = z
 
 export const generateImageFromCharacterSchema = z
   .object({
-    creatorProfileId: z.string().uuid(),
-    templateId: z.string().uuid().optional(),
+    creatorProfileId: z.string().guid(),
+    templateId: z.string().guid().optional(),
     prompt: z.string().min(1).max(2_000),
     negativePrompt: z.string().max(1_000).optional(),
     aspectRatio: z.enum(ASPECT_RATIOS),
     quality: z.enum(QUALITY).optional(),
-    referenceAssetId: z.string().uuid().optional(),
+    referenceAssetId: z.string().guid().optional(),
   })
   .strict();
 
 export const generateVideoFromImageSchema = z
   .object({
-    sourceAssetId: z.string().uuid(),
-    creatorProfileId: z.string().uuid().optional(),
+    sourceAssetId: z.string().guid(),
+    creatorProfileId: z.string().guid().optional(),
     motionPrompt: z.string().max(1_000).optional(),
     durationSeconds: z.number().int().min(2).max(30).optional(),
     aspectRatio: z.enum(ASPECT_RATIOS),
@@ -81,8 +81,8 @@ export const generateCaptionSchema = z
     language: z.enum(LANGUAGES),
     tone: z.string().max(200).optional(),
     objective: z.string().max(500).optional(),
-    creatorProfileId: z.string().uuid().optional(),
-    campaignId: z.string().uuid().optional(),
+    creatorProfileId: z.string().guid().optional(),
+    campaignId: z.string().guid().optional(),
   })
   .strict();
 
@@ -121,9 +121,9 @@ export const setAutopilotSchema = z
 
 export const createPostSchema = z
   .object({
-    campaignId: z.string().uuid().optional(),
-    creatorProfileId: z.string().uuid().optional(),
-    assetIds: z.array(z.string().uuid()).min(1),
+    campaignId: z.string().guid().optional(),
+    creatorProfileId: z.string().guid().optional(),
+    assetIds: z.array(z.string().guid()).min(1),
     caption: z.string().max(2_200).optional(),
     hashtags: z.array(z.string().max(60)).max(30).default([]),
     platform: z.enum(PLATFORMS),
@@ -134,7 +134,7 @@ export const updatePostContentSchema = z
   .object({
     caption: z.string().max(2_200).optional(),
     hashtags: z.array(z.string().max(60)).max(30).optional(),
-    assetIds: z.array(z.string().uuid()).min(1).optional(),
+    assetIds: z.array(z.string().guid()).min(1).optional(),
   })
   .strict();
 
@@ -148,7 +148,7 @@ export const reviewPostSchema = z
 export const schedulePostSchema = z
   .object({
     scheduledFor: z.coerce.date(),
-    socialAccountId: z.string().uuid(),
+    socialAccountId: z.string().guid(),
   })
   .strict();
 
