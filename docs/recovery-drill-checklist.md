@@ -97,7 +97,17 @@ Apply, then verify each count is **0**:
 
 **Abort if** any check is non-zero after sanitization.
 
+Scripted in `scripts/recovery-drill/s5-sanitize-offline.sh`. It runs these ten checks plus API keys,
+calendar push channels, recording URLs, transfer numbers and Supabase Auth secrets and sessions; see
+`scripts/recovery-drill/README.md`. It has been validated on synthetic data only.
+
 ## 6. Restore into the disposable project
+
+Scripted in `scripts/recovery-drill/s6-restore-disposable.sh`: it refuses a non-empty or wrong
+destination before any write, restores in one transaction, and verifies the checks, row counts,
+grants and migration history. It reports `20261014000000_secure_prisma_migrations_table` as pending
+and doesn't apply it; applying it to the disposable project is a separate, authorized step before
+the `migrate status` item below.
 
 - [ ] Restore the **sanitized** dump only.
 - [ ] Re-run all ten checks from §5 against the disposable project: all 0.
