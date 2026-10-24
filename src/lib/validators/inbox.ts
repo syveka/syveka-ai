@@ -10,14 +10,16 @@ const optionalTrimmed = (max: number) =>
     .trim()
     .max(max)
     .optional()
-    .transform((v) => (v ? v : undefined));
+    .transform((v) => (v ? v : undefined))
+    .optional();
 
 const optionalUuid = z
   .string()
-  .uuid()
+  .guid()
   .or(z.literal(""))
   .optional()
-  .transform((v) => (v ? v : undefined));
+  .transform((v) => (v ? v : undefined))
+  .optional();
 
 /** Simulates a message arriving on a channel — normally called by a future
  * webhook, not directly by a user. Finds or creates the matching thread. */
@@ -52,7 +54,7 @@ export const inboundEmailWebhookSchema = z.object({
 export type InboundEmailWebhookInput = z.infer<typeof inboundEmailWebhookSchema>;
 
 export const createDraftMessageSchema = z.object({
-  threadId: z.string().uuid(),
+  threadId: z.string().guid(),
   body: z.string().trim().min(1).max(10_000),
   aiGenerated: z.coerce.boolean().default(false),
 });
@@ -66,7 +68,7 @@ export type EditDraftMessageInput = z.infer<typeof editDraftMessageSchema>;
 export const threadListQuerySchema = z.object({
   status: z.enum(INBOX_THREAD_STATUSES).optional(),
   channel: z.enum(INBOX_CHANNELS).optional(),
-  cursor: z.string().uuid().optional(),
+  cursor: z.string().guid().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 export type ThreadListQuery = z.infer<typeof threadListQuerySchema>;
@@ -88,7 +90,7 @@ export const createContactFromThreadSchema = z.object({
 export type CreateContactFromThreadInput = z.infer<typeof createContactFromThreadSchema>;
 
 export const linkThreadToContactSchema = z.object({
-  contactId: z.string().uuid(),
+  contactId: z.string().guid(),
 });
 export type LinkThreadToContactInput = z.infer<typeof linkThreadToContactSchema>;
 

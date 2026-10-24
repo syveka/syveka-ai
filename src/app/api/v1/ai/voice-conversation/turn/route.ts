@@ -15,7 +15,7 @@ const TRANSCRIPTION_TIMEOUT_MS = 30_000;
 const TRANSCRIPTION_USD_PER_MINUTE = 0.003;
 const CONTAINER_MIME = { webm: "audio/webm", mp4: "audio/mp4" } as const;
 
-const fieldsSchema = z.object({ sessionId: z.string().uuid(), turnId: z.string().uuid() }).strict();
+const fieldsSchema = z.object({ sessionId: z.string().guid(), turnId: z.string().guid() }).strict();
 /**
  * Optional client diagnostics for the turn log (no content): how long the
  * device heard speech, and what ended the recording.
