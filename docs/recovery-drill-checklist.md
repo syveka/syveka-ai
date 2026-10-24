@@ -97,7 +97,22 @@ Apply, then verify each count is **0**:
 
 **Abort if** any check is non-zero after sanitization.
 
+Scripted in `scripts/recovery-drill/s5-sanitize-offline.sh`. On top of these ten checks it covers
+API keys, calendar push channels, recording URLs, transfer numbers, Supabase Auth secrets and
+sessions, workflow email recipients, and credential-named keys and known secret formats in every
+JSON and text column. It removes credentials and outbound configuration but does not anonymize
+personal data; see `scripts/recovery-drill/README.md` for what is retained and the coverage limits.
+It has been validated on synthetic data only.
+
 ## 6. Restore into the disposable project
+
+Scripted in `scripts/recovery-drill/s6-restore-disposable.sh`. Before any write it requires the
+connection's project ref to equal an explicitly typed disposable-project ref (and differ from
+production and staging), then refuses a non-empty destination. It restores in one transaction and
+verifies the checks, row counts, grants and migration history. A failure after the commit reports
+`DATA REMAINS — OWNER CLEANUP REQUIRED` and deletes nothing. It reports `20261014000000_secure_prisma_migrations_table` as pending
+and doesn't apply it; applying it to the disposable project is a separate, authorized step before
+the `migrate status` item below.
 
 - [ ] Restore the **sanitized** dump only.
 - [ ] Re-run all ten checks from §5 against the disposable project: all 0.

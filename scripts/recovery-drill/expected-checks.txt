@@ -1,0 +1,32 @@
+# Every check sanitize-checks.sql must report, and what passes.
+# zero        = the value must be exactly 0
+# zero-absent = 0, or ABSENT when this Auth version has no such table
+# The first ten are the runbook's §5 checks (docs/recovery-drill-checklist.md).
+calendar_oauth_tokens zero
+social_tokens zero
+webhook_endpoints zero
+active_workflows zero
+pending_reminders zero
+scheduled_or_inflight_posts zero
+stripe_ids zero
+vapi_assistants_and_numbers zero
+open_invitations zero
+live_booking_tokens zero
+active_api_keys zero
+calendar_push_channels zero
+voice_recording_urls zero
+voice_transfer_numbers zero
+integration_error_texts zero
+workflow_email_recipients zero
+json_sensitive_values zero
+text_secret_patterns zero
+auth_user_secrets zero
+auth_sessions zero-absent
+auth_refresh_tokens zero-absent
+auth_mfa_factors zero-absent
+auth_mfa_challenges zero-absent
+auth_mfa_amr_claims zero-absent
+auth_one_time_tokens zero-absent
+auth_flow_state zero-absent
+auth_saml_relay_states zero-absent
+auth_unlisted_tables_with_rows zero
