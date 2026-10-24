@@ -2,8 +2,13 @@
 -- could act on the outside world or authenticate as a real user.
 --
 -- Runs ONLY inside the offline sanitization container (s5-sanitize-offline.sh,
--- docker --network none). One transaction: any error rolls everything back
--- and psql exits non-zero (run with -v ON_ERROR_STOP=1 --single-transaction).
+-- docker --network none), after scrub-functions.sql in the same session. One
+-- transaction: any error rolls everything back and psql exits non-zero (run
+-- with -v ON_ERROR_STOP=1 --single-transaction).
+--
+-- This is credential and outbound-side-effect removal, NOT anonymization:
+-- names, email addresses, phone numbers, messages, transcripts and documents
+-- are retained (README.md, "Personal data retained").
 --
 -- Scope, from prisma/schema.prisma and docs/recovery-drill-runbook.md:
 --   * the runbook's ten outbound side effects (checks 1-10 in sanitize-checks.sql);
@@ -70,6 +75,18 @@ where webhook_subscription_id is not null or webhook_resource_id is not null
 
 -- 13. Call-recording URLs (provider-hosted audio)
 update public.voice_calls set recording_url = null where recording_url is not null;
+
+-- 25. Error texts of credential-bearing integrations (provider responses can
+-- echo tokens or account details in no fixed format).
+update public.calendar_connections set last_error = null where last_error is not null;
+update public.social_accounts set last_error = null where last_error is not null;
+
+-- 26-28. Generic, schema-aware scrubs over every JSON and text-like column a
+-- restore carries (scrub-functions.sql, loaded first in this session):
+-- credential-named JSON keys, workflow email recipients, known secret formats
+-- and credential-bearing URLs.
+select pg_temp.drill_scrub_json_columns();
+select pg_temp.drill_scrub_text_columns();
 
 -- 16-23. Auth sessions and token tables, children first (each only if this
 -- Auth version has it).

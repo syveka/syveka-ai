@@ -6,6 +6,8 @@
 -- the check allows it); a missing, duplicated, unknown or non-zero check fails.
 -- Run with -v ON_ERROR_STOP=1: a missing application table is a SQL error,
 -- which also fails. Read-only apart from session-local pg_temp helpers.
+-- Requires scrub-functions.sql loaded first in the same session (the JSON and
+-- text checks use the scrubber's own detection functions).
 
 create function pg_temp.drill_count_rows(schema_name text, table_name text)
 returns text language plpgsql as $$
@@ -116,6 +118,19 @@ select 'check', 'voice_recording_urls', count(*)::text from public.voice_calls w
 union all
 select 'check', 'voice_transfer_numbers', count(*)::text
 from public.voice_assistants where transfer_number is not null
+union all
+select 'check', 'integration_error_texts',
+  ((select count(*) from public.calendar_connections where last_error is not null)
+   + (select count(*) from public.social_accounts where last_error is not null))::text
+union all
+select 'check', 'workflow_email_recipients', count(*)::text
+from public.workflows
+where jsonb_path_exists(steps::jsonb, 'lax $.** ? (@.type == "email.send" && @.to != "redacted@drill.invalid")')
+   or jsonb_path_exists(trigger::jsonb, 'lax $.** ? (@.type == "email.send" && @.to != "redacted@drill.invalid")')
+union all
+select 'check', 'json_sensitive_values', pg_temp.drill_count_sensitive('json')::text
+union all
+select 'check', 'text_secret_patterns', pg_temp.drill_count_sensitive('text')::text
 union all
 select 'check', 'auth_user_secrets', pg_temp.drill_auth_user_secrets()
 union all

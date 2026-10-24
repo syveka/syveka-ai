@@ -16,6 +16,10 @@ active_api_keys zero
 calendar_push_channels zero
 voice_recording_urls zero
 voice_transfer_numbers zero
+integration_error_texts zero
+workflow_email_recipients zero
+json_sensitive_values zero
+text_secret_patterns zero
 auth_user_secrets zero
 auth_sessions zero-absent
 auth_refresh_tokens zero-absent

@@ -125,6 +125,29 @@ detect_extensions() {
   ' | sort
 }
 
+# validate_remote_target <host> <db-user> <expected-ref> <production-ref> <staging-ref>
+# The session pooler routes a connection to the project named in the user
+# (postgres.<ref>), so that suffix is the connection's identity. It must equal
+# the explicitly expected disposable ref and differ from production and
+# staging. Prints the reason and returns 1 on any mismatch. No network.
+validate_remote_target() {
+  local host=$1 user=$2 expected=$3 production=$4 staging=$5 ref r
+  printf '%s' "$host" | grep -qE '^aws-[0-9]+-[a-z0-9-]+\.pooler\.supabase\.com$' \
+    || { echo "host is not a Supabase session pooler host"; return 1; }
+  for r in "$expected" "$production" "$staging"; do
+    printf '%s' "$r" | grep -qE '^[a-z0-9]{20}$' || { echo "a project ref is not 20 lowercase letters/digits"; return 1; }
+  done
+  [ "$expected" != "$production" ] || { echo "the expected disposable ref is the PRODUCTION ref"; return 1; }
+  [ "$expected" != "$staging" ] || { echo "the expected disposable ref is the STAGING ref"; return 1; }
+  [ "$production" != "$staging" ] || { echo "the production and staging refs are equal"; return 1; }
+  printf '%s' "$user" | grep -qE '^postgres\.[a-z0-9]{20}$' || { echo "user is not of the form postgres.<20 chars>"; return 1; }
+  ref=${user#postgres.}
+  [ "$ref" != "$production" ] || { echo "the connection user targets PRODUCTION"; return 1; }
+  [ "$ref" != "$staging" ] || { echo "the connection user targets STAGING"; return 1; }
+  [ "$ref" = "$expected" ] || { echo "the connection user's project is not the expected disposable project"; return 1; }
+  return 0
+}
+
 # compare_rowcounts <expected> <actual>: identical sorted "rows|..." lines.
 compare_rowcounts() {
   diff <(grep '^rows|' "$1" | sort) <(grep '^rows|' "$2" | sort)

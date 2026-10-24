@@ -80,5 +80,30 @@ mkdir -p "$T/migrations/001_a" "$T/migrations/002_b" "$T/migrations/003_c"
 printf '%s\n' 001_a 002_b > "$T/applied"
 [ "$(pending_migrations "$T/migrations" "$T/applied")" = "003_c" ] && ok "pending migrations" || ko "pending migrations"
 
+# Remote target identity (no network): only the expected disposable project passes.
+H=aws-0-eu-west-1.pooler.supabase.com; E=eeeeeeeeeeeeeeeeeeee; P=pppppppppppppppppppp; S=ssssssssssssssssssss
+expect_pass "remote identity: the expected disposable project passes" validate_remote_target "$H" "postgres.$E" "$E" "$P" "$S"
+expect_fail "remote identity: a production user is refused" validate_remote_target "$H" "postgres.$P" "$E" "$P" "$S"
+expect_fail "remote identity: a staging user is refused" validate_remote_target "$H" "postgres.$S" "$E" "$P" "$S"
+expect_fail "remote identity: another project is refused" validate_remote_target "$H" "postgres.aaaaaaaaaaaaaaaaaaaa" "$E" "$P" "$S"
+expect_fail "remote identity: expected = production is refused" validate_remote_target "$H" "postgres.$P" "$P" "$P" "$S"
+expect_fail "remote identity: production = staging is refused" validate_remote_target "$H" "postgres.$E" "$E" "$P" "$P"
+expect_fail "remote identity: a direct-database host is refused" validate_remote_target "db.$E.supabase.co" "postgres.$E" "$E" "$P" "$S"
+expect_fail "remote identity: a malformed ref is refused" validate_remote_target "$H" "postgres.$E" "short" "$P" "$S"
+expect_fail "remote identity: a bare postgres user is refused" validate_remote_target "$H" "postgres" "$E" "$P" "$S"
+
+# Archive-scan patterns: the same secret formats as scrub-functions.sql.
+# Vendor-format samples are split ('s''k_live_') so no source line is in a key format.
+printf '%s\n' 'key s''k_live_SYNTHETICSECRET0123' 'xo''xb-SYNTHETICSECRET-1234567890' 'ya''29.SYNTHETICSECRET0123' \
+  'ey''JSYNTHETICSECRETaa.ey''JSYNTHETICSECRETbb.SYNTHETICSECRETcc' 'wh''sec_SYNTHETICSECRET99' \
+  'https://user:pw-SYNTHETIC@tools.invalid/x' > "$T/secrets.txt"
+printf '%s\n' 'https://cdn.invalid/a.png?X-Amz-Signature=abc123' 'https://h.invalid/x?token=abc' > "$T/query.txt"
+printf '%s\n' 'task-assignment-reminder-for-the-team' 'https://[redacted]@tools.invalid/x' \
+  'https://h.invalid/x?token=[redacted]' 'a plain sentence about sk and live tests' > "$T/clean.txt"
+[ "$(grep -cE -f "$HERE/secret-patterns.ere" "$T/secrets.txt")" = 6 ] && ok "archive scan finds every synthetic secret format" || ko "archive scan secret formats"
+[ "$(grep -ciE -f "$HERE/secret-query.ere" "$T/query.txt")" = 2 ] && ok "archive scan finds signed/token query parameters" || ko "archive scan query parameters"
+[ "$( { grep -E -f "$HERE/secret-patterns.ere" "$T/clean.txt"; grep -iE -f "$HERE/secret-query.ere" "$T/clean.txt"; } | wc -l | tr -d ' ')" = 0 ] \
+  && ok "archive scan ignores redacted values and look-alike words" || ko "archive scan false positive"
+
 printf 'selftest: %s failure(s)\n' "$fails"
 exit "$fails"

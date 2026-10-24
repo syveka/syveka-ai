@@ -27,9 +27,12 @@ IMG=pgvector/pgvector:pg17
 MEMORY_LIMIT=1g
 SANITIZE_SQL="$HERE/sanitize.sql"
 CHECKS_SQL="$HERE/sanitize-checks.sql"
+SCRUB_SQL="$HERE/scrub-functions.sql"
 EXPECTED_CHECKS="$HERE/expected-checks.txt"
 ROWCOUNTS_SQL="$HERE/rowcounts.sql"
 PRIVILEGES_SQL="$HERE/privileges.sql"
+SECRET_PATTERNS="$HERE/secret-patterns.ere"
+SECRET_QUERY="$HERE/secret-query.ere"
 
 say() { printf '%s\n' "$*"; }
 EVID=''
@@ -44,7 +47,7 @@ trap cleanup EXIT
 SRC=${1:-}
 [ -n "$SRC" ] && [ -d "$SRC" ] || { say "usage: $0 <dump-dir>"; exit 2; }
 SRC=$(cd "$SRC" && pwd)
-for f in "$SANITIZE_SQL" "$CHECKS_SQL" "$EXPECTED_CHECKS" "$ROWCOUNTS_SQL" "$PRIVILEGES_SQL"; do
+for f in "$SANITIZE_SQL" "$CHECKS_SQL" "$SCRUB_SQL" "$EXPECTED_CHECKS" "$ROWCOUNTS_SQL" "$PRIVILEGES_SQL" "$SECRET_PATTERNS" "$SECRET_QUERY"; do
   [ -s "$f" ] || { say "STOP: $f is missing"; exit 2; }
 done
 docker version >/dev/null 2>&1 || { say "STOP: docker is not available"; exit 2; }
@@ -92,7 +95,7 @@ psql_ctr() { in_ctr psql -X -q -v ON_ERROR_STOP=1 -U postgres -d postgres "$@"; 
 
 put "${DUMPS[0]}" /tmp/raw.dump || stop "cannot stage the dump"
 put "${ROLES[0]}" /tmp/roles.sql || stop "cannot stage the roles file"
-for f in "$SANITIZE_SQL" "$CHECKS_SQL" "$ROWCOUNTS_SQL" "$PRIVILEGES_SQL"; do
+for f in "$SANITIZE_SQL" "$CHECKS_SQL" "$SCRUB_SQL" "$ROWCOUNTS_SQL" "$PRIVILEGES_SQL"; do
   put "$f" "/tmp/$(basename "$f")" || stop "cannot stage $(basename "$f")"
 done
 
@@ -129,15 +132,15 @@ note "raw_restore_seconds=$(( $(date -u +%s) - RESTORE_START ))"
 in_ctr rm -f /tmp/raw.sql
 
 # ---------------------------------------------------------------- 3. counts before sanitizing
-psql_ctr -At -F '|' -f /tmp/sanitize-checks.sql > "$OUT/checks-raw.txt" 2>> "$EVID" || stop "checks failed on the raw restore (SQL error)"
+psql_ctr -At -F '|' -f /tmp/scrub-functions.sql -f /tmp/sanitize-checks.sql > "$OUT/checks-raw.txt" 2>> "$EVID" || stop "checks failed on the raw restore (SQL error)"
 validate_checks "$EXPECTED_CHECKS" "$OUT/checks-raw.txt" complete >> "$EVID" || stop "the check output before sanitizing is incomplete"
 psql_ctr -At -F '|' -f /tmp/rowcounts.sql > "$OUT/rowcounts-raw.txt" 2>> "$EVID" || stop "row counts failed on the raw restore"
 note "raw_nonzero_checks=$(awk -F'|' '$3 ~ /^[1-9]/ {printf "%s=%s ", $2, $3}' "$OUT/checks-raw.txt")"
 
 # ---------------------------------------------------------------- 4. sanitize (one transaction) and verify
-psql_ctr --single-transaction -f /tmp/sanitize.sql > /dev/null 2> "$OUT/sanitize-stderr.txt" \
+psql_ctr --single-transaction -f /tmp/scrub-functions.sql -f /tmp/sanitize.sql > /dev/null 2> "$OUT/sanitize-stderr.txt" \
   || { tail -5 "$OUT/sanitize-stderr.txt"; stop "sanitize.sql failed (rolled back)"; }
-psql_ctr -At -F '|' -f /tmp/sanitize-checks.sql > "$OUT/checks-sanitized.txt" 2>> "$EVID" || stop "checks failed after sanitizing (SQL error)"
+psql_ctr -At -F '|' -f /tmp/scrub-functions.sql -f /tmp/sanitize-checks.sql > "$OUT/checks-sanitized.txt" 2>> "$EVID" || stop "checks failed after sanitizing (SQL error)"
 if ! validate_checks "$EXPECTED_CHECKS" "$OUT/checks-sanitized.txt" > "$OUT/checks-sanitized-verdict.txt"; then
   cat "$OUT/checks-sanitized-verdict.txt" | tee -a "$EVID"
   stop "forbidden data remains after sanitizing; no sanitized archive written"
@@ -147,18 +150,20 @@ psql_ctr -At -F '|' -f /tmp/rowcounts.sql > "$OUT/rowcounts-sanitized.txt" 2>> "
 psql_ctr -At -F '|' -f /tmp/privileges.sql > "$OUT/privileges-sanitized.txt" 2>> "$EVID" || stop "privilege fingerprint failed"
 note "privilege_grants_recorded=$(grep -c '^acl|' "$OUT/privileges-sanitized.txt")"
 
-# ---------------------------------------------------------------- 5. sanitized archives (stdout -> host)
+# ---------------------------------------------------------------- 5. sanitized archives (inside the container first)
+# Written inside the container, verified there, and copied to the host only
+# after every check below passes: a failed run releases no sanitized archive.
 HAS_IDENTITIES=$(psql_ctr -At -c "select to_regclass('auth.identities') is not null")
 MANAGED="-t auth.users -t storage.buckets -t storage.objects"
 [ "$HAS_IDENTITIES" = t ] && MANAGED="$MANAGED -t auth.identities"
 # shellcheck disable=SC2086
-in_ctr pg_dump -Fc --strict-names $MANAGED -U postgres -d postgres > "$OUT/sanitized-managed.dump" 2>> "$EVID" \
+in_ctr pg_dump -Fc --strict-names $MANAGED -U postgres -d postgres -f /tmp/sanitized-managed.dump 2>> "$EVID" \
   || stop "pg_dump of the managed tables failed"
-in_ctr pg_dump -Fc -n public -U postgres -d postgres > "$OUT/sanitized-public.dump" 2>> "$EVID" \
+in_ctr pg_dump -Fc -n public -U postgres -d postgres -f /tmp/sanitized-public.dump 2>> "$EVID" \
   || stop "pg_dump of the public schema failed"
 
-in_ctr pg_restore -l < "$OUT/sanitized-public.dump" > "$OUT/sanitized-public-listing.txt" 2>> "$EVID" || stop "sanitized public archive unreadable"
-in_ctr pg_restore -l < "$OUT/sanitized-managed.dump" > "$OUT/sanitized-managed-listing.txt" 2>> "$EVID" || stop "sanitized managed archive unreadable"
+in_ctr pg_restore -l /tmp/sanitized-public.dump > "$OUT/sanitized-public-listing.txt" 2>> "$EVID" || stop "sanitized public archive unreadable"
+in_ctr pg_restore -l /tmp/sanitized-managed.dump > "$OUT/sanitized-managed-listing.txt" 2>> "$EVID" || stop "sanitized managed archive unreadable"
 RAW_PUBLIC_TABLES=$(toc_body < "$OUT/raw-listing.txt" | grep -cE '^TABLE public ')
 OUT_PUBLIC_TABLES=$(toc_body < "$OUT/sanitized-public-listing.txt" | grep -cE '^TABLE public ')
 OUT_MANAGED_DATA=$(toc_body < "$OUT/sanitized-managed-listing.txt" | grep -E '^TABLE DATA ' | awk '{print $3 "." $4}' | sort | tr '\n' ' ')
@@ -169,8 +174,24 @@ toc_body < "$OUT/sanitized-managed-listing.txt" | grep -E '^TABLE DATA ' \
   | grep -vqE '^TABLE DATA (auth (users|identities)|storage (buckets|objects)) ' \
   && stop "the managed archive carries a table other than auth.users/identities, storage.buckets/objects"
 
-( cd "$OUT" && sha256sum sanitized-public.dump sanitized-managed.dump rowcounts-sanitized.txt privileges-sanitized.txt checks-sanitized.txt >"SHA256SUMS-$TS.txt" ) \
+# Independent of the database checks: scan the archives' plain-text rendering
+# for known secret formats and credential-bearing URLs. The rendering exists
+# only inside the container and is removed afterwards.
+put "$SECRET_PATTERNS" /tmp/secret-patterns.ere && put "$SECRET_QUERY" /tmp/secret-query.ere || stop "cannot stage the scan patterns"
+HITS=$(in_ctr sh -c 'umask 077; pg_restore -f /tmp/render.sql /tmp/sanitized-public.dump && pg_restore -f - /tmp/sanitized-managed.dump >> /tmp/render.sql \
+  && { grep -E -f /tmp/secret-patterns.ere /tmp/render.sql; grep -iE -f /tmp/secret-query.ere /tmp/render.sql; } | wc -l; rm -f /tmp/render.sql') \
+  || stop "the archive scan failed"
+note "archive_secret_pattern_lines=$HITS"
+[ "$HITS" = 0 ] || stop "the sanitized archives still contain $HITS line(s) with a known secret format; nothing released"
+
+# ---------------------------------------------------------------- 6. release to the host
+in_ctr cat /tmp/sanitized-public.dump > "$OUT/sanitized-public.dump" || stop "cannot copy the public archive out"
+in_ctr cat /tmp/sanitized-managed.dump > "$OUT/sanitized-managed.dump" || stop "cannot copy the managed archive out"
+( cd "$OUT" && sha256sum sanitized-public.dump sanitized-managed.dump rowcounts-sanitized.txt privileges-sanitized.txt checks-sanitized.txt > "SHA256SUMS-$TS.txt" ) \
   || stop "cannot write checksums"
+CTR_SUMS=$(in_ctr sha256sum /tmp/sanitized-public.dump /tmp/sanitized-managed.dump | awk '{print $1}' | tr '\n' ' ')
+HOST_SUMS=$(awk 'NR <= 2 {print $1}' "$OUT/SHA256SUMS-$TS.txt" | tr '\n' ' ')
+[ "$CTR_SUMS" = "$HOST_SUMS" ] || { rm -f "$OUT"/sanitized-*.dump; stop "the copied archives do not match the container's; removed"; }
 cat "$OUT/SHA256SUMS-$TS.txt" >> "$EVID"
 note "S5_RESULT=PASS out=$OUT"
 exit 0

@@ -69,9 +69,47 @@ describe("recovery-drill sanitization checks", () => {
   it("runs the sanitization as one transaction and keeps identities", () => {
     const sanitize = read("sanitize.sql");
     expect(sanitize).not.toMatch(/\b(begin|commit);/i);
-    expect(read("s5-sanitize-offline.sh")).toMatch(/--single-transaction -f \/tmp\/sanitize\.sql/);
+    expect(read("s5-sanitize-offline.sh")).toMatch(
+      /--single-transaction -f \/tmp\/scrub-functions\.sql -f \/tmp\/sanitize\.sql/,
+    );
     expect(sanitize).not.toMatch(/delete from auth\.(users|identities)\b/i);
     expect(sanitize).not.toMatch(/'identities'/);
+  });
+
+  it("scrubs every carried JSON and text column, and checks both", () => {
+    expect(read("sanitize.sql")).toMatch(/^select pg_temp\.drill_scrub_json_columns\(\);$/m);
+    expect(read("sanitize.sql")).toMatch(/^select pg_temp\.drill_scrub_text_columns\(\);$/m);
+    for (const name of [
+      "json_sensitive_values",
+      "text_secret_patterns",
+      "workflow_email_recipients",
+    ]) {
+      expect(expectedChecks).toContainEqual({ name, rule: "zero" });
+    }
+    // The workflow-recipient check must not reuse the scrubber's own detector.
+    expect(read("sanitize-checks.sql")).toMatch(
+      /jsonb_path_exists\(steps::jsonb, 'lax \$\.\*\* \? \(@\.type == "email\.send"/,
+    );
+  });
+
+  it("keeps the archive-scan patterns identical to the database patterns", () => {
+    const sqlPatterns = [
+      ...read("scrub-functions.sql")
+        .split("create function pg_temp.drill_secret_patterns()")[1]!
+        .split("]")[0]!
+        .matchAll(/'([^']+)'/g),
+    ].map((m) => m[1]!.replace(/\\m/g, "\\b"));
+    const ere = read("secret-patterns.ere").split("\n").filter(Boolean);
+    expect(ere.slice(0, sqlPatterns.length)).toEqual(sqlPatterns);
+  });
+
+  it("releases sanitized archives only after the archive scan passes", () => {
+    const s5 = read("s5-sanitize-offline.sh");
+    const scan = s5.indexOf('[ "$HITS" = 0 ] || stop');
+    const release = s5.indexOf("in_ctr cat /tmp/sanitized-public.dump");
+    expect(scan).toBeGreaterThan(0);
+    expect(release).toBeGreaterThan(scan);
+    expect(s5).not.toMatch(/pg_dump[^\n]*> "\$OUT\/sanitized-/);
   });
 });
 
@@ -121,6 +159,33 @@ describe("recovery-drill isolation", () => {
     ]) {
       expect(s6.slice(0, guard)).toContain(refusal);
     }
+  });
+
+  it("checks the remote target identity before asking for a password", () => {
+    const s6 = read("s6-restore-disposable.sh");
+    const identity = s6.indexOf("validate_remote_target");
+    const password = s6.indexOf("database password (not echoed)");
+    const firstContainer = s6.indexOf("docker run");
+    expect(identity).toBeGreaterThan(0);
+    expect(password).toBeGreaterThan(identity);
+    expect(firstContainer).toBeGreaterThan(identity);
+    for (const prompt of [
+      "EXPECTED disposable project ref",
+      "PRODUCTION project ref",
+      "STAGING project ref",
+    ]) {
+      expect(s6).toContain(prompt);
+    }
+  });
+
+  it("separates a rolled-back restore from a failure after commit", () => {
+    const s6 = read("s6-restore-disposable.sh");
+    expect(s6).toContain("DATA REMAINS — OWNER CLEANUP REQUIRED (failed stage: $STAGE)");
+    const rolledBack = s6.indexOf("RESTORE ROLLED BACK");
+    const committed = s6.indexOf("COMMITTED=1");
+    expect(rolledBack).toBeGreaterThan(0);
+    expect(committed).toBeGreaterThan(rolledBack);
+    expect(s6).not.toMatch(/drop (schema|table|database)|delete from|truncate/i);
   });
 });
 
