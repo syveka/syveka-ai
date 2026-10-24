@@ -15,7 +15,7 @@ const TRANSCRIPTION_TIMEOUT_MS = 30_000;
 const TRANSCRIPTION_USD_PER_MINUTE = 0.003;
 const CONTAINER_MIME = { webm: "audio/webm", mp4: "audio/mp4" } as const;
 
-const fieldsSchema = z.object({ sessionId: z.string().uuid(), turnId: z.string().uuid() }).strict();
+const fieldsSchema = z.object({ sessionId: z.string().guid(), turnId: z.string().guid() }).strict();
 /**
  * Optional client diagnostics for the turn log (no content): how long the
  * device heard speech, and what ended the recording.
@@ -78,7 +78,10 @@ export async function POST(request: Request): Promise<Response> {
   } catch {
     return error("unauthenticated", 401);
   }
-  if (!can(ctx.role, "chat:use")) return error("permission_denied", 403);
+  if (!can(ctx.role, "chat:use")) {
+    await (await import("@/server/auth/guard")).auditDenial(ctx, "chat:use");
+    return error("permission_denied", 403);
+  }
   if (!conversation.isVoiceConversationMember(ctx)) {
     return error("voice_conversation_not_enabled", 403);
   }

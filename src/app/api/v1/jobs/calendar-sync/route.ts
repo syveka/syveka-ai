@@ -10,9 +10,9 @@ export const maxDuration = 120;
  * bounds a retry-mode payload to at most this many ids. */
 const BATCH_SIZE = 25;
 
-const sweepPayloadSchema = z.object({ cursor: z.string().uuid().optional() }).strict();
+const sweepPayloadSchema = z.object({ cursor: z.string().guid().optional() }).strict();
 const retryPayloadSchema = z
-  .object({ calendarIds: z.array(z.string().uuid()).min(1).max(BATCH_SIZE) })
+  .object({ calendarIds: z.array(z.string().guid()).min(1).max(BATCH_SIZE) })
   .strict();
 const payloadSchema = z.union([sweepPayloadSchema, retryPayloadSchema]);
 

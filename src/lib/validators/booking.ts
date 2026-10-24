@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isoDateTime } from "./datetime";
 
 const optionalTrimmed = (max: number) =>
   z
@@ -6,7 +7,8 @@ const optionalTrimmed = (max: number) =>
     .max(max)
     .optional()
     .or(z.literal(""))
-    .transform((v) => (v ? v : undefined));
+    .transform((v) => (v ? v : undefined))
+    .optional();
 
 const MINUTE_MAX = 24 * 60;
 
@@ -112,7 +114,8 @@ export const bookingTypeSchema = z.object({
     .regex(/^#[0-9a-fA-F]{6}$/)
     .optional()
     .or(z.literal(""))
-    .transform((v) => (v ? v : undefined)),
+    .transform((v) => (v ? v : undefined))
+    .optional(),
   confirmationMessage: optionalTrimmed(1000),
   collectPhone: z.coerce.boolean().default(false),
   collectCompany: z.coerce.boolean().default(false),
@@ -123,14 +126,14 @@ export const bookingTypeSchema = z.object({
     .optional()
     .or(z.literal(""))
     .transform((v) => (v ? v : undefined))
-    .pipe(z.string().uuid().optional()),
+    .pipe(z.string().guid().optional()),
 });
 
 export type BookingTypeInput = z.infer<typeof bookingTypeSchema>;
 
 /** Public guest booking payload — strictly validated, rate-limited upstream. */
 export const publicBookingSchema = z.object({
-  startsAt: z.string().datetime(),
+  startsAt: isoDateTime(),
   durationMinutes: z.coerce.number().int().min(5).max(480).optional(),
   timezone: z.string().min(1).max(64),
   name: z.string().min(1).max(200),
@@ -147,7 +150,7 @@ export const publicBookingSchema = z.object({
 export type PublicBookingInput = z.infer<typeof publicBookingSchema>;
 
 export const publicRescheduleSchema = z.object({
-  startsAt: z.string().datetime(),
+  startsAt: isoDateTime(),
   timezone: z.string().min(1).max(64).optional(),
 });
 

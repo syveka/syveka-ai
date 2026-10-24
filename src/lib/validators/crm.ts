@@ -9,7 +9,8 @@ const optionalTrimmed = (max: number) =>
     .trim()
     .max(max)
     .optional()
-    .transform((v) => (v ? v : undefined));
+    .transform((v) => (v ? v : undefined))
+    .optional();
 
 const optionalEmail = z
   .string()
@@ -18,7 +19,8 @@ const optionalEmail = z
   .max(320)
   .or(z.literal(""))
   .optional()
-  .transform((v) => (v ? v : undefined));
+  .transform((v) => (v ? v : undefined))
+  .optional();
 
 const optionalUrl = z
   .string()
@@ -27,14 +29,16 @@ const optionalUrl = z
   .max(300)
   .or(z.literal(""))
   .optional()
-  .transform((v) => (v ? v : undefined));
+  .transform((v) => (v ? v : undefined))
+  .optional();
 
 const optionalUuid = z
   .string()
-  .uuid()
+  .guid()
   .or(z.literal(""))
   .optional()
-  .transform((v) => (v ? v : undefined));
+  .transform((v) => (v ? v : undefined))
+  .optional();
 
 /** List filter for soft-archived records. */
 export const archivedFilterSchema = z.enum(["active", "archived", "all"]).default("active");
@@ -54,9 +58,9 @@ export const contactSchema = z.object({
 export const contactListQuerySchema = z.object({
   q: z.string().max(200).optional(),
   status: z.enum(CONTACT_STATUSES).optional(),
-  companyId: z.string().uuid().optional(),
+  companyId: z.string().guid().optional(),
   archived: archivedFilterSchema,
-  cursor: z.string().uuid().optional(),
+  cursor: z.string().guid().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
@@ -72,7 +76,7 @@ export const companySchema = z.object({
 export const companyListQuerySchema = z.object({
   q: z.string().max(200).optional(),
   archived: archivedFilterSchema,
-  cursor: z.string().uuid().optional(),
+  cursor: z.string().guid().optional(),
   limit: z.coerce.number().int().min(1).max(100).default(25),
 });
 
@@ -109,13 +113,13 @@ export const dealSchema = z.object({
   contactId: optionalUuid,
   companyId: optionalUuid,
   ownerId: optionalUuid,
-  stageId: z.string().uuid(),
+  stageId: z.string().guid(),
   expectedCloseAt: optionalDateString,
 });
 
 export const moveDealSchema = z.object({
-  dealId: z.string().uuid(),
-  stageId: z.string().uuid(),
+  dealId: z.string().guid(),
+  stageId: z.string().guid(),
   position: z.coerce.number().int().min(0).max(10_000).default(0),
 });
 

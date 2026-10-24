@@ -1,0 +1,306 @@
+{
+  "searchKnowledgeBase": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string"
+      }
+    },
+    "required": ["query"]
+  },
+  "searchContacts": {
+    "type": "object",
+    "properties": {
+      "query": {
+        "type": "string"
+      }
+    },
+    "required": ["query"]
+  },
+  "createContact": {
+    "type": "object",
+    "properties": {
+      "firstName": {
+        "type": "string"
+      },
+      "lastName": {
+        "type": "string"
+      },
+      "email": {
+        "type": "string"
+      },
+      "phone": {
+        "type": "string"
+      },
+      "source": {
+        "type": "string"
+      }
+    },
+    "required": ["firstName"]
+  },
+  "logActivity": {
+    "type": "object",
+    "properties": {
+      "contactId": {
+        "type": "string"
+      },
+      "type": {
+        "type": "string",
+        "enum": ["NOTE", "TASK"]
+      },
+      "subject": {
+        "type": "string"
+      },
+      "body": {
+        "type": "string"
+      },
+      "dueAt": {
+        "type": "string"
+      }
+    },
+    "required": ["contactId", "type", "subject"]
+  },
+  "getCalendarAvailability": {
+    "type": "object",
+    "properties": {
+      "date": {
+        "type": "string"
+      },
+      "serviceName": {
+        "type": "string"
+      }
+    },
+    "required": ["date"]
+  },
+  "bookMeeting": {
+    "type": "object",
+    "properties": {
+      "title": {
+        "type": "string"
+      },
+      "startsAt": {
+        "type": "string"
+      },
+      "serviceName": {
+        "type": "string"
+      },
+      "durationMinutes": {
+        "type": "number"
+      },
+      "contactId": {
+        "type": "string"
+      },
+      "notes": {
+        "type": "string"
+      }
+    },
+    "required": ["title", "startsAt"]
+  },
+  "proposeBusinessDnaUpdate": {
+    "type": "object",
+    "properties": {
+      "set": {
+        "type": "object",
+        "properties": {
+          "displayName": {
+            "type": "string"
+          },
+          "industry": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "productsServices": {
+            "type": "string"
+          },
+          "supportedLocales": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["FI", "EN", "AR"]
+            }
+          },
+          "timezone": {
+            "type": "string"
+          },
+          "brandTone": {
+            "type": "string"
+          },
+          "openingHours": {
+            "type": "object",
+            "properties": {
+              "monday": {
+                "type": "object",
+                "properties": {
+                  "closed": {
+                    "type": "boolean"
+                  },
+                  "open": {
+                    "type": "string"
+                  },
+                  "close": {
+                    "type": "string"
+                  }
+                },
+                "required": []
+              },
+              "tuesday": {
+                "type": "object",
+                "properties": {
+                  "closed": {
+                    "type": "boolean"
+                  },
+                  "open": {
+                    "type": "string"
+                  },
+                  "close": {
+                    "type": "string"
+                  }
+                },
+                "required": []
+              },
+              "wednesday": {
+                "type": "object",
+                "properties": {
+                  "closed": {
+                    "type": "boolean"
+                  },
+                  "open": {
+                    "type": "string"
+                  },
+                  "close": {
+                    "type": "string"
+                  }
+                },
+                "required": []
+              },
+              "thursday": {
+                "type": "object",
+                "properties": {
+                  "closed": {
+                    "type": "boolean"
+                  },
+                  "open": {
+                    "type": "string"
+                  },
+                  "close": {
+                    "type": "string"
+                  }
+                },
+                "required": []
+              },
+              "friday": {
+                "type": "object",
+                "properties": {
+                  "closed": {
+                    "type": "boolean"
+                  },
+                  "open": {
+                    "type": "string"
+                  },
+                  "close": {
+                    "type": "string"
+                  }
+                },
+                "required": []
+              },
+              "saturday": {
+                "type": "object",
+                "properties": {
+                  "closed": {
+                    "type": "boolean"
+                  },
+                  "open": {
+                    "type": "string"
+                  },
+                  "close": {
+                    "type": "string"
+                  }
+                },
+                "required": []
+              },
+              "sunday": {
+                "type": "object",
+                "properties": {
+                  "closed": {
+                    "type": "boolean"
+                  },
+                  "open": {
+                    "type": "string"
+                  },
+                  "close": {
+                    "type": "string"
+                  }
+                },
+                "required": []
+              }
+            },
+            "required": []
+          },
+          "cancellationPolicy": {
+            "type": "string"
+          },
+          "bookingPolicy": {
+            "type": "string"
+          },
+          "refundPolicy": {
+            "type": "string"
+          },
+          "paymentPolicy": {
+            "type": "string"
+          },
+          "otherPolicies": {
+            "type": "string"
+          },
+          "currency": {
+            "type": "string"
+          },
+          "quoteInstructions": {
+            "type": "string"
+          },
+          "pricingNotes": {
+            "type": "string"
+          },
+          "targetCustomer": {
+            "type": "string"
+          },
+          "keyFacts": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        },
+        "required": []
+      },
+      "clear": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "enum": [
+            "displayName",
+            "industry",
+            "description",
+            "productsServices",
+            "supportedLocales",
+            "timezone",
+            "brandTone",
+            "openingHours",
+            "cancellationPolicy",
+            "bookingPolicy",
+            "refundPolicy",
+            "paymentPolicy",
+            "otherPolicies",
+            "currency",
+            "quoteInstructions",
+            "pricingNotes",
+            "targetCustomer",
+            "keyFacts"
+          ]
+        }
+      }
+    },
+    "required": []
+  }
+}

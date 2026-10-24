@@ -46,7 +46,7 @@ export const stepSchema = z.discriminatedUnion("type", [
   z.object({
     id: z.string().min(1),
     type: z.literal("notify.member"),
-    userId: z.string().uuid().optional(), // default: workflow creator
+    userId: z.string().guid().optional(), // default: workflow creator
     title: z.string().min(1).max(200),
     body: z.string().max(1000).optional(),
   }),

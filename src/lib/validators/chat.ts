@@ -3,24 +3,24 @@ import type { BusinessDnaChange } from "@/lib/validators/business-dna-patch";
 
 export const chatRequestSchema = z
   .object({
-    conversationId: z.string().uuid().optional(),
+    conversationId: z.string().guid().optional(),
     message: z.string().min(1).max(8_000),
     useKnowledgeBase: z.boolean().default(true),
     deepMode: z.boolean().default(false),
-    documentIds: z.array(z.string().uuid()).max(10).default([]),
+    documentIds: z.array(z.string().guid()).max(10).default([]),
     /**
      * Single-use grant issued by POST /api/v1/ai/voice-conversation/turn for
      * one live voice turn. The server derives voice mode (read-only tools,
      * bounded reply) from a valid grant — there is no client-controlled mode.
      */
-    voiceGrant: z.string().uuid().optional(),
+    voiceGrant: z.string().guid().optional(),
   })
   .strict();
 
 export const chatFileFinalizeSchema = z
   .object({
     title: z.string().min(1).max(200),
-    uploadIntentId: z.string().uuid(),
+    uploadIntentId: z.string().guid(),
   })
   .strict();
 
