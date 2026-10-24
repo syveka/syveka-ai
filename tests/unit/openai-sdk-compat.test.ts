@@ -3,9 +3,11 @@ import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 /**
  * The OpenAI integration against the real `openai` SDK (v6), with only the
  * network replaced: what each call sends, how the reply is read, and that a
- * transcription makes exactly one attempt. No request leaves the process:
- * the SDK is pointed at a `.invalid` host (RFC 2606), so a request the stub
- * misses can't resolve, let alone reach the provider.
+ * transcription makes exactly one attempt. No request leaves the process,
+ * on any SDK version: the SDK is pointed at a `.invalid` host (RFC 2606), so
+ * a request the stub misses can't resolve, and the file refuses to run at all
+ * on an SDK older than v6, which sends through its own bundled fetch rather
+ * than the stubbed global one (openai 4.x did, and reached the network).
  */
 
 const BASE_URL = vi.hoisted(() => {
@@ -26,7 +28,14 @@ const fetchMock = vi.hoisted(() =>
 );
 vi.stubGlobal("fetch", fetchMock);
 
+import { VERSION as OPENAI_SDK_VERSION } from "openai/version";
 import { embed, isFlaggedByModeration, transcribeAudio } from "@/server/integrations/openai";
+
+if (Number(OPENAI_SDK_VERSION.split(".")[0]) < 6) {
+  throw new Error(
+    `openai ${OPENAI_SDK_VERSION} doesn't send through the stubbed fetch; refusing to run`,
+  );
+}
 
 function json(body: unknown, status = 200) {
   return new Response(JSON.stringify(body), {
