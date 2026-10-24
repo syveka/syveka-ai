@@ -6,7 +6,7 @@ export const inviteMemberSchema = z.object({
 });
 
 export const changeRoleSchema = z.object({
-  memberId: z.string().uuid(),
+  memberId: z.string().guid(),
   role: z.enum(["ADMIN", "MANAGER", "MEMBER", "VIEWER"]),
 });
 

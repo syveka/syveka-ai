@@ -12,14 +12,14 @@ export const MAX_UPLOAD_BYTES = 25 * 1024 * 1024; // §13.2
 
 const documentBase = {
   title: z.string().min(1).max(200),
-  collectionId: z.string().uuid().optional(),
+  collectionId: z.string().guid().optional(),
 };
 
 export const createDocumentSchema = z.discriminatedUnion("sourceType", [
   z.object({
     ...documentBase,
     sourceType: z.literal("UPLOAD"),
-    uploadIntentId: z.string().uuid(),
+    uploadIntentId: z.string().guid(),
   }),
   z.object({
     ...documentBase,
