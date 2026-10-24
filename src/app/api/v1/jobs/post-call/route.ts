@@ -8,7 +8,7 @@ export const maxDuration = 120;
 
 const payloadSchema = z.object({
   vapiCallId: z.string(),
-  orgId: z.string().uuid(),
+  orgId: z.string().guid(),
 });
 
 const analysisSchema = z.object({

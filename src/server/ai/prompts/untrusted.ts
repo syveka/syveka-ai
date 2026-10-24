@@ -19,3 +19,20 @@ import "server-only";
 export function neutralizeTagBreakout(text: string): string {
   return text.replace(/<\/(?=[a-zA-Z])/g, "<\\/");
 }
+
+/**
+ * Makes untrusted text safe inside a double-quoted attribute of a prompt
+ * wrapper tag, such as a knowledge-base document title in
+ * `<source title="...">` (any kb:write member chooses the title). Drops the
+ * characters that could end the attribute or the tag or start a new prompt
+ * line — `"`, `<`, `>`, newlines and every other control character — and
+ * collapses the whitespace left behind. Unlike wrapper content, an
+ * attribute value has no legitimate use for them, so they are removed
+ * rather than escaped.
+ */
+export function neutralizeAttributeValue(text: string): string {
+  return text
+    .replace(/["<>\p{Cc}\p{Zl}\p{Zp}]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}

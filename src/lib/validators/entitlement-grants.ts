@@ -13,7 +13,7 @@ const ENTITLEMENT_METRICS = [
 ] as const;
 
 export const createEntitlementGrantSchema = z.object({
-  organizationId: z.string().uuid(),
+  organizationId: z.string().guid(),
   metric: z.enum(ENTITLEMENT_METRICS),
   amount: z.coerce.number().int().positive(),
   reason: z.string().trim().min(1).max(500),
@@ -22,10 +22,11 @@ export const createEntitlementGrantSchema = z.object({
     .string()
     .optional()
     .transform((v) => (v ? v : undefined))
-    .refine((v) => v === undefined || !Number.isNaN(Date.parse(v)), "Invalid date"),
+    .refine((v) => v === undefined || !Number.isNaN(Date.parse(v)), "Invalid date")
+    .optional(),
 });
 
 export const revokeEntitlementGrantSchema = z.object({
-  grantId: z.string().uuid(),
-  organizationId: z.string().uuid(),
+  grantId: z.string().guid(),
+  organizationId: z.string().guid(),
 });

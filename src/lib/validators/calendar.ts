@@ -7,19 +7,20 @@ const optionalTrimmed = (max: number) =>
     .max(max)
     .optional()
     .or(z.literal(""))
-    .transform((v) => (v ? v : undefined));
+    .transform((v) => (v ? v : undefined))
+    .optional();
 
 const uuidOrEmpty = z
   .string()
   .optional()
   .or(z.literal(""))
   .transform((v) => (v ? v : undefined))
-  .pipe(z.string().uuid().optional());
+  .pipe(z.string().guid().optional());
 
 /** One attendee row submitted with the event form (JSON-encoded field). */
 export const attendeeSchema = z.object({
-  contactId: z.string().uuid().optional(),
-  userId: z.string().uuid().optional(),
+  contactId: z.string().guid().optional(),
+  userId: z.string().guid().optional(),
   email: z.string().email().max(320).optional(),
   name: z.string().max(200).optional(),
 });
@@ -91,10 +92,10 @@ export const eventFiltersSchema = z.object({
     .regex(/^\d{4}-\d{2}-\d{2}$/)
     .optional(),
   q: z.string().max(200).optional(),
-  ownerId: z.string().uuid().optional(),
-  contactId: z.string().uuid().optional(),
-  companyId: z.string().uuid().optional(),
-  dealId: z.string().uuid().optional(),
+  ownerId: z.string().guid().optional(),
+  contactId: z.string().guid().optional(),
+  companyId: z.string().guid().optional(),
+  dealId: z.string().guid().optional(),
   source: z.enum(["MANUAL", "VOICE_AI", "WORKFLOW", "BOOKING", "GOOGLE", "OUTLOOK"]).optional(),
 });
 

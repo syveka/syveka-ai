@@ -6,8 +6,8 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 300;
 
 const payloadSchema = z.object({
-  documentId: z.string().uuid(),
-  orgId: z.string().uuid(),
+  documentId: z.string().guid(),
+  orgId: z.string().guid(),
   inlineContent: z.string().optional(),
 });
 

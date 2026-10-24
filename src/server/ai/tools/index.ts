@@ -1,6 +1,7 @@
 import "server-only";
 
 import { z } from "zod";
+import { isoDateTime } from "@/lib/validators/datetime";
 import type Anthropic from "@anthropic-ai/sdk";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { retrieveChunks } from "@/server/ai/rag";
@@ -234,11 +235,11 @@ const logActivity = defineTool({
   name: "logActivity",
   description: "Log a note or task on a CRM contact.",
   schema: z.object({
-    contactId: z.string().uuid(),
+    contactId: z.string().guid(),
     type: z.enum(["NOTE", "TASK"]),
     subject: z.string().min(1).max(200),
     body: z.string().max(4000).optional(),
-    dueAt: z.string().datetime().optional(),
+    dueAt: isoDateTime().optional(),
   }),
   permission: "crm:write",
   describe: async (id, input) => {
@@ -475,10 +476,10 @@ const bookMeeting = defineTool({
     "Book a meeting into the company calendar. Only after the user/caller confirmed the slot. Pass serviceName (matching a name from the business's services) whenever the booking is for a specific service, so the real service duration is used - only pass an explicit durationMinutes to override that (e.g. a custom/one-off meeting with no matching service); defaults to 30 minutes if neither resolves.",
   schema: z.object({
     title: z.string().min(1).max(200),
-    startsAt: z.string().datetime(),
+    startsAt: isoDateTime(),
     serviceName: z.string().max(200).optional(),
     durationMinutes: z.number().int().min(15).max(240).optional(),
-    contactId: z.string().uuid().optional(),
+    contactId: z.string().guid().optional(),
     notes: z.string().max(2000).optional(),
   }),
   permission: "calendar:write",
@@ -838,15 +839,19 @@ function unwrap(schema: z.ZodTypeAny): { type: z.ZodTypeAny; optional: boolean }
       type = type._def.innerType as z.ZodTypeAny;
     } else if (type instanceof z.ZodNullable) {
       type = type._def.innerType as z.ZodTypeAny;
-    } else if (type instanceof z.ZodEffects) {
-      type = type._def.schema as z.ZodTypeAny;
+    } else if (type instanceof z.ZodPipe && type._zod.def.out instanceof z.ZodTransform) {
+      // .transform(): describe what the model sends, not what it becomes
+      type = type._zod.def.in as z.ZodTypeAny;
+    } else if (type instanceof z.ZodPipe && type._zod.def.in instanceof z.ZodTransform) {
+      // z.preprocess()
+      type = type._zod.def.out as z.ZodTypeAny;
     } else {
       return { type, optional };
     }
   }
 }
 
-function objectSchema(schema: z.AnyZodObject): object {
+function objectSchema(schema: z.ZodObject): object {
   const shape = schema.shape as Record<string, z.ZodTypeAny>;
   const properties: Record<string, object> = {};
   const required: string[] = [];

@@ -5,7 +5,7 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-const payloadSchema = z.object({ reminderId: z.string().uuid() });
+const payloadSchema = z.object({ reminderId: z.string().guid() });
 
 /**
  * QStash job: deliver a meeting reminder.

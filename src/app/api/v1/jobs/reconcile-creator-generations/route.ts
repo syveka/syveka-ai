@@ -7,8 +7,8 @@ export const maxDuration = 120;
 
 const payloadSchema = z
   .object({
-    generatingCursor: z.string().uuid().optional(),
-    settlementCursor: z.string().uuid().optional(),
+    generatingCursor: z.string().guid().optional(),
+    settlementCursor: z.string().guid().optional(),
   })
   .strict();
 

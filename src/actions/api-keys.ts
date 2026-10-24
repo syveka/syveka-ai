@@ -2,12 +2,15 @@
 
 import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/server/auth/guard";
-import { createApiKey, revokeApiKey } from "@/server/services/api-keys";
+import { API_SCOPES, createApiKey, revokeApiKey } from "@/server/services/api-keys";
 import { z } from "zod";
 
 const createSchema = z.object({
   name: z.string().min(1).max(60),
-  scopes: z.array(z.string()).min(1),
+  // A key never needs more scopes than exist. Keep the size checks first: Zod
+  // then rejects an oversized array before parsing any element
+  // (GHSA-mrhx-c7xc-m3w5); a check placed before them would disable that.
+  scopes: z.array(z.string().max(64)).max(API_SCOPES.length).min(1),
 });
 
 export async function createApiKeyAction(input: {
