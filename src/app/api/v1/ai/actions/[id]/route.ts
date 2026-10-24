@@ -8,7 +8,7 @@ export const dynamic = "force-dynamic";
 const bodySchema = z
   .object({
     decision: z.enum(["confirm", "cancel"]),
-    conversationId: z.string().uuid(),
+    conversationId: z.string().guid(),
     digest: z.string().regex(/^[0-9a-f]{64}$/),
   })
   .strict();
@@ -91,7 +91,7 @@ export async function POST(
   if (!can(ctx.role, "chat:use")) return error("permission_denied", 403);
 
   const { id } = await params;
-  if (!z.string().uuid().safeParse(id).success) return error("invalid_input", 400);
+  if (!z.string().guid().safeParse(id).success) return error("invalid_input", 400);
   const body = bodySchema.safeParse(await request.json().catch(() => null));
   if (!body.success) return error("invalid_input", 400);
 

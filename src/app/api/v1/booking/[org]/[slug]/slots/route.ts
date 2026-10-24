@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { isoDateTime } from "@/lib/validators/datetime";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const querySchema = z.object({
-  from: z.string().datetime(),
-  to: z.string().datetime(),
+  from: isoDateTime(),
+  to: isoDateTime(),
   duration: z.coerce.number().int().min(5).max(480).optional(),
 });
 

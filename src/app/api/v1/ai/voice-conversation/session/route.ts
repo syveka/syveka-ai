@@ -16,7 +16,7 @@ const START_REASONS = {
   daily_budget: "daily_audio",
 } as const;
 
-const endSchema = z.object({ sessionId: z.string().uuid() }).strict();
+const endSchema = z.object({ sessionId: z.string().guid() }).strict();
 
 async function guard(request: Request, { requireMember }: { requireMember: boolean }) {
   const [{ getTenantContext }, { can }, conversation] = await Promise.all([
@@ -46,7 +46,7 @@ async function guard(request: Request, { requireMember }: { requireMember: boole
   return { ok: true as const, ctx, config, conversation };
 }
 
-const startSchema = z.object({ conversationId: z.string().uuid().optional() }).strict();
+const startSchema = z.object({ conversationId: z.string().guid().optional() }).strict();
 
 /**
  * Starts a live voice session bound to one conversation.

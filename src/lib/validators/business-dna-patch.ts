@@ -174,7 +174,7 @@ export const confirmedBusinessDnaPatchSchema = z
     basis: z
       .object({
         exists: z.boolean(),
-        fields: z.record(z.enum(BUSINESS_DNA_PATCH_FIELDS), z.unknown()),
+        fields: z.partialRecord(z.enum(BUSINESS_DNA_PATCH_FIELDS), z.unknown()),
       })
       .strict(),
   })

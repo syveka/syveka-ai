@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isoDateTime } from "./datetime";
 
 /** "" (empty form field) → undefined; otherwise trimmed string. */
 const optionalTrimmed = (max: number) =>
@@ -7,7 +8,8 @@ const optionalTrimmed = (max: number) =>
     .trim()
     .max(max)
     .optional()
-    .transform((v) => (v ? v : undefined));
+    .transform((v) => (v ? v : undefined))
+    .optional();
 
 const optionalUrl = z
   .string()
@@ -16,7 +18,8 @@ const optionalUrl = z
   .max(2048)
   .or(z.literal(""))
   .optional()
-  .transform((v) => (v ? v : undefined));
+  .transform((v) => (v ? v : undefined))
+  .optional();
 
 const HHMM = /^([01]\d|2[0-3]):[0-5]\d$/;
 
@@ -64,7 +67,8 @@ const optionalTimezone = z
       }
     },
     { message: "invalid IANA timezone" },
-  );
+  )
+  .optional();
 
 /** ISO 4217 currency code (e.g. "EUR", "USD"). */
 const optionalCurrency = z
@@ -74,7 +78,8 @@ const optionalCurrency = z
   .regex(/^[A-Z]{3}$/, "must be a 3-letter ISO 4217 code")
   .optional()
   .or(z.literal(""))
-  .transform((v) => (v ? v : undefined));
+  .transform((v) => (v ? v : undefined))
+  .optional();
 
 const keyFactsSchema = z.array(z.string().trim().min(1).max(300)).max(20).default([]);
 
@@ -123,7 +128,7 @@ export type BusinessDNAInput = z.infer<typeof businessDnaSchema>;
  * (GET), or null when there was no profile yet. A save is refused when the
  * profile has changed since, so a stale client never overwrites newer data.
  */
-export const expectedUpdatedAtSchema = z.string().datetime().nullable();
+export const expectedUpdatedAtSchema = isoDateTime().nullable();
 
 /** PUT /api/v1/business-dna: the profile plus the version it replaces. */
 export const businessDnaSaveRequestSchema = businessDnaSchema.extend({
