@@ -109,8 +109,7 @@ describe.skipIf(!PG_URL)("acceptInvitation on real Postgres (service path)", () 
     db.organizationMember.count({ where: { organizationId: orgId } });
 
   it("lets exactly one of two concurrent acceptances take the last seat", async () => {
-    const { acceptInvitation } = await import("@/server/services/members");
-    const { EntitlementError } = await import("@/server/services/billing/entitlements");
+    const { acceptInvitation, InvitationAcceptError } = await import("@/server/services/members");
     const { orgId, joiners } = await seed(2);
 
     const results = await Promise.allSettled(
@@ -120,7 +119,8 @@ describe.skipIf(!PG_URL)("acceptInvitation on real Postgres (service path)", () 
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     const rejected = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
     expect(rejected).toHaveLength(1);
-    expect(rejected[0]!.reason).toBeInstanceOf(EntitlementError);
+    expect(rejected[0]!.reason).toBeInstanceOf(InvitationAcceptError);
+    expect(rejected[0]!.reason).toMatchObject({ code: "seat_limit" });
     await expect(members(orgId)).resolves.toBe(2);
 
     // The refused invitation is left pending; nothing of it was written.
@@ -130,13 +130,13 @@ describe.skipIf(!PG_URL)("acceptInvitation on real Postgres (service path)", () 
   });
 
   it("refuses to join a soft-deleted organization", async () => {
-    const { acceptInvitation } = await import("@/server/services/members");
+    const { acceptInvitation, InvitationAcceptError } = await import("@/server/services/members");
     const { orgId, joiners } = await seed(1);
     await db.organization.update({ where: { id: orgId }, data: { deletedAt: new Date() } });
 
-    await expect(acceptInvitation(joiners[0]!.token, joiners[0]!.userId)).rejects.toThrow(
-      "Invalid invitation",
-    );
+    const refused = acceptInvitation(joiners[0]!.token, joiners[0]!.userId);
+    await expect(refused).rejects.toBeInstanceOf(InvitationAcceptError);
+    await expect(refused).rejects.toMatchObject({ code: "invalid" });
     await expect(members(orgId)).resolves.toBe(1);
   });
 });
