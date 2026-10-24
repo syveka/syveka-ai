@@ -378,6 +378,58 @@ jobs:
             exit 1
           fi
 
+  opt-in-postgres:
+    name: Opt-in PostgreSQL suites (seat limit, post-call concurrency)
+    runs-on: ubuntu-latest
+    needs: [prisma-generate]
+    services:
+      postgres:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_PASSWORD: postgres
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    env:
+      # The suites reach the scratch database only through SEAT_LIMIT_PG_URL and
+      # VOICE_PG_URL. DATABASE_URL points nowhere on purpose: code that escapes a
+      # test's mock and uses the app's own client fails here instead of quietly
+      # reaching the same scratch database.
+      DATABASE_URL: postgresql://unreachable:unreachable@127.0.0.1:1/unreachable
+      DIRECT_URL: postgresql://unreachable:unreachable@127.0.0.1:1/unreachable
+      SCRATCH_URL: postgresql://postgres:postgres@localhost:5432/postgres
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Generate Prisma client
+        run: npx prisma generate
+      - name: Deploy complete migration history to empty PostgreSQL
+        env:
+          DATABASE_URL: ${{ env.SCRATCH_URL }}
+          DIRECT_URL: ${{ env.SCRATCH_URL }}
+        run: |
+          psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f tests/migrations/supabase-compatibility.sql
+          npx prisma migrate deploy
+      - name: Run the suites (they must run, not skip)
+        env:
+          SEAT_LIMIT_PG_URL: ${{ env.SCRATCH_URL }}
+          VOICE_PG_URL: ${{ env.SCRATCH_URL }}
+        run: |
+          npx vitest run tests/unit/invitation-seat-limit.postgres.test.ts tests/unit/post-call-concurrency.postgres.test.ts --reporter=default --reporter=json --outputFile=opt-in-postgres.json
+          node -e '
+            const r = require("./opt-in-postgres.json");
+            console.log(JSON.stringify({ total: r.numTotalTests, passed: r.numPassedTests, skipped: r.numPendingTests, todo: r.numTodoTests, failed: r.numFailedTests }));
+            if (r.numTotalTests === 0 || r.numPassedTests !== r.numTotalTests) process.exit(1);
+          '
+
   baseline-migration-repro:
     name: Initial baseline idempotency and failure-clarity
     runs-on: ubuntu-latest
