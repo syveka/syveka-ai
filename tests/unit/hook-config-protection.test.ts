@@ -21,7 +21,9 @@ function editOf(relPath: string, oldString = "old", newString = "new") {
   return {
     tool_name: "Edit",
     tool_input: {
-      file_path: path.join(REPO_ROOT, relPath),
+      // resolve, not join: across Windows drives path.relative() returns an absolute path,
+      // which join would glue under REPO_ROOT instead of targeting the real file.
+      file_path: path.resolve(REPO_ROOT, relPath),
       old_string: oldString,
       new_string: newString,
     },
@@ -196,6 +198,20 @@ describe("config-protection: consolidated coverage", () => {
       statusOf(editOf(path.relative(REPO_ROOT, path.join(home, ".claude", "settings.json")))),
     ).toBe(2);
   });
+
+  it("blocks editing Claude Code settings reached by a same-drive relative path", () => {
+    expect(statusOf(editOf(path.join("..", "elsewhere", ".claude", "settings.json")))).toBe(2);
+  });
+
+  it.skipIf(process.platform !== "win32")(
+    "blocks editing Claude Code settings on a different drive from the repository",
+    () => {
+      const otherDrive = REPO_ROOT.slice(0, 1).toUpperCase() === "C" ? "D" : "C";
+      const target = `${otherDrive}:\\Users\\someone\\.claude\\settings.json`;
+      expect(path.relative(REPO_ROOT, target)).toBe(target);
+      expect(statusOf(editOf(target))).toBe(2);
+    },
+  );
 
   it("denies Read and Grep of secret files even with the override", () => {
     const env = { SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT: "1" };
