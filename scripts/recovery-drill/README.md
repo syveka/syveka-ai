@@ -7,7 +7,7 @@ Companion scripts for `docs/recovery-drill-checklist.md` and `docs/recovery-dril
 - Validated on **synthetic data only**, in local network-isolated containers. The scripts have never
   run on real data or against a remote database.
 - **The real drill is not ready.** The open blockers are listed at the end of this file.
-- A real run needs the owner's separate, explicit authorization for each of §5, §6 and §10.
+- A real run needs the owner's separate, explicit authorization for each of §5, §6, §7 (and, within it, the migration) and §10.
 
 **The §4 dump script is not in this repository.** It exists and is validated (SHA-256
 `dd5f2a2fd16f833e…`), but the operator keeps it outside version control because it is
@@ -16,19 +16,20 @@ and `SHA256SUMS-<TS>.txt`.
 
 ## Files
 
-| File                                      | Role                                                                                                                                                     |
-| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `s5-sanitize-offline.sh`                  | §5. Restores the raw dump into a throwaway local container (`--network none`), sanitizes, verifies, scans, and only then releases the sanitized archives |
-| `s6-restore-disposable.sh`                | §6/§7. Checks the target identity, refuses a non-empty destination, restores in one transaction, then verifies                                           |
-| `sanitize.sql`                            | Sanitization statements (one transaction)                                                                                                                |
-| `scrub-functions.sql`                     | Session-local scrub and detection functions, shared by `sanitize.sql` and the checks                                                                     |
-| `sanitize-checks.sql`                     | Forbidden-data counts, one line per check                                                                                                                |
-| `expected-checks.txt`                     | The checks that must appear, and what passes                                                                                                             |
-| `secret-patterns.ere`, `secret-query.ere` | The same secret formats as GNU ERE, for scanning the archives' plain-text rendering                                                                      |
-| `rowcounts.sql`, `privileges.sql`         | Row counts, and the grant fingerprint (object grants plus `postgres`'s public default privileges)                                                        |
-| `destination-prelude.sql`                 | First statements of the restore: clears the destination's own default privileges in `public`                                                             |
-| `lib.sh`                                  | Shared helpers: check validator, archive-list filters, extension detection, remote target identity                                                       |
-| `rehearsal/`                              | Synthetic seed, the end-to-end rehearsal (`rehearse.sh`) and the offline self-test (`selftest.sh`)                                                       |
+| File                                      | Role                                                                                                                                                                                                                         |
+| ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `s5-sanitize-offline.sh`                  | §5. Restores the raw dump into a throwaway local container (`--network none`), sanitizes, verifies, scans, and only then releases the sanitized archives                                                                     |
+| `s6-restore-disposable.sh`                | §6/§7. Checks the target identity, refuses a non-empty destination, restores in one transaction, then verifies                                                                                                               |
+| `s7-verify-disposable.sh`                 | §7. On the restored disposable project: the real `prisma migrate deploy` (run-time phrase), `migrate status`, release invariants, the three RLS suites through the unchanged `scripts/ci/run-rls-check.sh`, tenant integrity |
+| `sanitize.sql`                            | Sanitization statements (one transaction)                                                                                                                                                                                    |
+| `scrub-functions.sql`                     | Session-local scrub and detection functions, shared by `sanitize.sql` and the checks                                                                                                                                         |
+| `sanitize-checks.sql`                     | Forbidden-data counts, one line per check                                                                                                                                                                                    |
+| `expected-checks.txt`                     | The checks that must appear, and what passes                                                                                                                                                                                 |
+| `secret-patterns.ere`, `secret-query.ere` | The same secret formats as GNU ERE, for scanning the archives' plain-text rendering                                                                                                                                          |
+| `rowcounts.sql`, `privileges.sql`         | Row counts, and the grant fingerprint (object grants plus `postgres`'s public default privileges)                                                                                                                            |
+| `destination-prelude.sql`                 | First statements of the restore: clears the destination's own default privileges in `public`                                                                                                                                 |
+| `lib.sh`                                  | Shared helpers: check validator, archive-list filters, extension detection, remote target identity                                                                                                                           |
+| `rehearsal/`                              | Synthetic seed, the end-to-end rehearsal (`rehearse.sh`) and the offline self-test (`selftest.sh`)                                                                                                                           |
 
 ## Three separate zones
 
@@ -166,7 +167,44 @@ Version and emptiness alone are not trusted.
 
 `s6` does not apply that migration. Applying it to the disposable project only (`npx prisma migrate
 deploy`) is a separate, separately authorized step, followed by `tests/staging/release-invariants.sql`
-and the RLS scripts.
+and the RLS scripts; `s7-verify-disposable.sh` runs that sequence (see below).
+
+## §7 verification and the pending migration (`s7`)
+
+`s7-verify-disposable.sh <restore-remote-TS dir>` runs only after `s6` recorded `S6_RESULT=PASS`,
+and only with a separate §7 authorization. Applying the migration needs its own authorization,
+given at run time.
+
+- **Identity:** the same prompts and `validate_remote_target` check as `s6`, before the password
+  and before any container or connection. It then requires the 17.11 server, an existing migration
+  history and row counts equal to what `s6` verified.
+- **Migration:** if exactly `20261014000000_secure_prisma_migrations_table` is pending, it asks
+  for `APPLY MIGRATION TO DISPOSABLE` and runs the real `npx --no-install prisma migrate deploy`.
+  It never edits `_prisma_migrations` and never runs migration SQL itself.
+  - On a repeat run, where the migration is already recorded, it skips the deploy and only verifies.
+  - A recorded failed attempt stops it; it doesn't resolve or retry.
+- **Verification:** `prisma migrate status` up to date; the history fully applied;
+  `tests/staging/release-invariants.sql`; the three RLS suites with exactly the
+  `staging-release.yml` arguments; `tests/integration/tenant-relationship-integrity.sql` (rolled
+  back); row counts unchanged apart from `_prisma_migrations`.
+- **Credentials:**
+  - the password and the URLs built from it stay in process memory and reach children only through
+    their environment: `DATABASE_URL`/`DIRECT_URL` for Prisma, `PGPASSWORD` for `psql`;
+  - `ADMIN_URL`, which `run-rls-check.sh` passes to `psql` as an argument, has no password;
+  - the RLS runner's own ephemeral role password still appears in that `psql` argument, as in CI;
+  - environment variables remain readable by the same user and local administrators while the
+    processes run;
+  - kept output is masked, and `::add-mask::` lines are dropped.
+- **`psql`:** the only `psql` is in one `postgres:17` client container (no mounts, no ports),
+  reached through a shim; files are streamed on stdin.
+- **Failure semantics:** the destination already holds the §6 restore, so any failure after the
+  destination guard prints `DATA REMAINS — OWNER CLEANUP REQUIRED (failed stage: …)`. Nothing is
+  deleted.
+
+**Not yet executed:** `s7` is covered by `tests/unit/recovery-drill-s7.test.ts` with fake `docker`
+and `npx` only. It has never connected to a database. The real Prisma run through the session
+pooler, the RLS suites against the hosted disposable project and the hosted role behaviour are
+proven only at the real §7 run.
 
 ## Grants and ACL limits
 
@@ -240,4 +278,4 @@ locally (it never pulls), about 1 GB of free RAM, and one container at a time.
 - **`prisma migrate deploy` itself** (the rehearsal applies the SQL and records the row as Prisma
   does), and the RLS scripts, which run against the disposable project in §7.
 - **Owner decisions still open:** outbound-email isolation in the drill project, Storage recovery,
-  and the authorizations for §4, §5, §6 and §10.
+  and the authorizations for §4, §5, §6, §7 (including the migration) and §10.
