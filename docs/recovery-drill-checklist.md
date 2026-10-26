@@ -120,6 +120,11 @@ the `migrate status` item below.
 
 ## 7. Verify data and isolation
 
+Scripted in `scripts/recovery-drill/s7-verify-disposable.sh` (separate §7 authorization; the pending
+migration runs through the real `prisma migrate deploy` only after its own run-time confirmation).
+It runs the `migrate status`, invariant and RLS items below. Row counts against §4 remain an
+operator comparison.
+
 - [ ] Per-table row counts match §4, except the rows sanitization deleted.
 - [ ] `psql -v ON_ERROR_STOP=1 -f tests/staging/release-invariants.sql`: `ALL STAGING RELEASE INVARIANTS PASSED`.
 - [ ] RLS scripts (`scripts/ci/run-rls-check.sh` with the `tests/rls/*` sets, as in
