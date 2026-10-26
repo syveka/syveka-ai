@@ -676,16 +676,20 @@ async function cancelBookingCore(
       data: { status: "CANCELED" },
     });
   }
+  // The timeline entry belongs on the guest's contact page, like the
+  // "Booking: …" entry createPublicBooking writes (#339).
+  const contactId = await guestContactId(tx, fresh);
   await tx.activity.create({
     data: {
       organizationId: fresh.organizationId,
+      contactId,
       type: "MEETING",
       subject: `Booking canceled: ${fresh.bookingType.name}`,
       body: `${fresh.guestName} canceled.${reason ? ` Reason: ${reason}` : ""}`,
       metadata: { bookingId: fresh.id, kind: "canceled" },
     },
   });
-  return { ...fresh, contactId: await guestContactId(tx, fresh) };
+  return { ...fresh, contactId };
 }
 
 /**
@@ -959,6 +963,8 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
     await tx.activity.create({
       data: {
         organizationId: orgId,
+        // Same contact as the successor attendee above (#339).
+        contactId: previousGuest?.contactId ?? null,
         type: "MEETING",
         subject: `Booking rescheduled: ${bookingType.name}`,
         body: `${oldBooking.guestName} moved the meeting.`,
