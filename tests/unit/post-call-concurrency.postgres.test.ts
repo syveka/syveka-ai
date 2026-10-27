@@ -166,10 +166,6 @@ describe.skipIf(!PG_URL)("post-call job on real Postgres", () => {
         select count(*)::int as waiting from pg_locks where locktype = 'advisory' and not granted`;
       return Number(rows[0]?.waiting) > 0;
     };
-    // Loaded on its own first: the route imports it alongside six other modules at once,
-    // and loaded that way its "@/server/db/tenant" import missed the mock above, so the
-    // organization check ran on the real client (DATABASE_URL, not this database).
-    await import("@/server/jobs/organization-guard");
     ({ POST } = await import("@/app/api/v1/jobs/post-call/route"));
   });
 
