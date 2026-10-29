@@ -27,6 +27,7 @@ const s = vi.hoisted(() => ({
   orgs: [] as Array<{ id: string; name: string; deletedAt: Date | null }>,
   failOrgLookup: false,
   reminders: [] as Row[],
+  attendees: [] as Row[],
   events: [] as Row[],
   documents: [] as Row[],
   chunks: [] as Row[],
@@ -84,14 +85,20 @@ const db = {
         ...r,
         event: {
           ...e,
-          attendeeRecords: [{ email: "attendee@example.test", name: "Attendee" }],
+          attendeeRecords: s.attendees,
           booking: null,
           organization: { name: o.name, deletedAt: o.deletedAt },
         },
       };
     }),
     updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
-      const r = s.reminders.find((x) => x.id === where.id && x.status === where.status);
+      const claimable =
+        typeof where.status === "string"
+          ? [where.status]
+          : ((where.status as { in: string[] }).in ?? []);
+      const r = s.reminders.find(
+        (x) => x.id === where.id && claimable.includes(x.status as string),
+      );
       if (!r) return { count: 0 };
       r.status = data.status;
       return { count: 1 };
@@ -323,6 +330,7 @@ beforeEach(() => {
     },
   ];
   s.reminders = [{ id: REM_A, organizationId: ORG_A, eventId: "evt-a", status: "SCHEDULED" }];
+  s.attendees = [{ email: "attendee@example.test", name: "Attendee" }];
   s.documents = [
     {
       id: DOC_A,
@@ -403,7 +411,7 @@ describe("send-reminder", () => {
   const reminder = () => s.reminders.find((r) => r.id === REM_A)!;
 
   it("active organization: sends and marks the reminder SENT (unchanged behavior)", async () => {
-    expect(await (await send()).json()).toEqual({ sent: 1 });
+    expect(await (await send()).json()).toEqual({ sent: 1, failed: 0 });
     expect(fx.sendEmail).toHaveBeenCalledTimes(1);
     expect(reminder().status).toBe("SENT");
   });
@@ -450,6 +458,86 @@ describe("send-reminder", () => {
     await expect(send()).rejects.toThrow("database unavailable");
     expect(fx.sendEmail).not.toHaveBeenCalled();
     expect(reminder().status).toBe("SCHEDULED");
+  });
+});
+
+describe("send-reminder — delivery failures are recorded, never silent", () => {
+  const send = () => sendReminder(job({ reminderId: REM_A }));
+  const reminder = () => s.reminders.find((r) => r.id === REM_A)!;
+  const errorLogs = (spy: ReturnType<typeof vi.spyOn>) =>
+    spy.mock.calls.map((c) => JSON.parse(String(c[0])) as Record<string, unknown>);
+
+  it("sends to every recipient and reports the count (unchanged behavior)", async () => {
+    const res = await send();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ sent: 1, failed: 0 });
+    expect(reminder().status).toBe("SENT");
+  });
+
+  it("nobody reached: FAILED with a reason, logged without the address, and 500 for a retry", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fx.sendEmail.mockRejectedValueOnce(
+      Object.assign(new Error("502 from provider for attendee@example.test"), {
+        name: "ResendError",
+      }),
+    );
+
+    const res = await send();
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "send failed", sent: 0, failed: 1 });
+    expect(reminder().status).toBe("FAILED");
+    expect(reminder().lastError).toBe("email delivery failed: ResendError");
+    const logged = errorLogs(error).filter((l) => l.event === "reminder_email_failed");
+    expect(logged).toEqual([
+      {
+        event: "reminder_email_failed",
+        reminderId: REM_A,
+        eventId: "evt-a",
+        orgId: ORG_A,
+        name: "ResendError",
+      },
+    ]);
+    expect(JSON.stringify(error.mock.calls)).not.toContain("attendee@example.test");
+    expect(JSON.stringify(error.mock.calls)).not.toContain("502 from provider");
+    error.mockRestore();
+  });
+
+  it("a failed reminder is sent by the retry; a sent one is still never resent", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fx.sendEmail.mockRejectedValueOnce(new Error("provider down"));
+    expect((await send()).status).toBe(500);
+    expect(reminder().status).toBe("FAILED");
+
+    const retry = await send();
+
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual({ sent: 1, failed: 0 });
+    expect(reminder().status).toBe("SENT");
+    expect(fx.sendEmail).toHaveBeenCalledTimes(2);
+    await send();
+    expect(fx.sendEmail).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+
+  it("some reached: stays SENT (never resent), the failures are logged and counted", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // Two attendees: the first send fails, the second succeeds.
+    s.attendees = [
+      { email: "first@example.test", name: "First" },
+      { email: "second@example.test", name: "Second" },
+    ];
+    fx.sendEmail.mockRejectedValueOnce(new Error("provider down"));
+
+    const res = await send();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ sent: 1, failed: 1 });
+    expect(reminder().status).toBe("SENT");
+    expect(errorLogs(error).filter((l) => l.event === "reminder_email_failed")).toHaveLength(1);
+    await send();
+    expect(fx.sendEmail).toHaveBeenCalledTimes(2);
+    error.mockRestore();
   });
 });
 

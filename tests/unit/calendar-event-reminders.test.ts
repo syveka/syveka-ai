@@ -268,7 +268,7 @@ describe("moving a calendar event moves its reminders", () => {
     }
     expect(fx.sendEmail).not.toHaveBeenCalled();
 
-    expect(await (await deliver(newJobs[0]!)).json()).toEqual({ sent: 1 });
+    expect(await (await deliver(newJobs[0]!)).json()).toEqual({ sent: 1, failed: 0 });
     expect(fx.sendEmail).toHaveBeenCalledTimes(1);
     expect(fx.bookingEmail.mock.calls[0]![0].whenText).toContain("March 10, 2026");
   });
@@ -290,7 +290,7 @@ describe("moving a calendar event moves its reminders", () => {
   it("a reminder already sent for the old time does not block one for the new time", async () => {
     const [dayBefore] = await createEventWithReminders(tomorrowish);
     vi.setSystemTime(new Date("2026-03-02T09:00:00Z"));
-    expect(await (await deliver(dayBefore!)).json()).toEqual({ sent: 1 });
+    expect(await (await deliver(dayBefore!)).json()).toEqual({ sent: 1, failed: 0 });
 
     await updateEvent(ctx, EVENT, input(nextWeek));
 

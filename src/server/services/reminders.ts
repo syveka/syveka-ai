@@ -91,10 +91,3 @@ export async function rescheduleEventReminders(params: {
   });
   return scheduleEventReminders(params);
 }
-
-export async function cancelEventReminders(eventId: string): Promise<void> {
-  await unscopedPrisma.reminder.updateMany({
-    where: { eventId, status: "SCHEDULED" },
-    data: { status: "CANCELED" },
-  });
-}

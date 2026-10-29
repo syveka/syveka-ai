@@ -12,6 +12,12 @@ const payloadSchema = z.object({ reminderId: z.string().guid() });
  * Idempotent: the Reminder row is flipped SCHEDULED → SENT with a guarded
  * updateMany before any email goes out, so QStash retries and duplicate
  * deliveries can never double-send.
+ *
+ * Delivery failures are never silent: each is logged (ids and the error's
+ * name only), and a reminder that reached nobody is recorded as FAILED and
+ * answered with 500, so QStash retries it; the claim below accepts FAILED
+ * again for that reason. A reminder that reached some recipients stays SENT
+ * (nothing is ever sent twice) with the failures logged.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   const [{ verifyJobRequest }, { unscopedPrisma }, { sendEmail }, emailMod, guard] =
@@ -41,8 +47,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   }
 
   // Claim the reminder atomically; 0 rows → already handled or canceled.
+  // FAILED (nothing was delivered) is claimable again, so a retry can send.
   const claimed = await unscopedPrisma.reminder.updateMany({
-    where: { id: parsed.data.reminderId, status: "SCHEDULED" },
+    where: { id: parsed.data.reminderId, status: { in: ["SCHEDULED", "FAILED"] } },
     data: { status: "SENT", sentAt: new Date(), attempts: { increment: 1 } },
   });
   if (claimed.count === 0) return NextResponse.json({ skipped: true });
@@ -91,21 +98,48 @@ export async function POST(request: Request): Promise<NextResponse> {
     if (event.booking?.guestEmail) recipients.add(event.booking.guestEmail);
     for (const a of event.attendeeRecords) if (a.email) recipients.add(a.email);
 
+    let sent = 0;
+    let lastErrorName = "unknown";
     for (const to of recipients) {
-      await sendEmail({
-        to,
-        subject: emailMod.bookingEmailSubject("reminder", locale, event.title),
-        react: emailMod.BookingEmail({
-          kind: "reminder",
-          locale,
-          title: event.title,
-          organizationName: event.organization.name,
-          whenText: `${whenText} (${timezone})`,
-          whereText: event.location ?? undefined,
-        }),
-      }).catch(() => undefined);
+      try {
+        await sendEmail({
+          to,
+          subject: emailMod.bookingEmailSubject("reminder", locale, event.title),
+          react: emailMod.BookingEmail({
+            kind: "reminder",
+            locale,
+            title: event.title,
+            organizationName: event.organization.name,
+            whenText: `${whenText} (${timezone})`,
+            whereText: event.location ?? undefined,
+          }),
+        });
+        sent += 1;
+      } catch (e) {
+        // Never the recipient address or the provider's message: ids and the
+        // error's name are enough to see a delivery problem in the logs.
+        lastErrorName = e instanceof Error ? e.name : "unknown";
+        console.error(
+          JSON.stringify({
+            event: "reminder_email_failed",
+            reminderId: reminder.id,
+            eventId: event.id,
+            orgId: reminder.organizationId,
+            name: lastErrorName,
+          }),
+        );
+      }
     }
-    return NextResponse.json({ sent: recipients.size });
+    const failed = recipients.size - sent;
+    if (failed > 0 && sent === 0) {
+      // Nobody was reached: not SENT. Recorded, and retried by QStash (500).
+      await unscopedPrisma.reminder.update({
+        where: { id: reminder.id },
+        data: { status: "FAILED", lastError: `email delivery failed: ${lastErrorName}` },
+      });
+      return NextResponse.json({ error: "send failed", sent, failed }, { status: 500 });
+    }
+    return NextResponse.json({ sent, failed });
   } catch (e) {
     await unscopedPrisma.reminder.update({
       where: { id: reminder.id },
