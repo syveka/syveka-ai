@@ -622,7 +622,9 @@
     },
     "errors": {
       "entitlement_exceeded": "Voice AI requires Starter or higher — upgrade your plan to continue.",
-      "generic": "Something went wrong. Please try again."
+      "generic": "Something went wrong. Please try again.",
+      "rate_limited": "Too many changes in a short time. Try again in a minute.",
+      "service_unavailable": "The change could not be verified right now. Try again in a moment."
     },
     "attachPhoneNumber": {
       "title": "Attach an existing number",

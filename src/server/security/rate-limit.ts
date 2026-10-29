@@ -56,7 +56,7 @@ export async function actionRateLimitError(
 }
 
 /** The areas whose plain write actions share one per-user allowance each. */
-export type WriteArea = "crm" | "calendar" | "booking" | "integrations" | "members";
+export type WriteArea = "crm" | "calendar" | "booking" | "integrations" | "members" | "voice";
 
 /**
  * The limit for an authenticated write action that has no limiter of its

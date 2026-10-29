@@ -29,6 +29,8 @@ const fx = vi.hoisted(() => ({
   syncExternalCalendar: vi.fn(async () => ({ imported: 0, updated: 0 })),
   ensureWebhookSubscription: vi.fn(async () => undefined),
   checkConnectionHealth: vi.fn(async () => ({ status: "ok" })),
+  activateAssistant: vi.fn(async () => ({ phoneNumberError: null })),
+  deactivateAssistant: vi.fn(async () => undefined),
 }));
 
 vi.mock("@upstash/redis", () => ({ Redis: class Redis {} }));
@@ -156,6 +158,14 @@ vi.mock("@/server/services/calendar-sync", () => ({
   ensureWebhookSubscription: fx.ensureWebhookSubscription,
   syncExternalCalendar: fx.syncExternalCalendar,
 }));
+vi.mock("@/server/services/voice", () => ({
+  AssistantNotSyncedError: class AssistantNotSyncedError extends Error {},
+  DuplicatePhoneNumberError: class DuplicatePhoneNumberError extends Error {},
+  activateAssistant: fx.activateAssistant,
+  attachPhoneNumber: vi.fn(),
+  deactivateAssistant: fx.deactivateAssistant,
+  upsertAssistant: vi.fn(),
+}));
 
 import { archiveContactAction } from "@/actions/contacts";
 import { createCompanyAction } from "@/actions/companies";
@@ -164,16 +174,20 @@ import { deleteEventAction, saveEventAction } from "@/actions/calendar";
 import { saveBookingTypeAction } from "@/actions/booking-types";
 import { deleteScheduleAction } from "@/actions/availability";
 import { syncNowAction, toggleCalendarSyncAction } from "@/actions/calendar-integrations";
+import { activateAssistantAction, deactivateAssistantAction } from "@/actions/voice";
 
 const API_LIMIT = 100;
 const key = (area: string, org = "org-a", user = "user-1") => `rl:api|${area}-write:${org}:${user}`;
 
-async function exhaust(area: "crm" | "calendar" | "booking" | "integrations"): Promise<void> {
+async function exhaust(
+  area: "crm" | "calendar" | "booking" | "integrations" | "voice",
+): Promise<void> {
   const run = {
     crm: () => archiveContactAction("c-1"),
     calendar: () => deleteEventAction("ev-1"),
     booking: () => deleteScheduleAction("sch-1"),
     integrations: () => toggleCalendarSyncAction("cal-1", false),
+    voice: () => deactivateAssistantAction("va-1", {}),
   }[area];
   for (let i = 0; i < API_LIMIT; i++) await run();
 }
@@ -275,6 +289,29 @@ describe("calendar, booking and integrations", () => {
   });
 });
 
+describe("voice (every action calls the paid voice provider)", () => {
+  it("the 101st change is refused with rate_limited and no provider call is made", async () => {
+    await exhaust("voice");
+    expect(fx.deactivateAssistant).toHaveBeenCalledTimes(API_LIMIT);
+
+    expect(await activateAssistantAction("va-1", {})).toEqual({ error: "rate_limited" });
+    expect(fx.activateAssistant).not.toHaveBeenCalled();
+    expect(s.counts.get(key("voice"))).toBe(API_LIMIT + 1);
+  });
+
+  it("is its own area: an exhausted voice allowance doesn't block CRM, and vice versa", async () => {
+    await exhaust("voice");
+    await archiveContactAction("c-1");
+    expect(fx.archiveContact).toHaveBeenCalledTimes(1);
+  });
+
+  it("a Redis timeout refuses with service_unavailable and calls no provider", async () => {
+    s.mode = "timeout";
+    expect(await activateAssistantAction("va-1", {})).toEqual({ error: "service_unavailable" });
+    expect(fx.activateAssistant).not.toHaveBeenCalled();
+  });
+});
+
 describe("fails closed", () => {
   it("a Redis timeout refuses with service_unavailable and changes nothing", async () => {
     s.mode = "timeout";
@@ -307,6 +344,7 @@ describe("every write action in these modules is covered (drift guard)", () => {
     "booking-types.ts": [],
     "availability.ts": [],
     "calendar-integrations.ts": [],
+    "voice.ts": [],
   };
 
   it.each(Object.entries(modules))("%s", (file, aiActionsWithTheirOwnLimit) => {
