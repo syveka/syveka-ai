@@ -160,6 +160,36 @@ describe("Creator Studio approval state machine", () => {
     );
   });
 
+  it("a post whose publish job could not be enqueued is not left 'Scheduled': it is FAILED (reschedulable) and the error is rethrown", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    enqueueMock.mockRejectedValueOnce(
+      Object.assign(new Error("qstash: 503 https://qstash.upstash.io"), { name: "QstashError" }),
+    );
+
+    await expect(
+      schedulePost(ctx(), "post-1", {
+        scheduledFor: new Date(Date.now() + 60_000),
+        socialAccountId: "acct-1",
+      }),
+    ).rejects.toThrow("qstash");
+
+    expect(db.creatorPost.updateMany).toHaveBeenLastCalledWith({
+      where: { id: "post-1", publishStatus: "SCHEDULED" },
+      data: {
+        publishStatus: "FAILED",
+        lastErrorCode: "schedule_failed",
+        lastErrorSafe: "Scheduling failed. Please try again.",
+      },
+    });
+    expect(JSON.parse(String(log.mock.calls[0]![0]))).toEqual({
+      event: "creator_post_schedule_enqueue_failed",
+      orgId: "org-a",
+      postId: "post-1",
+      name: "QstashError",
+    });
+    log.mockRestore();
+  });
+
   it("a reschedule enqueues its own job instead of being dropped as a duplicate", async () => {
     const first = new Date(Date.now() + 60_000);
     const later = new Date(Date.now() + 2 * 60 * 60_000);

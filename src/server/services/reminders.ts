@@ -29,8 +29,9 @@ export async function scheduleEventReminders(params: {
     const sendAt = new Date(params.startsAt.getTime() - offset * 60_000);
     if (sendAt.getTime() <= now) continue;
     const dedupeKey = reminderDedupeKey(params.eventId, offset, params.startsAt);
+    let reminder: { id: string };
     try {
-      const reminder = await unscopedPrisma.reminder.create({
+      reminder = await unscopedPrisma.reminder.create({
         data: {
           organizationId: params.orgId,
           eventId: params.eventId,
@@ -38,14 +39,30 @@ export async function scheduleEventReminders(params: {
           dedupeKey,
         },
       });
+    } catch {
+      // Unique dedupeKey violation → already scheduled; skip silently.
+      continue;
+    }
+    try {
       await enqueue(
         "send-reminder",
         { reminderId: reminder.id },
         { delaySeconds: Math.floor((sendAt.getTime() - now) / 1000) },
       );
       scheduled += 1;
-    } catch {
-      // Unique dedupeKey violation → already scheduled; skip silently.
+    } catch (e) {
+      // No job exists for this row. Left in place, its dedupeKey would make
+      // every later attempt a silent "already scheduled" with nothing ever
+      // sent; removed, the next schedule call (a move, a re-save) can try again.
+      await unscopedPrisma.reminder.delete({ where: { id: reminder.id } }).catch(() => undefined);
+      console.error(
+        JSON.stringify({
+          event: "reminder_enqueue_failed",
+          orgId: params.orgId,
+          eventId: params.eventId,
+          name: e instanceof Error ? e.name : "unknown",
+        }),
+      );
     }
   }
   return scheduled;

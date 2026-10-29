@@ -96,6 +96,11 @@ vi.mock("@/server/db/tenant", () => {
       s.reminders = s.reminders.filter((r) => !matches(r, where));
       return { count: before - s.reminders.length };
     }),
+    delete: vi.fn(async ({ where }: { where: { id: string } }) => {
+      const row = s.reminders.find((r) => r.id === where.id);
+      s.reminders = s.reminders.filter((r) => r.id !== where.id);
+      return row;
+    }),
     findUnique: vi.fn(async ({ where }: { where: { id: string } }) => {
       const r = s.reminders.find((x) => x.id === where.id);
       if (!r) return null;
@@ -372,6 +377,38 @@ describe("a reminder failure does not fail an update that is already saved", () 
       errorName: "Error",
     });
     expect(logged).not.toContain("db-1");
+    log.mockRestore();
+  });
+});
+
+describe("a reminder whose job could not be enqueued", () => {
+  it("is not left SCHEDULED without a job: the row is removed, the failure logged, and the next schedule call can try again", async () => {
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const startsAt = new Date("2026-11-10T09:00:00Z");
+    fx.enqueue.mockRejectedValueOnce(
+      Object.assign(new Error("qstash: 503 https://qstash.upstash.io/v2/publish"), {
+        name: "QstashError",
+      }),
+    );
+
+    const scheduled = await scheduleEventReminders({ orgId: ORG, eventId: EVENT, startsAt });
+
+    // Two offsets: the first enqueue failed and its row is gone; the second was scheduled.
+    expect(scheduled).toBe(1);
+    expect(s.reminders).toHaveLength(1);
+    const logged = JSON.parse(String(log.mock.calls[0]![0]));
+    expect(logged).toEqual({
+      event: "reminder_enqueue_failed",
+      orgId: ORG,
+      eventId: EVENT,
+      name: "QstashError",
+    });
+    expect(String(log.mock.calls[0]![0])).not.toContain("upstash.io");
+
+    // A later call (the event re-saved) schedules the missing one.
+    expect(await scheduleEventReminders({ orgId: ORG, eventId: EVENT, startsAt })).toBe(1);
+    expect(s.reminders).toHaveLength(2);
+    expect(fx.enqueue).toHaveBeenCalledTimes(3);
     log.mockRestore();
   });
 });

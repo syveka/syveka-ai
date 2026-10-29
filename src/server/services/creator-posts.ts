@@ -249,16 +249,38 @@ export async function schedulePost(
   }
   const updated = await db.creatorPost.findFirstOrThrow({ where: { id: postId } });
 
-  await enqueue(
-    "publish-creator-post",
-    { orgId: ctx.orgId, postId },
-    {
-      delaySeconds,
-      // Each schedule gets its own message: a reschedule must not be dropped as a duplicate of
-      // the earlier one (which publishCreatorPost then skips as early).
-      deduplicationId: `publish-creator-post:${postId}:${updated.contentVersion}:${params.scheduledFor.getTime()}`,
-    },
-  );
+  try {
+    await enqueue(
+      "publish-creator-post",
+      { orgId: ctx.orgId, postId },
+      {
+        delaySeconds,
+        // Each schedule gets its own message: a reschedule must not be dropped as a duplicate of
+        // the earlier one (which publishCreatorPost then skips as early).
+        deduplicationId: `publish-creator-post:${postId}:${updated.contentVersion}:${params.scheduledFor.getTime()}`,
+      },
+    );
+  } catch (e) {
+    // No job will publish it: a post shown as "Scheduled" would never go out.
+    // FAILED is reschedulable, so the user can try again.
+    await db.creatorPost.updateMany({
+      where: { id: postId, publishStatus: "SCHEDULED" },
+      data: {
+        publishStatus: "FAILED",
+        lastErrorCode: "schedule_failed",
+        lastErrorSafe: "Scheduling failed. Please try again.",
+      },
+    });
+    console.error(
+      JSON.stringify({
+        event: "creator_post_schedule_enqueue_failed",
+        orgId: ctx.orgId,
+        postId,
+        name: e instanceof Error ? e.name : "unknown",
+      }),
+    );
+    throw e;
+  }
 
   await audit(ctx, {
     action: "creator.post.scheduled",
