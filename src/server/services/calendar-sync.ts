@@ -1,5 +1,7 @@
 import "server-only";
 
+import { sanitizeErrorMessage } from "@/server/security/error-sanitization";
+
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type { Prisma } from "@/generated/prisma/client/client";
 import { unscopedPrisma } from "@/server/db/tenant";
@@ -269,7 +271,8 @@ export async function syncExternalCalendar(externalCalendarId: string): Promise<
     // nothing from the interrupted page was written, and nothing is recorded
     // or retried for a calendar its owner no longer gives the org access to.
     if (isAccessRevoked(e)) return { ...result, accessRevoked: true };
-    const message = e instanceof Error ? e.message : "sync failed";
+    // Stored and shown to the connection's managers: never a provider URL (it can carry a token).
+    const message = sanitizeErrorMessage(e, 300);
     await unscopedPrisma.calendarSyncState
       .upsert({
         where: { externalCalendarId: calendar.id },
