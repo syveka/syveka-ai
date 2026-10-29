@@ -1,3 +1,4 @@
+import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
@@ -131,6 +132,20 @@ describe("staging-deploy-only.yml scope", () => {
       "'.id == $id and .accountId == $org and .name == $name and .id != $prod'",
     );
     expect(pull.run.indexOf("v9/projects")).toBeLessThan(pull.run.indexOf('" pull --yes'));
+    // DIRECT_URL's Vercel type is read with the token, after the identity check, and only the
+    // type (never the listing) is handed to the credential-free build step.
+    expect(pull.run).toContain(
+      "https://api.vercel.com/v10/projects/$VERCEL_PROJECT_ID/env?teamId=$VERCEL_ORG_ID",
+    );
+    expect(pull.run.indexOf("v9/projects")).toBeLessThan(pull.run.indexOf("v10/projects"));
+    expect(pull.run).toContain('select(.key == "DIRECT_URL" and ((.gitBranch // null) == null)');
+    expect(pull.run).toContain('| .type] | if length == 1 then .[0] else "" end\'');
+    expect(pull.run).toContain("          unset env_json\n");
+    expect(pull.run).toContain("            encrypted | plain | sensitive) ;;\n");
+    expect(pull.run).toContain(
+      'printf \'%s\\n\' "$direct_url_type" > "$RUNNER_TEMP/direct-url-production-type"',
+    );
+    expect(pull.run).not.toMatch(/echo[^\n]*env_json/);
     expect(pull.run).toContain(
       '" pull --yes --environment=production --token="$STAGING_VERCEL_TOKEN"',
     );
@@ -157,6 +172,15 @@ describe("staging-deploy-only.yml scope", () => {
       "DIRECT_URL (Production) does not identify the staging Supabase project ref.",
     );
     expect(build.run).toContain('if (url.port === "6543") {');
+    // DIRECT_URL may be a write-only Vercel Secret. The pull step records its Vercel type; the
+    // check reports UNVERIFIED (and continues) only for type "sensitive" together with the CLI's
+    // documented placeholder, and fails closed on everything else (behavioral cases below).
+    expect(build.run).toContain('direct_url_type_file="$RUNNER_TEMP/direct-url-production-type"');
+    expect(build.run).toContain("DIRECT_URL_PRODUCTION_TYPE=");
+    expect(build.run).toContain('if (type === "sensitive") {');
+    expect(build.run).toContain('if (raw !== "[SENSITIVE]") {');
+    expect(build.run).not.toContain("DIRECT_URL (Production) is missing or not a valid URL.");
+    expect(build.run).not.toContain("is not readable here");
     expect(build.run).not.toMatch(/console\.log\([^)]*(raw|url\.href|url\.password)/);
   });
 
@@ -238,5 +262,113 @@ describe("staging-deploy-only.yml Vercel credential isolation", () => {
     expect(pull.run).toMatch(/vercel@\$VERCEL_CLI_VERSION" pull/);
     expect(pull.run).toContain("# >>> token-persistence guard");
     expect(guardBlock(workflow)).toBe(guardBlock(read("staging-release.yml")));
+  });
+});
+
+describe("staging-deploy-only.yml DIRECT_URL check (executed with synthetic inputs)", () => {
+  // Extract the inline Node script that follows the recorded Vercel type, and run it as the
+  // workflow does (`node -e`), with a synthetic environment instead of the pulled file.
+  const extractScript = (): string => {
+    const build = stepNamed(BUILD);
+    const nodeCall = build.run.indexOf(
+      "node --env-file=.vercel/.env.production.local -e '",
+      build.run.indexOf("direct_url_type_file"),
+    );
+    expect(nodeCall).toBeGreaterThan(-1);
+    const scriptStart = build.run.indexOf("'", nodeCall) + 1;
+    const scriptEnd = build.run.indexOf("\n          '", scriptStart);
+    expect(scriptEnd).toBeGreaterThan(scriptStart);
+    return build.run.slice(scriptStart, scriptEnd);
+  };
+
+  const REF = "abcdefghijklmnopqrst";
+  const PASSWORD = "SyntheticPassw0rd";
+  const stagingDirect = `postgresql://postgres.${REF}:${PASSWORD}@aws-0-eu-north-1.pooler.supabase.com:5432/postgres`;
+  const stagingPooler = `postgresql://postgres.${REF}:${PASSWORD}@aws-0-eu-north-1.pooler.supabase.com:6543/postgres`;
+  const otherProject = `postgresql://postgres.zzzzzzzzzzzzzzzzzzzz:${PASSWORD}@aws-0-eu-north-1.pooler.supabase.com:5432/postgres`;
+
+  const run = (env: Record<string, string>, ref: string = REF) => {
+    const base: Record<string, string> = {};
+    for (const key of ["PATH", "Path", "SystemRoot", "SYSTEMROOT", "TEMP", "TMP"]) {
+      if (process.env[key]) base[key] = process.env[key]!;
+    }
+    const result = spawnSync(process.execPath, ["-e", extractScript()], {
+      // The repo's ProcessEnv augmentation requires NODE_ENV; the script never reads it.
+      env: { ...base, NODE_ENV: "test", STAGING_SUPABASE_PROJECT_REF: ref, ...env },
+      encoding: "utf8",
+    });
+    const out = `${result.stdout}${result.stderr}`;
+    expect(out, "value leaked").not.toContain(PASSWORD);
+    expect(out, "value leaked").not.toContain("pooler.supabase.com");
+    return { status: result.status, out };
+  };
+
+  it("reports UNVERIFIED and continues only for a Vercel Secret with the CLI's documented placeholder", () => {
+    const r = run({ DIRECT_URL_PRODUCTION_TYPE: "sensitive", DIRECT_URL: "[SENSITIVE]" });
+    expect(r.status).toBe(0);
+    expect(r.out).toContain("DIRECT_URL (Production) is UNVERIFIED");
+  });
+
+  it("fails closed when the type says Secret but the pulled value is not the placeholder", () => {
+    for (const DIRECT_URL of ["", "not-a-url", stagingDirect]) {
+      const r = run({ DIRECT_URL_PRODUCTION_TYPE: "sensitive", DIRECT_URL });
+      expect(r.status, JSON.stringify(DIRECT_URL.length)).toBe(1);
+      expect(r.out).toContain("did not write its documented placeholder");
+    }
+    expect(run({ DIRECT_URL_PRODUCTION_TYPE: "sensitive" }).status).toBe(1);
+  });
+
+  it("fails closed when the Vercel type is missing, unknown, legacy secret or system", () => {
+    for (const type of ["", "secret", "system", "SENSITIVE", "config"]) {
+      const r = run({ DIRECT_URL_PRODUCTION_TYPE: type, DIRECT_URL: stagingDirect });
+      expect(r.status, type).toBe(1);
+      expect(r.out, type).toContain("unexpected Vercel type");
+    }
+    expect(run({ DIRECT_URL: "[SENSITIVE]" }).status).toBe(1);
+  });
+
+  it("fails closed on a readable DIRECT_URL that is missing, empty, malformed, the placeholder or not postgres", () => {
+    for (const type of ["encrypted", "plain"]) {
+      expect(run({ DIRECT_URL_PRODUCTION_TYPE: type }).status, `${type} missing`).toBe(1);
+      for (const DIRECT_URL of ["", "   ", "not a url", "[SENSITIVE]", "postgres"]) {
+        const r = run({ DIRECT_URL_PRODUCTION_TYPE: type, DIRECT_URL });
+        expect(r.status, `${type} ${JSON.stringify(DIRECT_URL)}`).toBe(1);
+        expect(r.out).toContain("missing, empty or not a valid URL");
+      }
+      for (const DIRECT_URL of [
+        `https://${REF}.supabase.co`,
+        `mysql://postgres.${REF}:${PASSWORD}@db.example.com:5432/postgres`,
+        `prisma://accelerate.example.com/?api_key=${PASSWORD}`,
+      ]) {
+        const r = run({ DIRECT_URL_PRODUCTION_TYPE: type, DIRECT_URL });
+        expect(r.status, DIRECT_URL.split(":")[0]).toBe(1);
+        expect(r.out).toContain("not a postgres:// or postgresql:// URL");
+      }
+    }
+  });
+
+  it("fails closed on a readable postgres DIRECT_URL for another project or the transaction pooler", () => {
+    const wrong = run({ DIRECT_URL_PRODUCTION_TYPE: "encrypted", DIRECT_URL: otherProject });
+    expect(wrong.status).toBe(1);
+    expect(wrong.out).toContain("does not identify the staging Supabase project ref");
+    const pooler = run({ DIRECT_URL_PRODUCTION_TYPE: "encrypted", DIRECT_URL: stagingPooler });
+    expect(pooler.status).toBe(1);
+    expect(pooler.out).toContain("transaction pooler port 6543");
+    expect(
+      run({ DIRECT_URL_PRODUCTION_TYPE: "encrypted", DIRECT_URL: stagingDirect }, "bad ref").status,
+    ).toBe(1);
+  });
+
+  it("passes a readable postgres DIRECT_URL for the staging project on a session/direct port", () => {
+    for (const type of ["encrypted", "plain"]) {
+      const r = run({ DIRECT_URL_PRODUCTION_TYPE: type, DIRECT_URL: stagingDirect });
+      expect(r.status, type).toBe(0);
+      expect(r.out).toContain("DIRECT_URL (Production) is VERIFIED");
+    }
+    const hostRef = run({
+      DIRECT_URL_PRODUCTION_TYPE: "encrypted",
+      DIRECT_URL: `postgres://postgres:${PASSWORD}@db.${REF}.supabase.co:5432/postgres`,
+    });
+    expect(hostRef.status).toBe(0);
   });
 });
