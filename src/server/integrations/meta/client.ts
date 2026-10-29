@@ -17,6 +17,9 @@ import { getAppUrlEnv } from "@/env";
 const DEFAULT_GRAPH_VERSION = "v21.0";
 const CONTAINER_POLL_INTERVAL_MS = 2000;
 const CONTAINER_POLL_TIMEOUT_MS = 120_000;
+// One Graph call never outlives the publish job: a hung connection fails here
+// instead of the platform killing the function mid-publish.
+const GRAPH_FETCH_TIMEOUT_MS = 30_000;
 
 export class MetaNotConfiguredError extends Error {
   readonly code = "meta_not_configured";
@@ -85,7 +88,10 @@ async function graphFetch<T>(
   init?: RequestInit & { retryOn5xx?: boolean },
 ): Promise<T> {
   const url = path.startsWith("http") ? path : `${graphBase()}${path}`;
-  const res = await fetch(url, init);
+  const res = await fetch(url, {
+    ...init,
+    signal: init?.signal ?? AbortSignal.timeout(GRAPH_FETCH_TIMEOUT_MS),
+  });
   const body = (await res.json().catch(() => ({}))) as
     T | { error?: { message?: string; code?: number; is_transient?: boolean } };
   if (!res.ok || (body && typeof body === "object" && "error" in body && body.error)) {

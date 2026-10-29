@@ -947,7 +947,10 @@ describe("publish-creator-post", () => {
 
   it("another organization's social account can't publish this post", async () => {
     (post().socialAccount as Row).organizationId = ORG_B;
-    expect((await publish()).status).toBe(500); // existing guard-failure response
+    // A refusal is final: answered 200 (no retry), recorded on the post.
+    const res = await publish();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: false, code: "social_account_not_connected" });
     expect(fx.publishPost).not.toHaveBeenCalled();
     expect(post()).toMatchObject({
       publishStatus: "FAILED",
@@ -956,7 +959,9 @@ describe("publish-creator-post", () => {
   });
 
   it("another organization's post can't be published via this org (existing scoping)", async () => {
-    expect((await publish(ORG_B)).status).toBe(500);
+    const res = await publish(ORG_B);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: false, code: "post_not_found" });
     expect(fx.publishPost).not.toHaveBeenCalled();
   });
 

@@ -79,16 +79,77 @@ async function markPublished(postId: string, externalPostId: string): Promise<vo
 }
 
 /**
+ * A PUBLISHING claim older than this belongs to a run the platform already
+ * stopped (the publish job's maxDuration plus a margin): nothing will finish
+ * it. Mirrors DOCUMENT_PROCESSING_RECLAIM_MS. The platform may or may not
+ * have published before the run died and the provider offers no way to tell,
+ * so such a post is never republished automatically: it is marked FAILED
+ * (reschedulable) and its author is told to check the platform first.
+ */
+export const PUBLISH_STALE_MS = 7 * 60_000;
+
+/**
+ * Marks posts stranded in PUBLISHING as FAILED, once each, and tells their
+ * authors. Run by the reconcile job; bounded per run.
+ */
+export async function failStalePublishingPosts(now: Date = new Date()): Promise<number> {
+  const cutoff = new Date(now.getTime() - PUBLISH_STALE_MS);
+  const stale = await unscopedPrisma.creatorPost.findMany({
+    where: { publishStatus: "PUBLISHING", updatedAt: { lt: cutoff } },
+    select: { id: true, organizationId: true, createdById: true, platform: true },
+    orderBy: { updatedAt: "asc" },
+    take: 25,
+  });
+  let failed = 0;
+  for (const post of stale) {
+    // Conditional: a run that finished (PUBLISHED or FAILED) in the meantime is left alone.
+    const flipped = await unscopedPrisma.creatorPost.updateMany({
+      where: { id: post.id, publishStatus: "PUBLISHING", updatedAt: { lt: cutoff } },
+      data: {
+        publishStatus: "FAILED",
+        lastErrorCode: "publish_interrupted",
+        lastErrorSafe:
+          "Publishing was interrupted. Check the platform before scheduling this post again.",
+      },
+    });
+    if (flipped.count !== 1) continue;
+    failed += 1;
+    const ctx = { orgId: post.organizationId, userId: post.createdById };
+    await audit(ctx, {
+      action: "creator.post.publish_failed",
+      resourceType: "creator_post",
+      resourceId: post.id,
+      after: { errorCode: "publish_interrupted" },
+    });
+    if (await isOrganizationActive(post.organizationId)) {
+      await notifyUser(ctx, post.createdById, {
+        type: "creator_post_publish_failed",
+        title: "Publishing was interrupted",
+        body: "Check the platform before scheduling this post again.",
+        href: "/creator-studio/calendar",
+      });
+    }
+  }
+  return failed;
+}
+
+/**
  * Centralized publishing engine (Phase 13). Called by the
  * /api/v1/jobs/publish-creator-post handler — never call provider.publishPost
  * directly from anywhere else. Every guard below is re-verified here, at
  * publish time, regardless of what was checked when the post was scheduled
  * (Phase 12: "approval validation immediately before publish").
+ *
+ * `finalAttempt`: whether QStash will not deliver this message again. A
+ * failure is recorded every time, but the author is told only once, on the
+ * last attempt (or for a refusal that no retry can change).
  */
 export async function publishCreatorPost(
   orgId: string,
   postId: string,
-): Promise<"done" | "organization_inactive"> {
+  options: { finalAttempt?: boolean } = {},
+): Promise<"done" | "organization_inactive" | "in_progress"> {
+  const finalAttempt = options.finalAttempt ?? true;
   // A missing or soft-deleted organization publishes nothing; the post's
   // status is left as it is (nothing was attempted).
   if (!(await isOrganizationActive(orgId))) return "organization_inactive";
@@ -120,7 +181,21 @@ export async function publishCreatorPost(
     data: { publishStatus: "PUBLISHING", publishAttemptCount: { increment: 1 } },
   });
   if (claim.count !== 1) {
-    return "done"; // already publishing/published/canceled/rejected — nothing to do
+    // Another delivery is publishing it right now (or was killed less than
+    // PUBLISH_STALE_MS ago): the caller answers 409 so QStash delivers again
+    // later, when the post is PUBLISHED (done) or the sweep has marked it
+    // FAILED. Already published/canceled/rejected: nothing to do.
+    const current = await unscopedPrisma.creatorPost.findFirst({
+      where: { id: postId, organizationId: orgId },
+      select: { publishStatus: true, updatedAt: true },
+    });
+    if (
+      current?.publishStatus === "PUBLISHING" &&
+      current.updatedAt.getTime() > Date.now() - PUBLISH_STALE_MS
+    ) {
+      return "in_progress";
+    }
+    return "done";
   }
 
   // Set once the provider has published: from then on the post is live and must never be
@@ -268,7 +343,16 @@ export async function publishCreatorPost(
         ? error.message
         : "Publishing failed due to a provider error. Please try again.";
     if (!(error instanceof PublishGuardError)) {
-      console.error("creator post publish failed", { postId, orgId, error });
+      // The name only: a provider's message can carry its response text and
+      // request URLs (with tokens).
+      console.error(
+        JSON.stringify({
+          event: "creator_post_publish_failed",
+          postId,
+          orgId,
+          name: error instanceof Error ? error.name : "unknown",
+        }),
+      );
     }
 
     await unscopedPrisma.creatorPost.update({
@@ -285,12 +369,16 @@ export async function publishCreatorPost(
       resourceId: postId,
       after: { errorCode: code },
     });
-    await notifyUser(ctx, post.createdById, {
-      type: "creator_post_publish_failed",
-      title: "Publishing failed",
-      body: safeMessage,
-      href: "/creator-studio/calendar",
-    });
+    // A refusal is final (the route doesn't retry it); a provider error is
+    // told only when no retry follows, so the author hears about it once.
+    if (error instanceof PublishGuardError || finalAttempt) {
+      await notifyUser(ctx, post.createdById, {
+        type: "creator_post_publish_failed",
+        title: "Publishing failed",
+        body: safeMessage,
+        href: "/creator-studio/calendar",
+      });
+    }
     throw error; // let the job handler decide on QStash retry vs. terminal failure
   }
 }

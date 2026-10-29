@@ -14,6 +14,7 @@ const {
       updateMany: vi.fn(),
       update: vi.fn(async (_args: { where: unknown; data: Record<string, unknown> }) => ({})),
       count: vi.fn(async (_args: unknown) => 0),
+      findMany: vi.fn(async (_args: unknown) => [] as Array<Record<string, unknown>>),
     },
     creatorReferenceAsset: { findMany: vi.fn() },
   },
@@ -50,7 +51,12 @@ vi.mock("@/server/supabase/server", () => ({
 vi.mock("@/server/services/audit", () => ({ audit: auditMock }));
 vi.mock("@/server/services/creator-notifications", () => ({ notifyUser: notifyUserMock }));
 
-import { publishCreatorPost, PublishGuardError } from "@/server/services/creator-publishing";
+import {
+  PUBLISH_STALE_MS,
+  failStalePublishingPosts,
+  publishCreatorPost,
+  PublishGuardError,
+} from "@/server/services/creator-publishing";
 
 function approvedPost(overrides: Record<string, unknown> = {}) {
   return {
@@ -278,5 +284,150 @@ describe("publishCreatorPost", () => {
       code: "not_approved",
     });
     expect(provider.publishPost).not.toHaveBeenCalled();
+  });
+});
+
+describe("a publish run the platform killed", () => {
+  const minutesAgo = (m: number) => new Date(Date.now() - m * 60_000);
+  let provider: { publishPost: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    provider = { publishPost: vi.fn(async () => ({ externalPostId: "ext-post-1" })) };
+    getSocialPublishingProviderMock.mockReturnValue(provider);
+    unscopedPrismaMock.creatorReferenceAsset.findMany.mockResolvedValue([
+      { id: "asset-1", storagePath: "org-a/x.png", assetType: "generated_image" },
+    ]);
+  });
+
+  it("a delivery during another run's PUBLISHING claim reports in_progress (409), publishing nothing", async () => {
+    unscopedPrismaMock.creatorPost.findFirst
+      .mockResolvedValueOnce(approvedPost())
+      .mockResolvedValueOnce({ publishStatus: "PUBLISHING", updatedAt: minutesAgo(1) });
+    unscopedPrismaMock.creatorPost.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    expect(await publishCreatorPost("org-a", "post-1")).toBe("in_progress");
+    expect(provider.publishPost).not.toHaveBeenCalled();
+  });
+
+  it("a stale PUBLISHING claim is never republished by a delivery (the platform may have published): done", async () => {
+    unscopedPrismaMock.creatorPost.findFirst
+      .mockResolvedValueOnce(approvedPost())
+      .mockResolvedValueOnce({ publishStatus: "PUBLISHING", updatedAt: minutesAgo(30) });
+    unscopedPrismaMock.creatorPost.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    expect(await publishCreatorPost("org-a", "post-1")).toBe("done");
+    expect(provider.publishPost).not.toHaveBeenCalled();
+  });
+
+  it("the sweep marks a stale PUBLISHING post FAILED once, audited, and tells its author", async () => {
+    unscopedPrismaMock.creatorPost.findMany.mockResolvedValueOnce([
+      { id: "post-1", organizationId: "org-a", createdById: "user-1", platform: "INSTAGRAM" },
+    ]);
+    unscopedPrismaMock.creatorPost.updateMany.mockResolvedValueOnce({ count: 1 });
+
+    expect(await failStalePublishingPosts()).toBe(1);
+
+    expect(unscopedPrismaMock.creatorPost.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ id: "post-1", publishStatus: "PUBLISHING" }),
+        data: expect.objectContaining({
+          publishStatus: "FAILED",
+          lastErrorCode: "publish_interrupted",
+        }),
+      }),
+    );
+    expect(auditMock).toHaveBeenCalledWith(
+      { orgId: "org-a", userId: "user-1" },
+      expect.objectContaining({
+        action: "creator.post.publish_failed",
+        resourceId: "post-1",
+        after: { errorCode: "publish_interrupted" },
+      }),
+    );
+    expect(notifyUserMock).toHaveBeenCalledTimes(1);
+    expect(notifyUserMock).toHaveBeenCalledWith(
+      { orgId: "org-a", userId: "user-1" },
+      "user-1",
+      expect.objectContaining({ type: "creator_post_publish_failed" }),
+    );
+    expect(provider.publishPost).not.toHaveBeenCalled();
+  });
+
+  it("the sweep leaves a post that finished between its read and its write alone", async () => {
+    unscopedPrismaMock.creatorPost.findMany.mockResolvedValueOnce([
+      { id: "post-1", organizationId: "org-a", createdById: "user-1", platform: "INSTAGRAM" },
+    ]);
+    unscopedPrismaMock.creatorPost.updateMany.mockResolvedValueOnce({ count: 0 });
+
+    expect(await failStalePublishingPosts()).toBe(0);
+    expect(auditMock).not.toHaveBeenCalled();
+    expect(notifyUserMock).not.toHaveBeenCalled();
+  });
+
+  it("the sweep only looks at PUBLISHING posts older than the stale window", async () => {
+    unscopedPrismaMock.creatorPost.findMany.mockResolvedValueOnce([]);
+    const now = new Date("2026-10-30T03:00:00Z");
+
+    await failStalePublishingPosts(now);
+
+    expect(unscopedPrismaMock.creatorPost.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: {
+          publishStatus: "PUBLISHING",
+          updatedAt: { lt: new Date(now.getTime() - PUBLISH_STALE_MS) },
+        },
+        take: 25,
+      }),
+    );
+  });
+});
+
+describe("the author is told once about a failed publish", () => {
+  let provider: { publishPost: ReturnType<typeof vi.fn> };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    provider = { publishPost: vi.fn(async () => ({ externalPostId: "ext-post-1" })) };
+    getSocialPublishingProviderMock.mockReturnValue(provider);
+    unscopedPrismaMock.creatorPost.updateMany.mockResolvedValue({ count: 1 });
+    unscopedPrismaMock.creatorReferenceAsset.findMany.mockResolvedValue([
+      { id: "asset-1", storagePath: "org-a/x.png", assetType: "generated_image" },
+    ]);
+    unscopedPrismaMock.creatorPost.findFirst.mockResolvedValue(approvedPost());
+  });
+
+  it("a provider error on an attempt QStash will retry is recorded but not yet reported", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    provider.publishPost.mockRejectedValueOnce(new Error("provider down"));
+
+    await expect(publishCreatorPost("org-a", "post-1", { finalAttempt: false })).rejects.toThrow();
+
+    expect(auditMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ action: "creator.post.publish_failed" }),
+    );
+    expect(notifyUserMock).not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it("a provider error on the last attempt is reported", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    provider.publishPost.mockRejectedValueOnce(new Error("provider down"));
+
+    await expect(publishCreatorPost("org-a", "post-1", { finalAttempt: true })).rejects.toThrow();
+
+    expect(notifyUserMock).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+
+  it("a refusal (no media) is reported at once, whatever the attempt: no retry can change it", async () => {
+    unscopedPrismaMock.creatorPost.findFirst.mockResolvedValue(approvedPost({ assetIds: [] }));
+
+    await expect(
+      publishCreatorPost("org-a", "post-1", { finalAttempt: false }),
+    ).rejects.toMatchObject({ code: "no_media" });
+
+    expect(notifyUserMock).toHaveBeenCalledTimes(1);
   });
 });
