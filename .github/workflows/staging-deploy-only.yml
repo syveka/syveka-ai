@@ -1,0 +1,481 @@
+name: Staging deploy-only (pinned reviewed source)
+
+# Manually dispatched. Rebuilds the reviewed staging source (PINNED_SOURCE_SHA)
+# on Linux and deploys it to the staging Vercel project's Production target,
+# which serves the stable staging alias, so the new deployment picks up the
+# staging project's current environment variables (for example after a
+# database credential rotation). Vercel cannot redeploy prebuilt deployments
+# from the dashboard, so this creates a new one.
+#
+# Unlike staging-release.yml this runs no migrations, Storage SQL, fixtures,
+# E2E account changes or smoke tests, uses no GitHub database secret (the
+# staging project's own Vercel-held DATABASE_URL/DIRECT_URL are pulled for the
+# build, masked in the log and never printed), and writes nothing to the
+# database. It reuses staging-release.yml's reviewed build,
+# Vercel credential isolation and token-persistence guard.
+
+on:
+  workflow_dispatch:
+    inputs:
+      staging_project_ref:
+        description: "Type the 20-character staging Supabase project ref"
+        required: true
+        type: string
+      source_sha:
+        description: "Type the full 40-character source commit to deploy (must equal PINNED_SOURCE_SHA)"
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+# Same group as staging-release.yml, so a deploy-only run never overlaps a
+# staging release or another staging deploy.
+concurrency:
+  group: staging-release
+  cancel-in-progress: false
+
+env:
+  NODE_VERSION: "22"
+  VERCEL_CLI_VERSION: "56.3.2"
+  PINNED_SOURCE_SHA: 611fd74ecf99d405252eb3bcfc291e363f5f970e
+  STAGING_VERCEL_PROJECT_NAME: syveka-ai-staging
+  STAGING_STABLE_URL: https://syveka-ai-staging.vercel.app
+
+jobs:
+  deploy-only:
+    name: Deploy pinned source to staging (no migrations)
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: staging
+    timeout-minutes: 45
+    steps:
+      - name: Refuse non-staging targets
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$CONFIRM_STAGING_PROJECT_REF" =~ ^[a-z0-9]{20}$ ]]; then
+            echo "The staging confirmation must be a 20-character lowercase Supabase project ref."
+            exit 1
+          fi
+          if [ "$RUN_REF" != "refs/heads/main" ]; then
+            echo "Staging deploy-only runs are only allowed from main."
+            exit 1
+          fi
+          if [ "$CONFIRM_STAGING_PROJECT_REF" != "$STAGING_SUPABASE_PROJECT_REF" ]; then
+            echo "The confirmation input does not match the staging project ref."
+            exit 1
+          fi
+          if [ -z "$PRODUCTION_SUPABASE_PROJECT_REF" ] || [ "$STAGING_SUPABASE_PROJECT_REF" = "$PRODUCTION_SUPABASE_PROJECT_REF" ]; then
+            echo "Staging and production Supabase project refs must be present and different."
+            exit 1
+          fi
+          if [ -z "$STAGING_VERCEL_PROJECT_ID" ] || [ -z "$STAGING_VERCEL_ORG_ID" ]; then
+            echo "The staging Vercel project and team IDs must both be configured."
+            exit 1
+          fi
+          if [ -z "$PRODUCTION_VERCEL_PROJECT_ID" ] || [ "$STAGING_VERCEL_PROJECT_ID" = "$PRODUCTION_VERCEL_PROJECT_ID" ]; then
+            echo "The staging Vercel project must be present and different from production."
+            exit 1
+          fi
+          if [ "$CONFIRM_SOURCE_SHA" != "$PINNED_SOURCE_SHA" ]; then
+            echo "The confirmed source commit does not equal the pinned reviewed source $PINNED_SOURCE_SHA."
+            exit 1
+          fi
+        env:
+          CONFIRM_STAGING_PROJECT_REF: ${{ inputs.staging_project_ref }}
+          CONFIRM_SOURCE_SHA: ${{ inputs.source_sha }}
+          RUN_REF: ${{ github.ref }}
+          STAGING_SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+          PRODUCTION_SUPABASE_PROJECT_REF: ${{ vars.PRODUCTION_SUPABASE_PROJECT_REF }}
+          STAGING_VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+          STAGING_VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
+          PRODUCTION_VERCEL_PROJECT_ID: ${{ vars.PRODUCTION_VERCEL_PROJECT_ID }}
+
+      - name: Checkout pinned reviewed source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.PINNED_SOURCE_SHA }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Verify the pinned source is reviewed main history
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$(git rev-parse HEAD)" != "$PINNED_SOURCE_SHA" ]; then
+            echo "The checked-out commit is not the pinned source $PINNED_SOURCE_SHA."
+            exit 1
+          fi
+          if ! git merge-base --is-ancestor "$PINNED_SOURCE_SHA" refs/remotes/origin/main; then
+            echo "The pinned source $PINNED_SOURCE_SHA is not part of main's history."
+            exit 1
+          fi
+          echo "Building pinned reviewed source $PINNED_SOURCE_SHA."
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Production build
+        run: npm run build
+        env:
+          SKIP_ENV_VALIDATION: "1"
+          NEXT_PUBLIC_APP_URL: https://staging.invalid
+          NEXT_PUBLIC_SUPABASE_URL: https://staging.invalid
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: staging-build-placeholder
+          NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY: pk_test_staging_build
+          DATABASE_URL: postgresql://ci:ci@localhost:5432/ci
+          DIRECT_URL: postgresql://ci:ci@localhost:5432/ci
+
+      - name: Verify Prisma RHEL query engine is included in build artifacts
+        run: node scripts/verify-prisma-engine.mjs
+
+      # Vercel credential isolation (as in staging-release.yml): the staging
+      # Vercel credential is only in steps that run nothing but the Vercel
+      # CLI's `pull`/`deploy`/`promote` or read-only Vercel API calls (curl and
+      # jq). The Vercel build runs repository
+      # code, so it runs in its own step without any Vercel credential.
+      # tests/unit/staging-deploy-only-workflow.test.ts enforces this.
+      - name: Pull stable staging alias config (Vercel credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # Positive identity check before pulling anything: the configured
+          # project must be the staging project, in the configured team, and
+          # not the production project. Prints no IDs and no response body.
+          project_json=$(curl --fail --silent --show-error --max-time 30 \
+            -H "Authorization: Bearer $STAGING_VERCEL_TOKEN" \
+            "https://api.vercel.com/v9/projects/$VERCEL_PROJECT_ID?teamId=$VERCEL_ORG_ID")
+          if ! jq -e \
+            --arg id "$VERCEL_PROJECT_ID" \
+            --arg org "$VERCEL_ORG_ID" \
+            --arg name "$STAGING_VERCEL_PROJECT_NAME" \
+            --arg prod "$PRODUCTION_VERCEL_PROJECT_ID" \
+            '.id == $id and .accountId == $org and .name == $name and .id != $prod' \
+            >/dev/null <<<"$project_json"; then
+            echo "Vercel project identity check failed: the configured project is not $STAGING_VERCEL_PROJECT_NAME in the configured team, or it is the production project."
+            exit 1
+          fi
+          unset project_json
+          echo "Vercel project identity verified as $STAGING_VERCEL_PROJECT_NAME (IDs not printed)."
+          npx --yes "vercel@$VERCEL_CLI_VERSION" pull --yes --environment=production --token="$STAGING_VERCEL_TOKEN"
+          guard_token="$STAGING_VERCEL_TOKEN"
+          # >>> token-persistence guard (identical in deploy.yml and staging-release.yml)
+          # Fails closed if the token is found anywhere `vercel pull` or the CLI
+          # could have written it. Reports only the file path and, for dotenv
+          # files, the KEY name -- never a value, line, hash or fragment.
+          if [ -z "$guard_token" ] || [[ "$guard_token" == *$'\n'* || "$guard_token" == *$'\r'* ]]; then
+            echo "Token guard: the Vercel token is empty or multi-line; refusing to build."
+            exit 1
+          fi
+          guard_hits=0
+          for guard_root in .vercel "$HOME/.local/share/com.vercel.cli" "$HOME/.vercel"; do
+            [ -e "$guard_root" ] || continue
+            if [ "$guard_root" = ".vercel" ]; then
+              guard_category=".vercel (vercel pull output)"
+            else
+              guard_category="Vercel CLI config"
+            fi
+            if [ -n "$(find "$guard_root" ! -readable -print -quit 2>/dev/null)" ]; then
+              echo "Token guard: $guard_category contains unreadable entries; refusing to build."
+              guard_hits=$((guard_hits + 1))
+            fi
+            while IFS= read -r -d '' guard_file; do
+              guard_rc=0
+              grep -qF -- "$guard_token" "$guard_file" || guard_rc=$?
+              [ "$guard_rc" -eq 1 ] && continue
+              guard_hits=$((guard_hits + 1))
+              guard_path="${guard_file//"$guard_token"/[REDACTED]}"
+              guard_path="$(printf '%s' "$guard_path" | LC_ALL=C tr -c '[:print:]' '?')"
+              if [ "$guard_rc" -ne 0 ]; then
+                echo "Token guard: could not read $guard_category file: $guard_path"
+                continue
+              fi
+              echo "Token guard: token value found in $guard_category file: $guard_path"
+              case "${guard_file##*/}" in
+                .env | .env.* | *.env)
+                  GUARD_TOKEN="$guard_token" LC_ALL=C awk '
+                    index($0, ENVIRON["GUARD_TOKEN"]) {
+                      if (match($0, /^[ \t]*(export[ \t]+)?[A-Za-z_][A-Za-z0-9_]*=/)) {
+                        key = substr($0, RSTART, RLENGTH - 1)
+                        sub(/^[ \t]*(export[ \t]+)?/, "", key)
+                        if (index(key, ENVIRON["GUARD_TOKEN"])) key = "[REDACTED]"
+                        print "Token guard:   in variable " key
+                      } else {
+                        print "Token guard:   on line " NR " (not a KEY=VALUE line)"
+                      }
+                    }' "$guard_file" | sort -u
+                  ;;
+              esac
+            done < <(find "$guard_root" -type f -print0 2>/dev/null)
+          done
+          if [ "$guard_hits" -ne 0 ]; then
+            echo "Token guard: the Vercel token was persisted to disk ($guard_hits finding(s)); refusing to build."
+            exit 1
+          fi
+          # <<< token-persistence guard
+        env:
+          STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+          PRODUCTION_VERCEL_PROJECT_ID: ${{ vars.PRODUCTION_VERCEL_PROJECT_ID }}
+
+      - name: Build pinned candidate for the stable staging alias (no Vercel credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The pulled file holds the staging project's own Production values
+          # (Vercel-held, not GitHub secrets, so GitHub does not mask them).
+          # Before anything that could print them runs, mask DATABASE_URL and
+          # DIRECT_URL with their password components, plus every other value
+          # of 16+ characters from the pulled file only (never the runner's own
+          # environment, which holds the pinned SHA, the stable URL and paths
+          # that later proof lines must keep legible), except NEXT_PUBLIC_* and
+          # the public Vercel system keys. VERCEL_OIDC_TOKEN and similar
+          # credential-bearing system values are therefore masked too. The
+          # runner unescapes %25/%0A/%0D in command data, so `%` is escaped.
+          node -e '
+            const { parseEnv } = require("node:util");
+            const pulled = parseEnv(require("node:fs").readFileSync(".vercel/.env.production.local", "utf8"));
+            const PUBLIC_KEY = /^(NEXT_PUBLIC_|VERCEL(_ENV|_URL|_BRANCH_URL|_PROJECT_PRODUCTION_URL|_REGION|_TARGET_ENV|_DEPLOYMENT_ID|_GIT_[A-Z_]+)?$)/;
+            const publicValues = new Set(
+              ["PINNED_SOURCE_SHA", "STAGING_STABLE_URL", "STAGING_VERCEL_PROJECT_NAME"].map((key) => process.env[key] ?? ""),
+            );
+            const values = new Set();
+            for (const key of ["DATABASE_URL", "DIRECT_URL"]) {
+              const raw = pulled[key] ?? "";
+              if (!raw) continue;
+              values.add(raw);
+              try {
+                const url = new URL(raw);
+                if (url.password) {
+                  values.add(url.password);
+                  try { values.add(decodeURIComponent(url.password)); } catch {}
+                }
+              } catch {}
+            }
+            for (const [key, value] of Object.entries(pulled)) {
+              if (PUBLIC_KEY.test(key) || typeof value !== "string" || value.length < 16) continue;
+              values.add(value);
+            }
+            let masked = 0;
+            for (const value of values) {
+              if (value.length < 8 || /[\r\n]/.test(value) || publicValues.has(value)) continue;
+              process.stdout.write(`::add-mask::${value.replace(/%/g, "%25")}\n`);
+              masked += 1;
+            }
+            console.log(`Masked ${masked} pulled value(s) (database URLs, their passwords and other non-public values) in this job log.`);
+          '
+          # DATABASE_URL must identify the staging project (validated without printing it).
+          STAGING_CONFIG_MODE=runtime node --env-file=.vercel/.env.production.local scripts/validate-staging-config.mjs
+          app_url="$(node --env-file=.vercel/.env.production.local -e 'process.stdout.write(process.env.NEXT_PUBLIC_APP_URL ?? "")')"
+          if [ "$app_url" != "$STAGING_STABLE_URL" ]; then
+            echo "The staging project's Production NEXT_PUBLIC_APP_URL is not $STAGING_STABLE_URL."
+            exit 1
+          fi
+          # DIRECT_URL is only used by Prisma CLI commands, but the app's env
+          # schema requires a valid URL and anyone using this config with Prisma
+          # would connect to its target. Fail closed unless it identifies the
+          # staging project on a session/direct port. Never prints the value.
+          node --env-file=.vercel/.env.production.local -e '
+            const ref = process.env.STAGING_SUPABASE_PROJECT_REF ?? "";
+            const raw = process.env.DIRECT_URL ?? "";
+            let url;
+            try {
+              url = new URL(raw);
+            } catch {
+              console.error("DIRECT_URL (Production) is missing or not a valid URL.");
+              process.exit(1);
+            }
+            if (!/^[a-z0-9]{20}$/.test(ref)) {
+              console.error("STAGING_SUPABASE_PROJECT_REF is missing or malformed.");
+              process.exit(1);
+            }
+            if (!url.hostname.includes(ref) && !decodeURIComponent(url.username).includes(ref)) {
+              console.error("DIRECT_URL (Production) does not identify the staging Supabase project ref.");
+              process.exit(1);
+            }
+            if (url.port === "6543") {
+              console.error("DIRECT_URL (Production) uses the transaction pooler port 6543.");
+              process.exit(1);
+            }
+            console.log("DIRECT_URL (Production) identifies the staging project on a session/direct port (value not printed).");
+          '
+          npx --yes "vercel@$VERCEL_CLI_VERSION" build --prod
+        env:
+          # Inlined into /api/health's `build` field so the deployment and the
+          # stable alias can be proven to serve exactly the pinned source.
+          NEXT_PUBLIC_BUILD_SHA: ${{ env.PINNED_SOURCE_SHA }}
+          STAGING_SUPABASE_PROJECT_REF: ${{ vars.STAGING_SUPABASE_PROJECT_REF }}
+
+      # Checked before deploying, so a missing bypass secret never leaves an
+      # unchecked STAGED deployment behind.
+      - name: Require Vercel protection bypass secret
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${VERCEL_AUTOMATION_BYPASS_SECRET:-}" ]; then
+            echo "VERCEL_AUTOMATION_BYPASS_SECRET is not configured for the staging environment."
+            echo "The staged deployment sits behind Vercel Deployment Protection, so its health" \
+                 "check cannot run without this bypass secret."
+            exit 1
+          fi
+        env:
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      # Staged-then-promote, as in deploy.yml: `--skip-domain` creates the
+      # deployment without moving the stable alias, so a candidate that fails
+      # its checks never serves staging. The alias moves only in the explicit
+      # promote step, after the deployment itself proved healthy.
+      - name: Deploy pinned candidate as a staged deployment (Vercel credentials)
+        id: deploy
+        shell: bash
+        run: |
+          set -euo pipefail
+          api() {
+            curl --fail --silent --show-error --max-time 30 \
+              -H "Authorization: Bearer $STAGING_VERCEL_TOKEN" "https://api.vercel.com$1?teamId=$VERCEL_ORG_ID"
+          }
+          # Rollback target for the owner: the deployment the stable alias serves now.
+          # Fail closed (as deploy.yml does) rather than deploy without a known target.
+          previous_id=$(api "/v9/projects/$VERCEL_PROJECT_ID" | jq -r '.targets.production.id // empty' 2>/dev/null)
+          if [[ ! "$previous_id" =~ ^dpl_[A-Za-z0-9]+$ ]]; then
+            echo "Could not read the deployment the stable staging alias currently serves; refusing to deploy without a rollback target."
+            exit 1
+          fi
+          echo "Stable staging alias currently serves deployment: $previous_id (rollback target)."
+          deployment_url=$(npx --yes "vercel@$VERCEL_CLI_VERSION" deploy --prebuilt --prod --skip-domain --token="$STAGING_VERCEL_TOKEN")
+          if [[ ! "$deployment_url" =~ ^https://[a-z0-9.-]+\.vercel\.app$ ]]; then
+            echo "Vercel did not return an HTTPS *.vercel.app deployment URL."
+            exit 1
+          fi
+          echo "$deployment_url"
+          # The staged deployment must be a READY, STAGED Production deployment
+          # of the staging project with the runtime variables the app needs.
+          # The API returns variable NAMES only; values are never read.
+          info=$(api "/v13/deployments/${deployment_url#https://}")
+          deployment_id=$(jq -r '.id // empty' <<<"$info" 2>/dev/null)
+          project_id=$(jq -r '.projectId // empty' <<<"$info" 2>/dev/null)
+          ready_state=$(jq -r '.readyState // empty' <<<"$info" 2>/dev/null)
+          ready_substate=$(jq -r '.readySubstate // empty' <<<"$info" 2>/dev/null)
+          target=$(jq -r '.target // empty' <<<"$info" 2>/dev/null)
+          echo "Candidate $deployment_id: readyState=$ready_state readySubstate=$ready_substate target=$target"
+          if [[ ! "$deployment_id" =~ ^dpl_[A-Za-z0-9]+$ ]] ||
+            [ "$project_id" != "$VERCEL_PROJECT_ID" ] ||
+            [ "$ready_state" != "READY" ] ||
+            [ "$ready_substate" != "STAGED" ] ||
+            [ "$target" != "production" ]; then
+            echo "The staged deployment is not a READY, STAGED Production deployment of the staging project."
+            exit 1
+          fi
+          for name in DATABASE_URL DIRECT_URL FAL_API_KEY; do
+            if ! jq -e --arg n "$name" '(.env // []) | index($n) != null' >/dev/null 2>&1 <<<"$info"; then
+              echo "The deployment does not have $name in its runtime environment; refusing to continue."
+              exit 1
+            fi
+          done
+          unset info
+          echo "Runtime DATABASE_URL, DIRECT_URL and FAL_API_KEY are configured (names verified; values never read)."
+          echo "url=$deployment_url" >> "$GITHUB_OUTPUT"
+          echo "id=$deployment_id" >> "$GITHUB_OUTPUT"
+        env:
+          STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+
+      - name: Verify the staged deployment serves the pinned source with a healthy database
+        shell: bash
+        run: |
+          set -euo pipefail
+          max_attempts=30
+          for attempt in $(seq 1 "$max_attempts"); do
+            body_file=$(mktemp)
+            status=$(curl --silent --max-time 15 --connect-timeout 10 -o "$body_file" -w '%{http_code}' \
+              -H "x-vercel-protection-bypass: $VERCEL_AUTOMATION_BYPASS_SECRET" \
+              "$DEPLOYMENT_URL/api/health") || status=000
+            body=$(head -c 500 "$body_file" 2>/dev/null)
+            rm -f "$body_file"
+            if [ "$status" = "200" ] && jq -e --arg sha "$PINNED_SOURCE_SHA" \
+              '.status == "healthy" and .checks.database == "ok" and .build == $sha' >/dev/null 2>&1 <<<"$body"; then
+              echo "Staged deployment healthy on attempt $attempt/$max_attempts: $body"
+              exit 0
+            fi
+            echo "Attempt $attempt/$max_attempts: status=$status body=$body"
+            sleep 10
+          done
+          echo "The staged deployment did not report healthy (database ok, build $PINNED_SOURCE_SHA) within ~5 minutes; it was NOT promoted and the stable alias is unchanged."
+          exit 1
+        env:
+          DEPLOYMENT_URL: ${{ steps.deploy.outputs.url }}
+          VERCEL_AUTOMATION_BYPASS_SECRET: ${{ secrets.VERCEL_AUTOMATION_BYPASS_SECRET }}
+
+      - name: Promote the verified deployment to the stable staging alias (Vercel credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          npx --yes "vercel@$VERCEL_CLI_VERSION" promote "$CANDIDATE_DEPLOYMENT_ID" --timeout 5m --yes --token="$STAGING_VERCEL_TOKEN"
+        env:
+          CANDIDATE_DEPLOYMENT_ID: ${{ steps.deploy.outputs.id }}
+          STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+
+      - name: Verify the stable staging alias points at the promoted deployment (Vercel credentials)
+        shell: bash
+        run: |
+          set -euo pipefail
+          api() {
+            curl --fail --silent --show-error --max-time 30 \
+              -H "Authorization: Bearer $STAGING_VERCEL_TOKEN" "https://api.vercel.com$1?teamId=$VERCEL_ORG_ID"
+          }
+          # Vercel's project and alias records can lag the CLI's return by a few
+          # seconds, and a read can fail transiently (e.g. 404 while the alias
+          # record is written), so each read is retried rather than fatal.
+          domain="${STAGING_STABLE_URL#https://}"
+          max_attempts=6
+          for attempt in $(seq 1 "$max_attempts"); do
+            live_id=$(api "/v9/projects/$VERCEL_PROJECT_ID" | jq -r '.targets.production.id // empty' 2>/dev/null) || live_id=""
+            ready_substate=$(api "/v13/deployments/$CANDIDATE_DEPLOYMENT_ID" | jq -r '.readySubstate // empty' 2>/dev/null) || ready_substate=""
+            aliased_id=$(api "/v4/aliases/$domain" | jq -r '.deploymentId // empty' 2>/dev/null) || aliased_id=""
+            echo "Attempt $attempt/$max_attempts: production deployment=$live_id candidate readySubstate=$ready_substate $domain -> $aliased_id"
+            if [ "$live_id" = "$CANDIDATE_DEPLOYMENT_ID" ] && [ "$ready_substate" = "PROMOTED" ] && [ "$aliased_id" = "$CANDIDATE_DEPLOYMENT_ID" ]; then
+              echo "The stable staging alias points at the promoted candidate $CANDIDATE_DEPLOYMENT_ID."
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "The candidate was not promoted to $domain within ~1 minute (still STAGED, or another deployment is live). Previous deployment: see the deploy step's rollback target."
+          exit 1
+        env:
+          CANDIDATE_DEPLOYMENT_ID: ${{ steps.deploy.outputs.id }}
+          STAGING_VERCEL_TOKEN: ${{ secrets.STAGING_VERCEL_TOKEN }}
+          VERCEL_ORG_ID: ${{ secrets.STAGING_VERCEL_ORG_ID }}
+          VERCEL_PROJECT_ID: ${{ secrets.STAGING_VERCEL_PROJECT_ID }}
+
+      - name: Prove the stable staging alias serves the pinned source with a healthy database
+        shell: bash
+        run: |
+          set -euo pipefail
+          max_attempts=30
+          for attempt in $(seq 1 "$max_attempts"); do
+            body_file=$(mktemp)
+            status=$(curl --silent --max-time 15 --connect-timeout 10 -o "$body_file" -w '%{http_code}' \
+              "$STAGING_STABLE_URL/api/health") || status=000
+            body=$(head -c 500 "$body_file" 2>/dev/null)
+            rm -f "$body_file"
+            if [ "$status" = "200" ] && jq -e --arg sha "$PINNED_SOURCE_SHA" \
+              '.status == "healthy" and .checks.database == "ok" and .build == $sha' >/dev/null 2>&1 <<<"$body"; then
+              echo "Stable staging alias serves $PINNED_SOURCE_SHA with a healthy database (attempt $attempt/$max_attempts, $(date -u +%Y-%m-%dT%H:%M:%SZ)): $body"
+              exit 0
+            fi
+            echo "Attempt $attempt/$max_attempts: status=$status body=$body"
+            sleep 10
+          done
+          echo "The stable staging alias did not serve $PINNED_SOURCE_SHA with a healthy database within ~5 minutes."
+          exit 1
