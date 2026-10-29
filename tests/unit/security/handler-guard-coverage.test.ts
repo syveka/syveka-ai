@@ -121,6 +121,54 @@ function exportedActions(source: string): Array<{ name: string; body: string }> 
     .map((body) => ({ name: body.slice(0, body.indexOf("(")), body }));
 }
 
+const HTTP_METHODS = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
+
+/** Exported route handlers of a route module: method and body (one per export). */
+function exportedHandlers(source: string): Array<{ method: string; body: string }> {
+  const parts = source.split(/^export async function /m).slice(1);
+  return parts
+    .map((body) => ({ method: body.slice(0, body.indexOf("(")), body }))
+    .filter(({ method }) => HTTP_METHODS.includes(method));
+}
+
+/**
+ * Names of the module's own (non-exported) functions whose body carries one of
+ * the markers: a handler may delegate its guard to such a helper (`guard()`,
+ * `secretMatches()`), and then counts as guarded when it calls it.
+ */
+function guardingHelpers(source: string, markers: string[]): string[] {
+  const names: string[] = [];
+  const declaration = /^(?:async )?function (\w+)\s*\(/gm;
+  for (const match of source.matchAll(declaration)) {
+    const name = match[1]!;
+    const start = match.index!;
+    const next = source.slice(start + 1).search(/^(?:export )?(?:async )?function /m);
+    const body = next === -1 ? source.slice(start) : source.slice(start, start + 1 + next);
+    if (has(body, markers)) names.push(name);
+  }
+  return names;
+}
+
+const guardedBy = (body: string, markers: string[], helpers: string[]) =>
+  has(body, markers) || helpers.some((name) => body.includes(`${name}(`));
+
+/**
+ * Exports the scans above read: `export async function NAME` at column 0, and
+ * for a route its segment config. Any other export shape (a const arrow, a
+ * re-export, a default export, a wrapped handler) would hide a handler or an
+ * action from them, so it is refused instead of silently passing.
+ */
+function unexpectedExports(source: string, allowed: RegExp): string[] {
+  return source
+    .split("\n")
+    .filter((line) => /^export\b/.test(line))
+    .filter((line) => !/^export async function \w+\(/.test(line))
+    .filter((line) => !/^export (type|interface) /.test(line))
+    .filter((line) => !allowed.test(line));
+}
+
+const ROUTE_SEGMENT_CONFIG = /^export const (runtime|dynamic|maxDuration|revalidate) = /;
+
 describe("every API route handler is guarded", () => {
   it("finds the routes", () => {
     expect(routeFiles.length).toBeGreaterThan(50);
@@ -128,28 +176,53 @@ describe("every API route handler is guarded", () => {
 
   it.each(routeFiles)("%s", (file) => {
     const source = read(file);
-    const guarded = has(source, SESSION_GUARDS) || has(source, SIGNATURE_GUARDS);
+    const handlers = exportedHandlers(source);
+    expect(handlers.length, `${file}: no exported handler found`).toBeGreaterThan(0);
+    const sessionHelpers = guardingHelpers(source, SESSION_GUARDS);
+    const signatureHelpers = guardingHelpers(source, SIGNATURE_GUARDS);
     const declared = PUBLIC_ROUTES[file];
-    if (declared) {
-      expect(guarded, `${file} is declared public but has a guard: remove it from the list`).toBe(
-        false,
-      );
-      if (declared.rateLimited) {
-        expect(has(source, RATE_LIMITS), `${file}: a public route must be rate limited`).toBe(true);
+    for (const { method, body } of handlers) {
+      const guarded =
+        guardedBy(body, SESSION_GUARDS, sessionHelpers) ||
+        guardedBy(body, SIGNATURE_GUARDS, signatureHelpers);
+      if (declared) {
+        expect(
+          guarded,
+          `${file} ${method} is declared public but has a guard: remove it from the list`,
+        ).toBe(false);
+        if (declared.rateLimited) {
+          expect(
+            has(body, RATE_LIMITS),
+            `${file} ${method}: a public route must be rate limited`,
+          ).toBe(true);
+        }
+        continue;
       }
-      return;
+      expect(
+        guarded,
+        `${file} ${method}: no session guard or signature verification in this handler (or a helper it calls). Add one, or declare the route public (with a rate limit) in this test.`,
+      ).toBe(true);
     }
-    expect(
-      guarded,
-      `${file}: no session guard or signature verification found. Add one, or declare it public (with a rate limit) in this test.`,
-    ).toBe(true);
   });
 
   it("declares only routes that exist", () => {
     expect(Object.keys(PUBLIC_ROUTES).filter((f) => !routeFiles.includes(f))).toEqual([]);
   });
-});
 
+  it("exports handlers only as `export async function METHOD` (plus segment config), so none can hide", () => {
+    for (const file of routeFiles) {
+      expect(
+        unexpectedExports(read(file), ROUTE_SEGMENT_CONFIG),
+        `${file}: handlers must be \`export async function\``,
+      ).toEqual([]);
+    }
+  });
+
+  it("every file under src/app/api is a route module (no helper modules with hidden handlers)", () => {
+    const others = walk(path.join(root, "app/api"), (f) => f.endsWith(".ts") && f !== "route.ts");
+    expect(others).toEqual([]);
+  });
+});
 describe("every exported Server Action is guarded", () => {
   it("finds the actions", () => {
     expect(actionFiles.length).toBeGreaterThan(15);
@@ -169,6 +242,21 @@ describe("every exported Server Action is guarded", () => {
         `${file}#${name}: no session guard found. Add one, or declare it in this test with why.`,
       ).toBe(true);
     }
+  });
+
+  it("exports actions only as `export async function`, and only under src/actions", () => {
+    for (const file of actionFiles) {
+      expect(
+        unexpectedExports(read(file), /^$/),
+        `${file}: actions must be \`export async function\``,
+      ).toEqual([]);
+    }
+    const outside = walk(root, (f) => f.endsWith(".ts") || f.endsWith(".tsx")).filter(
+      (f) => !f.startsWith("actions/") && /^"use server";?\s*$/m.test(read(f)),
+    );
+    expect(outside, "server action modules live under src/actions so this test sees them").toEqual(
+      [],
+    );
   });
 
   it("declares only actions that exist", () => {
