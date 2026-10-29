@@ -146,6 +146,10 @@ describe("provider client environment isolation", () => {
     expect(mocks.stripeConstructor).toHaveBeenCalledTimes(1);
     expect(mocks.openAIConstructor).toHaveBeenCalledTimes(1);
     expect(mocks.anthropicConstructor).toHaveBeenCalledTimes(1);
+    // No SDK retries (the caller retries), and a request never outlives the job that made it.
+    expect(mocks.anthropicConstructor).toHaveBeenCalledWith(
+      expect.objectContaining({ maxRetries: 0, timeout: 60_000 }),
+    );
     expect(mocks.resendConstructor).toHaveBeenCalledTimes(1);
     expect(mocks.fetch).not.toHaveBeenCalled();
 
