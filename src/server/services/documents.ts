@@ -200,13 +200,23 @@ const DOCUMENT_VIEW_SELECT = {
 
 type DocumentViewRow = Prisma.DocumentGetPayload<{ select: typeof DOCUMENT_VIEW_SELECT }>;
 
-/** `stalled`: still queued or processing long after every retry of its job ran out. */
-function documentView({ updatedAt, ...document }: DocumentViewRow, now: Date) {
+/**
+ * The document as shown to its organization (any row with at least the view's
+ * fields): the view's fields only, plus `stalled` (still queued or processing
+ * long after every retry of its job ran out).
+ */
+export function toDocumentView(row: DocumentViewRow, now: Date = new Date()) {
+  const picked = Object.fromEntries(
+    Object.keys(DOCUMENT_VIEW_SELECT).map((key) => [key, row[key as keyof DocumentViewRow]]),
+  ) as DocumentViewRow;
+  const { updatedAt, ...document } = picked;
   return {
     ...document,
     stalled: isDocumentStalled({ status: document.status, updatedAt }, now),
   };
 }
+
+const documentView = toDocumentView;
 
 /**
  * The organization's documents. `stalled`: still queued or processing long after

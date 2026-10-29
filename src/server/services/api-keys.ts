@@ -2,7 +2,7 @@ import "server-only";
 
 import { createHash, randomBytes } from "node:crypto";
 import { tenantDb } from "@/server/db/tenant";
-import { getEntitlements } from "./billing/entitlements";
+import { EntitlementError, getEntitlements } from "./billing/entitlements";
 import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
 
@@ -32,7 +32,7 @@ export async function createApiKey(
   input: { name: string; scopes: string[] },
 ): Promise<{ plaintext: string }> {
   const ent = await getEntitlements(ctx.orgId);
-  if (!ent.apiAccess) throw new Error("API access requires the PRO plan");
+  if (!ent.apiAccess) throw new EntitlementError("apiAccess", "API access requires the PRO plan");
 
   const secret = randomBytes(24).toString("base64url");
   const plaintext = `syv_live_${secret}`;

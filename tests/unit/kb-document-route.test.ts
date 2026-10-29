@@ -155,3 +155,15 @@ describe("DELETE /api/v1/kb/documents/{id}", () => {
     expect(m.remove).not.toHaveBeenCalled();
   });
 });
+
+describe("toDocumentView (the create response)", () => {
+  it("keeps the list's fields only: never the storage object path or the uploader", async () => {
+    const { toDocumentView } = await import("@/server/services/documents");
+    const view = toDocumentView(m.rows[0] as never);
+
+    expect(view).toMatchObject({ id: DOC, title: "Price list", status: "FAILED", stalled: false });
+    expect(view).not.toHaveProperty("storagePath");
+    expect(view).not.toHaveProperty("uploadedById");
+    expect(view).not.toHaveProperty("deletedAt");
+  });
+});

@@ -88,3 +88,34 @@ describe("createApiKeyAction scopes", () => {
     expect(mocks.createApiKey).not.toHaveBeenCalled();
   });
 });
+
+describe("createApiKeyAction error codes", () => {
+  it("a plan without API access → entitlement_exceeded", async () => {
+    const { EntitlementError } = await import("@/server/services/billing/entitlements");
+    mocks.createApiKey.mockRejectedValueOnce(
+      new EntitlementError("apiAccess", "API access requires the PRO plan"),
+    );
+
+    await expect(createApiKeyAction({ name: "k", scopes: ["crm:read"] })).resolves.toEqual({
+      error: "entitlement_exceeded",
+    });
+  });
+
+  it("an unexpected failure → failed, without leaking its message", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.createApiKey.mockRejectedValueOnce(
+      Object.assign(new Error("Invalid `prisma.apiKey.create()` invocation"), {
+        name: "PrismaClientKnownRequestError",
+      }),
+    );
+
+    await expect(createApiKeyAction({ name: "k", scopes: ["crm:read"] })).resolves.toEqual({
+      error: "failed",
+    });
+    expect(JSON.parse(String(error.mock.calls[0]![0]))).toEqual({
+      event: "create_api_key_failed",
+      name: "PrismaClientKnownRequestError",
+    });
+    error.mockRestore();
+  });
+});
