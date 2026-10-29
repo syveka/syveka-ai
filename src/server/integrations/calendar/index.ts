@@ -25,8 +25,6 @@ export function listAvailableProviders(): Array<{
     { provider: "GOOGLE", configured: googleCalendarAdapter.isConfigured() },
     { provider: "MICROSOFT", configured: microsoftCalendarAdapter.isConfigured() },
   ];
-  if (process.env.CALENDAR_MOCK_PROVIDER === "1" || process.env.NODE_ENV !== "production") {
-    out.push({ provider: "MOCK", configured: true });
-  }
+  if (mockCalendarAdapter.isConfigured()) out.push({ provider: "MOCK", configured: true });
   return out;
 }
