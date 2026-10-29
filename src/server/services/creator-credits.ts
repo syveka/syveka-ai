@@ -3,7 +3,7 @@ import "server-only";
 import { Prisma, type CreatorGenerationType } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import type { TenantContext } from "@/server/auth/session";
-import { getEntitlements } from "./billing/entitlements";
+import { EntitlementError, getEntitlements } from "./billing/entitlements";
 
 /**
  * Creator Studio credit system (Phase 2): a server-side-only reserve →
@@ -132,6 +132,16 @@ export async function reserveCreatorCredits(
   params: { generationId: string; amount: number },
 ): Promise<void> {
   await ensureMonthlyCreditGrant(ctx.orgId);
+  // A locked organization (past due too long, canceled over its limits) spends
+  // nothing on a paid provider call, whatever balance it still holds; the
+  // same lockout every other paid feature applies.
+  const ent = await getEntitlements(ctx.orgId);
+  if (ent.readOnly) {
+    throw new EntitlementError(
+      "creatorCreditsPerMonth",
+      "The organization is read-only until its subscription is resolved.",
+    );
+  }
 
   await unscopedPrisma.$transaction(async (tx) => {
     const result = await tx.creatorCreditBalance.updateMany({
