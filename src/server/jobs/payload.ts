@@ -18,3 +18,19 @@ export function jobPayloadJson(rawBody: string): unknown {
     return undefined;
   }
 }
+
+/**
+ * How many times QStash delivers a job again after a non-2xx answer, so a
+ * message is delivered at most JOB_MAX_RETRIES + 1 times (see enqueue).
+ */
+export const JOB_MAX_RETRIES = 3;
+
+/**
+ * Whether QStash will deliver this message again after a non-2xx answer.
+ * QStash counts the retries so far in this header; without it (a manual or
+ * test delivery) nothing is assumed to follow, so the attempt is the last.
+ */
+export function jobWillBeRetried(request: Request): boolean {
+  const retried = request.headers.get("upstash-retried");
+  return retried !== null && Number(retried) < JOB_MAX_RETRIES;
+}

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { jobPayloadJson } from "@/server/jobs/payload";
+import { jobPayloadJson, jobWillBeRetried } from "@/server/jobs/payload";
 import type { Prisma } from "@/generated/prisma/client/client";
 import { WorkflowNotificationEmail } from "../../../../../../emails/workflow-notification";
 import type { WorkflowStep } from "@/lib/validators/workflows";
@@ -111,6 +111,27 @@ class WorkflowStepRefusedError extends Error {
   constructor(readonly reason: "ai_quota_exceeded") {
     super(reason);
   }
+}
+
+/**
+ * A step failure whose message was written here for the workflow's creator
+ * (an invalid recipient, a missing contact). Only these messages and
+ * refusals are shown; any other error (a provider's, the database's) is
+ * described by its name alone, so no internal text reaches a notification,
+ * the run record or the response.
+ */
+class WorkflowStepError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "WorkflowStepError";
+  }
+}
+
+function failureText(err: unknown, fallback: string): string {
+  if (err instanceof WorkflowStepRefusedError || err instanceof WorkflowStepError) {
+    return err.message;
+  }
+  return err instanceof Error ? `${fallback} (${err.name})` : fallback;
 }
 
 /**
@@ -376,6 +397,14 @@ export async function POST(request: Request): Promise<NextResponse> {
         existing?.status === "FAILED" ||
         (existing?.status === "RUNNING" && existing.startedAt < staleSince);
       if (!existing || !isReclaimable) {
+        // RUNNING within the window: another delivery is working on it now,
+        // or was killed by the platform less than STALE_RUNNING_MS ago. A 2xx
+        // here would end this message's retries, so a killed run would never
+        // be reclaimed; 409 makes QStash deliver again later, when the run has
+        // finished (acknowledged then) or gone stale (reclaimed then).
+        if (existing?.status === "RUNNING") {
+          return NextResponse.json({ error: "run_in_progress" }, { status: 409 });
+        }
         return NextResponse.json({
           skipped: "duplicate_trigger",
           duplicate: existing?.status === "SUCCEEDED",
@@ -411,7 +440,8 @@ export async function POST(request: Request): Promise<NextResponse> {
         },
       });
       if (reclaimed.count === 0) {
-        return NextResponse.json({ skipped: "duplicate_trigger", duplicate: false });
+        // A concurrent delivery reclaimed it first and is running it now.
+        return NextResponse.json({ error: "run_in_progress" }, { status: 409 });
       }
       run = await unscopedPrisma.workflowRun.findFirstOrThrow({
         where: { organizationId: orgId, workflowId, sourceEventKey },
@@ -502,7 +532,10 @@ export async function POST(request: Request): Promise<NextResponse> {
               results.push({ stepId: step.id, status: "ok", output: text });
               break;
             }
-            return NextResponse.json({ ok: true, skipped: "step_in_progress", stepId: step.id });
+            return NextResponse.json(
+              { error: "step_in_progress", stepId: step.id },
+              { status: 409 },
+            );
           }
           try {
             // Checked only for a step this attempt actually claimed: a
@@ -576,11 +609,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             }
           } catch (stepErr) {
             if (!(stepErr instanceof StepFencedError)) {
-              await failStep(
-                unscopedPrisma,
-                claim,
-                stepErr instanceof Error ? stepErr.message : "ai.generate failed",
-              );
+              await failStep(unscopedPrisma, claim, failureText(stepErr, "ai.generate failed"));
             }
             throw stepErr;
           }
@@ -598,11 +627,15 @@ export async function POST(request: Request): Promise<NextResponse> {
               results.push({ stepId: step.id, status: "ok" });
               break;
             }
-            return NextResponse.json({ ok: true, skipped: "step_in_progress", stepId: step.id });
+            return NextResponse.json(
+              { error: "step_in_progress", stepId: step.id },
+              { status: 409 },
+            );
           }
           try {
             const to = interpolate(step.to, ctx);
-            if (!to.includes("@")) throw new Error(`email.send: invalid recipient "${to}"`);
+            if (!to.includes("@"))
+              throw new WorkflowStepError(`email.send: invalid recipient "${to}"`);
             const sent = await sendEmail({
               to,
               subject: interpolate(step.subject, ctx),
@@ -625,11 +658,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             results.push({ stepId: step.id, status: "ok" });
           } catch (stepErr) {
             if (!(stepErr instanceof StepFencedError)) {
-              await failStep(
-                unscopedPrisma,
-                claim,
-                stepErr instanceof Error ? stepErr.message : "email.send failed",
-              );
+              await failStep(unscopedPrisma, claim, failureText(stepErr, "email.send failed"));
             }
             throw stepErr;
           }
@@ -647,14 +676,17 @@ export async function POST(request: Request): Promise<NextResponse> {
               results.push({ stepId: step.id, status: "ok" });
               break;
             }
-            return NextResponse.json({ ok: true, skipped: "step_in_progress", stepId: step.id });
+            return NextResponse.json(
+              { error: "step_in_progress", stepId: step.id },
+              { status: 409 },
+            );
           }
           try {
             const contactId = String(resolveField(step.contactIdVar, ctx) ?? "");
             const contact = await unscopedPrisma.contact.findFirst({
               where: { id: contactId, organizationId: orgId },
             });
-            if (!contact) throw new Error("crm.create_activity: contact not found");
+            if (!contact) throw new WorkflowStepError("crm.create_activity: contact not found");
             // DB-local side effect: creating the Activity and marking the
             // step SUCCEEDED commit atomically together, so there is no
             // crash window between them at all (unlike email/AI, which
@@ -694,7 +726,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             await failStep(
               unscopedPrisma,
               claim,
-              stepErr instanceof Error ? stepErr.message : "crm.create_activity failed",
+              failureText(stepErr, "crm.create_activity failed"),
             );
             throw stepErr;
           }
@@ -719,7 +751,10 @@ export async function POST(request: Request): Promise<NextResponse> {
               );
               break;
             }
-            return NextResponse.json({ ok: true, skipped: "step_in_progress", stepId: step.id });
+            return NextResponse.json(
+              { error: "step_in_progress", stepId: step.id },
+              { status: 409 },
+            );
           }
           try {
             // Same atomic-transaction + fencing treatment as
@@ -763,11 +798,7 @@ export async function POST(request: Request): Promise<NextResponse> {
               results.push({ stepId: step.id, status: "ok" });
               break;
             }
-            await failStep(
-              unscopedPrisma,
-              claim,
-              stepErr instanceof Error ? stepErr.message : "notify.member failed",
-            );
+            await failStep(unscopedPrisma, claim, failureText(stepErr, "notify.member failed"));
             throw stepErr;
           }
           break;
@@ -787,26 +818,39 @@ export async function POST(request: Request): Promise<NextResponse> {
             // response was lost in transit) must stop here rather than
             // fall through and run the *next* steps immediately, which
             // would race the legitimately scheduled resume.
-            return NextResponse.json({
-              ok: true,
-              skipped: claim.reason === "succeeded" ? "duplicate_wait_resume" : "step_in_progress",
-              stepId: step.id,
-            });
+            if (claim.reason === "succeeded") {
+              return NextResponse.json({
+                ok: true,
+                skipped: "duplicate_wait_resume",
+                stepId: step.id,
+              });
+            }
+            return NextResponse.json(
+              { error: "step_in_progress", stepId: step.id },
+              { status: 409 },
+            );
           }
           results.push({ stepId: step.id, status: "ok" });
           await persist("WAITING");
-          await enqueue(
-            "run-workflow",
-            {
-              workflowId,
-              orgId,
-              triggerType: parsed.data.triggerType,
-              triggerData,
-              runId: run.id,
-              resumeFromIndex: i + 1,
-            },
-            { delaySeconds: step.seconds },
-          );
+          try {
+            await enqueue(
+              "run-workflow",
+              {
+                workflowId,
+                orgId,
+                triggerType: parsed.data.triggerType,
+                triggerData,
+                runId: run.id,
+                resumeFromIndex: i + 1,
+              },
+              { delaySeconds: step.seconds },
+            );
+          } catch (enqueueErr) {
+            // No resume is scheduled: the step must not stay CLAIMED, or the
+            // retry that reclaims this run would find it "in progress" forever.
+            await failStep(unscopedPrisma, claim, failureText(enqueueErr, "wait.duration failed"));
+            throw enqueueErr;
+          }
           try {
             await completeStep(unscopedPrisma, claim, undefined);
           } catch (completeErr) {
@@ -827,11 +871,25 @@ export async function POST(request: Request): Promise<NextResponse> {
     await recordUsage(orgId, "WORKFLOW_RUNS", 1, { workflowId });
     return NextResponse.json({ ok: true });
   } catch (err) {
-    const message = err instanceof Error ? err.message.slice(0, 500) : "step failed";
+    const message = failureText(err, "step failed").slice(0, 500);
     results.push({ stepId: "error", status: "failed", output: message });
     await persist("FAILED", message);
-    // Only a creator who is still a member of this (not deleted) org is told.
-    if (await isCurrentMember(unscopedPrisma, orgId, workflow.createdById)) {
+    console.error(
+      JSON.stringify({
+        event: "workflow_run_failed",
+        orgId,
+        workflowId,
+        runId: run.id,
+        name: err instanceof Error ? err.name : "unknown",
+      }),
+    );
+    // Only a creator who is still a member of this (not deleted) org is told,
+    // and only once per run: not for an attempt QStash will deliver again.
+    const terminal = err instanceof WorkflowStepRefusedError;
+    if (
+      (terminal || !jobWillBeRetried(request)) &&
+      (await isCurrentMember(unscopedPrisma, orgId, workflow.createdById))
+    ) {
       await unscopedPrisma.notification.create({
         data: {
           organizationId: orgId,

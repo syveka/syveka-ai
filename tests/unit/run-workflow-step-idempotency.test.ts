@@ -628,8 +628,9 @@ describe("step-level idempotency: concurrent overlap during a stale run-level re
       }),
     );
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toMatchObject({ skipped: "step_in_progress" });
+    // 409: QStash delivers again later, when the step has finished or its claim is stale.
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: "step_in_progress" });
     expect(fakeDb.activity.create).not.toHaveBeenCalled();
   });
 });
