@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { jobPayloadJson } from "@/server/jobs/payload";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -32,7 +33,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const body = await verifyJobRequest(request);
   if (body === null) return NextResponse.json({ error: "invalid signature" }, { status: 401 });
 
-  const parsed = payloadSchema.safeParse(JSON.parse(body));
+  const parsed = payloadSchema.safeParse(jobPayloadJson(body));
   if (!parsed.success) return NextResponse.json({ error: "invalid payload" }, { status: 400 });
 
   // A reminder of a missing or soft-deleted organization is left as it is

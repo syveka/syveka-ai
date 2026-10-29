@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { jobPayloadJson } from "@/server/jobs/payload";
 import type { Prisma } from "@/generated/prisma/client/client";
 import { WorkflowNotificationEmail } from "../../../../../../emails/workflow-notification";
 import type { WorkflowStep } from "@/lib/validators/workflows";
@@ -273,7 +274,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const rawBody = await verifyJobRequest(request);
   if (rawBody === null) return NextResponse.json({ error: "invalid signature" }, { status: 401 });
 
-  const parsed = payloadSchema.safeParse(JSON.parse(rawBody));
+  const parsed = payloadSchema.safeParse(jobPayloadJson(rawBody));
   if (!parsed.success) return NextResponse.json({ error: "invalid payload" }, { status: 400 });
   const { workflowId, orgId, triggerData, runId, resumeFromIndex, sourceEventKey } = parsed.data;
 

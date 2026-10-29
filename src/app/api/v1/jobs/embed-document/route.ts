@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { jobPayloadJson } from "@/server/jobs/payload";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,7 +79,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "invalid signature" }, { status: 401 });
   }
 
-  const parsed = payloadSchema.safeParse(JSON.parse(rawBody));
+  const parsed = payloadSchema.safeParse(jobPayloadJson(rawBody));
   if (!parsed.success) return NextResponse.json({ error: "invalid payload" }, { status: 400 });
   const { documentId, orgId, inlineContent } = parsed.data;
 

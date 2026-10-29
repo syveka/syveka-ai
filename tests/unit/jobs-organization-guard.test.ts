@@ -1003,3 +1003,27 @@ describe("publish-creator-post", () => {
     expect(fx.publishPost).toHaveBeenCalledTimes(1);
   });
 });
+
+// ── malformed bodies ───────────────────────────────────────────────────────
+describe("a malformed job body is refused (400), never retried into the dead-letter queue", () => {
+  const malformed = (body: string) =>
+    new Request("https://jobs.test/api/v1/jobs", { method: "POST", body });
+
+  it.each([
+    ["send-reminder", sendReminder],
+    ["embed-document", embedDocument],
+    ["post-call", postCall],
+    ["publish-creator-post", publishPost],
+  ])("%s", async (_name, handler) => {
+    for (const body of ["not json", "{", ""]) {
+      const res = await handler(malformed(body));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid payload" });
+    }
+    expect(fx.sendEmail).not.toHaveBeenCalled();
+    expect(fx.embed).not.toHaveBeenCalled();
+    expect(fx.anthropic).not.toHaveBeenCalled();
+    expect(fx.publishPost).not.toHaveBeenCalled();
+    expect(db.organization.findFirst).not.toHaveBeenCalled();
+  });
+});
