@@ -122,7 +122,16 @@ export async function changeRoleAction(
   try {
     await changeMemberRole(ctx, parsed.data.memberId, parsed.data.role as Role);
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "failed" };
+    // Stable codes only: exception text (Prisma's, a provider's) never
+    // reaches the client. The name is enough to find the cause in the logs.
+    if (e instanceof MemberError) return { error: e.code };
+    console.error(
+      JSON.stringify({
+        event: "change_member_role_failed",
+        name: e instanceof Error ? e.name : "unknown",
+      }),
+    );
+    return { error: "failed" };
   }
 
   revalidatePath("/settings/members");
