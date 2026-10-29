@@ -12,6 +12,7 @@ import {
 } from "@/server/services/organizations";
 import { createSupabaseServer } from "@/server/supabase/server";
 import { createOrgSchema } from "@/lib/validators/organization";
+import { actionRateLimitError } from "@/server/security/rate-limit";
 
 export type OrgActionState = { error?: string };
 
@@ -21,6 +22,12 @@ export async function createOrganizationAction(
 ): Promise<OrgActionState> {
   const user = await getSessionUser();
   if (!user) throw new AuthError("Not authenticated");
+
+  // Each organization gets its own plan allowances, so creating them is
+  // bounded per user like sign-up is per address (the `auth` limiter), and
+  // refused when the limit can't be checked.
+  const limited = await actionRateLimitError(["auth", `org-create:${user.id}`]);
+  if (limited) return { error: limited };
 
   const parsed = createOrgSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };

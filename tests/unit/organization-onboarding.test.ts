@@ -8,9 +8,14 @@ const mocks = vi.hoisted(() => ({
   redirect: vi.fn((path: string) => {
     throw new Error(`NEXT_REDIRECT:${path}`);
   }),
+  // Within its rate limit by default (the limiter itself: rate-limit-gaps.test.ts).
+  actionRateLimitError: vi.fn(async () => null as "rate_limited" | "service_unavailable" | null),
 }));
 
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+vi.mock("@/server/security/rate-limit", () => ({
+  actionRateLimitError: mocks.actionRateLimitError,
+}));
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
 vi.mock("@/server/auth/session", () => ({
   getSessionUser: mocks.getSessionUser,
@@ -40,6 +45,32 @@ describe("createOrganizationAction — onboarding activation", () => {
     vi.clearAllMocks();
     mocks.getSessionUser.mockResolvedValue({ id: "user-1", email: "u@example.com" });
     mocks.countMemberships.mockReset().mockResolvedValue(0);
+    mocks.actionRateLimitError.mockResolvedValue(null);
+  });
+
+  it("is bounded per user: a refused limit creates nothing and reports the code", async () => {
+    mocks.actionRateLimitError.mockResolvedValueOnce("rate_limited");
+
+    const result = await createOrganizationAction(
+      {},
+      formData({ name: "Acme Oy", industry: "Retail", defaultLocale: "EN" }),
+    );
+
+    expect(result).toEqual({ error: "rate_limited" });
+    expect(mocks.createOrganization).not.toHaveBeenCalled();
+    expect(mocks.actionRateLimitError).toHaveBeenCalledWith(["auth", "org-create:user-1"]);
+  });
+
+  it("fails closed when the limit can't be checked", async () => {
+    mocks.actionRateLimitError.mockResolvedValueOnce("service_unavailable");
+
+    const result = await createOrganizationAction(
+      {},
+      formData({ name: "Acme Oy", industry: "Retail", defaultLocale: "EN" }),
+    );
+
+    expect(result).toEqual({ error: "service_unavailable" });
+    expect(mocks.createOrganization).not.toHaveBeenCalled();
   });
 
   it("sends a brand-new organization to Business DNA setup, not straight to the dashboard", async () => {
