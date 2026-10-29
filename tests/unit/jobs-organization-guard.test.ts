@@ -124,14 +124,17 @@ const db = {
       ),
     ),
     // The embed job's claim: PENDING/FAILED, or PROCESSING last updated before `lt`.
+    // Its READY write: the claimed (PROCESSING), still existing document.
     updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
       const claimable = (d: Row) =>
-        (where.OR as Row[]).some((c) =>
-          typeof c.status === "string"
-            ? d.status === c.status &&
-              (d.updatedAt as Date) < ((c.updatedAt as { lt: Date }).lt as Date)
-            : (c.status as { in: string[] }).in.includes(d.status as string),
-        );
+        where.OR
+          ? (where.OR as Row[]).some((c) =>
+              typeof c.status === "string"
+                ? d.status === c.status &&
+                  (d.updatedAt as Date) < ((c.updatedAt as { lt: Date }).lt as Date)
+                : (c.status as { in: string[] }).in.includes(d.status as string),
+            )
+          : d.status === where.status;
       const d = s.documents.find(
         (x) =>
           x.id === where.id &&
@@ -150,8 +153,9 @@ const db = {
       return { count: 0 };
     }),
   },
-  $executeRaw: vi.fn(async (..._args: unknown[]) => {
-    s.chunks.push({ documentId: "inserted" });
+  // embed-document's chunk insert: the first bound value is the document id.
+  $executeRaw: vi.fn(async (sql: { values?: unknown[] }) => {
+    s.chunks.push({ documentId: sql.values?.[0] ?? "inserted", inserted: true });
     return 1;
   }),
   // Array form (embed-document's chunk inserts) and callback form (post-call's locked steps).
@@ -588,6 +592,25 @@ describe("embed-document", () => {
     expect(s.notifications).toHaveLength(0);
   });
 
+  it("document deleted during the embedding call: its new chunks are removed, never READY, no usage or notification", async () => {
+    fx.embed.mockImplementationOnce(async (texts: string[]) => {
+      // deleteDocument(): soft delete and remove the chunks it knows of.
+      doc().deletedAt = new Date();
+      s.chunks = s.chunks.filter((c) => c.documentId !== DOC_A);
+      return texts.map(() => [0.1]);
+    });
+
+    const res = await embedJob();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ skipped: "document gone" });
+    expect(s.chunks).toHaveLength(0);
+    expect(doc().status).toBe("PROCESSING");
+    expect(doc().deletedAt).not.toBeNull();
+    expect(fx.recordUsage).not.toHaveBeenCalled();
+    expect(s.notifications).toHaveLength(0);
+  });
+
   it("guard database failure: the job fails (retry), no embedding call", async () => {
     s.failOrgLookup = true;
     await expect(embedJob()).rejects.toThrow("database unavailable");
@@ -771,7 +794,7 @@ describe("embed-document — one run at a time, nothing left stuck", () => {
     expect(await res.json()).toEqual({ ok: true, chunks: 3 });
     expect(doc().status).toBe("READY");
     expect(s.chunks).toHaveLength(3);
-    expect(s.chunks.filter((c) => c.documentId === DOC_A)).toHaveLength(0);
+    expect(s.chunks.filter((c) => !c.inserted)).toHaveLength(0);
   });
 
   it("a FAILED document is processed again by a later delivery", async () => {

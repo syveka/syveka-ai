@@ -186,10 +186,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    await unscopedPrisma.document.update({
-      where: { id: documentId },
+    // Only the document this run claimed, if it still exists, becomes READY.
+    // Deleted during the run (deleteDocument removed the chunks it knew of,
+    // this run has since stored new ones): the new chunks go too, and
+    // nothing is recorded or notified. match_chunks() already ignores a
+    // deleted document's chunks; this keeps them from being stored at all.
+    const ready = await unscopedPrisma.document.updateMany({
+      where: { id: documentId, organizationId: orgId, deletedAt: null, status: "PROCESSING" },
       data: { status: "READY", chunkCount: chunks.length },
     });
+    if (ready.count === 0) {
+      await unscopedPrisma.documentChunk.deleteMany({ where: { documentId } });
+      return NextResponse.json({ skipped: "document gone" });
+    }
     chunkCount = chunks.length;
   } catch (err) {
     // Deleted meanwhile: no failure record or notification (no retry either).
