@@ -234,6 +234,7 @@ describe("createCreatorPost only links this organization's campaign and profile"
   let db: {
     creatorCampaign: { findFirst: ReturnType<typeof vi.fn> };
     creatorProfile: { findFirst: ReturnType<typeof vi.fn> };
+    creatorReferenceAsset: { count: ReturnType<typeof vi.fn> };
     creatorPost: { create: ReturnType<typeof vi.fn> };
   };
 
@@ -242,9 +243,28 @@ describe("createCreatorPost only links this organization's campaign and profile"
     db = {
       creatorCampaign: { findFirst: vi.fn(async () => ({ id: "camp-a" })) },
       creatorProfile: { findFirst: vi.fn(async () => ({ id: "profile-a" })) },
+      // This organization owns exactly "asset-a".
+      creatorReferenceAsset: {
+        count: vi.fn(
+          async ({ where }: { where: { id: { in: string[] } } }) =>
+            where.id.in.filter((id) => id === "asset-a").length,
+        ),
+      },
       creatorPost: { create: vi.fn(async () => ({ id: "post-1" })) },
     };
     tenantDbMock.mockReturnValue(db);
+  });
+
+  it("refuses another organization's asset ids (they would never publish anyway)", async () => {
+    await expect(
+      createCreatorPost(ctx(), { ...input, assetIds: ["asset-a", "asset-of-org-b"] } as never),
+    ).rejects.toMatchObject({ code: "media_missing" });
+    expect(db.creatorPost.create).not.toHaveBeenCalled();
+  });
+
+  it("accepts this organization's assets", async () => {
+    await createCreatorPost(ctx(), { ...input, assetIds: ["asset-a"] } as never);
+    expect(db.creatorPost.create).toHaveBeenCalledTimes(1);
   });
 
   it("refuses another organization's campaign (an AUTOPILOT one would skip approval)", async () => {

@@ -23,6 +23,20 @@ export class PostWorkflowError extends Error {
   }
 }
 
+/**
+ * Every asset a post names must be this organization's. Publishing checks
+ * this again; checking here keeps a foreign id out of the post (and its
+ * audit record) in the first place, like the campaign and profile checks.
+ */
+async function assertAssetsInTenant(db: ReturnType<typeof tenantDb>, assetIds: string[]) {
+  const distinct = [...new Set(assetIds)];
+  if (distinct.length === 0) return;
+  const found = await db.creatorReferenceAsset.count({ where: { id: { in: distinct } } });
+  if (found !== distinct.length) {
+    throw new PostWorkflowError("media_missing", "One or more post assets could not be found.");
+  }
+}
+
 export async function createCreatorPost(ctx: TenantContext, input: CreatePostInput) {
   await assertFeatureEnabled(ctx.orgId, CREATOR_STUDIO_FLAG);
   const db = tenantDb(ctx.orgId);
@@ -42,6 +56,7 @@ export async function createCreatorPost(ctx: TenantContext, input: CreatePostInp
     });
     if (!profile) throw new PostWorkflowError("profile_not_found", "Creator profile not found.");
   }
+  await assertAssetsInTenant(db, input.assetIds);
   const post = await db.creatorPost.create({
     data: {
       organizationId: ctx.orgId,
@@ -112,6 +127,8 @@ export async function updatePostContent(
       "Cannot edit a post that is already published.",
     );
   }
+
+  if (input.assetIds) await assertAssetsInTenant(db, input.assetIds);
 
   const wasApproved = post.approvalStatus === "APPROVED";
   const updated = await db.creatorPost.update({
