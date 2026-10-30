@@ -21,7 +21,11 @@ const { tenantDbMock, unscopedPrismaMock, getEntitlementsMock } = vi.hoisted(() 
       findFirst: vi.fn(async (): Promise<{ id: string } | null> => null),
     },
   },
-  getEntitlementsMock: vi.fn(async () => ({ creatorCreditsPerMonth: 200 })),
+  getEntitlementsMock: vi.fn(
+    async (): Promise<{ creatorCreditsPerMonth: number; readOnly?: boolean }> => ({
+      creatorCreditsPerMonth: 200,
+    }),
+  ),
 }));
 
 vi.mock("@/server/db/tenant", () => ({
@@ -31,6 +35,15 @@ vi.mock("@/server/db/tenant", () => ({
 
 vi.mock("@/server/services/billing/entitlements", () => ({
   getEntitlements: getEntitlementsMock,
+  EntitlementError: class EntitlementError extends Error {
+    readonly code = "entitlement_exceeded";
+    constructor(
+      public readonly limit: string,
+      message: string,
+    ) {
+      super(message);
+    }
+  },
 }));
 
 import {
@@ -284,5 +297,24 @@ describe("credit reservation ledger", () => {
 
     unscopedPrismaMock.creatorCreditTransaction.findFirst.mockResolvedValueOnce({ id: "txn-1" });
     expect(await creatorGenerationCreditsReserved("gen-1")).toBe(true);
+  });
+});
+
+describe("a read-only organization", () => {
+  it("reserve: refuses with the entitlement code and moves no credits, whatever the balance", async () => {
+    const { EntitlementError } = await import("@/server/services/billing/entitlements");
+    getEntitlementsMock.mockResolvedValue({ creatorCreditsPerMonth: 200, readOnly: true });
+
+    await expect(
+      reserveCreatorCredits(ctx(), { generationId: "gen-locked", amount: 5 }),
+    ).rejects.toBeInstanceOf(EntitlementError);
+
+    // The monthly grant may still be recorded; the reservation itself never is.
+    expect(unscopedPrismaMock.creatorCreditBalance.updateMany).not.toHaveBeenCalled();
+    const ledger = unscopedPrismaMock.creatorCreditTransaction.create.mock.calls.map(
+      (c) => (c as unknown as [{ data: { type: string } }])[0].data.type,
+    );
+    expect(ledger).not.toContain("RESERVE");
+    getEntitlementsMock.mockResolvedValue({ creatorCreditsPerMonth: 200 });
   });
 });

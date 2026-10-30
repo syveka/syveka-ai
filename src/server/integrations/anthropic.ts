@@ -6,8 +6,22 @@ import { abortableDelay, isTransientAiError, retryDelayMs } from "@/server/ai/re
 
 let anthropicClient: Anthropic | null = null;
 
+/**
+ * How long one request may wait for the provider's response (headers) before
+ * it fails here. The SDK's default is 10 minutes, longer than any route or
+ * job that calls it (post-call 120 s, run-workflow 300 s), so a hung
+ * connection was killed by the platform mid-job instead of failing in the
+ * caller, where it is recorded and retried. A streamed reply is not cut by
+ * this: the SDK clears the timer once the response starts.
+ */
+const ANTHROPIC_REQUEST_TIMEOUT_MS = 60_000;
+
 function getAnthropic(): Anthropic {
-  anthropicClient ??= new Anthropic({ apiKey: getAnthropicEnv().ANTHROPIC_API_KEY, maxRetries: 0 });
+  anthropicClient ??= new Anthropic({
+    apiKey: getAnthropicEnv().ANTHROPIC_API_KEY,
+    maxRetries: 0,
+    timeout: ANTHROPIC_REQUEST_TIMEOUT_MS,
+  });
   return anthropicClient;
 }
 

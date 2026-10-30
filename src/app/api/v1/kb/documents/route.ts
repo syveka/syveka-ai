@@ -26,7 +26,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const [
     { requirePermission },
     { AuthError },
-    { createDocument, DocumentIngestionError, UrlIngestionError },
+    { createDocument, DocumentIngestionError, UrlIngestionError, toDocumentView },
     { rateLimitRefusal },
   ] = await Promise.all([
     import("@/server/auth/guard"),
@@ -47,7 +47,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
     const document = await createDocument(ctx, body.data);
-    return NextResponse.json({ data: document }, { status: 201 });
+    // The list shape: never the storage object path or the uploader id.
+    return NextResponse.json({ data: toDocumentView(document) }, { status: 201 });
   } catch (e) {
     if (e instanceof AuthError) {
       return NextResponse.json({ error: { code: "forbidden" } }, { status: e.status });

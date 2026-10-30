@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/server/auth/guard";
 import { API_SCOPES, createApiKey, revokeApiKey } from "@/server/services/api-keys";
+import { EntitlementError } from "@/server/services/billing/entitlements";
 import { z } from "zod";
 
 const createSchema = z.object({
@@ -25,7 +26,15 @@ export async function createApiKeyAction(input: {
     revalidatePath("/settings/api-keys");
     return { plaintext };
   } catch (e) {
-    return { error: e instanceof Error ? e.message : "failed" };
+    // Stable codes only; exception text (Prisma's) never reaches the client.
+    if (e instanceof EntitlementError) return { error: e.code };
+    console.error(
+      JSON.stringify({
+        event: "create_api_key_failed",
+        name: e instanceof Error ? e.name : "unknown",
+      }),
+    );
+    return { error: "failed" };
   }
 }
 

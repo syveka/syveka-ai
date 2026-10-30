@@ -2,6 +2,7 @@ import "server-only";
 
 import { Client } from "@upstash/qstash";
 import { getQstashEnv } from "@/env";
+import { JOB_MAX_RETRIES } from "./payload";
 
 let qstash: Client | null = null;
 
@@ -33,7 +34,7 @@ export async function enqueue(
   await getQstash().publishJSON({
     url: `${NEXT_PUBLIC_APP_URL}/api/v1/jobs/${job}`,
     body: payload,
-    retries: 3,
+    retries: JOB_MAX_RETRIES,
     ...(opts?.delaySeconds ? { delay: opts.delaySeconds } : {}),
     ...(opts?.deduplicationId ? { deduplicationId: opts.deduplicationId } : {}),
   });

@@ -12,14 +12,17 @@ type SocialAccount = { id: string; platform: string; displayName: string };
 export function SchedulePostForm({
   postId,
   socialAccounts,
+  requireNotPublishedConfirmation = false,
 }: {
   postId: string;
   socialAccounts: SocialAccount[];
+  requireNotPublishedConfirmation?: boolean;
 }) {
   const t = useTranslations("creatorStudio.calendar");
   const router = useRouter();
   const [scheduledFor, setScheduledFor] = useState("");
   const [socialAccountId, setSocialAccountId] = useState(socialAccounts[0]?.id ?? "");
+  const [confirmedNotPublished, setConfirmedNotPublished] = useState(false);
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
 
@@ -51,15 +54,28 @@ export function SchedulePostForm({
           ))}
         </select>
       </div>
+      {requireNotPublishedConfirmation ? (
+        <label className="flex w-full items-center gap-2 text-xs">
+          <input
+            type="checkbox"
+            checked={confirmedNotPublished}
+            onChange={(e) => setConfirmedNotPublished(e.target.checked)}
+          />
+          {t("confirmNotPublished")}
+        </label>
+      ) : null}
       <Button
         size="sm"
-        disabled={pending || !scheduledFor}
+        disabled={
+          pending || !scheduledFor || (requireNotPublishedConfirmation && !confirmedNotPublished)
+        }
         onClick={() =>
           startTransition(async () => {
             setError(null);
             const res = await schedulePostAction(postId, {
               scheduledFor: new Date(scheduledFor).toISOString(),
               socialAccountId,
+              ...(requireNotPublishedConfirmation ? { confirmNotPublished: true } : {}),
             });
             if (res.error) setError(res.error);
             router.refresh();

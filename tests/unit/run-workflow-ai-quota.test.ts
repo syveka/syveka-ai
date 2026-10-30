@@ -205,11 +205,12 @@ function workflowWith(steps: unknown[]) {
   };
 }
 
-function post(body: Record<string, unknown>) {
+function post(body: Record<string, unknown>, headers: Record<string, string> = {}) {
   return POST(
     new Request("https://example.test/api/v1/jobs/run-workflow", {
       method: "POST",
       body: JSON.stringify(body),
+      headers,
     }),
   );
 }
@@ -278,6 +279,61 @@ describe("ai.generate AI quota", () => {
     expect(res.status).toBe(200);
     expect(fx.anthropicCreate).not.toHaveBeenCalled();
     expect(fakeDb.runs.get(run.id)!.status).toBe("FAILED");
+  });
+
+  it("a provider failure is recorded and reported by its name only: no provider text reaches the run, the creator or the response", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fakeDb.workflow.findFirst.mockResolvedValue(workflowWith([aiStep]));
+    fx.anthropicCreate.mockRejectedValueOnce(
+      Object.assign(new Error("401 at https://api.anthropic.com/v1/messages: invalid x-api-key"), {
+        name: "AuthenticationError",
+      }),
+    );
+
+    const res = await post(bookingTrigger, { "upstash-retried": "3" });
+
+    expect(res.status).toBe(500);
+    const body = await res.json();
+    expect(body).toEqual({ error: "step failed (AuthenticationError)" });
+    const exec = [...fakeDb.stepExecs.values()][0]!;
+    expect(exec.error).toBe("ai.generate failed (AuthenticationError)");
+    const run = [...fakeDb.runs.values()][0]!;
+    expect(run.error).toBe("step failed (AuthenticationError)");
+    expect(failureNotifications()).toHaveLength(1);
+    const everything = JSON.stringify([body, exec, run, fakeDb.notification.create.mock.calls]);
+    expect(everything).not.toContain("api.anthropic.com");
+    expect(everything).not.toContain("x-api-key");
+    vi.restoreAllMocks();
+  });
+
+  it("a creator is told once per run: not while QStash will deliver the message again", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fakeDb.workflow.findFirst.mockResolvedValue(workflowWith([aiStep]));
+    fx.anthropicCreate.mockRejectedValue(new Error("provider down"));
+    // One run per attempt here: this fixture can't replay one source event.
+    const attempt = (n: number, retried: string) =>
+      post(
+        { ...bookingTrigger, sourceEventKey: `booking.created:b${n}` },
+        { "upstash-retried": retried },
+      );
+
+    expect((await attempt(1, "0")).status).toBe(500);
+    expect(failureNotifications()).toHaveLength(0);
+    expect((await attempt(2, "2")).status).toBe(500);
+    expect(failureNotifications()).toHaveLength(0);
+    expect((await attempt(3, "3")).status).toBe(500);
+    expect(failureNotifications()).toHaveLength(1);
+    vi.restoreAllMocks();
+  });
+
+  it("without the retry header (a manual delivery) the creator is told at once", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fakeDb.workflow.findFirst.mockResolvedValue(workflowWith([aiStep]));
+    fx.anthropicCreate.mockRejectedValueOnce(new Error("provider down"));
+
+    expect((await post(bookingTrigger)).status).toBe(500);
+    expect(failureNotifications()).toHaveLength(1);
+    vi.restoreAllMocks();
   });
 
   it("within quota: counts one AI message for the generation", async () => {

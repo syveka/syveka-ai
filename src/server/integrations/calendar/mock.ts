@@ -56,8 +56,14 @@ export const mockProviderTestApi = {
 export const mockCalendarAdapter: CalendarProviderAdapter = {
   provider: "MOCK",
 
+  /**
+   * Available outside production, and in production only when
+   * CALENDAR_MOCK_PROVIDER=1. Checked wherever a connection starts (not only
+   * in the settings list), so a fake calendar can't be attached to a
+   * production organization by calling the connect action directly.
+   */
   isConfigured() {
-    return true;
+    return process.env.CALENDAR_MOCK_PROVIDER === "1" || process.env.NODE_ENV !== "production";
   },
 
   getAuthUrl({ redirectUri, state: oauthState }) {

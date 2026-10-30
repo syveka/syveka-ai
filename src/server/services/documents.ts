@@ -181,6 +181,44 @@ export async function createDocument(ctx: TenantContext, input: CreateDocumentIn
 }
 
 /**
+ * What a document looks like to its organization: never the storage object
+ * path (an internal location) and only the sanitized processing error.
+ */
+const DOCUMENT_VIEW_SELECT = {
+  id: true,
+  title: true,
+  sourceType: true,
+  sourceUrl: true,
+  status: true,
+  error: true,
+  chunkCount: true,
+  sizeBytes: true,
+  createdAt: true,
+  updatedAt: true,
+  mimeType: true,
+} as const;
+
+type DocumentViewRow = Prisma.DocumentGetPayload<{ select: typeof DOCUMENT_VIEW_SELECT }>;
+
+/**
+ * The document as shown to its organization (any row with at least the view's
+ * fields): the view's fields only, plus `stalled` (still queued or processing
+ * long after every retry of its job ran out).
+ */
+export function toDocumentView(row: DocumentViewRow, now: Date = new Date()) {
+  const picked = Object.fromEntries(
+    Object.keys(DOCUMENT_VIEW_SELECT).map((key) => [key, row[key as keyof DocumentViewRow]]),
+  ) as DocumentViewRow;
+  const { updatedAt, ...document } = picked;
+  return {
+    ...document,
+    stalled: isDocumentStalled({ status: document.status, updatedAt }, now),
+  };
+}
+
+const documentView = toDocumentView;
+
+/**
  * The organization's documents. `stalled`: still queued or processing long after
  * every retry of its job ran out (see isDocumentStalled), so it will never finish.
  */
@@ -190,29 +228,34 @@ export async function listDocuments(ctx: TenantContext) {
     where: { deletedAt: null },
     orderBy: { createdAt: "desc" },
     take: 100,
-    select: {
-      id: true,
-      title: true,
-      sourceType: true,
-      status: true,
-      error: true,
-      chunkCount: true,
-      sizeBytes: true,
-      createdAt: true,
-      updatedAt: true,
-      mimeType: true,
-    },
+    select: DOCUMENT_VIEW_SELECT,
   });
   const now = new Date();
-  return documents.map(({ updatedAt, ...document }) => ({
-    ...document,
-    stalled: isDocumentStalled({ status: document.status, updatedAt }, now),
-  }));
+  return documents.map((document) => documentView(document, now));
+}
+
+/** One of the organization's documents, in the same shape as the list, or null. */
+export async function getDocument(ctx: TenantContext, documentId: string) {
+  const document = await tenantDb(ctx.orgId).document.findFirst({
+    where: { id: documentId, deletedAt: null },
+    select: DOCUMENT_VIEW_SELECT,
+  });
+  return document ? documentView(document, new Date()) : null;
+}
+
+/** No such document in this organization (or already deleted). */
+export class DocumentNotFoundError extends Error {
+  constructor() {
+    super("Document not found");
+    this.name = "DocumentNotFoundError";
+  }
 }
 
 export async function deleteDocument(ctx: TenantContext, documentId: string): Promise<void> {
   const db = tenantDb(ctx.orgId);
-  const doc = await db.document.findFirstOrThrow({ where: { id: documentId } });
+  // Another organization's document is indistinguishable from an unknown id.
+  const doc = await db.document.findFirst({ where: { id: documentId, deletedAt: null } });
+  if (!doc) throw new DocumentNotFoundError();
 
   await db.document.update({ where: { id: documentId }, data: { deletedAt: new Date() } });
   await db.document.update({

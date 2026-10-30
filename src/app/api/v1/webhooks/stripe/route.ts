@@ -157,6 +157,21 @@ async function applySubscriptionUpsert(
   const item = sub.items.data[0];
   const priceId = item?.price.id ?? "";
   const plan = deps.planForPriceId(priceId);
+  if (!plan) {
+    // A price outside STRIPE_PRICE_* (a new or legacy price, another
+    // currency): a new subscription is stored as FREE and an existing one
+    // keeps its plan, so a paying customer may get the wrong limits. Nothing
+    // here can map it; the alert is for an operator to fix the price ids.
+    console.warn(
+      JSON.stringify({
+        alert: "stripe_unknown_price",
+        organizationId: orgId,
+        subscriptionId: sub.id,
+        priceId,
+        subscriptionStatus: sub.status,
+      }),
+    );
+  }
 
   await tx.subscription.upsert({
     where: { organizationId: orgId },

@@ -77,6 +77,26 @@ function ctx(orgId = "org-a"): TenantContext {
   return { userId: "user-1", email: "u@example.com", orgId, role: "MANAGER", locale: "en" };
 }
 
+/**
+ * Evaluates a claim's `where` against the single post: equality, `in`, `notIn` (NULL as in
+ * SQL) and nested OR. Ids are not checked; there is only one post.
+ */
+function claimMatches(post: Record<string, unknown>, where: Record<string, unknown>): boolean {
+  const field = (v: unknown, c: unknown): boolean => {
+    if (c && typeof c === "object" && "in" in c)
+      return v != null && (c.in as unknown[]).includes(v);
+    if (c && typeof c === "object" && "notIn" in c) {
+      return v != null && !(c.notIn as unknown[]).includes(v);
+    }
+    return (v ?? null) === c;
+  };
+  return Object.entries(where).every(([k, c]) =>
+    k === "OR"
+      ? (c as Array<Record<string, unknown>>).some((w) => claimMatches(post, w))
+      : k === "id" || k === "organizationId" || field(post[k], c),
+  );
+}
+
 describe("Creator Studio: approve -> schedule -> publish integration", () => {
   let post: Record<string, unknown>;
   let provider: { publishPost: ReturnType<typeof vi.fn> };
@@ -101,6 +121,8 @@ describe("Creator Studio: approve -> schedule -> publish integration", () => {
       socialAccountId: null,
       socialAccount: null,
       publishAttemptCount: 0,
+      lastErrorCode: null,
+      updatedAt: new Date("2026-11-02T10:00:00Z"),
     };
 
     provider = {
@@ -115,15 +137,16 @@ describe("Creator Studio: approve -> schedule -> publish integration", () => {
           Object.assign(post, resolveIncrements(data));
           return post;
         }),
+        findFirst: vi.fn(async () => post),
         updateMany: vi.fn(
           async ({
             where,
             data,
           }: {
-            where: { publishStatus: { in: string[] } };
+            where: Record<string, unknown>;
             data: Record<string, unknown>;
           }) => {
-            if (!where.publishStatus.in.includes(post.publishStatus as string)) return { count: 0 };
+            if (!claimMatches(post, where)) return { count: 0 };
             Object.assign(post, resolveIncrements(data));
             return { count: 1 };
           },
@@ -153,15 +176,16 @@ describe("Creator Studio: approve -> schedule -> publish integration", () => {
             }
           : null,
       })),
+      // The publish claim: SCHEDULED, or FAILED with a code (or none) outside `notIn`.
       updateMany: vi.fn(
         async ({
           where,
           data,
         }: {
-          where: { publishStatus: { in: string[] } };
+          where: Record<string, unknown>;
           data: Record<string, unknown>;
         }) => {
-          if (!where.publishStatus.in.includes(post.publishStatus as string)) return { count: 0 };
+          if (!claimMatches(post, where)) return { count: 0 };
           Object.assign(post, resolveIncrements(data));
           return { count: 1 };
         },

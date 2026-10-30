@@ -29,8 +29,9 @@ export async function scheduleEventReminders(params: {
     const sendAt = new Date(params.startsAt.getTime() - offset * 60_000);
     if (sendAt.getTime() <= now) continue;
     const dedupeKey = reminderDedupeKey(params.eventId, offset, params.startsAt);
+    let reminder: { id: string };
     try {
-      const reminder = await unscopedPrisma.reminder.create({
+      reminder = await unscopedPrisma.reminder.create({
         data: {
           organizationId: params.orgId,
           eventId: params.eventId,
@@ -38,14 +39,30 @@ export async function scheduleEventReminders(params: {
           dedupeKey,
         },
       });
+    } catch {
+      // Unique dedupeKey violation → already scheduled; skip silently.
+      continue;
+    }
+    try {
       await enqueue(
         "send-reminder",
         { reminderId: reminder.id },
         { delaySeconds: Math.floor((sendAt.getTime() - now) / 1000) },
       );
       scheduled += 1;
-    } catch {
-      // Unique dedupeKey violation → already scheduled; skip silently.
+    } catch (e) {
+      // No job exists for this row. Left in place, its dedupeKey would make
+      // every later attempt a silent "already scheduled" with nothing ever
+      // sent; removed, the next schedule call (a move, a re-save) can try again.
+      await unscopedPrisma.reminder.delete({ where: { id: reminder.id } }).catch(() => undefined);
+      console.error(
+        JSON.stringify({
+          event: "reminder_enqueue_failed",
+          orgId: params.orgId,
+          eventId: params.eventId,
+          name: e instanceof Error ? e.name : "unknown",
+        }),
+      );
     }
   }
   return scheduled;
@@ -59,7 +76,8 @@ export async function scheduleEventReminders(params: {
  * emailing their attendees because they were moved.
  *
  * Pending reminders for the old time are canceled, so their already-enqueued
- * jobs find no SCHEDULED row and send nothing; canceled rows also keep the
+ * jobs find no claimable row and send nothing. That includes FAILED ones,
+ * whose QStash retry may still be on its way; canceled rows also keep the
  * event marked as one that has reminders. Then reminders for the new time are
  * scheduled (none whose send time has already passed). A canceled reminder
  * for exactly the new time (the event moved away and back) is removed first so
@@ -75,7 +93,7 @@ export async function rescheduleEventReminders(params: {
   if ((await unscopedPrisma.reminder.count({ where: scope })) === 0) return 0;
 
   await unscopedPrisma.reminder.updateMany({
-    where: { ...scope, status: "SCHEDULED" },
+    where: { ...scope, status: { in: ["SCHEDULED", "FAILED"] } },
     data: { status: "CANCELED" },
   });
   await unscopedPrisma.reminder.deleteMany({
@@ -90,11 +108,4 @@ export async function rescheduleEventReminders(params: {
     },
   });
   return scheduleEventReminders(params);
-}
-
-export async function cancelEventReminders(eventId: string): Promise<void> {
-  await unscopedPrisma.reminder.updateMany({
-    where: { eventId, status: "SCHEDULED" },
-    data: { status: "CANCELED" },
-  });
 }

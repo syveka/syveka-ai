@@ -27,6 +27,7 @@ const s = vi.hoisted(() => ({
   orgs: [] as Array<{ id: string; name: string; deletedAt: Date | null }>,
   failOrgLookup: false,
   reminders: [] as Row[],
+  attendees: [] as Row[],
   events: [] as Row[],
   documents: [] as Row[],
   chunks: [] as Row[],
@@ -84,14 +85,20 @@ const db = {
         ...r,
         event: {
           ...e,
-          attendeeRecords: [{ email: "attendee@example.test", name: "Attendee" }],
+          attendeeRecords: s.attendees,
           booking: null,
           organization: { name: o.name, deletedAt: o.deletedAt },
         },
       };
     }),
     updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
-      const r = s.reminders.find((x) => x.id === where.id && x.status === where.status);
+      const claimable =
+        typeof where.status === "string"
+          ? [where.status]
+          : ((where.status as { in: string[] }).in ?? []);
+      const r = s.reminders.find(
+        (x) => x.id === where.id && claimable.includes(x.status as string),
+      );
       if (!r) return { count: 0 };
       r.status = data.status;
       return { count: 1 };
@@ -117,14 +124,17 @@ const db = {
       ),
     ),
     // The embed job's claim: PENDING/FAILED, or PROCESSING last updated before `lt`.
+    // Its READY write: the claimed (PROCESSING), still existing document.
     updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
       const claimable = (d: Row) =>
-        (where.OR as Row[]).some((c) =>
-          typeof c.status === "string"
-            ? d.status === c.status &&
-              (d.updatedAt as Date) < ((c.updatedAt as { lt: Date }).lt as Date)
-            : (c.status as { in: string[] }).in.includes(d.status as string),
-        );
+        where.OR
+          ? (where.OR as Row[]).some((c) =>
+              typeof c.status === "string"
+                ? d.status === c.status &&
+                  (d.updatedAt as Date) < ((c.updatedAt as { lt: Date }).lt as Date)
+                : (c.status as { in: string[] }).in.includes(d.status as string),
+            )
+          : d.status === where.status;
       const d = s.documents.find(
         (x) =>
           x.id === where.id &&
@@ -143,8 +153,9 @@ const db = {
       return { count: 0 };
     }),
   },
-  $executeRaw: vi.fn(async (..._args: unknown[]) => {
-    s.chunks.push({ documentId: "inserted" });
+  // embed-document's chunk insert: the first bound value is the document id.
+  $executeRaw: vi.fn(async (sql: { values?: unknown[] }) => {
+    s.chunks.push({ documentId: sql.values?.[0] ?? "inserted", inserted: true });
     return 1;
   }),
   // Array form (embed-document's chunk inserts) and callback form (post-call's locked steps).
@@ -218,13 +229,17 @@ const db = {
       const p = s.posts.find((x) => x.id === where.id && x.organizationId === where.organizationId);
       return p ? { ...p } : null;
     }),
+    // The publish claim: SCHEDULED, or FAILED with a code (or none) outside `notIn`.
     updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
-      const p = s.posts.find(
-        (x) =>
-          x.id === where.id &&
-          x.organizationId === where.organizationId &&
-          (where.publishStatus as { in: string[] }).in.includes(x.publishStatus as string),
-      );
+      const field = (v: unknown, c: unknown): boolean =>
+        c && typeof c === "object" && "notIn" in c
+          ? v != null && !(c.notIn as unknown[]).includes(v)
+          : (v ?? null) === c;
+      const matches = (x: Row, w: Row): boolean =>
+        Object.entries(w).every(([k, c]) =>
+          k === "OR" ? (c as Row[]).some((sub) => matches(x, sub)) : field(x[k], c),
+        );
+      const p = s.posts.find((x) => matches(x, where));
       if (!p) return { count: 0 };
       p.publishStatus = data.publishStatus;
       return { count: 1 };
@@ -258,7 +273,8 @@ vi.mock("@/server/db/tenant", () => ({
 vi.mock("@/server/integrations/resend", () => ({ sendEmail: fx.sendEmail }));
 vi.mock("../../emails/booking-email", () => ({
   bookingEmailSubject: () => "Reminder",
-  BookingEmail: () => null,
+  // Echoes its input, so a fake provider can tell one payload from another.
+  BookingEmail: (props: unknown) => ({ props }),
 }));
 vi.mock("@/server/integrations/openai", () => ({ embed: fx.embed }));
 vi.mock("@/server/ai/extract", () => ({ extractText: vi.fn(), extractFromUrl: vi.fn() }));
@@ -322,7 +338,17 @@ beforeEach(() => {
       location: null,
     },
   ];
-  s.reminders = [{ id: REM_A, organizationId: ORG_A, eventId: "evt-a", status: "SCHEDULED" }];
+  s.reminders = [
+    {
+      id: REM_A,
+      organizationId: ORG_A,
+      eventId: "evt-a",
+      status: "SCHEDULED",
+      // The 24 h reminder for evt-a's start.
+      sendAt: new Date("2026-11-01T09:00:00Z"),
+    },
+  ];
+  s.attendees = [{ email: "attendee@example.test", name: "Attendee" }];
   s.documents = [
     {
       id: DOC_A,
@@ -403,7 +429,7 @@ describe("send-reminder", () => {
   const reminder = () => s.reminders.find((r) => r.id === REM_A)!;
 
   it("active organization: sends and marks the reminder SENT (unchanged behavior)", async () => {
-    expect(await (await send()).json()).toEqual({ sent: 1 });
+    expect(await (await send()).json()).toEqual({ sent: 1, failed: 0 });
     expect(fx.sendEmail).toHaveBeenCalledTimes(1);
     expect(reminder().status).toBe("SENT");
   });
@@ -453,6 +479,279 @@ describe("send-reminder", () => {
   });
 });
 
+describe("send-reminder — delivery failures are recorded, never silent", () => {
+  const send = () => sendReminder(job({ reminderId: REM_A }));
+  const reminder = () => s.reminders.find((r) => r.id === REM_A)!;
+  const errorLogs = (spy: ReturnType<typeof vi.spyOn>) =>
+    spy.mock.calls.map((c) => JSON.parse(String(c[0])) as Record<string, unknown>);
+
+  it("sends to every recipient and reports the count (unchanged behavior)", async () => {
+    const res = await send();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ sent: 1, failed: 0 });
+    expect(reminder().status).toBe("SENT");
+  });
+
+  it("nobody reached: FAILED with a reason, logged without the address, and 500 for a retry", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fx.sendEmail.mockRejectedValueOnce(
+      Object.assign(new Error("502 from provider for attendee@example.test"), {
+        name: "ResendError",
+      }),
+    );
+
+    const res = await send();
+
+    expect(res.status).toBe(500);
+    expect(await res.json()).toEqual({ error: "send failed", sent: 0, failed: 1 });
+    expect(reminder().status).toBe("FAILED");
+    expect(reminder().lastError).toBe("email delivery failed: ResendError");
+    const logged = errorLogs(error).filter((l) => l.event === "reminder_email_failed");
+    expect(logged).toEqual([
+      {
+        event: "reminder_email_failed",
+        reminderId: REM_A,
+        eventId: "evt-a",
+        orgId: ORG_A,
+        name: "ResendError",
+      },
+    ]);
+    expect(JSON.stringify(error.mock.calls)).not.toContain("attendee@example.test");
+    expect(JSON.stringify(error.mock.calls)).not.toContain("502 from provider");
+    error.mockRestore();
+  });
+
+  it("a failed reminder is sent by the retry; a sent one is still never resent", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fx.sendEmail.mockRejectedValueOnce(new Error("provider down"));
+    expect((await send()).status).toBe(500);
+    expect(reminder().status).toBe("FAILED");
+
+    const retry = await send();
+
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual({ sent: 1, failed: 0 });
+    expect(reminder().status).toBe("SENT");
+    expect(fx.sendEmail).toHaveBeenCalledTimes(2);
+    await send();
+    expect(fx.sendEmail).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+
+  it("some reached: stays SENT (never resent), the failures are logged and counted", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    // Two attendees: the first send fails, the second succeeds.
+    s.attendees = [
+      { email: "first@example.test", name: "First" },
+      { email: "second@example.test", name: "Second" },
+    ];
+    fx.sendEmail.mockRejectedValueOnce(new Error("provider down"));
+
+    const res = await send();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ sent: 1, failed: 1 });
+    expect(reminder().status).toBe("SENT");
+    expect(errorLogs(error).filter((l) => l.event === "reminder_email_failed")).toHaveLength(1);
+    await send();
+    expect(fx.sendEmail).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+});
+
+describe("send-reminder — the provider accepted the email but the answer was lost", () => {
+  const send = () => sendReminder(job({ reminderId: REM_A }));
+  const reminder = () => s.reminders.find((r) => r.id === REM_A)!;
+  type SendParams = {
+    to: string;
+    subject: string;
+    react: { props: unknown };
+    idempotencyKey?: string;
+  };
+
+  /**
+   * A fake of Resend's documented idempotency (24-hour key store): the same
+   * key with the same payload returns the original answer without sending;
+   * with a different payload, 409 invalid_idempotent_request. `loseAnswers`
+   * drops the answer after the provider has accepted the email; `busy` answers
+   * 409 concurrent_idempotent_requests first. It assumes a refused request
+   * stores no key (Resend doesn't document either way).
+   */
+  let accepted: Array<{ to: string; subject: string }>;
+  let loseAnswers: number;
+  let busy: number;
+  const refuse = async () => {
+    throw new Error("provider down");
+  };
+  beforeEach(() => {
+    accepted = [];
+    loseAnswers = 0;
+    busy = 0;
+    const store = new Map<string, { payload: string; id: string }>();
+    fx.sendEmail.mockImplementation((async (params: SendParams) => {
+      if (busy > 0) {
+        busy -= 1;
+        throw Object.assign(new Error("Resend error: request in progress"), {
+          name: "EmailSendError",
+          code: "concurrent_idempotent_requests",
+        });
+      }
+      const payload = JSON.stringify([params.to, params.subject, params.react.props]);
+      const prior = params.idempotencyKey ? store.get(params.idempotencyKey) : undefined;
+      if (prior && prior.payload !== payload) {
+        throw Object.assign(new Error("Resend error: idempotency key reused"), {
+          name: "EmailSendError",
+          code: "invalid_idempotent_request",
+        });
+      }
+      const id = prior?.id ?? `email-${accepted.push({ to: params.to, subject: params.subject })}`;
+      if (params.idempotencyKey) store.set(params.idempotencyKey, { payload, id });
+      if (loseAnswers > 0) {
+        loseAnswers -= 1;
+        throw Object.assign(new Error("Resend error: Unable to fetch data."), {
+          name: "EmailSendError",
+          code: "application_error",
+        });
+      }
+      return { id };
+    }) as never);
+  });
+  // The fake must not leak into later describe blocks (clearAllMocks keeps implementations).
+  afterEach(() => {
+    fx.sendEmail.mockImplementation(async () => ({}));
+  });
+
+  it("acceptance, a lost answer, then the queue's retry: one email accepted", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    loseAnswers = 1;
+
+    const first = await send();
+    expect(first.status).toBe(500);
+    expect(reminder().status).toBe("FAILED");
+    expect(accepted).toHaveLength(1);
+
+    const retry = await send();
+
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual({ sent: 1, failed: 0 });
+    expect(reminder().status).toBe("SENT");
+    expect(fx.sendEmail).toHaveBeenCalledTimes(2);
+    expect(accepted).toHaveLength(1);
+    const keys = fx.sendEmail.mock.calls.map(
+      (c) => (c as unknown as [SendParams])[0].idempotencyKey,
+    );
+    expect(keys[0]).toMatch(new RegExp(`^reminder-${REM_A}-[0-9a-f]{64}$`));
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[0]).not.toContain("@");
+    error.mockRestore();
+  });
+
+  it("each recipient has its own key: a lost answer for one doesn't suppress the other", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    s.attendees = [
+      { email: "first@example.test", name: "First" },
+      { email: "second@example.test", name: "Second" },
+    ];
+    // The first recipient's answer is lost; the second is refused before acceptance.
+    loseAnswers = 1;
+    const base = fx.sendEmail.getMockImplementation()!;
+    fx.sendEmail.mockImplementationOnce(base).mockImplementationOnce(refuse);
+
+    expect((await send()).status).toBe(500);
+    expect(reminder().status).toBe("FAILED");
+    const retry = await send();
+
+    expect(await retry.json()).toEqual({ sent: 2, failed: 0 });
+    expect(accepted.map((a) => a.to).sort()).toEqual(["first@example.test", "second@example.test"]);
+    const keys = fx.sendEmail.mock.calls.map(
+      (c) => (c as unknown as [SendParams])[0].idempotencyKey,
+    );
+    expect(new Set(keys).size).toBe(2);
+    error.mockRestore();
+  });
+
+  it("content edited before the retry: not sent again, not retried forever, logged without the address", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    loseAnswers = 1;
+    expect((await send()).status).toBe(500);
+    s.events[0]!.title = "Renamed meeting";
+
+    const retry = await send();
+
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual({ sent: 0, failed: 0, notResent: 1 });
+    expect(reminder().status).toBe("SENT");
+    expect(reminder().lastError).toBe("email not resent: idempotency conflict");
+    expect(accepted).toHaveLength(1);
+    const logged = error.mock.calls.map((c) => JSON.parse(String(c[0])) as Record<string, unknown>);
+    expect(logged.map((l) => l.event)).toEqual([
+      "reminder_email_failed",
+      "reminder_email_not_resent",
+    ]);
+    expect(JSON.stringify(error.mock.calls)).not.toContain("@example.test");
+    // SENT now: a further delivery is skipped by the claim.
+    expect(await (await send()).json()).toEqual({ skipped: true });
+    expect(accepted).toHaveLength(1);
+    error.mockRestore();
+  });
+
+  it("a conflict with a refusal is retried; only the refused recipient is sent again", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    s.attendees = [
+      { email: "first@example.test", name: "First" },
+      { email: "second@example.test", name: "Second" },
+    ];
+    const base = fx.sendEmail.getMockImplementation()!;
+    // Attempt 1: first accepted, answer lost; second refused.
+    // Attempt 2 (after an edit): first conflicts; second refused again.
+    loseAnswers = 1;
+    fx.sendEmail
+      .mockImplementationOnce(base)
+      .mockImplementationOnce(refuse)
+      .mockImplementationOnce(base)
+      .mockImplementationOnce(refuse);
+
+    expect((await send()).status).toBe(500);
+    s.events[0]!.title = "Renamed meeting";
+
+    const second = await send();
+    expect(second.status).toBe(500);
+    expect(await second.json()).toEqual({ error: "send failed", sent: 0, failed: 1 });
+    expect(reminder().status).toBe("FAILED");
+    expect(reminder().lastError).toBe("email delivery failed: Error");
+
+    // Attempt 3: first conflicts again (not resent); second is accepted.
+    const third = await send();
+    expect(await third.json()).toEqual({ sent: 1, failed: 0, notResent: 1 });
+    expect(reminder().status).toBe("SENT");
+    expect(accepted.map((a) => a.to)).toEqual(["first@example.test", "second@example.test"]);
+    error.mockRestore();
+  });
+
+  it("another request with the same key in progress: an ordinary failure, then one email", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    busy = 1;
+    expect((await send()).status).toBe(500);
+    expect(reminder().status).toBe("FAILED");
+    expect(accepted).toHaveLength(0);
+
+    expect(await (await send()).json()).toEqual({ sent: 1, failed: 0 });
+    expect(accepted).toHaveLength(1);
+    error.mockRestore();
+  });
+
+  it("refused before acceptance, then retried: one email, exactly as before", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fx.sendEmail.mockImplementationOnce(refuse);
+    expect((await send()).status).toBe(500);
+    expect(accepted).toHaveLength(0);
+
+    expect(await (await send()).json()).toEqual({ sent: 1, failed: 0 });
+    expect(accepted).toHaveLength(1);
+    error.mockRestore();
+  });
+});
+
 // ── embed-document ─────────────────────────────────────────────────────────
 describe("embed-document", () => {
   const embedJob = (orgId = ORG_A, documentId = DOC_A) =>
@@ -496,6 +795,25 @@ describe("embed-document", () => {
     expect(fx.embed).toHaveBeenCalledTimes(1); // the in-flight call can't be recalled
     expect(s.chunks).toHaveLength(0);
     expect(doc().status).not.toBe("READY");
+    expect(fx.recordUsage).not.toHaveBeenCalled();
+    expect(s.notifications).toHaveLength(0);
+  });
+
+  it("document deleted during the embedding call: its new chunks are removed, never READY, no usage or notification", async () => {
+    fx.embed.mockImplementationOnce(async (texts: string[]) => {
+      // deleteDocument(): soft delete and remove the chunks it knows of.
+      doc().deletedAt = new Date();
+      s.chunks = s.chunks.filter((c) => c.documentId !== DOC_A);
+      return texts.map(() => [0.1]);
+    });
+
+    const res = await embedJob();
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ skipped: "document gone" });
+    expect(s.chunks).toHaveLength(0);
+    expect(doc().status).toBe("PROCESSING");
+    expect(doc().deletedAt).not.toBeNull();
     expect(fx.recordUsage).not.toHaveBeenCalled();
     expect(s.notifications).toHaveLength(0);
   });
@@ -683,7 +1001,7 @@ describe("embed-document — one run at a time, nothing left stuck", () => {
     expect(await res.json()).toEqual({ ok: true, chunks: 3 });
     expect(doc().status).toBe("READY");
     expect(s.chunks).toHaveLength(3);
-    expect(s.chunks.filter((c) => c.documentId === DOC_A)).toHaveLength(0);
+    expect(s.chunks.filter((c) => !c.inserted)).toHaveLength(0);
   });
 
   it("a FAILED document is processed again by a later delivery", async () => {
@@ -836,7 +1154,10 @@ describe("publish-creator-post", () => {
 
   it("another organization's social account can't publish this post", async () => {
     (post().socialAccount as Row).organizationId = ORG_B;
-    expect((await publish()).status).toBe(500); // existing guard-failure response
+    // A refusal is final: answered 200 (no retry), recorded on the post.
+    const res = await publish();
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: false, code: "social_account_not_connected" });
     expect(fx.publishPost).not.toHaveBeenCalled();
     expect(post()).toMatchObject({
       publishStatus: "FAILED",
@@ -845,7 +1166,9 @@ describe("publish-creator-post", () => {
   });
 
   it("another organization's post can't be published via this org (existing scoping)", async () => {
-    expect((await publish(ORG_B)).status).toBe(500);
+    const res = await publish(ORG_B);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: false, code: "post_not_found" });
     expect(fx.publishPost).not.toHaveBeenCalled();
   });
 
@@ -890,5 +1213,29 @@ describe("publish-creator-post", () => {
     await publish();
     await publish();
     expect(fx.publishPost).toHaveBeenCalledTimes(1);
+  });
+});
+
+// ── malformed bodies ───────────────────────────────────────────────────────
+describe("a malformed job body is refused (400), never retried into the dead-letter queue", () => {
+  const malformed = (body: string) =>
+    new Request("https://jobs.test/api/v1/jobs", { method: "POST", body });
+
+  it.each([
+    ["send-reminder", sendReminder],
+    ["embed-document", embedDocument],
+    ["post-call", postCall],
+    ["publish-creator-post", publishPost],
+  ])("%s", async (_name, handler) => {
+    for (const body of ["not json", "{", ""]) {
+      const res = await handler(malformed(body));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "invalid payload" });
+    }
+    expect(fx.sendEmail).not.toHaveBeenCalled();
+    expect(fx.embed).not.toHaveBeenCalled();
+    expect(fx.anthropic).not.toHaveBeenCalled();
+    expect(fx.publishPost).not.toHaveBeenCalled();
+    expect(db.organization.findFirst).not.toHaveBeenCalled();
   });
 });

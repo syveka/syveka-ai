@@ -1,5 +1,7 @@
 import "server-only";
 
+import { sanitizeErrorMessage } from "@/server/security/error-sanitization";
+
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { CalendarProvider } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
@@ -283,11 +285,7 @@ export async function getFreshTokens(connectionId: string, orgId: string): Promi
   try {
     refreshed = await adapter.refreshTokens(decryptToken(usedRefreshTokenEnc));
   } catch (e) {
-    await markConnectionStatus(
-      connectionId,
-      "NEEDS_REAUTH",
-      e instanceof Error ? e.message : "Token refresh failed",
-    );
+    await markConnectionStatus(connectionId, "NEEDS_REAUTH", sanitizeErrorMessage(e, 300));
     throw e;
   }
 
@@ -448,7 +446,7 @@ export async function checkConnectionHealth(ctx: TenantContext, connectionId: st
     await markConnectionStatus(connectionId, "CONNECTED");
     return { status: "CONNECTED" as const };
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Health check failed";
+    const message = sanitizeErrorMessage(e, 300);
     const status =
       e instanceof ProviderError && e.code === "token_expired" ? "NEEDS_REAUTH" : "ERROR";
     await markConnectionStatus(connectionId, status, message);

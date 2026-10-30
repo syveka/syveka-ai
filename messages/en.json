@@ -622,7 +622,9 @@
     },
     "errors": {
       "entitlement_exceeded": "Voice AI requires Starter or higher — upgrade your plan to continue.",
-      "generic": "Something went wrong. Please try again."
+      "generic": "Something went wrong. Please try again.",
+      "rate_limited": "Too many changes in a short time. Try again in a minute.",
+      "service_unavailable": "The change could not be verified right now. Try again in a moment."
     },
     "attachPhoneNumber": {
       "title": "Attach an existing number",
@@ -1337,7 +1339,9 @@
       "socialAccountLabel": "Account",
       "scheduling": "Scheduling…",
       "scheduleCta": "Schedule",
-      "cancelCta": "Cancel"
+      "cancelCta": "Cancel",
+      "outcomeUnknown": "This post may already have been published. Check the platform before scheduling it again.",
+      "confirmNotPublished": "I checked the platform and this post is not published"
     },
     "library": {
       "generationsTitle": "Generations",

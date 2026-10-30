@@ -54,6 +54,7 @@ vi.mock("@upstash/ratelimit", () => ({
 }));
 
 vi.mock("@/server/services/documents", () => ({
+  toDocumentView: (row: unknown) => row,
   createDocument: createDocumentMock,
   createUploadUrl: createUploadUrlMock,
   listDocuments: vi.fn(),

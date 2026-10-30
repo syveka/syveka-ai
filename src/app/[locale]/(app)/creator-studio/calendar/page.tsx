@@ -9,6 +9,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { formatDate } from "@/lib/utils";
 import { SchedulePostForm } from "@/components/creator-studio/schedule-post-form";
 import { CancelPostButton } from "@/components/creator-studio/cancel-post-button";
+import { isUnknownPublishOutcome } from "@/lib/creator-studio/publish-outcome";
 
 const STATUS_ORDER = [
   "NOT_SCHEDULED",
@@ -72,7 +73,9 @@ export default async function CreatorCalendarPage() {
                           })}
                         </p>
                       ) : null}
-                      {post.lastErrorSafe ? (
+                      {isUnknownPublishOutcome(post.lastErrorCode) ? (
+                        <p className="text-xs text-destructive">{t("outcomeUnknown")}</p>
+                      ) : post.lastErrorSafe ? (
                         <p className="text-xs text-destructive">{post.lastErrorSafe}</p>
                       ) : null}
                     </div>
@@ -81,9 +84,18 @@ export default async function CreatorCalendarPage() {
                     ) : null}
                   </div>
                   {canPublish &&
-                  post.publishStatus === "NOT_SCHEDULED" &&
+                  (post.publishStatus === "NOT_SCHEDULED" || post.publishStatus === "FAILED") &&
                   post.approvalStatus === "APPROVED" ? (
-                    <SchedulePostForm postId={post.id} socialAccounts={connectedAccounts} />
+                    <SchedulePostForm
+                      postId={post.id}
+                      socialAccounts={connectedAccounts}
+                      // A post that may already be live is scheduled again only once the
+                      // author confirms they checked the platform (enforced by the server too).
+                      requireNotPublishedConfirmation={
+                        post.publishStatus === "FAILED" &&
+                        isUnknownPublishOutcome(post.lastErrorCode)
+                      }
+                    />
                   ) : null}
                 </div>
               ))}

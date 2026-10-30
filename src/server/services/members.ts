@@ -19,7 +19,8 @@ const INVITE_EXPIRY_DAYS = 7;
 export class MemberError extends Error {
   constructor(
     message: string,
-    public readonly code: "already_member" | "not_pending",
+    public readonly code:
+      "already_member" | "not_pending" | "not_found" | "owner_role" | "own_role",
   ) {
     super(message);
     this.name = "MemberError";
@@ -255,10 +256,14 @@ export async function changeMemberRole(
   role: Role,
 ): Promise<void> {
   const db = tenantDb(ctx.orgId);
-  const member = await db.organizationMember.findFirstOrThrow({ where: { id: memberId } });
+  // Another organization's member is indistinguishable from an unknown id.
+  const member = await db.organizationMember.findFirst({ where: { id: memberId } });
+  if (!member) throw new MemberError("Member not found", "not_found");
 
-  if (member.role === "OWNER") throw new Error("Transfer ownership instead");
-  if (member.userId === ctx.userId) throw new Error("Cannot change your own role");
+  if (member.role === "OWNER") throw new MemberError("Transfer ownership instead", "owner_role");
+  if (member.userId === ctx.userId) {
+    throw new MemberError("Cannot change your own role", "own_role");
+  }
 
   await db.organizationMember.update({ where: { id: memberId }, data: { role } });
 

@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { jobPayloadJson } from "@/server/jobs/payload";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -78,7 +79,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "invalid signature" }, { status: 401 });
   }
 
-  const parsed = payloadSchema.safeParse(JSON.parse(rawBody));
+  const parsed = payloadSchema.safeParse(jobPayloadJson(rawBody));
   if (!parsed.success) return NextResponse.json({ error: "invalid payload" }, { status: 400 });
   const { documentId, orgId, inlineContent } = parsed.data;
 
@@ -186,10 +187,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
     }
 
-    await unscopedPrisma.document.update({
-      where: { id: documentId },
+    // Only the document this run claimed, if it still exists, becomes READY.
+    // Deleted during the run (deleteDocument removed the chunks it knew of,
+    // this run has since stored new ones): the new chunks go too, and
+    // nothing is recorded or notified. match_chunks() already ignores a
+    // deleted document's chunks; this keeps them from being stored at all.
+    const ready = await unscopedPrisma.document.updateMany({
+      where: { id: documentId, organizationId: orgId, deletedAt: null, status: "PROCESSING" },
       data: { status: "READY", chunkCount: chunks.length },
     });
+    if (ready.count === 0) {
+      await unscopedPrisma.documentChunk.deleteMany({ where: { documentId } });
+      return NextResponse.json({ skipped: "document gone" });
+    }
     chunkCount = chunks.length;
   } catch (err) {
     // Deleted meanwhile: no failure record or notification (no retry either).

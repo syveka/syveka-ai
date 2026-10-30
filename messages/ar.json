@@ -622,7 +622,9 @@
     },
     "errors": {
       "entitlement_exceeded": "يتطلب المساعد الصوتي بالذكاء الاصطناعي خطة Starter أو أعلى — قم بترقية خطتك للمتابعة.",
-      "generic": "حدث خطأ ما. حاول مرة أخرى."
+      "generic": "حدث خطأ ما. حاول مرة أخرى.",
+      "rate_limited": "تغييرات كثيرة جدًا في وقت قصير. حاول مرة أخرى بعد دقيقة.",
+      "service_unavailable": "تعذر التحقق من التغيير الآن. حاول مرة أخرى بعد قليل."
     },
     "attachPhoneNumber": {
       "title": "إرفاق رقم موجود",
@@ -1337,7 +1339,9 @@
       "socialAccountLabel": "الحساب",
       "scheduling": "جارٍ الجدولة…",
       "scheduleCta": "جدولة",
-      "cancelCta": "إلغاء"
+      "cancelCta": "إلغاء",
+      "outcomeUnknown": "ربما نُشر هذا المنشور بالفعل. تحقّق من المنصة قبل جدولته مرة أخرى.",
+      "confirmNotPublished": "تحقّقتُ من المنصة وهذا المنشور غير منشور"
     },
     "library": {
       "generationsTitle": "الإنشاءات",

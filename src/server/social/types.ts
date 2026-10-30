@@ -48,6 +48,20 @@ export class SocialProviderNotImplementedError extends Error {
   }
 }
 
+/**
+ * Thrown by publishPost when the platform may have published the post but we
+ * never saw its answer (the publishing request timed out, the connection
+ * dropped, or the platform answered 5xx or without an id). Publishing it again
+ * could post it twice, so the engine never retries it on its own.
+ */
+export class SocialPublishOutcomeUnknownError extends Error {
+  readonly code = "publish_outcome_unknown";
+  constructor(platform: string, options?: { cause?: unknown }) {
+    super(`${platform} publish outcome is unknown`, options);
+    this.name = "SocialPublishOutcomeUnknownError";
+  }
+}
+
 export interface SocialPublishingProvider {
   readonly platform: string;
   /** "full": end-to-end real integration. "blocked": adapter exists, real API calls are not implemented (Phase 11). */

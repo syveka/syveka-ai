@@ -622,7 +622,9 @@
     },
     "errors": {
       "entitlement_exceeded": "Puhe-AI vaatii Starter-tason tai korkeamman — päivitä tasoa jatkaaksesi.",
-      "generic": "Jokin meni pieleen. Yritä uudelleen."
+      "generic": "Jokin meni pieleen. Yritä uudelleen.",
+      "rate_limited": "Liian monta muutosta lyhyessä ajassa. Yritä uudelleen minuutin kuluttua.",
+      "service_unavailable": "Muutosta ei voitu vahvistaa juuri nyt. Yritä hetken kuluttua uudelleen."
     },
     "attachPhoneNumber": {
       "title": "Liitä olemassa oleva numero",
@@ -1337,7 +1339,9 @@
       "socialAccountLabel": "Tili",
       "scheduling": "Ajastetaan…",
       "scheduleCta": "Ajasta",
-      "cancelCta": "Peru"
+      "cancelCta": "Peru",
+      "outcomeUnknown": "Tämä julkaisu on ehkä jo julkaistu. Tarkista tilanne palvelussa ennen kuin ajastat sen uudelleen.",
+      "confirmNotPublished": "Tarkistin palvelun, eikä julkaisua ole julkaistu"
     },
     "library": {
       "generationsTitle": "Luonnit",

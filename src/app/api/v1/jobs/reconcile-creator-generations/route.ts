@@ -67,5 +67,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ error: "failed to publish follow-up job" }, { status: 500 });
   }
 
-  return NextResponse.json(result);
+  // Posts whose publish run the platform killed: marked FAILED, author told once.
+  const { failStalePublishingPosts } = await import("@/server/services/creator-publishing");
+  const stalePublishingFailed = await failStalePublishingPosts();
+
+  return NextResponse.json({ ...result, stalePublishingFailed });
 }

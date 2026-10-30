@@ -548,3 +548,34 @@ describe("invoice.payment_failed is applied only while the subscription is still
     expect(mocks.txSubscriptionUpdate).not.toHaveBeenCalled();
   });
 });
+
+describe("a price outside the configured catalog", () => {
+  it("is alerted for an operator: the plan can't be mapped, so the limits may be wrong", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocks.planForPriceId.mockReturnValue(null);
+    const event = fakeEvent("customer.subscription.updated", fakeSubscription());
+    mocks.constructEvent.mockReturnValue(event);
+
+    const res = await POST(webhookRequest("{}"));
+
+    expect(res.status).toBe(200);
+    const alerts = warn.mock.calls
+      .map((c) => JSON.parse(String(c[0])) as Record<string, unknown>)
+      .filter((l) => l.alert === "stripe_unknown_price");
+    expect(alerts).toEqual([
+      expect.objectContaining({ alert: "stripe_unknown_price", priceId: expect.any(String) }),
+    ]);
+    warn.mockRestore();
+  });
+
+  it("is not alerted when the price maps to a plan", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const event = fakeEvent("customer.subscription.updated", fakeSubscription());
+    mocks.constructEvent.mockReturnValue(event);
+
+    await POST(webhookRequest("{}"));
+
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("stripe_unknown_price");
+    warn.mockRestore();
+  });
+});

@@ -671,8 +671,9 @@ async function cancelBookingCore(
       where: { id: fresh.eventId },
       data: { status: "CANCELED", canceledAt: new Date() },
     });
+    // FAILED too: its QStash retry may still be on its way.
     await tx.reminder.updateMany({
-      where: { eventId: fresh.eventId, status: "SCHEDULED" },
+      where: { eventId: fresh.eventId, status: { in: ["SCHEDULED", "FAILED"] } },
       data: { status: "CANCELED" },
     });
   }
@@ -833,20 +834,24 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
   });
   if (!bookingType) throw new BookingError("Booking type not found", "not_found");
 
-  const duration = Math.round(
+  const previousDuration = Math.round(
     (oldBooking.endsAt.getTime() - oldBooking.startsAt.getTime()) / 60_000,
   );
+  // The moved meeting keeps its length while the type still offers it;
+  // otherwise it gets the type's default. One value for the slots offered
+  // and the booking made, so the meeting never runs past the slot checked.
+  const durationMinutes = bookingType.durationOptions.includes(previousDuration)
+    ? previousDuration
+    : bookingType.durationMinutes;
   const startsAt = new Date(newStartIso);
-  const endsAt = new Date(startsAt.getTime() + duration * 60_000);
+  const endsAt = new Date(startsAt.getTime() + durationMinutes * 60_000);
 
   const { slots } = await getPublicSlots({
     orgSlug: bookingType.organization.slug,
     typeSlug: bookingType.slug,
     from: new Date(startsAt.getTime() - 86_400_000),
     to: new Date(endsAt.getTime() + 86_400_000),
-    durationMinutes: bookingType.durationOptions.includes(duration)
-      ? duration
-      : bookingType.durationMinutes,
+    durationMinutes,
   });
   if (!slots.some((s) => s.getTime() === startsAt.getTime())) {
     throw new BookingError("Requested time is not available", "invalid_slot");
@@ -900,8 +905,9 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
         where: { id: oldBooking.eventId },
         data: { status: "CANCELED", canceledAt: new Date() },
       });
+      // FAILED too: its QStash retry may still be on its way.
       await tx.reminder.updateMany({
-        where: { eventId: oldBooking.eventId, status: "SCHEDULED" },
+        where: { eventId: oldBooking.eventId, status: { in: ["SCHEDULED", "FAILED"] } },
         data: { status: "CANCELED" },
       });
     }

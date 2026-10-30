@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { jobPayloadJson } from "@/server/jobs/payload";
 import type { Prisma } from "@/generated/prisma/client/client";
 
 export const runtime = "nodejs";
@@ -57,7 +58,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   const rawBody = await verifyJobRequest(request);
   if (rawBody === null) return NextResponse.json({ error: "invalid signature" }, { status: 401 });
 
-  const parsed = payloadSchema.safeParse(JSON.parse(rawBody));
+  const parsed = payloadSchema.safeParse(jobPayloadJson(rawBody));
   if (!parsed.success) return NextResponse.json({ error: "invalid payload" }, { status: 400 });
   const { vapiCallId, orgId } = parsed.data;
 

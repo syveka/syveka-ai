@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requirePermission } from "@/server/auth/guard";
+import { actionWriteLimitError } from "@/server/security/rate-limit";
 import {
   upsertAssistant,
   activateAssistant,
@@ -28,6 +29,10 @@ export async function saveAssistantAction(
   formData: FormData,
 ): Promise<VoiceActionState> {
   const ctx = await requirePermission("voice:configure");
+  // Every voice action calls the paid voice provider (assistant sync, phone
+  // numbers): the shared per-user write allowance bounds a burst, failing closed.
+  const limited = await actionWriteLimitError("voice", ctx);
+  if (limited) return { error: limited };
 
   const raw = Object.fromEntries(formData);
   const parsed = voiceAssistantSchema.safeParse({
@@ -60,6 +65,8 @@ export async function activateAssistantAction(
   _prev: VoiceActionState,
 ): Promise<VoiceActionState> {
   const ctx = await requirePermission("voice:configure");
+  const limited = await actionWriteLimitError("voice", ctx);
+  if (limited) return { error: limited };
 
   let result: Awaited<ReturnType<typeof activateAssistant>>;
   try {
@@ -87,6 +94,8 @@ export async function deactivateAssistantAction(
   _prev: VoiceActionState,
 ): Promise<VoiceActionState> {
   const ctx = await requirePermission("voice:configure");
+  const limited = await actionWriteLimitError("voice", ctx);
+  if (limited) return { error: limited };
 
   try {
     await deactivateAssistant(ctx, assistantId);
@@ -105,6 +114,8 @@ export async function attachPhoneNumberAction(
   formData: FormData,
 ): Promise<VoiceActionState> {
   const ctx = await requirePermission("voice:configure");
+  const limited = await actionWriteLimitError("voice", ctx);
+  if (limited) return { error: limited };
 
   const parsed = attachPhoneNumberSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };

@@ -14,9 +14,13 @@ const mocks = vi.hoisted(() => ({
     nextSettlementCursor: null as string | null,
   })),
   enqueue: vi.fn(async (..._args: unknown[]) => undefined),
+  failStalePublishingPosts: vi.fn(async () => 0),
 }));
 
 vi.mock("@/server/jobs/verify", () => ({ verifyJobRequest: mocks.verifyJobRequest }));
+vi.mock("@/server/services/creator-publishing", () => ({
+  failStalePublishingPosts: mocks.failStalePublishingPosts,
+}));
 vi.mock("@/server/services/creator-generation-recovery", () => ({
   reconcileCreatorGenerations: mocks.reconcileCreatorGenerations,
 }));

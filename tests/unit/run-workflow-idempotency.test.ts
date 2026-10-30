@@ -198,27 +198,38 @@ describe("trigger-level idempotency: sequential duplicate delivery", () => {
 });
 
 describe("trigger-level idempotency: concurrent duplicate delivery", () => {
-  it("returns a safe duplicate response when the claim loses to an in-flight (non-stale) RUNNING row", async () => {
+  it("answers 409 (deliver again later) when the claim loses to an in-flight (non-stale) RUNNING row, so a killed run is reclaimed by a later retry", async () => {
     mocks.runCreate.mockRejectedValueOnce(new FakePrismaKnownError("P2002"));
     mocks.runFindFirst.mockResolvedValueOnce(runRow({ status: "RUNNING", startedAt: new Date() }));
 
     const res = await post(freshTriggerPayload());
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ skipped: "duplicate_trigger", duplicate: false });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "run_in_progress" });
     expect(mocks.runUpdateMany).not.toHaveBeenCalled();
     expect(mocks.notificationCreate).not.toHaveBeenCalled();
   });
 
-  it("returns a safe duplicate response when the atomic reclaim loses the race (count: 0)", async () => {
+  it("acknowledges (200) a run that already SUCCEEDED: nothing to retry", async () => {
+    mocks.runCreate.mockRejectedValueOnce(new FakePrismaKnownError("P2002"));
+    mocks.runFindFirst.mockResolvedValueOnce(runRow({ status: "SUCCEEDED" }));
+
+    const res = await post(freshTriggerPayload());
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ skipped: "duplicate_trigger", duplicate: true });
+    expect(mocks.runUpdateMany).not.toHaveBeenCalled();
+  });
+
+  it("answers 409 when the atomic reclaim loses the race (count: 0): the winner is running it now", async () => {
     mocks.runCreate.mockRejectedValueOnce(new FakePrismaKnownError("P2002"));
     mocks.runFindFirst.mockResolvedValueOnce(runRow({ status: "FAILED" }));
     mocks.runUpdateMany.mockResolvedValueOnce({ count: 0 });
 
     const res = await post(freshTriggerPayload());
 
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ skipped: "duplicate_trigger", duplicate: false });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toEqual({ error: "run_in_progress" });
     expect(mocks.notificationCreate).not.toHaveBeenCalled();
   });
 });

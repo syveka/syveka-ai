@@ -555,6 +555,14 @@ describe("rescheduleBookingViaToken", () => {
     });
   });
 
+  it("the old meeting's scheduled and failed reminders are canceled (a pending retry sends nothing)", async () => {
+    await rescheduleBookingViaToken("raw-token", NEW_START);
+    expect(txMock.reminder.updateMany).toHaveBeenCalledWith({
+      where: { eventId: "evt-old", status: { in: ["SCHEDULED", "FAILED"] } },
+      data: { status: "CANCELED" },
+    });
+  });
+
   it("a guest attendee without a contact stays without one", async () => {
     await rescheduleBookingViaToken("raw-token", NEW_START);
     expect(txMock.eventAttendee.create).toHaveBeenCalledWith({
@@ -625,6 +633,41 @@ describe("rescheduleBookingViaToken", () => {
       undefined,
       rescheduled.booking.endsAt,
     );
+  });
+
+  it("keeps the booking's length when the type still offers it", async () => {
+    // Type offers 30 and 60; the booking was 30 minutes.
+    unscopedMock.bookingType.findFirst.mockResolvedValue(
+      bookingType({ durationOptions: [30, 60] }),
+    );
+    resolveTokenMock.mockResolvedValue({
+      id: "token-1",
+      purpose: "RESCHEDULE",
+      booking: oldBooking({ endsAt: new Date(new Date(VALID_START).getTime() + 30 * 60_000) }),
+    });
+
+    const rescheduled = await rescheduleBookingViaToken("raw-token", NEW_START);
+
+    expect(rescheduled.booking.endsAt).toEqual(
+      new Date(new Date(NEW_START).getTime() + 30 * 60_000),
+    );
+  });
+
+  it("a length the type no longer offers falls back to the type's default, for the slot and the booking alike", async () => {
+    // Type now offers only 60; the booking was made when 30 was offered.
+    resolveTokenMock.mockResolvedValue({
+      id: "token-1",
+      purpose: "RESCHEDULE",
+      booking: oldBooking({ endsAt: new Date(new Date(VALID_START).getTime() + 30 * 60_000) }),
+    });
+
+    const rescheduled = await rescheduleBookingViaToken("raw-token", NEW_START);
+
+    const sixtyMinutesLater = new Date(new Date(NEW_START).getTime() + 60 * 60_000);
+    expect(rescheduled.booking.endsAt).toEqual(sixtyMinutesLater);
+    expect(txMock.calendarEvent.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ endsAt: sixtyMinutesLater }),
+    });
   });
 
   it("rejects (whole transaction rolls back) when the token was already consumed by a concurrent request", async () => {
@@ -898,7 +941,10 @@ describe("cancelBookingAsOwner", () => {
       expect.objectContaining({ where: { id: "evt-old" } }),
     );
     expect(txMock.reminder.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { eventId: "evt-old", status: "SCHEDULED" } }),
+      // FAILED too: a pending retry of a failed send must not go out for a canceled booking.
+      expect.objectContaining({
+        where: { eventId: "evt-old", status: { in: ["SCHEDULED", "FAILED"] } },
+      }),
     );
     expect(txMock.activity.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ type: "MEETING" }) }),

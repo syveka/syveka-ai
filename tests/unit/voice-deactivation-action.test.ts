@@ -18,6 +18,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("@/server/auth/guard", () => ({ requirePermission: mocks.requirePermission }));
+// Within its rate limit (the limit itself: rate-limit-write-actions.test.ts).
+vi.mock("@/server/security/rate-limit", () => ({
+  actionWriteLimitError: vi.fn(async () => null),
+}));
 vi.mock("@/server/services/voice", () => ({
   upsertAssistant: vi.fn(),
   activateAssistant: vi.fn(),
