@@ -273,7 +273,8 @@ vi.mock("@/server/db/tenant", () => ({
 vi.mock("@/server/integrations/resend", () => ({ sendEmail: fx.sendEmail }));
 vi.mock("../../emails/booking-email", () => ({
   bookingEmailSubject: () => "Reminder",
-  BookingEmail: () => null,
+  // Echoes its input, so a fake provider can tell one payload from another.
+  BookingEmail: (props: unknown) => ({ props }),
 }));
 vi.mock("@/server/integrations/openai", () => ({ embed: fx.embed }));
 vi.mock("@/server/ai/extract", () => ({ extractText: vi.fn(), extractFromUrl: vi.fn() }));
@@ -554,6 +555,199 @@ describe("send-reminder — delivery failures are recorded, never silent", () =>
     expect(errorLogs(error).filter((l) => l.event === "reminder_email_failed")).toHaveLength(1);
     await send();
     expect(fx.sendEmail).toHaveBeenCalledTimes(2);
+    error.mockRestore();
+  });
+});
+
+describe("send-reminder — the provider accepted the email but the answer was lost", () => {
+  const send = () => sendReminder(job({ reminderId: REM_A }));
+  const reminder = () => s.reminders.find((r) => r.id === REM_A)!;
+  type SendParams = {
+    to: string;
+    subject: string;
+    react: { props: unknown };
+    idempotencyKey?: string;
+  };
+
+  /**
+   * A fake of Resend's documented idempotency (24-hour key store): the same
+   * key with the same payload returns the original answer without sending;
+   * with a different payload, 409 invalid_idempotent_request. `loseAnswers`
+   * drops the answer after the provider has accepted the email; `busy` answers
+   * 409 concurrent_idempotent_requests first. It assumes a refused request
+   * stores no key (Resend doesn't document either way).
+   */
+  let accepted: Array<{ to: string; subject: string }>;
+  let loseAnswers: number;
+  let busy: number;
+  const refuse = async () => {
+    throw new Error("provider down");
+  };
+  beforeEach(() => {
+    accepted = [];
+    loseAnswers = 0;
+    busy = 0;
+    const store = new Map<string, { payload: string; id: string }>();
+    fx.sendEmail.mockImplementation((async (params: SendParams) => {
+      if (busy > 0) {
+        busy -= 1;
+        throw Object.assign(new Error("Resend error: request in progress"), {
+          name: "EmailSendError",
+          code: "concurrent_idempotent_requests",
+        });
+      }
+      const payload = JSON.stringify([params.to, params.subject, params.react.props]);
+      const prior = params.idempotencyKey ? store.get(params.idempotencyKey) : undefined;
+      if (prior && prior.payload !== payload) {
+        throw Object.assign(new Error("Resend error: idempotency key reused"), {
+          name: "EmailSendError",
+          code: "invalid_idempotent_request",
+        });
+      }
+      const id = prior?.id ?? `email-${accepted.push({ to: params.to, subject: params.subject })}`;
+      if (params.idempotencyKey) store.set(params.idempotencyKey, { payload, id });
+      if (loseAnswers > 0) {
+        loseAnswers -= 1;
+        throw Object.assign(new Error("Resend error: Unable to fetch data."), {
+          name: "EmailSendError",
+          code: "application_error",
+        });
+      }
+      return { id };
+    }) as never);
+  });
+  // The fake must not leak into later describe blocks (clearAllMocks keeps implementations).
+  afterEach(() => {
+    fx.sendEmail.mockImplementation(async () => ({}));
+  });
+
+  it("acceptance, a lost answer, then the queue's retry: one email accepted", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    loseAnswers = 1;
+
+    const first = await send();
+    expect(first.status).toBe(500);
+    expect(reminder().status).toBe("FAILED");
+    expect(accepted).toHaveLength(1);
+
+    const retry = await send();
+
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual({ sent: 1, failed: 0 });
+    expect(reminder().status).toBe("SENT");
+    expect(fx.sendEmail).toHaveBeenCalledTimes(2);
+    expect(accepted).toHaveLength(1);
+    const keys = fx.sendEmail.mock.calls.map(
+      (c) => (c as unknown as [SendParams])[0].idempotencyKey,
+    );
+    expect(keys[0]).toMatch(new RegExp(`^reminder-${REM_A}-[0-9a-f]{64}$`));
+    expect(keys[1]).toBe(keys[0]);
+    expect(keys[0]).not.toContain("@");
+    error.mockRestore();
+  });
+
+  it("each recipient has its own key: a lost answer for one doesn't suppress the other", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    s.attendees = [
+      { email: "first@example.test", name: "First" },
+      { email: "second@example.test", name: "Second" },
+    ];
+    // The first recipient's answer is lost; the second is refused before acceptance.
+    loseAnswers = 1;
+    const base = fx.sendEmail.getMockImplementation()!;
+    fx.sendEmail.mockImplementationOnce(base).mockImplementationOnce(refuse);
+
+    expect((await send()).status).toBe(500);
+    expect(reminder().status).toBe("FAILED");
+    const retry = await send();
+
+    expect(await retry.json()).toEqual({ sent: 2, failed: 0 });
+    expect(accepted.map((a) => a.to).sort()).toEqual(["first@example.test", "second@example.test"]);
+    const keys = fx.sendEmail.mock.calls.map(
+      (c) => (c as unknown as [SendParams])[0].idempotencyKey,
+    );
+    expect(new Set(keys).size).toBe(2);
+    error.mockRestore();
+  });
+
+  it("content edited before the retry: not sent again, not retried forever, logged without the address", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    loseAnswers = 1;
+    expect((await send()).status).toBe(500);
+    s.events[0]!.title = "Renamed meeting";
+
+    const retry = await send();
+
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual({ sent: 0, failed: 0, notResent: 1 });
+    expect(reminder().status).toBe("SENT");
+    expect(reminder().lastError).toBe("email not resent: idempotency conflict");
+    expect(accepted).toHaveLength(1);
+    const logged = error.mock.calls.map((c) => JSON.parse(String(c[0])) as Record<string, unknown>);
+    expect(logged.map((l) => l.event)).toEqual([
+      "reminder_email_failed",
+      "reminder_email_not_resent",
+    ]);
+    expect(JSON.stringify(error.mock.calls)).not.toContain("@example.test");
+    // SENT now: a further delivery is skipped by the claim.
+    expect(await (await send()).json()).toEqual({ skipped: true });
+    expect(accepted).toHaveLength(1);
+    error.mockRestore();
+  });
+
+  it("a conflict with a refusal is retried; only the refused recipient is sent again", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    s.attendees = [
+      { email: "first@example.test", name: "First" },
+      { email: "second@example.test", name: "Second" },
+    ];
+    const base = fx.sendEmail.getMockImplementation()!;
+    // Attempt 1: first accepted, answer lost; second refused.
+    // Attempt 2 (after an edit): first conflicts; second refused again.
+    loseAnswers = 1;
+    fx.sendEmail
+      .mockImplementationOnce(base)
+      .mockImplementationOnce(refuse)
+      .mockImplementationOnce(base)
+      .mockImplementationOnce(refuse);
+
+    expect((await send()).status).toBe(500);
+    s.events[0]!.title = "Renamed meeting";
+
+    const second = await send();
+    expect(second.status).toBe(500);
+    expect(await second.json()).toEqual({ error: "send failed", sent: 0, failed: 1 });
+    expect(reminder().status).toBe("FAILED");
+    expect(reminder().lastError).toBe("email delivery failed: Error");
+
+    // Attempt 3: first conflicts again (not resent); second is accepted.
+    const third = await send();
+    expect(await third.json()).toEqual({ sent: 1, failed: 0, notResent: 1 });
+    expect(reminder().status).toBe("SENT");
+    expect(accepted.map((a) => a.to)).toEqual(["first@example.test", "second@example.test"]);
+    error.mockRestore();
+  });
+
+  it("another request with the same key in progress: an ordinary failure, then one email", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    busy = 1;
+    expect((await send()).status).toBe(500);
+    expect(reminder().status).toBe("FAILED");
+    expect(accepted).toHaveLength(0);
+
+    expect(await (await send()).json()).toEqual({ sent: 1, failed: 0 });
+    expect(accepted).toHaveLength(1);
+    error.mockRestore();
+  });
+
+  it("refused before acceptance, then retried: one email, exactly as before", async () => {
+    const error = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fx.sendEmail.mockImplementationOnce(refuse);
+    expect((await send()).status).toBe(500);
+    expect(accepted).toHaveLength(0);
+
+    expect(await (await send()).json()).toEqual({ sent: 1, failed: 0 });
+    expect(accepted).toHaveLength(1);
     error.mockRestore();
   });
 });

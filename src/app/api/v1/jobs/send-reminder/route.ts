@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { jobPayloadJson } from "@/server/jobs/payload";
@@ -7,6 +8,30 @@ export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const payloadSchema = z.object({ reminderId: z.string().guid() });
+
+/**
+ * Resend's Idempotency-Key for one reminder to one recipient: the same on
+ * every retry of this reminder row, different for every other row (a moved
+ * event gets new rows) and recipient. The address is hashed, so the key stays
+ * within Resend's 256 characters and doesn't carry it.
+ */
+function reminderEmailIdempotencyKey(reminderId: string, to: string): string {
+  return `reminder-${reminderId}-${createHash("sha256").update(to).digest("hex")}`;
+}
+
+/**
+ * Resend's answer when this key was already used with a different payload:
+ * the event's title, place or organization name changed between attempts.
+ * Sending again could duplicate an email the provider already accepted, and
+ * a retry would only get the same answer, so the recipient is left as is.
+ */
+function isIdempotencyConflict(e: unknown): boolean {
+  return (
+    e instanceof Error &&
+    e.name === "EmailSendError" &&
+    (e as { code?: unknown }).code === "invalid_idempotent_request"
+  );
+}
 
 /**
  * QStash job: deliver a meeting reminder.
@@ -19,6 +44,13 @@ const payloadSchema = z.object({ reminderId: z.string().guid() });
  * answered with 500, so QStash retries it; the claim below accepts FAILED
  * again for that reason. A reminder that reached some recipients stays SENT
  * (nothing is ever sent twice) with the failures logged.
+ *
+ * A thrown send doesn't prove nothing went out: Resend may have accepted it
+ * and the answer been lost. Each send therefore carries a per-reminder,
+ * per-recipient Idempotency-Key, so the retry of a FAILED reminder gets
+ * Resend's original answer instead of a second email. Resend keeps keys for
+ * 24 hours; QStash's automatic retries of a reminder end well within that. A
+ * manual replay from the dead-letter queue after 24 hours is not covered.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   const [
@@ -118,6 +150,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     for (const a of event.attendeeRecords) if (a.email) recipients.add(a.email);
 
     let sent = 0;
+    let failed = 0;
+    let notResent = 0;
     let lastErrorName = "unknown";
     for (const to of recipients) {
       try {
@@ -132,24 +166,30 @@ export async function POST(request: Request): Promise<NextResponse> {
             whenText: `${whenText} (${timezone})`,
             whereText: event.location ?? undefined,
           }),
+          idempotencyKey: reminderEmailIdempotencyKey(reminder.id, to),
         });
         sent += 1;
       } catch (e) {
         // Never the recipient address or the provider's message: ids and the
         // error's name are enough to see a delivery problem in the logs.
-        lastErrorName = e instanceof Error ? e.name : "unknown";
+        const conflict = isIdempotencyConflict(e);
+        if (conflict) {
+          notResent += 1;
+        } else {
+          failed += 1;
+          lastErrorName = e instanceof Error ? e.name : "unknown";
+        }
         console.error(
           JSON.stringify({
-            event: "reminder_email_failed",
+            event: conflict ? "reminder_email_not_resent" : "reminder_email_failed",
             reminderId: reminder.id,
             eventId: event.id,
             orgId: reminder.organizationId,
-            name: lastErrorName,
+            name: e instanceof Error ? e.name : "unknown",
           }),
         );
       }
     }
-    const failed = recipients.size - sent;
     if (failed > 0 && sent === 0) {
       // Nobody was reached: not SENT. Recorded, and retried by QStash (500).
       await unscopedPrisma.reminder.update({
@@ -158,7 +198,26 @@ export async function POST(request: Request): Promise<NextResponse> {
       });
       return NextResponse.json({ error: "send failed", sent, failed }, { status: 500 });
     }
-    return NextResponse.json({ sent, failed });
+    if (notResent > 0 && sent === 0) {
+      // Whether anyone was reached is unknown: kept SENT (not retried), but
+      // the row says so instead of keeping an earlier attempt's error. Best
+      // effort: a failed note must not turn this decision into a retry.
+      await unscopedPrisma.reminder
+        .update({
+          where: { id: reminder.id },
+          data: { lastError: "email not resent: idempotency conflict" },
+        })
+        .catch((e: unknown) =>
+          console.error(
+            JSON.stringify({
+              event: "reminder_note_failed",
+              reminderId: reminder.id,
+              name: e instanceof Error ? e.name : "unknown",
+            }),
+          ),
+        );
+    }
+    return NextResponse.json(notResent > 0 ? { sent, failed, notResent } : { sent, failed });
   } catch (e) {
     await unscopedPrisma.reminder.update({
       where: { id: reminder.id },
