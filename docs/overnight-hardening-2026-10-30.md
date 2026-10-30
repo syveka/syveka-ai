@@ -287,9 +287,97 @@ Open questions from the review:
 | `npm test`                 | **Not fully passing on Windows:** 4361 passed, 14 failed. 12 fail identically on unmodified `3097547` on this machine (11 `security/handler-guard-coverage`, Windows `\` paths; 1 `recovery-drill-scripts`, shell). 2 are 5 s timeouts in the untouched `voice-conversation-flow` suite under full-suite load; that suite passes 40/40 in isolation on both trees. Linux CI is the authority; see below. |
 | `npm run test:e2e`         | Not run locally; see the staging Preview section                                                                                                                                                                                                                                                                                                                                                         |
 
+### CI at the fix commit
+
+Fix commit `c8080613e7465275c1bd319407dc055fb1eec595`, CI run **41042244077**: every check
+passed, read at 2026-10-30T10:45:39Z. That includes unit and integration tests, both RLS suites,
+the opt-in Postgres suites, the production build, typecheck, lint, secret scan, both dependency
+audits, the migration tests and i18n parity.
+
+The commit after it adds only this report (`docs/**/*.md`). Its CI result is on the PR.
+
+### Staging Preview
+
+**Skip setting.** The `syveka-ai-staging` Ignored Build Step setting was changed once, with the
+owner's authorization. It was read back after a reload.
+
+- **Before** (140 chars; recovery value):
+  `git fetch -q --depth=1000 origin main && git diff --quiet FETCH_HEAD...HEAD -- . ':!docs' ':!.claude' ':!syveka-skills' ':!.github' ':!*.md'`
+  It exited 128 in Vercel's clone, which has no `origin`, and failed every staging Preview.
+- **After** (226 chars):
+  `p=$VERCEL_GIT_PREVIOUS_SHA;case $p in ''|*[!0-9a-f]*)exit 1;;esac;f=$(git diff --no-renames --name-only "$p" HEAD --)&&{ printf '%s\n' "$f"|grep -qvE '^(docs/.*|[^/]+|syveka-skills/docs/[^/]+)\.md$';[ $? = 1 ];}&&exit 0;exit 1`
+  - It skips only when every path changed since the branch's last successful deployment is
+    Markdown under `docs/`, a root `.md` file, or `syveka-skills/docs/*.md`.
+  - Missing or ambiguous data builds.
+  - It makes no network call and prints no values.
+  - 30 synthetic Git cases pass; the old command fails all 30.
+
+**Preview** `dpl_En8ruKEDEwoFpmqsh5dAzywnF4Ge` at
+`https://syveka-ai-staging-8tby74f8s-syveka-ai.vercel.app`:
+
+- State **Ready**, environment **Preview**, branch `claude/syveka-release-readiness-69qo1r`,
+  commit `c808061`. GitHub deployment 7436305761 records SHA `c8080613…`.
+- Not promoted; the stable staging alias was not touched.
+- Built, not canceled, so the new command returned 1 (build) for this runtime change.
+
+Checks performed, all non-mutating, through the owner's Vercel-authenticated browser:
+
+| Check                                                          | Result                                                       |
+| -------------------------------------------------------------- | ------------------------------------------------------------ |
+| `GET /api/health`                                              | `healthy`, database ok, redis ok (`build: "unknown"`; ¹)     |
+| `/` landing                                                    | renders (`/en`, h1 present)                                  |
+| `/ar`                                                          | `lang="ar"`, `dir="rtl"`                                     |
+| `/en/creator-studio/calendar` unauthenticated                  | redirects to login with `next`                               |
+| `GET /api/v1/creator-studio/posts` unauthenticated             | refused (`forbidden`)                                        |
+| Publishing, reminders, unknown-outcome recovery, calendar form | **Not exercised on the Preview**; covered by the unit suites |
+
+¹ The health route's `build` field is set only by the staging release workflow, which Git
+Previews do not run.
+
+Not run, and why:
+
+- **Playwright** needs `VERCEL_AUTOMATION_BYPASS_SECRET`, which is not available without reading
+  a secret.
+- **The authenticated smoke tests** write CRM data to the shared staging database.
+- **Scheduled jobs and real publishing** cannot be shown by a Preview. Staging has no `META_*`
+  variables, so real social publishing is not configured there; no real post or email could be
+  sent.
+
+To validate further, run the read-only `public` Playwright project with the bypass header against
+the Preview URL. Exercise the calendar recovery form only in an isolated, approved test
+organization.
+
+### Configuration (metadata only; nothing created or changed)
+
+- **`CALENDAR_MOCK_PROVIDER`:** not set on `syveka-ai-staging` (no `CALENDAR_*` or `*MOCK*`
+  variables). After this PR, staging cannot start a MOCK calendar connection. No E2E spec depends
+  on it (the smoke test only opens `/calendar`), so it is not required for the intended
+  validation. Set it to `1` on Preview only if a manual calendar test needs the fake provider.
+- **QStash schedules:** the only Upstash console this browser can open (account "Personal", EU)
+  has **no schedules** and no messages in the last 15 days. Which QStash account staging's token
+  belongs to cannot be established without reading the secret. So the usage-rollup body `{}`
+  and the reconcile schedule are **unverified**. If staging does use this account, staging runs
+  no nightly rollup or GDPR purge, no calendar sync and no reconcile sweep. Stranded
+  PUBLISHING posts would then never be marked interrupted. That fails safe: they are never
+  republished.
+- **Proposed correction**, owner action, only once the account is confirmed. Create schedules to
+  `/api/v1/jobs/usage-rollup` (body `{}`, nightly) and `/api/v1/jobs/reconcile-creator-generations`
+  (`*/5 * * * *`, body `{}`), per `docs/release-runbook.md`.
+- **Observation:** the push also produced a completed `Vercel – syveka-ai-production` Preview
+  check. This work did not change the production project.
+
 ## PR #376 recommendation
 
-Pending CI and staging Preview results for the pushed fix; updated in the next commit.
+Assessed separately:
+
+- **Code review:** READY. The fix is reviewed (one MEDIUM found and fixed, re-review approved),
+  and CI is green at `c808061`.
+- **Merge consideration:** not yet. A human GitHub review is still needed (subagent reviews are
+  not approvals). The QStash schedule question should be answered, because the stale-publishing
+  recovery depends on the reconcile schedule.
+- **Staging validation:** PARTIAL. The Preview builds and is healthy, and the public pages, RTL
+  and authentication walls pass. The authenticated flows, jobs and Playwright were not run.
+- **Release:** NOT READY. That needs merge, the staging release path and its own authorization.
 
 ## Explicit safety confirmation
 
