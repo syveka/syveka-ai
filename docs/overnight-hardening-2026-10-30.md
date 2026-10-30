@@ -343,9 +343,21 @@ Not run, and why:
   variables, so real social publishing is not configured there; no real post or email could be
   sent.
 
-To validate further, run the read-only `public` Playwright project with the bypass header against
-the Preview URL. Exercise the calendar recovery form only in an isolated, approved test
-organization.
+**Public Playwright smoke (owner-run, 2026-10-30): 6/6 passed (8.6 s).**
+
+- **Target:** `https://syveka-ai-staging-8tby74f8s-syveka-ai.vercel.app`. Its identity was
+  confirmed before the run: GitHub deployment `7436305761` ("Preview – syveka-ai-staging",
+  success) maps this URL to `c8080613e7465275c1bd319407dc055fb1eec595`, and the commit status
+  links Vercel deployment `dpl_En8ruKEDEwoFpmqsh5dAzywnF4Ge`. The app's own `/api/health` reports
+  `build: "unknown"` on Git-triggered Previews by design.
+- **Before the tests:** a preflight confirmed that `/api/health` returned the app's JSON
+  (`healthy`) through the bypass header. The tests ran only after that.
+- **Command:** `smoke.spec.ts --project=desktop --no-deps --grep "public" --trace off`, so no
+  sign-in setup ran and no traces were kept.
+- **An earlier attempt is not evidence.** It reached Vercel's protection page (the secret did not
+  reach the run), and its 2 "passes" were false positives.
+- **Still unverified:** the authenticated flows, including the calendar recovery form. Exercise
+  them only in an isolated, approved test organization.
 
 ### Configuration (metadata only; nothing created or changed)
 
@@ -353,13 +365,15 @@ organization.
   variables). After this PR, staging cannot start a MOCK calendar connection. No E2E spec depends
   on it (the smoke test only opens `/calendar`), so it is not required for the intended
   validation. Set it to `1` on Preview only if a manual calendar test needs the fake provider.
-- **QStash schedules:** the only Upstash console this browser can open (account "Personal", EU)
-  has **no schedules** and no messages in the last 15 days. Which QStash account staging's token
-  belongs to cannot be established without reading the secret. So the usage-rollup body `{}`
-  and the reconcile schedule are **unverified**. If staging does use this account, staging runs
-  no nightly rollup or GDPR purge, no calendar sync and no reconcile sweep. Stranded
-  PUBLISHING posts would then never be marked interrupted. That fails safe: they are never
-  republished.
+- **QStash schedules:** the Upstash account "Personal" (EU) has **no schedules**.
+  - **Inbound signatures confirmed (owner-run, 2026-10-30).** One Publish to stable staging's
+    `/api/v1/jobs/send-reminder` with body `{}` and no retries returned
+    **400 `invalid payload`**. That route checks the signature before the payload, so stable
+    staging accepts this account's signatures.
+  - **Still unverified:** the account behind staging's **outbound** `QSTASH_TOKEN`.
+  - **No schedule is running**, so staging has no nightly rollup or GDPR purge, no calendar sync
+    and no reconcile sweep. Stranded PUBLISHING posts are never marked interrupted. That fails
+    safe: they are never republished.
 - **Proposed correction**, owner action, only once the account is confirmed. Create schedules to
   `/api/v1/jobs/usage-rollup` (body `{}`, nightly) and `/api/v1/jobs/reconcile-creator-generations`
   (`*/5 * * * *`, body `{}`), per `docs/release-runbook.md`.
@@ -375,14 +389,27 @@ Assessed separately:
 - **Merge consideration:** not yet. A human GitHub review is still needed (subagent reviews are
   not approvals). The QStash schedule question should be answered, because the stale-publishing
   recovery depends on the reconcile schedule.
-- **Staging validation:** PARTIAL. The Preview builds and is healthy, and the public pages, RTL
-  and authentication walls pass. The authenticated flows, jobs and Playwright were not run.
+- **Staging validation:** PARTIAL. The Preview builds and is healthy, and the 6 public Playwright
+  smoke tests passed against it at `c808061`. The authenticated flows (including calendar
+  recovery) and the scheduled jobs are **not verified**.
 - **Release:** NOT READY. That needs merge, the staging release path and its own authorization.
 
 ## Explicit safety confirmation
 
-No merge. No deployment. No staging workflow dispatch. No production workflow dispatch. No
-migration applied. No Supabase mutation. No Vercel configuration mutation (a route's own
-`maxDuration` export changed in code; `vercel.json` untouched). No secret mutation or read. No
-external-service mutation. Automatic CI and Vercel previews ran on the push, as they do for any
-PR branch update; nothing about them was triggered, rerun or inspected beyond reading results.
+**Overnight work (to `3097547`):** no merge, deployment, workflow dispatch or migration, and no
+Supabase, Vercel, secret or external-service change. A route's own `maxDuration` export changed in
+code; `vercel.json` is untouched.
+
+**2026-10-30 follow-up (owner-authorized):**
+
+- **Setting changed:** the `syveka-ai-staging` Ignored Build Step setting was changed once.
+- **Preview deployed:** the normal push of `c808061` built staging Preview
+  `dpl_En8ruKEDEwoFpmqsh5dAzywnF4Ge`. The docs-only push of `cca1510` was skipped by that setting,
+  as designed.
+- **Requests sent:** the Preview was checked with non-mutating requests and the owner-run public
+  smoke tests. The owner sent one QStash identity message to stable staging, which was refused at
+  the payload check.
+- **Not changed:** stable staging was **not promoted** (it still serves `611fd74`), and the
+  production project and deployment are **unchanged**.
+- **Not done:** no merge, workflow dispatch, gate approval, migration, database write, schedule,
+  or environment or credential change; no real post or email.
