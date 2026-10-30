@@ -555,6 +555,14 @@ describe("rescheduleBookingViaToken", () => {
     });
   });
 
+  it("the old meeting's scheduled and failed reminders are canceled (a pending retry sends nothing)", async () => {
+    await rescheduleBookingViaToken("raw-token", NEW_START);
+    expect(txMock.reminder.updateMany).toHaveBeenCalledWith({
+      where: { eventId: "evt-old", status: { in: ["SCHEDULED", "FAILED"] } },
+      data: { status: "CANCELED" },
+    });
+  });
+
   it("a guest attendee without a contact stays without one", async () => {
     await rescheduleBookingViaToken("raw-token", NEW_START);
     expect(txMock.eventAttendee.create).toHaveBeenCalledWith({
@@ -933,7 +941,10 @@ describe("cancelBookingAsOwner", () => {
       expect.objectContaining({ where: { id: "evt-old" } }),
     );
     expect(txMock.reminder.updateMany).toHaveBeenCalledWith(
-      expect.objectContaining({ where: { eventId: "evt-old", status: "SCHEDULED" } }),
+      // FAILED too: a pending retry of a failed send must not go out for a canceled booking.
+      expect.objectContaining({
+        where: { eventId: "evt-old", status: { in: ["SCHEDULED", "FAILED"] } },
+      }),
     );
     expect(txMock.activity.create).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ type: "MEETING" }) }),

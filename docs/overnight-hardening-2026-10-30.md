@@ -13,8 +13,13 @@ the file, command or test it comes from.
   stranded in PUBLISHING forever (and an Instagram publish did not fit its 60 s budget).
 - **PR #376 is materially safer and more reliable**: 15 commits added overnight, 61 files
   changed on the branch in all, with regression tests for every fix.
-- **Recommendation from a CODE perspective: CODE REVIEW READY.** Deployment authorization is a
-  separate decision (CLAUDE.md §2 step 14) and is not implied by this report.
+- **Superseded 2026-10-30 (see "Follow-up: duplicate external side effects" below).** A
+  follow-up review of head `3097547` found one HIGH and two MEDIUM duplicate side-effect paths,
+  two of them introduced by this branch. Two pre-existing recovery gaps were found while fixing
+  them. All five are fixed on this branch with regression tests. The current status is in
+  "PR #376 recommendation" at the end.
+- Original recommendation, at `cd949f3`/`3097547`: CODE REVIEW READY. Deployment authorization
+  is a separate decision (CLAUDE.md §2 step 14) and is not implied by this report.
 
 ## Ground truth
 
@@ -179,11 +184,112 @@ majors and `vitest` 5 pins its `vite` peer range.
 4. RBAC placements: prompt deletion (MEMBER), recordings/transcripts (VIEWER), likeness consent
    (MEMBER, any profile).
 
+## Follow-up: duplicate external side effects (2026-10-30)
+
+Found by a read-only review of head `30975479537d5639dc7ffd45b8136c5c071c28f2` and confirmed
+in code. Fixed on this branch in the commit that follows `3097547`.
+
+### Findings and fixes
+
+| Severity | Finding                                                                                                                                                                                                                                                                                                | Introduced by                 | Fix                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| HIGH     | A post whose publish run was killed after the platform published is marked `FAILED/publish_interrupted` by the sweep. The claim accepted any FAILED post, so the pending QStash retry published it **again**. The retries come at about +12 s and +2.5 min (409), then +30 min, after the 7-min sweep. | `87d7a85` (sweep + 409)       | The claim takes SCHEDULED, or FAILED whose `lastErrorCode` is NULL or outside `publish_interrupted`/`publish_outcome_unknown` (NULL spelled out, because `NOT IN` drops NULL). The organization filter is unchanged.                                                                                                                                                                                                                      |
+| MEDIUM   | A publish call that times out (the new 30 s Graph timeout), drops its connection, or gets 5xx or a 2xx without an id may have published. It was recorded `publish_failed` and retried, so it could publish twice.                                                                                      | `87d7a85` made it more likely | `graphFetch({ publishes: true })` on `media_publish`, Page `/photos` and `/videos` throws `MetaPublishOutcomeUnknownError`. The provider maps it to the provider-agnostic `SocialPublishOutcomeUnknownError`. The engine records `FAILED/publish_outcome_unknown`, audits, tells the author once and returns `done` (200, so no QStash retry). Earlier calls (container creation, polling) and 4xx answers stay definitive and retryable. |
+| MEDIUM   | A reminder whose send FAILED was claimable by its pending retry after the event moved. It went out at the old lead, showing the new time, alongside the new-time reminder.                                                                                                                             | `66fe446` (FAILED claimable)  | Moving an event (`rescheduleEventReminders`), cancelling a booking and rescheduling a booking now cancel SCHEDULED **and** FAILED reminders. The send job also cancels and skips any reminder whose `sendAt` is not exactly one configured offset before the event's current `startsAt`. That covers two concurrent moves of the same event.                                                                                              |
+| MEDIUM   | Scheduling a post again to the same time and content version within QStash's 10-minute deduplication window reused the earlier message's deduplication id. QStash dropped it and the post stayed SCHEDULED with no job. Found by reproducing it through `schedulePost`.                                | pre-existing                  | The deduplication id adds the schedule write's `updatedAt`, so each schedule call gets its own message. Duplicates stay harmless: the publish claim is atomic and an early message is skipped.                                                                                                                                                                                                                                            |
+| MEDIUM   | No safe recovery path: the calendar offered no way to schedule any FAILED post again, while the API could schedule one that may already be live without any check.                                                                                                                                     | pre-existing / this follow-up | `schedulePost` refuses a post whose code is an unknown outcome (FAILED or CANCELED) unless `confirmNotPublished: true` (optional, backward-compatible API field). The check is repeated inside the claiming UPDATE. The calendar shows a translated warning (EN/FI/AR) and a schedule form for approved FAILED posts, and asks the author to confirm they checked the platform first.                                                     |
+
+Also checked and found sound:
+
+- **An old message for a rescheduled post** is skipped as early, or finds the post already
+  claimed or published.
+- **Concurrent deliveries:** the atomic claim admits one.
+- **The stale sweep** cannot overtake a live attempt. `PUBLISH_STALE_MS` (7 min) exceeds the
+  publish route's `maxDuration` (300 s), and a test now pins that.
+- **Calendar sync** only moves imported events, which never get reminders.
+
+### Recovery for an unknown publishing outcome
+
+1. The post shows FAILED with "This post may already have been published. Check the platform
+   before scheduling it again." (EN/FI/AR). The author gets one notification.
+2. No job publishes it again. A further delivery of the same message gets claim 0 and is
+   acknowledged.
+3. The author checks the platform:
+   - If the post is live, leave it. Recording it as PUBLISHED needs an operator update or a
+     future "mark as published" action.
+   - If it is not live, tick "I checked the platform and this post is not published" and
+     schedule it. Without that confirmation the server refuses with
+     `publish_outcome_unconfirmed`. Cancelling first does not skip it, because the check uses
+     the code, not the status.
+
+### Tests
+
+Each new test was written first and seen to fail on `3097547`: 14 failures in the final suite.
+Examples:
+
+- "expected 2 to be 1" for the platform post count
+- a reminder sent for a moved event
+- one message delivered instead of two in the deduplication-window case
+
+The suites:
+
+- **`creator-publishing-unknown-outcome.test.ts` (new, 11):** a stateful fake that evaluates the
+  real claim (SQL NULL semantics), plus the real Instagram provider and Meta client with only
+  `fetch` faked.
+  - killed after publishing, then sweep, then QStash retries: published once
+  - timeout, reset, 5xx and no-id: unknown, not retried
+  - 4xx and container timeout: definitive and retried
+  - another organization cannot claim
+  - the stale-window invariant
+- **`creator-posts-workflow.test.ts` (+7):** refused without confirmation (both codes); the
+  confirmation clears the code; refused atomically if the post turns unknown after it was read;
+  cancel then schedule is still refused; a definitive failure schedules freely; and a fake
+  QStash dedup window shows the reschedule is no longer dropped.
+- **`calendar-event-reminders.test.ts` (+5):**
+  - FAILED then move: the retry sends nothing
+  - stale lead: canceled
+  - unmoved retry: sends once, and only once
+  - canceled event: nothing sent
+  - two concurrent moves: only the final time's reminders send
+- **`booking-service.test.ts`:** cancel and reschedule both cancel FAILED reminders.
+- **`jobs-organization-guard.test.ts` and `creator-studio-integration.test.ts`:** their fakes now
+  evaluate the new claim shapes, with the same assertions.
+
+### Review
+
+An independent review of the final diff, by a context that did not write it, found one MEDIUM:
+cancelling a post and then scheduling it bypassed the confirmation through the API. It is fixed
+and has a regression test, and the re-review approved it.
+
+Earlier low notes, both applied:
+
+- the Meta "no answer" error keeps its cause and is named `MetaApiError`
+- the timeout fallback is documented as deliberate
+
+Open questions from the review:
+
+- An autopilot post (not `APPROVED`) in an unknown state has no calendar recovery form. The
+  same was already true for NOT_SCHEDULED autopilot posts.
+- `PostWorkflowError` texts and notification titles stay English-only, which is the existing
+  pattern. The new calendar strings are translated.
+
+### Local validation (Windows 11, existing `node_modules` for the identical lockfile)
+
+| Command                    | Result                                                                                                                                                                                                                                                                                                                                                                                                   |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Focused suites (10 files)  | PASS, 217 tests                                                                                                                                                                                                                                                                                                                                                                                          |
+| `npm run format:check`     | PASS                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `npm run lint`             | PASS (0 errors, the 2 pre-existing warnings)                                                                                                                                                                                                                                                                                                                                                             |
+| `npm run typecheck`        | PASS                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `npm run i18n:check`       | PASS (1154 keys)                                                                                                                                                                                                                                                                                                                                                                                         |
+| `npm run migrations:check` | PASS (no schema change)                                                                                                                                                                                                                                                                                                                                                                                  |
+| `npm run build`            | PASS                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `npm test`                 | **Not fully passing on Windows:** 4361 passed, 14 failed. 12 fail identically on unmodified `3097547` on this machine (11 `security/handler-guard-coverage`, Windows `\` paths; 1 `recovery-drill-scripts`, shell). 2 are 5 s timeouts in the untouched `voice-conversation-flow` suite under full-suite load; that suite passes 40/40 in isolation on both trees. Linux CI is the authority; see below. |
+| `npm run test:e2e`         | Not run locally; see the staging Preview section                                                                                                                                                                                                                                                                                                                                                         |
+
 ## PR #376 recommendation
 
-**CODE REVIEW READY.** No P0; both P1s are fixed with tests; every validation command passes on
-the final HEAD; the remaining items need decisions or a schema change, not more repository
-work before review. Merge and deployment remain separate, explicit authorizations.
+Pending CI and staging Preview results for the pushed fix; updated in the next commit.
 
 ## Explicit safety confirmation
 

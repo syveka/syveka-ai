@@ -117,7 +117,13 @@ vi.mock("@/server/db/tenant", () => {
           : null,
       };
     }),
-    update: vi.fn(),
+    update: vi.fn(
+      async ({ where, data }: { where: { id: string }; data: Record<string, unknown> }) => {
+        const row = s.reminders.find((r) => r.id === where.id)!;
+        if (data.status) row.status = data.status as ReminderRow["status"];
+        return { ...row };
+      },
+    ),
   };
   const tenant = {
     calendarEvent: {
@@ -335,6 +341,85 @@ describe("moving a calendar event moves its reminders", () => {
     await updateEvent(ctx, EVENT, input(new Date(NOW.getTime() - 2 * HOUR)));
     await updateEvent(ctx, EVENT, input(nextWeek));
     expect(pending()).toEqual(["2026-03-09T09:00:00.000Z", "2026-03-10T08:00:00.000Z"]);
+  });
+});
+
+describe("a reminder whose send failed is not sent for an event that has moved", () => {
+  async function failFirstSend(): Promise<string> {
+    const [dayBefore] = await createEventWithReminders(tomorrowish);
+    vi.setSystemTime(new Date("2026-03-02T09:00:00Z"));
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    fx.sendEmail.mockRejectedValueOnce(
+      Object.assign(new Error("resend 503"), { name: "ResendError" }),
+    );
+    // Nobody reached: FAILED, and QStash will retry this message (500).
+    expect((await deliver(dayBefore!)).status).toBe(500);
+    log.mockRestore();
+    expect(s.reminders.find((r) => r.id === dayBefore)!.status).toBe("FAILED");
+    return dayBefore!;
+  }
+
+  it("moving the event cancels the failed reminder, so the pending retry sends nothing", async () => {
+    const dayBefore = await failFirstSend();
+
+    await updateEvent(ctx, EVENT, input(nextWeek));
+    expect(s.reminders.find((r) => r.id === dayBefore)!.status).toBe("CANCELED");
+
+    expect(await (await deliver(dayBefore)).json()).toEqual({ skipped: true });
+    // Only the failed attempt reached the email provider.
+    expect(fx.sendEmail).toHaveBeenCalledTimes(1);
+    expect(pending()).toEqual(["2026-03-09T09:00:00.000Z", "2026-03-10T08:00:00.000Z"]);
+  });
+
+  it("a retry for a reminder timed from another start time is skipped even if nothing canceled it", async () => {
+    const dayBefore = await failFirstSend();
+    // Left uncanceled, e.g. by a concurrent move whose cancel ran first.
+    s.events[0]!.startsAt = nextWeek;
+
+    expect(await (await deliver(dayBefore)).json()).toEqual({ skipped: true });
+    expect(fx.sendEmail).toHaveBeenCalledTimes(1);
+    expect(s.reminders.find((r) => r.id === dayBefore)!.status).toBe("CANCELED");
+  });
+
+  it("a retry for an event that has not moved still sends, once", async () => {
+    const dayBefore = await failFirstSend();
+    expect(await (await deliver(dayBefore)).json()).toEqual({ sent: 1, failed: 0 });
+    expect(fx.sendEmail).toHaveBeenCalledTimes(2);
+    // A further delivery of the same message sends nothing.
+    expect(await (await deliver(dayBefore)).json()).toEqual({ skipped: true });
+    expect(fx.sendEmail).toHaveBeenCalledTimes(2);
+  });
+
+  it("a canceled event's failed reminder is not sent by its retry", async () => {
+    const dayBefore = await failFirstSend();
+    s.events[0]!.status = "CANCELED";
+    expect(await (await deliver(dayBefore)).json()).toEqual({ skipped: true });
+    expect(fx.sendEmail).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("two concurrent moves of the same event", () => {
+  it("only the reminders for the event's final time send; the other move's are canceled", async () => {
+    await createEventWithReminders(tomorrowish);
+    const later = new Date("2026-03-17T09:00:00Z");
+    // Interleaved: move A (next week) and move B (later) both cancel the original reminders,
+    // A's event write loses to B's, but A still schedules reminders for its own time.
+    await updateEvent(ctx, EVENT, input(nextWeek));
+    const moveA = fx.enqueue.mock.calls.map((c) => c[1].reminderId);
+    fx.enqueue.mockClear();
+    s.events[0]!.startsAt = later;
+    await scheduleEventReminders({ orgId: ORG, eventId: EVENT, startsAt: later });
+    const moveB = fx.enqueue.mock.calls.map((c) => c[1].reminderId);
+
+    for (const id of moveA) {
+      expect(await (await deliver(id)).json()).toEqual({ skipped: true });
+      expect(s.reminders.find((r) => r.id === id)!.status).toBe("CANCELED");
+    }
+    expect(fx.sendEmail).not.toHaveBeenCalled();
+    for (const id of moveB) {
+      expect(await (await deliver(id)).json()).toEqual({ sent: 1, failed: 0 });
+    }
+    expect(fx.sendEmail).toHaveBeenCalledTimes(2);
   });
 });
 

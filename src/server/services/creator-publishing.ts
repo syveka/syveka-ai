@@ -2,6 +2,8 @@ import "server-only";
 
 import { unscopedPrisma } from "@/server/db/tenant";
 import { getSocialPublishingProvider } from "@/server/social";
+import { SocialPublishOutcomeUnknownError } from "@/server/social/types";
+import { UNKNOWN_PUBLISH_OUTCOME_CODES } from "@/lib/creator-studio/publish-outcome";
 import { decryptSocialToken } from "@/server/integrations/social/crypto";
 import { createSupabaseAdmin } from "@/server/supabase/server";
 import { isOrganizationActive } from "@/server/jobs/organization-guard";
@@ -89,6 +91,19 @@ async function markPublished(postId: string, externalPostId: string): Promise<vo
 export const PUBLISH_STALE_MS = 7 * 60_000;
 
 /**
+ * A publish call whose answer never arrived: the platform may have published.
+ * A bare timeout or abort from a provider that doesn't classify its own calls
+ * is treated the same way on purpose: losing one automatic retry is cheaper
+ * than posting twice.
+ */
+function isUnknownOutcome(error: unknown): boolean {
+  return (
+    error instanceof SocialPublishOutcomeUnknownError ||
+    (error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError"))
+  );
+}
+
+/**
  * Marks posts stranded in PUBLISHING as FAILED, once each, and tells their
  * authors. Run by the reconcile job; bounded per run.
  */
@@ -172,19 +187,34 @@ export async function publishCreatorPost(
     return "done";
   }
 
-  // Idempotent claim: only a SCHEDULED or previously-FAILED post can start
+  // Idempotent claim: only a SCHEDULED or definitively FAILED post can start
   // publishing, and the conditional UPDATE (like the credit ledger's
   // reserve) makes a concurrent duplicate delivery a safe no-op rather than
-  // a double-publish.
+  // a double-publish. A FAILED post that may be live is never claimed.
   const claim = await unscopedPrisma.creatorPost.updateMany({
-    where: { id: postId, organizationId: orgId, publishStatus: { in: ["SCHEDULED", "FAILED"] } },
+    where: {
+      id: postId,
+      organizationId: orgId,
+      OR: [
+        { publishStatus: "SCHEDULED" },
+        {
+          publishStatus: "FAILED",
+          // Spelled out: `notIn` alone would also exclude a NULL code.
+          OR: [
+            { lastErrorCode: null },
+            { lastErrorCode: { notIn: UNKNOWN_PUBLISH_OUTCOME_CODES } },
+          ],
+        },
+      ],
+    },
     data: { publishStatus: "PUBLISHING", publishAttemptCount: { increment: 1 } },
   });
   if (claim.count !== 1) {
     // Another delivery is publishing it right now (or was killed less than
     // PUBLISH_STALE_MS ago): the caller answers 409 so QStash delivers again
-    // later, when the post is PUBLISHED (done) or the sweep has marked it
-    // FAILED. Already published/canceled/rejected: nothing to do.
+    // later, when the post is PUBLISHED or the sweep has marked it
+    // publish_interrupted (both done). Already published/canceled/rejected,
+    // or an unknown outcome waiting for its author: nothing to do.
     const current = await unscopedPrisma.creatorPost.findFirst({
       where: { id: postId, organizationId: orgId },
       select: { publishStatus: true, updatedAt: true },
@@ -201,6 +231,7 @@ export async function publishCreatorPost(
   // Set once the provider has published: from then on the post is live and must never be
   // marked FAILED, because a FAILED post can be claimed again and would be published twice.
   let externalPostId: string | null = null;
+  let providerCalled = false;
   try {
     if (post.publishStatus === "CANCELED" || post.approvalStatus === "REJECTED") {
       throw new PublishGuardError("not_publishable", "Post is canceled or rejected.");
@@ -291,6 +322,7 @@ export async function publishCreatorPost(
     if (!(await isOrganizationActive(orgId))) {
       throw new PublishGuardError("organization_inactive", "The organization is no longer active.");
     }
+    providerCalled = true;
     const result = await provider.publishPost(
       {
         accessToken: decryptSocialToken(post.socialAccount.accessTokenEnc),
@@ -335,6 +367,42 @@ export async function publishCreatorPost(
         externalPostId,
       });
       await markPublished(postId, externalPostId).catch(() => undefined);
+      return "done";
+    }
+    if (providerCalled && isUnknownOutcome(error)) {
+      // The platform may have published: recorded, never retried (the job
+      // answers 200), and the author is told now to check before rescheduling.
+      console.error(
+        JSON.stringify({
+          event: "creator_post_publish_outcome_unknown",
+          postId,
+          orgId,
+          name: error instanceof Error ? error.name : "unknown",
+        }),
+      );
+      const safeMessage =
+        "This post may have been published. Check the platform before scheduling it again.";
+      await unscopedPrisma.creatorPost.update({
+        where: { id: postId },
+        data: {
+          publishStatus: "FAILED",
+          lastErrorCode: "publish_outcome_unknown",
+          lastErrorSafe: safeMessage,
+        },
+      });
+      if (!(await isOrganizationActive(orgId))) return "organization_inactive";
+      await audit(ctx, {
+        action: "creator.post.publish_failed",
+        resourceType: "creator_post",
+        resourceId: postId,
+        after: { errorCode: "publish_outcome_unknown" },
+      });
+      await notifyUser(ctx, post.createdById, {
+        type: "creator_post_publish_failed",
+        title: "Publishing may have succeeded",
+        body: safeMessage,
+        href: "/creator-studio/calendar",
+      });
       return "done";
     }
     const code = error instanceof PublishGuardError ? error.code : "publish_failed";

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@/server/auth/session";
 
 const { tenantDbMock, auditMock, notifyApproversMock, notifyUserMock, enqueueMock } = vi.hoisted(
@@ -47,14 +47,32 @@ function basePost(overrides: Record<string, unknown> = {}) {
     approvedContentVersion: null,
     createdById: "user-1",
     caption: "old",
+    lastErrorCode: null,
+    updatedAt: new Date("2026-11-02T10:00:00Z"),
     ...overrides,
   };
+}
+
+/** Every publishStatus value a `where` (with nested OR) can match. */
+function statusesIn(where: Record<string, unknown>): string[] {
+  const own = where.publishStatus;
+  const mine =
+    typeof own === "string"
+      ? [own]
+      : own && typeof own === "object" && "in" in own
+        ? (own.in as string[])
+        : [];
+  const nested = Array.isArray(where.OR)
+    ? (where.OR as Array<Record<string, unknown>>).flatMap(statusesIn)
+    : [];
+  return [...mine, ...nested];
 }
 
 describe("Creator Studio approval state machine", () => {
   let db: {
     creatorPost: {
       findFirstOrThrow: ReturnType<typeof vi.fn>;
+      findFirst: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
       updateMany: ReturnType<typeof vi.fn>;
     };
@@ -66,6 +84,7 @@ describe("Creator Studio approval state machine", () => {
     db = {
       creatorPost: {
         findFirstOrThrow: vi.fn(async () => basePost()),
+        findFirst: vi.fn(async () => basePost()),
         update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
           ...basePost(),
           ...data,
@@ -218,9 +237,168 @@ describe("Creator Studio approval state machine", () => {
     });
 
     expect(enqueueMock).not.toHaveBeenCalled();
-    const where = db.creatorPost.updateMany.mock.calls[0]![0].where;
-    expect(where.publishStatus.in).not.toContain("PUBLISHED");
-    expect(where.publishStatus.in).not.toContain("PUBLISHING");
+    const claimable = statusesIn(db.creatorPost.updateMany.mock.calls[0]![0].where);
+    expect(claimable.length).toBeGreaterThan(0);
+    expect(claimable).not.toContain("PUBLISHED");
+    expect(claimable).not.toContain("PUBLISHING");
+  });
+});
+
+/**
+ * Scheduling a post again after its publish may already be live, against a
+ * stateful row that evaluates schedulePost's real claim (NULL as in SQL) and
+ * a fake QStash that drops a message whose deduplication id it accepted in the
+ * last 10 minutes (its documented window).
+ */
+describe("scheduling again after a failed or unknown publish", () => {
+  const WINDOW_MS = 10 * 60_000;
+  let row: Record<string, unknown>;
+  let accepted: Array<{ id: string; at: number }>;
+  let delivered: string[];
+
+  function field(value: unknown, cond: unknown): boolean {
+    if (cond === null) return value === null;
+    if (cond && typeof cond === "object") {
+      const c = cond as Record<string, unknown>;
+      if ("in" in c) return value !== null && (c.in as unknown[]).includes(value);
+      if ("notIn" in c) return value !== null && !(c.notIn as unknown[]).includes(value);
+      throw new Error(`fake does not support ${JSON.stringify(c)}`);
+    }
+    return value === cond;
+  }
+  function matches(where: Record<string, unknown>): boolean {
+    return Object.entries(where).every(([k, v]) =>
+      k === "OR" ? (v as Array<Record<string, unknown>>).some(matches) : field(row[k], v),
+    );
+  }
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-02T10:00:00Z"));
+    accepted = [];
+    delivered = [];
+    row = basePost({
+      approvalStatus: "APPROVED",
+      approvedContentVersion: 1,
+      publishStatus: "FAILED",
+      lastErrorCode: "publish_interrupted",
+      lastErrorSafe: "Publishing was interrupted.",
+      scheduledFor: new Date("2026-11-02T09:55:00Z"),
+    });
+    tenantDbMock.mockReturnValue({
+      creatorPost: {
+        findFirstOrThrow: vi.fn(async () => ({ ...row })),
+        findFirst: vi.fn(async () => ({ ...row })),
+        updateMany: vi.fn(
+          async ({ where, data }: { where: Record<string, unknown>; data: object }) => {
+            if (!matches(where)) return { count: 0 };
+            Object.assign(row, data, { updatedAt: new Date() });
+            return { count: 1 };
+          },
+        ),
+      },
+      socialAccount: {
+        findFirstOrThrow: vi.fn(async () => ({ id: "acct-1", status: "CONNECTED" })),
+      },
+    });
+    enqueueMock.mockImplementation((async (
+      _job: string,
+      _payload: unknown,
+      opts: { deduplicationId: string },
+    ) => {
+      const now = Date.now();
+      if (accepted.some((m) => m.id === opts.deduplicationId && now - m.at < WINDOW_MS)) return;
+      accepted.push({ id: opts.deduplicationId, at: now });
+      delivered.push(opts.deduplicationId);
+    }) as never);
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  const params = (extra: Record<string, unknown> = {}) => ({
+    scheduledFor: new Date("2026-11-02T09:55:00Z"),
+    socialAccountId: "acct-1",
+    ...extra,
+  });
+
+  it.each(["publish_interrupted", "publish_outcome_unknown"])(
+    "%s: refused without the author's confirmation; nothing enqueued, the row unchanged",
+    async (code) => {
+      row.lastErrorCode = code;
+      await expect(schedulePost(ctx(), "post-1", params())).rejects.toMatchObject({
+        code: "publish_outcome_unconfirmed",
+      });
+      expect(row).toMatchObject({ publishStatus: "FAILED", lastErrorCode: code });
+      expect(enqueueMock).not.toHaveBeenCalled();
+    },
+  );
+
+  it("with the confirmation: SCHEDULED, the stale error cleared, one job enqueued", async () => {
+    await schedulePost(ctx(), "post-1", params({ confirmNotPublished: true }));
+    expect(row).toMatchObject({
+      publishStatus: "SCHEDULED",
+      lastErrorCode: null,
+      lastErrorSafe: null,
+    });
+    expect(delivered).toHaveLength(1);
+  });
+
+  it("the claim itself refuses: a post that becomes an unknown outcome after it was read", async () => {
+    // Read as NOT_SCHEDULED; by the UPDATE the row is FAILED/publish_outcome_unknown.
+    const read = { ...row, publishStatus: "NOT_SCHEDULED", lastErrorCode: null };
+    row.lastErrorCode = "publish_outcome_unknown";
+    // tenantDbMock returns the same fake on every call.
+    tenantDbMock().creatorPost.findFirstOrThrow.mockResolvedValueOnce(read);
+
+    await expect(schedulePost(ctx(), "post-1", params())).rejects.toMatchObject({
+      code: "publish_outcome_unconfirmed",
+    });
+    expect(row.publishStatus).toBe("FAILED");
+    expect(enqueueMock).not.toHaveBeenCalled();
+  });
+
+  it("canceling it first does not skip the confirmation (the code, not the status, decides)", async () => {
+    row.lastErrorCode = "publish_outcome_unknown";
+    await cancelScheduledPost(ctx(), "post-1");
+    expect(row).toMatchObject({
+      publishStatus: "CANCELED",
+      lastErrorCode: "publish_outcome_unknown",
+    });
+
+    await expect(schedulePost(ctx(), "post-1", params())).rejects.toMatchObject({
+      code: "publish_outcome_unconfirmed",
+    });
+    expect(row.publishStatus).toBe("CANCELED");
+    expect(enqueueMock).not.toHaveBeenCalled();
+
+    await schedulePost(ctx(), "post-1", params({ confirmNotPublished: true }));
+    expect(row.publishStatus).toBe("SCHEDULED");
+    expect(delivered).toHaveLength(1);
+  });
+
+  it("a definitive failure is scheduled again without any confirmation", async () => {
+    row.lastErrorCode = "publish_failed";
+    await schedulePost(ctx(), "post-1", params());
+    expect(row.publishStatus).toBe("SCHEDULED");
+    expect(delivered).toHaveLength(1);
+  });
+
+  it("scheduled again for the same time and version within 10 minutes: the new message is not dropped", async () => {
+    row.publishStatus = "NOT_SCHEDULED";
+    row.lastErrorCode = null;
+    await schedulePost(ctx(), "post-1", params());
+    // The run is interrupted; the sweep marks it; the author checks and confirms.
+    vi.setSystemTime(new Date("2026-11-02T10:08:00Z"));
+    Object.assign(row, { publishStatus: "FAILED", lastErrorCode: "publish_interrupted" });
+
+    await schedulePost(ctx(), "post-1", params({ confirmNotPublished: true }));
+
+    expect(enqueueMock).toHaveBeenCalledTimes(2);
+    expect(delivered).toHaveLength(2);
+    expect(row.publishStatus).toBe("SCHEDULED");
   });
 });
 

@@ -229,13 +229,17 @@ const db = {
       const p = s.posts.find((x) => x.id === where.id && x.organizationId === where.organizationId);
       return p ? { ...p } : null;
     }),
+    // The publish claim: SCHEDULED, or FAILED with a code (or none) outside `notIn`.
     updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
-      const p = s.posts.find(
-        (x) =>
-          x.id === where.id &&
-          x.organizationId === where.organizationId &&
-          (where.publishStatus as { in: string[] }).in.includes(x.publishStatus as string),
-      );
+      const field = (v: unknown, c: unknown): boolean =>
+        c && typeof c === "object" && "notIn" in c
+          ? v != null && !(c.notIn as unknown[]).includes(v)
+          : (v ?? null) === c;
+      const matches = (x: Row, w: Row): boolean =>
+        Object.entries(w).every(([k, c]) =>
+          k === "OR" ? (c as Row[]).some((sub) => matches(x, sub)) : field(x[k], c),
+        );
+      const p = s.posts.find((x) => matches(x, where));
       if (!p) return { count: 0 };
       p.publishStatus = data.publishStatus;
       return { count: 1 };
@@ -333,7 +337,16 @@ beforeEach(() => {
       location: null,
     },
   ];
-  s.reminders = [{ id: REM_A, organizationId: ORG_A, eventId: "evt-a", status: "SCHEDULED" }];
+  s.reminders = [
+    {
+      id: REM_A,
+      organizationId: ORG_A,
+      eventId: "evt-a",
+      status: "SCHEDULED",
+      // The 24 h reminder for evt-a's start.
+      sendAt: new Date("2026-11-01T09:00:00Z"),
+    },
+  ];
   s.attendees = [{ email: "attendee@example.test", name: "Attendee" }];
   s.documents = [
     {

@@ -12,8 +12,10 @@ import {
   getMetaObjectStatus,
   revokeMetaAccess,
   MetaApiError,
+  MetaPublishOutcomeUnknownError,
   type MetaPage,
 } from "@/server/integrations/meta/client";
+import { SocialPublishOutcomeUnknownError } from "./types";
 import type {
   SocialPublishingProvider,
   SocialAccountConnection,
@@ -42,6 +44,18 @@ export { metaAuthorizeUrl };
 abstract class MetaPublishingProviderBase implements SocialPublishingProvider {
   abstract readonly platform: "INSTAGRAM" | "FACEBOOK";
   readonly capability = "full" as const;
+
+  /** Reports a Meta publish call that got no answer in the provider-agnostic form. */
+  protected async publishing<T>(call: () => Promise<T>): Promise<T> {
+    try {
+      return await call();
+    } catch (e) {
+      if (e instanceof MetaPublishOutcomeUnknownError) {
+        throw new SocialPublishOutcomeUnknownError(this.platform, { cause: e });
+      }
+      throw e;
+    }
+  }
 
   isConfigured(): boolean {
     return isMetaConfigured();
@@ -153,15 +167,13 @@ export class InstagramPublishingProvider extends MetaPublishingProviderBase {
     if (!url) throw new MetaApiError("Instagram publish requires at least one media asset.");
     const caption =
       req.hashtags.length > 0 ? `${req.caption}\n\n${req.hashtags.join(" ")}` : req.caption;
-    const { postId } = await publishInstagramMedia(
-      connection.externalAccountId,
-      connection.accessToken,
-      {
+    const { postId } = await this.publishing(() =>
+      publishInstagramMedia(connection.externalAccountId, connection.accessToken, {
         imageUrl: req.mediaType === "image" ? url : undefined,
         videoUrl: req.mediaType === "video" ? url : undefined,
         caption,
         isVideo: req.mediaType === "video",
-      },
+      }),
     );
     return { externalPostId: postId, providerRequestId: postId };
   }
@@ -184,16 +196,17 @@ export class FacebookPublishingProvider extends MetaPublishingProviderBase {
     if (!url) throw new MetaApiError("Facebook publish requires at least one media asset.");
     const caption =
       req.hashtags.length > 0 ? `${req.caption}\n\n${req.hashtags.join(" ")}` : req.caption;
-    const { postId } =
+    const { postId } = await this.publishing(() =>
       req.mediaType === "video"
-        ? await publishFacebookVideo(connection.externalAccountId, connection.accessToken, {
+        ? publishFacebookVideo(connection.externalAccountId, connection.accessToken, {
             videoUrl: url,
             caption,
           })
-        : await publishFacebookPhoto(connection.externalAccountId, connection.accessToken, {
+        : publishFacebookPhoto(connection.externalAccountId, connection.accessToken, {
             imageUrl: url,
             caption,
-          });
+          }),
+    );
     return { externalPostId: postId, providerRequestId: postId };
   }
 }

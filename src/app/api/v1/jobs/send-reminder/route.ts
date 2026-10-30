@@ -21,14 +21,21 @@ const payloadSchema = z.object({ reminderId: z.string().guid() });
  * (nothing is ever sent twice) with the failures logged.
  */
 export async function POST(request: Request): Promise<NextResponse> {
-  const [{ verifyJobRequest }, { unscopedPrisma }, { sendEmail }, emailMod, guard] =
-    await Promise.all([
-      import("@/server/jobs/verify"),
-      import("@/server/db/tenant"),
-      import("@/server/integrations/resend"),
-      import("../../../../../../emails/booking-email"),
-      import("@/server/jobs/organization-guard"),
-    ]);
+  const [
+    { verifyJobRequest },
+    { unscopedPrisma },
+    { sendEmail },
+    emailMod,
+    guard,
+    { REMINDER_OFFSETS_MINUTES },
+  ] = await Promise.all([
+    import("@/server/jobs/verify"),
+    import("@/server/db/tenant"),
+    import("@/server/integrations/resend"),
+    import("../../../../../../emails/booking-email"),
+    import("@/server/jobs/organization-guard"),
+    import("@/server/services/reminders"),
+  ]);
 
   const body = await verifyJobRequest(request);
   if (body === null) return NextResponse.json({ error: "invalid signature" }, { status: 401 });
@@ -76,6 +83,17 @@ export async function POST(request: Request): Promise<NextResponse> {
   // Deleted after the check above: same as a canceled event (nothing sent).
   if (event.organization.deletedAt || event.organizationId !== reminder.organizationId) {
     return NextResponse.json(guard.ORGANIZATION_INACTIVE);
+  }
+  // Timed from another start time: the event moved after this reminder was
+  // scheduled (a retry of a FAILED send can arrive after the move). Canceled,
+  // never sent with the new time at the old lead.
+  const leadMs = event.startsAt.getTime() - reminder.sendAt.getTime();
+  if (!REMINDER_OFFSETS_MINUTES.some((minutes) => minutes * 60_000 === leadMs)) {
+    await unscopedPrisma.reminder.update({
+      where: { id: reminder.id },
+      data: { status: "CANCELED" },
+    });
+    return NextResponse.json({ skipped: true });
   }
 
   try {

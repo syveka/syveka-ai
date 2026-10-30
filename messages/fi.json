@@ -1339,7 +1339,9 @@
       "socialAccountLabel": "Tili",
       "scheduling": "Ajastetaan…",
       "scheduleCta": "Ajasta",
-      "cancelCta": "Peru"
+      "cancelCta": "Peru",
+      "outcomeUnknown": "Tämä julkaisu on ehkä jo julkaistu. Tarkista tilanne palvelussa ennen kuin ajastat sen uudelleen.",
+      "confirmNotPublished": "Tarkistin palvelun, eikä julkaisua ole julkaistu"
     },
     "library": {
       "generationsTitle": "Luonnit",

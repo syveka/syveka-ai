@@ -1339,7 +1339,9 @@
       "socialAccountLabel": "الحساب",
       "scheduling": "جارٍ الجدولة…",
       "scheduleCta": "جدولة",
-      "cancelCta": "إلغاء"
+      "cancelCta": "إلغاء",
+      "outcomeUnknown": "ربما نُشر هذا المنشور بالفعل. تحقّق من المنصة قبل جدولته مرة أخرى.",
+      "confirmNotPublished": "تحقّقتُ من المنصة وهذا المنشور غير منشور"
     },
     "library": {
       "generationsTitle": "الإنشاءات",

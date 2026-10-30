@@ -671,8 +671,9 @@ async function cancelBookingCore(
       where: { id: fresh.eventId },
       data: { status: "CANCELED", canceledAt: new Date() },
     });
+    // FAILED too: its QStash retry may still be on its way.
     await tx.reminder.updateMany({
-      where: { eventId: fresh.eventId, status: "SCHEDULED" },
+      where: { eventId: fresh.eventId, status: { in: ["SCHEDULED", "FAILED"] } },
       data: { status: "CANCELED" },
     });
   }
@@ -904,8 +905,9 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
         where: { id: oldBooking.eventId },
         data: { status: "CANCELED", canceledAt: new Date() },
       });
+      // FAILED too: its QStash retry may still be on its way.
       await tx.reminder.updateMany({
-        where: { eventId: oldBooking.eventId, status: "SCHEDULED" },
+        where: { eventId: oldBooking.eventId, status: { in: ["SCHEDULED", "FAILED"] } },
         data: { status: "CANCELED" },
       });
     }

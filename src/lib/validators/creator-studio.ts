@@ -149,6 +149,8 @@ export const schedulePostSchema = z
   .object({
     scheduledFor: z.coerce.date(),
     socialAccountId: z.string().guid(),
+    // Required (true) to schedule again a post whose last publish may already be live.
+    confirmNotPublished: z.boolean().optional(),
   })
   .strict();
 

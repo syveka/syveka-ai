@@ -8,6 +8,10 @@ import { audit } from "./audit";
 import { notifyApprovers, notifyUser } from "./creator-notifications";
 import { enqueue } from "@/server/jobs/queue";
 import type { CreatePostInput, AutopilotRules } from "@/lib/validators/creator-studio";
+import {
+  isUnknownPublishOutcome,
+  UNKNOWN_PUBLISH_OUTCOME_CODES,
+} from "@/lib/creator-studio/publish-outcome";
 import type {
   CreatorCampaignApprovalMode,
   CreatorPostPublishStatus,
@@ -21,6 +25,13 @@ export class PostWorkflowError extends Error {
   ) {
     super(message);
   }
+}
+
+function outcomeUnconfirmed(): PostWorkflowError {
+  return new PostWorkflowError(
+    "publish_outcome_unconfirmed",
+    "This post may already be published. Check the platform, then confirm it is not live to schedule it again.",
+  );
 }
 
 /**
@@ -226,7 +237,7 @@ const RESCHEDULABLE_STATUSES: CreatorPostPublishStatus[] = [
 export async function schedulePost(
   ctx: TenantContext,
   postId: string,
-  params: { scheduledFor: Date; socialAccountId: string },
+  params: { scheduledFor: Date; socialAccountId: string; confirmNotPublished?: boolean },
 ) {
   await assertFeatureEnabled(ctx.orgId, CREATOR_STUDIO_FLAG);
   const db = tenantDb(ctx.orgId);
@@ -234,6 +245,11 @@ export async function schedulePost(
 
   if (post.approvalStatus === "REJECTED") {
     throw new PostWorkflowError("post_rejected", "A rejected post cannot be scheduled.");
+  }
+  // By the code, not the status: canceling such a post keeps its code, so a cancel followed by a
+  // schedule still needs the confirmation.
+  if (isUnknownPublishOutcome(post.lastErrorCode) && !params.confirmNotPublished) {
+    throw outcomeUnconfirmed();
   }
 
   const account = await db.socialAccount.findFirstOrThrow({
@@ -249,16 +265,44 @@ export async function schedulePost(
   const now = Date.now();
   const delaySeconds = Math.max(0, Math.round((params.scheduledFor.getTime() - now) / 1000));
 
-  // A post that is publishing or already published must never become claimable again.
+  // A post that is publishing or already published must never become claimable again, and one
+  // that may already be live only with the author's confirmation (checked in the same UPDATE, so
+  // a publish that ends with an unknown outcome meanwhile can't slip through).
   const claimed = await db.creatorPost.updateMany({
-    where: { id: postId, publishStatus: { in: RESCHEDULABLE_STATUSES } },
+    where: {
+      id: postId,
+      publishStatus: { in: RESCHEDULABLE_STATUSES },
+      ...(params.confirmNotPublished
+        ? {}
+        : {
+            // Spelled out: `notIn` alone would also exclude a NULL code.
+            OR: [
+              { lastErrorCode: null },
+              { lastErrorCode: { notIn: UNKNOWN_PUBLISH_OUTCOME_CODES } },
+            ],
+          }),
+    },
     data: {
       scheduledFor: params.scheduledFor,
       socialAccountId: params.socialAccountId,
       publishStatus: "SCHEDULED",
+      lastErrorCode: null,
+      lastErrorSafe: null,
     },
   });
   if (claimed.count !== 1) {
+    const current = await db.creatorPost.findFirst({
+      where: { id: postId },
+      select: { publishStatus: true, lastErrorCode: true },
+    });
+    if (
+      current &&
+      RESCHEDULABLE_STATUSES.includes(current.publishStatus) &&
+      isUnknownPublishOutcome(current.lastErrorCode) &&
+      !params.confirmNotPublished
+    ) {
+      throw outcomeUnconfirmed();
+    }
     throw new PostWorkflowError(
       "already_published",
       "A post that is publishing or already published cannot be rescheduled.",
@@ -273,8 +317,10 @@ export async function schedulePost(
       {
         delaySeconds,
         // Each schedule gets its own message: a reschedule must not be dropped as a duplicate of
-        // the earlier one (which publishCreatorPost then skips as early).
-        deduplicationId: `publish-creator-post:${postId}:${updated.contentVersion}:${params.scheduledFor.getTime()}`,
+        // the earlier one (which publishCreatorPost then skips as early). The write's updatedAt
+        // makes it unique even for the same time and version, e.g. an interrupted post scheduled
+        // again for the time it already had, within QStash's deduplication window.
+        deduplicationId: `publish-creator-post:${postId}:${updated.contentVersion}:${params.scheduledFor.getTime()}:${updated.updatedAt.getTime()}`,
       },
     );
   } catch (e) {

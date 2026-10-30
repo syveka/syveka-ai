@@ -33,8 +33,10 @@ export class MetaApiError extends Error {
   constructor(
     message: string,
     public readonly retryable = false,
+    options?: { cause?: unknown },
   ) {
-    super(message);
+    super(message, options);
+    this.name = "MetaApiError";
   }
 }
 
@@ -83,17 +85,42 @@ export function metaAuthorizeUrl(state: string): string {
   return `https://www.facebook.com/${graphVersion()}/dialog/oauth?${q.toString()}`;
 }
 
+/**
+ * A call that publishes (media_publish, Page photos/videos) whose answer we
+ * never got: Meta may have created the post, so it is never retried blindly.
+ */
+export class MetaPublishOutcomeUnknownError extends Error {
+  readonly code = "meta_publish_outcome_unknown";
+  constructor(message: string, options?: { cause?: unknown }) {
+    super(message, options);
+    this.name = "MetaPublishOutcomeUnknownError";
+  }
+}
+
 async function graphFetch<T>(
   path: string,
-  init?: RequestInit & { retryOn5xx?: boolean },
+  init?: RequestInit & { retryOn5xx?: boolean; publishes?: boolean },
 ): Promise<T> {
   const url = path.startsWith("http") ? path : `${graphBase()}${path}`;
-  const res = await fetch(url, {
-    ...init,
-    signal: init?.signal ?? AbortSignal.timeout(GRAPH_FETCH_TIMEOUT_MS),
-  });
+  const { publishes = false, ...requestInit } = init ?? {};
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      ...requestInit,
+      signal: requestInit.signal ?? AbortSignal.timeout(GRAPH_FETCH_TIMEOUT_MS),
+    });
+  } catch (e) {
+    // Timed out or the connection dropped: the request may have reached Meta.
+    if (publishes) {
+      throw new MetaPublishOutcomeUnknownError("Meta publish request got no answer", { cause: e });
+    }
+    throw new MetaApiError("Meta Graph API request got no answer", true, { cause: e });
+  }
   const body = (await res.json().catch(() => ({}))) as
     T | { error?: { message?: string; code?: number; is_transient?: boolean } };
+  if (publishes && res.status >= 500) {
+    throw new MetaPublishOutcomeUnknownError(`Meta publish request answered ${res.status}`);
+  }
   if (!res.ok || (body && typeof body === "object" && "error" in body && body.error)) {
     const err = (body as { error?: { message?: string; is_transient?: boolean } }).error;
     throw new MetaApiError(
@@ -176,6 +203,7 @@ export async function publishFacebookPhoto(
 ): Promise<{ postId: string }> {
   const data = await graphFetch<{ id?: string; post_id?: string }>(`/${pageId}/photos`, {
     method: "POST",
+    publishes: true,
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       url: params.imageUrl,
@@ -184,7 +212,8 @@ export async function publishFacebookPhoto(
     }),
   });
   const postId = data.post_id ?? data.id;
-  if (!postId) throw new MetaApiError("Facebook photo publish returned no post id");
+  if (!postId)
+    throw new MetaPublishOutcomeUnknownError("Facebook photo publish returned no post id");
   return { postId };
 }
 
@@ -196,6 +225,7 @@ export async function publishFacebookVideo(
 ): Promise<{ postId: string }> {
   const data = await graphFetch<{ id?: string }>(`/${pageId}/videos`, {
     method: "POST",
+    publishes: true,
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({
       file_url: params.videoUrl,
@@ -203,7 +233,8 @@ export async function publishFacebookVideo(
       access_token: pageAccessToken,
     }),
   });
-  if (!data.id) throw new MetaApiError("Facebook video publish returned no post id");
+  if (!data.id)
+    throw new MetaPublishOutcomeUnknownError("Facebook video publish returned no post id");
   return { postId: data.id };
 }
 
@@ -254,10 +285,13 @@ export async function publishInstagramMedia(
 
   const published = await graphFetch<{ id?: string }>(`/${igUserId}/media_publish`, {
     method: "POST",
+    publishes: true,
     headers: { "Content-Type": "application/x-www-form-urlencoded" },
     body: new URLSearchParams({ creation_id: container.id, access_token: pageAccessToken }),
   });
-  if (!published.id) throw new MetaApiError("Instagram media_publish returned no post id");
+  if (!published.id) {
+    throw new MetaPublishOutcomeUnknownError("Instagram media_publish returned no post id");
+  }
   return { postId: published.id };
 }
 

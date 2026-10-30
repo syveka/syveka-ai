@@ -76,7 +76,8 @@ export async function scheduleEventReminders(params: {
  * emailing their attendees because they were moved.
  *
  * Pending reminders for the old time are canceled, so their already-enqueued
- * jobs find no SCHEDULED row and send nothing; canceled rows also keep the
+ * jobs find no claimable row and send nothing. That includes FAILED ones,
+ * whose QStash retry may still be on its way; canceled rows also keep the
  * event marked as one that has reminders. Then reminders for the new time are
  * scheduled (none whose send time has already passed). A canceled reminder
  * for exactly the new time (the event moved away and back) is removed first so
@@ -92,7 +93,7 @@ export async function rescheduleEventReminders(params: {
   if ((await unscopedPrisma.reminder.count({ where: scope })) === 0) return 0;
 
   await unscopedPrisma.reminder.updateMany({
-    where: { ...scope, status: "SCHEDULED" },
+    where: { ...scope, status: { in: ["SCHEDULED", "FAILED"] } },
     data: { status: "CANCELED" },
   });
   await unscopedPrisma.reminder.deleteMany({

@@ -1339,7 +1339,9 @@
       "socialAccountLabel": "Account",
       "scheduling": "Scheduling…",
       "scheduleCta": "Schedule",
-      "cancelCta": "Cancel"
+      "cancelCta": "Cancel",
+      "outcomeUnknown": "This post may already have been published. Check the platform before scheduling it again.",
+      "confirmNotPublished": "I checked the platform and this post is not published"
     },
     "library": {
       "generationsTitle": "Generations",
