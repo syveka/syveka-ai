@@ -2,11 +2,12 @@
 
 import { useEffect, useRef } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { Sparkles, FileText, Volume2, Square } from "lucide-react";
+import { Sparkles, Volume2, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UiMessage } from "@/hooks/use-chat";
 import type { PlaybackFailure } from "@/hooks/use-speech-playback";
 import { ActionConfirmation } from "./action-confirmation";
+import { MarkdownMessage } from "./markdown-message";
 
 /** Optional read-aloud controls for assistant replies (never autoplays). */
 export type ReplyPlayback = {
@@ -102,7 +103,7 @@ function MessageBubble({
     <div className={cn("flex", isUser ? "justify-end" : "justify-start")}>
       <div
         className={cn(
-          "max-w-[85%] rounded-lg px-4 py-2.5 text-sm md:max-w-[70%]",
+          "min-w-0 max-w-[85%] rounded-lg px-4 py-2.5 text-sm md:max-w-[70%]",
           isUser ? "bg-primary text-primary-foreground" : "bg-muted",
         )}
       >
@@ -114,24 +115,18 @@ function MessageBubble({
           </div>
         ) : null}
 
-        <div className="whitespace-pre-wrap break-words">
-          {message.content}
-          {message.streaming ? <span className="animate-pulse">▍</span> : null}
-        </div>
-
-        {message.citations && message.citations.length > 0 ? (
-          <div className="mt-2 space-y-1 border-t border-border/50 pt-2">
-            {message.citations.map((c) => (
-              <div
-                key={c.documentId}
-                className="flex items-center gap-1.5 text-xs text-muted-foreground"
-              >
-                <FileText className="size-3" />
-                {c.title}
-              </div>
-            ))}
+        {/* A user's own text is shown exactly as typed; only replies are Markdown. */}
+        {isUser ? (
+          <div dir="auto" className="whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+            {message.content}
           </div>
-        ) : null}
+        ) : (
+          <MarkdownMessage
+            content={message.content}
+            citations={message.citations}
+            streaming={message.streaming}
+          />
+        )}
 
         {!isUser && message.actions?.length
           ? message.actions.map((action) => (

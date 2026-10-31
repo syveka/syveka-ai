@@ -213,6 +213,9 @@
   "chat": {
     "emptyState": "اسأل أي شيء عن شركتك — يمكنني البحث في قاعدة المعرفة وإدارة العملاء والتقويم.",
     "newConversation": "محادثة جديدة",
+    "conversations": "المحادثات",
+    "sources": "المصادر",
+    "citation": "المصدر {number}: {title}",
     "placeholder": "راسل سيفيكا…",
     "useKnowledgeBase": "استخدام قاعدة المعرفة",
     "attachFile": "إرفاق ملف PDF أو DOCX أو TXT",

@@ -213,6 +213,9 @@
   "chat": {
     "emptyState": "Ask anything about your business — I can search your knowledge base, CRM and calendar.",
     "newConversation": "New conversation",
+    "conversations": "Conversations",
+    "sources": "Sources",
+    "citation": "Source {number}: {title}",
     "placeholder": "Message Syveka…",
     "useKnowledgeBase": "Use knowledge base",
     "attachFile": "Attach PDF, DOCX or TXT",

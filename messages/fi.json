@@ -213,6 +213,9 @@
   "chat": {
     "emptyState": "Kysy mitä tahansa yrityksestäsi — voin hakea tietopankista, CRM:stä ja kalenterista.",
     "newConversation": "Uusi keskustelu",
+    "conversations": "Keskustelut",
+    "sources": "Lähteet",
+    "citation": "Lähde {number}: {title}",
     "placeholder": "Viesti Syvekalle…",
     "useKnowledgeBase": "Käytä tietopankkia",
     "attachFile": "Liitä PDF-, DOCX- tai TXT-tiedosto",

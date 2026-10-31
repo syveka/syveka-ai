@@ -216,8 +216,9 @@ describe("ChatThread Listen control", () => {
     fireEvent.click(listen[0]!);
     expect(spoken[0]!.text).toBe("Hello there.");
     expect(screen.getByRole("button", { name: en.chat.voice.stopListening })).toBeTruthy();
-    // Reply text stays fully visible.
-    expect(document.body.textContent).toContain("Hello **there**.");
+    // Reply text stays fully visible (rendered as Markdown: "there" in bold).
+    expect(document.body.textContent).toContain("Hello there.");
+    expect(document.querySelector("strong")?.textContent).toBe("there");
   });
 
   it("a short reply is read in the language of the user message it answers", () => {
