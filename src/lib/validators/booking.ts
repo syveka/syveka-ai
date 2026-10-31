@@ -131,6 +131,14 @@ export const bookingTypeSchema = z.object({
 
 export type BookingTypeInput = z.infer<typeof bookingTypeSchema>;
 
+/**
+ * Explicit consent only. z.coerce.boolean() turned any non-empty string,
+ * "false" included, into true, so a hand-made request could claim consent.
+ */
+const consentFlag = z
+  .union([z.boolean(), z.enum(["true", "on", "false", "off", ""])])
+  .transform((v) => v === true || v === "true" || v === "on");
+
 /** Public guest booking payload — strictly validated, rate-limited upstream. */
 export const publicBookingSchema = z.object({
   startsAt: isoDateTime(),
@@ -141,7 +149,7 @@ export const publicBookingSchema = z.object({
   phone: optionalTrimmed(40),
   company: optionalTrimmed(200),
   notes: optionalTrimmed(2000),
-  consent: z.coerce.boolean().default(false),
+  consent: consentFlag.default(false),
   locale: z.enum(["en", "fi", "ar"]).optional(),
   /** Honeypot — must stay empty; bots fill it. */
   website: z.literal("").optional().or(z.undefined()),

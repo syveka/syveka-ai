@@ -35,6 +35,23 @@ describe("publicBookingSchema", () => {
   it("rejects non-ISO start times", () => {
     expect(publicBookingSchema.safeParse({ ...valid, startsAt: "tomorrow" }).success).toBe(false);
   });
+
+  it.each([
+    [true, true],
+    ["true", true],
+    ["on", true],
+    [false, false],
+    ["false", false],
+    ["off", false],
+    ["", false],
+    [undefined, false],
+  ])("consent %j is read as %s (a string 'false' never counts as consent)", (consent, expected) => {
+    expect(publicBookingSchema.parse({ ...valid, consent }).consent).toBe(expected);
+  });
+
+  it.each([["yes"], ["0"], ["1"], [1], [{}]])("consent %j is not a valid value", (consent) => {
+    expect(publicBookingSchema.safeParse({ ...valid, consent }).success).toBe(false);
+  });
 });
 
 describe("weekly rules and schedules", () => {

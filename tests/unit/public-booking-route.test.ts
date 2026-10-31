@@ -111,7 +111,7 @@ describe("public booking: confirmation email outcome", () => {
  */
 describe("public booking: server-side consent", () => {
   /** `undefined` leaves the field out of the JSON body entirely. */
-  function requestWithConsent(consent: boolean | undefined) {
+  function requestWithConsent(consent: boolean | string | undefined) {
     return new Request("http://localhost/api/v1/booking/acme/intro", {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-forwarded-for": "203.0.113.7" },
@@ -129,6 +129,7 @@ describe("public booking: server-side consent", () => {
   it.each([
     ["consent left out", undefined],
     ["consent: false", false],
+    ['consent: "false" (a string)', "false"],
   ])("%s reaches the service as no consent and is refused with 400", async (_label, consent) => {
     const { BookingError } = await import("@/server/services/booking");
     mocks.createPublicBooking.mockRejectedValue(
