@@ -4,6 +4,7 @@ import { routeModel } from "@/server/ai/router";
 import { can } from "@/server/auth/permissions";
 import type { TenantContext } from "@/server/auth/session";
 import { tenantDb } from "@/server/db/tenant";
+import { summarizeOpenPipeline } from "@/lib/crm/deal-forecast";
 
 function startOfUtcDay(date = new Date()): Date {
   return new Date(Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), date.getUTCDate()));
@@ -144,13 +145,23 @@ export async function getCrmDashboard(ctx: TenantContext) {
       : Promise.resolve([]),
   ]);
 
-  const [stageDealTotals, upcomingTasks] = await Promise.all([
+  const [stageDealTotals, openDeals, upcomingTasks] = await Promise.all([
+    // Per-stage rows count every live deal in the stage, open or closed, the
+    // same rule as the Analytics funnel, so Won/Lost rows show real totals.
     pipeline
       ? db.deal.groupBy({
           by: ["stageId"],
-          where: { pipelineId: pipeline.id, deletedAt: null, closedAt: null },
+          where: { pipelineId: pipeline.id, deletedAt: null },
           _count: { _all: true },
           _sum: { valueCents: true },
+        })
+      : Promise.resolve([]),
+    // Open value and forecast need each deal's own probability override, so
+    // they are computed per deal with the shared forecast contract.
+    pipeline
+      ? db.deal.findMany({
+          where: { pipelineId: pipeline.id, deletedAt: null, closedAt: null },
+          select: { stageId: true, valueCents: true, probability: true, closedAt: true },
         })
       : Promise.resolve([]),
     db.activity.findMany({
@@ -186,13 +197,12 @@ export async function getCrmDashboard(ctx: TenantContext) {
       };
     }) ?? [];
 
-  const openStages = pipelineStages.filter((stage) => !stage.isWon && !stage.isLost);
-  const openPipelineValueCents = openStages.reduce((sum, stage) => sum + stage.valueCents, 0);
-  // Weighted forecast uses stage default probabilities; per-deal overrides
-  // are reflected on the deals board where deals are loaded individually.
-  const forecastValueCents = openStages.reduce(
-    (sum, stage) => sum + Math.round((stage.valueCents * stage.probability) / 100),
-    0,
+  const stageById = new Map((pipeline?.stages ?? []).map((stage) => [stage.id, stage]));
+  const { openValueCents: openPipelineValueCents, forecastValueCents } = summarizeOpenPipeline(
+    openDeals.flatMap((deal) => {
+      const stage = stageById.get(deal.stageId);
+      return stage ? [{ deal, stage }] : [];
+    }),
   );
 
   const summaryModel = routeModel("summary");
