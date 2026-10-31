@@ -253,9 +253,10 @@
       "listen": "Kuuntele",
       "stopListening": "Lopeta ääneen lukeminen",
       "listenLabel": "Lue vastaus ääneen",
+      "preparingVoice": "Valmistellaan puheääntä…",
       "playbackErrors": {
         "unsupported": "Tämä selain ei osaa lukea vastauksia ääneen.",
-        "no_voice": "Tässä laitteessa ei ole puheääntä tälle kielelle.",
+        "no_voice": "Tähän laitteeseen ei ole asennettu puheääntä kielelle {language}. Jos haluat kuunnella vastauksia, asenna puhedata kielelle {language} laitteen tekstistä puheeksi -asetuksista. Voit silti lukea vastauksen yllä.",
         "unknown_language": "Tämän vastauksen kieltä ei voitu yhdistää puheääneen.",
         "playback_failed": "Vastausta ei voitu lukea ääneen."
       },

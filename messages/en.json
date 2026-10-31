@@ -253,9 +253,10 @@
       "listen": "Listen",
       "stopListening": "Stop reading aloud",
       "listenLabel": "Read this reply aloud",
+      "preparingVoice": "Preparing the voice…",
       "playbackErrors": {
         "unsupported": "This browser can't read replies aloud.",
-        "no_voice": "This device has no voice for this language.",
+        "no_voice": "No {language} voice is installed on this device. To hear replies, install the {language} voice data in your device's text-to-speech settings. You can still read the reply above.",
         "unknown_language": "The language of this reply couldn't be matched to a voice.",
         "playback_failed": "The reply couldn't be read aloud."
       },

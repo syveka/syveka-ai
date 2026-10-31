@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { chooseVoice } from "@/lib/voice/voices";
+import { watchVoices } from "@/lib/voice/voice-list";
 
 /**
  * Whether this device can speak replies in the interface language:
@@ -28,27 +29,18 @@ export function useDeviceVoice(locale: string, active: boolean): DeviceVoice {
       setState("unavailable");
       return;
     }
-    const synth = window.speechSynthesis;
-    let stopped = false;
-    const evaluate = (final: boolean) => {
-      if (stopped) return;
-      const voices = synth.getVoices();
-      if (voices.length === 0) {
-        if (final) setState((s) => (s === "checking" ? "unknown" : s));
-        return;
-      }
-      setState(chooseVoice(locale, voices).ok ? "available" : "unavailable");
-    };
     setState("checking");
-    evaluate(false);
-    const onChange = () => evaluate(false);
-    synth.addEventListener?.("voiceschanged", onChange);
-    const timer = setTimeout(() => evaluate(true), WAIT_MS);
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-      synth.removeEventListener?.("voiceschanged", onChange);
-    };
+    return watchVoices(
+      window.speechSynthesis,
+      (voices, final) => {
+        if (voices.length === 0) {
+          if (final) setState((s) => (s === "checking" ? "unknown" : s));
+          return;
+        }
+        setState(chooseVoice(locale, voices).ok ? "available" : "unavailable");
+      },
+      WAIT_MS,
+    );
   }, [locale, active]);
 
   return state;
