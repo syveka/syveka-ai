@@ -2,6 +2,7 @@ import "server-only";
 
 import { Prisma } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
+import { rescheduleDurationMinutes } from "@/lib/booking-duration";
 import { audit } from "./audit";
 import { emitWorkflowEvent } from "./workflow-events";
 import { emitContactCreated } from "./contacts";
@@ -834,15 +835,13 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
   });
   if (!bookingType) throw new BookingError("Booking type not found", "not_found");
 
-  const previousDuration = Math.round(
-    (oldBooking.endsAt.getTime() - oldBooking.startsAt.getTime()) / 60_000,
+  // One value for the slots offered and the booking made, so the meeting
+  // never runs past the slot checked.
+  const durationMinutes = rescheduleDurationMinutes(
+    bookingType,
+    oldBooking.startsAt,
+    oldBooking.endsAt,
   );
-  // The moved meeting keeps its length while the type still offers it;
-  // otherwise it gets the type's default. One value for the slots offered
-  // and the booking made, so the meeting never runs past the slot checked.
-  const durationMinutes = bookingType.durationOptions.includes(previousDuration)
-    ? previousDuration
-    : bookingType.durationMinutes;
   const startsAt = new Date(newStartIso);
   const endsAt = new Date(startsAt.getTime() + durationMinutes * 60_000);
 

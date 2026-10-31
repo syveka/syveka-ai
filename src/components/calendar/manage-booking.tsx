@@ -13,6 +13,7 @@ export function ManageBooking({
   orgSlug,
   status,
   startsAt,
+  durationMinutes,
   guestTimezone,
 }: {
   token: string;
@@ -21,6 +22,7 @@ export function ManageBooking({
   orgSlug: string;
   status: string;
   startsAt: string;
+  durationMinutes: number;
   guestTimezone: string;
 }) {
   const t = useTranslations("booking");
@@ -31,6 +33,10 @@ export function ManageBooking({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [newStart, setNewStart] = useState<string | null>(null);
+  const [rescheduled, setRescheduled] = useState<{
+    manageToken: string;
+    confirmationEmailSent: boolean;
+  } | null>(null);
 
   const fullFmt = useMemo(
     () =>
@@ -57,7 +63,7 @@ export function ManageBooking({
     const from = new Date().toISOString();
     const to = new Date(Date.now() + 14 * 86_400_000).toISOString();
     void fetch(
-      `/api/v1/booking/${orgSlug}/${typeSlug}/slots?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
+      `/api/v1/booking/${orgSlug}/${typeSlug}/slots?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&duration=${durationMinutes}`,
     )
       .then(async (res) => {
         if (!res.ok) throw new Error();
@@ -69,7 +75,7 @@ export function ManageBooking({
     return () => {
       aborted = true;
     };
-  }, [mode, orgSlug, typeSlug, t]);
+  }, [mode, orgSlug, typeSlug, durationMinutes, t]);
 
   async function cancelBooking() {
     setBusy(true);
@@ -95,13 +101,21 @@ export function ManageBooking({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ startsAt: newStart }),
       });
-      const data = (await res.json()) as { error?: string };
+      const data = (await res.json()) as {
+        error?: string;
+        manageToken?: string;
+        confirmationEmailSent?: boolean;
+      };
       if (!res.ok) {
         setError(
           data.error === "slot_taken" ? t("errors.slotTaken") : t("errors.rescheduleFailed"),
         );
         return;
       }
+      setRescheduled({
+        manageToken: data.manageToken!,
+        confirmationEmailSent: data.confirmationEmailSent !== false,
+      });
       setMode("rescheduled");
     } catch {
       setError(t("errors.rescheduleFailed"));
@@ -126,7 +140,19 @@ export function ManageBooking({
         <CardContent className="pt-6 text-center">
           <h1 className="text-xl font-semibold">{t("manage.rescheduledTitle")}</h1>
           <p className="mt-2 text-sm">{newStart ? fullFmt.format(new Date(newStart)) : null}</p>
-          <p className="mt-2 text-sm text-muted-foreground">{t("confirmationEmailNote")}</p>
+          <p className="mt-2 text-sm text-muted-foreground">
+            {rescheduled?.confirmationEmailSent === false
+              ? t("confirmationEmailFailedNote")
+              : t("confirmationEmailNote")}
+          </p>
+          {rescheduled ? (
+            <a
+              href={`/booking/manage/${rescheduled.manageToken}`}
+              className="mt-2 inline-block text-sm text-primary underline"
+            >
+              {t("manageBooking")}
+            </a>
+          ) : null}
         </CardContent>
       </Card>
     );

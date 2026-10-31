@@ -2,6 +2,7 @@ export const dynamic = "force-dynamic";
 
 import { getTranslations } from "next-intl/server";
 import { getBookingByToken } from "@/server/services/booking";
+import { rescheduleDurationMinutes } from "@/lib/booking-duration";
 import { BookingTokenError } from "@/server/services/booking-tokens";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { ManageBooking } from "@/components/calendar/manage-booking";
@@ -49,6 +50,11 @@ export default async function ManageBookingPage({
       orgSlug={org?.slug ?? ""}
       status={booking.status}
       startsAt={booking.startsAt.toISOString()}
+      durationMinutes={rescheduleDurationMinutes(
+        booking.bookingType,
+        booking.startsAt,
+        booking.endsAt,
+      )}
       guestTimezone={booking.guestTimezone}
     />
   );

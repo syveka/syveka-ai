@@ -16,7 +16,13 @@ export async function saveBookingTypeAction(
   const ctx = await requirePermission("booking:manage");
   const limited = await actionWriteLimitError("booking", ctx);
   if (limited) return { error: limited };
-  const parsed = bookingTypeSchema.safeParse(Object.fromEntries(formData));
+  // An unticked checkbox submits nothing, and the schema's defaults (true)
+  // would then silently re-activate the type and its consent requirement.
+  const parsed = bookingTypeSchema.safeParse({
+    ...Object.fromEntries(formData),
+    isActive: formData.get("isActive") === "true",
+    requiresConsent: formData.get("requiresConsent") === "true",
+  });
   if (!parsed.success) return { error: "invalid_input" };
 
   try {

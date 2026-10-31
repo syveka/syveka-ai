@@ -69,12 +69,13 @@ async function once(
 }
 
 function formatWhen(startsAt: Date, endsAt: Date, timezone: string, locale: string): string {
-  const fmt = new Intl.DateTimeFormat(locale === "ar" ? "ar" : locale === "fi" ? "fi" : "en", {
+  const intlLocale = locale === "ar" ? "ar" : locale === "fi" ? "fi" : "en";
+  const fmt = new Intl.DateTimeFormat(intlLocale, {
     timeZone: timezone,
     dateStyle: "full",
     timeStyle: "short",
   });
-  const end = new Intl.DateTimeFormat("en", {
+  const end = new Intl.DateTimeFormat(intlLocale, {
     timeZone: timezone,
     timeStyle: "short",
   });
