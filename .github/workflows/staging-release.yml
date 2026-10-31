@@ -468,7 +468,17 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run essential staging smoke tests
-        run: npm run test:e2e
+        # No Playwright trace and no failure artifact anywhere in this job: the
+        # repository is public, artifacts are not secret-masked, a trace records
+        # every request's headers and cookies (here the bypass secret and the E2E
+        # session), and error-context.md's page snapshot records visible form
+        # values (the E2E email, and the password if a test fails while it is
+        # still typed). Failures are diagnosed from the job log. GitHub masks
+        # registered secrets there, but Playwright call logs can quote fill
+        # values and API request headers, so values that are not registered
+        # secrets (recovery links, generated passwords) are withheld in the
+        # tests themselves.
+        run: npm run test:e2e -- --trace=off
         env:
           E2E_BASE_URL: ${{ steps.staging-url.outputs.url }}
           E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
@@ -631,7 +641,7 @@ jobs:
         # is public, and the recovery journey also navigates to Supabase,
         # which must never receive that header. Retries are disabled because
         # a retried recovery request would hit Supabase's per-user throttle.
-        run: npx playwright test tests/e2e/auth-journeys.spec.ts --project=desktop --retries=0
+        run: npx playwright test tests/e2e/auth-journeys.spec.ts --project=desktop --retries=0 --trace=off
         env:
           E2E_AUTH_JOURNEYS: "1"
           E2E_BASE_URL: https://syveka-ai-staging.vercel.app
@@ -653,34 +663,8 @@ jobs:
           SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.STAGING_SUPABASE_SERVICE_ROLE_KEY }}
 
       - name: Run essential smoke tests on the stable staging alias
-        run: npm run test:e2e
+        run: npm run test:e2e -- --trace=off
         env:
           E2E_BASE_URL: https://syveka-ai-staging.vercel.app
           E2E_USER_EMAIL: ${{ secrets.STAGING_E2E_USER_EMAIL }}
           E2E_USER_PASSWORD: ${{ secrets.STAGING_E2E_USER_PASSWORD }}
-
-      - name: Upload Playwright traces on failure
-        # Without this, a failed staging E2E run's trace.zip/error-context.md
-        # (the only way to see the actual DOM/network state at the moment of
-        # failure, e.g. exactly what a reported-empty login-error alert
-        # really contained) only ever existed on the ephemeral runner disk
-        # and was unrecoverable the instant the job ended -- every prior
-        # staging auth failure had to be diagnosed from the test's own text
-        # assertion message alone, with no way to confirm or rule out
-        # competing explanations after the fact.
-        #
-        # test-results/.auth/ is deliberately excluded: auth.setup.ts writes
-        # the full browser storageState there (cookies + localStorage,
-        # including the live Supabase session tokens) on every *successful*
-        # sign-in, regardless of whether a *later*, unrelated test in the
-        # same job fails. Uploading it would hand out a ready-to-replay,
-        # no-credentials-needed session for the staging E2E account.
-        if: failure()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: staging-e2e-test-results
-          path: |
-            test-results/
-            !test-results/.auth/
-            !test-results/auth-journeys*/**
-          retention-days: 7

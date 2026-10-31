@@ -33,10 +33,22 @@ function pathOf(page: Page): string {
   return new URL(page.url()).pathname;
 }
 
+/**
+ * Fills a password field. Playwright's call log quotes a fill's value, and
+ * the journey's generated password is not a registered (masked) secret, so a
+ * failure reports only the selector and the error's name.
+ */
+async function fillSecret(page: Page, selector: string, value: string): Promise<void> {
+  await page.fill(selector, value).catch((error: unknown) => {
+    const name = error instanceof Error ? error.name : "unknown";
+    throw new Error(`filling ${selector} failed (${name}; value withheld)`);
+  });
+}
+
 async function signIn(page: Page, email: string, password: string): Promise<void> {
   await page.goto("/en/login");
   await page.fill("#email", email);
-  await page.fill("#password", password);
+  await fillSecret(page, "#password", password);
   await page.getByRole("button", { name: /kirjaudu|log in/i }).click();
   await page.waitForURL((url) => classifyE2ELoginPathname(url.pathname) !== "login", {
     timeout: 20_000,
@@ -109,7 +121,16 @@ test.describe("auth journeys on the stable staging host (opt-in)", () => {
     const verifyUrl =
       `${supabaseUrl}/auth/v1/verify?token=${encodeURIComponent(token!)}` +
       `&type=recovery&redirect_to=${encodeURIComponent(redirectTo)}`;
-    await page.goto(verifyUrl);
+    // Playwright's own navigation error quotes the full URL, recovery token
+    // included, into the (public) job log; report the failure without it,
+    // keeping only the error's name and network error code.
+    await page.goto(verifyUrl).catch((error: unknown) => {
+      const name = error instanceof Error ? error.name : "unknown";
+      const netError = /net::ERR_[A-Z_]+/.exec(String(error))?.[0] ?? "none";
+      throw new Error(
+        `recovery link navigation failed (${name}, ${netError}; URL withheld: it carries a recovery token)`,
+      );
+    });
     await page
       .waitForURL((url) => url.origin === origin && url.pathname === "/en/reset-password", {
         timeout: 30_000,
@@ -122,7 +143,7 @@ test.describe("auth journeys on the stable staging host (opt-in)", () => {
         );
       });
 
-    await page.fill("#password", newPassword);
+    await fillSecret(page, "#password", newPassword);
     await page.locator('form button[type="submit"]').click();
     await page.waitForURL((url) => classifyE2ELoginPathname(url.pathname) === "dashboard", {
       timeout: 30_000,
