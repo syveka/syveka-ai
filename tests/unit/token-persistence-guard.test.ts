@@ -236,11 +236,7 @@ describe("token-persistence guard: nothing builds or deploys after a match", () 
       .filter((s) => /\n        if: .*(always|failure)\(\)/.test(s.text))
       .map((s) => s.name);
     expect(conditional.sort()).toEqual(
-      [
-        "Print the rollback command",
-        "Restore the E2E account password",
-        "Upload Playwright traces on failure",
-      ].sort(),
+      ["Print the rollback command", "Restore the E2E account password"].sort(),
     );
   });
 });
