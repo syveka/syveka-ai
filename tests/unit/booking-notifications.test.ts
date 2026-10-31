@@ -294,4 +294,15 @@ describe("sendBookingLifecycleNotifications", () => {
     expect(JSON.stringify(guestReact.react)).toContain('"locale":"fi"');
     expect(JSON.stringify(ownerReact.react)).toContain('"locale":"en"');
   });
+
+  it("formats the guest's whole time range in the guest locale (no English AM/PM end time in Finnish)", async () => {
+    unscopedPrismaMock.booking.findUnique.mockResolvedValue(bookingRow({ guestLocale: "FI" }));
+
+    await sendBookingLifecycleNotifications({ kind: "confirmation", bookingId: "booking-1" });
+
+    const guestReact = (sendEmailMock.mock.calls[0]![0] as { react: { whenText: string } }).react;
+    // 09:00-09:30 UTC is 12.00-12.30 in Helsinki; "en" would render the end as "12:30 PM".
+    expect(guestReact.whenText).toContain("(Europe/Helsinki)");
+    expect(guestReact.whenText).not.toMatch(/AM|PM/);
+  });
 });

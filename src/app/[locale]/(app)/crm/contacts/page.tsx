@@ -16,7 +16,9 @@ export default async function ContactsPage({
 }) {
   const ctx = await requirePermission("crm:read");
   const t = await getTranslations("crm");
-  const query = contactListQuerySchema.parse(await searchParams);
+  // An invalid filter (e.g. an over-long search) falls back to the unfiltered list.
+  const parsedQuery = contactListQuerySchema.safeParse(await searchParams);
+  const query = parsedQuery.success ? parsedQuery.data : contactListQuerySchema.parse({});
   const canWrite = can(ctx.role, "crm:write");
 
   const [{ data, nextCursor }, companies] = await Promise.all([

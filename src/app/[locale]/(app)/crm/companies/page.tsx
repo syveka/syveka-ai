@@ -15,7 +15,9 @@ export default async function CompaniesPage({
 }) {
   const ctx = await requirePermission("crm:read");
   const t = await getTranslations("crm");
-  const query = companyListQuerySchema.parse(await searchParams);
+  // An invalid filter (e.g. an over-long search) falls back to the unfiltered list.
+  const parsedQuery = companyListQuerySchema.safeParse(await searchParams);
+  const query = parsedQuery.success ? parsedQuery.data : companyListQuerySchema.parse({});
 
   const { data, nextCursor } = await listCompanies(ctx, query);
 

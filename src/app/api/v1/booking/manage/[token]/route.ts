@@ -72,7 +72,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   const { token } = await params;
   try {
     const result = await booking.rescheduleBookingViaToken(token, parsed.data.startsAt);
-    await Promise.allSettled([
+    const [notified] = await Promise.allSettled([
       notifications.sendBookingLifecycleNotifications({
         kind: "reschedule",
         bookingId: result.booking.id,
@@ -88,6 +88,9 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
       bookingId: result.booking.id,
       manageToken: result.manageToken,
       startsAt: result.booking.startsAt.toISOString(),
+      // "skipped" means the email was already claimed (sent or in flight).
+      confirmationEmailSent:
+        notified.status === "fulfilled" && notified.value.guestEmail !== "failed",
     });
   } catch (e) {
     if (e instanceof tokens.BookingTokenError) {

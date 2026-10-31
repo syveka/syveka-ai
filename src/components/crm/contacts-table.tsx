@@ -66,6 +66,7 @@ export function ContactsTable({
         <Input
           placeholder={t("searchPlaceholder")}
           defaultValue={params.get("q") ?? ""}
+          maxLength={200}
           className="max-w-xs"
           onKeyDown={(e) => {
             if (e.key === "Enter") setParam("q", e.currentTarget.value || undefined);
