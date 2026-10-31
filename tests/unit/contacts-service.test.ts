@@ -146,16 +146,28 @@ describe("contacts service", () => {
       });
     });
 
-    it("builds a case-insensitive search across name, email and phone", async () => {
-      await listContacts(ctx(), { archived: "active", q: "ada l", limit: 25 });
+    it("builds a case-insensitive search where every term must match name, email or phone", async () => {
+      await listContacts(ctx(), { archived: "active", q: " ada  l ", limit: 25 });
 
       const args = db.contact.findMany.mock.calls[0]![0]!;
-      expect(args.where.OR).toEqual([
-        { firstName: { contains: "ada l", mode: "insensitive" } },
-        { lastName: { contains: "ada l", mode: "insensitive" } },
-        { email: { contains: "ada l", mode: "insensitive" } },
-        { phone: { contains: "adal" } },
-      ]);
+      const anyField = (term: string) => ({
+        OR: [
+          { firstName: { contains: term, mode: "insensitive" } },
+          { lastName: { contains: term, mode: "insensitive" } },
+          { email: { contains: term, mode: "insensitive" } },
+          { phone: { contains: term } },
+        ],
+      });
+      expect(args.where.AND).toEqual([anyField("ada"), anyField("l")]);
+      expect(args.where.OR).toBeUndefined();
+    });
+
+    it("applies no search filter for a whitespace-only query", async () => {
+      await listContacts(ctx(), { archived: "active", q: "   ", limit: 25 });
+
+      const args = db.contact.findMany.mock.calls[0]![0]!;
+      expect(args.where.AND).toBeUndefined();
+      expect(args.where.OR).toBeUndefined();
     });
 
     it("paginates with a cursor and reports nextCursor when more rows exist", async () => {

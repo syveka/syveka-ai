@@ -5,6 +5,7 @@ import { tenantDb } from "@/server/db/tenant";
 import { assertWithinLimit } from "./billing/entitlements";
 import { audit } from "./audit";
 import { emitWorkflowEvent } from "./workflow-events";
+import { searchTerms } from "@/lib/crm/search-terms";
 import type { TenantContext } from "@/server/auth/session";
 import type {
   ArchivedFilter,
@@ -33,17 +34,20 @@ export async function listContacts(ctx: TenantContext, params: ContactListQuery)
     ...archivedWhere(params.archived),
     ...(params.status ? { status: params.status } : {}),
     ...(params.companyId ? { companyId: params.companyId } : {}),
-    ...(params.q
-      ? {
-          OR: [
-            { firstName: { contains: params.q, mode: "insensitive" } },
-            { lastName: { contains: params.q, mode: "insensitive" } },
-            { email: { contains: params.q, mode: "insensitive" } },
-            { phone: { contains: params.q.replace(/\s/g, "") } },
-          ],
-        }
-      : {}),
   };
+  // Each term must match some field ("Pilot Guest" = first + last name). A
+  // spaced phone number ("040 123 4567") still matches term by term.
+  const terms = searchTerms(params.q);
+  if (terms.length > 0) {
+    where.AND = terms.map((term) => ({
+      OR: [
+        { firstName: { contains: term, mode: "insensitive" } },
+        { lastName: { contains: term, mode: "insensitive" } },
+        { email: { contains: term, mode: "insensitive" } },
+        { phone: { contains: term } },
+      ],
+    }));
+  }
 
   const rows = await db.contact.findMany({
     where,
