@@ -672,7 +672,9 @@
       "company": "Company",
       "deal": "Deal",
       "attendees": "Attendees",
-      "guestEmails": "Guest emails (comma-separated)"
+      "guestEmails": "Guest emails (comma-separated)",
+      "guestEmailsLabel": "Guest emails",
+      "guestEmailsHint": "For guests who aren't contacts. Separate several addresses with commas, for example anna@example.com, ben@example.com."
     },
     "views": {
       "day": "Day",
@@ -762,9 +764,22 @@
       "collectCompany": "Ask for company",
       "confirmationMessage": "Confirmation message",
       "slugTaken": "This URL slug is already in use",
-      "ownerNotMember": "This booking type's owner is no longer a member, so it can't be activated."
+      "ownerNotMember": "This booking type's owner is no longer a member, so it can't be activated.",
+      "copyFailed": "Couldn't copy. Select the link above and copy it manually."
     },
-    "connectCalendarLink": "Connect calendar"
+    "connectCalendarLink": "Connect calendar",
+    "attendeePicker": {
+      "clear": "Clear all",
+      "selectedCount": "{count, plural, =0 {No contacts selected} one {# contact selected} other {# contacts selected}}",
+      "selectedList": "Selected attendees",
+      "remove": "Remove {name}",
+      "unknownContact": "Unknown contact",
+      "noContacts": "No contacts to add yet.",
+      "filter": "Filter contacts",
+      "noMatches": "No matching contacts"
+    },
+    "monthDayEvents": "{count, plural, one {# event} other {# events}} on {date}. Open the day view.",
+    "monthMoreEvents": "{count, plural, one {# more event} other {# more events}}. Open the day view."
   },
   "notifications": {
     "title": "Notifications",
@@ -952,6 +967,12 @@
       "pickNewTime": "Pick a new time",
       "confirmReschedule": "Confirm new time",
       "back": "Back"
+    },
+    "languageLabel": "Language",
+    "unavailable": {
+      "title": "This booking page is not available",
+      "description": "The link may be incorrect, or online booking may be turned off for now.",
+      "contactHint": "Please contact the person or business who shared the link with you."
     }
   },
   "integrations": {

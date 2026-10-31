@@ -672,7 +672,9 @@
       "company": "الشركة",
       "deal": "الصفقة",
       "attendees": "الحضور",
-      "guestEmails": "بريد الضيوف (مفصولة بفواصل)"
+      "guestEmails": "بريد الضيوف (مفصولة بفواصل)",
+      "guestEmailsLabel": "بريد الضيوف",
+      "guestEmailsHint": "للضيوف غير المسجلين كجهات اتصال. افصل بين العناوين بفواصل، مثل anna@example.com, ben@example.com."
     },
     "views": {
       "day": "يوم",
@@ -762,9 +764,22 @@
       "collectCompany": "طلب اسم الشركة",
       "confirmationMessage": "رسالة التأكيد",
       "slugTaken": "معرّف الرابط مستخدم بالفعل",
-      "ownerNotMember": "مالك نوع الحجز هذا لم يعد عضوًا، لذلك لا يمكن تفعيله."
+      "ownerNotMember": "مالك نوع الحجز هذا لم يعد عضوًا، لذلك لا يمكن تفعيله.",
+      "copyFailed": "تعذر النسخ. حدد الرابط أعلاه وانسخه يدويًا."
     },
-    "connectCalendarLink": "ربط التقويم"
+    "connectCalendarLink": "ربط التقويم",
+    "attendeePicker": {
+      "clear": "مسح الكل",
+      "selectedCount": "{count, plural, =0 {لم يتم اختيار جهات اتصال} one {تم اختيار جهة اتصال واحدة} two {تم اختيار جهتي اتصال} few {تم اختيار # جهات اتصال} many {تم اختيار # جهة اتصال} other {تم اختيار # جهة اتصال}}",
+      "selectedList": "الحضور المختارون",
+      "remove": "إزالة {name}",
+      "unknownContact": "جهة اتصال غير معروفة",
+      "noContacts": "لا توجد جهات اتصال لإضافتها بعد.",
+      "filter": "تصفية جهات الاتصال",
+      "noMatches": "لا توجد جهات اتصال مطابقة"
+    },
+    "monthDayEvents": "{count, plural, one {حدث واحد} two {حدثان} few {# أحداث} many {# حدثًا} other {# حدث}} في {date}. افتح عرض اليوم.",
+    "monthMoreEvents": "{count, plural, one {حدث آخر} two {حدثان آخران} few {# أحداث أخرى} many {# حدثًا آخر} other {# حدث آخر}}. افتح عرض اليوم."
   },
   "notifications": {
     "title": "الإشعارات",
@@ -952,6 +967,12 @@
       "pickNewTime": "اختر وقتًا جديدًا",
       "confirmReschedule": "تأكيد الوقت الجديد",
       "back": "رجوع"
+    },
+    "languageLabel": "اللغة",
+    "unavailable": {
+      "title": "صفحة الحجز هذه غير متاحة",
+      "description": "قد يكون الرابط غير صحيح، أو قد يكون الحجز عبر الإنترنت متوقفًا حاليًا.",
+      "contactHint": "يُرجى التواصل مع الشخص أو الجهة التي شاركت الرابط معك."
     }
   },
   "integrations": {

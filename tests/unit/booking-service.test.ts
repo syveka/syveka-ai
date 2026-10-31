@@ -194,6 +194,18 @@ describe("public slots", () => {
 });
 
 describe("createPublicBooking", () => {
+  // Staging QA: the CRM timeline shows only when an entry was written, so the
+  // entries name the action and the meeting time themselves.
+  it("the creation activity says it is a new booking and names the meeting time in the guest's zone", async () => {
+    await createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() });
+    expect(txMock.activity.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        subject: "New booking: Intro call",
+        body: "Guest One (guest@example.com) booked Intro call for 2026-02-02 09:00 (Europe/Helsinki).",
+      }),
+    });
+  });
+
   it("books a valid slot: event + attendee + booking + CRM activity + token", async () => {
     const result = await createPublicBooking({
       orgSlug: "acme",
@@ -595,6 +607,16 @@ describe("rescheduleBookingViaToken", () => {
     );
   });
 
+  it("the reschedule activity names both the old and the new meeting time", async () => {
+    await rescheduleBookingViaToken("raw-token", NEW_START);
+    expect(txMock.activity.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        subject: "Booking rescheduled: Intro call",
+        body: "Guest One moved the meeting from 2026-02-02 09:00 (Europe/Helsinki) to 2026-02-03 10:00 (Europe/Helsinki).",
+      }),
+    });
+  });
+
   it("the reschedule activity has a null contact when the guest has none (unchanged behavior)", async () => {
     await rescheduleBookingViaToken("raw-token", NEW_START);
     expect(txMock.activity.create).toHaveBeenCalledWith({
@@ -893,7 +915,7 @@ describe("cancelBookingViaToken", () => {
         contactId: "contact-guest",
         type: "MEETING",
         subject: "Booking canceled: Intro call",
-        body: "Guest One canceled. Reason: change of plans",
+        body: "Guest One canceled the meeting on 2026-02-02 09:00 (Europe/Helsinki). Reason: change of plans",
         metadata: { bookingId: "bk-old", kind: "canceled" },
       }),
     });

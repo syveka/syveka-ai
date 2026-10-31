@@ -102,3 +102,47 @@ describe("public booking: confirmation email outcome", () => {
     expect(mocks.createPublicBooking).toHaveBeenCalledTimes(1);
   });
 });
+
+/**
+ * Consent is enforced by the server, not only by the browser's `required`
+ * checkbox: a raw request without consent, for a type that requires it, gets
+ * the service's refusal back and nothing is booked, emailed or scheduled.
+ * (createPublicBooking's own check is covered in booking-service.test.ts.)
+ */
+describe("public booking: server-side consent", () => {
+  /** `undefined` leaves the field out of the JSON body entirely. */
+  function requestWithConsent(consent: boolean | undefined) {
+    return new Request("http://localhost/api/v1/booking/acme/intro", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", "x-forwarded-for": "203.0.113.7" },
+      body: JSON.stringify({
+        startsAt: "2026-10-07T06:00:00.000Z",
+        timezone: "Europe/Helsinki",
+        name: "Guest",
+        email: "guest@example.com",
+        consent,
+        locale: "en",
+      }),
+    });
+  }
+
+  it.each([
+    ["consent left out", undefined],
+    ["consent: false", false],
+  ])("%s reaches the service as no consent and is refused with 400", async (_label, consent) => {
+    const { BookingError } = await import("@/server/services/booking");
+    mocks.createPublicBooking.mockRejectedValue(
+      new BookingError("Consent required", "consent_required"),
+    );
+
+    const res = await POST(requestWithConsent(consent), params);
+
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "consent_required" });
+    expect(mocks.createPublicBooking).toHaveBeenCalledWith(
+      expect.objectContaining({ input: expect.objectContaining({ consent: false }) }),
+    );
+    expect(mocks.notify).not.toHaveBeenCalled();
+    expect(mocks.reminders).not.toHaveBeenCalled();
+  });
+});
