@@ -26,6 +26,13 @@ export const createEntitlementGrantSchema = z.object({
     .optional(),
 });
 
+export const setOrganizationFeatureSchema = z.object({
+  organizationId: z.string().guid(),
+  key: z.enum(["creator_studio_v1"]),
+  enabled: z.enum(["true", "false"]).transform((v) => v === "true"),
+  reason: z.string().trim().min(1).max(500),
+});
+
 export const revokeEntitlementGrantSchema = z.object({
   grantId: z.string().guid(),
   organizationId: z.string().guid(),

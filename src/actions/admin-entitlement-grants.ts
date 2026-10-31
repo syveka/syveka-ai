@@ -9,7 +9,12 @@ import {
 import {
   createEntitlementGrantSchema,
   revokeEntitlementGrantSchema,
+  setOrganizationFeatureSchema,
 } from "@/lib/validators/entitlement-grants";
+import {
+  InvalidFeatureToggleError,
+  setOrganizationFeatureAsSuperadmin,
+} from "@/server/services/admin-feature-flags";
 import { AuthError } from "@/server/auth/session";
 import type { EntitlementMetric } from "@/generated/prisma/client/client";
 
@@ -63,4 +68,28 @@ export async function revokeEntitlementGrantAction(
 
   revalidatePath(`/admin/organizations/${parsed.data.organizationId}`);
   return { message: "Grant revoked." };
+}
+
+/**
+ * Superadmin switch for an organization's screen-level feature flag (see
+ * src/server/services/admin-feature-flags.ts). requireSuperadmin() inside
+ * the service is the authorization boundary.
+ */
+export async function setOrganizationFeatureAction(
+  _prev: EntitlementGrantActionState,
+  formData: FormData,
+): Promise<EntitlementGrantActionState> {
+  const parsed = setOrganizationFeatureSchema.safeParse(Object.fromEntries(formData));
+  if (!parsed.success) return { error: "invalid_input" };
+
+  try {
+    await setOrganizationFeatureAsSuperadmin(parsed.data);
+  } catch (e) {
+    if (e instanceof AuthError) return { error: "forbidden" };
+    if (e instanceof InvalidFeatureToggleError) return { error: e.message };
+    return { error: "failed" };
+  }
+
+  revalidatePath(`/admin/organizations/${parsed.data.organizationId}`);
+  return { message: parsed.data.enabled ? "Feature enabled." : "Feature disabled." };
 }

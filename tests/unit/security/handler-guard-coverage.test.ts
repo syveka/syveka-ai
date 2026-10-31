@@ -98,6 +98,10 @@ const PUBLIC_ACTIONS: Record<string, { why: string; mustContain: string }> = {
     why: "requireSuperadmin() runs inside the service (asserted below)",
     mustContain: "revokeEntitlementOverride(",
   },
+  "actions/admin-entitlement-grants.ts#setOrganizationFeatureAction": {
+    why: "requireSuperadmin() runs inside the service (asserted below)",
+    mustContain: "setOrganizationFeatureAsSuperadmin(",
+  },
 };
 
 function walk(dir: string, match: (file: string) => boolean): string[] {
@@ -272,5 +276,15 @@ describe("every exported Server Action is guarded", () => {
       const body = service.slice(service.indexOf(`export async function ${fn}(`));
       expect(body.indexOf("requireSuperadmin("), fn).toBeGreaterThan(0);
     }
+  });
+
+  it("the admin feature-flag service enforces requireSuperadmin before any change", () => {
+    const service = read("server/services/admin-feature-flags.ts");
+    const body = service.slice(
+      service.indexOf("export async function setOrganizationFeatureAsSuperadmin("),
+    );
+    const guard = body.indexOf("requireSuperadmin(");
+    expect(guard).toBeGreaterThan(0);
+    expect(guard).toBeLessThan(body.indexOf("setFeatureEnabled("));
   });
 });

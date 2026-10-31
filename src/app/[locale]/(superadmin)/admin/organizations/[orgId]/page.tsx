@@ -8,6 +8,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "@/i18n/routing";
 import { GrantForm } from "@/components/admin/grant-form";
 import { RevokeGrantButton } from "@/components/admin/revoke-grant-button";
+import { FeatureToggleForm } from "@/components/admin/feature-toggle-form";
 
 const METRIC_LABELS: Record<string, string> = {
   MAX_SEATS: "Seats",
@@ -107,6 +108,26 @@ export default async function AdminOrganizationDetailPage({
               </div>
             </details>
           ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Feature access</CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <p className="text-xs text-muted-foreground">
+            Opens Creator Studio&apos;s screens for this organization only. It grants no credits:
+            every generation still needs credits, which a FREE organization does not have, so no
+            paid generation becomes possible. Superadmin-only and recorded in the
+            organization&apos;s audit log.
+          </p>
+          <FeatureToggleForm
+            organizationId={orgId}
+            featureKey="creator_studio_v1"
+            label="Creator Studio"
+            enabled={(org.settings as Record<string, unknown> | null)?.creator_studio_v1 === true}
+          />
         </CardContent>
       </Card>
     </div>
