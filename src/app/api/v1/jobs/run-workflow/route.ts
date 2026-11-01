@@ -279,6 +279,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     { isOrganizationActive, ORGANIZATION_INACTIVE },
     { assertAiQuotaAvailable, AiSpendError },
     { WORKFLOW_DATA_SYSTEM_PROMPT, formatWorkflowDataValue, stripWorkflowDataMarkers },
+    { isInternalOnlyWorkflowOrg },
+    { internalScopeViolations },
   ] = await Promise.all([
     import("@/server/jobs/verify"),
     import("@/server/db/tenant"),
@@ -290,6 +292,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/jobs/organization-guard"),
     import("@/server/services/ai-spend"),
     import("@/server/ai/prompts/workflow-data"),
+    import("@/server/services/workflows"),
+    import("@/lib/workflows/internal-scope"),
   ]);
 
   const rawBody = await verifyJobRequest(request);
@@ -317,6 +321,29 @@ export async function POST(request: Request): Promise<NextResponse> {
     where: { id: workflowId, organizationId: orgId },
   });
   if (!workflow) return NextResponse.json({ skipped: "workflow inactive or gone" });
+
+  // An internal-only organization (lib/workflows/internal-scope.ts) runs no
+  // step outside that scope: checked before any step, for fresh triggers,
+  // test runs and resumes alike, so a workflow saved before the restriction
+  // was set can't send email, call a model or park on a wait either. A test
+  // or resumed run is marked FAILED; nothing is executed.
+  if (
+    (await isInternalOnlyWorkflowOrg(orgId)) &&
+    internalScopeViolations(workflow.trigger, workflow.steps).length > 0
+  ) {
+    if (runId) {
+      await unscopedPrisma.workflowRun.updateMany({
+        where: {
+          id: runId,
+          workflowId,
+          organizationId: orgId,
+          status: { in: ["WAITING", "RUNNING"] },
+        },
+        data: { status: "FAILED", error: "step_not_allowed", finishedAt: new Date() },
+      });
+    }
+    return NextResponse.json({ skipped: "step_not_allowed" });
+  }
 
   // Only a manual test run (testWorkflowAction, which always carries runId)
   // may run an inactive workflow. Everything else stops here, including the

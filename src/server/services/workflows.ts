@@ -3,16 +3,40 @@ import "server-only";
 import { tenantDb } from "@/server/db/tenant";
 import { assertWithinLimit } from "./billing/entitlements";
 import { audit } from "./audit";
+import { isRestrictionSet } from "./feature-flags";
 import type { TenantContext } from "@/server/auth/session";
 import type { WorkflowInput } from "@/lib/validators/workflows";
+import {
+  INTERNAL_ONLY_WORKFLOWS_FLAG,
+  internalScopeViolations,
+} from "@/lib/workflows/internal-scope";
 
 export class WorkflowError extends Error {
   constructor(
     message: string,
-    public readonly code: "recipient_not_member",
+    public readonly code: "recipient_not_member" | "step_not_allowed",
   ) {
     super(message);
     this.name = "WorkflowError";
+  }
+}
+
+/** Whether this organization's workflows are limited to internal steps (see internal-scope.ts). */
+export function isInternalOnlyWorkflowOrg(orgId: string): Promise<boolean> {
+  return isRestrictionSet(orgId, INTERNAL_ONLY_WORKFLOWS_FLAG);
+}
+
+/** Refuses a workflow outside an internal-only organization's scope. */
+export async function assertWorkflowInOrgScope(
+  orgId: string,
+  workflow: { trigger: unknown; steps: unknown },
+): Promise<void> {
+  if (!(await isInternalOnlyWorkflowOrg(orgId))) return;
+  if (internalScopeViolations(workflow.trigger, workflow.steps).length > 0) {
+    throw new WorkflowError(
+      "This organization's workflows may only use internal steps",
+      "step_not_allowed",
+    );
   }
 }
 
@@ -33,6 +57,7 @@ export async function upsertWorkflow(
   workflowId?: string,
 ) {
   const db = tenantDb(ctx.orgId);
+  await assertWorkflowInOrgScope(ctx.orgId, input);
 
   // notify.member recipients must be members of this org: the run-workflow job
   // writes the notification with no further check. organizationMember is
@@ -99,6 +124,11 @@ export async function setWorkflowActive(
 ): Promise<void> {
   const db = tenantDb(ctx.orgId);
   if (isActive) {
+    const workflow = await db.workflow.findFirstOrThrow({
+      where: { id: workflowId },
+      select: { trigger: true, steps: true },
+    });
+    await assertWorkflowInOrgScope(ctx.orgId, workflow);
     const active = await db.workflow.count({ where: { isActive: true } });
     await assertWithinLimit(ctx.orgId, { kind: "workflows", active });
   }

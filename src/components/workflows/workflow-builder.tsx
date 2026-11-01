@@ -20,7 +20,12 @@ import {
 import { WorkflowEntitlementNotice } from "@/components/workflows/workflow-entitlement-notice";
 
 const NOTICE_ID = "workflow-builder-entitlement-notice";
-const SAVE_ERROR_CODES = ["invalid_input", "duplicate_step_id", "recipient_not_member"] as const;
+const SAVE_ERROR_CODES = [
+  "invalid_input",
+  "duplicate_step_id",
+  "recipient_not_member",
+  "step_not_allowed",
+] as const;
 const RUN_STATUSES = ["RUNNING", "SUCCEEDED", "FAILED", "CANCELED", "WAITING"] as const;
 
 const STEP_TYPES = [
@@ -220,9 +225,11 @@ export function WorkflowBuilder({
                   setError(
                     res.error === "quota"
                       ? t("testErrors.quota")
-                      : res.error === "service_unavailable"
-                        ? t("testErrors.unavailable")
-                        : t("testErrors.rateLimited"),
+                      : res.error === "step_not_allowed"
+                        ? t("saveErrors.step_not_allowed")
+                        : res.error === "service_unavailable"
+                          ? t("testErrors.unavailable")
+                          : t("testErrors.rateLimited"),
                   );
                 }
               })
