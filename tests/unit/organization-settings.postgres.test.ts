@@ -1,5 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import type * as OrgSettings from "@/server/services/organization-settings";
+import type * as FeatureFlags from "@/server/services/feature-flags";
+import type * as SettingsActions from "@/actions/settings";
 
 /**
  * Organization.settings writes on a real Postgres (full migration history):
@@ -58,11 +61,11 @@ const RESTRICTION = "workflow_steps_internal_only";
 describe.skipIf(!PG_URL)("organization settings writes on real Postgres", () => {
   let db: Db;
   let PgClientCtor: new (cfg: { connectionString: string }) => PgClient;
-  let patchOrganizationSettings: typeof import("@/server/services/organization-settings").patchOrganizationSettings;
-  let ProtectedSettingError: typeof import("@/server/services/organization-settings").ProtectedSettingError;
-  let setFeatureEnabled: typeof import("@/server/services/feature-flags").setFeatureEnabled;
-  let isRestrictionSet: typeof import("@/server/services/feature-flags").isRestrictionSet;
-  let updateOrganizationAction: typeof import("@/actions/settings").updateOrganizationAction;
+  let patchOrganizationSettings: typeof OrgSettings.patchOrganizationSettings;
+  let ProtectedSettingError: typeof OrgSettings.ProtectedSettingError;
+  let setFeatureEnabled: typeof FeatureFlags.setFeatureEnabled;
+  let isRestrictionSet: typeof FeatureFlags.isRestrictionSet;
+  let updateOrganizationAction: typeof SettingsActions.updateOrganizationAction;
 
   beforeAll(async () => {
     const [{ PrismaClient }, { PrismaPg }, pg] = await Promise.all([
