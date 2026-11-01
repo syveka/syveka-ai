@@ -52,7 +52,12 @@ vi.mock("@/i18n/routing", () => ({
 
 import NotificationsPage from "@/app/[locale]/(app)/notifications/page";
 
-const row = (over: Record<string, unknown>) => ({
+const row = (over: {
+  type: string;
+  title: string;
+  body?: string | null;
+  href?: string | null;
+}) => ({
   id: String(Math.random()),
   readAt: null,
   createdAt: new Date("2026-11-01T15:20:00.000Z"),

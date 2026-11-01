@@ -183,8 +183,8 @@
     "currentPeriodEnds": "تنتهي فترة الفوترة الحالية: {date}",
     "completed": "مكتملة",
     "emptyValue": "—",
-    "paymentSummary": "{plan} / {status}",
-    "stageSummary": "{count} / {value}",
+    "paymentSummary": "{plan} · {status}",
+    "stageSummary": "{count, plural, zero {لا صفقات} one {صفقة واحدة} two {صفقتان} few {{countText} صفقات} many {{countText} صفقة} other {{countText} صفقة}} · {value}",
     "noPipeline": "لم يتم إعداد مسار مبيعات.",
     "emptyActivity": "لا يوجد نشاط بعد.",
     "emptyPayments": "لا يوجد نشاط فوترة بعد.",
@@ -201,7 +201,16 @@
     "errorTitle": "تعذر تحميل لوحة التحكم",
     "errorDescription": "حدّث لوحة التحكم أو حاول مرة أخرى بعد لحظات.",
     "retry": "حاول مرة أخرى",
-    "pipelineForecast": "التوقعات المرجحة"
+    "pipelineForecast": "التوقعات المرجحة",
+    "subscriptionStatus": {
+      "ACTIVE": "نشط",
+      "TRIALING": "فترة تجريبية",
+      "PAST_DUE": "الدفع متأخر",
+      "CANCELED": "ملغى",
+      "INCOMPLETE": "الدفع معلّق",
+      "PAUSED": "متوقف مؤقتًا"
+    },
+    "stageBarsMetric": "يمثّل طول الشريط عدد الصفقات في كل مرحلة، وليس قيمتها."
   },
   "billing": {
     "title": "الفوترة",
@@ -472,7 +481,7 @@
     "noContacts": "لا توجد جهات اتصال بعد.",
     "loadMore": "عرض المزيد",
     "noPipeline": "لم يتم إعداد خط المبيعات.",
-    "openPipeline": "خط المبيعات المفتوح",
+    "openPipeline": "إجمالي قيمة الصفقات المفتوحة",
     "gdprConsent": "وافقت جهة الاتصال وفق اللائحة العامة لحماية البيانات",
     "quotaContacts": "تم بلوغ حد جهات الاتصال — قم بترقية خطتك.",
     "statuses": {
@@ -600,7 +609,9 @@
       "bookingCanceledBodyAt": "ألغى {guest} الاجتماع المحدد في {time}.",
       "bookingCanceledBodyAtWithReason": "ألغى {guest} الاجتماع المحدد في {time}. السبب: {reason}",
       "bookingRescheduledBodyFromTo": "نقل {guest} الاجتماع من {from} إلى {to}."
-    }
+    },
+    "taskTitleLabel": "المهمة",
+    "taskDueLabel": "تاريخ ووقت الاستحقاق (اختياري)"
   },
   "voice": {
     "title": "المساعد الصوتي",
@@ -702,7 +713,7 @@
       "attendees": "الحضور",
       "guestEmails": "بريد الضيوف (مفصولة بفواصل)",
       "guestEmailsLabel": "بريد الضيوف",
-      "guestEmailsHint": "للضيوف غير المسجلين كجهات اتصال. افصل بين العناوين بفواصل، مثل anna@example.com, ben@example.com."
+      "guestEmailsHint": "للضيوف غير المسجلين كجهات اتصال. افصل بين العناوين بفواصل، مثل <ltr>anna@example.com, ben@example.com</ltr>."
     },
     "views": {
       "day": "يوم",
@@ -784,7 +795,7 @@
       "bufferBefore": "فاصل قبل (دقيقة)",
       "bufferAfter": "فاصل بعد (دقيقة)",
       "minNotice": "أدنى مهلة (دقيقة)",
-      "maxWindow": "أقصى نافذة (يوم)",
+      "maxWindow": "أقصى مدة للحجز مسبقًا (بالأيام)",
       "brandColor": "لون العلامة",
       "active": "نشط",
       "requireConsent": "طلب الموافقة",
@@ -882,7 +893,7 @@
     "subjectPlaceholder": "الموضوع…",
     "fields": {
       "name": "الاسم",
-      "trigger": "المُطلق"
+      "trigger": "حدث بدء التشغيل"
     },
     "triggers": {
       "contact": {
@@ -935,8 +946,8 @@
       "WAITING": "في الانتظار"
     },
     "runFailure": {
-      "contact_missing_test_run": "لا تتضمن عمليات التشغيل التجريبية بيانات المُطلق، لذا لم تكن هناك جهة اتصال لإضافة النشاط إليها. تعمل هذه الخطوة عندما يتضمن مُطلق سير عمل مفعّل جهة اتصال، مثل جهة اتصال جديدة.",
-      "contact_missing": "لم يُشر حقل جهة الاتصال إلى أي جهة اتصال. قد لا يتضمن هذا المُطلق جهة اتصال (أحداث الصفقات مثلًا).",
+      "contact_missing_test_run": "لا تتضمن عمليات التشغيل التجريبية بيانات حدث بدء التشغيل، لذا لم تكن هناك جهة اتصال لإضافة النشاط إليها. تعمل هذه الخطوة عندما يتضمن حدث بدء التشغيل في مسار عمل مفعّل جهة اتصال، مثل إضافة جهة اتصال جديدة.",
+      "contact_missing": "لم يُشر حقل جهة الاتصال إلى أي جهة اتصال. قد لا يتضمن حدث بدء التشغيل هذا جهة اتصال (أحداث الصفقات مثلًا).",
       "contact_not_found": "لم يتم العثور على جهة الاتصال في مساحة العمل هذه.",
       "invalid_recipient": "مستلم البريد الإلكتروني ليس عنوانًا صالحًا.",
       "ai_quota_exceeded": "تم بلوغ حد استخدام الذكاء الاصطناعي لمساحة العمل.",
@@ -969,7 +980,6 @@
     "plans": "الخطط",
     "current": "الخطة الحالية",
     "choosePlan": "اختر الخطة",
-    "perUserMonth": "مستخدم/شهر",
     "intervalLabel": "فترة الفوترة",
     "interval": {
       "monthly": "شهرياً",
@@ -995,7 +1005,10 @@
     "planChangeUnavailable": "لا يمكن بدء تغيير الخطة الآن. يُرجى المحاولة مرة أخرى بعد قليل.",
     "paymentPending": "اشتراكك في انتظار الدفعة الأولى. أكمل الدفع لتفعيل خطتك.",
     "completePayment": "إكمال الدفع",
-    "redirecting": "جارٍ الفتح…"
+    "redirecting": "جارٍ الفتح…",
+    "priceMonthlyUnit": "لكل مستخدم شهريًا، تُدفع شهريًا",
+    "priceAnnualUnit": "لكل مستخدم سنويًا، تُدفع مرة واحدة في السنة",
+    "annualEquivalent": "ما يعادل {price} لكل مستخدم شهريًا: 12 شهرًا بسعر 10 أشهر."
   },
   "booking": {
     "durationLabel": "{minutes} دقيقة",

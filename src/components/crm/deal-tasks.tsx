@@ -1,10 +1,11 @@
 "use client";
 
-import { useActionState, useEffect, useRef, useTransition } from "react";
+import { useActionState, useEffect, useId, useRef, useTransition } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { addDealTaskAction, toggleDealTaskAction, type DealActionState } from "@/actions/deals";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { formatDateTimeInTimeZone } from "@/lib/date-time";
 
@@ -83,6 +84,7 @@ export function DealTasks({
 }) {
   const t = useTranslations("crm");
   const tc = useTranslations("common");
+  const fieldId = useId();
   const formRef = useRef<HTMLFormElement>(null);
   const [state, action, pending] = useActionState<DealActionState, FormData>(
     addDealTaskAction.bind(null, dealId),
@@ -96,20 +98,30 @@ export function DealTasks({
   return (
     <div className="space-y-3">
       {canWrite ? (
-        <form ref={formRef} action={action} className="flex flex-wrap items-center gap-2">
-          <Input
-            name="title"
-            required
-            maxLength={200}
-            placeholder={t("taskPlaceholder")}
-            className="w-40 flex-1"
-          />
-          <Input
-            name="dueAt"
-            type="datetime-local"
-            className="w-52"
-            aria-label={t("dealFields.dueDate")}
-          />
+        <form
+          ref={formRef}
+          action={action}
+          className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end"
+        >
+          <div className="min-w-0 space-y-1">
+            <Label htmlFor={`${fieldId}-title`}>{t("taskTitleLabel")}</Label>
+            <Input
+              id={`${fieldId}-title`}
+              name="title"
+              required
+              maxLength={200}
+              placeholder={t("taskPlaceholder")}
+            />
+          </div>
+          <div className="min-w-0 space-y-1">
+            <Label htmlFor={`${fieldId}-due`}>{t("taskDueLabel")}</Label>
+            <Input
+              id={`${fieldId}-due`}
+              name="dueAt"
+              type="datetime-local"
+              className="w-full sm:w-52"
+            />
+          </div>
           <Button type="submit" size="sm" disabled={pending}>
             {pending ? tc("loading") : t("addTask")}
           </Button>

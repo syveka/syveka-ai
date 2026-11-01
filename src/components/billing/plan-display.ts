@@ -19,3 +19,13 @@ export const PLAN_NAMES: Record<Plan, string> = {
 export function formatCount(locale: string, value: number): string {
   return new Intl.NumberFormat(locale === "ar" ? "ar-u-nu-latn" : locale).format(value);
 }
+
+/** A euro amount in the locale's currency format, Latin digits in Arabic. */
+export function formatEur(locale: string, value: number, fractionDigits = 0): string {
+  return new Intl.NumberFormat(locale === "ar" ? "ar-u-nu-latn" : locale, {
+    style: "currency",
+    currency: "EUR",
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+  }).format(value);
+}

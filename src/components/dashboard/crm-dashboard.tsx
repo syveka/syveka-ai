@@ -21,6 +21,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CrmDashboard } from "@/server/services/dashboard";
 import { cn, formatCents } from "@/lib/utils";
+import { PLAN_NAMES } from "@/components/billing/plan-display";
+import { conversationTitle } from "@/lib/chat/conversation-title";
 
 type DashboardProps = {
   dashboard: CrmDashboard;
@@ -69,7 +71,14 @@ type DashboardLabels = {
   completed: string;
   emptyValue: string;
   paymentSummary: string;
-  stageSummary: string;
+  /** Interface-language names of subscription states (the enum is never shown). */
+  subscriptionStatus: Record<string, string>;
+  /** "3 deals · €1,250" for a stage. */
+  stageSummary: (count: number, value: string) => string;
+  /** What a stage bar's length encodes. */
+  stageBarsMetric: string;
+  /** Shown for a conversation that still has the system's default title. */
+  newConversation: string;
   noPipeline: string;
   emptyActivity: string;
   emptyPayments: string;
@@ -220,7 +229,7 @@ function ActivityFeed({
                 {dashboard.feed.aiActivities.map((item) => (
                   <ActivityRow
                     key={item.id}
-                    title={item.title}
+                    title={conversationTitle(item.title, labels.newConversation)}
                     meta={item.model ?? labels.aiConversation}
                     at={item.at}
                     locale={locale}
@@ -243,8 +252,8 @@ function ActivityFeed({
                   <ActivityRow
                     key={item.id}
                     title={labels.paymentSummary
-                      .replace("{plan}", item.plan)
-                      .replace("{status}", item.status)}
+                      .replace("{plan}", PLAN_NAMES[item.plan])
+                      .replace("{status}", labels.subscriptionStatus[item.status] ?? "")}
                     meta={
                       item.currentPeriodEnd
                         ? labels.currentPeriodEnds.replace(
@@ -366,6 +375,7 @@ function PipelinePreview({
                 {formatCents(dashboard.pipeline.forecastValueCents, locale)}
               </span>
             </div>
+            <p className="text-xs text-muted-foreground">{labels.stageBarsMetric}</p>
             {dashboard.pipeline.stages.map((stage) => (
               <div key={stage.id}>
                 <div className="mb-1 flex items-center justify-between gap-3 text-sm">
@@ -373,12 +383,11 @@ function PipelinePreview({
                     {stageLabel(stage, (key) => labels.defaultStages[key])}
                   </span>
                   <span className="shrink-0 text-muted-foreground">
-                    {labels.stageSummary
-                      .replace("{count}", formatNumber(stage.count, locale))
-                      .replace("{value}", formatCents(stage.valueCents, locale))}
+                    {labels.stageSummary(stage.count, formatCents(stage.valueCents, locale))}
                   </span>
                 </div>
-                <div className="h-2 overflow-hidden rounded bg-muted">
+                {/* The count is in the text above; the bar repeats it visually. */}
+                <div aria-hidden className="h-2 overflow-hidden rounded bg-muted">
                   <div
                     className={cn(
                       "h-full rounded",
@@ -388,7 +397,11 @@ function PipelinePreview({
                           ? "bg-destructive/70"
                           : "bg-primary/70",
                     )}
-                    style={{ width: `${Math.max(4, (stage.count / max) * 100)}%` }}
+                    // An empty stage has no bar; any other keeps a visible minimum.
+                    style={{
+                      width:
+                        stage.count === 0 ? "0%" : `${Math.max(4, (stage.count / max) * 100)}%`,
+                    }}
                   />
                 </div>
               </div>
@@ -498,6 +511,7 @@ function AiInsights({ dashboard, labels }: DashboardProps & { labels: DashboardL
 export async function CrmDashboardView({ dashboard: data, locale, timeZone }: DashboardProps) {
   const t = await getTranslations("dashboard");
   const tCrm = await getTranslations("crm");
+  const tChat = await getTranslations("chat");
   // System-written booking entries are shown in the interface language;
   // everything else exactly as stored (src/lib/crm/activity-display.ts).
   const dashboard: CrmDashboard = {
@@ -560,7 +574,18 @@ export async function CrmDashboardView({ dashboard: data, locale, timeZone }: Da
     completed: t("completed"),
     emptyValue: t("emptyValue"),
     paymentSummary: t("paymentSummary", { plan: "{plan}", status: "{status}" }),
-    stageSummary: t("stageSummary", { count: "{count}", value: "{value}" }),
+    subscriptionStatus: {
+      ACTIVE: t("subscriptionStatus.ACTIVE"),
+      TRIALING: t("subscriptionStatus.TRIALING"),
+      PAST_DUE: t("subscriptionStatus.PAST_DUE"),
+      CANCELED: t("subscriptionStatus.CANCELED"),
+      INCOMPLETE: t("subscriptionStatus.INCOMPLETE"),
+      PAUSED: t("subscriptionStatus.PAUSED"),
+    },
+    stageSummary: (count: number, value: string) =>
+      t("stageSummary", { count, countText: formatNumber(count, locale), value }),
+    stageBarsMetric: t("stageBarsMetric"),
+    newConversation: tChat("newConversation"),
     noPipeline: t("noPipeline"),
     emptyActivity: t("emptyActivity"),
     emptyPayments: t("emptyPayments"),

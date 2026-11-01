@@ -79,6 +79,7 @@ export function CompanyDialog({
                   id="domain"
                   name="domain"
                   placeholder="example.com"
+                  dir="ltr"
                   defaultValue={company?.domain ?? ""}
                 />
               </div>
@@ -88,6 +89,7 @@ export function CompanyDialog({
                   id="website"
                   name="website"
                   type="url"
+                  dir="ltr"
                   placeholder="https://example.com"
                   defaultValue={company?.website ?? ""}
                 />

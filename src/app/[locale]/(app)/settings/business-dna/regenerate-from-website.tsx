@@ -58,6 +58,7 @@ export function RegenerateFromWebsite({
         <Input
           id="regenerate-url"
           type="url"
+          dir="ltr"
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           placeholder={t("regenerate.placeholder")}

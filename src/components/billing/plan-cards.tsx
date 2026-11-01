@@ -6,11 +6,13 @@ import type { Plan } from "@/generated/prisma/client/client";
 import { startCheckoutAction } from "@/actions/billing";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
-import { formatCount, PLAN_NAMES } from "./plan-display";
+import { formatCount, formatEur, PLAN_NAMES } from "./plan-display";
 import { PendingSubmitButton } from "./pending-submit-button";
 import {
-  displayedMonthlyPriceEur,
+  annualMonthlyEquivalentEur,
+  annualPriceEur,
   PLAN_CARD_EXTRAS,
+  PLAN_MONTHLY_PRICE_EUR,
   PLAN_LIMITS,
   SELF_SERVE_PLANS,
   type SelfServePlan,
@@ -99,17 +101,32 @@ export function PlanCards({ currentPlan }: { currentPlan: Plan }) {
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         {PLANS.map(({ plan, limits }) => {
-          const price = displayedMonthlyPriceEur(plan, interval);
           const isCurrent = plan === currentPlan;
+          const annual = interval === "annual";
+          // What is charged, and how often; annual also shows its monthly
+          // equivalent to the cent, so the numbers add up.
           return (
             <Card key={plan} className={cn(isCurrent && "border-primary")}>
-              <CardHeader>
-                <CardTitle className="flex items-baseline justify-between">
-                  <span>{PLAN_NAMES[plan]}</span>
-                  <span className="text-base font-normal text-muted-foreground">
-                    {n(price)} €/{t("perUserMonth")}
+              <CardHeader className="space-y-1">
+                <CardTitle>{PLAN_NAMES[plan]}</CardTitle>
+                <p>
+                  <span className="text-2xl font-semibold">
+                    {formatEur(
+                      locale,
+                      annual ? annualPriceEur(plan) : PLAN_MONTHLY_PRICE_EUR[plan],
+                    )}
+                  </span>{" "}
+                  <span className="text-sm text-muted-foreground">
+                    {t(annual ? "priceAnnualUnit" : "priceMonthlyUnit")}
                   </span>
-                </CardTitle>
+                </p>
+                {annual ? (
+                  <p className="text-xs text-muted-foreground">
+                    {t("annualEquivalent", {
+                      price: formatEur(locale, annualMonthlyEquivalentEur(plan), 2),
+                    })}
+                  </p>
+                ) : null}
               </CardHeader>
               <CardContent className="space-y-4">
                 <ul className="space-y-1 text-sm text-muted-foreground">

@@ -36,7 +36,7 @@ export default async function PublicBookingPage({
           {bookingType.name}
         </h1>
         {bookingType.description ? (
-          <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
+          <p dir="auto" className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
             {bookingType.description}
           </p>
         ) : null}

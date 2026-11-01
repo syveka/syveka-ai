@@ -183,8 +183,8 @@
     "currentPeriodEnds": "Nykyinen laskutusjakso päättyy: {date}",
     "completed": "Valmis",
     "emptyValue": "—",
-    "paymentSummary": "{plan} / {status}",
-    "stageSummary": "{count} / {value}",
+    "paymentSummary": "{plan} · {status}",
+    "stageSummary": "{count, plural, one {{countText} myyntimahdollisuus} other {{countText} myyntimahdollisuutta}} · {value}",
     "noPipeline": "Myyntiputkea ei ole määritetty.",
     "emptyActivity": "Ei tapahtumia vielä.",
     "emptyPayments": "Ei laskutustapahtumia vielä.",
@@ -201,7 +201,16 @@
     "errorTitle": "Työpöytää ei voitu ladata",
     "errorDescription": "Päivitä työpöytä tai yritä hetken kuluttua uudelleen.",
     "retry": "Yritä uudelleen",
-    "pipelineForecast": "Painotettu ennuste"
+    "pipelineForecast": "Painotettu ennuste",
+    "subscriptionStatus": {
+      "ACTIVE": "Aktiivinen",
+      "TRIALING": "Kokeilu",
+      "PAST_DUE": "Maksu myöhässä",
+      "CANCELED": "Peruttu",
+      "INCOMPLETE": "Maksu odottaa",
+      "PAUSED": "Keskeytetty"
+    },
+    "stageBarsMetric": "Palkin pituus kertoo vaiheen myyntimahdollisuuksien määrän, ei niiden arvoa."
   },
   "billing": {
     "title": "Laskutus",
@@ -600,7 +609,9 @@
       "bookingCanceledBodyAt": "{guest} perui tapaamisen {time}.",
       "bookingCanceledBodyAtWithReason": "{guest} perui tapaamisen {time}. Syy: {reason}",
       "bookingRescheduledBodyFromTo": "{guest} siirsi tapaamisen ajasta {from} aikaan {to}."
-    }
+    },
+    "taskTitleLabel": "Tehtävä",
+    "taskDueLabel": "Määräaika ja kellonaika (valinnainen)"
   },
   "voice": {
     "title": "Puheavustaja",
@@ -702,7 +713,7 @@
       "attendees": "Osallistujat",
       "guestEmails": "Vieraiden sähköpostit (pilkuin eroteltuna)",
       "guestEmailsLabel": "Vieraiden sähköpostit",
-      "guestEmailsHint": "Vieraille, jotka eivät ole kontakteja. Erota useampi osoite pilkuilla, esimerkiksi anna@example.com, ben@example.com."
+      "guestEmailsHint": "Vieraille, jotka eivät ole kontakteja. Erota useampi osoite pilkuilla, esimerkiksi <ltr>anna@example.com, ben@example.com</ltr>."
     },
     "views": {
       "day": "Päivä",
@@ -969,7 +980,6 @@
     "plans": "Tilaukset",
     "current": "Nykyinen tilaus",
     "choosePlan": "Valitse tilaus",
-    "perUserMonth": "käyttäjä/kk",
     "intervalLabel": "Laskutusväli",
     "interval": {
       "monthly": "Kuukausittain",
@@ -995,7 +1005,10 @@
     "planChangeUnavailable": "Tilauksen muutosta ei voi aloittaa juuri nyt. Yritä hetken kuluttua uudelleen.",
     "paymentPending": "Tilauksesi odottaa ensimmäistä maksua. Viimeistele maksu, niin pakettisi otetaan käyttöön.",
     "completePayment": "Viimeistele maksu",
-    "redirecting": "Avataan…"
+    "redirecting": "Avataan…",
+    "priceMonthlyUnit": "käyttäjää kohden kuukaudessa, laskutetaan kuukausittain",
+    "priceAnnualUnit": "käyttäjää kohden vuodessa, laskutetaan kerran vuodessa",
+    "annualEquivalent": "Vastaa {price} käyttäjää kohden kuukaudessa: 12 kuukautta 10 kuukauden hinnalla."
   },
   "booking": {
     "durationLabel": "{minutes} min",

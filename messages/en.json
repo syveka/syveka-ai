@@ -183,8 +183,8 @@
     "currentPeriodEnds": "Current period ends: {date}",
     "completed": "Completed",
     "emptyValue": "—",
-    "paymentSummary": "{plan} / {status}",
-    "stageSummary": "{count} / {value}",
+    "paymentSummary": "{plan} · {status}",
+    "stageSummary": "{count, plural, one {{countText} deal} other {{countText} deals}} · {value}",
     "noPipeline": "No pipeline configured.",
     "emptyActivity": "No activity yet.",
     "emptyPayments": "No billing activity yet.",
@@ -201,7 +201,16 @@
     "errorTitle": "Dashboard could not load",
     "errorDescription": "Refresh the dashboard or try again in a moment.",
     "retry": "Try again",
-    "pipelineForecast": "Weighted forecast"
+    "pipelineForecast": "Weighted forecast",
+    "subscriptionStatus": {
+      "ACTIVE": "Active",
+      "TRIALING": "Trial",
+      "PAST_DUE": "Payment overdue",
+      "CANCELED": "Canceled",
+      "INCOMPLETE": "Payment pending",
+      "PAUSED": "Paused"
+    },
+    "stageBarsMetric": "Bar length shows the number of deals in each stage, not their value."
   },
   "billing": {
     "title": "Billing",
@@ -600,7 +609,9 @@
       "bookingCanceledBodyAt": "{guest} canceled the meeting on {time}.",
       "bookingCanceledBodyAtWithReason": "{guest} canceled the meeting on {time}. Reason: {reason}",
       "bookingRescheduledBodyFromTo": "{guest} moved the meeting from {from} to {to}."
-    }
+    },
+    "taskTitleLabel": "Task",
+    "taskDueLabel": "Due date and time (optional)"
   },
   "voice": {
     "title": "Voice AI",
@@ -702,7 +713,7 @@
       "attendees": "Attendees",
       "guestEmails": "Guest emails (comma-separated)",
       "guestEmailsLabel": "Guest emails",
-      "guestEmailsHint": "For guests who aren't contacts. Separate several addresses with commas, for example anna@example.com, ben@example.com."
+      "guestEmailsHint": "For guests who aren't contacts. Separate several addresses with commas, for example <ltr>anna@example.com, ben@example.com</ltr>."
     },
     "views": {
       "day": "Day",
@@ -969,7 +980,6 @@
     "plans": "Plans",
     "current": "Current plan",
     "choosePlan": "Choose plan",
-    "perUserMonth": "user/mo",
     "intervalLabel": "Billing interval",
     "interval": {
       "monthly": "Monthly",
@@ -995,7 +1005,10 @@
     "planChangeUnavailable": "Plan changes can't be started right now. Please try again shortly.",
     "paymentPending": "Your subscription is waiting for its first payment. Complete the payment to activate your plan.",
     "completePayment": "Complete payment",
-    "redirecting": "Opening…"
+    "redirecting": "Opening…",
+    "priceMonthlyUnit": "per user per month, billed monthly",
+    "priceAnnualUnit": "per user per year, billed once a year",
+    "annualEquivalent": "Equals {price} per user per month: 12 months for the price of 10."
   },
   "booking": {
     "durationLabel": "{minutes} min",
