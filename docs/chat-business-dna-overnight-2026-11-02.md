@@ -9,17 +9,17 @@ worktree and never modified. Every claim names the file, command or test it come
 
 ## 1. Ground truth
 
-| Item                             | Value                                                                             |
-| -------------------------------- | --------------------------------------------------------------------------------- |
-| Base (`origin/main`)             | `19581f274e87e876343d0eb3be8cf51547485569` (verified; unchanged overnight)        |
-| Head at the start                | `9fcc93e5a9c555bfc355f2c7f2f6ddbbb56bcad6` (as reported; verified against origin) |
-| CI on `9fcc93e`                  | run 41353262501: all 19 checks green (read, not re-run)                           |
-| Final code head                  | `60d8ecb` (this document is committed after it; see the PR for the exact head)    |
-| Overnight commits                | `6c34f55`, `12b724e`, `60d8ecb` (+ this document)                                 |
-| Overnight diff                   | 15 files, +1251 / −118 before this document                                       |
-| Whole PR vs `main`               | 16 files, +2147 / −110 before this document                                       |
-| Schema / migrations / env / deps | none changed                                                                      |
-| PR #386 head read                | `1689886f943a18146393cd6655d4b1a8b6c80b1e` (base `19581f2`, 56 files)             |
+| Item                             | Value                                                                                                      |
+| -------------------------------- | ---------------------------------------------------------------------------------------------------------- |
+| Base (`origin/main`) overnight   | `19581f274e87e876343d0eb3be8cf51547485569` (verified at the time; superseded, see §12)                     |
+| Head at the start                | `9fcc93e5a9c555bfc355f2c7f2f6ddbbb56bcad6` (as reported; verified against origin)                          |
+| CI on `9fcc93e`                  | run 41353262501: all 19 checks green (read, not re-run)                                                    |
+| Final code head                  | `60d8ecb` (this document is committed after it; see the PR for the exact head)                             |
+| Overnight commits                | `6c34f55`, `12b724e`, `60d8ecb` (+ this document)                                                          |
+| Overnight diff                   | 15 files, +1251 / −118 before this document                                                                |
+| Whole PR vs `main`               | 16 files, +2147 / −110 before this document                                                                |
+| Schema / migrations / env / deps | none changed                                                                                               |
+| PR #386 head read                | `1689886f943a18146393cd6655d4b1a8b6c80b1e` (base `19581f2`, 56 files); merged to `main` as `af75e17` (§12) |
 
 ## 2. The documentation contradiction, resolved
 
@@ -147,17 +147,18 @@ Files both PRs change: `messages/en.json`, `messages/fi.json`, `messages/ar.json
 count for the voice-playback error) and adds keys elsewhere in the locale files; #385 changes
 the thread's action handling and adds keys under `chat.actions`.
 
-Combined validation in a disposable worktree (never pushed), `#385 60d8ecb` + `#386 1689886`
-merged with `git merge --no-commit`: clean automatic merge (no conflict), `npm run i18n:check` PASS (1261 keys in parity), `tsc --noEmit` PASS, `eslint src tests` PASS, `vitest run` PASS (344 files passed, 9 skipped; 4882 tests passed, 55 skipped). These are combined results, not #385-only ones. The earlier combined run at `#385 12b724e`
+Combined validation in a disposable worktree (never pushed), `#385 60d8ecb` merged with
+`#386 1689886` using `git merge --no-commit`: clean automatic merge (no conflict),
+`npm run i18n:check` PASS (1261 keys in parity), `tsc --noEmit` PASS, `eslint src tests` PASS,
+`vitest run` PASS (344 files passed, 9 skipped; 4882 tests passed, 55 skipped). These are
+combined results, not #385-only ones. The earlier combined run at `#385 12b724e` plus
+`#386 1689886` also merged cleanly and passed typecheck, lint, i18n parity (1261 keys) and the
+full suite (344 files, 4874 tests). A first attempt in a fresh worktree failed only because the
+generated Prisma client was absent there; generating it fixed every failure, so none was a real
+conflict.
 
-- `#386 1689886` also merged cleanly and passed typecheck, lint, i18n parity (1261 keys) and
-  the full suite (344 files, 4874 tests). A first attempt in a fresh worktree failed only because
-  the generated Prisma client was absent there; generating it fixed every failure, so none was a
-  real conflict.
-
-Intended resolution: no action needed on either PR; whichever merges second rebases or merges
-`main` and re-runs `npm run i18n:check` (both add locale keys in different sections, so the
-merge is automatic). #385 stays independently reviewable; #386 was not modified.
+Resolution: #386 merged first (`af75e17`), and `main` was then merged into this branch with a
+normal merge commit (§12). #385 stays independently reviewable; #386 was never modified.
 
 ## 8. Verification on the final code tree (`60d8ecb`)
 
@@ -218,3 +219,38 @@ CI observed on the final head: the final head is pushed after this document; its
 
 Human review of PR #385. Recommendation: **ready for review** (draft can be marked ready) once
 the CI on the final head is read as green; merge and deployment remain separate decisions.
+
+## 12. Integration of `main` after #386 merged (2026-11-02)
+
+| Item                        | Value                                                                                                                                                                                                                                          |
+| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `origin/main` integrated    | `af75e17414d6becfd03d2563403d806a619b8baa` (merge of #386; no other commit since `19581f2`)                                                                                                                                                    |
+| Merge commit on this branch | `1485949` (`git merge --no-ff origin/main`; no rebase, no force-push)                                                                                                                                                                          |
+| Conflicts                   | none; Git merged the four shared files automatically                                                                                                                                                                                           |
+| Shared files                | `messages/{en,fi,ar}.json` (different sections), `src/components/chat/chat-thread.tsx` (#386 edits `ListenControl` only; #385 edits the action handling)                                                                                       |
+| Reversion check             | `git diff origin/main HEAD` over the four shared files equals exactly this branch's own additions (+64 / −13); both sides present (`notCarriedOver` and `no_voices_listed` in every locale; `supersededActions` and `countText` in the thread) |
+
+Focused suites on the merged tree (`1485949`): Business DNA and chat (`action-confirmation`,
+`chat-thread-supersession`, `superseded-actions`, `ai-business-dna-tool`, `ai-tool-actions`,
+`chat-view-action-navigation`, `chat-page-restored-actions`, `chat-tool-status`,
+`chat-view-live-voice`) and the #386 suites touching the shared files
+(`speech-playback-voice-wait`, `use-speech-playback`, `notification-display`,
+`ar-acceptance-forms`, `settings-localization`, `plan-cards-interval`): **PASS**, 15 files,
+349 tests; `npm run i18n:check` **PASS** (1261 keys in parity).
+
+Repository checks on the merged tree (`1485949`):
+
+| Command                                            | Result                                                                                               |
+| -------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `npm run format:check`                             | **PASS**                                                                                             |
+| `npm run lint`                                     | **PASS**                                                                                             |
+| `npm run typecheck`                                | **PASS**                                                                                             |
+| `npm test`                                         | **PASS** — 344 files passed, 9 skipped; 4882 tests passed, 55 skipped (opt-in Postgres/Redis suites) |
+| `npm run i18n:check`                               | **PASS** (1261 keys in parity in fi and ar)                                                          |
+| `npm run migrations:check`                         | **PASS**                                                                                             |
+| `npx prisma validate` (placeholder `DATABASE_URL`) | **PASS**                                                                                             |
+| `SKIP_ENV_VALIDATION=1 npm run build`              | **PASS**                                                                                             |
+| `npm audit --omit=dev --audit-level=high`          | **PASS** at high (12 low/moderate, pre-existing)                                                     |
+| `npm run test:e2e`                                 | **NOT APPLICABLE** (no app runtime with Supabase/Redis)                                              |
+
+CI on the final head is reported in the hand-off message, not here.
