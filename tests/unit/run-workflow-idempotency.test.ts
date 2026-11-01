@@ -40,6 +40,8 @@ const mocks = vi.hoisted(() => {
   };
 });
 
+// Internal-only workflow scope off here (covered in workflow-internal-scope.test.ts).
+vi.mock("@/server/services/feature-flags", () => ({ isFeatureEnabled: vi.fn(async () => false) }));
 vi.mock("@/server/jobs/verify", () => ({ verifyJobRequest: mocks.verifyJobRequest }));
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {

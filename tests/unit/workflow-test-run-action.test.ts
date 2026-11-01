@@ -15,6 +15,17 @@ const m = vi.hoisted(() => ({
   workflowFindFirstOrThrow: vi.fn(async () => ({ id: "wf-1" })),
   workflowRunCreate: vi.fn(async () => ({ id: "run-1" })),
   enqueue: vi.fn(async () => undefined),
+  assertWorkflowInOrgScope: vi.fn(async (..._a: unknown[]) => {
+    void _a;
+  }),
+  WorkflowError: class extends Error {
+    constructor(
+      message: string,
+      public readonly code: string,
+    ) {
+      super(message);
+    }
+  },
 }));
 
 vi.mock("next/cache", () => ({ revalidatePath: vi.fn() }));
@@ -23,7 +34,8 @@ vi.mock("@/server/auth/guard", () => ({ requirePermission: m.requirePermission }
 vi.mock("@/server/services/workflows", () => ({
   upsertWorkflow: vi.fn(),
   setWorkflowActive: vi.fn(),
-  WorkflowError: class extends Error {},
+  assertWorkflowInOrgScope: m.assertWorkflowInOrgScope,
+  WorkflowError: m.WorkflowError,
 }));
 vi.mock("@/server/services/billing/entitlements", () => ({
   EntitlementError: class extends Error {},
@@ -58,6 +70,16 @@ describe("testWorkflowAction", () => {
     m.getEntitlements.mockResolvedValueOnce({ readOnly: false, activeWorkflows: 0 });
     expect(await testWorkflowAction("wf-1")).toEqual({ error: "quota" });
     expect(m.checkRateLimit).not.toHaveBeenCalled();
+    expect(m.workflowRunCreate).not.toHaveBeenCalled();
+    expect(m.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("refuses an out-of-scope workflow in an internal-only organization before creating or enqueueing a run", async () => {
+    m.assertWorkflowInOrgScope.mockRejectedValueOnce(
+      new m.WorkflowError("internal steps only", "step_not_allowed"),
+    );
+    expect(await testWorkflowAction("wf-1")).toEqual({ error: "step_not_allowed" });
+    expect(m.assertWorkflowInOrgScope).toHaveBeenCalledWith("org-a", { id: "wf-1" });
     expect(m.workflowRunCreate).not.toHaveBeenCalled();
     expect(m.enqueue).not.toHaveBeenCalled();
   });

@@ -54,7 +54,11 @@ export function WorkflowToggle({
               if (res.error) {
                 setActive(!next);
                 setError(
-                  res.error === "quota" ? t("entitlement.activationUnavailable") : tc("error"),
+                  res.error === "quota"
+                    ? t("entitlement.activationUnavailable")
+                    : res.error === "step_not_allowed"
+                      ? t("saveErrors.step_not_allowed")
+                      : tc("error"),
                 );
               }
             } catch {

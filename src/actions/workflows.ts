@@ -3,7 +3,12 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { requirePermission } from "@/server/auth/guard";
-import { upsertWorkflow, setWorkflowActive, WorkflowError } from "@/server/services/workflows";
+import {
+  upsertWorkflow,
+  setWorkflowActive,
+  assertWorkflowInOrgScope,
+  WorkflowError,
+} from "@/server/services/workflows";
 import { workflowSchema } from "@/lib/validators/workflows";
 import { EntitlementError, getEntitlements } from "@/server/services/billing/entitlements";
 import { checkRateLimit } from "@/server/integrations/redis";
@@ -43,6 +48,7 @@ export async function toggleWorkflowAction(
     await setWorkflowActive(ctx, workflowId, isActive);
   } catch (e) {
     if (e instanceof EntitlementError) return { error: "quota" };
+    if (e instanceof WorkflowError) return { error: e.code };
     throw e;
   }
   revalidatePath("/workflows");
@@ -71,6 +77,12 @@ export async function testWorkflowAction(workflowId: string): Promise<WorkflowAc
   const workflow = await unscopedPrisma.workflow.findFirstOrThrow({
     where: { id: workflowId, organizationId: ctx.orgId },
   });
+  try {
+    await assertWorkflowInOrgScope(ctx.orgId, workflow);
+  } catch (e) {
+    if (e instanceof WorkflowError) return { error: e.code };
+    throw e;
+  }
   const run = await unscopedPrisma.workflowRun.create({
     data: {
       workflowId: workflow.id,

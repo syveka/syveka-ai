@@ -935,7 +935,8 @@
     "saveErrors": {
       "invalid_input": "Joitakin automaation kenttiä puuttuu tai ne ovat virheellisiä. Tarkista ne ja yritä uudelleen.",
       "duplicate_step_id": "Kahdella vaiheella on sama tunniste. Poista toinen ja lisää se uudelleen.",
-      "recipient_not_member": "Ilmoituksen vastaanottajan on oltava tämän organisaation jäsen."
+      "recipient_not_member": "Ilmoituksen vastaanottajan on oltava tämän organisaation jäsen.",
+      "step_not_allowed": "Tämän työtilan työnkuluissa voi käyttää vain sisäisiä vaiheita: ehtoja, CRM-aktiviteetteja ja jäsenille näkyviä sovelluksen sisäisiä ilmoituksia. Poista sähköposti-, tekoäly-, odotus- ja ajastusvaiheet."
     }
   },
   "billingPage": {

@@ -8,6 +8,8 @@ const mocks = vi.hoisted(() => ({
   tenantDb: vi.fn(),
 }));
 
+// Internal-only workflow scope off here (covered in workflow-internal-scope.test.ts).
+vi.mock("@/server/services/feature-flags", () => ({ isFeatureEnabled: vi.fn(async () => false) }));
 vi.mock("@/server/db/tenant", () => ({ tenantDb: mocks.tenantDb }));
 vi.mock("@/server/services/audit", () => ({ audit: vi.fn().mockResolvedValue(undefined) }));
 vi.mock("@/server/services/billing/entitlements", () => ({ assertWithinLimit: vi.fn() }));

@@ -935,7 +935,8 @@
     "saveErrors": {
       "invalid_input": "Some workflow fields are missing or invalid. Check them and try again.",
       "duplicate_step_id": "Two steps have the same identifier. Remove one and add it again.",
-      "recipient_not_member": "The notification recipient must be a member of this organization."
+      "recipient_not_member": "The notification recipient must be a member of this organization.",
+      "step_not_allowed": "This workspace's workflows can only use internal steps: conditions, CRM activities and in-app notifications to members. Remove email, AI, wait and scheduled steps."
     }
   },
   "billingPage": {
