@@ -294,6 +294,29 @@ keys aren't accepted by any route yet):
    `400 invalid_input`: `expectedUpdatedAt` missing or malformed (requests written before it
    existed now get this). `429`/`503`: rate limited / limit unavailable.
 
+### Corrections, retries and reopened conversations
+
+- **A corrected fact replaces the earlier card.** When the user corrects something before
+  confirming ("actually we close at 16"), the assistant proposes again. An undecided proposal is
+  shown as _replaced_ (not confirmable) when a later undecided proposal in the conversation
+  changes any of the same fields (`src/lib/chat/superseded-actions.ts`); proposals about
+  different fields (hours, then languages) stay independent. This is a view decision: the server
+  still binds every confirmation to its own proposal, and an old proposal confirmed through the
+  API after the newer one was applied to the same field is refused as stale.
+- **A confirmation that got no usable answer can be sent again.** When the chat limit or the
+  action store was unavailable (503), the limit was reached (429), or the connection dropped, the
+  card offers _Try again_, which sends the same decision. The server runs an action at most once
+  (the decision is single-use), so a repeat after a lost answer is refused as `already_decided`
+  and the endpoint returns the recorded outcome of the first decision (this organization's audit
+  record only); the card then shows what happened. Refusals that consumed the action or can't
+  change (plan limit, permission, expired, altered payload, a failure while running) offer no
+  retry.
+- **Reopening the conversation** (`src/server/ai/tool-action-history.ts`) shows each saved
+  proposal with its recorded outcome; an undecided one is offered again only while the action
+  store still holds it as pending and it hasn't expired (10 minutes from the proposal,
+  `ACTION_TTL_SECONDS`). After that it reads as expired or unavailable: ask the assistant again.
+- After a decision, keyboard focus moves to the result line, which replaced the buttons.
+
 Known limit: chat changes don't change the website-extraction provenance (`sourceUrl`,
 `extractedAt`).
 
