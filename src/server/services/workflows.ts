@@ -3,7 +3,7 @@ import "server-only";
 import { tenantDb } from "@/server/db/tenant";
 import { assertWithinLimit } from "./billing/entitlements";
 import { audit } from "./audit";
-import { isFeatureEnabled } from "./feature-flags";
+import { isRestrictionSet } from "./feature-flags";
 import type { TenantContext } from "@/server/auth/session";
 import type { WorkflowInput } from "@/lib/validators/workflows";
 import {
@@ -23,7 +23,7 @@ export class WorkflowError extends Error {
 
 /** Whether this organization's workflows are limited to internal steps (see internal-scope.ts). */
 export function isInternalOnlyWorkflowOrg(orgId: string): Promise<boolean> {
-  return isFeatureEnabled(orgId, INTERNAL_ONLY_WORKFLOWS_FLAG);
+  return isRestrictionSet(orgId, INTERNAL_ONLY_WORKFLOWS_FLAG);
 }
 
 /** Refuses a workflow outside an internal-only organization's scope. */

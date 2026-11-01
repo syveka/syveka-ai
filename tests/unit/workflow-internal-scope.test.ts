@@ -39,7 +39,7 @@ const fx = vi.hoisted(() => ({
   recordUsage: vi.fn(async () => undefined),
   assertWithinLimit: vi.fn(async () => undefined),
   audit: vi.fn(async () => undefined),
-  isFeatureEnabled: vi.fn(async (_org: string, key: string) =>
+  isRestrictionSet: vi.fn(async (_org: string, key: string) =>
     key === "workflow_steps_internal_only" ? state.internalOnly : false,
   ),
   serviceCreate: vi.fn(async ({ data }: { data: Row }) => ({ id: "wf-new", ...data })),
@@ -112,7 +112,7 @@ const serviceDb = {
   organizationMember: { count: vi.fn(async () => 1) },
 };
 
-vi.mock("@/server/services/feature-flags", () => ({ isFeatureEnabled: fx.isFeatureEnabled }));
+vi.mock("@/server/services/feature-flags", () => ({ isRestrictionSet: fx.isRestrictionSet }));
 vi.mock("@/server/jobs/verify", () => ({ verifyJobRequest: async (req: Request) => req.text() }));
 vi.mock("@/server/db/tenant", () => ({
   get unscopedPrisma() {

@@ -25,6 +25,20 @@ export async function isFeatureEnabled(orgId: string, key: string): Promise<bool
   return settings[key] === true;
 }
 
+/**
+ * For a flag that RESTRICTS an organization: anything other than an absent
+ * key or JSON false counts as set, so a mistyped value ("true", 1) restricts
+ * instead of silently leaving the organization unrestricted.
+ */
+export async function isRestrictionSet(orgId: string, key: string): Promise<boolean> {
+  const org = await unscopedPrisma.organization.findUnique({
+    where: { id: orgId },
+    select: { settings: true },
+  });
+  const settings = (org?.settings ?? {}) as Record<string, unknown>;
+  return key in settings && settings[key] !== false && settings[key] !== null;
+}
+
 export async function setFeatureEnabled(
   orgId: string,
   key: string,

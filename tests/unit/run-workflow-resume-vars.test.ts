@@ -82,7 +82,10 @@ const db = {
 };
 
 // Internal-only workflow scope off here (covered in workflow-internal-scope.test.ts).
-vi.mock("@/server/services/feature-flags", () => ({ isFeatureEnabled: vi.fn(async () => false) }));
+vi.mock("@/server/services/feature-flags", () => ({
+  isFeatureEnabled: vi.fn(async () => false),
+  isRestrictionSet: vi.fn(async () => false),
+}));
 vi.mock("@/server/jobs/verify", () => ({ verifyJobRequest: async (req: Request) => req.text() }));
 vi.mock("@/server/db/tenant", () => ({
   get unscopedPrisma() {
