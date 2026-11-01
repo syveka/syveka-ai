@@ -58,6 +58,15 @@ export function DealBoard({
   const t = useTranslations("crm");
   const locale = useLocale();
   const [stages, setStages] = useState(initial);
+  // The board keeps a local copy for optimistic drag-and-drop, but the server
+  // stays the source of truth: when the page is revalidated (a deal created,
+  // edited or moved elsewhere) the new stages replace the copy. Without this a
+  // newly created deal stayed invisible until a manual reload.
+  const [serverStages, setServerStages] = useState(initial);
+  if (initial !== serverStages) {
+    setServerStages(initial);
+    setStages(initial);
+  }
   const [dragged, setDragged] = useState<{ dealId: string; fromStageId: string } | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [, startTransition] = useTransition();
