@@ -6,7 +6,7 @@ import { getTenantContext } from "@/server/auth/session";
 import { requirePermission } from "@/server/auth/guard";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { audit } from "@/server/services/audit";
-import { patchOrganizationSettings } from "@/server/services/organization-settings";
+import { updateOrganizationProfile } from "@/server/services/organization-settings";
 
 export type SettingsActionState = { error?: string; message?: string };
 
@@ -56,26 +56,20 @@ export async function updateOrganizationAction(
     select: { name: true },
   });
 
-  // Only this form's own settings key changes, atomically on the current
-  // value: a concurrent change to another key (a feature flag, an operator
-  // restriction) can't be overwritten by a copy read earlier.
-  await unscopedPrisma.$transaction(async (tx) => {
-    await tx.organization.update({
-      where: { id: ctx.orgId },
-      data: {
-        name: parsed.data.name,
-        businessId: parsed.data.businessId || null,
-        vatId: parsed.data.vatId || null,
-      },
-    });
-    await patchOrganizationSettings(
-      ctx.orgId,
-      parsed.data.aiInstructions
-        ? { set: { aiInstructions: parsed.data.aiInstructions } }
-        : { remove: ["aiInstructions"] },
-      tx,
-    );
-  });
+  // One statement: the columns plus only this form's own settings key, on the
+  // current value, so a concurrent change to another key (a feature flag, an
+  // operator restriction) can't be overwritten by a copy read earlier.
+  await updateOrganizationProfile(
+    ctx.orgId,
+    {
+      name: parsed.data.name,
+      businessId: parsed.data.businessId || null,
+      vatId: parsed.data.vatId || null,
+    },
+    parsed.data.aiInstructions
+      ? { set: { aiInstructions: parsed.data.aiInstructions } }
+      : { remove: ["aiInstructions"] },
+  );
 
   await audit(ctx, {
     action: "org.update",

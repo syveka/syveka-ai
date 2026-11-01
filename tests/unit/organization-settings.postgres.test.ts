@@ -107,10 +107,19 @@ describe.skipIf(!PG_URL)("organization settings writes on real Postgres", () => 
     return fd;
   };
 
-  /** Installs the restriction in an open transaction holding the row lock; returns commit(). */
-  async function holdRestrictionInstall(): Promise<{ commit: () => Promise<void> }> {
+  /**
+   * Installs the restriction in an open transaction holding the row lock.
+   * waitUntilBlocking() resolves only once Postgres reports another backend
+   * waiting on this one (pg_blocking_pids), which proves the app write really
+   * overlaps the operator's change instead of assuming it after a delay.
+   */
+  async function holdRestrictionInstall(): Promise<{
+    commit: () => Promise<void>;
+    waitUntilBlocking: () => Promise<void>;
+  }> {
     const operator = new PgClientCtor({ connectionString: PG_URL! });
     await operator.connect();
+    const pid = Number((await operator.query("select pg_backend_pid() as pid")).rows[0]!.pid);
     await operator.query("begin");
     await operator.query(
       `update organizations set settings = settings || '{"${RESTRICTION}": true}'::jsonb where id = $1`,
@@ -121,11 +130,19 @@ describe.skipIf(!PG_URL)("organization settings writes on real Postgres", () => 
         await operator.query("commit");
         await operator.end();
       },
+      waitUntilBlocking: async () => {
+        for (let i = 0; i < 100; i++) {
+          const { rows } = await operator.query(
+            "select count(*)::int as waiting from pg_stat_activity where $1 = any(pg_blocking_pids(pid))",
+            [pid],
+          );
+          if (Number(rows[0]!.waiting) > 0) return;
+          await new Promise((r) => setTimeout(r, 50));
+        }
+        throw new Error("the app write never waited on the operator's row lock");
+      },
     };
   }
-
-  const settles = async (p: Promise<unknown>, ms = 300) =>
-    Promise.race([p.then(() => true), new Promise((r) => setTimeout(() => r(false), ms))]);
 
   it("an organization save overlapping a restriction install keeps the restriction and other keys", async () => {
     const operator = await holdRestrictionInstall();
@@ -133,7 +150,7 @@ describe.skipIf(!PG_URL)("organization settings writes on real Postgres", () => 
       {},
       form({ name: "Renamed", businessId: "", vatId: "", aiInstructions: "new instructions" }),
     );
-    expect(await settles(save)).toBe(false); // blocked on the operator's row lock
+    await operator.waitUntilBlocking(); // proven blocked on the operator's row lock
     await operator.commit();
     await save;
     const s = await settingsOf();
@@ -146,7 +163,7 @@ describe.skipIf(!PG_URL)("organization settings writes on real Postgres", () => 
   it("a feature toggle overlapping a restriction install keeps both", async () => {
     const operator = await holdRestrictionInstall();
     const toggle = setFeatureEnabled(holder.orgId, "creator_studio_v1", true);
-    expect(await settles(toggle)).toBe(false);
+    await operator.waitUntilBlocking();
     await operator.commit();
     await toggle;
     const s = await settingsOf();
@@ -158,10 +175,14 @@ describe.skipIf(!PG_URL)("organization settings writes on real Postgres", () => 
   it("control: the previous read-then-write pattern loses the restriction under the same interleaving", async () => {
     const staleRead = (await settingsOf()) as object; // read before the install commits
     const operator = await holdRestrictionInstall();
-    const oldWrite = db.organization.update({
-      where: { id: holder.orgId },
-      data: { settings: { ...staleRead, aiInstructions: "stale copy" } },
-    });
+    // Prisma queries are lazy: .then() sends this one now, so it can block on the lock.
+    const oldWrite = db.organization
+      .update({
+        where: { id: holder.orgId },
+        data: { settings: { ...staleRead, aiInstructions: "stale copy" } },
+      })
+      .then((r) => r);
+    await operator.waitUntilBlocking();
     await operator.commit();
     await oldWrite;
     expect((await settingsOf())[RESTRICTION]).toBeUndefined();
@@ -206,12 +227,14 @@ describe.skipIf(!PG_URL)("organization settings writes on real Postgres", () => 
     expect(s.unrelated).toEqual({ keep: true });
   });
 
-  it("emergency rollback re-asserting the restriction overlapping an app save keeps both", async () => {
-    // Restriction missing (e.g. lost before this fix); the owner's rollback re-adds it
-    // under the row lock while an app save is in flight.
+  it("emergency rollback re-asserting a disabled restriction overlapping an app save keeps it on", async () => {
+    // The restriction was found set to false; the owner's rollback sets it back to true
+    // under the row lock while an app save that read the old state is in flight.
+    await db.$executeRaw`update organizations set settings = settings || '{"workflow_steps_internal_only": false}'::jsonb where id = ${holder.orgId}::uuid`;
+    expect(await isRestrictionSet(holder.orgId, RESTRICTION)).toBe(false);
     const operator = await holdRestrictionInstall();
     const save = setFeatureEnabled(holder.orgId, "creator_studio_v1", false);
-    expect(await settles(save)).toBe(false); // in flight, blocked on the rollback's row lock
+    await operator.waitUntilBlocking();
     await operator.commit();
     await save;
     const s = await settingsOf();

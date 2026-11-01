@@ -17,7 +17,9 @@ import { INTERNAL_ONLY_WORKFLOWS_FLAG } from "@/lib/workflows/internal-scope";
  * A stored value that isn't a JSON object (never written by the app) is
  * treated as {} and replaced by an object holding only the patch.
  */
-export const OPERATOR_ONLY_SETTINGS: readonly string[] = [INTERNAL_ONLY_WORKFLOWS_FLAG];
+export const OPERATOR_ONLY_SETTINGS: readonly string[] = Object.freeze([
+  INTERNAL_ONLY_WORKFLOWS_FLAG,
+]);
 
 export class ProtectedSettingError extends Error {
   constructor(key: string) {
@@ -27,17 +29,47 @@ export class ProtectedSettingError extends Error {
 }
 
 type RawClient = Pick<typeof unscopedPrisma, "$executeRaw">;
+type SettingsPatch = { set?: Record<string, unknown>; remove?: string[] };
 
-export async function patchOrganizationSettings(
-  orgId: string,
-  patch: { set?: Record<string, unknown>; remove?: string[] },
-  client: RawClient = unscopedPrisma,
-): Promise<number> {
+function checkedPatch(patch: SettingsPatch): { set: Record<string, unknown>; remove: string[] } {
   const set = patch.set ?? {};
   const remove = patch.remove ?? [];
   for (const key of [...Object.keys(set), ...remove]) {
     if (OPERATOR_ONLY_SETTINGS.includes(key)) throw new ProtectedSettingError(key);
   }
+  return { set, remove };
+}
+
+/**
+ * The organization profile form: its columns and its settings keys in ONE
+ * statement (no interactive transaction, so a row lock held by an operator
+ * makes the save wait instead of hitting a transaction timeout).
+ */
+export async function updateOrganizationProfile(
+  orgId: string,
+  columns: { name: string; businessId: string | null; vatId: string | null },
+  patch: SettingsPatch,
+  client: RawClient = unscopedPrisma,
+): Promise<number> {
+  const { set, remove } = checkedPatch(patch);
+  return client.$executeRaw`
+    update organizations
+       set name = ${columns.name},
+           business_id = ${columns.businessId},
+           vat_id = ${columns.vatId},
+           settings = (case when jsonb_typeof(settings) = 'object' then settings else '{}'::jsonb end
+                         - ${remove}::text[])
+                      || ${JSON.stringify(set)}::jsonb,
+           updated_at = now() at time zone 'UTC'
+     where id = ${orgId}::uuid`;
+}
+
+export async function patchOrganizationSettings(
+  orgId: string,
+  patch: SettingsPatch,
+  client: RawClient = unscopedPrisma,
+): Promise<number> {
+  const { set, remove } = checkedPatch(patch);
   if (Object.keys(set).length === 0 && remove.length === 0) return 0;
   // updated_at is timestamp(3) without time zone, stored in UTC like Prisma writes it.
   return client.$executeRaw`

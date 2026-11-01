@@ -18,6 +18,7 @@ vi.mock("@/server/db/tenant", () => ({ unscopedPrisma: db }));
 import {
   OPERATOR_ONLY_SETTINGS,
   patchOrganizationSettings,
+  updateOrganizationProfile,
   ProtectedSettingError,
 } from "@/server/services/organization-settings";
 import { setFeatureEnabled } from "@/server/services/feature-flags";
@@ -79,5 +80,37 @@ describe("setFeatureEnabled", () => {
     await expect(setFeatureEnabled(ORG, "creator_studio_v1", true)).rejects.toThrow(
       "Organization not found",
     );
+  });
+});
+
+describe("updateOrganizationProfile", () => {
+  it("writes the columns and only its settings keys in one statement", async () => {
+    await updateOrganizationProfile(
+      ORG,
+      { name: "Acme", businessId: null, vatId: "FI123" },
+      { set: { aiInstructions: "Be brief" } },
+    );
+    expect(db.$executeRaw).toHaveBeenCalledTimes(1);
+    const call = db.$executeRaw.mock.calls[0]!;
+    expect(sqlOf(call)).toContain("set name = ?, business_id = ?, vat_id = ?, settings = (case");
+    expect(call.slice(1)).toEqual([
+      "Acme",
+      null,
+      "FI123",
+      [],
+      JSON.stringify({ aiInstructions: "Be brief" }),
+      ORG,
+    ]);
+  });
+
+  it("refuses operator-only keys before writing", async () => {
+    await expect(
+      updateOrganizationProfile(
+        ORG,
+        { name: "Acme", businessId: null, vatId: null },
+        { remove: ["workflow_steps_internal_only"] },
+      ),
+    ).rejects.toBeInstanceOf(ProtectedSettingError);
+    expect(db.$executeRaw).not.toHaveBeenCalled();
   });
 });

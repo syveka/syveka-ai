@@ -345,7 +345,8 @@ async function verify(prisma: PrismaClient): Promise<void> {
                                   to_jsonb(${generations[0]!.id}::text)),
              updated_at = now() at time zone 'UTC'
        where id = ${org.id}::uuid
-         and jsonb_typeof(settings -> ${PAID_IMAGE_TEST.claimKey}::text) = 'object'`;
+         and jsonb_typeof(settings -> ${PAID_IMAGE_TEST.claimKey}::text) = 'object'
+         and not (settings -> ${PAID_IMAGE_TEST.claimKey}::text ? 'generationId')`;
   }
 
   const result = classifyOutcome({
