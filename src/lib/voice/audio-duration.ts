@@ -334,8 +334,14 @@ function mp4Seconds(b: Uint8Array): number {
         for (let i = 0; i < count; i++) {
           let duration = defDuration;
           let size = defSize;
-          if (rf & 0x100) ((duration = view.getUint32(q)), (q += 4));
-          if (rf & 0x200) ((size = view.getUint32(q)), (q += 4));
+          if (rf & 0x100) {
+            duration = view.getUint32(q);
+            q += 4;
+          }
+          if (rf & 0x200) {
+            size = view.getUint32(q);
+            q += 4;
+          }
           if (rf & 0x400) q += 4;
           if (rf & 0x800) q += 4;
           if (q > trun.end) fail();

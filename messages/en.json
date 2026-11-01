@@ -242,13 +242,11 @@
     },
     "voice": {
       "record": "Record a voice message",
-      "stopRecording": "Stop and transcribe",
       "cancel": "Cancel",
       "recording": "Recording…",
       "requesting": "Waiting for microphone permission…",
       "transcribing": "Transcribing…",
       "maxDuration": "Recording stops automatically after {seconds} seconds.",
-      "privacy": "Your recording is sent to our speech-to-text provider (OpenAI) only to create the text, and is not stored.",
       "transcriptAdded": "Transcript added to the message box. Review it, then press Send.",
       "recordingStarted": "Recording started.",
       "recordingCancelled": "Recording cancelled.",
@@ -280,8 +278,19 @@
         "timeout": "Transcription took too long. Please try again.",
         "network_error": "Connection lost while transcribing. Please try again.",
         "transcription_failed": "The recording couldn't be transcribed. Please try again.",
-        "daily_limit": "You've used today's {limit} voice transcriptions for this pilot. Try again tomorrow (Helsinki time) or type your message."
-      }
+        "daily_limit": "You've used today's {limit} voice transcriptions for this pilot. Try again tomorrow (Helsinki time) or type your message.",
+        "interrupted": "The recording stopped unexpectedly (the microphone was disconnected or taken by another app). Nothing was sent. Try again."
+      },
+      "stop": "Stop",
+      "reviewTitle": "Recording ready",
+      "reviewHint": "Listen back if you like. Nothing is uploaded until you press Transcribe.",
+      "transcribe": "Transcribe",
+      "discard": "Discard",
+      "playbackLabel": "Play back your recording",
+      "recordingReady": "Recording stopped. Listen back, then transcribe or discard it.",
+      "recordingDiscarded": "Recording discarded.",
+      "privacyNote": "Only the text you send reaches the assistant. The recording is used only to create that text: it is sent to our speech-to-text provider (OpenAI) and is not stored by Syveka.",
+      "retryHint": "Your recording is kept: press Transcribe to try again."
     },
     "live": {
       "start": "Start voice conversation",

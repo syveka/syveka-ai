@@ -149,14 +149,24 @@ export function Composer({
         <VoiceStatusBar
           status={voice.status}
           elapsedMs={voice.elapsedMs}
+          pending={voice.pending}
           error={voice.error}
           announcement={
-            voice.status === "transcribing" ? tVoice("transcribing") : voiceAnnouncement
+            voice.status === "transcribing"
+              ? tVoice("transcribing")
+              : voice.status === "review"
+                ? tVoice("recordingReady")
+                : voiceAnnouncement
           }
           onStop={voice.stop}
           onCancel={() => {
             voice.cancel();
             setVoiceAnnouncement(tVoice("recordingCancelled"));
+          }}
+          onTranscribe={() => void voice.transcribe()}
+          onDiscard={() => {
+            voice.discard();
+            setVoiceAnnouncement(tVoice("recordingDiscarded"));
           }}
           onDismissError={voice.clearError}
         />
@@ -201,7 +211,7 @@ export function Composer({
           <label
             title={t("attachFile")}
             className={cn(
-              "cursor-pointer rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent",
+              "inline-flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent",
               uploading && "pointer-events-none opacity-50",
             )}
           >
@@ -224,7 +234,7 @@ export function Composer({
           onClick={() => setUseKb((v) => !v)}
           title={t("useKnowledgeBase")}
           className={cn(
-            "rounded-md p-2 transition-colors",
+            "inline-flex size-10 shrink-0 items-center justify-center rounded-md transition-colors",
             useKb ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-accent",
           )}
         >
@@ -235,6 +245,7 @@ export function Composer({
         ) : null}
         <Button
           size="icon"
+          className="size-10 shrink-0"
           onClick={disabled ? onAbort : submit}
           disabled={!disabled && (!text.trim() || uploading || voiceBusy)}
           aria-label={disabled ? t("stopGenerating") : t("send")}

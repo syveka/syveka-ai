@@ -242,13 +242,11 @@
     },
     "voice": {
       "record": "Nauhoita ääniviesti",
-      "stopRecording": "Lopeta ja litteroi",
       "cancel": "Peruuta",
       "recording": "Nauhoitetaan…",
       "requesting": "Odotetaan mikrofonin käyttölupaa…",
       "transcribing": "Litteroidaan…",
       "maxDuration": "Nauhoitus päättyy automaattisesti {seconds} sekunnin kohdalla.",
-      "privacy": "Nauhoitus lähetetään puheentunnistuspalvelullemme (OpenAI) vain tekstin luomista varten, eikä sitä tallenneta.",
       "transcriptAdded": "Teksti lisättiin viestikenttään. Tarkista se ja paina Lähetä.",
       "recordingStarted": "Nauhoitus alkoi.",
       "recordingCancelled": "Nauhoitus peruttiin.",
@@ -280,8 +278,19 @@
         "timeout": "Litterointi kesti liian kauan. Yritä uudelleen.",
         "network_error": "Yhteys katkesi litteroinnin aikana. Yritä uudelleen.",
         "transcription_failed": "Nauhoitusta ei voitu litteroida. Yritä uudelleen.",
-        "daily_limit": "Tämän pilotin {limit} päivittäistä puheen litterointia on käytetty. Yritä huomenna uudelleen (Suomen aikaa) tai kirjoita viestisi."
-      }
+        "daily_limit": "Tämän pilotin {limit} päivittäistä puheen litterointia on käytetty. Yritä huomenna uudelleen (Suomen aikaa) tai kirjoita viestisi.",
+        "interrupted": "Nauhoitus keskeytyi odottamatta (mikrofoni irrotettiin tai toinen sovellus otti sen käyttöön). Mitään ei lähetetty. Yritä uudelleen."
+      },
+      "stop": "Lopeta",
+      "reviewTitle": "Nauhoitus valmis",
+      "reviewHint": "Voit kuunnella sen ensin. Mitään ei lähetetä ennen kuin painat Litteroi.",
+      "transcribe": "Litteroi",
+      "discard": "Hylkää",
+      "playbackLabel": "Kuuntele nauhoituksesi",
+      "recordingReady": "Nauhoitus lopetettu. Kuuntele se ja litteroi tai hylkää.",
+      "recordingDiscarded": "Nauhoitus hylätty.",
+      "privacyNote": "Avustajalle menee vain lähettämäsi teksti. Nauhoitusta käytetään vain tekstin luomiseen: se lähetetään puheentunnistuspalvelullemme (OpenAI), eikä Syveka tallenna sitä.",
+      "retryHint": "Nauhoitus on tallessa: yritä uudelleen painamalla Litteroi."
     },
     "live": {
       "start": "Aloita puhekeskustelu",

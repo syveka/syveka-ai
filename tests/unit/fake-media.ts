@@ -8,6 +8,8 @@ import { vi } from "vitest";
 export class FakeTrack {
   stopped = false;
   enabled = true;
+  /** Set by the code under test; tests call it to simulate a lost device. */
+  onended: (() => void) | null = null;
   stop() {
     this.stopped = true;
   }
@@ -33,6 +35,7 @@ export class FakeMediaRecorder {
   mimeType: string;
   ondataavailable: ((e: { data: Blob }) => void) | null = null;
   onstop: (() => void) | null = null;
+  onerror: (() => void) | null = null;
   /** Bytes the fake "records" per stop. */
   static bytesPerRecording = 8192;
 
