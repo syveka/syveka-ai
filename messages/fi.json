@@ -266,7 +266,7 @@
       "preparingVoice": "Valmistellaan puheääntä…",
       "playbackErrors": {
         "unsupported": "Tämä selain ei osaa lukea vastauksia ääneen.",
-        "no_voice": "Tämä selain tarjosi Syvekalle {count, plural, one {# puheäänen} other {# puheääntä}}, mutta ei yhtään kielelle {language}, joten vastausta ei luettu ääneen. Jos laitteeseesi on asennettu puheääni kielelle {language}, kokeile toista selainta tai tarkista laitteen tekstistä puheeksi -asetukset. Voit silti lukea vastauksen yllä.",
+        "no_voice": "Tämä selain tarjosi Syvekalle {count, plural, one {{countText} puheäänen} other {{countText} puheääntä}}, mutta ei yhtään kielelle {language}, joten vastausta ei luettu ääneen. Jos laitteeseesi on asennettu puheääni kielelle {language}, kokeile toista selainta tai tarkista laitteen tekstistä puheeksi -asetukset. Voit silti lukea vastauksen yllä.",
         "unknown_language": "Tämän vastauksen kieltä ei voitu yhdistää puheääneen.",
         "playback_failed": "Vastausta ei voitu lukea ääneen. Yritä uudelleen; jos ääntä ei kuulu, kokeile toista selainta.",
         "no_voices_listed": "Tämä selain ei antanut Syvekan käyttöön yhtään puheääntä, joten vastausta ei luettu ääneen. Laitteeseesi asennetut puheäänet voivat silti toimia toisessa selaimessa. Voit silti lukea vastauksen yllä."
@@ -664,8 +664,8 @@
       "description": "Organisaatiollasi on {plan}-taso, joka ei sisällä puhe-AI:ta.",
       "currentPlan": "Nykyinen taso",
       "upgradeButton": "Päivitä taso",
-      "limitTitle": "Puheavustajien enimmäismäärä täynnä",
-      "limitDescription": "{plan}-tasoon sisältyy {limit, plural, one {# puheavustaja} other {# puheavustajaa}}, ja organisaatiollasi on jo niin monta."
+      "limitTitle": "Puheavustajien enimmäismäärä on täynnä",
+      "limitDescription": "{plan}-tasoon sisältyy {limit, plural, one {{limitText} puheavustaja} other {{limitText} puheavustajaa}}, ja ne ovat jo kaikki käytössä."
     },
     "errors": {
       "entitlement_exceeded": "Puhe-AI vaatii Starter-tason tai korkeamman — päivitä tasoa jatkaaksesi.",
@@ -795,7 +795,7 @@
       "bufferBefore": "Puskuri ennen (min)",
       "bufferAfter": "Puskuri jälkeen (min)",
       "minNotice": "Väh. varoaika (min)",
-      "maxWindow": "Enint. aikaikkuna (pv)",
+      "maxWindow": "Varattavissa enintään (päivää etukäteen)",
       "brandColor": "Brändiväri",
       "active": "Aktiivinen",
       "requireConsent": "Vaadi suostumus",

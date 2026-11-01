@@ -266,7 +266,7 @@
       "preparingVoice": "Preparing the voice…",
       "playbackErrors": {
         "unsupported": "This browser can't read replies aloud.",
-        "no_voice": "This browser offered Syveka {count, plural, one {# voice} other {# voices}}, but none for {language}, so the reply wasn't read aloud. If a {language} voice is installed on your device, try another browser or check your device's text-to-speech settings. You can still read the reply above.",
+        "no_voice": "This browser offered Syveka {count, plural, one {{countText} voice} other {{countText} voices}}, but none for {language}, so the reply wasn't read aloud. If your device has a voice for {language} installed, try another browser or check your device's text-to-speech settings. You can still read the reply above.",
         "unknown_language": "The language of this reply couldn't be matched to a voice.",
         "playback_failed": "The reply couldn't be read aloud. Try again; if it stays silent, try another browser.",
         "no_voices_listed": "This browser didn't make any voices available to Syveka, so the reply wasn't read aloud. Voices installed on your device may still work in another browser. You can still read the reply above."
@@ -665,7 +665,7 @@
       "currentPlan": "Current plan",
       "upgradeButton": "Upgrade plan",
       "limitTitle": "Voice assistant limit reached",
-      "limitDescription": "The {plan} plan includes {limit, plural, one {# voice assistant} other {# voice assistants}}, and your organization already has that many."
+      "limitDescription": "The {plan} plan includes {limit, plural, one {{limitText} voice assistant} other {{limitText} voice assistants}}, and your organization already uses all of them."
     },
     "errors": {
       "entitlement_exceeded": "Voice AI requires Starter or higher — upgrade your plan to continue.",
@@ -795,7 +795,7 @@
       "bufferBefore": "Buffer before (min)",
       "bufferAfter": "Buffer after (min)",
       "minNotice": "Min notice (min)",
-      "maxWindow": "Max window (days)",
+      "maxWindow": "Bookable up to (days ahead)",
       "brandColor": "Brand color",
       "active": "Active",
       "requireConsent": "Require consent",
@@ -1310,7 +1310,7 @@
       "not_configured": "Not configured",
       "blocked": "Blocked",
       "verification_required": "Verification required",
-      "plan_required": "Requires Starter or above"
+      "plan_required": "Requires Starter or higher"
     }
   },
   "creatorStudio": {

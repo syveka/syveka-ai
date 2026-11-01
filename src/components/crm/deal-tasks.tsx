@@ -101,9 +101,10 @@ export function DealTasks({
         <form
           ref={formRef}
           action={action}
-          className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-end"
+          className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-end"
         >
-          <div className="min-w-0 space-y-1">
+          {/* The title gets its own row: the deal page column can be narrow. */}
+          <div className="min-w-0 space-y-1 sm:col-span-2">
             <Label htmlFor={`${fieldId}-title`}>{t("taskTitleLabel")}</Label>
             <Input
               id={`${fieldId}-title`}
@@ -115,12 +116,7 @@ export function DealTasks({
           </div>
           <div className="min-w-0 space-y-1">
             <Label htmlFor={`${fieldId}-due`}>{t("taskDueLabel")}</Label>
-            <Input
-              id={`${fieldId}-due`}
-              name="dueAt"
-              type="datetime-local"
-              className="w-full sm:w-52"
-            />
+            <Input id={`${fieldId}-due`} name="dueAt" type="datetime-local" className="w-full" />
           </div>
           <Button type="submit" size="sm" disabled={pending}>
             {pending ? tc("loading") : t("addTask")}

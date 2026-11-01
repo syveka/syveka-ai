@@ -122,9 +122,9 @@ export function annualPriceEur(plan: PublicPlan): number {
 }
 
 /**
- * The annual price spread over 12 months, unrounded (€24.17 Starter, €65.83
- * Pro): shown to two decimals so 12 × the shown amount matches the annual
- * charge. Rounding to whole euros (€24, €66) would not.
+ * The annual price spread over 12 months (€24.17 Starter, €65.83 Pro, shown
+ * to the cent). The amount charged is the annual price; this is only its
+ * equivalent, closer than whole euros (€24, €66) that implied €288 and €792.
  */
 export function annualMonthlyEquivalentEur(plan: PublicPlan): number {
   return annualPriceEur(plan) / 12;

@@ -258,10 +258,10 @@ Clear) are browser controls and were not replaced.
 | Key                               | Before              | After                           |
 | --------------------------------- | ------------------- | ------------------------------- |
 | `calendar.bookingTypes.maxWindow` | أقصى نافذة (يوم)    | أقصى مدة للحجز مسبقًا (بالأيام) |
-| `workflows.fields.trigger`        | المُطلق             | حدث بدء التشغيل                 |
+| `workflows.fields.trigger`        | المُطلق             | الحدث المُشغِّل                 |
 | `crm.openPipeline`                | خط المبيعات المفتوح | إجمالي قيمة الصفقات المفتوحة    |
 
-The two Run-history reasons that used "المُطلق" use the new term, and "سير عمل" became
+"حدث بدء التشغيل" (suggested) was not used because it reads like a device start-up; "الحدث المُشغِّل" needs a native-speaker check. The two Run-history reasons that used "المُطلق" use the new term, and "سير عمل" became
 "مسار عمل" to match the rest of the workflows UI.
 
 ### C5. Audit log action labels (deferred)
@@ -320,7 +320,7 @@ won, €1,000 lost.
   - monthly: "€29, per user per month, billed monthly";
   - annual: "€290, per user per year, billed once a year", plus "Equals €24.17 per user per month:
     12 months for the price of 10".
-- The equivalent is shown to the cent, so 12 × it equals the charge. In Arabic the amount uses
+- The equivalent is shown to the cent (12 × €24.17 = €290.04); the amount charged is the annual figure. In Arabic the amount uses
   Latin digits after a right-to-left mark.
 - **Unchanged:** prices, Stripe price IDs, entitlements, quotas, subscription state and the checkout
   arguments.

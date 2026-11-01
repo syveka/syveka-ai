@@ -378,11 +378,12 @@ function PipelinePreview({
             <p className="text-xs text-muted-foreground">{labels.stageBarsMetric}</p>
             {dashboard.pipeline.stages.map((stage) => (
               <div key={stage.id}>
-                <div className="mb-1 flex items-center justify-between gap-3 text-sm">
-                  <span className="truncate text-start">
+                {/* Wraps on phones: long counts (Finnish) never hide the stage name. */}
+                <div className="mb-1 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 text-sm">
+                  <span className="min-w-0 truncate text-start">
                     {stageLabel(stage, (key) => labels.defaultStages[key])}
                   </span>
-                  <span className="shrink-0 text-muted-foreground">
+                  <span className="text-end text-muted-foreground">
                     {labels.stageSummary(stage.count, formatCents(stage.valueCents, locale))}
                   </span>
                 </div>

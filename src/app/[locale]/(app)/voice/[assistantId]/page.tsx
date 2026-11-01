@@ -1,12 +1,12 @@
 export const dynamic = "force-dynamic";
 
 import { notFound } from "next/navigation";
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { tenantDb } from "@/server/db/tenant";
 import { getEntitlements } from "@/server/services/billing/entitlements";
 import { AssistantForm } from "@/components/voice/assistant-form";
-import { PLAN_NAMES } from "@/components/billing/plan-display";
+import { formatCount, PLAN_NAMES } from "@/components/billing/plan-display";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Link } from "@/i18n/routing";
@@ -41,7 +41,11 @@ export default async function AssistantPage({
             <h1 className="text-lg font-semibold">{atLimit ? t("limitTitle") : t("title")}</h1>
             <p className="text-sm text-muted-foreground">
               {atLimit
-                ? t("limitDescription", { plan, limit: ent.voiceAssistants })
+                ? t("limitDescription", {
+                    plan,
+                    limit: ent.voiceAssistants,
+                    limitText: formatCount(await getLocale(), ent.voiceAssistants),
+                  })
                 : t("description", { plan })}
             </p>
             <p className="text-xs text-muted-foreground">

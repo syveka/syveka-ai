@@ -104,7 +104,7 @@ export function PlanCards({ currentPlan }: { currentPlan: Plan }) {
           const isCurrent = plan === currentPlan;
           const annual = interval === "annual";
           // What is charged, and how often; annual also shows its monthly
-          // equivalent to the cent, so the numbers add up.
+          // equivalent to the cent.
           return (
             <Card key={plan} className={cn(isCurrent && "border-primary")}>
               <CardHeader className="space-y-1">

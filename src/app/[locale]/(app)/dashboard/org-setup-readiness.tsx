@@ -44,7 +44,7 @@ export async function OrgSetupReadiness({ ctx }: { ctx: TenantContext }) {
           const href = actionHref(item.key, item.state);
           const row = (
             <div className="flex items-center justify-between gap-2 py-1 text-sm">
-              <span>{t(`items.${item.key}`)}</span>
+              <span className="min-w-0">{t(`items.${item.key}`)}</span>
               <StateBadge state={item.state} t={t} />
             </div>
           );
@@ -102,8 +102,8 @@ function StateBadge({
   }
   if (state === "plan_required") {
     return (
-      <span className="flex items-center gap-1 text-muted-foreground">
-        <Lock className="size-4" />
+      <span className="flex items-center gap-1 text-end text-muted-foreground">
+        <Lock className="size-4 shrink-0" />
         {t("state.plan_required")}
       </span>
     );

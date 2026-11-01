@@ -199,6 +199,12 @@ export function WorkflowBuilder({
         </div>
       ))}
 
+      {/* Before the buttons, so it is read before the unavailable steps. */}
+      {internalOnly ? (
+        <p id="workflow-internal-only-hint" className="text-xs text-muted-foreground">
+          {t("internalOnlyHint")}
+        </p>
+      ) : null}
       <div className="flex flex-wrap gap-2">
         {STEP_TYPES.map((st) => {
           const unavailable = internalOnly && !INTERNAL_STEP_TYPES.includes(st);
@@ -218,11 +224,6 @@ export function WorkflowBuilder({
           );
         })}
       </div>
-      {internalOnly ? (
-        <p id="workflow-internal-only-hint" className="text-xs text-muted-foreground">
-          {t("internalOnlyHint")}
-        </p>
-      ) : null}
 
       {error ? (
         <p role="alert" className="text-sm text-destructive">

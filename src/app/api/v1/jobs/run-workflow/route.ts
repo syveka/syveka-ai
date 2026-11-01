@@ -127,6 +127,10 @@ class WorkflowStepRefusedError extends Error {
  * refusals are shown; any other error (a provider's, the database's) is
  * described by its name alone, so no internal text reaches a notification,
  * the run record or the response.
+ *
+ * Throw it only for failures the same input reproduces on every attempt: it
+ * ends the job without a QStash retry. A provider or database condition must
+ * propagate as its own error so it is retried.
  */
 class WorkflowStepError extends Error {
   constructor(message: string) {

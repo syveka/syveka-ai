@@ -22,6 +22,7 @@ const MESSAGES = { en: load("en"), fi: load("fi"), ar: load("ar") };
 vi.mock("next-intl/server", async () => {
   const { createTranslator } = await import("next-intl");
   return {
+    getLocale: vi.fn(async () => state.locale),
     getTranslations: vi.fn(async (namespace?: string) =>
       createTranslator({
         locale: state.locale,
