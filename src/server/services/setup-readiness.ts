@@ -52,8 +52,9 @@ function businessDnaHasAnyFact(dna: Awaited<ReturnType<typeof getBusinessDnaCont
  *   present, but no real inbound email has been received yet, so nothing
  *   proves mail actually reaches the inbox (configuration alone is not
  *   end-to-end capability).
- * - `ready`: a real inbound email (with a provider message id) has been
- *   received. This proves receiving only; it says nothing about sending.
+ * - `ready`: the organization has a receiving address and a real inbound
+ *   email (with a provider message id) has been received. This proves
+ *   receiving only; it says nothing about sending.
  */
 export type EmailChannelStatus =
   "mock" | "not_configured" | "no_address" | "verification_required" | "ready";
@@ -69,8 +70,10 @@ export async function getEmailChannelStatus(ctx: TenantContext): Promise<EmailCh
     },
     select: { id: true },
   });
-  if (hasReceivedRealEmail) return "ready";
-  return (await getEmailReceivingAddress(ctx)) ? "verification_required" : "no_address";
+  // Mail received in the past proves nothing once the receiving address is
+  // gone: without a mailbox the webhooks refuse every new email.
+  if (!(await getEmailReceivingAddress(ctx))) return "no_address";
+  return hasReceivedRealEmail ? "ready" : "verification_required";
 }
 
 /** The organization's own inbound address, if one has been set up. */

@@ -9,6 +9,8 @@ import {
   CONTACT_MISSING_TEST_RUN_ERROR,
   CONTACT_NOT_FOUND_ERROR,
   INVALID_RECIPIENT_ERROR_PREFIX,
+  isTerminalRunError,
+  TERMINAL_RUN_ERRORS,
 } from "@/lib/workflows/run-failure";
 
 export const runtime = "nodejs";
@@ -314,6 +316,24 @@ export async function POST(request: Request): Promise<NextResponse> {
   const parsed = payloadSchema.safeParse(jobPayloadJson(rawBody));
   if (!parsed.success) return NextResponse.json({ error: "invalid payload" }, { status: 400 });
   const { workflowId, orgId, triggerData, runId, resumeFromIndex, sourceEventKey } = parsed.data;
+  // A FAILED run is reclaimable only if its failure wasn't terminal (see
+  // TERMINAL_RUN_ERRORS): a terminal failure was acknowledged with 200 and
+  // must not run again when the same message is delivered again. A run with
+  // no recorded error (crash) or any other error stays retryable.
+  const retryableFailedRun: Prisma.WorkflowRunWhereInput = {
+    status: "FAILED",
+    OR: [
+      { error: null },
+      {
+        NOT: {
+          OR: [
+            { error: { in: [...TERMINAL_RUN_ERRORS.exact] } },
+            ...TERMINAL_RUN_ERRORS.prefixes.map((prefix) => ({ error: { startsWith: prefix } })),
+          ],
+        },
+      },
+    ],
+  };
 
   // Fail closed rather than silently creating an unprotected duplicate-prone
   // run: every fresh-trigger caller (emitWorkflowEvent) supplies
@@ -400,14 +420,21 @@ export async function POST(request: Request): Promise<NextResponse> {
   if (runId) {
     // Bind the resumed run to the workflow and org it was loaded for above, so
     // a mismatched payload can never rewrite another tenant's run record.
+    // A run that already failed terminally stays failed: a repeated delivery
+    // of its message executes nothing and notifies no one again.
+    // The condition is part of the update itself, so it is atomic.
+    const runWhere = { id: runId, workflowId, organizationId: orgId };
     try {
       run = await unscopedPrisma.workflowRun.update({
-        where: { id: runId, workflowId, organizationId: orgId },
+        where: { ...runWhere, OR: [{ status: { not: "FAILED" } }, retryableFailedRun] },
         data: { status: "RUNNING" },
       });
     } catch (err) {
       if (!isRecordNotFound(err)) throw err;
-      return NextResponse.json({ skipped: "run not found for workflow" });
+      const existing = await unscopedPrisma.workflowRun.findFirst({ where: runWhere });
+      return NextResponse.json(
+        existing ? { skipped: "terminal_failure" } : { skipped: "run not found for workflow" },
+      );
     }
   } else {
     try {
@@ -432,6 +459,9 @@ export async function POST(request: Request): Promise<NextResponse> {
         where: { organizationId: orgId, workflowId, sourceEventKey },
       });
       const staleSince = new Date(Date.now() - STALE_RUNNING_MS);
+      if (existing?.status === "FAILED" && isTerminalRunError(existing.error)) {
+        return NextResponse.json({ skipped: "terminal_failure" });
+      }
       const isReclaimable =
         existing?.status === "FAILED" ||
         (existing?.status === "RUNNING" && existing.startedAt < staleSince);
@@ -468,7 +498,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           organizationId: orgId,
           workflowId,
           sourceEventKey,
-          OR: [{ status: "FAILED" }, { status: "RUNNING", startedAt: { lt: staleSince } }],
+          OR: [retryableFailedRun, { status: "RUNNING", startedAt: { lt: staleSince } }],
         },
         data: {
           status: "RUNNING",

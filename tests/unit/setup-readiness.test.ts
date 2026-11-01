@@ -136,6 +136,14 @@ describe("getOrgSetupReadiness", () => {
     });
   });
 
+  it("does not report ready from historical mail once the receiving address is gone", async () => {
+    getEmailChannelAdapterMock.mockReturnValue({ provider: "RESEND", isConfigured: () => true });
+    db.inboxThread.findFirst.mockResolvedValue({ id: "thread-from-before" });
+    db.inboxMailbox.findFirst.mockResolvedValue(null);
+    const items = await getOrgSetupReadiness(ctx());
+    expect(items.find((i) => i.key === "emailChannel")?.state).toBe("setup_required");
+  });
+
   it("marks the email channel ready when Resend is configured and a real inbound email has been received", async () => {
     getEmailChannelAdapterMock.mockReturnValue({ provider: "RESEND", isConfigured: () => true });
     db.inboxThread.findFirst.mockResolvedValue({ id: "thread-1" });

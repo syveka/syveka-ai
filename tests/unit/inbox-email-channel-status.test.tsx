@@ -162,6 +162,15 @@ describe("Inbox email channel status matches the Dashboard readiness", () => {
     expect(await dashboardEmailState()).toBe("ready");
   });
 
+  it("historical mail without a current receiving address says email can't arrive, not 'received'", async () => {
+    state.inbound = { id: "thread-from-before" };
+    state.mailbox = null;
+    const html = (await renderInbox("en")).replaceAll("&#x27;", "'");
+    expect(html).toContain(MESSAGES.en.inbox.channelStatus.noAddress);
+    expect(html).not.toContain(MESSAGES.en.inbox.channelStatus.receiving);
+    expect(await dashboardEmailState()).toBe("setup_required");
+  });
+
   it("reports missing credentials as not configured on both", async () => {
     state.adapter = { provider: "RESEND", isConfigured: () => false };
     expect(await renderInbox("fi")).toContain(MESSAGES.fi.inbox.channelStatus.notConfigured);

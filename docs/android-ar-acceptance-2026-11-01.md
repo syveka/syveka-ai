@@ -362,6 +362,8 @@ changed here.
 
 - **No mailbox row.** The new status is `no_address`. The dashboard shows "Setup required" and the
   Inbox explains that email can't arrive until a receiving address exists.
+  - This holds even if mail arrived in the past: historical inbound mail no longer counts as
+    "ready" without a current receiving address (PR review follow-up).
 - **With a row.** The Inbox shows the address, isolated left-to-right, and the manual test: send
   one email from your own mailbox to it.
 - The email item links to `/inbox`.
@@ -454,6 +456,32 @@ accepted OpenAI cost. Nothing was enabled.
 | G2  | Translate the workflow failure notification | **Fixed** (B3).                                                                                                                                                                                                                                                                                                                                 |
 | G3  | Restricted editor offers blocked steps      | **Fixed.** With the restriction set, the Email, AI and Wait step buttons are disabled with the reason. Save, activation, test run and the job still enforce it on the server. Test: `workflows-entitlement-ui.test.tsx`.                                                                                                                        |
 | G4  | PostgreSQL settings suite in CI             | **Not done.** It needs a `ci.yml` change, which is a protected action. It requires explicit authorization.                                                                                                                                                                                                                                      |
+
+**G1 follow-up (PR review): terminal failures are durable across redelivery.**
+
+- **Problem (_proven_).** The terminal response (200) didn't make the run terminal:
+  - a repeated delivery with the same `sourceEventKey` reclaimed any FAILED run;
+  - a repeated delivery with `runId` set the run back to RUNNING unconditionally.
+  - Either way the failing step ran again and the creator was notified again.
+- **Classification.** It reuses the run's existing `error` column; there is no schema change.
+  `TERMINAL_RUN_ERRORS` in `src/lib/workflows/run-failure.ts` lists the texts the job ends with
+  200: the three step-error texts and the `ai_quota_exceeded` refusal.
+  - Any other FAILED run stays reclaimable: no recorded error, a provider or database error, a
+    crash, or a legacy row.
+- **Fix.**
+  - The fresh-event path acknowledges a terminally failed run (`skipped: terminal_failure`), and
+    its atomic reclaim condition excludes terminal failures.
+  - The `runId` path's update now carries the same condition, so the change stays atomic.
+- **Tests (`run-workflow-contact-field.test.ts`).** The fake database now evaluates
+  `OR`/`AND`/`NOT`/`in`/`startsWith`/`lt` and implements a real `updateMany`. Before, it
+  always returned 0, so a reclaim was never exercised. The tests cover:
+  - the same deterministic event delivered twice: the run stays FAILED, the step runs once, one
+    notification;
+  - a repeated terminal manual run with `runId`: the same results;
+  - a transient database failure, recovered by redelivery on both paths: SUCCEEDED, one activity,
+    no failure notification.
+  - The two terminal tests fail against the previous route. `run-workflow-idempotency.test.ts`
+    pins the new reclaim and resume conditions.
 
 A Test run without a contact still can't create an activity. A Test run is not equivalent to a real
 "contact created" event; it fails with the translated reason.

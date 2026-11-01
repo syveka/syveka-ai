@@ -115,6 +115,37 @@ vi.mock("@/server/services/ai-spend", () => ({
 }));
 
 import { POST } from "@/app/api/v1/jobs/run-workflow/route";
+import {
+  CONTACT_MISSING_ERROR,
+  CONTACT_MISSING_TEST_RUN_ERROR,
+  CONTACT_NOT_FOUND_ERROR,
+  INVALID_RECIPIENT_ERROR_PREFIX,
+} from "@/lib/workflows/run-failure";
+
+/** A FAILED run is reclaimable only when its failure wasn't terminal. */
+const RETRYABLE_FAILED_RUN = {
+  status: "FAILED",
+  OR: [
+    { error: null },
+    {
+      NOT: {
+        OR: [
+          {
+            error: {
+              in: [
+                CONTACT_MISSING_TEST_RUN_ERROR,
+                CONTACT_MISSING_ERROR,
+                CONTACT_NOT_FOUND_ERROR,
+                "ai_quota_exceeded",
+              ],
+            },
+          },
+          { error: { startsWith: INVALID_RECIPIENT_ERROR_PREFIX } },
+        ],
+      },
+    },
+  ],
+};
 
 const ORG = "11111111-1111-4111-8111-111111111111";
 const WORKFLOW = "22222222-2222-4222-8222-222222222222";
@@ -258,7 +289,7 @@ describe("trigger-level idempotency: retry after FAILED", () => {
           organizationId: ORG,
           workflowId: WORKFLOW,
           sourceEventKey: "booking.created:bk-1",
-          OR: [{ status: "FAILED" }, { status: "RUNNING", startedAt: { lt: expect.any(Date) } }],
+          OR: [RETRYABLE_FAILED_RUN, { status: "RUNNING", startedAt: { lt: expect.any(Date) } }],
         }),
         data: expect.objectContaining({ status: "RUNNING" }),
       }),
@@ -388,7 +419,13 @@ describe("trigger-level idempotency: resumes are unaffected by the claim path", 
     expect(await res.json()).toEqual({ ok: true });
     expect(mocks.runCreate).not.toHaveBeenCalled();
     expect(mocks.runUpdate).toHaveBeenCalledWith({
-      where: { id: runId, workflowId: WORKFLOW, organizationId: ORG },
+      where: {
+        id: runId,
+        workflowId: WORKFLOW,
+        organizationId: ORG,
+        // A terminally failed run is never resumed (see run-workflow-contact-field).
+        OR: [{ status: { not: "FAILED" } }, RETRYABLE_FAILED_RUN],
+      },
       data: { status: "RUNNING" },
     });
   });

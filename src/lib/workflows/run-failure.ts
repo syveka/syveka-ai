@@ -25,6 +25,31 @@ export const CONTACT_MISSING_ERROR = "crm.create_activity: no contact in the con
 export const CONTACT_NOT_FOUND_ERROR = "crm.create_activity: contact not found";
 export const INVALID_RECIPIENT_ERROR_PREFIX = "email.send: invalid recipient";
 
+/**
+ * Run errors that end the job without a retry (the run-workflow job answers
+ * 200): a step error the same input reproduces on every attempt, or a
+ * refusal. A FAILED run with one of these stays FAILED when its message is
+ * delivered again; any other FAILED run (a provider or database error, a
+ * crash, a legacy row) stays reclaimable so a retry can still succeed.
+ */
+export const TERMINAL_RUN_ERRORS = {
+  exact: [
+    CONTACT_MISSING_TEST_RUN_ERROR,
+    CONTACT_MISSING_ERROR,
+    CONTACT_NOT_FOUND_ERROR,
+    "ai_quota_exceeded",
+  ],
+  prefixes: [INVALID_RECIPIENT_ERROR_PREFIX],
+} as const;
+
+export function isTerminalRunError(error: string | null): boolean {
+  if (!error) return false;
+  return (
+    (TERMINAL_RUN_ERRORS.exact as readonly string[]).includes(error) ||
+    TERMINAL_RUN_ERRORS.prefixes.some((prefix) => error.startsWith(prefix))
+  );
+}
+
 export function workflowRunFailure(error: string | null): WorkflowRunFailure | null {
   if (!error) return null;
   if (error === CONTACT_MISSING_TEST_RUN_ERROR) return "contact_missing_test_run";
