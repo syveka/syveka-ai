@@ -270,8 +270,6 @@ function dashboardFixture(pipelineName: string): CrmDashboard {
     },
     calendar: { meetings: [], tasks: [] },
     insights: {
-      model: "test-model",
-      provider: "test",
       activeDeals: 1,
       overdueTasks: 0,
       customerGrowthPct: null,
@@ -302,6 +300,15 @@ describe("Dashboard", () => {
 
   it("keeps a renamed pipeline exactly as entered", async () => {
     expect(await renderDashboard("en", "Enterprise deals")).toContain("Enterprise deals");
+  });
+
+  it("labels the rule-based insights honestly: no model name, no 'Generated with'", async () => {
+    const en = await renderDashboard("en");
+    expect(en).toContain("Calculated from your CRM data. No AI model is used for these.");
+    expect(en).not.toContain("Generated with");
+    expect(en).not.toContain("AI insights");
+    expect(en).not.toMatch(/claude|anthropic/i);
+    expect(await renderDashboard("fi")).toContain("Näihin ei käytetä tekoälymallia");
   });
 
   it("shows feed times in Helsinki time and system booking subjects in the interface language", async () => {

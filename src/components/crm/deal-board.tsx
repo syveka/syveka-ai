@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { CalendarClock } from "lucide-react";
 import { Link, RTL_LOCALES } from "@/i18n/routing";
@@ -58,6 +58,22 @@ export function DealBoard({
   const t = useTranslations("crm");
   const locale = useLocale();
   const [stages, setStages] = useState(initial);
+  // The board keeps a local copy for optimistic drag-and-drop, but the server
+  // stays the source of truth: when the page is revalidated (a deal created,
+  // edited or moved elsewhere) the new stages replace the copy. Without this a
+  // newly created deal stayed invisible until a manual reload.
+  const [serverStages, setServerStages] = useState(initial);
+  if (initial !== serverStages) {
+    setServerStages(initial);
+    setStages(initial);
+  }
+  // A failed move falls back to the latest server data, not to the board as
+  // it was at the drop: a refresh may have arrived meanwhile (a new deal, another
+  // move), and the drop-time snapshot would hide it again.
+  const latestServerStages = useRef(serverStages);
+  useEffect(() => {
+    latestServerStages.current = serverStages;
+  }, [serverStages]);
   const [dragged, setDragged] = useState<{ dealId: string; fromStageId: string } | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [, startTransition] = useTransition();
@@ -103,7 +119,7 @@ export function DealBoard({
       try {
         await moveDealAction({ dealId, stageId: toStageId, position });
       } catch {
-        setStages(prev); // rollback
+        setStages(latestServerStages.current); // rollback to the server's view
       }
     });
   };
