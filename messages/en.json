@@ -924,7 +924,7 @@
       "CANCELED": "Canceled",
       "WAITING": "Waiting"
     },
-    "toggleLabel": "{name}: active",
+    "toggleLabel": "{name}",
     "entitlement": {
       "notIncluded": "Workflows aren't included in your current plan. You can build and save workflows as drafts, but activating them or running a test requires a plan that includes workflows.",
       "readOnly": "Your workspace is read-only while the subscription is past due, so workflows can't be activated or tested.",

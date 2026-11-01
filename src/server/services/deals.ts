@@ -363,7 +363,6 @@ export async function addDealNote(ctx: TenantContext, dealId: string, input: Not
   return activity;
 }
 
-/** Adds a TASK activity (reminder) with an optional due date. */
 /**
  * A task's due time. The form's datetime-local value has no zone and means
  * the user's own wall clock; parsed on the server (UTC) it was stored two or
@@ -374,6 +373,7 @@ async function taskDueAt(ctx: TenantContext, value: string): Promise<Date> {
   return zonedWallTimeToUtc(value, await getViewerTimeZone(ctx.userId));
 }
 
+/** Adds a TASK activity (reminder) with an optional due date. */
 export async function addDealTask(ctx: TenantContext, dealId: string, input: DealTaskInput) {
   const db = tenantDb(ctx.orgId);
   const deal = await db.deal.findFirstOrThrow({

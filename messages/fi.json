@@ -924,7 +924,7 @@
       "CANCELED": "Peruttu",
       "WAITING": "Odottaa"
     },
-    "toggleLabel": "{name}: käytössä",
+    "toggleLabel": "{name}",
     "entitlement": {
       "notIncluded": "Automaatiot eivät sisälly nykyiseen tilaukseesi. Voit rakentaa ja tallentaa automaatioita luonnoksina, mutta niiden aktivointi ja testiajo vaativat tilauksen, johon automaatiot sisältyvät.",
       "readOnly": "Työtilasi on vain luku -tilassa, koska tilauksen maksu on myöhässä, joten automaatioita ei voi aktivoida eikä testata.",

@@ -36,6 +36,10 @@ export function CalendarModal({
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
+        // Escape first clears a search field (the browser's own behaviour);
+        // only an Escape that has nothing to clear closes the dialog.
+        const target = e.target;
+        if (target instanceof HTMLInputElement && target.type === "search" && target.value) return;
         onClose();
         return;
       }

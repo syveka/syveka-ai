@@ -95,6 +95,12 @@ export function AttendeePicker({
               type="search"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
+              onKeyDown={(e) => {
+                // This filter sits inside the event form: Enter (or a phone
+                // keyboard's Search key) must not save a half-filled event.
+                if (e.key === "Enter") e.preventDefault();
+              }}
+              enterKeyHint="search"
               aria-label={t("filter")}
               placeholder={t("filter")}
             />

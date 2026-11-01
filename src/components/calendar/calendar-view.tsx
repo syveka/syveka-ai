@@ -370,7 +370,7 @@ function MonthGrid({
                   count: dayEvents.length,
                   date: dayNameFmt.format(new Date(`${day}T12:00:00Z`)),
                 })}
-                className="mt-1 flex w-full items-center justify-center rounded bg-primary/15 py-0.5 text-xs font-medium text-primary sm:hidden"
+                className="mt-1 flex min-h-9 w-full items-center justify-center rounded bg-primary/15 text-xs font-medium text-primary sm:hidden"
               >
                 {dayEvents.length}
               </button>

@@ -63,6 +63,8 @@ const { EventDialog } = await import("@/components/calendar/event-dialog");
 const { CalendarView } = await import("@/components/calendar/calendar-view");
 const { BookingTypesManager } = await import("@/components/calendar/booking-types-manager");
 const { PublicLanguageSwitcher } = await import("@/components/calendar/public-language-switcher");
+const { AttendeePicker } = await import("@/components/calendar/attendee-picker");
+const { CalendarModal } = await import("@/components/calendar/calendar-modal");
 const { default: BookingPageUnavailable } =
   await import("@/app/[locale]/(public)/book/[org]/[slug]/not-found");
 
@@ -260,6 +262,48 @@ describe("attendee picker", () => {
     expect(names.filter((n) => n === "attendees")).toHaveLength(1);
     expect(names).not.toContain("attendeeContacts");
     expect(host.querySelectorAll("fieldset input[name]")).toHaveLength(0);
+  });
+});
+
+describe("attendee filter inside the event form", () => {
+  const many = Array.from({ length: 8 }, (_, i) => ({ id: `c-${i}`, name: `Contact ${i}` }));
+
+  it("Enter (or a phone keyboard's Search key) in the filter never submits the event", async () => {
+    const onSubmit = vi.fn((e: React.FormEvent) => e.preventDefault());
+    const host = await render(
+      <form onSubmit={onSubmit}>
+        <AttendeePicker contacts={many} selectedIds={[]} onChange={vi.fn()} />
+        <button type="submit">Save</button>
+      </form>,
+    );
+    const filter = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+    expect(filter.getAttribute("enterkeyhint")).toBe("search");
+    await act(async () => {
+      const enter = new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true });
+      filter.dispatchEvent(enter);
+      expect(enter.defaultPrevented).toBe(true);
+    });
+    expect(onSubmit).not.toHaveBeenCalled();
+  });
+
+  it("Escape in a filter with text clears it instead of closing the dialog", async () => {
+    const onClose = vi.fn();
+    const host = await render(
+      <CalendarModal title="New event" onClose={onClose}>
+        <AttendeePicker contacts={many} selectedIds={[]} onChange={vi.fn()} />
+      </CalendarModal>,
+    );
+    const filter = host.querySelector<HTMLInputElement>('input[type="search"]')!;
+    filter.value = "Contact 3";
+    await act(async () => {
+      filter.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    filter.value = "";
+    await act(async () => {
+      filter.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    expect(onClose).toHaveBeenCalledTimes(1);
   });
 });
 
