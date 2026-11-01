@@ -110,7 +110,7 @@ describe("useSpeechPlayback", () => {
       vi.advanceTimersByTime(VOICE_WAIT_MS);
     });
     expect(synth.speak).not.toHaveBeenCalled();
-    expect(result.current.error).toEqual({ id: "m1", code: "no_voice", language: "ar" });
+    expect(result.current.error).toEqual({ id: "m1", code: "no_voice", language: "ar", listed: 3 });
   });
 
   it("Listen reads a reply in its own language, never with the interface voice", () => {
@@ -127,7 +127,7 @@ describe("useSpeechPlayback", () => {
       vi.advanceTimersByTime(VOICE_WAIT_MS);
     });
     expect(spoken).toHaveLength(1); // not read with the English voice
-    expect(result.current.error).toEqual({ id: "m2", code: "no_voice", language: "fi" });
+    expect(result.current.error).toEqual({ id: "m2", code: "no_voice", language: "fi", listed: 1 });
   });
 
   it("a short reply with no language context is shown as text, not read by a guessed voice", () => {
@@ -150,7 +150,7 @@ describe("useSpeechPlayback", () => {
     expect(result.current.error).toEqual({ id: "m1", code: "unknown_language" });
   });
 
-  it("an empty voice list is never left to the engine's guess: it waits, then reports no_voice", () => {
+  it("an empty voice list is never left to the engine's guess: it waits, then reports no_voices_listed", () => {
     // A bare `lang` lets the engine fall back to another language's voice.
     vi.useFakeTimers();
     voices = [];
@@ -161,7 +161,7 @@ describe("useSpeechPlayback", () => {
       vi.advanceTimersByTime(VOICE_WAIT_MS);
     });
     expect(synth.speak).not.toHaveBeenCalled();
-    expect(result.current.error).toEqual({ id: "m1", code: "no_voice", language: "ar" });
+    expect(result.current.error).toEqual({ id: "m1", code: "no_voices_listed", language: "ar" });
   });
 
   it("reports playback_failed on an engine error, but not for our own interruption", () => {

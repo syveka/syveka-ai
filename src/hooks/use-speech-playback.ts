@@ -6,10 +6,21 @@ import { splitForSpeech, toSpokenText } from "@/lib/voice/spoken-text";
 import { watchVoices } from "@/lib/voice/voice-list";
 import { chooseReplyVoice } from "@/lib/voice/voices";
 
-export type PlaybackError = "unsupported" | "no_voice" | "unknown_language" | "playback_failed";
+export type PlaybackError =
+  "unsupported" | "no_voice" | "no_voices_listed" | "unknown_language" | "playback_failed";
 
-/** A reply that couldn't be read aloud; `language` is set for "no_voice". */
-export type PlaybackFailure = { id: string; code: PlaybackError; language?: ReplyLanguage };
+/**
+ * A reply that couldn't be read aloud. `language` is set for "no_voice" and
+ * "no_voices_listed"; `listed` is how many voices the browser offered for
+ * "no_voice". Both describe what the browser exposes, not what the device has
+ * installed: a browser can list fewer voices than the device's speech engine.
+ */
+export type PlaybackFailure = {
+  id: string;
+  code: PlaybackError;
+  language?: ReplyLanguage;
+  listed?: number;
+};
 
 /**
  * How long a tap waits for the reply's voice to be listed. Android lists
@@ -25,9 +36,10 @@ const chunkWatchdogMs = (text: string) => 5_000 + text.length * 90;
  * Reads assistant replies aloud with the device's speech voices (browser
  * speech synthesis — no provider, no cost), always with a voice of the
  * reply's own language. States per reply: idle, loading (`loadingId`:
- * waiting for the device to list a voice for the language), playing
- * (`playingId`), or failed (`error`: "no_voice" = unavailable on this
- * device, "playback_failed" = the engine failed). Only one reply loads or
+ * waiting for the browser to list a voice for the language), playing
+ * (`playingId`), or failed (`error`: "no_voice" = the browser lists voices
+ * but none in the reply's language, "no_voices_listed" = the browser lists
+ * no voices at all, "playback_failed" = the engine failed or never started). Only one reply loads or
  * plays at a time; `stop()`, another `play()`, unmount and hiding the page
  * end it, including a pending voice wait. Never autoplays: `play` is only
  * called from a user tap.
@@ -87,11 +99,15 @@ export function useSpeechPlayback() {
           utterance.lang = lang;
           utterance.voice = voice;
           let advanced = false;
+          let started = false;
           const next = () => {
             if (advanced) return; // onend and the watchdog can both fire
             advanced = true;
             if (watchdogRef.current) clearTimeout(watchdogRef.current);
             speakChunk(index + 1);
+          };
+          utterance.onstart = () => {
+            started = true;
           };
           utterance.onend = next;
           utterance.onerror = (event) => {
@@ -101,8 +117,17 @@ export function useSpeechPlayback() {
           };
           utterancesRef.current.push(utterance);
           if (watchdogRef.current) clearTimeout(watchdogRef.current);
-          watchdogRef.current = setTimeout(next, chunkWatchdogMs(chunks[index]!));
-          window.speechSynthesis.speak(utterance);
+          // A chunk the engine never started was not heard: report it rather
+          // than ending "successfully" in silence.
+          watchdogRef.current = setTimeout(
+            () => (started ? next() : finish(true)),
+            chunkWatchdogMs(chunks[index]!),
+          );
+          try {
+            window.speechSynthesis.speak(utterance);
+          } catch {
+            finish(true);
+          }
         };
         setLoadingId(null);
         setPlayingId(id);
@@ -129,7 +154,11 @@ export function useSpeechPlayback() {
           }
           if (final) {
             setLoadingId(null);
-            setError({ id, code: "no_voice", language: choice.language });
+            setError(
+              voices.length === 0
+                ? { id, code: "no_voices_listed", language: choice.language }
+                : { id, code: "no_voice", language: choice.language, listed: voices.length },
+            );
             return true;
           }
           setLoadingId(id);

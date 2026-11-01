@@ -257,9 +257,10 @@
       "preparingVoice": "Preparing the voice…",
       "playbackErrors": {
         "unsupported": "This browser can't read replies aloud.",
-        "no_voice": "No {language} voice is installed on this device. To hear replies, install the {language} voice data in your device's text-to-speech settings. You can still read the reply above.",
+        "no_voice": "This browser offered Syveka {count, plural, one {# voice} other {# voices}}, but none for {language}, so the reply wasn't read aloud. If a {language} voice is installed on your device, try another browser or check your device's text-to-speech settings. You can still read the reply above.",
         "unknown_language": "The language of this reply couldn't be matched to a voice.",
-        "playback_failed": "The reply couldn't be read aloud."
+        "playback_failed": "The reply couldn't be read aloud. Try again; if it stays silent, try another browser.",
+        "no_voices_listed": "This browser didn't make any voices available to Syveka, so the reply wasn't read aloud. Voices installed on your device may still work in another browser. You can still read the reply above."
       },
       "errors": {
         "unsupported": "Voice input isn't supported in this browser. You can still type your message.",
@@ -325,7 +326,7 @@
       },
       "notices": {
         "not_heard": "Didn't catch that. Please say it again.",
-        "no_voice": "This device has no voice for this reply's language, so it's shown as text. You can keep talking.",
+        "no_voice": "This browser doesn't offer a voice for this reply's language, so it's shown as text. You can keep talking.",
         "language_unknown": "This reply is shown as text because its language couldn't be matched to a voice. You can keep talking.",
         "turn_too_long": "That was too long for one turn. Please say it in shorter parts.",
         "speech_blocked": "Your browser didn't allow Syveka to speak. Tap \"Enable spoken replies\" to hear the reply; the conversation continues.",
@@ -351,8 +352,8 @@
         "rate_limited": "Too many voice requests in a short time. Wait a moment and try again."
       },
       "voiceChecking": "Checking voices…",
-      "voiceUnavailable": "This device has no voice for this language, so Syveka can't answer aloud. You can talk and read the replies, or use dictation instead.",
-      "voiceUnknown": "Your device didn't list its voices yet. If you don't hear replies, end the conversation and start again with text replies.",
+      "voiceUnavailable": "This browser doesn't offer a voice for this language, so Syveka can't answer aloud here. A voice installed on your device may work in another browser. You can talk and read the replies, or use dictation instead.",
+      "voiceUnknown": "This browser hasn't listed any voices yet. If you don't hear replies, end the conversation and start again with text replies.",
       "startTextOnly": "Start with text replies",
       "useDictation": "Use dictation instead",
       "textOnlyHint": "Replies are shown as text only.",
