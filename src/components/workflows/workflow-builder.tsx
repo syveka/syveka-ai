@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useTransition } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { Plus, Trash2, ArrowDown } from "lucide-react";
 import { saveWorkflowAction, testWorkflowAction } from "@/actions/workflows";
 import type { WorkflowStep, WorkflowTrigger } from "@/lib/validators/workflows";
@@ -11,17 +11,17 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Link } from "@/i18n/routing";
 import { cn } from "@/lib/utils";
+import { formatDateTimeInTimeZone } from "@/lib/date-time";
+import {
+  TRIGGER_TYPES,
+  blocksTestRun,
+  type WorkflowActivationBlock,
+} from "@/lib/workflows/activation";
+import { WorkflowEntitlementNotice } from "@/components/workflows/workflow-entitlement-notice";
 
-const TRIGGER_TYPES = [
-  "contact.created",
-  "deal.stage_changed",
-  "deal.won",
-  "call.completed",
-  "booking.created",
-  "booking.canceled",
-  "booking.rescheduled",
-  "manual",
-] as const;
+const NOTICE_ID = "workflow-builder-entitlement-notice";
+const SAVE_ERROR_CODES = ["invalid_input", "duplicate_step_id", "recipient_not_member"] as const;
+const RUN_STATUSES = ["RUNNING", "SUCCEEDED", "FAILED", "CANCELED", "WAITING"] as const;
 
 const STEP_TYPES = [
   "condition",
@@ -59,9 +59,27 @@ function newStep(type: (typeof STEP_TYPES)[number], id: string): WorkflowStep {
   }
 }
 
-export function WorkflowBuilder({ initial }: { initial?: Initial }) {
+export function WorkflowBuilder({
+  initial,
+  activation = { block: null, limit: 0 },
+  timeZone,
+  canViewPlans = false,
+}: {
+  initial?: Initial;
+  /** Why the plan does not allow activation (display only; the server enforces). */
+  activation?: { block: WorkflowActivationBlock | null; limit: number };
+  /** The viewer's zone for run times (server render and hydration agree). */
+  timeZone: string;
+  canViewPlans?: boolean;
+}) {
   const t = useTranslations("workflows");
   const tc = useTranslations("common");
+  const locale = useLocale();
+  const testRunBlocked = blocksTestRun(activation.block);
+  const saveErrorMessage = (code: string) =>
+    (SAVE_ERROR_CODES as readonly string[]).includes(code)
+      ? t(`saveErrors.${code as (typeof SAVE_ERROR_CODES)[number]}`)
+      : tc("error");
   const [name, setName] = useState(initial?.name ?? "");
   const [trigger, setTrigger] = useState<WorkflowTrigger>(
     initial?.trigger ?? { type: "contact.created" },
@@ -86,7 +104,7 @@ export function WorkflowBuilder({ initial }: { initial?: Initial }) {
         trigger,
         steps,
       });
-      if (res?.error) setError(res.error);
+      if (res?.error) setError(saveErrorMessage(res.error));
       else setSaved(true);
     });
 
@@ -98,6 +116,20 @@ export function WorkflowBuilder({ initial }: { initial?: Initial }) {
         </Link>
         <h1 className="mt-1 text-2xl font-semibold">{initial?.id ? name : t("newWorkflow")}</h1>
       </div>
+
+      {activation.block ? (
+        <WorkflowEntitlementNotice
+          id={NOTICE_ID}
+          message={
+            activation.block === "limit_reached"
+              ? t("entitlement.limitReached", { limit: activation.limit })
+              : activation.block === "read_only"
+                ? t("entitlement.readOnly")
+                : t("entitlement.notIncluded")
+          }
+          plansLabel={canViewPlans ? t("entitlement.viewPlans") : undefined}
+        />
+      ) : null}
 
       <Card>
         <CardContent className="space-y-4 pt-6">
@@ -178,7 +210,8 @@ export function WorkflowBuilder({ initial }: { initial?: Initial }) {
         {initial?.id ? (
           <Button
             variant="outline"
-            disabled={pending}
+            disabled={pending || testRunBlocked}
+            aria-describedby={testRunBlocked ? NOTICE_ID : undefined}
             onClick={() =>
               startTransition(async () => {
                 setError(null);
@@ -208,9 +241,12 @@ export function WorkflowBuilder({ initial }: { initial?: Initial }) {
           <CardContent className="space-y-2">
             {initial.runs.map((r) => (
               <div key={r.id} className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">
-                  {new Date(r.startedAt).toLocaleString()}
-                </span>
+                <time className="text-muted-foreground" dateTime={r.startedAt}>
+                  {formatDateTimeInTimeZone(r.startedAt, locale, timeZone, {
+                    dateStyle: "short",
+                    timeStyle: "medium",
+                  })}
+                </time>
                 <span
                   className={cn(
                     "rounded-full px-2 py-0.5 text-xs",
@@ -219,7 +255,9 @@ export function WorkflowBuilder({ initial }: { initial?: Initial }) {
                   )}
                   title={r.error ?? undefined}
                 >
-                  {r.status}
+                  {(RUN_STATUSES as readonly string[]).includes(r.status)
+                    ? t(`runStatus.${r.status as (typeof RUN_STATUSES)[number]}`)
+                    : r.status}
                 </span>
               </div>
             ))}

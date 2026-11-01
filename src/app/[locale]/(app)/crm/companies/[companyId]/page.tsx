@@ -15,7 +15,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { CompanyDialog } from "@/components/crm/company-dialog";
 import { EntityActions } from "@/components/crm/entity-actions";
 import { NoteComposer } from "@/components/crm/note-composer";
-import { formatCents, formatDate } from "@/lib/utils";
+import { formatCents } from "@/lib/utils";
+import { formatDateTimeInTimeZone } from "@/lib/date-time";
+import { getViewerTimeZone } from "@/server/services/viewer-time-zone";
+import { ActivityTimeline, loadTimelineStages } from "@/components/crm/activity-timeline";
 import { stageLabel } from "@/lib/crm/stage-labels";
 import { Link } from "@/i18n/routing";
 import { EntityMeetings } from "@/components/calendar/entity-meetings";
@@ -32,8 +35,12 @@ export default async function CompanyDetailPage({
   const canWrite = can(ctx.role, "crm:write");
   const canDelete = can(ctx.role, "crm:delete");
 
-  const company = await getCompany(ctx, companyId);
+  const [company, timeZone] = await Promise.all([
+    getCompany(ctx, companyId),
+    getViewerTimeZone(ctx.userId),
+  ]);
   if (!company) notFound();
+  const timelineStages = await loadTimelineStages(ctx.orgId, company.activities);
 
   return (
     <div className="space-y-6">
@@ -109,7 +116,9 @@ export default async function CompanyDetailPage({
               <InfoRow label={t("companyFields.businessId")} value={company.businessId} />
               <InfoRow
                 label={t("createdLabel")}
-                value={formatDate(company.createdAt, locale, { dateStyle: "medium" })}
+                value={formatDateTimeInTimeZone(company.createdAt, locale, timeZone, {
+                  dateStyle: "medium",
+                })}
               />
             </CardContent>
           </Card>
@@ -169,35 +178,12 @@ export default async function CompanyDetailPage({
             {canWrite ? (
               <NoteComposer action={addCompanyNoteAction.bind(null, company.id)} />
             ) : null}
-            {company.activities.length === 0 ? (
-              <p className="text-sm text-muted-foreground">{t("noActivities")}</p>
-            ) : (
-              <div className="space-y-3">
-                {company.activities.map((a) => (
-                  <div key={a.id} className="border-s-2 border-border ps-3">
-                    <p className="text-sm font-medium">{a.subject}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {t(`activityTypes.${a.type}` as never)} ·{" "}
-                      {formatDate(a.createdAt, locale, { dateStyle: "medium", timeStyle: "short" })}
-                      {a.user?.fullName ? <> · {a.user.fullName}</> : null}
-                      {a.contact ? (
-                        <>
-                          {" · "}
-                          <Link href={`/crm/contacts/${a.contact.id}`} className="hover:underline">
-                            {[a.contact.firstName, a.contact.lastName].filter(Boolean).join(" ")}
-                          </Link>
-                        </>
-                      ) : null}
-                    </p>
-                    {a.body && a.body !== a.subject ? (
-                      <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">
-                        {a.body}
-                      </p>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            )}
+            <ActivityTimeline
+              activities={company.activities}
+              stages={timelineStages}
+              locale={locale}
+              timeZone={timeZone}
+            />
           </CardContent>
         </Card>
       </div>

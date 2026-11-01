@@ -57,6 +57,7 @@ export default async function DealsPage() {
               stages={pipeline.stages.map((s) => ({
                 id: s.id,
                 name: s.name,
+                displayName: label(s),
                 probability: s.probability,
                 isWon: s.isWon,
                 isLost: s.isLost,

@@ -7,13 +7,18 @@ import { markReadAction } from "@/actions/notifications";
 import { Link } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { formatDate, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { formatDateTimeInTimeZone } from "@/lib/date-time";
+import { getViewerTimeZone } from "@/server/services/viewer-time-zone";
 
 export default async function NotificationsPage() {
   const ctx = await getTenantContext();
   const t = await getTranslations("notifications");
   const locale = await getLocale();
-  const notifications = await listNotifications(ctx);
+  const [notifications, timeZone] = await Promise.all([
+    listNotifications(ctx),
+    getViewerTimeZone(ctx.userId),
+  ]);
 
   return (
     <div className="mx-auto max-w-2xl space-y-4">
@@ -35,8 +40,14 @@ export default async function NotificationsPage() {
                 <div className={cn("p-4", !n.readAt && "bg-primary/5")}>
                   <div className="flex items-baseline justify-between gap-2">
                     <p className="text-sm font-medium">{n.title}</p>
-                    <time className="shrink-0 text-xs text-muted-foreground">
-                      {formatDate(n.createdAt, locale, { dateStyle: "short", timeStyle: "short" })}
+                    <time
+                      className="shrink-0 text-xs text-muted-foreground"
+                      dateTime={new Date(n.createdAt).toISOString()}
+                    >
+                      {formatDateTimeInTimeZone(n.createdAt, locale, timeZone, {
+                        dateStyle: "short",
+                        timeStyle: "short",
+                      })}
                     </time>
                   </div>
                   {n.body ? <p className="mt-0.5 text-sm text-muted-foreground">{n.body}</p> : null}

@@ -13,21 +13,27 @@ import {
 } from "lucide-react";
 import type React from "react";
 import { getTranslations } from "next-intl/server";
-import { stageLabel, type DefaultStageKey } from "@/lib/crm/stage-labels";
+import { pipelineLabel, stageLabel, type DefaultStageKey } from "@/lib/crm/stage-labels";
+import { displayActivity } from "@/lib/crm/activity-display";
+import { formatDateTimeInTimeZone } from "@/lib/date-time";
 import { Link } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CrmDashboard } from "@/server/services/dashboard";
-import { cn, formatCents, formatDate } from "@/lib/utils";
+import { cn, formatCents } from "@/lib/utils";
 
 type DashboardProps = {
   dashboard: CrmDashboard;
   locale: string;
+  /** The viewer's IANA zone (getViewerTimeZone); the server itself runs in UTC. */
+  timeZone: string;
 };
 
 type DashboardLabels = {
   /** Interface-language labels of the untouched default pipeline stages. */
   defaultStages: Record<DefaultStageKey, string>;
+  /** Interface-language label of the untouched seeded default pipeline name. */
+  defaultPipelineName: string;
   title: string;
   subtitle: string;
   totalCustomers: string;
@@ -79,9 +85,12 @@ type DashboardLabels = {
   insightNoAiMessages: string;
 };
 
-function formatDateTime(date: Date | string | null, locale: string): string {
+function formatDateTime(date: Date | string | null, locale: string, timeZone: string): string {
   if (!date) return "";
-  return formatDate(date, locale, { dateStyle: "medium", timeStyle: "short" });
+  return formatDateTimeInTimeZone(date, locale, timeZone, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  });
 }
 
 function formatNumber(value: number, locale: string): string {
@@ -145,11 +154,13 @@ function ActivityRow({
   meta,
   at,
   locale,
+  timeZone,
 }: {
   title: string;
   meta?: string | null;
   at?: Date | string | null;
   locale: string;
+  timeZone: string;
 }) {
   return (
     <li className="flex items-start justify-between gap-3 border-b py-3 last:border-0">
@@ -162,14 +173,19 @@ function ActivityRow({
           className="shrink-0 text-start text-xs text-muted-foreground"
           dateTime={new Date(at).toISOString()}
         >
-          {formatDateTime(at, locale)}
+          {formatDateTime(at, locale, timeZone)}
         </time>
       ) : null}
     </li>
   );
 }
 
-function ActivityFeed({ dashboard, locale, labels }: DashboardProps & { labels: DashboardLabels }) {
+function ActivityFeed({
+  dashboard,
+  locale,
+  timeZone,
+  labels,
+}: DashboardProps & { labels: DashboardLabels }) {
   return (
     <Card>
       <CardHeader>
@@ -187,6 +203,7 @@ function ActivityFeed({ dashboard, locale, labels }: DashboardProps & { labels: 
                   meta={item.contactName ?? item.dealTitle}
                   at={item.at}
                   locale={locale}
+                  timeZone={timeZone}
                 />
               ))}
             </ul>
@@ -207,6 +224,7 @@ function ActivityFeed({ dashboard, locale, labels }: DashboardProps & { labels: 
                     meta={item.model ?? labels.aiConversation}
                     at={item.at}
                     locale={locale}
+                    timeZone={timeZone}
                   />
                 ))}
               </ul>
@@ -231,12 +249,13 @@ function ActivityFeed({ dashboard, locale, labels }: DashboardProps & { labels: 
                       item.currentPeriodEnd
                         ? labels.currentPeriodEnds.replace(
                             "{date}",
-                            formatDateTime(item.currentPeriodEnd, locale),
+                            formatDateTime(item.currentPeriodEnd, locale, timeZone),
                           )
                         : labels.billingStatus
                     }
                     at={item.at}
                     locale={locale}
+                    timeZone={timeZone}
                   />
                 ))}
               </ul>
@@ -257,6 +276,7 @@ function ActivityFeed({ dashboard, locale, labels }: DashboardProps & { labels: 
                   meta={item.completedAt ? labels.completed : (item.contactName ?? item.dealTitle)}
                   at={item.dueAt}
                   locale={locale}
+                  timeZone={timeZone}
                 />
               ))}
             </ul>
@@ -329,7 +349,15 @@ function PipelinePreview({
         {dashboard.pipeline.stages.length > 0 ? (
           <div className="space-y-3">
             <div className="flex items-center justify-between gap-3 text-sm">
-              <span className="truncate text-muted-foreground">{dashboard.pipeline.name}</span>
+              <span className="truncate text-muted-foreground">
+                {dashboard.pipeline.name
+                  ? pipelineLabel(
+                      // getCrmDashboard reads the org's default pipeline only.
+                      { name: dashboard.pipeline.name, isDefault: true },
+                      labels.defaultPipelineName,
+                    )
+                  : null}
+              </span>
               <strong>{formatCents(dashboard.pipeline.openValueCents, locale)}</strong>
             </div>
             <div className="flex items-center justify-between gap-3 text-sm">
@@ -377,6 +405,7 @@ function PipelinePreview({
 function CalendarWidget({
   dashboard,
   locale,
+  timeZone,
   labels,
 }: DashboardProps & { labels: DashboardLabels }) {
   return (
@@ -397,6 +426,7 @@ function CalendarWidget({
                     meta={meeting.source}
                     at={meeting.startsAt}
                     locale={locale}
+                    timeZone={timeZone}
                   />
                 ))}
               </ul>
@@ -416,6 +446,7 @@ function CalendarWidget({
                   meta={task.contactName ?? task.dealTitle}
                   at={task.dueAt}
                   locale={locale}
+                  timeZone={timeZone}
                 />
               ))}
             </ul>
@@ -465,9 +496,24 @@ function AiInsights({ dashboard, labels }: DashboardProps & { labels: DashboardL
   );
 }
 
-export async function CrmDashboardView({ dashboard, locale }: DashboardProps) {
+export async function CrmDashboardView({ dashboard: data, locale, timeZone }: DashboardProps) {
   const t = await getTranslations("dashboard");
   const tCrm = await getTranslations("crm");
+  // System-written booking entries are shown in the interface language;
+  // everything else exactly as stored (src/lib/crm/activity-display.ts).
+  const dashboard: CrmDashboard = {
+    ...data,
+    feed: {
+      ...data.feed,
+      customerActivities: data.feed.customerActivities.map((item) => ({
+        ...item,
+        subject: displayActivity(item, {
+          translate: (key, values) => tCrm(`systemActivity.${key}`, values),
+          stageName: (key) => tCrm(`defaultStages.${key}`),
+        }).subject,
+      })),
+    },
+  };
   const labels = {
     defaultStages: {
       newLead: tCrm("defaultStages.newLead"),
@@ -477,6 +523,7 @@ export async function CrmDashboardView({ dashboard, locale }: DashboardProps) {
       won: tCrm("defaultStages.won"),
       lost: tCrm("defaultStages.lost"),
     },
+    defaultPipelineName: tCrm("defaultPipelineName"),
     title: t("title"),
     subtitle: t("subtitle"),
     totalCustomers: t("totalCustomers"),
@@ -590,14 +637,19 @@ export async function CrmDashboardView({ dashboard, locale }: DashboardProps) {
       </div>
 
       <div className="grid gap-4 xl:grid-cols-[minmax(0,2fr)_minmax(320px,1fr)]">
-        <ActivityFeed dashboard={dashboard} locale={locale} labels={labels} />
-        <QuickActions dashboard={dashboard} locale={locale} labels={labels} />
+        <ActivityFeed dashboard={dashboard} locale={locale} timeZone={timeZone} labels={labels} />
+        <QuickActions dashboard={dashboard} locale={locale} timeZone={timeZone} labels={labels} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <PipelinePreview dashboard={dashboard} locale={locale} labels={labels} />
-        <CalendarWidget dashboard={dashboard} locale={locale} labels={labels} />
-        <AiInsights dashboard={dashboard} locale={locale} labels={labels} />
+        <PipelinePreview
+          dashboard={dashboard}
+          locale={locale}
+          timeZone={timeZone}
+          labels={labels}
+        />
+        <CalendarWidget dashboard={dashboard} locale={locale} timeZone={timeZone} labels={labels} />
+        <AiInsights dashboard={dashboard} locale={locale} timeZone={timeZone} labels={labels} />
       </div>
     </div>
   );

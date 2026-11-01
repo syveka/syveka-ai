@@ -48,3 +48,21 @@ export function stageLabel(stage: StageIdentity, translate: (key: DefaultStageKe
   const key = defaultStageKey(stage);
   return key ? translate(key) : stage.name;
 }
+
+/**
+ * The name every organization's default pipeline is seeded with
+ * (src/server/services/organizations.ts). Like the seeded stage names it is
+ * Finnish organization data, so it is translated for display only while it is
+ * still exactly the seeded name on the default pipeline; a renamed pipeline
+ * keeps the customer's name.
+ */
+export const DEFAULT_PIPELINE_NAME = "Myyntiputki";
+
+export function pipelineLabel(
+  pipeline: { name: string; isDefault: boolean },
+  translatedDefaultName: string,
+): string {
+  return pipeline.isDefault && pipeline.name === DEFAULT_PIPELINE_NAME
+    ? translatedDefaultName
+    : pipeline.name;
+}

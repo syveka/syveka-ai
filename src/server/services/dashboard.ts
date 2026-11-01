@@ -224,6 +224,9 @@ export async function getCrmDashboard(ctx: TenantContext) {
         id: activity.id,
         type: activity.type,
         subject: activity.subject,
+        // Display only: lets the dashboard recognise system-written booking
+        // entries and show them in the interface language (activity-display.ts).
+        metadata: activity.metadata,
         at: activity.createdAt,
         contactName: activity.contact
           ? [activity.contact.firstName, activity.contact.lastName].filter(Boolean).join(" ")

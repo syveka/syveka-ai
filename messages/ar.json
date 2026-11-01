@@ -583,6 +583,22 @@
       "negotiation": "تفاوض",
       "won": "مكسوبة",
       "lost": "خاسرة"
+    },
+    "defaultPipelineName": "مسار المبيعات",
+    "stageName": "اسم المرحلة",
+    "systemActivity": {
+      "stageChange": "{from} ← {to}",
+      "bookingBookedSubject": "حجز جديد: {type}",
+      "bookingBookedBody": "حجز {guest} ({email}) موعد {type}.",
+      "bookingCanceledSubject": "تم إلغاء الحجز: {type}",
+      "bookingCanceledBody": "ألغى {guest} الحجز.",
+      "bookingCanceledBodyWithReason": "ألغى {guest} الحجز. السبب: {reason}",
+      "bookingRescheduledSubject": "تم تغيير موعد الحجز: {type}",
+      "bookingRescheduledBody": "غيّر {guest} موعد الاجتماع.",
+      "bookingBookedBodyAt": "حجز {guest} ({email}) موعد {type} في {time}.",
+      "bookingCanceledBodyAt": "ألغى {guest} الاجتماع المحدد في {time}.",
+      "bookingCanceledBodyAtWithReason": "ألغى {guest} الاجتماع المحدد في {time}. السبب: {reason}",
+      "bookingRescheduledBodyFromTo": "نقل {guest} الاجتماع من {from} إلى {to}."
     }
   },
   "voice": {
@@ -811,7 +827,12 @@
       "positive": "إيجابي",
       "neutral": "محايد",
       "negative": "سلبي"
-    }
+    },
+    "noAiMessages": "لا توجد رسائل ذكاء اصطناعي خلال آخر ٣٠ يومًا.",
+    "noCalls": "لا توجد مكالمات خلال آخر ٣٠ يومًا.",
+    "chartSummary": "{count, plural, zero {لا توجد أيام ببيانات} one {يوم واحد ببيانات} two {يومان ببيانات} few {# أيام ببيانات} many {# يومًا ببيانات} other {# يوم ببيانات}}، الأعلى {max}.",
+    "chartDate": "التاريخ",
+    "chartValue": "العدد"
   },
   "prompts": {
     "title": "مكتبة الأوامر",
@@ -894,6 +915,27 @@
       "quota": "خطتك لا تتضمن مسارات العمل. قم بالترقية لتشغيل اختبار.",
       "rateLimited": "عدد كبير جدًا من التشغيلات التجريبية. حاول مرة أخرى لاحقًا.",
       "unavailable": "التشغيلات التجريبية غير متاحة مؤقتًا. حاول مجددًا."
+    },
+    "runsCount": "{count, plural, zero {لا توجد تشغيلات} one {تشغيل واحد} two {تشغيلان} few {# تشغيلات} many {# تشغيلًا} other {# تشغيل}}",
+    "runStatus": {
+      "RUNNING": "قيد التشغيل",
+      "SUCCEEDED": "نجح",
+      "FAILED": "فشل",
+      "CANCELED": "أُلغي",
+      "WAITING": "في الانتظار"
+    },
+    "toggleLabel": "{name}: نشط",
+    "entitlement": {
+      "notIncluded": "مسارات العمل غير مشمولة في خطتك الحالية. يمكنك إنشاء مسارات العمل وحفظها كمسودات، لكن تفعيلها أو تشغيل اختبار يتطلب خطة تشمل مسارات العمل.",
+      "readOnly": "مساحة العمل للقراءة فقط لأن الاشتراك متأخر السداد، لذلك لا يمكن تفعيل مسارات العمل أو اختبارها.",
+      "limitReached": "{limit, plural, one {مسار العمل النشط الوحيد في خطتك مستخدم.} other {جميع مسارات العمل النشطة في خطتك (#) مستخدمة.}} أوقف أحدها أو قم بترقية خطتك لتفعيل مسار آخر.",
+      "viewPlans": "عرض الخطط",
+      "activationUnavailable": "التفعيل غير متاح في خطتك الحالية."
+    },
+    "saveErrors": {
+      "invalid_input": "بعض حقول مسار العمل مفقودة أو غير صالحة. تحقق منها وحاول مرة أخرى.",
+      "duplicate_step_id": "خطوتان لهما المعرّف نفسه. احذف إحداهما وأضفها من جديد.",
+      "recipient_not_member": "يجب أن يكون مستلم الإشعار عضوًا في هذه المؤسسة."
     }
   },
   "billingPage": {
@@ -1026,9 +1068,10 @@
       "WEB_CHAT": "الدردشة عبر الموقع"
     },
     "channelStatus": {
-      "connected": "البريد الإلكتروني متصل",
       "mock": "يتم استخدام مزود بريد إلكتروني تجريبي — الرسائل محاكاة وليست حقيقية",
-      "notConfigured": "لم يتم إعداد البريد الإلكتروني بعد"
+      "notConfigured": "لم يتم إعداد البريد الإلكتروني بعد",
+      "configuredUnverified": "تم إعداد مزود البريد الإلكتروني — لم يتم التحقق بعد: لم يصل أي بريد وارد",
+      "receiving": "قناة البريد الإلكتروني تستقبل: وصل بريد وارد"
     },
     "status": {
       "OPEN": "مفتوحة",

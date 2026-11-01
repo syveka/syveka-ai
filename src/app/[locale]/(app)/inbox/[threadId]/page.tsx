@@ -1,13 +1,15 @@
 export const dynamic = "force-dynamic";
 
 import { notFound } from "next/navigation";
-import { getTranslations } from "next-intl/server";
+import { getLocale, getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";
 import { getThread, listAssignableMembers, markThreadRead } from "@/server/services/inbox";
 import { listBookingTypes } from "@/server/services/booking";
 import { approveMessageAction, markThreadUnreadAction, sendMessageAction } from "@/actions/inbox";
 import { tenantDb } from "@/server/db/tenant";
+import { getViewerTimeZone } from "@/server/services/viewer-time-zone";
+import { formatDateTimeInTimeZone } from "@/lib/date-time";
 import { getAppUrlEnv } from "@/env";
 import { Link } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
@@ -42,6 +44,9 @@ export default async function InboxThreadPage({
   const t = await getTranslations("inbox");
   const thread = await getThread(ctx, threadId);
   if (!thread) notFound();
+  const [locale, timeZone] = await Promise.all([getLocale(), getViewerTimeZone(ctx.userId)]);
+  const formatWhen = (value: Date | string) =>
+    formatDateTimeInTimeZone(value, locale, timeZone, { dateStyle: "medium", timeStyle: "short" });
   await markThreadRead(ctx, threadId);
 
   const canWrite = can(ctx.role, "inbox:write");
@@ -107,7 +112,7 @@ export default async function InboxThreadPage({
           <p className="text-sm text-muted-foreground">
             {t("detail.upcomingBooking", {
               type: thread.upcomingBooking.typeName,
-              date: new Date(thread.upcomingBooking.startsAt).toLocaleString(),
+              date: formatWhen(thread.upcomingBooking.startsAt),
             })}
           </p>
         ) : null}
@@ -175,7 +180,9 @@ export default async function InboxThreadPage({
                         {message.status === "FAILED" ? (
                           <span className="text-destructive">{t("detail.failedBadge")}</span>
                         ) : null}
-                        <span>{new Date(message.createdAt).toLocaleString()}</span>
+                        <time dateTime={new Date(message.createdAt).toISOString()}>
+                          {formatWhen(message.createdAt)}
+                        </time>
                       </div>
                     </CardContent>
                   </Card>

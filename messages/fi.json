@@ -583,6 +583,22 @@
       "negotiation": "Neuvottelu",
       "won": "Voitettu",
       "lost": "Hävitty"
+    },
+    "defaultPipelineName": "Myyntiputki",
+    "stageName": "Vaiheen nimi",
+    "systemActivity": {
+      "stageChange": "{from} → {to}",
+      "bookingBookedSubject": "Uusi ajanvaraus: {type}",
+      "bookingBookedBody": "{guest} ({email}) varasi ajan: {type}.",
+      "bookingCanceledSubject": "Ajanvaraus peruttu: {type}",
+      "bookingCanceledBody": "{guest} perui varauksen.",
+      "bookingCanceledBodyWithReason": "{guest} perui varauksen. Syy: {reason}",
+      "bookingRescheduledSubject": "Ajanvaraus siirretty: {type}",
+      "bookingRescheduledBody": "{guest} siirsi tapaamisen.",
+      "bookingBookedBodyAt": "{guest} ({email}) varasi ajan: {type}, {time}.",
+      "bookingCanceledBodyAt": "{guest} perui tapaamisen {time}.",
+      "bookingCanceledBodyAtWithReason": "{guest} perui tapaamisen {time}. Syy: {reason}",
+      "bookingRescheduledBodyFromTo": "{guest} siirsi tapaamisen ajasta {from} aikaan {to}."
     }
   },
   "voice": {
@@ -811,7 +827,12 @@
       "positive": "Positiivinen",
       "neutral": "Neutraali",
       "negative": "Negatiivinen"
-    }
+    },
+    "noAiMessages": "Ei AI-viestejä viimeisen 30 päivän aikana.",
+    "noCalls": "Ei puheluita viimeisen 30 päivän aikana.",
+    "chartSummary": "{count, plural, one {# päivä, jolta on tietoja} other {# päivää, joilta on tietoja}}, suurin {max}.",
+    "chartDate": "Päivä",
+    "chartValue": "Määrä"
   },
   "prompts": {
     "title": "Promptikirjasto",
@@ -894,6 +915,27 @@
       "quota": "Tilaukseesi eivät sisälly työnkulut. Päivitä tilaus testataksesi.",
       "rateLimited": "Liian monta testiajoa. Yritä myöhemmin uudelleen.",
       "unavailable": "Testiajot eivät ole tilapäisesti käytettävissä. Yritä uudelleen."
+    },
+    "runsCount": "{count, plural, one {# ajo} other {# ajoa}}",
+    "runStatus": {
+      "RUNNING": "Käynnissä",
+      "SUCCEEDED": "Onnistui",
+      "FAILED": "Epäonnistui",
+      "CANCELED": "Peruttu",
+      "WAITING": "Odottaa"
+    },
+    "toggleLabel": "{name}: käytössä",
+    "entitlement": {
+      "notIncluded": "Automaatiot eivät sisälly nykyiseen tilaukseesi. Voit rakentaa ja tallentaa automaatioita luonnoksina, mutta niiden aktivointi ja testiajo vaativat tilauksen, johon automaatiot sisältyvät.",
+      "readOnly": "Työtilasi on vain luku -tilassa, koska tilauksen maksu on myöhässä, joten automaatioita ei voi aktivoida eikä testata.",
+      "limitReached": "{limit, plural, one {Tilauksesi # aktiivinen automaatio on käytössä.} other {Kaikki tilauksesi # aktiivista automaatiota ovat käytössä.}} Poista yksi käytöstä tai päivitä tilaus aktivoidaksesi uuden.",
+      "viewPlans": "Katso tilaukset",
+      "activationUnavailable": "Aktivointi ei ole käytettävissä nykyisellä tilauksellasi."
+    },
+    "saveErrors": {
+      "invalid_input": "Joitakin automaation kenttiä puuttuu tai ne ovat virheellisiä. Tarkista ne ja yritä uudelleen.",
+      "duplicate_step_id": "Kahdella vaiheella on sama tunniste. Poista toinen ja lisää se uudelleen.",
+      "recipient_not_member": "Ilmoituksen vastaanottajan on oltava tämän organisaation jäsen."
     }
   },
   "billingPage": {
@@ -1026,9 +1068,10 @@
       "WEB_CHAT": "Verkkochat"
     },
     "channelStatus": {
-      "connected": "Sähköposti yhdistetty",
       "mock": "Testisähköpostipalvelu käytössä — viestit ovat simuloituja, eivät oikeita",
-      "notConfigured": "Sähköpostia ei ole vielä määritetty"
+      "notConfigured": "Sähköpostia ei ole vielä määritetty",
+      "configuredUnverified": "Sähköpostipalvelu määritetty — ei vielä vahvistettu: saapuvaa sähköpostia ei ole vastaanotettu",
+      "receiving": "Sähköpostikanava vastaanottaa: saapuvaa sähköpostia on tullut"
     },
     "status": {
       "OPEN": "Avoin",

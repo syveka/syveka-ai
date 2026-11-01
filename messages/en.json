@@ -583,6 +583,22 @@
       "negotiation": "Negotiation",
       "won": "Won",
       "lost": "Lost"
+    },
+    "defaultPipelineName": "Sales pipeline",
+    "stageName": "Stage name",
+    "systemActivity": {
+      "stageChange": "{from} → {to}",
+      "bookingBookedSubject": "New booking: {type}",
+      "bookingBookedBody": "{guest} ({email}) booked {type}.",
+      "bookingCanceledSubject": "Booking canceled: {type}",
+      "bookingCanceledBody": "{guest} canceled.",
+      "bookingCanceledBodyWithReason": "{guest} canceled. Reason: {reason}",
+      "bookingRescheduledSubject": "Booking rescheduled: {type}",
+      "bookingRescheduledBody": "{guest} moved the meeting.",
+      "bookingBookedBodyAt": "{guest} ({email}) booked {type} for {time}.",
+      "bookingCanceledBodyAt": "{guest} canceled the meeting on {time}.",
+      "bookingCanceledBodyAtWithReason": "{guest} canceled the meeting on {time}. Reason: {reason}",
+      "bookingRescheduledBodyFromTo": "{guest} moved the meeting from {from} to {to}."
     }
   },
   "voice": {
@@ -811,7 +827,12 @@
       "positive": "Positive",
       "neutral": "Neutral",
       "negative": "Negative"
-    }
+    },
+    "noAiMessages": "No AI messages in the last 30 days.",
+    "noCalls": "No calls in the last 30 days.",
+    "chartSummary": "{count, plural, one {# day with data} other {# days with data}}, highest {max}.",
+    "chartDate": "Date",
+    "chartValue": "Count"
   },
   "prompts": {
     "title": "Prompt Library",
@@ -894,6 +915,27 @@
       "quota": "Your plan doesn't include workflows. Upgrade to run a test.",
       "rateLimited": "Too many test runs. Try again later.",
       "unavailable": "Test runs are temporarily unavailable. Please try again."
+    },
+    "runsCount": "{count, plural, one {# run} other {# runs}}",
+    "runStatus": {
+      "RUNNING": "Running",
+      "SUCCEEDED": "Succeeded",
+      "FAILED": "Failed",
+      "CANCELED": "Canceled",
+      "WAITING": "Waiting"
+    },
+    "toggleLabel": "{name}: active",
+    "entitlement": {
+      "notIncluded": "Workflows aren't included in your current plan. You can build and save workflows as drafts, but activating them or running a test requires a plan that includes workflows.",
+      "readOnly": "Your workspace is read-only while the subscription is past due, so workflows can't be activated or tested.",
+      "limitReached": "{limit, plural, one {Your plan's # active workflow is in use.} other {All # active workflows in your plan are in use.}} Deactivate one or upgrade your plan to activate another.",
+      "viewPlans": "View plans",
+      "activationUnavailable": "Activation isn't available on your current plan."
+    },
+    "saveErrors": {
+      "invalid_input": "Some workflow fields are missing or invalid. Check them and try again.",
+      "duplicate_step_id": "Two steps have the same identifier. Remove one and add it again.",
+      "recipient_not_member": "The notification recipient must be a member of this organization."
     }
   },
   "billingPage": {
@@ -1026,9 +1068,10 @@
       "WEB_CHAT": "Web chat"
     },
     "channelStatus": {
-      "connected": "Email connected",
       "mock": "Using a test email provider — messages are simulated, not real",
-      "notConfigured": "Email not configured yet"
+      "notConfigured": "Email not configured yet",
+      "configuredUnverified": "Email provider configured — not verified yet: no inbound email has been received",
+      "receiving": "Email channel receiving: inbound email has arrived"
     },
     "status": {
       "OPEN": "Open",

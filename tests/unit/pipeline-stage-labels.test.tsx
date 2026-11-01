@@ -3,7 +3,7 @@ import React from "react";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { NextIntlClientProvider, createTranslator } from "next-intl";
 import { DEFAULT_PIPELINE_STAGES } from "@/lib/constants";
 import { defaultStageKey, stageLabel } from "@/lib/crm/stage-labels";
@@ -260,18 +260,30 @@ describe.each(LOCALES)("Analytics › Pipeline funnel (%s)", (locale) => {
 });
 
 describe.each(LOCALES)("Deals board (%s)", (locale) => {
-  it("board columns use the same labels; the pipeline editor shows the stored names it edits", async () => {
+  it("board columns and the pipeline editor use the same labels; the editor submits stored names", async () => {
     await renderServer(DealsPage, locale);
     const expected: string[] = [...EXPECTED[locale]];
     expected[2] = "Tarjous lähetetty";
     for (const label of [...expected, "Demo booked"]) {
       expect(screen.getAllByText(label).length).toBeGreaterThan(0);
     }
-    // The stage editor (owner) keeps the stored values: what is edited is what is saved.
-    const editors = document.querySelectorAll<HTMLInputElement>('input[name="name"]');
-    if (editors.length > 0) {
-      expect([...editors].map((e) => e.defaultValue)).toEqual(STORED.map((s) => s.name));
-    }
-    void within;
+    // The stage editor (owner) shows the interface-language labels, but an
+    // unedited row still submits the stored name: saving never renames a
+    // seeded default stage into one language.
+    fireEvent.click(
+      screen.getByRole("button", {
+        name: (MESSAGES[locale].crm as Record<string, string>).editStages,
+      }),
+    );
+    const dialog = screen.getByRole("dialog");
+    const rows = within(dialog)
+      .getAllByRole("textbox")
+      .slice(0, STORED.length)
+      .map((e) => (e as HTMLInputElement).value);
+    expect(rows).toEqual([...expected, "Demo booked"]);
+    const submitted = dialog.querySelectorAll<HTMLInputElement>(
+      'input[type="hidden"][name="name"]',
+    );
+    expect([...submitted].map((e) => e.value)).toEqual(STORED.map((s) => s.name));
   });
 });

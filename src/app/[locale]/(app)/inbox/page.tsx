@@ -1,11 +1,14 @@
 export const dynamic = "force-dynamic";
 
-import { getTranslations } from "next-intl/server";
-import { CheckCircle2, CloudOff, XCircle } from "lucide-react";
+import { getLocale, getTranslations } from "next-intl/server";
+import { AlertCircle, CheckCircle2, CloudOff, XCircle } from "lucide-react";
 import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";
 import { listThreads } from "@/server/services/inbox";
-import { getEmailChannelAdapter } from "@/server/channels/email";
+import { getEmailChannelStatus } from "@/server/services/setup-readiness";
+import { getViewerTimeZone } from "@/server/services/viewer-time-zone";
+import type { TenantContext } from "@/server/auth/session";
+import { formatDateTimeInTimeZone } from "@/lib/date-time";
 import { threadListQuerySchema } from "@/lib/validators/inbox";
 import { Link } from "@/i18n/routing";
 import { Card, CardContent } from "@/components/ui/card";
@@ -24,7 +27,11 @@ export default async function InboxPage({
   const ctx = await requirePermission("inbox:read");
   const t = await getTranslations("inbox");
   const query = threadListQuerySchema.parse(await searchParams);
-  const { data } = await listThreads(ctx, query);
+  const [{ data }, locale, timeZone] = await Promise.all([
+    listThreads(ctx, query),
+    getLocale(),
+    getViewerTimeZone(ctx.userId),
+  ]);
   const canWrite = can(ctx.role, "inbox:write");
 
   return (
@@ -34,7 +41,7 @@ export default async function InboxPage({
         <p className="text-sm text-muted-foreground">{t("subtitle")}</p>
       </div>
 
-      {canWrite ? <EmailChannelStatus /> : null}
+      {canWrite ? <EmailChannelStatus ctx={ctx} /> : null}
 
       {data.length === 0 ? (
         <Card>
@@ -85,9 +92,14 @@ export default async function InboxPage({
                       </p>
                     </div>
                     <div className="shrink-0 text-end text-xs text-muted-foreground">
-                      {thread.lastMessageAt
-                        ? new Date(thread.lastMessageAt).toLocaleString()
-                        : null}
+                      {thread.lastMessageAt ? (
+                        <time dateTime={new Date(thread.lastMessageAt).toISOString()}>
+                          {formatDateTimeInTimeZone(thread.lastMessageAt, locale, timeZone, {
+                            dateStyle: "short",
+                            timeStyle: "short",
+                          })}
+                        </time>
+                      ) : null}
                     </div>
                   </CardContent>
                 </Card>
@@ -101,38 +113,44 @@ export default async function InboxPage({
 }
 
 /**
- * Truthful, read-only readout of the email channel's real state — whether
- * inbound/outbound really go through Resend or are silently simulated by the
- * mock provider (`shouldUseMockProvider()` in `src/server/channels/email/
- * index.ts`), which was previously invisible outside server logs. Never
- * exposes the underlying env var names or internal error detail — just the
- * three truthful states the rest of the app already uses for integrations
- * (Connected / Setup required / Not configured), mirroring the Calendar
- * integrations `StatusBadge` pattern (icon + text, never color alone).
+ * Truthful, read-only readout of the email channel's real state. It reads the
+ * same status as the Dashboard's setup-readiness "Email channel" row
+ * (getEmailChannelStatus), so the two never disagree: configured credentials
+ * alone are "not verified yet", and only a real received inbound email counts
+ * as receiving. Nothing here claims that sending works. Never exposes env var
+ * names or internal error detail; icon + text, never color alone.
  */
-async function EmailChannelStatus() {
+async function EmailChannelStatus({ ctx }: { ctx: TenantContext }) {
   const t = await getTranslations("inbox");
-  const adapter = getEmailChannelAdapter();
+  const status = await getEmailChannelStatus(ctx);
 
-  if (adapter.provider === "MOCK") {
+  if (status === "mock") {
     return (
       <p className="flex items-center gap-1.5 text-sm text-muted-foreground">
-        <CloudOff className="size-4" />
+        <CloudOff className="size-4" aria-hidden="true" />
         {t("channelStatus.mock")}
       </p>
     );
   }
-  if (adapter.isConfigured()) {
+  if (status === "ready") {
     return (
       <p className="flex items-center gap-1.5 text-sm text-primary">
-        <CheckCircle2 className="size-4" />
-        {t("channelStatus.connected")}
+        <CheckCircle2 className="size-4" aria-hidden="true" />
+        {t("channelStatus.receiving")}
+      </p>
+    );
+  }
+  if (status === "verification_required") {
+    return (
+      <p className="flex items-center gap-1.5 text-sm text-amber-600">
+        <AlertCircle className="size-4" aria-hidden="true" />
+        {t("channelStatus.configuredUnverified")}
       </p>
     );
   }
   return (
     <p className="flex items-center gap-1.5 text-sm text-destructive">
-      <XCircle className="size-4" />
+      <XCircle className="size-4" aria-hidden="true" />
       {t("channelStatus.notConfigured")}
     </p>
   );

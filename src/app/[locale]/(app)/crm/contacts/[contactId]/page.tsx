@@ -16,7 +16,10 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ContactDialog } from "@/components/crm/contact-dialog";
 import { EntityActions } from "@/components/crm/entity-actions";
 import { NoteComposer } from "@/components/crm/note-composer";
-import { formatCents, formatDate } from "@/lib/utils";
+import { formatCents } from "@/lib/utils";
+import { formatDateTimeInTimeZone } from "@/lib/date-time";
+import { getViewerTimeZone } from "@/server/services/viewer-time-zone";
+import { ActivityTimeline, loadTimelineStages } from "@/components/crm/activity-timeline";
 import { stageLabel } from "@/lib/crm/stage-labels";
 import { Link } from "@/i18n/routing";
 import { EntityMeetings } from "@/components/calendar/entity-meetings";
@@ -33,11 +36,13 @@ export default async function ContactDetailPage({
   const canWrite = can(ctx.role, "crm:write");
   const canDelete = can(ctx.role, "crm:delete");
 
-  const [contact, companies] = await Promise.all([
+  const [contact, companies, timeZone] = await Promise.all([
     getContact(ctx, contactId),
     canWrite ? listCompanyOptions(ctx) : Promise.resolve([]),
+    getViewerTimeZone(ctx.userId),
   ]);
   if (!contact) notFound();
+  const timelineStages = await loadTimelineStages(ctx.orgId, contact.activities);
 
   const name = [contact.firstName, contact.lastName].filter(Boolean).join(" ");
   const company = contact.company && !contact.company.deletedAt ? contact.company : null;
@@ -118,7 +123,9 @@ export default async function ContactDetailPage({
               />
               <InfoRow
                 label={t("createdLabel")}
-                value={formatDate(contact.createdAt, locale, { dateStyle: "medium" })}
+                value={formatDateTimeInTimeZone(contact.createdAt, locale, timeZone, {
+                  dateStyle: "medium",
+                })}
               />
             </CardContent>
           </Card>
@@ -153,27 +160,12 @@ export default async function ContactDetailPage({
             {canWrite ? (
               <NoteComposer action={addContactNoteAction.bind(null, contact.id)} />
             ) : null}
-            {contact.activities.length === 0 ? (
-              <p className="text-sm text-muted-foreground">{t("noActivities")}</p>
-            ) : (
-              <div className="space-y-3">
-                {contact.activities.map((a) => (
-                  <div key={a.id} className="border-s-2 border-border ps-3">
-                    <p className="text-sm font-medium">{a.subject}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {t(`activityTypes.${a.type}` as never)} ·{" "}
-                      {formatDate(a.createdAt, locale, { dateStyle: "medium", timeStyle: "short" })}
-                      {a.user?.fullName ? <> · {a.user.fullName}</> : null}
-                    </p>
-                    {a.body && a.body !== a.subject ? (
-                      <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">
-                        {a.body}
-                      </p>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            )}
+            <ActivityTimeline
+              activities={contact.activities}
+              stages={timelineStages}
+              locale={locale}
+              timeZone={timeZone}
+            />
           </CardContent>
         </Card>
       </div>

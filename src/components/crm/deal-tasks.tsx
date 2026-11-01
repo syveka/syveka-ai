@@ -5,7 +5,8 @@ import { useLocale, useTranslations } from "next-intl";
 import { addDealTaskAction, toggleDealTaskAction, type DealActionState } from "@/actions/deals";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { formatDate, cn } from "@/lib/utils";
+import { cn } from "@/lib/utils";
+import { formatDateTimeInTimeZone } from "@/lib/date-time";
 
 export type DealTask = {
   id: string;
@@ -18,10 +19,12 @@ function TaskRow({
   dealId,
   task,
   canWrite,
+  timeZone,
 }: {
   dealId: string;
   task: DealTask;
   canWrite: boolean;
+  timeZone: string;
 }) {
   const t = useTranslations("crm");
   const locale = useLocale();
@@ -55,7 +58,10 @@ function TaskRow({
             )}
           >
             {overdue ? `${t("overdue")} · ` : ""}
-            {formatDate(task.dueAt, locale, { dateStyle: "medium", timeStyle: "short" })}
+            {formatDateTimeInTimeZone(task.dueAt, locale, timeZone, {
+              dateStyle: "medium",
+              timeStyle: "short",
+            })}
           </span>
         ) : null}
       </span>
@@ -67,10 +73,13 @@ export function DealTasks({
   dealId,
   tasks,
   canWrite,
+  timeZone,
 }: {
   dealId: string;
   tasks: DealTask[];
   canWrite: boolean;
+  /** The viewer's zone, so server render and hydration show the same time. */
+  timeZone: string;
 }) {
   const t = useTranslations("crm");
   const tc = useTranslations("common");
@@ -116,7 +125,13 @@ export function DealTasks({
       ) : (
         <div className="space-y-2">
           {tasks.map((task) => (
-            <TaskRow key={task.id} dealId={dealId} task={task} canWrite={canWrite} />
+            <TaskRow
+              key={task.id}
+              dealId={dealId}
+              task={task}
+              canWrite={canWrite}
+              timeZone={timeZone}
+            />
           ))}
         </div>
       )}
