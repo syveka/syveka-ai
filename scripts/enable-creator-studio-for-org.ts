@@ -112,10 +112,13 @@ async function main(): Promise<void> {
     const settings = (org.settings ?? {}) as Record<string, unknown>;
     const alreadyEnabled = settings[CREATOR_STUDIO_FLAG] === true;
     if (!alreadyEnabled) {
-      await prisma.organization.update({
-        where: { id: org.id },
-        data: { settings: { ...settings, [CREATOR_STUDIO_FLAG]: true } },
-      });
+      // Only this key, atomically on the current value (src/server/services/organization-settings.ts).
+      await prisma.$executeRaw`
+        update organizations
+           set settings = (case when jsonb_typeof(settings) = 'object' then settings else '{}'::jsonb end)
+                          || jsonb_build_object(${CREATOR_STUDIO_FLAG}::text, true),
+               updated_at = now() at time zone 'UTC'
+         where id = ${org.id}::uuid`;
       console.log(
         `enable-creator-studio-for-org: enabled "${CREATOR_STUDIO_FLAG}" for ${org.name} (${org.id}).`,
       );

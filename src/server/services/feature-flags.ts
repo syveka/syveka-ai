@@ -1,6 +1,6 @@
 import "server-only";
 
-import type { Prisma } from "@/generated/prisma/client/client";
+import { patchOrganizationSettings } from "./organization-settings";
 import { unscopedPrisma } from "@/server/db/tenant";
 
 export class FeatureDisabledError extends Error {
@@ -44,15 +44,9 @@ export async function setFeatureEnabled(
   key: string,
   enabled: boolean,
 ): Promise<void> {
-  const org = await unscopedPrisma.organization.findUniqueOrThrow({
-    where: { id: orgId },
-    select: { settings: true },
-  });
-  const settings = {
-    ...(org.settings as Record<string, unknown>),
-    [key]: enabled,
-  } as Prisma.InputJsonValue;
-  await unscopedPrisma.organization.update({ where: { id: orgId }, data: { settings } });
+  // Only this key changes, atomically (operator-only keys are refused).
+  const updated = await patchOrganizationSettings(orgId, { set: { [key]: enabled } });
+  if (updated !== 1) throw new Error("Organization not found");
 }
 
 export async function assertFeatureEnabled(orgId: string, key: string): Promise<void> {
