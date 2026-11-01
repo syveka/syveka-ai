@@ -43,6 +43,8 @@ const state = vi.hoisted(() => ({
   stepClaims: 0,
   /** Makes the next notification insert fail, like a database error. */
   failNextNotification: false,
+  /** The next transaction commits, then reports an error (connection lost after COMMIT). */
+  errorAfterNextCommit: false,
 }));
 
 /**
@@ -188,8 +190,14 @@ const db = {
     const runs = structuredClone(state.runs);
     const notifications = structuredClone(state.notifications);
     try {
-      return await fn(db);
+      const result = await fn(db);
+      if (state.errorAfterNextCommit) {
+        state.errorAfterNextCommit = false;
+        throw Object.assign(new Error("connection lost after commit"), { committed: true });
+      }
+      return result;
     } catch (err) {
+      if ((err as { committed?: boolean }).committed) throw err; // committed: nothing to undo
       state.runs.forEach((run, i) => Object.assign(run, runs[i]));
       state.notifications.splice(0, Infinity, ...notifications);
       throw err;
@@ -298,6 +306,7 @@ beforeEach(() => {
   state.contactLookups = 0;
   state.stepClaims = 0;
   state.failNextNotification = false;
+  state.errorAfterNextCommit = false;
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -398,6 +407,28 @@ describe("crm.create_activity: contact field resolution", () => {
     expect(await again.json()).toEqual({ skipped: "terminal_failure" });
     expect(state.stepClaims).toBe(2);
     expect(state.notifications).toHaveLength(1);
+  });
+
+  it("a failure record that committed but reported an error is not overwritten (no second notification)", async () => {
+    const UNKNOWN = "e0e0e0e0-e0e0-4e0e-8e0e-e0e0e0e0e0e0";
+    const event = {
+      triggerType: "contact.created",
+      triggerData: { contactId: UNKNOWN },
+      sourceEventKey: `contact.created:${UNKNOWN}`,
+    };
+    // The contact lookup fails before any step transaction, so the next
+    // transaction is the failure record: it commits, then reports an error.
+    state.errorAfterNextCommit = true;
+    const first = await deliver(event, { "upstash-retried": "0" });
+    expect(first.status).toBe(500);
+    // The committed terminal record stands: the fallback only touches a RUNNING run.
+    expect(state.runs[0]).toMatchObject({ status: "FAILED", error: CONTACT_NOT_FOUND_ERROR });
+    expect(state.notifications).toHaveLength(1);
+
+    const again = await deliver(event, { "upstash-retried": "1" });
+    expect(await again.json()).toEqual({ skipped: "terminal_failure" });
+    expect(state.notifications).toHaveLength(1);
+    expect(state.stepClaims).toBe(1);
   });
 
   it("a crashed run with no recorded error is reclaimed by redelivery", async () => {

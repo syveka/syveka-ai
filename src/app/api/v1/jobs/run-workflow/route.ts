@@ -988,12 +988,25 @@ export async function POST(request: Request): Promise<NextResponse> {
         }
       });
     } catch (recordErr) {
-      // Nothing was recorded. A retryable failure (not a terminal text) lets
-      // the redelivery run the step again and record both; if even this write
-      // fails, the run stays RUNNING and is reclaimed once stale, like a crash.
-      await persist("FAILED", failureText(recordErr, "failure not recorded")).catch(
-        () => undefined,
-      );
+      // Normally nothing was recorded: leave a retryable failure (not a
+      // terminal text) so a redelivery runs the step again and records both.
+      // Only a run still RUNNING is touched, so a commit that succeeded but
+      // reported an error is not overwritten (which would notify twice).
+      // Limits: if this write fails too, the run stays RUNNING and is
+      // reclaimed once stale, like a crash; on the final attempt there is no
+      // redelivery, so the notification is lost and the run shows a generic
+      // failure (the step's own text stays in stepResults).
+      await unscopedPrisma.workflowRun
+        .updateMany({
+          where: { id: run.id, status: "RUNNING" },
+          data: {
+            stepResults: results as Prisma.InputJsonValue,
+            status: "FAILED",
+            finishedAt: new Date(),
+            error: failureText(recordErr, "failure not recorded"),
+          },
+        })
+        .catch(() => undefined);
       return NextResponse.json({ error: message }, { status: 500 });
     }
     if (err instanceof WorkflowStepRefusedError) {
