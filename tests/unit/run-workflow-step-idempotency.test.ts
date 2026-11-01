@@ -245,7 +245,7 @@ function createFakeDb() {
         },
       ),
     },
-    contact: { findFirst: vi.fn(async () => ({ id: "contact-1" })) },
+    contact: { findFirst: vi.fn(async () => ({ id: "c0000001-0000-4000-8000-000000000001" })) },
     activity: { create: vi.fn(async () => ({})) },
     notification: { create: vi.fn(async () => ({})) },
     // Recipients are current members (membership itself is covered by
@@ -333,7 +333,7 @@ function freshTriggerPayload(overrides: Record<string, unknown> = {}) {
     workflowId: WORKFLOW,
     orgId: ORG,
     triggerType: "deal.won",
-    triggerData: { contactId: "contact-1" },
+    triggerData: { contactId: "c0000001-0000-4000-8000-000000000001" },
     sourceEventKey: "deal.won:k1",
     ...overrides,
   };
@@ -528,7 +528,7 @@ describe("step-level idempotency: genuinely distinct steps and runs are never su
     await post(
       freshTriggerPayload({
         sourceEventKey: "deal.won:k2",
-        triggerData: { contactId: "contact-2" },
+        triggerData: { contactId: "c0000002-0000-4000-8000-000000000002" },
       }),
     );
 
@@ -557,7 +557,7 @@ describe("step-level idempotency: manual runs are unaffected", () => {
       workflowId: WORKFLOW,
       orgId: ORG,
       triggerType: "manual",
-      triggerData: { contactId: "contact-1" },
+      triggerData: { contactId: "c0000001-0000-4000-8000-000000000001" },
       runId: run.id,
       resumeFromIndex: 0,
     });
@@ -579,7 +579,7 @@ describe("step-level idempotency: manual runs are unaffected", () => {
       workflowId: WORKFLOW,
       orgId: ORG,
       triggerType: "manual",
-      triggerData: {},
+      triggerData: { contactId: "c0000001-0000-4000-8000-000000000001" },
       runId: runA.id,
       resumeFromIndex: 0,
     });
@@ -587,7 +587,7 @@ describe("step-level idempotency: manual runs are unaffected", () => {
       workflowId: WORKFLOW,
       orgId: ORG,
       triggerType: "manual",
-      triggerData: {},
+      triggerData: { contactId: "c0000001-0000-4000-8000-000000000001" },
       runId: runB.id,
       resumeFromIndex: 0,
     });

@@ -487,17 +487,19 @@ describe("ai.generate: interpolated values are data, not instructions", () => {
         },
       ]),
     );
-    fakeDb.contact.findFirst.mockResolvedValue({ id: "c1" } as never);
+    fakeDb.contact.findFirst.mockResolvedValue({
+      id: "c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1",
+    } as never);
 
     await post("booking.canceled", {
       bookingId: "b1",
-      contactId: "c1",
+      contactId: "c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1",
       guestName: "Aino",
       reason: "<b>ill</b>",
     });
 
     expect(fakeDb.contact.findFirst).toHaveBeenCalledWith({
-      where: { id: "c1", organizationId: ORG },
+      where: { id: "c1c1c1c1-c1c1-4c1c-8c1c-c1c1c1c1c1c1", organizationId: ORG },
     });
     expect(fakeDb.activity.create).toHaveBeenCalledTimes(1);
     const activity = (

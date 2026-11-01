@@ -239,7 +239,7 @@ describe("WorkflowBuilder", () => {
         id: "r1",
         status: "FAILED",
         startedAt: "2026-10-24T21:30:00.000Z",
-        error: null,
+        failure: null,
       },
     ],
   };
@@ -277,6 +277,68 @@ describe("WorkflowBuilder", () => {
     // 21:30 UTC on 24 Oct is 00:30 on 25 Oct in Helsinki (EEST, before the DST change).
     expect(screen.getByText(/25\.10\.2026.*0\.30\.00/)).toBeTruthy();
     expect(screen.queryByRole("status")).toBeNull();
+  });
+
+  it.each(["en", "fi", "ar"] as const)(
+    "shows a failed run's reason as localized text, not the stored error (%s)",
+    (locale) => {
+      render(
+        withIntl(
+          <WorkflowBuilder
+            initial={
+              {
+                ...initial,
+                runs: [{ ...initial.runs[0], failure: "contact_missing_test_run" }],
+              } as never
+            }
+            activation={{ block: null, limit: 5 }}
+            timeZone="Europe/Helsinki"
+          />,
+          locale,
+        ),
+      );
+      expect(
+        screen.getByText(MESSAGES[locale].workflows.runFailure.contact_missing_test_run),
+      ).toBeTruthy();
+    },
+  );
+
+  it("shows a canceled run's reason and no reason while a run is in progress", () => {
+    render(
+      withIntl(
+        <WorkflowBuilder
+          initial={
+            {
+              ...initial,
+              runs: [
+                {
+                  ...initial.runs[0],
+                  id: "r1",
+                  status: "CANCELED",
+                  failure: "workflow_deactivated",
+                },
+                { ...initial.runs[0], id: "r2", status: "RUNNING", failure: "internal" },
+              ],
+            } as never
+          }
+          activation={{ block: null, limit: 5 }}
+          timeZone="Europe/Helsinki"
+        />,
+        "en",
+      ),
+    );
+    const m = MESSAGES.en.workflows.runFailure;
+    expect(screen.getByText(m.workflow_deactivated)).toBeTruthy();
+    expect(screen.queryByText(m.internal)).toBeNull();
+  });
+
+  it("every run failure code has EN/FI/AR text", async () => {
+    const { WORKFLOW_RUN_FAILURES } = await import("@/lib/workflows/run-failure");
+    for (const locale of ["en", "fi", "ar"] as const) {
+      for (const code of WORKFLOW_RUN_FAILURES) {
+        expect(MESSAGES[locale].workflows.runFailure[code], `${locale}.${code}`).toBeTruthy();
+      }
+    }
   });
 
   it("maps save errors to localized messages, never raw codes", async () => {
