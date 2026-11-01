@@ -9,6 +9,8 @@ import { emitWorkflowEvent } from "./workflow-events";
 import { buildBusinessDnaPromptBlock, getBusinessDnaContext } from "@/server/business-dna/context";
 import type { TenantContext } from "@/server/auth/session";
 import { effectiveProbability, expectedRevenueCents } from "@/lib/crm/deal-forecast";
+import { isZonelessWallTime, zonedWallTimeToUtc } from "@/lib/date-time";
+import { getViewerTimeZone } from "./viewer-time-zone";
 import type {
   DealInput,
   DealTaskInput,
@@ -362,6 +364,16 @@ export async function addDealNote(ctx: TenantContext, dealId: string, input: Not
 }
 
 /** Adds a TASK activity (reminder) with an optional due date. */
+/**
+ * A task's due time. The form's datetime-local value has no zone and means
+ * the user's own wall clock; parsed on the server (UTC) it was stored two or
+ * three hours late in Finland. A value with an explicit offset keeps it.
+ */
+async function taskDueAt(ctx: TenantContext, value: string): Promise<Date> {
+  if (!isZonelessWallTime(value)) return new Date(value);
+  return zonedWallTimeToUtc(value, await getViewerTimeZone(ctx.userId));
+}
+
 export async function addDealTask(ctx: TenantContext, dealId: string, input: DealTaskInput) {
   const db = tenantDb(ctx.orgId);
   const deal = await db.deal.findFirstOrThrow({
@@ -378,7 +390,7 @@ export async function addDealTask(ctx: TenantContext, dealId: string, input: Dea
       companyId: deal.companyId,
       type: "TASK",
       subject: input.title,
-      dueAt: input.dueAt ? new Date(input.dueAt) : null,
+      dueAt: input.dueAt ? await taskDueAt(ctx, input.dueAt) : null,
     },
   });
 

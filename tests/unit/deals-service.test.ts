@@ -22,6 +22,11 @@ vi.mock("@/server/services/audit", () => ({
   audit: auditMock,
 }));
 
+const viewerZone = vi.hoisted(() => ({ value: "Europe/Helsinki" }));
+vi.mock("@/server/services/viewer-time-zone", () => ({
+  getViewerTimeZone: vi.fn(async () => viewerZone.value),
+}));
+
 vi.mock("@/server/services/workflow-events", () => ({
   emitWorkflowEvent: emitWorkflowEventMock,
 }));
@@ -440,6 +445,27 @@ describe("deals service", () => {
       const data = db.activity.create.mock.calls[0]![0]!.data;
       expect(data).toMatchObject({ type: "TASK", subject: "Send proposal" });
       expect(data.dueAt).toBeInstanceOf(Date);
+    });
+
+    it("reads a form due time on the user's own clock, not the server's UTC", async () => {
+      viewerZone.value = "Europe/Helsinki";
+      // Summer (UTC+3) and winter (UTC+2), on both sides of the 2026-10-25 change.
+      await addDealTask(ctx(), "deal-1", { title: "Summer", dueAt: "2026-08-01T09:00" });
+      await addDealTask(ctx(), "deal-1", { title: "Winter", dueAt: "2026-11-02T09:00" });
+      const dueAt = (i: number) =>
+        (db.activity.create.mock.calls[i]![0]!.data.dueAt as Date).toISOString();
+      expect(dueAt(0)).toBe("2026-08-01T06:00:00.000Z");
+      expect(dueAt(1)).toBe("2026-11-02T07:00:00.000Z");
+
+      viewerZone.value = "Asia/Riyadh";
+      await addDealTask(ctx(), "deal-1", { title: "Riyadh", dueAt: "2026-11-02T09:00" });
+      expect(dueAt(2)).toBe("2026-11-02T06:00:00.000Z");
+    });
+
+    it("keeps a due time that already carries an offset", async () => {
+      await addDealTask(ctx(), "deal-1", { title: "API", dueAt: "2026-11-02T09:00:00Z" });
+      const data = db.activity.create.mock.calls[0]![0]!.data;
+      expect((data.dueAt as Date).toISOString()).toBe("2026-11-02T09:00:00.000Z");
     });
 
     it("verifies the task belongs to the deal before toggling", async () => {
