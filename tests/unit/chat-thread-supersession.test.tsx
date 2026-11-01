@@ -270,3 +270,54 @@ describe("a reopened conversation (outcomes restored from the record)", () => {
     expect(confirmable(a!)).toBe(false);
   });
 });
+
+describe("several open proposals", () => {
+  it("answers that arrive out of order update their own cards only", async () => {
+    const pending = new Map<string, (r: Response) => void>();
+    vi.mocked(fetch).mockImplementation(
+      (url) =>
+        new Promise<Response>((resolve) => {
+          pending.set(String(url), resolve);
+        }),
+    );
+    renderThread([
+      message("m1", [dna(A, ["openingHours"])]),
+      message("m2", [dna(B, ["supportedLocales"])]),
+    ]);
+    const [a, b] = cards();
+    await click(a!, en.chat.actions.confirm);
+    await click(b!, en.chat.actions.cancel);
+    expect(pending.size).toBe(2);
+    // B's answer first, then A's.
+    await act(async () => {
+      pending.get(`/api/v1/ai/actions/${B}`)!(
+        new Response(JSON.stringify({ data: { status: "canceled" } }), { status: 200 }),
+      );
+    });
+    expect(statusOf(b!)).toBe(en.chat.actions.result.canceled);
+    expect(statusOf(a!)).toBe(en.chat.actions.confirming);
+    await act(async () => {
+      pending.get(`/api/v1/ai/actions/${A}`)!(
+        new Response(JSON.stringify({ data: { status: "not_done", reason: "stale" } }), {
+          status: 200,
+        }),
+      );
+    });
+    expect(statusOf(a!)).toBe(en.chat.actions.result.stale);
+    expect(statusOf(b!)).toBe(en.chat.actions.result.canceled);
+  });
+
+  it("a proposal recorded as stale or failed never becomes confirmable through a canceled correction", async () => {
+    for (const restored of ["stale", "failed", "unknown", "unavailable"] as const) {
+      cleanup();
+      renderThread([
+        message("m1", [dna(A, ["openingHours"], { restored })]),
+        message("m2", [dna(B, ["openingHours"])]),
+      ]);
+      const [a, b] = cards();
+      await click(b!, en.chat.actions.cancel);
+      expect(statusOf(a!)).toBe(en.chat.actions.result[restored]);
+      expect(confirmable(a!)).toBe(false);
+    }
+  });
+});

@@ -669,6 +669,24 @@ describe("ActionConfirmation — while a repeat is in flight", () => {
     expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.done);
   });
 
+  it("Confirm then Cancel clicked in a row: only the first decision is sent", async () => {
+    let release!: (r: Response) => void;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((r) => (release = r)));
+    show(action());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.chat.actions.confirm }));
+      fireEvent.click(screen.getByRole("button", { name: en.chat.actions.cancel }));
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
+    expect(JSON.parse(String(init.body)).decision).toBe("confirm");
+    await act(async () => {
+      release(new Response(JSON.stringify({ data: { status: "done" } }), { status: 200 }));
+    });
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.done);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
   it("the live region exists while pending too, so a replacement is announced, not inserted", () => {
     show(action());
     expect(screen.getByRole("status").textContent).toBe(en.chat.actions.nothingYet);
