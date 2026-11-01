@@ -306,3 +306,73 @@ describe("sendBookingLifecycleNotifications", () => {
     expect(guestReact.whenText).not.toMatch(/AM|PM/);
   });
 });
+
+/**
+ * Staging QA: the owner's in-app notification read "Consultation — Guest Name"
+ * for a new, a moved and a canceled booking alike. The title now leads with
+ * the action, in the owner's language, and the body is the meeting time in the
+ * owner's own zone.
+ */
+describe("owner in-app notification wording", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    seenIdempotencyKeyMock.mockResolvedValue(false);
+    unscopedPrismaMock.booking.findUnique.mockResolvedValue(bookingRow());
+    unscopedPrismaMock.user.findUnique.mockResolvedValue(ownerRow({ locale: "EN" }));
+  });
+
+  function notificationData() {
+    const call = unscopedPrismaMock.notification.create.mock.calls[0] as unknown as [
+      { data: { title: string; body: string; type: string } },
+    ];
+    return call[0].data;
+  }
+
+  it.each([
+    ["confirmation", "New booking: Consultation — Guest Name"],
+    ["reschedule", "Booking rescheduled: Consultation — Guest Name"],
+    ["cancellation", "Booking canceled: Consultation — Guest Name"],
+  ] as const)("%s: the title names the action", async (kind, title) => {
+    await sendBookingLifecycleNotifications({ kind, bookingId: "booking-1" });
+    expect(notificationData()).toMatchObject({ type: `booking.${kind}`, title });
+  });
+
+  it("is written in the owner's language (Finnish, Arabic)", async () => {
+    unscopedPrismaMock.user.findUnique.mockResolvedValue(ownerRow({ locale: "FI" }));
+    await sendBookingLifecycleNotifications({ kind: "reschedule", bookingId: "booking-1" });
+    expect(notificationData().title).toBe("Varaus siirretty: Consultation — Guest Name");
+    expect(notificationData().body).not.toMatch(/AM|PM/);
+
+    unscopedPrismaMock.notification.create.mockClear();
+    unscopedPrismaMock.user.findUnique.mockResolvedValue(ownerRow({ locale: "AR" }));
+    await sendBookingLifecycleNotifications({ kind: "cancellation", bookingId: "booking-1" });
+    expect(notificationData().title).toBe("تم إلغاء الحجز: Consultation — Guest Name");
+  });
+
+  it("reads the owner's locale with their zone", async () => {
+    await sendBookingLifecycleNotifications({ kind: "confirmation", bookingId: "booking-1" });
+    expect(unscopedPrismaMock.user.findUnique).toHaveBeenCalledWith({
+      where: { id: "owner-1" },
+      select: { id: true, email: true, timezone: true, locale: true },
+    });
+  });
+
+  it("the body is the meeting time in the owner's zone, not the guest's", async () => {
+    unscopedPrismaMock.booking.findUnique.mockResolvedValue(
+      bookingRow({ guestTimezone: "America/New_York" }),
+    );
+    await sendBookingLifecycleNotifications({ kind: "confirmation", bookingId: "booking-1" });
+    // 09:00–09:30 UTC is 12:00–12:30 in Helsinki (EEST).
+    const body = notificationData().body;
+    expect(body).toContain("(Europe/Helsinki)");
+    expect(body).toContain("12:00");
+    expect(body).toContain("12:30");
+    expect(body).not.toContain("America/New_York");
+  });
+
+  it("an owner without a stored locale gets English", async () => {
+    unscopedPrismaMock.user.findUnique.mockResolvedValue(ownerRow());
+    await sendBookingLifecycleNotifications({ kind: "confirmation", bookingId: "booking-1" });
+    expect(notificationData().title).toBe("New booking: Consultation — Guest Name");
+  });
+});

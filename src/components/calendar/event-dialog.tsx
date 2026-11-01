@@ -11,8 +11,9 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { CalEvent } from "./calendar-view";
+import { CalendarModal } from "./calendar-modal";
+import { AttendeePicker } from "./attendee-picker";
 import { toZonedWallTime } from "@/lib/date-time";
 
 export type EventOptions = {
@@ -128,304 +129,283 @@ export function EventDialog({
   }, [attendeeContactIds, guestEmails]);
 
   const selectClass =
-    "w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+    "w-full min-w-0 rounded-md border border-input bg-transparent px-3 py-2 text-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
-      onClick={(e) => e.target === e.currentTarget && onClose()}
-      role="dialog"
-      aria-modal="true"
-    >
-      <Card className="max-h-[90vh] w-full max-w-lg overflow-y-auto">
-        <CardHeader>
-          <CardTitle>{event ? event.title : t("newEvent")}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <form action={action} className="space-y-3">
-            <input type="hidden" name="attendees" value={attendeesJson} />
-            <input type="hidden" name="allowConflict" value={allowConflict ? "true" : "false"} />
+    <CalendarModal title={event ? event.title : t("newEvent")} onClose={onClose}>
+      <form action={action} className="min-w-0 space-y-3">
+        <input type="hidden" name="attendees" value={attendeesJson} />
+        <input type="hidden" name="allowConflict" value={allowConflict ? "true" : "false"} />
 
-            {isSeries ? (
-              <p
-                role="note"
-                className="rounded-md border border-border bg-muted/50 p-3 text-sm text-muted-foreground"
-              >
-                {t("seriesNotice")}
-              </p>
-            ) : null}
+        {isSeries ? (
+          <p
+            role="note"
+            className="rounded-md border border-border bg-muted/50 p-3 text-sm text-muted-foreground"
+          >
+            {t("seriesNotice")}
+          </p>
+        ) : null}
 
-            <div className="space-y-1.5">
-              <Label htmlFor="title">{t("fields.title")}</Label>
-              <Input
-                id="title"
-                name="title"
-                defaultValue={event?.title}
-                required
-                disabled={readOnly}
-              />
-            </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="title">{t("fields.title")}</Label>
+          <Input id="title" name="title" defaultValue={event?.title} required disabled={readOnly} />
+        </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="startsAt">{t("fields.start")}</Label>
-                <Input
-                  id="startsAt"
-                  name="startsAt"
-                  type="datetime-local"
-                  defaultValue={defaultStart}
-                  required
-                  disabled={readOnly}
-                />
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="endsAt">{t("fields.end")}</Label>
-                <Input
-                  id="endsAt"
-                  name="endsAt"
-                  type="datetime-local"
-                  defaultValue={defaultEnd}
-                  required
-                  disabled={readOnly}
-                />
-              </div>
-            </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="min-w-0 space-y-1.5">
+            <Label htmlFor="startsAt">{t("fields.start")}</Label>
+            <Input
+              id="startsAt"
+              name="startsAt"
+              type="datetime-local"
+              className="min-w-0"
+              defaultValue={defaultStart}
+              required
+              disabled={readOnly}
+            />
+          </div>
+          <div className="min-w-0 space-y-1.5">
+            <Label htmlFor="endsAt">{t("fields.end")}</Label>
+            <Input
+              id="endsAt"
+              name="endsAt"
+              type="datetime-local"
+              className="min-w-0"
+              defaultValue={defaultEnd}
+              required
+              disabled={readOnly}
+            />
+          </div>
+        </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="timezone">{t("fields.timezone")}</Label>
-                <select
-                  id="timezone"
-                  name="timezone"
-                  defaultValue={eventZone}
-                  disabled={readOnly}
-                  className={selectClass}
-                >
-                  {timezones.map((tz) => (
-                    <option key={tz} value={tz}>
-                      {tz}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="recurrenceRule">{t("fields.repeat")}</Label>
-                <select
-                  id="recurrenceRule"
-                  name="recurrenceRule"
-                  defaultValue={event?.recurrenceRule ?? ""}
-                  disabled={readOnly}
-                  className={selectClass}
-                >
-                  {RECURRENCE_PRESETS.map((r) => (
-                    <option key={r.key} value={r.value}>
-                      {t(`recurrence.${r.key}`)}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="min-w-0 space-y-1.5">
+            <Label htmlFor="timezone">{t("fields.timezone")}</Label>
+            <select
+              id="timezone"
+              name="timezone"
+              defaultValue={eventZone}
+              disabled={readOnly}
+              className={selectClass}
+            >
+              {timezones.map((tz) => (
+                <option key={tz} value={tz}>
+                  {tz}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="min-w-0 space-y-1.5">
+            <Label htmlFor="recurrenceRule">{t("fields.repeat")}</Label>
+            <select
+              id="recurrenceRule"
+              name="recurrenceRule"
+              defaultValue={event?.recurrenceRule ?? ""}
+              disabled={readOnly}
+              className={selectClass}
+            >
+              {RECURRENCE_PRESETS.map((r) => (
+                <option key={r.key} value={r.value}>
+                  {t(`recurrence.${r.key}`)}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
 
-            <label className="flex items-center gap-2 text-sm">
+        <label className="flex items-center gap-2 text-sm">
+          <input
+            type="checkbox"
+            name="allDay"
+            value="true"
+            defaultChecked={event?.allDay}
+            disabled={readOnly}
+            className="size-4"
+          />
+          {t("fields.allDay")}
+        </label>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="location">{t("fields.location")}</Label>
+          <Input
+            id="location"
+            name="location"
+            defaultValue={event?.location ?? ""}
+            disabled={readOnly}
+          />
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="min-w-0 space-y-1.5">
+            <Label htmlFor="ownerId">{t("fields.owner")}</Label>
+            <select
+              id="ownerId"
+              name="ownerId"
+              defaultValue={event?.ownerId ?? ""}
+              disabled={readOnly}
+              className={selectClass}
+            >
+              <option value="">{t("fields.me")}</option>
+              {options.owners.map((o) => (
+                <option key={o.id} value={o.id}>
+                  {o.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="min-w-0 space-y-1.5">
+            <Label htmlFor="contactId">{t("fields.contact")}</Label>
+            <select
+              id="contactId"
+              name="contactId"
+              defaultValue={event?.contactId ?? ""}
+              disabled={readOnly}
+              className={selectClass}
+            >
+              <option value="">—</option>
+              {options.contacts.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+          <div className="min-w-0 space-y-1.5">
+            <Label htmlFor="companyId">{t("fields.company")}</Label>
+            <select
+              id="companyId"
+              name="companyId"
+              defaultValue={event?.companyId ?? ""}
+              disabled={readOnly}
+              className={selectClass}
+            >
+              <option value="">—</option>
+              {options.companies.map((c) => (
+                <option key={c.id} value={c.id}>
+                  {c.name}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="min-w-0 space-y-1.5">
+            <Label htmlFor="dealId">{t("fields.deal")}</Label>
+            <select
+              id="dealId"
+              name="dealId"
+              defaultValue={event?.dealId ?? ""}
+              disabled={readOnly}
+              className={selectClass}
+            >
+              <option value="">—</option>
+              {options.deals.map((d) => (
+                <option key={d.id} value={d.id}>
+                  {d.title}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
+        <AttendeePicker
+          contacts={options.contacts}
+          selectedIds={attendeeContactIds}
+          onChange={setAttendeeContactIds}
+          disabled={readOnly}
+        />
+
+        <div className="space-y-1.5">
+          <Label htmlFor="guestEmails">{t("fields.guestEmailsLabel")}</Label>
+          <Input
+            id="guestEmails"
+            inputMode="email"
+            value={guestEmails}
+            onChange={(e) => setGuestEmails(e.target.value)}
+            disabled={readOnly}
+            aria-describedby="guestEmailsHint"
+          />
+          <p id="guestEmailsHint" className="break-words text-xs text-muted-foreground">
+            {t("fields.guestEmailsHint")}
+          </p>
+        </div>
+
+        <div className="space-y-1.5">
+          <Label htmlFor="description">{t("fields.description")}</Label>
+          <textarea
+            id="description"
+            name="description"
+            rows={3}
+            defaultValue={event?.description ?? ""}
+            disabled={readOnly}
+            className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
+          />
+        </div>
+
+        {state.error === "conflict" ? (
+          <div
+            role="alert"
+            className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm"
+          >
+            <p className="font-medium text-destructive">{t("conflictWarning")}</p>
+            <ul className="mt-1 list-inside list-disc text-muted-foreground">
+              {state.conflicts?.map((c) => (
+                <li key={c.id}>
+                  {c.title} — {toZonedWallTime(c.startsAt, eventZone).replace("T", " ")}
+                </li>
+              ))}
+            </ul>
+            <label className="mt-2 flex items-center gap-2">
               <input
                 type="checkbox"
-                name="allDay"
-                value="true"
-                defaultChecked={event?.allDay}
-                disabled={readOnly}
+                checked={allowConflict}
+                onChange={(e) => setAllowConflict(e.target.checked)}
                 className="size-4"
               />
-              {t("fields.allDay")}
+              {t("bookAnyway")}
             </label>
+          </div>
+        ) : state.error ? (
+          <p role="alert" className="text-sm text-destructive">
+            {tc("error")}
+          </p>
+        ) : null}
 
-            <div className="space-y-1.5">
-              <Label htmlFor="location">{t("fields.location")}</Label>
-              <Input
-                id="location"
-                name="location"
-                defaultValue={event?.location ?? ""}
-                disabled={readOnly}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="ownerId">{t("fields.owner")}</Label>
-                <select
-                  id="ownerId"
-                  name="ownerId"
-                  defaultValue={event?.ownerId ?? ""}
-                  disabled={readOnly}
-                  className={selectClass}
-                >
-                  <option value="">{t("fields.me")}</option>
-                  {options.owners.map((o) => (
-                    <option key={o.id} value={o.id}>
-                      {o.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="contactId">{t("fields.contact")}</Label>
-                <select
-                  id="contactId"
-                  name="contactId"
-                  defaultValue={event?.contactId ?? ""}
-                  disabled={readOnly}
-                  className={selectClass}
-                >
-                  <option value="">—</option>
-                  {options.contacts.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-1.5">
-                <Label htmlFor="companyId">{t("fields.company")}</Label>
-                <select
-                  id="companyId"
-                  name="companyId"
-                  defaultValue={event?.companyId ?? ""}
-                  disabled={readOnly}
-                  className={selectClass}
-                >
-                  <option value="">—</option>
-                  {options.companies.map((c) => (
-                    <option key={c.id} value={c.id}>
-                      {c.name}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div className="space-y-1.5">
-                <Label htmlFor="dealId">{t("fields.deal")}</Label>
-                <select
-                  id="dealId"
-                  name="dealId"
-                  defaultValue={event?.dealId ?? ""}
-                  disabled={readOnly}
-                  className={selectClass}
-                >
-                  <option value="">—</option>
-                  {options.deals.map((d) => (
-                    <option key={d.id} value={d.id}>
-                      {d.title}
-                    </option>
-                  ))}
-                </select>
-              </div>
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="attendeeContacts">{t("fields.attendees")}</Label>
-              <select
-                id="attendeeContacts"
-                multiple
-                value={attendeeContactIds}
-                onChange={(e) =>
-                  setAttendeeContactIds([...e.target.selectedOptions].map((o) => o.value))
-                }
-                disabled={readOnly}
-                className={`${selectClass} min-h-20`}
+        <div className="flex flex-wrap justify-between gap-2 pt-2">
+          <div className="flex flex-wrap gap-2">
+            {event && canWrite && event.status !== "CANCELED" ? (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => void cancelEventAction(event.id).then(onClose)}
               >
-                {options.contacts.map((c) => (
-                  <option key={c.id} value={c.id}>
-                    {c.name}
-                  </option>
-                ))}
-              </select>
-              <Input
-                placeholder={t("fields.guestEmails")}
-                value={guestEmails}
-                onChange={(e) => setGuestEmails(e.target.value)}
-                disabled={readOnly}
-                aria-label={t("fields.guestEmails")}
-              />
-            </div>
-
-            <div className="space-y-1.5">
-              <Label htmlFor="description">{t("fields.description")}</Label>
-              <textarea
-                id="description"
-                name="description"
-                rows={3}
-                defaultValue={event?.description ?? ""}
-                disabled={readOnly}
-                className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm"
-              />
-            </div>
-
-            {state.error === "conflict" ? (
-              <div
-                role="alert"
-                className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm"
-              >
-                <p className="font-medium text-destructive">{t("conflictWarning")}</p>
-                <ul className="mt-1 list-inside list-disc text-muted-foreground">
-                  {state.conflicts?.map((c) => (
-                    <li key={c.id}>
-                      {c.title} — {toZonedWallTime(c.startsAt, eventZone).replace("T", " ")}
-                    </li>
-                  ))}
-                </ul>
-                <label className="mt-2 flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    checked={allowConflict}
-                    onChange={(e) => setAllowConflict(e.target.checked)}
-                    className="size-4"
-                  />
-                  {t("bookAnyway")}
-                </label>
-              </div>
-            ) : state.error ? (
-              <p role="alert" className="text-sm text-destructive">
-                {tc("error")}
-              </p>
+                {isSeries ? t("cancelSeries") : t("cancelEvent")}
+              </Button>
             ) : null}
-
-            <div className="flex flex-wrap justify-between gap-2 pt-2">
-              <div className="flex gap-2">
-                {event && canWrite && event.status !== "CANCELED" ? (
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => void cancelEventAction(event.id).then(onClose)}
-                  >
-                    {isSeries ? t("cancelSeries") : t("cancelEvent")}
-                  </Button>
-                ) : null}
-                {event && canDelete ? (
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    className="text-destructive"
-                    onClick={() => void deleteEventAction(event.id).then(onClose)}
-                  >
-                    {isSeries ? t("deleteSeries") : tc("delete")}
-                  </Button>
-                ) : null}
-              </div>
-              <div className="flex gap-2">
-                <Button type="button" variant="ghost" onClick={onClose}>
-                  {tc("cancel")}
-                </Button>
-                {!readOnly ? (
-                  <Button type="submit" disabled={pending}>
-                    {pending ? tc("loading") : tc("save")}
-                  </Button>
-                ) : null}
-              </div>
-            </div>
-          </form>
-        </CardContent>
-      </Card>
-    </div>
+            {event && canDelete ? (
+              <Button
+                type="button"
+                variant="ghost"
+                className="text-destructive"
+                onClick={() => void deleteEventAction(event.id).then(onClose)}
+              >
+                {isSeries ? t("deleteSeries") : tc("delete")}
+              </Button>
+            ) : null}
+          </div>
+          <div className="ms-auto flex flex-wrap gap-2">
+            <Button type="button" variant="ghost" onClick={onClose}>
+              {tc("cancel")}
+            </Button>
+            {!readOnly ? (
+              <Button type="submit" disabled={pending}>
+                {pending ? tc("loading") : tc("save")}
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      </form>
+    </CalendarModal>
   );
 }

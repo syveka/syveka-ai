@@ -15,7 +15,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export type ManagedStage = {
   id: string;
+  /** The stored name (organization data). */
   name: string;
+  /**
+   * What the stage is called in the interface language: the translation for an
+   * untouched seeded default stage, otherwise the stored name (stage-labels.ts).
+   */
+  displayName: string;
   probability: number;
   isWon: boolean;
   isLost: boolean;
@@ -39,11 +45,24 @@ function StageRow({ stage }: { stage: ManagedStage }) {
   );
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [deleting, startDelete] = useTransition();
+  // The editor shows the interface-language label. Saving the row without
+  // touching the name keeps the stored (seeded) name, so the stage stays an
+  // untouched default that every user sees in their own language; only a name
+  // the user actually typed is stored.
+  const [nameInput, setNameInput] = useState(stage.displayName);
+  const submittedName = nameInput === stage.displayName ? stage.name : nameInput;
 
   return (
     <div className="space-y-1">
       <form action={action} className="flex flex-wrap items-center gap-2">
-        <Input name="name" defaultValue={stage.name} required className="w-40 flex-1" />
+        <Input
+          value={nameInput}
+          onChange={(e) => setNameInput(e.target.value)}
+          required
+          className="w-40 flex-1"
+          aria-label={t("stageName")}
+        />
+        <input type="hidden" name="name" value={submittedName} />
         <Input
           name="probability"
           type="number"
@@ -136,6 +155,7 @@ export function PipelineManager({ stages }: { stages: ManagedStage[] }) {
               name="name"
               required
               placeholder={t("newStagePlaceholder")}
+              aria-label={t("stageName")}
               className="w-40 flex-1"
             />
             <Input

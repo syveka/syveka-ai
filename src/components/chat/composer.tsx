@@ -58,8 +58,11 @@ export function Composer({
   // text already typed (never replacing it) and is sent only when the user
   // presses Send.
   const [voiceAnnouncement, setVoiceAnnouncement] = useState("");
+  const micRef = useRef<HTMLButtonElement>(null);
+  const transcriptArrived = useRef(false);
   const voice = useVoiceRecorder({
     onTranscript: (transcript) => {
+      transcriptArrived.current = true;
       setText((current) => {
         if (!current.trim()) return transcript;
         const trimmed = current.replace(/[ \t]+$/, "");
@@ -78,6 +81,22 @@ export function Composer({
   useEffect(() => {
     onVoiceBusyChange?.(voiceBusy);
   }, [voiceBusy, onVoiceBusyChange]);
+
+  // After a discard, cancel or error the voice panel disappears with the
+  // focused control in it; give focus back to the microphone. A transcript
+  // instead focuses the text box (above).
+  const wasVoiceBusy = useRef(false);
+  useEffect(() => {
+    const ended = wasVoiceBusy.current && !voiceBusy;
+    wasVoiceBusy.current = voiceBusy;
+    if (!ended) return;
+    if (transcriptArrived.current) {
+      transcriptArrived.current = false;
+      return;
+    }
+    const active = document.activeElement;
+    if (!active || active === document.body) micRef.current?.focus();
+  }, [voiceBusy]);
 
   const startRecording = () => {
     onRecordingStart?.();
@@ -149,14 +168,24 @@ export function Composer({
         <VoiceStatusBar
           status={voice.status}
           elapsedMs={voice.elapsedMs}
+          pending={voice.pending}
           error={voice.error}
           announcement={
-            voice.status === "transcribing" ? tVoice("transcribing") : voiceAnnouncement
+            voice.status === "transcribing"
+              ? tVoice("transcribing")
+              : voice.status === "review"
+                ? tVoice("recordingReady")
+                : voiceAnnouncement
           }
           onStop={voice.stop}
           onCancel={() => {
             voice.cancel();
             setVoiceAnnouncement(tVoice("recordingCancelled"));
+          }}
+          onTranscribe={() => void voice.transcribe()}
+          onDiscard={() => {
+            voice.discard();
+            setVoiceAnnouncement(tVoice("recordingDiscarded"));
           }}
           onDismissError={voice.clearError}
         />
@@ -201,7 +230,7 @@ export function Composer({
           <label
             title={t("attachFile")}
             className={cn(
-              "cursor-pointer rounded-md p-2 text-muted-foreground transition-colors hover:bg-accent",
+              "inline-flex size-10 shrink-0 cursor-pointer items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent",
               uploading && "pointer-events-none opacity-50",
             )}
           >
@@ -224,17 +253,18 @@ export function Composer({
           onClick={() => setUseKb((v) => !v)}
           title={t("useKnowledgeBase")}
           className={cn(
-            "rounded-md p-2 transition-colors",
+            "inline-flex size-10 shrink-0 items-center justify-center rounded-md transition-colors",
             useKb ? "bg-primary/10 text-primary" : "text-muted-foreground hover:bg-accent",
           )}
         >
           <BookOpen className="size-4" />
         </button>
         {voiceInputEnabled ? (
-          <MicrophoneButton status={voice.status} onStart={startRecording} />
+          <MicrophoneButton status={voice.status} onStart={startRecording} buttonRef={micRef} />
         ) : null}
         <Button
           size="icon"
+          className="size-10 shrink-0"
           onClick={disabled ? onAbort : submit}
           disabled={!disabled && (!text.trim() || uploading || voiceBusy)}
           aria-label={disabled ? t("stopGenerating") : t("send")}

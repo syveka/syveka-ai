@@ -6,13 +6,19 @@ import { CalendarClock } from "lucide-react";
 import { Link, RTL_LOCALES } from "@/i18n/routing";
 import { moveDealAction } from "@/actions/deals";
 import { formatCents, formatDate, cn } from "@/lib/utils";
+import { effectiveProbability, stageColumnTotals } from "@/lib/crm/deal-forecast";
 
 export type BoardDeal = {
   id: string;
   title: string;
   valueCents: number;
   currency: string;
-  probability: number;
+  /**
+   * The deal's own stored probability (null = use the stage default). The
+   * effective probability is derived from the column the card is in, so an
+   * optimistic move re-weights the card under the target stage.
+   */
+  probabilityOverride: number | null;
   expectedCloseAt: string | null;
   isClosed: boolean;
   contactName: string | null;
@@ -107,12 +113,11 @@ export function DealBoard({
     // contained so a swipe past its end doesn't move the page or navigate.
     <div className="flex gap-3 overflow-x-auto overscroll-x-contain pb-4" dir="ltr">
       {stages.map((stage) => {
-        const open = stage.deals.filter((d) => !d.isClosed);
-        const totalCents = open.reduce((sum, d) => sum + d.valueCents, 0);
-        const weightedCents = open.reduce(
-          (sum, d) => sum + Math.round((d.valueCents * d.probability) / 100),
-          0,
-        );
+        const { totalValueCents: totalCents, weightedValueCents: weightedCents } =
+          stageColumnTotals(
+            stage,
+            stage.deals.map((d) => ({ ...d, probability: d.probabilityOverride })),
+          );
         return (
           <div
             key={stage.id}
@@ -137,7 +142,7 @@ export function DealBoard({
               </div>
               <p className="mt-0.5 text-xs text-muted-foreground">
                 {formatCents(totalCents, locale)}
-                {!stage.isWon && !stage.isLost ? (
+                {weightedCents !== null ? (
                   <>
                     {" "}
                     · {t("weighted")} {formatCents(weightedCents, locale)}
@@ -188,7 +193,8 @@ export function DealBoard({
                       ) : null}
                     </div>
                     <p className="mt-1 text-xs text-muted-foreground">
-                      {formatCents(deal.valueCents, locale, deal.currency)} · {deal.probability}%
+                      {formatCents(deal.valueCents, locale, deal.currency)} ·{" "}
+                      {effectiveProbability({ probability: deal.probabilityOverride }, stage)}%
                     </p>
                     {deal.contactName || deal.companyName ? (
                       <p className="mt-0.5 truncate text-xs text-muted-foreground">

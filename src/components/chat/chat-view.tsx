@@ -2,7 +2,9 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
-import { AudioLines } from "lucide-react";
+import { AudioLines, Plus } from "lucide-react";
+import { useRouter } from "@/i18n/routing";
+import { Button } from "@/components/ui/button";
 import { useChat, type UiMessage } from "@/hooks/use-chat";
 import { useSpeechPlayback } from "@/hooks/use-speech-playback";
 import { useVoiceConversation } from "@/hooks/use-voice-conversation";
@@ -48,13 +50,7 @@ function useLiveAllowance(open: boolean): VoiceAllowance | null | undefined {
   return allowance;
 }
 
-export function ChatView({
-  conversationId,
-  initialMessages,
-  voiceInputEnabled = false,
-  attachmentsEnabled = false,
-  voiceConversation = null,
-}: {
+type ChatViewProps = {
   conversationId?: string;
   initialMessages: UiMessage[];
   voiceInputEnabled?: boolean;
@@ -62,9 +58,30 @@ export function ChatView({
   attachmentsEnabled?: boolean;
   /** Live voice conversation, when the server allows it for this user. */
   voiceConversation?: { sessionMinutes: number } | null;
-}) {
+};
+
+/** Same key as the prompt library's "use in chat" hand-off; the composer restores it on mount. */
+const DRAFT_KEY = "chat:draft";
+
+export function ChatView(props: ChatViewProps) {
+  // "New conversation" on /chat itself remounts the session: same route, so
+  // navigating alone would keep the previous chat's messages and id.
+  const [session, setSession] = useState(0);
+  return <ChatSession key={session} {...props} onFreshSession={() => setSession((n) => n + 1)} />;
+}
+
+function ChatSession({
+  conversationId,
+  initialMessages,
+  voiceInputEnabled = false,
+  attachmentsEnabled = false,
+  voiceConversation = null,
+  onFreshSession,
+}: ChatViewProps & { onFreshSession: () => void }) {
   const t = useTranslations("chat");
   const locale = useLocale();
+  const router = useRouter();
+  const rootRef = useRef<HTMLDivElement>(null);
   const liveActiveRef = useRef(false);
   const {
     messages,
@@ -127,8 +144,50 @@ export function ChatView({
     void live.start();
   };
 
+  // Not while a reply streams or a live/dictation session owns this chat;
+  // pointless on a chat that hasn't started.
+  const canStartNewChat =
+    !isStreaming && !live.active && !dictating && (messages.length > 0 || !!conversationId);
+
+  /**
+   * Starts an empty conversation; earlier ones stay in the list. An unsent
+   * draft is carried over (never sent, never dropped). The server creates the
+   * new conversation on its first message, with no earlier history.
+   */
+  const startNewChat = () => {
+    const draft = rootRef.current?.querySelector("textarea")?.value ?? "";
+    if (draft.trim()) {
+      try {
+        sessionStorage.setItem(DRAFT_KEY, draft);
+      } catch {
+        // Storage unavailable: the draft can't be carried over.
+      }
+    }
+    playback.stop();
+    if (conversationId) {
+      router.push("/chat");
+      return;
+    }
+    const created = getConversationId() !== undefined;
+    onFreshSession();
+    if (created) router.refresh(); // list the conversation that was just created
+  };
+
   return (
-    <div className="flex h-[calc(100vh-3rem)] flex-col md:h-[calc(100vh-4.5rem)]">
+    <div ref={rootRef} className="flex h-[calc(100dvh-3rem)] flex-col md:h-[calc(100dvh-4.5rem)]">
+      <div className="flex shrink-0 items-center justify-end border-b px-4 py-2">
+        <Button
+          type="button"
+          variant="outline"
+          size="sm"
+          className="min-h-10"
+          onClick={startNewChat}
+          disabled={!canStartNewChat}
+        >
+          <Plus aria-hidden />
+          {t("newConversation")}
+        </Button>
+      </div>
       <ChatThread
         messages={messages}
         playback={live.active ? undefined : playback}

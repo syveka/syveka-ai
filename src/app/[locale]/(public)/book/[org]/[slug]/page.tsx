@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { getPublicBookingType } from "@/server/services/booking";
 import { BookingWidget } from "@/components/calendar/booking-widget";
+import { PublicLanguageSwitcher } from "@/components/calendar/public-language-switcher";
 
 export default async function PublicBookingPage({
   params,
@@ -17,6 +18,7 @@ export default async function PublicBookingPage({
 
   return (
     <div className="space-y-6">
+      <PublicLanguageSwitcher />
       <div className="text-center">
         {bookingType.organization.logoUrl ? (
           // eslint-disable-next-line @next/next/no-img-element

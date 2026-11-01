@@ -213,6 +213,9 @@
   "chat": {
     "emptyState": "اسأل أي شيء عن شركتك — يمكنني البحث في قاعدة المعرفة وإدارة العملاء والتقويم.",
     "newConversation": "محادثة جديدة",
+    "conversations": "المحادثات",
+    "sources": "المصادر",
+    "citation": "المصدر {number}: {title}",
     "placeholder": "راسل سيفيكا…",
     "useKnowledgeBase": "استخدام قاعدة المعرفة",
     "attachFile": "إرفاق ملف PDF أو DOCX أو TXT",
@@ -239,13 +242,11 @@
     },
     "voice": {
       "record": "تسجيل رسالة صوتية",
-      "stopRecording": "إيقاف وتحويل إلى نص",
       "cancel": "إلغاء",
       "recording": "جارٍ التسجيل…",
       "requesting": "في انتظار إذن استخدام الميكروفون…",
       "transcribing": "جارٍ التحويل إلى نص…",
       "maxDuration": "يتوقف التسجيل تلقائيًا بعد {seconds} ثانية.",
-      "privacy": "يُرسَل تسجيلك إلى مزوّد تحويل الكلام إلى نص لدينا (OpenAI) لإنشاء النص فقط، ولا يُحفَظ.",
       "transcriptAdded": "أُضيف النص إلى مربع الرسالة. راجِعه ثم اضغط إرسال.",
       "recordingStarted": "بدأ التسجيل.",
       "recordingCancelled": "أُلغي التسجيل.",
@@ -253,9 +254,10 @@
       "listen": "استماع",
       "stopListening": "إيقاف القراءة الصوتية",
       "listenLabel": "قراءة هذا الرد بصوت عالٍ",
+      "preparingVoice": "جارٍ تجهيز الصوت…",
       "playbackErrors": {
         "unsupported": "لا يستطيع هذا المتصفح قراءة الردود بصوت عالٍ.",
-        "no_voice": "لا يتوفر على هذا الجهاز صوت لهذه اللغة.",
+        "no_voice": "لا يوجد صوت مثبَّت للغة {language} على هذا الجهاز. لسماع الردود، ثبِّت بيانات صوت {language} من إعدادات تحويل النص إلى كلام في جهازك. لا يزال بإمكانك قراءة الرد أعلاه.",
         "unknown_language": "تعذّرت مطابقة لغة هذا الرد مع صوت.",
         "playback_failed": "تعذّرت قراءة الرد بصوت عالٍ."
       },
@@ -276,8 +278,19 @@
         "timeout": "استغرق التحويل إلى نص وقتًا طويلًا. حاول مجددًا.",
         "network_error": "انقطع الاتصال أثناء التحويل إلى نص. حاول مجددًا.",
         "transcription_failed": "تعذّر تحويل التسجيل إلى نص. حاول مجددًا.",
-        "daily_limit": "استخدمت عمليات التحويل الصوتي اليومية المتاحة في هذه التجربة ({limit}). حاول مجددًا غدًا (بتوقيت هلسنكي) أو اكتب رسالتك."
-      }
+        "daily_limit": "استخدمت عمليات التحويل الصوتي اليومية المتاحة في هذه التجربة ({limit}). حاول مجددًا غدًا (بتوقيت هلسنكي) أو اكتب رسالتك.",
+        "interrupted": "توقف التسجيل بشكل غير متوقع (فُصِل الميكروفون أو استخدمه تطبيق آخر). لم يُرسَل أي شيء. حاول مجددًا."
+      },
+      "stop": "إيقاف",
+      "reviewTitle": "التسجيل جاهز",
+      "reviewHint": "يمكنك الاستماع إليه أولًا. لن يُرفَع أي شيء حتى تضغط على «تحويل إلى نص».",
+      "transcribe": "تحويل إلى نص",
+      "discard": "حذف",
+      "playbackLabel": "استمع إلى تسجيلك",
+      "recordingReady": "توقف التسجيل. استمع إليه، ثم حوّله إلى نص أو تجاهله.",
+      "recordingDiscarded": "تم حذف التسجيل.",
+      "privacyNote": "لا يصل إلى المساعد إلا النص الذي ترسله. يُستخدَم التسجيل لإنشاء هذا النص فقط: يُرسَل إلى مزوّد تحويل الكلام إلى نص لدينا (OpenAI) ولا يحفظه سيفيكا.",
+      "retryHint": "تسجيلك محفوظ: اضغط على «تحويل إلى نص» للمحاولة مجددًا."
     },
     "live": {
       "start": "بدء محادثة صوتية",
@@ -484,6 +497,10 @@
     "editContact": "تعديل جهة الاتصال",
     "noCompanies": "لا توجد شركات بعد.",
     "searchCompaniesPlaceholder": "ابحث بالاسم أو النطاق أو المجال…",
+    "search": "بحث",
+    "clearSearch": "مسح البحث",
+    "noContactsMatch": "لا توجد جهات اتصال تطابق «{query}».",
+    "noCompaniesMatch": "لا توجد شركات تطابق «{query}».",
     "contactCount": "{count} جهة اتصال",
     "dealCount": "{count} صفقة",
     "archivedBadge": "مؤرشف",
@@ -566,6 +583,22 @@
       "negotiation": "تفاوض",
       "won": "مكسوبة",
       "lost": "خاسرة"
+    },
+    "defaultPipelineName": "مسار المبيعات",
+    "stageName": "اسم المرحلة",
+    "systemActivity": {
+      "stageChange": "{from} ← {to}",
+      "bookingBookedSubject": "حجز جديد: {type}",
+      "bookingBookedBody": "حجز {guest} ({email}) موعد {type}.",
+      "bookingCanceledSubject": "تم إلغاء الحجز: {type}",
+      "bookingCanceledBody": "ألغى {guest} الحجز.",
+      "bookingCanceledBodyWithReason": "ألغى {guest} الحجز. السبب: {reason}",
+      "bookingRescheduledSubject": "تم تغيير موعد الحجز: {type}",
+      "bookingRescheduledBody": "غيّر {guest} موعد الاجتماع.",
+      "bookingBookedBodyAt": "حجز {guest} ({email}) موعد {type} في {time}.",
+      "bookingCanceledBodyAt": "ألغى {guest} الاجتماع المحدد في {time}.",
+      "bookingCanceledBodyAtWithReason": "ألغى {guest} الاجتماع المحدد في {time}. السبب: {reason}",
+      "bookingRescheduledBodyFromTo": "نقل {guest} الاجتماع من {from} إلى {to}."
     }
   },
   "voice": {
@@ -664,7 +697,9 @@
       "company": "الشركة",
       "deal": "الصفقة",
       "attendees": "الحضور",
-      "guestEmails": "بريد الضيوف (مفصولة بفواصل)"
+      "guestEmails": "بريد الضيوف (مفصولة بفواصل)",
+      "guestEmailsLabel": "بريد الضيوف",
+      "guestEmailsHint": "للضيوف غير المسجلين كجهات اتصال. افصل بين العناوين بفواصل، مثل anna@example.com, ben@example.com."
     },
     "views": {
       "day": "يوم",
@@ -754,9 +789,22 @@
       "collectCompany": "طلب اسم الشركة",
       "confirmationMessage": "رسالة التأكيد",
       "slugTaken": "معرّف الرابط مستخدم بالفعل",
-      "ownerNotMember": "مالك نوع الحجز هذا لم يعد عضوًا، لذلك لا يمكن تفعيله."
+      "ownerNotMember": "مالك نوع الحجز هذا لم يعد عضوًا، لذلك لا يمكن تفعيله.",
+      "copyFailed": "تعذر النسخ. حدد الرابط أعلاه وانسخه يدويًا."
     },
-    "connectCalendarLink": "ربط التقويم"
+    "connectCalendarLink": "ربط التقويم",
+    "attendeePicker": {
+      "clear": "مسح الكل",
+      "selectedCount": "{count, plural, =0 {لم يتم اختيار جهات اتصال} one {تم اختيار جهة اتصال واحدة} two {تم اختيار جهتي اتصال} few {تم اختيار # جهات اتصال} many {تم اختيار # جهة اتصال} other {تم اختيار # جهة اتصال}}",
+      "selectedList": "الحضور المختارون",
+      "remove": "إزالة {name}",
+      "unknownContact": "جهة اتصال غير معروفة",
+      "noContacts": "لا توجد جهات اتصال لإضافتها بعد.",
+      "filter": "تصفية جهات الاتصال",
+      "noMatches": "لا توجد جهات اتصال مطابقة"
+    },
+    "monthDayEvents": "{count, plural, one {حدث واحد} two {حدثان} few {# أحداث} many {# حدثًا} other {# حدث}} في {date}. افتح عرض اليوم.",
+    "monthMoreEvents": "{count, plural, one {حدث آخر} two {حدثان آخران} few {# أحداث أخرى} many {# حدثًا آخر} other {# حدث آخر}}. افتح عرض اليوم."
   },
   "notifications": {
     "title": "الإشعارات",
@@ -779,7 +827,12 @@
       "positive": "إيجابي",
       "neutral": "محايد",
       "negative": "سلبي"
-    }
+    },
+    "noAiMessages": "لا توجد رسائل ذكاء اصطناعي خلال آخر ٣٠ يومًا.",
+    "noCalls": "لا توجد مكالمات خلال آخر ٣٠ يومًا.",
+    "chartSummary": "{count, plural, zero {لا توجد أيام ببيانات} one {يوم واحد ببيانات} two {يومان ببيانات} few {# أيام ببيانات} many {# يومًا ببيانات} other {# يوم ببيانات}}، الأعلى {max}.",
+    "chartDate": "التاريخ",
+    "chartValue": "العدد"
   },
   "prompts": {
     "title": "مكتبة الأوامر",
@@ -862,6 +915,27 @@
       "quota": "خطتك لا تتضمن مسارات العمل. قم بالترقية لتشغيل اختبار.",
       "rateLimited": "عدد كبير جدًا من التشغيلات التجريبية. حاول مرة أخرى لاحقًا.",
       "unavailable": "التشغيلات التجريبية غير متاحة مؤقتًا. حاول مجددًا."
+    },
+    "runsCount": "{count, plural, zero {لا توجد تشغيلات} one {تشغيل واحد} two {تشغيلان} few {# تشغيلات} many {# تشغيلًا} other {# تشغيل}}",
+    "runStatus": {
+      "RUNNING": "قيد التشغيل",
+      "SUCCEEDED": "نجح",
+      "FAILED": "فشل",
+      "CANCELED": "أُلغي",
+      "WAITING": "في الانتظار"
+    },
+    "toggleLabel": "{name}",
+    "entitlement": {
+      "notIncluded": "مسارات العمل غير مشمولة في خطتك الحالية. يمكنك إنشاء مسارات العمل وحفظها كمسودات، لكن تفعيلها أو تشغيل اختبار يتطلب خطة تشمل مسارات العمل.",
+      "readOnly": "مساحة العمل للقراءة فقط لأن الاشتراك متأخر السداد، لذلك لا يمكن تفعيل مسارات العمل أو اختبارها.",
+      "limitReached": "{limit, plural, one {مسار العمل النشط الوحيد في خطتك مستخدم.} other {جميع مسارات العمل النشطة في خطتك (#) مستخدمة.}} أوقف أحدها أو قم بترقية خطتك لتفعيل مسار آخر.",
+      "viewPlans": "عرض الخطط",
+      "activationUnavailable": "التفعيل غير متاح في خطتك الحالية."
+    },
+    "saveErrors": {
+      "invalid_input": "بعض حقول مسار العمل مفقودة أو غير صالحة. تحقق منها وحاول مرة أخرى.",
+      "duplicate_step_id": "خطوتان لهما المعرّف نفسه. احذف إحداهما وأضفها من جديد.",
+      "recipient_not_member": "يجب أن يكون مستلم الإشعار عضوًا في هذه المؤسسة."
     }
   },
   "billingPage": {
@@ -944,6 +1018,12 @@
       "pickNewTime": "اختر وقتًا جديدًا",
       "confirmReschedule": "تأكيد الوقت الجديد",
       "back": "رجوع"
+    },
+    "languageLabel": "اللغة",
+    "unavailable": {
+      "title": "صفحة الحجز هذه غير متاحة",
+      "description": "قد يكون الرابط غير صحيح، أو قد يكون الحجز عبر الإنترنت متوقفًا حاليًا.",
+      "contactHint": "يُرجى التواصل مع الشخص أو الجهة التي شاركت الرابط معك."
     }
   },
   "integrations": {
@@ -988,9 +1068,10 @@
       "WEB_CHAT": "الدردشة عبر الموقع"
     },
     "channelStatus": {
-      "connected": "البريد الإلكتروني متصل",
       "mock": "يتم استخدام مزود بريد إلكتروني تجريبي — الرسائل محاكاة وليست حقيقية",
-      "notConfigured": "لم يتم إعداد البريد الإلكتروني بعد"
+      "notConfigured": "لم يتم إعداد البريد الإلكتروني بعد",
+      "configuredUnverified": "تم إعداد مزود البريد الإلكتروني — لم يتم التحقق بعد: لم يصل أي بريد وارد",
+      "receiving": "تم استلام بريد وارد: وصلت رسالة حقيقية واحدة على الأقل"
     },
     "status": {
       "OPEN": "مفتوحة",

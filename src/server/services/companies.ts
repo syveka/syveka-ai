@@ -4,6 +4,7 @@ import type { Prisma } from "@/generated/prisma/client/client";
 import { tenantDb } from "@/server/db/tenant";
 import { audit } from "./audit";
 import { archivedWhere, noteSubject } from "./contacts";
+import { searchTerms } from "@/lib/crm/search-terms";
 import type { TenantContext } from "@/server/auth/session";
 import type { CompanyInput, CompanyListQuery, NoteInput } from "@/lib/validators/crm";
 
@@ -12,16 +13,17 @@ export async function listCompanies(ctx: TenantContext, params: CompanyListQuery
   const where: Prisma.CompanyWhereInput = {
     deletedAt: null,
     ...archivedWhere(params.archived),
-    ...(params.q
-      ? {
-          OR: [
-            { name: { contains: params.q, mode: "insensitive" } },
-            { domain: { contains: params.q, mode: "insensitive" } },
-            { industry: { contains: params.q, mode: "insensitive" } },
-          ],
-        }
-      : {}),
   };
+  const terms = searchTerms(params.q);
+  if (terms.length > 0) {
+    where.AND = terms.map((term) => ({
+      OR: [
+        { name: { contains: term, mode: "insensitive" } },
+        { domain: { contains: term, mode: "insensitive" } },
+        { industry: { contains: term, mode: "insensitive" } },
+      ],
+    }));
+  }
 
   const rows = await db.company.findMany({
     where,

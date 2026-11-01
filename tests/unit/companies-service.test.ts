@@ -108,10 +108,14 @@ describe("companies service", () => {
       await listCompanies(ctx(), { archived: "active", q: "acme", limit: 25 });
 
       const args = db.company.findMany.mock.calls[0]![0]!;
-      expect(args.where.OR).toEqual([
-        { name: { contains: "acme", mode: "insensitive" } },
-        { domain: { contains: "acme", mode: "insensitive" } },
-        { industry: { contains: "acme", mode: "insensitive" } },
+      expect(args.where.AND).toEqual([
+        {
+          OR: [
+            { name: { contains: "acme", mode: "insensitive" } },
+            { domain: { contains: "acme", mode: "insensitive" } },
+            { industry: { contains: "acme", mode: "insensitive" } },
+          ],
+        },
       ]);
     });
 

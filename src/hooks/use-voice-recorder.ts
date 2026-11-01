@@ -10,7 +10,19 @@ import {
   pickRecordingMimeType,
 } from "@/lib/voice/audio";
 
-export type VoiceRecorderStatus = "idle" | "requesting" | "recording" | "transcribing";
+/**
+ * idle → requesting (permission prompt) → recording → review (held in this
+ * browser only: nothing has been uploaded) → transcribing → idle. A failed
+ * transcription worth retrying returns to review with the recording kept.
+ */
+export type VoiceRecorderStatus = "idle" | "requesting" | "recording" | "review" | "transcribing";
+
+/** A finished recording held in this browser only, awaiting Transcribe or Discard. */
+export type PendingRecording = {
+  /** Object URL for local playback; null where the browser can't create one. */
+  url: string | null;
+  durationMs: number;
+};
 
 /** Every outcome the UI can explain (chat.voice.errors.*). */
 export type VoiceRecorderError =
@@ -19,6 +31,7 @@ export type VoiceRecorderError =
   | "permission_denied"
   | "no_microphone"
   | "microphone_busy"
+  | "interrupted"
   | "too_short"
   | "too_large"
   | "empty_transcript"
@@ -97,11 +110,27 @@ async function microphoneError(e: unknown): Promise<VoiceRecorderError> {
 }
 
 /**
- * Records one short voice clip and turns it into text via `transcribe`.
- * The transcript is only handed to `onTranscript`; nothing is ever sent.
+ * Failures where sending the same recording again can succeed. Anything else
+ * (limits, permissions, unusable audio) discards the recording.
+ */
+const RETRYABLE: ReadonlySet<VoiceRecorderError> = new Set<VoiceRecorderError>([
+  "network_error",
+  "timeout",
+  "transcription_failed",
+  "rate_limited",
+  "unavailable",
+]);
+
+export const isRetryableTranscriptionError = (code: VoiceRecorderError | null): boolean =>
+  code !== null && RETRYABLE.has(code);
+
+/**
+ * Records one short voice clip, lets the user review it locally, and turns it
+ * into text via `transcribe` only when they ask. The transcript is only
+ * handed to `onTranscript`; nothing is ever sent.
  *
- * Every start creates a session id. Stop/cancel/unmount end the session, so a
- * transcription that resolves late can never reach the caller.
+ * Every start creates a session id. Cancel/discard/unmount end the session,
+ * so a transcription that resolves late can never reach the caller.
  */
 export function useVoiceRecorder({
   onTranscript,
@@ -115,7 +144,7 @@ export function useVoiceRecorder({
 }) {
   const [status, setStatusState] = useState<VoiceRecorderStatus>("idle");
   // Mirrors `status` synchronously so a second tap in the same tick can't
-  // start a second recording before React re-renders.
+  // start a second recording or a second upload before React re-renders.
   const statusRef = useRef<VoiceRecorderStatus>("idle");
   const setStatus = useCallback((next: VoiceRecorderStatus) => {
     statusRef.current = next;
@@ -123,6 +152,7 @@ export function useVoiceRecorder({
   }, []);
   const [error, setError] = useState<VoiceRecorderError | null>(null);
   const [elapsedMs, setElapsedMs] = useState(0);
+  const [pending, setPending] = useState<PendingRecording | null>(null);
 
   const sessionRef = useRef(0);
   const streamRef = useRef<MediaStream | null>(null);
@@ -131,6 +161,8 @@ export function useVoiceRecorder({
   const startedAtRef = useRef(0);
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const uploadRef = useRef<AbortController | null>(null);
+  const audioRef = useRef<Blob | null>(null);
+  const urlRef = useRef<string | null>(null);
   const onTranscriptRef = useRef(onTranscript);
   onTranscriptRef.current = onTranscript;
   const transcribeRef = useRef(transcribe);
@@ -151,6 +183,7 @@ export function useVoiceRecorder({
     if (recorder) {
       recorder.ondataavailable = null;
       recorder.onstop = null;
+      recorder.onerror = null;
       if (recorder.state !== "inactive") {
         try {
           recorder.stop();
@@ -159,23 +192,58 @@ export function useVoiceRecorder({
         }
       }
     }
-    streamRef.current?.getTracks().forEach((track) => track.stop());
+    streamRef.current?.getTracks().forEach((track) => {
+      track.onended = null;
+      track.stop();
+    });
     streamRef.current = null;
   }, []);
 
-  /** Ends the current session without producing a transcript. */
+  /** Forgets the recorded audio and frees its playback URL. Idempotent. */
+  const dropRecording = useCallback(() => {
+    audioRef.current = null;
+    const url = urlRef.current;
+    urlRef.current = null;
+    if (url) URL.revokeObjectURL(url);
+    setPending(null);
+  }, []);
+
+  /** Ends the current session without producing a transcript or an upload. */
   const cancel = useCallback(() => {
     sessionRef.current += 1;
     uploadRef.current?.abort();
     uploadRef.current = null;
     chunksRef.current = [];
     releaseDevice();
+    dropRecording();
     setElapsedMs(0);
     setStatus("idle");
-  }, [releaseDevice, setStatus]);
+  }, [dropRecording, releaseDevice, setStatus]);
 
-  const upload = useCallback(
-    async (session: number, audio: Blob, durationMs: number) => {
+  /** The microphone or recorder failed mid-recording: nothing is kept or sent. */
+  const interrupt = useCallback(
+    (session: number) => {
+      if (session !== sessionRef.current || statusRef.current !== "recording") return;
+      cancel();
+      setError("interrupted");
+    },
+    [cancel],
+  );
+
+  /** Finishes the recording and holds it for review. Uploads nothing. */
+  const stop = useCallback(() => {
+    const recorder = recorderRef.current;
+    if (!recorder || recorder.state === "inactive" || statusRef.current !== "recording") return;
+    const session = sessionRef.current;
+    const durationMs = Date.now() - startedAtRef.current;
+    const mimeType = recorder.mimeType;
+    recorder.onstop = () => {
+      const audio = new Blob(chunksRef.current, mimeType ? { type: mimeType } : undefined);
+      chunksRef.current = [];
+      releaseDevice();
+      if (session !== sessionRef.current) return;
+      setElapsedMs(0);
+      // Unusable audio is refused here, before review; the server checks again.
       if (durationMs < MIN_RECORDING_MS || audio.size < MIN_AUDIO_BYTES) {
         setStatus("idle");
         setError("too_short");
@@ -186,50 +254,65 @@ export function useVoiceRecorder({
         setError("too_large");
         return;
       }
-      setStatus("transcribing");
-      const controller = new AbortController();
-      uploadRef.current = controller;
+      audioRef.current = audio;
+      let url: string | null = null;
       try {
-        const text = await transcribeRef.current(audio, controller.signal);
-        if (session !== sessionRef.current) return; // cancelled or unmounted meanwhile
-        if (!text.trim()) {
-          setError("empty_transcript");
-        } else {
-          onTranscriptRef.current(text.trim());
-        }
-      } catch (e) {
-        if (session !== sessionRef.current) return;
-        setError(e instanceof TranscriptionError ? e.code : "network_error");
-      } finally {
-        if (session === sessionRef.current) {
-          uploadRef.current = null;
-          setStatus("idle");
-          setElapsedMs(0);
-        }
+        url = typeof URL.createObjectURL === "function" ? URL.createObjectURL(audio) : null;
+      } catch {
+        url = null; // Playback is optional; Transcribe and Discard still work.
       }
-    },
-    [setStatus],
-  );
-
-  /** Finishes the recording and transcribes it. */
-  const stop = useCallback(() => {
-    const recorder = recorderRef.current;
-    if (!recorder || recorder.state === "inactive") return;
-    const session = sessionRef.current;
-    const durationMs = Date.now() - startedAtRef.current;
-    const mimeType = recorder.mimeType;
-    recorder.onstop = () => {
-      const audio = new Blob(chunksRef.current, mimeType ? { type: mimeType } : undefined);
-      chunksRef.current = [];
-      releaseDevice();
-      if (session !== sessionRef.current) return;
-      void upload(session, audio, durationMs);
+      urlRef.current = url;
+      setPending({ url, durationMs: Math.min(durationMs, MAX_RECORDING_SECONDS * 1000) });
+      setStatus("review");
     };
+    // Our own stop must not be reported as an interrupted recording.
+    recorder.onerror = null;
+    streamRef.current?.getTracks().forEach((track) => {
+      track.onended = null;
+    });
     if (timerRef.current) clearInterval(timerRef.current);
     timerRef.current = null;
-    setStatus("transcribing");
+    // Review starts now; `pending` appears once the browser has written the
+    // final chunk (Transcribe is ignored until then, Discard always works).
+    setStatus("review");
     recorder.stop();
-  }, [releaseDevice, setStatus, upload]);
+  }, [releaseDevice, setStatus]);
+
+  /**
+   * Uploads the reviewed recording, only on an explicit tap. A second tap
+   * while uploading is ignored. A retryable failure keeps the recording so
+   * the user can press Transcribe again; a recording yields at most one
+   * transcript.
+   */
+  const transcribeRecording = useCallback(async () => {
+    const audio = audioRef.current;
+    if (statusRef.current !== "review" || !audio) return;
+    const session = sessionRef.current;
+    setError(null);
+    setStatus("transcribing");
+    const controller = new AbortController();
+    uploadRef.current = controller;
+    let failure: VoiceRecorderError | null = null;
+    let text = "";
+    try {
+      text = (await transcribeRef.current(audio, controller.signal)).trim();
+      if (!text) failure = "empty_transcript";
+    } catch (e) {
+      failure = e instanceof TranscriptionError ? e.code : "network_error";
+    }
+    if (session !== sessionRef.current) return; // cancelled, discarded or unmounted meanwhile
+    uploadRef.current = null;
+    if (failure && isRetryableTranscriptionError(failure)) {
+      setError(failure);
+      setStatus("review");
+      return;
+    }
+    sessionRef.current += 1;
+    dropRecording();
+    setStatus("idle");
+    if (failure) setError(failure);
+    else onTranscriptRef.current(text);
+  }, [dropRecording, setStatus]);
 
   const start = useCallback(async () => {
     if (statusRef.current !== "idle") return; // no duplicate recordings
@@ -281,6 +364,11 @@ export function useVoiceRecorder({
     recorder.ondataavailable = (event) => {
       if (event.data && event.data.size > 0) chunksRef.current.push(event.data);
     };
+    // Microphone unplugged, permission revoked or the device taken by the OS.
+    recorder.onerror = () => interrupt(session);
+    stream.getTracks().forEach((track) => {
+      track.onended = () => interrupt(session);
+    });
     recorder.start(1000);
     startedAtRef.current = Date.now();
     setElapsedMs(0);
@@ -290,28 +378,53 @@ export function useVoiceRecorder({
       setElapsedMs(Math.min(elapsed, MAX_RECORDING_SECONDS * 1000));
       if (elapsed >= autoStopMs) stop();
     }, 250);
-  }, [autoStopMs, setStatus, stop, supported]);
+  }, [autoStopMs, interrupt, setStatus, stop, supported]);
 
-  // Leaving the page (unmount) or the tab closing ends any session and frees the mic.
+  // Hiding the tab never keeps the microphone open: a recording in progress
+  // stops and waits for review (nothing is uploaded); a pending permission
+  // request is abandoned. Leaving the page discards everything.
   useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState !== "hidden") return;
+      if (statusRef.current === "recording") stop();
+      else if (statusRef.current === "requesting") cancel();
+    };
     const onPageHide = () => cancel();
+    document.addEventListener("visibilitychange", onVisibility);
     window.addEventListener("pagehide", onPageHide);
     return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
       window.removeEventListener("pagehide", onPageHide);
+    };
+  }, [cancel, stop]);
+
+  // Unmount (navigation, organization switch): no upload, no late transcript.
+  useEffect(
+    () => () => {
       sessionRef.current += 1;
       uploadRef.current?.abort();
       releaseDevice();
-    };
-  }, [cancel, releaseDevice]);
+      audioRef.current = null;
+      const url = urlRef.current;
+      urlRef.current = null;
+      if (url) URL.revokeObjectURL(url);
+    },
+    [releaseDevice],
+  );
 
   return {
     status,
     error,
     elapsedMs,
     supported,
+    /** The recording awaiting review (status "review", or "transcribing" it). */
+    pending,
     start,
     stop,
     cancel,
+    /** Discards the reviewed recording without uploading it. */
+    discard: cancel,
+    transcribe: transcribeRecording,
     clearError: () => setError(null),
   };
 }

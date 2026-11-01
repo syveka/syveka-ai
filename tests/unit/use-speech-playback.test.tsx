@@ -5,7 +5,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
-import { useSpeechPlayback } from "@/hooks/use-speech-playback";
+import { useSpeechPlayback, VOICE_WAIT_MS } from "@/hooks/use-speech-playback";
 import { ChatThread } from "@/components/chat/chat-thread";
 
 // ChatThread's action cards can link to settings; next-intl's navigation
@@ -29,14 +29,20 @@ class FakeUtterance {
 
 let spoken: FakeUtterance[];
 let voices: Array<{ lang: string; localService: boolean; name: string }>;
+let listeners: Array<() => void>;
 const synth = {
   speak: vi.fn((u: FakeUtterance) => spoken.push(u)),
   cancel: vi.fn(),
   getVoices: () => voices,
+  addEventListener: (_: string, fn: () => void) => listeners.push(fn),
+  removeEventListener: (_: string, fn: () => void) => {
+    listeners = listeners.filter((l) => l !== fn);
+  },
 };
 
 beforeEach(() => {
   spoken = [];
+  listeners = [];
   voices = [
     { lang: "en-US", localService: true, name: "en" },
     { lang: "fi-FI", localService: false, name: "fi-remote" },
@@ -49,6 +55,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   cleanup();
+  vi.useRealTimers();
   vi.unstubAllGlobals();
 });
 
@@ -95,10 +102,15 @@ describe("useSpeechPlayback", () => {
   });
 
   it("reports no_voice instead of reading Arabic with a wrong-language voice", () => {
+    vi.useFakeTimers();
     const { result } = renderHook(() => useSpeechPlayback());
     act(() => result.current.play("m1", "مرحبا"));
+    expect(result.current.loadingId).toBe("m1");
+    act(() => {
+      vi.advanceTimersByTime(VOICE_WAIT_MS);
+    });
     expect(synth.speak).not.toHaveBeenCalled();
-    expect(result.current.error).toEqual({ id: "m1", code: "no_voice" });
+    expect(result.current.error).toEqual({ id: "m1", code: "no_voice", language: "ar" });
   });
 
   it("Listen reads a reply in its own language, never with the interface voice", () => {
@@ -108,10 +120,14 @@ describe("useSpeechPlayback", () => {
     expect(spoken[0]!.lang).toBe("fi-FI");
     expect((spoken[0]!.voice as { name: string }).name).toBe("fi-local");
 
+    vi.useFakeTimers();
     voices = [{ lang: "en-US", localService: true, name: "en" }];
     act(() => result.current.play("m2", finnish));
+    act(() => {
+      vi.advanceTimersByTime(VOICE_WAIT_MS);
+    });
     expect(spoken).toHaveLength(1); // not read with the English voice
-    expect(result.current.error).toEqual({ id: "m2", code: "no_voice" });
+    expect(result.current.error).toEqual({ id: "m2", code: "no_voice", language: "fi" });
   });
 
   it("a short reply with no language context is shown as text, not read by a guessed voice", () => {
@@ -134,11 +150,18 @@ describe("useSpeechPlayback", () => {
     expect(result.current.error).toEqual({ id: "m1", code: "unknown_language" });
   });
 
-  it("still tries when the voice list hasn't loaded yet (lang set, engine picks)", () => {
+  it("an empty voice list is never left to the engine's guess: it waits, then reports no_voice", () => {
+    // A bare `lang` lets the engine fall back to another language's voice.
+    vi.useFakeTimers();
     voices = [];
     const { result } = renderHook(() => useSpeechPlayback());
     act(() => result.current.play("m1", "مرحبا"));
-    expect(spoken[0]!.lang).toBe("ar-SA");
+    expect(result.current.loadingId).toBe("m1");
+    act(() => {
+      vi.advanceTimersByTime(VOICE_WAIT_MS);
+    });
+    expect(synth.speak).not.toHaveBeenCalled();
+    expect(result.current.error).toEqual({ id: "m1", code: "no_voice", language: "ar" });
   });
 
   it("reports playback_failed on an engine error, but not for our own interruption", () => {
@@ -193,8 +216,9 @@ describe("ChatThread Listen control", () => {
     fireEvent.click(listen[0]!);
     expect(spoken[0]!.text).toBe("Hello there.");
     expect(screen.getByRole("button", { name: en.chat.voice.stopListening })).toBeTruthy();
-    // Reply text stays fully visible.
-    expect(document.body.textContent).toContain("Hello **there**.");
+    // Reply text stays fully visible (rendered as Markdown: "there" in bold).
+    expect(document.body.textContent).toContain("Hello there.");
+    expect(document.querySelector("strong")?.textContent).toBe("there");
   });
 
   it("a short reply is read in the language of the user message it answers", () => {

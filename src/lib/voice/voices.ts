@@ -5,19 +5,45 @@ export type VoiceChoice =
   | { ok: true; lang: string; voice: SpeechSynthesisVoice | undefined }
   | { ok: false; reason: "no_voice" };
 
+/** Primary language subtag, lower-case: "ar_SA", "ar-XA", "AR" → "ar". */
+export function primaryLanguage(tag: string): string {
+  return tag.split(/[-_]/)[0]!.toLowerCase();
+}
+
+/** Region subtag, upper-case, if any: "fi_fi" → "FI". */
+function regionOf(tag: string): string | undefined {
+  return tag.split(/[-_]/)[1]?.toUpperCase();
+}
+
+/** Hyphenated BCP-47 form of a device voice tag: "ar_sa" → "ar-SA". */
+function normalizeTag(tag: string): string {
+  const [language = "", ...rest] = tag.split(/[-_]/);
+  return [language.toLowerCase(), ...rest.map((p) => (p.length === 2 ? p.toUpperCase() : p))].join(
+    "-",
+  );
+}
+
 /**
- * Picks a device voice for the interface language, preferring on-device
- * voices. Never substitutes another language: a loaded voice list without
- * this language is a definite "no voice". An empty list often just means
- * voices haven't loaded yet (Android), so the engine is left to choose by
- * `lang`.
+ * Picks a device voice for a language, matching the primary language subtag
+ * only (so "fil" never stands in for "fi"), preferring on-device voices,
+ * then the default region. Never substitutes another language: a voice list
+ * without this language is "no voice". An empty list often just means voices
+ * haven't loaded yet (Android), so it returns `ok` with no voice and leaves
+ * the decision to the caller.
  */
 export function chooseVoice(locale: string, voices: SpeechSynthesisVoice[]): VoiceChoice {
   const lang = speechLangFor(locale);
-  const prefix = lang.split("-")[0]!.toLowerCase();
-  const matching = voices.filter((v) => v.lang.toLowerCase().startsWith(prefix));
+  const primary = primaryLanguage(lang);
+  const region = regionOf(lang);
+  const matching = voices.filter((v) => primaryLanguage(v.lang ?? "") === primary);
   if (voices.length > 0 && matching.length === 0) return { ok: false, reason: "no_voice" };
-  return { ok: true, lang, voice: matching.find((v) => v.localService) ?? matching[0] };
+  const rank = (v: SpeechSynthesisVoice) =>
+    (v.localService ? 2 : 0) + (regionOf(v.lang) === region ? 1 : 0);
+  const voice = matching.reduce<SpeechSynthesisVoice | undefined>(
+    (best, v) => (!best || rank(v) > rank(best) ? v : best),
+    undefined,
+  );
+  return { ok: true, lang: voice ? normalizeTag(voice.lang) : lang, voice };
 }
 
 export type ReplyVoiceChoice =

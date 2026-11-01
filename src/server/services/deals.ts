@@ -8,6 +8,9 @@ import { noteSubject } from "./contacts";
 import { emitWorkflowEvent } from "./workflow-events";
 import { buildBusinessDnaPromptBlock, getBusinessDnaContext } from "@/server/business-dna/context";
 import type { TenantContext } from "@/server/auth/session";
+import { effectiveProbability, expectedRevenueCents } from "@/lib/crm/deal-forecast";
+import { isZonelessWallTime, zonedWallTimeToUtc } from "@/lib/date-time";
+import { getViewerTimeZone } from "./viewer-time-zone";
 import type {
   DealInput,
   DealTaskInput,
@@ -30,20 +33,9 @@ export class DealError extends Error {
   }
 }
 
-/** Effective win probability: won=100, lost=0, else deal override or stage default. */
-export function effectiveProbability(
-  deal: { probability: number | null },
-  stage: { probability: number; isWon: boolean; isLost: boolean },
-): number {
-  if (stage.isWon) return 100;
-  if (stage.isLost) return 0;
-  return deal.probability ?? stage.probability;
-}
-
-/** Probability-weighted revenue in cents. */
-export function expectedRevenueCents(valueCents: number, probability: number): number {
-  return Math.round((valueCents * probability) / 100);
-}
+// The forecast contract lives in a pure module so the board, the deals page
+// and the dashboard share one calculation; re-exported for existing callers.
+export { effectiveProbability, expectedRevenueCents };
 
 /** Kanban board data: default pipeline + ordered stages + visible deals. */
 export async function getBoard(ctx: TenantContext) {
@@ -371,6 +363,16 @@ export async function addDealNote(ctx: TenantContext, dealId: string, input: Not
   return activity;
 }
 
+/**
+ * A task's due time. The form's datetime-local value has no zone and means
+ * the user's own wall clock; parsed on the server (UTC) it was stored two or
+ * three hours late in Finland. A value with an explicit offset keeps it.
+ */
+async function taskDueAt(ctx: TenantContext, value: string): Promise<Date> {
+  if (!isZonelessWallTime(value)) return new Date(value);
+  return zonedWallTimeToUtc(value, await getViewerTimeZone(ctx.userId));
+}
+
 /** Adds a TASK activity (reminder) with an optional due date. */
 export async function addDealTask(ctx: TenantContext, dealId: string, input: DealTaskInput) {
   const db = tenantDb(ctx.orgId);
@@ -388,7 +390,7 @@ export async function addDealTask(ctx: TenantContext, dealId: string, input: Dea
       companyId: deal.companyId,
       type: "TASK",
       subject: input.title,
-      dueAt: input.dueAt ? new Date(input.dueAt) : null,
+      dueAt: input.dueAt ? await taskDueAt(ctx, input.dueAt) : null,
     },
   });
 

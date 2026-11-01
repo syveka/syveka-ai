@@ -20,6 +20,23 @@ export default async function AnalyticsPage() {
     getVoiceAnalytics(ctx),
   ]);
 
+  const number = new Intl.NumberFormat(locale);
+  // Series keys are calendar days ("YYYY-MM-DD", bucketed in UTC by the
+  // analytics service), so they are formatted as dates in UTC, not shifted.
+  const day = new Intl.DateTimeFormat(locale, { day: "numeric", month: "short", timeZone: "UTC" });
+  const series = (rows: Array<{ date: string; count: number }>) =>
+    rows.map((r) => ({
+      key: r.date,
+      label: day.format(new Date(`${r.date}T00:00:00Z`)),
+      value: r.count,
+      valueText: number.format(r.count),
+    }));
+  const chartText = (rows: Array<{ count: number }>) =>
+    t("chartSummary", {
+      count: rows.length,
+      max: number.format(Math.max(0, ...rows.map((r) => r.count))),
+    });
+
   return (
     <div className="space-y-6">
       <h1 className="text-2xl font-semibold">{t("title")}</h1>
@@ -29,7 +46,7 @@ export default async function AnalyticsPage() {
           label={t("winRate")}
           value={sales.winRate !== null ? `${sales.winRate} %` : "—"}
         />
-        <StatCard label={t("aiTokens")} value={(ai.tokensIn + ai.tokensOut).toLocaleString()} />
+        <StatCard label={t("aiTokens")} value={number.format(ai.tokensIn + ai.tokensOut)} />
         <StatCard label={t("voiceCalls30d")} value={voice.totalCalls} />
         <StatCard label={t("voiceMinutes30d")} value={voice.totalMinutes} />
       </div>
@@ -61,7 +78,12 @@ export default async function AnalyticsPage() {
           </CardHeader>
           <CardContent>
             <BarChart
-              data={ai.messagesByDay.map((d) => ({ label: d.date.slice(5), value: d.count }))}
+              data={series(ai.messagesByDay)}
+              title={t("aiMessages30d")}
+              summary={chartText(ai.messagesByDay)}
+              emptyLabel={t("noAiMessages")}
+              dateHeader={t("chartDate")}
+              valueHeader={t("chartValue")}
             />
             {ai.feedbackPositivePct !== null ? (
               <p className="mt-3 text-sm text-muted-foreground">
@@ -77,7 +99,12 @@ export default async function AnalyticsPage() {
           </CardHeader>
           <CardContent>
             <BarChart
-              data={voice.callsByDay.map((d) => ({ label: d.date.slice(5), value: d.count }))}
+              data={series(voice.callsByDay)}
+              title={t("callVolume30d")}
+              summary={chartText(voice.callsByDay)}
+              emptyLabel={t("noCalls")}
+              dateHeader={t("chartDate")}
+              valueHeader={t("chartValue")}
             />
           </CardContent>
         </Card>

@@ -5,10 +5,10 @@ import { useRouter, usePathname } from "@/i18n/routing";
 import { useSearchParams } from "next/navigation";
 import { Building2, Trash2 } from "lucide-react";
 import { Link } from "@/i18n/routing";
-import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { deleteCompanyAction } from "@/actions/companies";
+import { ListSearch } from "./list-search";
 
 type Row = {
   id: string;
@@ -35,6 +35,7 @@ export function CompaniesTable({
   const router = useRouter();
   const pathname = usePathname();
   const params = useSearchParams();
+  const query = params.get("q") ?? "";
 
   const setParam = (key: string, value?: string) => {
     const next = new URLSearchParams(params.toString());
@@ -53,13 +54,12 @@ export function CompaniesTable({
   return (
     <div className="space-y-3">
       <div className="flex flex-wrap gap-2">
-        <Input
+        <ListSearch
+          value={query}
           placeholder={t("searchCompaniesPlaceholder")}
-          defaultValue={params.get("q") ?? ""}
-          className="max-w-xs"
-          onKeyDown={(e) => {
-            if (e.key === "Enter") setParam("q", e.currentTarget.value || undefined);
-          }}
+          searchLabel={t("search")}
+          clearLabel={t("clearSearch")}
+          onSearch={(q) => setParam("q", q)}
         />
         <select
           defaultValue={params.get("archived") ?? "active"}
@@ -79,7 +79,18 @@ export function CompaniesTable({
       <Card>
         <CardContent className="divide-y p-0">
           {companies.length === 0 ? (
-            <p className="p-8 text-center text-sm text-muted-foreground">{t("noCompanies")}</p>
+            query.trim() ? (
+              <div className="space-y-3 p-8 text-center" role="status">
+                <p className="break-words text-sm text-muted-foreground">
+                  {t("noCompaniesMatch", { query: query.trim() })}
+                </p>
+                <Button variant="outline" size="sm" onClick={() => setParam("q", undefined)}>
+                  {t("clearSearch")}
+                </Button>
+              </div>
+            ) : (
+              <p className="p-8 text-center text-sm text-muted-foreground">{t("noCompanies")}</p>
+            )
           ) : (
             companies.map((c) => (
               <div key={c.id} className="flex items-center gap-3 p-4">

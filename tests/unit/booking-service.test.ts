@@ -194,6 +194,18 @@ describe("public slots", () => {
 });
 
 describe("createPublicBooking", () => {
+  // Staging QA: the CRM timeline shows only when an entry was written, so the
+  // entries name the action and the meeting time themselves.
+  it("the creation activity says it is a new booking and names the meeting time in the guest's zone", async () => {
+    await createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() });
+    expect(txMock.activity.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        subject: "New booking: Intro call",
+        body: "Guest One (guest@example.com) booked Intro call for 2026-02-02 09:00 (Europe/Helsinki).",
+      }),
+    });
+  });
+
   it("books a valid slot: event + attendee + booking + CRM activity + token", async () => {
     const result = await createPublicBooking({
       orgSlug: "acme",
@@ -570,6 +582,51 @@ describe("rescheduleBookingViaToken", () => {
     });
   });
 
+  // #339: the "Booking rescheduled" timeline entry used to be stored with
+  // contact_id = null, so it never showed on the guest's contact page.
+  it("the reschedule activity is linked to the guest's CRM contact, in the booking's own org", async () => {
+    txMock.eventAttendee.findFirst.mockResolvedValueOnce({ contactId: "contact-guest" });
+
+    await rescheduleBookingViaToken("raw-token", NEW_START);
+
+    expect(txMock.activity.create).toHaveBeenCalledTimes(1);
+    expect(txMock.activity.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organizationId: "org-a",
+        contactId: "contact-guest",
+        type: "MEETING",
+        subject: "Booking rescheduled: Intro call",
+        metadata: { bookingId: "bk-1", previousBookingId: "bk-old", kind: "rescheduled" },
+      }),
+    });
+    // The contact comes only from the old booking's own attendee row, so a
+    // contact of another organization can never be attached.
+    expect(txMock.eventAttendee.findFirst).toHaveBeenCalledTimes(1);
+    expect(txMock.eventAttendee.findFirst).toHaveBeenCalledWith(
+      expect.objectContaining({ where: { eventId: "evt-old", email: "guest@example.com" } }),
+    );
+  });
+
+  it("the reschedule activity names both the old and the new meeting time", async () => {
+    await rescheduleBookingViaToken("raw-token", NEW_START);
+    expect(txMock.activity.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        subject: "Booking rescheduled: Intro call",
+        body: "Guest One moved the meeting from 2026-02-02 09:00 (Europe/Helsinki) to 2026-02-03 10:00 (Europe/Helsinki).",
+      }),
+    });
+  });
+
+  it("the reschedule activity has a null contact when the guest has none (unchanged behavior)", async () => {
+    await rescheduleBookingViaToken("raw-token", NEW_START);
+    expect(txMock.activity.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        contactId: null,
+        subject: "Booking rescheduled: Intro call",
+      }),
+    });
+  });
+
   it("booking.rescheduled carries the contact, guest, type, and both times, keyed by the successor booking", async () => {
     txMock.eventAttendee.findFirst.mockResolvedValueOnce({ contactId: "contact-guest" });
 
@@ -839,6 +896,45 @@ describe("cancelBookingViaToken", () => {
       expect.objectContaining({ contactId: null }),
       "bk-old",
     );
+    expect(txMock.activity.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ contactId: null, subject: "Booking canceled: Intro call" }),
+    });
+  });
+
+  // #339: the "Booking canceled" timeline entry used to be stored with
+  // contact_id = null, so it never showed on the guest's contact page.
+  it("the cancel activity is linked to the guest's CRM contact, looked up within the booking's org", async () => {
+    txMock.eventAttendee.findFirst.mockResolvedValueOnce({ contactId: "contact-guest" });
+
+    await cancelBookingViaToken("raw-token", "change of plans");
+
+    expect(txMock.activity.create).toHaveBeenCalledTimes(1);
+    expect(txMock.activity.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organizationId: "org-a",
+        contactId: "contact-guest",
+        type: "MEETING",
+        subject: "Booking canceled: Intro call",
+        body: "Guest One canceled the meeting on 2026-02-02 09:00 (Europe/Helsinki). Reason: change of plans",
+        metadata: { bookingId: "bk-old", kind: "canceled" },
+      }),
+    });
+    // One tenant-bound lookup serves both the activity and the workflow payload.
+    expect(txMock.eventAttendee.findFirst).toHaveBeenCalledTimes(1);
+    expect(txMock.eventAttendee.findFirst).toHaveBeenCalledWith({
+      where: { eventId: "evt-old", email: "guest@example.com", event: { organizationId: "org-a" } },
+      select: { contactId: true },
+    });
+  });
+
+  it("a guest attendee of another org's event is never linked (the tenant-scoped lookup finds nothing)", async () => {
+    // The scoped query returns no row for a foreign-org attendee; the entry
+    // then stays unlinked rather than pointing at a contact across tenants.
+    txMock.eventAttendee.findFirst.mockResolvedValueOnce(null);
+    await cancelBookingViaToken("raw-token");
+    expect(txMock.activity.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({ organizationId: "org-a", contactId: null }),
+    });
   });
 
   it("emits nothing when the cancel loses the race (no duplicate booking.canceled)", async () => {
@@ -985,6 +1081,22 @@ describe("cancelBookingAsOwner", () => {
       },
       "bk-old",
     );
+  });
+
+  it("the owner-cancel activity is linked to the guest's CRM contact like the guest path (#339)", async () => {
+    txMock.eventAttendee.findFirst.mockResolvedValueOnce({ contactId: "contact-guest" });
+
+    await cancelBookingAsOwner(ownerCtx(), "bk-old", "owner canceled by phone");
+
+    expect(txMock.activity.create).toHaveBeenCalledTimes(1);
+    expect(txMock.activity.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        organizationId: "org-a",
+        contactId: "contact-guest",
+        subject: "Booking canceled: Intro call",
+        metadata: { bookingId: "bk-old", kind: "canceled" },
+      }),
+    });
   });
 
   it("an owner cancel from the calendar (no reason given) sends reason null", async () => {

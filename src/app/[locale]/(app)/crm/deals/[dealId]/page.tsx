@@ -19,7 +19,10 @@ import { DealInsights } from "@/components/crm/deal-insights";
 import { DealTasks } from "@/components/crm/deal-tasks";
 import { EntityActions } from "@/components/crm/entity-actions";
 import { NoteComposer } from "@/components/crm/note-composer";
-import { formatCents, formatDate } from "@/lib/utils";
+import { formatCents } from "@/lib/utils";
+import { formatDateTimeInTimeZone } from "@/lib/date-time";
+import { getViewerTimeZone } from "@/server/services/viewer-time-zone";
+import { ActivityTimeline } from "@/components/crm/activity-timeline";
 import { stageLabel } from "@/lib/crm/stage-labels";
 import { Link } from "@/i18n/routing";
 import { EntityMeetings } from "@/components/calendar/entity-meetings";
@@ -34,13 +37,18 @@ export default async function DealDetailPage({ params }: { params: Promise<{ dea
   const canWrite = can(ctx.role, "crm:write");
   const canDelete = can(ctx.role, "crm:delete");
 
-  const [deal, contacts, companies, owners] = await Promise.all([
+  const [deal, contacts, companies, owners, timeZone] = await Promise.all([
     getDeal(ctx, dealId),
     canWrite ? listContactOptions(ctx) : Promise.resolve([]),
     canWrite ? listCompanyOptions(ctx) : Promise.resolve([]),
     listOwnerOptions(ctx),
+    getViewerTimeZone(ctx.userId),
   ]);
   if (!deal) notFound();
+  // Instants in the viewer's zone. The expected close date is a calendar date
+  // stored as UTC midnight (YYYY-MM-DD from the form), so it is read in UTC.
+  const formatDay = (value: Date, zone: string = timeZone) =>
+    formatDateTimeInTimeZone(value, locale, zone, { dateStyle: "medium" });
 
   const probability = effectiveProbability(deal, deal.stage);
   const forecast = expectedRevenueCents(deal.valueCents, probability);
@@ -144,22 +152,12 @@ export default async function DealDetailPage({ params }: { params: Promise<{ dea
               </div>
               <InfoRow
                 label={t("dealFields.expectedClose")}
-                value={
-                  deal.expectedCloseAt
-                    ? formatDate(deal.expectedCloseAt, locale, { dateStyle: "medium" })
-                    : null
-                }
+                value={deal.expectedCloseAt ? formatDay(deal.expectedCloseAt, "UTC") : null}
               />
               {deal.closedAt ? (
-                <InfoRow
-                  label={t("closedLabel")}
-                  value={formatDate(deal.closedAt, locale, { dateStyle: "medium" })}
-                />
+                <InfoRow label={t("closedLabel")} value={formatDay(deal.closedAt)} />
               ) : null}
-              <InfoRow
-                label={t("createdLabel")}
-                value={formatDate(deal.createdAt, locale, { dateStyle: "medium" })}
-              />
+              <InfoRow label={t("createdLabel")} value={formatDay(deal.createdAt)} />
             </CardContent>
           </Card>
 
@@ -171,6 +169,7 @@ export default async function DealDetailPage({ params }: { params: Promise<{ dea
               <DealTasks
                 dealId={deal.id}
                 canWrite={canWrite}
+                timeZone={timeZone}
                 tasks={deal.tasks.map((task) => ({
                   id: task.id,
                   subject: task.subject,
@@ -189,27 +188,12 @@ export default async function DealDetailPage({ params }: { params: Promise<{ dea
           </CardHeader>
           <CardContent className="space-y-4">
             {canWrite ? <NoteComposer action={addDealNoteAction.bind(null, deal.id)} /> : null}
-            {deal.timeline.length === 0 ? (
-              <p className="text-sm text-muted-foreground">{t("noActivities")}</p>
-            ) : (
-              <div className="space-y-3">
-                {deal.timeline.map((a) => (
-                  <div key={a.id} className="border-s-2 border-border ps-3">
-                    <p className="text-sm font-medium">{a.subject}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {t(`activityTypes.${a.type}` as never)} ·{" "}
-                      {formatDate(a.createdAt, locale, { dateStyle: "medium", timeStyle: "short" })}
-                      {a.user?.fullName ? <> · {a.user.fullName}</> : null}
-                    </p>
-                    {a.body && a.body !== a.subject ? (
-                      <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">
-                        {a.body}
-                      </p>
-                    ) : null}
-                  </div>
-                ))}
-              </div>
-            )}
+            <ActivityTimeline
+              activities={deal.timeline}
+              stages={deal.pipeline.stages}
+              locale={locale}
+              timeZone={timeZone}
+            />
           </CardContent>
         </Card>
       </div>

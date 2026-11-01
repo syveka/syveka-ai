@@ -34,6 +34,34 @@ function businessDnaHasAnyFact(dna: Awaited<ReturnType<typeof getBusinessDnaCont
 }
 
 /**
+ * The email channel's truthful state, shared by the Dashboard readiness
+ * checklist and the Inbox status line so both say the same thing:
+ *
+ * - `mock`: the test provider is active; messages are simulated.
+ * - `not_configured`: Resend credentials are missing.
+ * - `verification_required`: credentials are present, but no real inbound
+ *   email has been received yet, so nothing proves mail actually reaches the
+ *   inbox (credentials alone are not end-to-end capability).
+ * - `ready`: a real inbound email (with a provider message id) has been
+ *   received. This proves receiving only; it says nothing about sending.
+ */
+export type EmailChannelStatus = "mock" | "not_configured" | "verification_required" | "ready";
+
+export async function getEmailChannelStatus(ctx: TenantContext): Promise<EmailChannelStatus> {
+  const adapter = getEmailChannelAdapter();
+  if (adapter.provider === "MOCK") return "mock";
+  if (adapter.provider !== "RESEND" || !adapter.isConfigured()) return "not_configured";
+  const hasReceivedRealEmail = await tenantDb(ctx.orgId).inboxThread.findFirst({
+    where: {
+      channel: "EMAIL",
+      messages: { some: { direction: "INBOUND", externalId: { not: null } } },
+    },
+    select: { id: true },
+  });
+  return hasReceivedRealEmail ? "ready" : "verification_required";
+}
+
+/**
  * Truthful, org-scoped setup-readiness summary for the core MVP loop
  * (Business DNA -> Email channel -> Booking -> CRM -> Voice). Deliberately
  * excludes Calendar and Stripe billing — outside the Dashboard -> Inbox ->
@@ -59,19 +87,13 @@ export async function getOrgSetupReadiness(ctx: TenantContext): Promise<Readines
   const [
     businessDna,
     activeBookingTypeCount,
-    hasReceivedRealEmail,
+    emailStatus,
     activeVoiceAssistant,
     hasCompletedRealCall,
   ] = await Promise.all([
     getBusinessDnaContext(ctx.orgId),
     db.bookingType.count({ where: { isActive: true, deletedAt: null } }),
-    db.inboxThread.findFirst({
-      where: {
-        channel: "EMAIL",
-        messages: { some: { direction: "INBOUND", externalId: { not: null } } },
-      },
-      select: { id: true },
-    }),
+    getEmailChannelStatus(ctx),
     db.voiceAssistant.findFirst({
       where: { isActive: true, vapiAssistantId: { not: null } },
       select: { id: true },
@@ -79,13 +101,8 @@ export async function getOrgSetupReadiness(ctx: TenantContext): Promise<Readines
     db.voiceCall.findFirst({ where: { status: "COMPLETED" }, select: { id: true } }),
   ]);
 
-  const emailAdapter = getEmailChannelAdapter();
-  const emailConfigured = emailAdapter.provider === "RESEND" && emailAdapter.isConfigured();
-  const emailState: ReadinessState = !emailConfigured
-    ? "not_configured"
-    : hasReceivedRealEmail
-      ? "ready"
-      : "verification_required";
+  // The simulated test provider is not a configured channel.
+  const emailState: ReadinessState = emailStatus === "mock" ? "not_configured" : emailStatus;
 
   const voiceState: ReadinessState = !activeVoiceAssistant
     ? "setup_required"

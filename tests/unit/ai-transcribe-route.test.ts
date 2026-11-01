@@ -19,6 +19,7 @@ const m = vi.hoisted(() => ({
   recordUsage: vi.fn(async () => {}),
   limit: vi.fn(),
   member: true,
+  memberCheck: vi.fn(),
   reserve: vi.fn(),
   order: [] as string[],
   audit: vi.fn(async (..._args: unknown[]) => undefined),
@@ -38,7 +39,10 @@ vi.mock("@/server/integrations/redis", () => ({
   redis: { eval: vi.fn() },
 }));
 vi.mock("@/server/ai/transcription-pilot", () => ({
-  isTranscriptionPilotMember: () => m.member,
+  isTranscriptionPilotMember: (ctx: unknown) => {
+    m.memberCheck(ctx);
+    return m.member;
+  },
   reserveDailyTranscriptionAttempt: m.reserve,
 }));
 vi.mock("@/server/integrations/openai", () => ({
@@ -137,6 +141,7 @@ beforeEach(() => {
   m.rate = { success: true, reset: Date.now() + 1000, limit: 20, remaining: 19 };
   m.limit.mockReset().mockImplementation(async () => m.rate);
   m.member = true;
+  m.memberCheck.mockClear();
   m.order = [];
   m.reserve.mockReset().mockImplementation(async () => {
     m.order.push("reserve");
@@ -300,6 +305,18 @@ describe("staging pilot: allowlist and daily attempts", () => {
     expect(res).toEqual({ status: 403, body: { error: { code: "voice_not_enabled" } } });
     expect(m.limit).not.toHaveBeenCalled();
     expect(m.reserve).not.toHaveBeenCalled();
+    expect(m.transcribe).not.toHaveBeenCalled();
+  });
+
+  it("decides allowlist membership from the session's organization and user, never the request's", async () => {
+    const OTHER = "99999999-9999-4999-8999-999999999999";
+    m.member = false;
+    const res = await call(request(webm(), { orgId: OTHER, userId: OTHER }));
+    expect(res.status).toBe(403);
+    expect(m.memberCheck).toHaveBeenCalledTimes(1);
+    expect(m.memberCheck).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: ORG, userId: USER }),
+    );
     expect(m.transcribe).not.toHaveBeenCalled();
   });
 

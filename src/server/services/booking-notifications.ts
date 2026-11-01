@@ -82,6 +82,46 @@ function formatWhen(startsAt: Date, endsAt: Date, timezone: string, locale: stri
   return `${fmt.format(startsAt)} – ${end.format(endsAt)} (${timezone})`;
 }
 
+/**
+ * The owner's in-app notification names what happened first, so the list
+ * reads "New booking: Intro call — Anna" rather than just the meeting name.
+ * Stored text, written in the owner's own language when the row is created;
+ * rows written earlier keep the wording they had.
+ */
+const OWNER_NOTIFICATION_ACTIONS: Record<BookingEmailLocale, Record<BookingEmailKind, string>> = {
+  en: {
+    confirmation: "New booking",
+    reschedule: "Booking rescheduled",
+    cancellation: "Booking canceled",
+    reminder: "Upcoming meeting",
+  },
+  fi: {
+    confirmation: "Uusi varaus",
+    reschedule: "Varaus siirretty",
+    cancellation: "Varaus peruttu",
+    reminder: "Tuleva tapaaminen",
+  },
+  ar: {
+    confirmation: "حجز جديد",
+    reschedule: "تمت إعادة جدولة الحجز",
+    cancellation: "تم إلغاء الحجز",
+    reminder: "اجتماع قادم",
+  },
+};
+
+function toNotificationLocale(locale: string | null | undefined): BookingEmailLocale {
+  return locale === "FI" ? "fi" : locale === "AR" ? "ar" : "en";
+}
+
+export function ownerNotificationTitle(
+  kind: BookingEmailKind,
+  locale: BookingEmailLocale,
+  bookingTypeName: string,
+  guestName: string,
+): string {
+  return `${OWNER_NOTIFICATION_ACTIONS[locale][kind]}: ${bookingTypeName} — ${guestName}`;
+}
+
 export async function sendBookingLifecycleNotifications(params: {
   kind: BookingEmailKind;
   bookingId: string;
@@ -134,7 +174,7 @@ export async function sendBookingLifecycleNotifications(params: {
   // Internal attendee (owner) email + in-app notification.
   const owner = await unscopedPrisma.user.findUnique({
     where: { id: booking.bookingType.ownerId },
-    select: { id: true, email: true, timezone: true },
+    select: { id: true, email: true, timezone: true, locale: true },
   });
   if (owner) {
     const ownerWhen = formatWhen(booking.startsAt, booking.endsAt, owner.timezone, "en");
@@ -155,14 +195,22 @@ export async function sendBookingLifecycleNotifications(params: {
       }),
     );
 
+    // In the owner's language and zone (the guest's may differ); for a
+    // reschedule this is the new time.
+    const ownerLocale = toNotificationLocale(owner.locale);
     await once(keyFor("in-app"), params.kind, "owner_notification", booking.id, () =>
       unscopedPrisma.notification.create({
         data: {
           organizationId: booking.organizationId,
           userId: owner.id,
           type: `booking.${params.kind}`,
-          title: `${booking.bookingType.name} — ${booking.guestName}`,
-          body: whenText,
+          title: ownerNotificationTitle(
+            params.kind,
+            ownerLocale,
+            booking.bookingType.name,
+            booking.guestName,
+          ),
+          body: formatWhen(booking.startsAt, booking.endsAt, owner.timezone, ownerLocale),
           href: "/calendar",
         },
       }),

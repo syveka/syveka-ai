@@ -213,6 +213,9 @@
   "chat": {
     "emptyState": "Kysy mitä tahansa yrityksestäsi — voin hakea tietopankista, CRM:stä ja kalenterista.",
     "newConversation": "Uusi keskustelu",
+    "conversations": "Keskustelut",
+    "sources": "Lähteet",
+    "citation": "Lähde {number}: {title}",
     "placeholder": "Viesti Syvekalle…",
     "useKnowledgeBase": "Käytä tietopankkia",
     "attachFile": "Liitä PDF-, DOCX- tai TXT-tiedosto",
@@ -239,13 +242,11 @@
     },
     "voice": {
       "record": "Nauhoita ääniviesti",
-      "stopRecording": "Lopeta ja litteroi",
       "cancel": "Peruuta",
       "recording": "Nauhoitetaan…",
       "requesting": "Odotetaan mikrofonin käyttölupaa…",
       "transcribing": "Litteroidaan…",
       "maxDuration": "Nauhoitus päättyy automaattisesti {seconds} sekunnin kohdalla.",
-      "privacy": "Nauhoitus lähetetään puheentunnistuspalvelullemme (OpenAI) vain tekstin luomista varten, eikä sitä tallenneta.",
       "transcriptAdded": "Teksti lisättiin viestikenttään. Tarkista se ja paina Lähetä.",
       "recordingStarted": "Nauhoitus alkoi.",
       "recordingCancelled": "Nauhoitus peruttiin.",
@@ -253,9 +254,10 @@
       "listen": "Kuuntele",
       "stopListening": "Lopeta ääneen lukeminen",
       "listenLabel": "Lue vastaus ääneen",
+      "preparingVoice": "Valmistellaan puheääntä…",
       "playbackErrors": {
         "unsupported": "Tämä selain ei osaa lukea vastauksia ääneen.",
-        "no_voice": "Tässä laitteessa ei ole puheääntä tälle kielelle.",
+        "no_voice": "Tähän laitteeseen ei ole asennettu puheääntä kielelle {language}. Jos haluat kuunnella vastauksia, asenna puhedata kielelle {language} laitteen tekstistä puheeksi -asetuksista. Voit silti lukea vastauksen yllä.",
         "unknown_language": "Tämän vastauksen kieltä ei voitu yhdistää puheääneen.",
         "playback_failed": "Vastausta ei voitu lukea ääneen."
       },
@@ -276,8 +278,19 @@
         "timeout": "Litterointi kesti liian kauan. Yritä uudelleen.",
         "network_error": "Yhteys katkesi litteroinnin aikana. Yritä uudelleen.",
         "transcription_failed": "Nauhoitusta ei voitu litteroida. Yritä uudelleen.",
-        "daily_limit": "Tämän pilotin {limit} päivittäistä puheen litterointia on käytetty. Yritä huomenna uudelleen (Suomen aikaa) tai kirjoita viestisi."
-      }
+        "daily_limit": "Tämän pilotin {limit} päivittäistä puheen litterointia on käytetty. Yritä huomenna uudelleen (Suomen aikaa) tai kirjoita viestisi.",
+        "interrupted": "Nauhoitus keskeytyi odottamatta (mikrofoni irrotettiin tai toinen sovellus otti sen käyttöön). Mitään ei lähetetty. Yritä uudelleen."
+      },
+      "stop": "Lopeta",
+      "reviewTitle": "Nauhoitus valmis",
+      "reviewHint": "Voit kuunnella sen ensin. Mitään ei lähetetä ennen kuin painat Litteroi.",
+      "transcribe": "Litteroi",
+      "discard": "Hylkää",
+      "playbackLabel": "Kuuntele nauhoituksesi",
+      "recordingReady": "Nauhoitus lopetettu. Kuuntele se ja litteroi tai hylkää.",
+      "recordingDiscarded": "Nauhoitus hylätty.",
+      "privacyNote": "Avustajalle menee vain lähettämäsi teksti. Nauhoitusta käytetään vain tekstin luomiseen: se lähetetään puheentunnistuspalvelullemme (OpenAI), eikä Syveka tallenna sitä.",
+      "retryHint": "Nauhoitus on tallessa: yritä uudelleen painamalla Litteroi."
     },
     "live": {
       "start": "Aloita puhekeskustelu",
@@ -484,6 +497,10 @@
     "editContact": "Muokkaa kontaktia",
     "noCompanies": "Ei yrityksiä vielä.",
     "searchCompaniesPlaceholder": "Hae nimellä, verkkotunnuksella, toimialalla…",
+    "search": "Hae",
+    "clearSearch": "Tyhjennä haku",
+    "noContactsMatch": "Haulla ”{query}” ei löytynyt kontakteja.",
+    "noCompaniesMatch": "Haulla ”{query}” ei löytynyt yrityksiä.",
     "contactCount": "{count} kontaktia",
     "dealCount": "{count} myyntimahdollisuutta",
     "archivedBadge": "Arkistoitu",
@@ -566,6 +583,22 @@
       "negotiation": "Neuvottelu",
       "won": "Voitettu",
       "lost": "Hävitty"
+    },
+    "defaultPipelineName": "Myyntiputki",
+    "stageName": "Vaiheen nimi",
+    "systemActivity": {
+      "stageChange": "{from} → {to}",
+      "bookingBookedSubject": "Uusi ajanvaraus: {type}",
+      "bookingBookedBody": "{guest} ({email}) varasi ajan: {type}.",
+      "bookingCanceledSubject": "Ajanvaraus peruttu: {type}",
+      "bookingCanceledBody": "{guest} perui varauksen.",
+      "bookingCanceledBodyWithReason": "{guest} perui varauksen. Syy: {reason}",
+      "bookingRescheduledSubject": "Ajanvaraus siirretty: {type}",
+      "bookingRescheduledBody": "{guest} siirsi tapaamisen.",
+      "bookingBookedBodyAt": "{guest} ({email}) varasi ajan: {type}, {time}.",
+      "bookingCanceledBodyAt": "{guest} perui tapaamisen {time}.",
+      "bookingCanceledBodyAtWithReason": "{guest} perui tapaamisen {time}. Syy: {reason}",
+      "bookingRescheduledBodyFromTo": "{guest} siirsi tapaamisen ajasta {from} aikaan {to}."
     }
   },
   "voice": {
@@ -664,7 +697,9 @@
       "company": "Yritys",
       "deal": "Kauppa",
       "attendees": "Osallistujat",
-      "guestEmails": "Vieraiden sähköpostit (pilkuin eroteltuna)"
+      "guestEmails": "Vieraiden sähköpostit (pilkuin eroteltuna)",
+      "guestEmailsLabel": "Vieraiden sähköpostit",
+      "guestEmailsHint": "Vieraille, jotka eivät ole kontakteja. Erota useampi osoite pilkuilla, esimerkiksi anna@example.com, ben@example.com."
     },
     "views": {
       "day": "Päivä",
@@ -754,9 +789,22 @@
       "collectCompany": "Kysy yritys",
       "confirmationMessage": "Vahvistusviesti",
       "slugTaken": "URL-tunnus on jo käytössä",
-      "ownerNotMember": "Tämän varaustyypin omistaja ei ole enää jäsen, joten sitä ei voi aktivoida."
+      "ownerNotMember": "Tämän varaustyypin omistaja ei ole enää jäsen, joten sitä ei voi aktivoida.",
+      "copyFailed": "Kopiointi ei onnistunut. Valitse linkki yllä ja kopioi se itse."
     },
-    "connectCalendarLink": "Yhdistä kalenteri"
+    "connectCalendarLink": "Yhdistä kalenteri",
+    "attendeePicker": {
+      "clear": "Tyhjennä kaikki",
+      "selectedCount": "{count, plural, =0 {Ei valittuja kontakteja} one {# kontakti valittu} other {# kontaktia valittu}}",
+      "selectedList": "Valitut osallistujat",
+      "remove": "Poista {name}",
+      "unknownContact": "Tuntematon kontakti",
+      "noContacts": "Lisättäviä kontakteja ei vielä ole.",
+      "filter": "Suodata kontakteja",
+      "noMatches": "Ei vastaavia kontakteja"
+    },
+    "monthDayEvents": "{count, plural, one {# tapahtuma} other {# tapahtumaa}}: {date}. Avaa päivänäkymä.",
+    "monthMoreEvents": "{count, plural, one {# tapahtuma lisää} other {# tapahtumaa lisää}}. Avaa päivänäkymä."
   },
   "notifications": {
     "title": "Ilmoitukset",
@@ -779,7 +827,12 @@
       "positive": "Positiivinen",
       "neutral": "Neutraali",
       "negative": "Negatiivinen"
-    }
+    },
+    "noAiMessages": "Ei AI-viestejä viimeisen 30 päivän aikana.",
+    "noCalls": "Ei puheluita viimeisen 30 päivän aikana.",
+    "chartSummary": "{count, plural, one {# päivä, jolta on tietoja} other {# päivää, joilta on tietoja}}, suurin {max}.",
+    "chartDate": "Päivämäärä",
+    "chartValue": "Määrä"
   },
   "prompts": {
     "title": "Promptikirjasto",
@@ -862,6 +915,27 @@
       "quota": "Tilaukseesi eivät sisälly työnkulut. Päivitä tilaus testataksesi.",
       "rateLimited": "Liian monta testiajoa. Yritä myöhemmin uudelleen.",
       "unavailable": "Testiajot eivät ole tilapäisesti käytettävissä. Yritä uudelleen."
+    },
+    "runsCount": "{count, plural, one {# ajo} other {# ajoa}}",
+    "runStatus": {
+      "RUNNING": "Käynnissä",
+      "SUCCEEDED": "Onnistui",
+      "FAILED": "Epäonnistui",
+      "CANCELED": "Peruttu",
+      "WAITING": "Odottaa"
+    },
+    "toggleLabel": "{name}",
+    "entitlement": {
+      "notIncluded": "Automaatiot eivät sisälly nykyiseen tilaukseesi. Voit rakentaa ja tallentaa automaatioita luonnoksina, mutta niiden aktivointi ja testiajo vaativat tilauksen, johon automaatiot sisältyvät.",
+      "readOnly": "Työtilasi on vain luku -tilassa, koska tilauksen maksu on myöhässä, joten automaatioita ei voi aktivoida eikä testata.",
+      "limitReached": "{limit, plural, one {Tilauksesi # aktiivinen automaatio on käytössä.} other {Kaikki tilauksesi # aktiivista automaatiota ovat käytössä.}} Poista yksi käytöstä tai päivitä tilaus aktivoidaksesi uuden.",
+      "viewPlans": "Katso tilaukset",
+      "activationUnavailable": "Aktivointi ei ole käytettävissä nykyisellä tilauksellasi."
+    },
+    "saveErrors": {
+      "invalid_input": "Joitakin automaation kenttiä puuttuu tai ne ovat virheellisiä. Tarkista ne ja yritä uudelleen.",
+      "duplicate_step_id": "Kahdella vaiheella on sama tunniste. Poista toinen ja lisää se uudelleen.",
+      "recipient_not_member": "Ilmoituksen vastaanottajan on oltava tämän organisaation jäsen."
     }
   },
   "billingPage": {
@@ -944,6 +1018,12 @@
       "pickNewTime": "Valitse uusi aika",
       "confirmReschedule": "Vahvista uusi aika",
       "back": "Takaisin"
+    },
+    "languageLabel": "Kieli",
+    "unavailable": {
+      "title": "Tämä varaussivu ei ole käytettävissä",
+      "description": "Linkki voi olla virheellinen, tai ajanvaraus voi olla toistaiseksi suljettu.",
+      "contactHint": "Ota yhteyttä henkilöön tai yritykseen, joka jakoi linkin sinulle."
     }
   },
   "integrations": {
@@ -988,9 +1068,10 @@
       "WEB_CHAT": "Verkkochat"
     },
     "channelStatus": {
-      "connected": "Sähköposti yhdistetty",
       "mock": "Testisähköpostipalvelu käytössä — viestit ovat simuloituja, eivät oikeita",
-      "notConfigured": "Sähköpostia ei ole vielä määritetty"
+      "notConfigured": "Sähköpostia ei ole vielä määritetty",
+      "configuredUnverified": "Sähköpostipalvelu määritetty — ei vielä vahvistettu: saapuvaa sähköpostia ei ole vastaanotettu",
+      "receiving": "Saapuvaa sähköpostia vastaanotettu: vähintään yksi oikea viesti on saapunut"
     },
     "status": {
       "OPEN": "Avoin",

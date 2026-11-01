@@ -1,11 +1,14 @@
-import { Plus, Pin } from "lucide-react";
+import { Pin } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { Link } from "@/i18n/routing";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 
 type Item = { id: string; title: string; isPinned: boolean };
 
+/**
+ * Earlier conversations (desktop). "New conversation" lives in the chat view
+ * itself, on every screen size, so a new chat also resets an unsaved one.
+ */
 export async function ConversationList({
   conversations,
   activeId,
@@ -16,15 +19,10 @@ export async function ConversationList({
   const t = await getTranslations("chat");
   return (
     <aside className="hidden w-64 shrink-0 flex-col border-e md:flex">
-      <div className="p-3">
-        <Button variant="outline" className="w-full justify-start gap-2" asChild>
-          <Link href="/chat">
-            <Plus className="size-4" />
-            {t("newConversation")}
-          </Link>
-        </Button>
-      </div>
-      <nav className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-4">
+      <nav
+        aria-label={t("conversations")}
+        className="flex-1 space-y-0.5 overflow-y-auto px-2 pb-4 pt-3"
+      >
         {conversations.map((c) => (
           <Link
             key={c.id}
@@ -37,7 +35,9 @@ export async function ConversationList({
             )}
           >
             {c.isPinned ? <Pin className="size-3 shrink-0" /> : null}
-            <span className="truncate">{c.title}</span>
+            <span dir="auto" className="truncate">
+              {c.title}
+            </span>
           </Link>
         ))}
       </nav>

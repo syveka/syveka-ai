@@ -197,6 +197,7 @@ export function CalendarView({
           canWrite={canWrite}
           onDayClick={(day) => canWrite && setDialog({ date: day })}
           onEventClick={(e) => setDialog({ event: e })}
+          onShowDay={(day) => setParams({ view: "day", date: day })}
         />
       ) : view === "agenda" ? (
         <AgendaList
@@ -246,6 +247,11 @@ function weekDays(anchor: Date): string[] {
   );
 }
 
+/** "10:00 Intro call", or just the title for an all-day event. */
+function eventLabel(event: CalEvent, timeFmt: Intl.DateTimeFormat): string {
+  return event.allDay ? event.title : `${timeFmt.format(new Date(event.startsAt))} ${event.title}`;
+}
+
 function EventChip({
   event,
   timeFmt,
@@ -255,12 +261,18 @@ function EventChip({
   timeFmt: Intl.DateTimeFormat;
   onClick: () => void;
 }) {
+  const label = eventLabel(event, timeFmt);
   return (
     <button
+      type="button"
       onClick={(ev) => {
         ev.stopPropagation();
         onClick();
       }}
+      // The visible text is truncated in narrow cells; the name and tooltip
+      // always carry the full time and title.
+      aria-label={label}
+      title={label}
       className={cn(
         "flex w-full items-center gap-1 truncate rounded px-1.5 py-0.5 text-start text-xs",
         event.source === "VOICE_AI"
@@ -270,12 +282,13 @@ function EventChip({
             : "bg-primary/10 text-primary",
       )}
     >
-      {event.source === "VOICE_AI" ? <Phone className="size-3 shrink-0" /> : null}
-      {event.source === "BOOKING" ? <CalendarClock className="size-3 shrink-0" /> : null}
-      <span className="truncate">
-        {!event.allDay ? `${timeFmt.format(new Date(event.startsAt))} ` : ""}
-        {event.title}
-      </span>
+      {event.source === "VOICE_AI" ? (
+        <Phone className="size-3 shrink-0" aria-hidden="true" />
+      ) : null}
+      {event.source === "BOOKING" ? (
+        <CalendarClock className="size-3 shrink-0" aria-hidden="true" />
+      ) : null}
+      <span className="truncate">{label}</span>
     </button>
   );
 }
@@ -289,6 +302,7 @@ function MonthGrid({
   canWrite,
   onDayClick,
   onEventClick,
+  onShowDay,
 }: {
   anchor: Date;
   eventsByDay: Map<string, CalEvent[]>;
@@ -298,10 +312,19 @@ function MonthGrid({
   canWrite: boolean;
   onDayClick: (day: string) => void;
   onEventClick: (e: CalEvent) => void;
+  /** Opens the day view, where every event of the day has room for its label. */
+  onShowDay: (day: string) => void;
 }) {
+  const t = useTranslations("calendar");
   const month = anchor.getUTCMonth();
   const weeks = buildMonthGrid(anchor.getUTCFullYear(), month);
   const weekdayFmt = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" });
+  const dayNameFmt = new Intl.DateTimeFormat(locale, {
+    weekday: "long",
+    day: "numeric",
+    month: "long",
+    timeZone: "UTC",
+  });
 
   return (
     <div className="grid grid-cols-7 overflow-hidden rounded-lg border text-sm">
@@ -321,7 +344,7 @@ function MonthGrid({
             key={day}
             onClick={() => onDayClick(day)}
             className={cn(
-              "min-h-24 border-b border-e p-1.5 align-top",
+              "min-h-16 min-w-0 border-b border-e p-1 align-top sm:min-h-24 sm:p-1.5",
               !inMonth && "bg-muted/30 text-muted-foreground",
               canWrite && "cursor-pointer hover:bg-accent/40",
             )}
@@ -334,7 +357,25 @@ function MonthGrid({
             >
               {Number(day.slice(8, 10))}
             </span>
-            <div className="mt-1 space-y-1">
+            {/* Phones: a seventh of the screen can't show "10:00 Title" (it read "1…"),
+                so the cell shows how many events the day has and opens the day view. */}
+            {dayEvents.length > 0 ? (
+              <button
+                type="button"
+                onClick={(ev) => {
+                  ev.stopPropagation();
+                  onShowDay(day);
+                }}
+                aria-label={t("monthDayEvents", {
+                  count: dayEvents.length,
+                  date: dayNameFmt.format(new Date(`${day}T12:00:00Z`)),
+                })}
+                className="mt-1 flex min-h-9 w-full items-center justify-center rounded bg-primary/15 text-xs font-medium text-primary sm:hidden"
+              >
+                {dayEvents.length}
+              </button>
+            ) : null}
+            <div className="mt-1 hidden space-y-1 sm:block">
               {dayEvents.slice(0, 3).map((e) => (
                 <EventChip
                   key={`${e.id}-${e.startsAt}`}
@@ -344,7 +385,17 @@ function MonthGrid({
                 />
               ))}
               {dayEvents.length > 3 ? (
-                <p className="px-1.5 text-xs text-muted-foreground">+{dayEvents.length - 3}</p>
+                <button
+                  type="button"
+                  onClick={(ev) => {
+                    ev.stopPropagation();
+                    onShowDay(day);
+                  }}
+                  aria-label={t("monthMoreEvents", { count: dayEvents.length - 3 })}
+                  className="px-1.5 text-xs text-muted-foreground hover:underline"
+                >
+                  +{dayEvents.length - 3}
+                </button>
               ) : null}
             </div>
           </div>

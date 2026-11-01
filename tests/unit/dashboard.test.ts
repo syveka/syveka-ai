@@ -103,6 +103,7 @@ function createMockDb(orgId: keyof typeof orgData) {
           _sum: { valueCents: data.pipelineValueCents },
         },
       ]),
+      findMany: vi.fn(async () => []),
     },
     activity: {
       count: vi.fn(async ({ where }: { where: { dueAt: { lt?: Date } } }) =>

@@ -3,6 +3,7 @@ import "server-only";
 import { Prisma } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { rescheduleDurationMinutes } from "@/lib/booking-duration";
+import { resolveDisplayTimeZone, toZonedWallTime } from "@/lib/date-time";
 import { audit } from "./audit";
 import { emitWorkflowEvent } from "./workflow-events";
 import { emitContactCreated } from "./contacts";
@@ -563,8 +564,8 @@ export async function createPublicBooking(params: {
         organizationId: orgId,
         contactId: matchedContact.id,
         type: "MEETING",
-        subject: `Booking: ${bookingType.name}`,
-        body: `${input.name} (${input.email}) booked ${bookingType.name}.`,
+        subject: `New booking: ${bookingType.name}`,
+        body: `${input.name} (${input.email}) booked ${bookingType.name} for ${activityTime(startsAt, input.timezone)}.`,
         dueAt: startsAt,
         metadata: { bookingId: booking.id, kind: "booked" },
       },
@@ -678,16 +679,30 @@ async function cancelBookingCore(
       data: { status: "CANCELED" },
     });
   }
+  // The timeline entry belongs on the guest's contact page, like the
+  // "New booking: …" entry createPublicBooking writes (#339).
+  const contactId = await guestContactId(tx, fresh);
   await tx.activity.create({
     data: {
       organizationId: fresh.organizationId,
+      contactId,
       type: "MEETING",
       subject: `Booking canceled: ${fresh.bookingType.name}`,
-      body: `${fresh.guestName} canceled.${reason ? ` Reason: ${reason}` : ""}`,
+      body: `${fresh.guestName} canceled the meeting on ${activityTime(fresh.startsAt, fresh.guestTimezone)}.${reason ? ` Reason: ${reason}` : ""}`,
       metadata: { bookingId: fresh.id, kind: "canceled" },
     },
   });
-  return { ...fresh, contactId: await guestContactId(tx, fresh) };
+  return { ...fresh, contactId };
+}
+
+/**
+ * The meeting time in a CRM timeline entry, which shows only when the entry
+ * was written: "2026-02-02 09:00 (Europe/Helsinki)", in the guest's zone and
+ * named, so it reads the same for every teammate.
+ */
+function activityTime(instant: Date, timeZone: string | null | undefined): string {
+  const zone = resolveDisplayTimeZone(timeZone);
+  return `${toZonedWallTime(instant, zone).replace("T", " ")} (${zone})`;
 }
 
 /**
@@ -964,9 +979,11 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
     await tx.activity.create({
       data: {
         organizationId: orgId,
+        // Same contact as the successor attendee above (#339).
+        contactId: previousGuest?.contactId ?? null,
         type: "MEETING",
         subject: `Booking rescheduled: ${bookingType.name}`,
-        body: `${oldBooking.guestName} moved the meeting.`,
+        body: `${oldBooking.guestName} moved the meeting from ${activityTime(oldBooking.startsAt, oldBooking.guestTimezone)} to ${activityTime(startsAt, oldBooking.guestTimezone)}.`,
         dueAt: startsAt,
         metadata: { bookingId: booking.id, previousBookingId: oldBooking.id, kind: "rescheduled" },
       },

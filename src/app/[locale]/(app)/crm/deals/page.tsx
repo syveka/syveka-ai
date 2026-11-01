@@ -3,19 +3,14 @@ export const dynamic = "force-dynamic";
 import { getTranslations, getLocale } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";
-import {
-  effectiveProbability,
-  expectedRevenueCents,
-  getBoard,
-  listContactOptions,
-  listOwnerOptions,
-} from "@/server/services/deals";
+import { getBoard, listContactOptions, listOwnerOptions } from "@/server/services/deals";
 import { listCompanyOptions } from "@/server/services/companies";
 import { DealBoard } from "@/components/crm/deal-board";
 import { DealDialog } from "@/components/crm/deal-dialog";
 import { PipelineManager } from "@/components/crm/pipeline-manager";
 import { formatCents } from "@/lib/utils";
 import { stageLabel } from "@/lib/crm/stage-labels";
+import { summarizeOpenPipeline } from "@/lib/crm/deal-forecast";
 
 export default async function DealsPage() {
   const ctx = await requirePermission("crm:read");
@@ -40,15 +35,8 @@ export default async function DealsPage() {
   // custom stages exactly as entered (see stage-labels.ts). Display only.
   const label = (s: { name: string; order: number; isWon: boolean; isLost: boolean }) =>
     stageLabel(s, (key) => t(`defaultStages.${key}`));
-  const openDeals = pipeline.stages
-    .filter((s) => !s.isWon && !s.isLost)
-    .flatMap((s) => s.deals.map((d) => ({ deal: d, stage: s })))
-    .filter(({ deal }) => deal.closedAt === null);
-  const openValue = openDeals.reduce((sum, { deal }) => sum + deal.valueCents, 0);
-  const forecastValue = openDeals.reduce(
-    (sum, { deal, stage }) =>
-      sum + expectedRevenueCents(deal.valueCents, effectiveProbability(deal, stage)),
-    0,
+  const { openValueCents: openValue, forecastValueCents: forecastValue } = summarizeOpenPipeline(
+    pipeline.stages.flatMap((s) => s.deals.map((d) => ({ deal: d, stage: s }))),
   );
 
   return (
@@ -69,6 +57,7 @@ export default async function DealsPage() {
               stages={pipeline.stages.map((s) => ({
                 id: s.id,
                 name: s.name,
+                displayName: label(s),
                 probability: s.probability,
                 isWon: s.isWon,
                 isLost: s.isLost,
@@ -100,7 +89,7 @@ export default async function DealsPage() {
             title: d.title,
             valueCents: d.valueCents,
             currency: d.currency,
-            probability: effectiveProbability(d, s),
+            probabilityOverride: d.probability,
             expectedCloseAt: d.expectedCloseAt?.toISOString() ?? null,
             isClosed: d.closedAt !== null,
             contactName: d.contact

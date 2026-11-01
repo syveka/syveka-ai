@@ -213,6 +213,9 @@
   "chat": {
     "emptyState": "Ask anything about your business — I can search your knowledge base, CRM and calendar.",
     "newConversation": "New conversation",
+    "conversations": "Conversations",
+    "sources": "Sources",
+    "citation": "Source {number}: {title}",
     "placeholder": "Message Syveka…",
     "useKnowledgeBase": "Use knowledge base",
     "attachFile": "Attach PDF, DOCX or TXT",
@@ -239,13 +242,11 @@
     },
     "voice": {
       "record": "Record a voice message",
-      "stopRecording": "Stop and transcribe",
       "cancel": "Cancel",
       "recording": "Recording…",
       "requesting": "Waiting for microphone permission…",
       "transcribing": "Transcribing…",
       "maxDuration": "Recording stops automatically after {seconds} seconds.",
-      "privacy": "Your recording is sent to our speech-to-text provider (OpenAI) only to create the text, and is not stored.",
       "transcriptAdded": "Transcript added to the message box. Review it, then press Send.",
       "recordingStarted": "Recording started.",
       "recordingCancelled": "Recording cancelled.",
@@ -253,9 +254,10 @@
       "listen": "Listen",
       "stopListening": "Stop reading aloud",
       "listenLabel": "Read this reply aloud",
+      "preparingVoice": "Preparing the voice…",
       "playbackErrors": {
         "unsupported": "This browser can't read replies aloud.",
-        "no_voice": "This device has no voice for this language.",
+        "no_voice": "No {language} voice is installed on this device. To hear replies, install the {language} voice data in your device's text-to-speech settings. You can still read the reply above.",
         "unknown_language": "The language of this reply couldn't be matched to a voice.",
         "playback_failed": "The reply couldn't be read aloud."
       },
@@ -276,8 +278,19 @@
         "timeout": "Transcription took too long. Please try again.",
         "network_error": "Connection lost while transcribing. Please try again.",
         "transcription_failed": "The recording couldn't be transcribed. Please try again.",
-        "daily_limit": "You've used today's {limit} voice transcriptions for this pilot. Try again tomorrow (Helsinki time) or type your message."
-      }
+        "daily_limit": "You've used today's {limit} voice transcriptions for this pilot. Try again tomorrow (Helsinki time) or type your message.",
+        "interrupted": "The recording stopped unexpectedly (the microphone was disconnected or taken by another app). Nothing was sent. Try again."
+      },
+      "stop": "Stop",
+      "reviewTitle": "Recording ready",
+      "reviewHint": "Listen back if you like. Nothing is uploaded until you press Transcribe.",
+      "transcribe": "Transcribe",
+      "discard": "Discard",
+      "playbackLabel": "Play back your recording",
+      "recordingReady": "Recording stopped. Listen back, then transcribe or discard it.",
+      "recordingDiscarded": "Recording discarded.",
+      "privacyNote": "Only the text you send reaches the assistant. The recording is used only to create that text: it is sent to our speech-to-text provider (OpenAI) and is not stored by Syveka.",
+      "retryHint": "Your recording is kept: press Transcribe to try again."
     },
     "live": {
       "start": "Start voice conversation",
@@ -484,6 +497,10 @@
     "editContact": "Edit contact",
     "noCompanies": "No companies yet.",
     "searchCompaniesPlaceholder": "Search name, domain, industry…",
+    "search": "Search",
+    "clearSearch": "Clear search",
+    "noContactsMatch": "No contacts match “{query}”.",
+    "noCompaniesMatch": "No companies match “{query}”.",
     "contactCount": "{count} contacts",
     "dealCount": "{count} deals",
     "archivedBadge": "Archived",
@@ -566,6 +583,22 @@
       "negotiation": "Negotiation",
       "won": "Won",
       "lost": "Lost"
+    },
+    "defaultPipelineName": "Sales pipeline",
+    "stageName": "Stage name",
+    "systemActivity": {
+      "stageChange": "{from} → {to}",
+      "bookingBookedSubject": "New booking: {type}",
+      "bookingBookedBody": "{guest} ({email}) booked {type}.",
+      "bookingCanceledSubject": "Booking canceled: {type}",
+      "bookingCanceledBody": "{guest} canceled.",
+      "bookingCanceledBodyWithReason": "{guest} canceled. Reason: {reason}",
+      "bookingRescheduledSubject": "Booking rescheduled: {type}",
+      "bookingRescheduledBody": "{guest} moved the meeting.",
+      "bookingBookedBodyAt": "{guest} ({email}) booked {type} for {time}.",
+      "bookingCanceledBodyAt": "{guest} canceled the meeting on {time}.",
+      "bookingCanceledBodyAtWithReason": "{guest} canceled the meeting on {time}. Reason: {reason}",
+      "bookingRescheduledBodyFromTo": "{guest} moved the meeting from {from} to {to}."
     }
   },
   "voice": {
@@ -664,7 +697,9 @@
       "company": "Company",
       "deal": "Deal",
       "attendees": "Attendees",
-      "guestEmails": "Guest emails (comma-separated)"
+      "guestEmails": "Guest emails (comma-separated)",
+      "guestEmailsLabel": "Guest emails",
+      "guestEmailsHint": "For guests who aren't contacts. Separate several addresses with commas, for example anna@example.com, ben@example.com."
     },
     "views": {
       "day": "Day",
@@ -754,9 +789,22 @@
       "collectCompany": "Ask for company",
       "confirmationMessage": "Confirmation message",
       "slugTaken": "This URL slug is already in use",
-      "ownerNotMember": "This booking type's owner is no longer a member, so it can't be activated."
+      "ownerNotMember": "This booking type's owner is no longer a member, so it can't be activated.",
+      "copyFailed": "Couldn't copy. Select the link above and copy it manually."
     },
-    "connectCalendarLink": "Connect calendar"
+    "connectCalendarLink": "Connect calendar",
+    "attendeePicker": {
+      "clear": "Clear all",
+      "selectedCount": "{count, plural, =0 {No contacts selected} one {# contact selected} other {# contacts selected}}",
+      "selectedList": "Selected attendees",
+      "remove": "Remove {name}",
+      "unknownContact": "Unknown contact",
+      "noContacts": "No contacts to add yet.",
+      "filter": "Filter contacts",
+      "noMatches": "No matching contacts"
+    },
+    "monthDayEvents": "{count, plural, one {# event} other {# events}} on {date}. Open the day view.",
+    "monthMoreEvents": "{count, plural, one {# more event} other {# more events}}. Open the day view."
   },
   "notifications": {
     "title": "Notifications",
@@ -779,7 +827,12 @@
       "positive": "Positive",
       "neutral": "Neutral",
       "negative": "Negative"
-    }
+    },
+    "noAiMessages": "No AI messages in the last 30 days.",
+    "noCalls": "No calls in the last 30 days.",
+    "chartSummary": "{count, plural, one {# day with data} other {# days with data}}, highest {max}.",
+    "chartDate": "Date",
+    "chartValue": "Count"
   },
   "prompts": {
     "title": "Prompt Library",
@@ -862,6 +915,27 @@
       "quota": "Your plan doesn't include workflows. Upgrade to run a test.",
       "rateLimited": "Too many test runs. Try again later.",
       "unavailable": "Test runs are temporarily unavailable. Please try again."
+    },
+    "runsCount": "{count, plural, one {# run} other {# runs}}",
+    "runStatus": {
+      "RUNNING": "Running",
+      "SUCCEEDED": "Succeeded",
+      "FAILED": "Failed",
+      "CANCELED": "Canceled",
+      "WAITING": "Waiting"
+    },
+    "toggleLabel": "{name}",
+    "entitlement": {
+      "notIncluded": "Workflows aren't included in your current plan. You can build and save workflows as drafts, but activating them or running a test requires a plan that includes workflows.",
+      "readOnly": "Your workspace is read-only while the subscription is past due, so workflows can't be activated or tested.",
+      "limitReached": "{limit, plural, one {Your plan's # active workflow is in use.} other {All # active workflows in your plan are in use.}} Deactivate one or upgrade your plan to activate another.",
+      "viewPlans": "View plans",
+      "activationUnavailable": "Activation isn't available on your current plan."
+    },
+    "saveErrors": {
+      "invalid_input": "Some workflow fields are missing or invalid. Check them and try again.",
+      "duplicate_step_id": "Two steps have the same identifier. Remove one and add it again.",
+      "recipient_not_member": "The notification recipient must be a member of this organization."
     }
   },
   "billingPage": {
@@ -944,6 +1018,12 @@
       "pickNewTime": "Pick a new time",
       "confirmReschedule": "Confirm new time",
       "back": "Back"
+    },
+    "languageLabel": "Language",
+    "unavailable": {
+      "title": "This booking page is not available",
+      "description": "The link may be incorrect, or online booking may be turned off for now.",
+      "contactHint": "Please contact the person or business who shared the link with you."
     }
   },
   "integrations": {
@@ -988,9 +1068,10 @@
       "WEB_CHAT": "Web chat"
     },
     "channelStatus": {
-      "connected": "Email connected",
       "mock": "Using a test email provider — messages are simulated, not real",
-      "notConfigured": "Email not configured yet"
+      "notConfigured": "Email not configured yet",
+      "configuredUnverified": "Email provider configured — not verified yet: no inbound email has been received",
+      "receiving": "Inbound email received: at least one real email has arrived"
     },
     "status": {
       "OPEN": "Open",

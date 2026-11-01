@@ -2,7 +2,10 @@ export const dynamic = "force-dynamic";
 
 import { notFound } from "next/navigation";
 import { requirePermission } from "@/server/auth/guard";
+import { can } from "@/server/auth/permissions";
 import { tenantDb } from "@/server/db/tenant";
+import { getViewerTimeZone } from "@/server/services/viewer-time-zone";
+import { getWorkflowActivation } from "@/server/services/workflow-activation";
 import { WorkflowBuilder } from "@/components/workflows/workflow-builder";
 import type { WorkflowStep, WorkflowTrigger } from "@/lib/validators/workflows";
 
@@ -13,10 +16,21 @@ export default async function WorkflowPage({
 }) {
   const { workflowId } = await params;
   const ctx = await requirePermission("workflows:manage");
-
-  if (workflowId === "new") return <WorkflowBuilder />;
-
   const db = tenantDb(ctx.orgId);
+
+  const [activeCount, timeZone] = await Promise.all([
+    db.workflow.count({ where: { isActive: true } }),
+    getViewerTimeZone(ctx.userId),
+  ]);
+  const activation = await getWorkflowActivation(ctx.orgId, activeCount);
+  const planProps = {
+    activation,
+    timeZone,
+    canViewPlans: can(ctx.role, "billing:view"),
+  };
+
+  if (workflowId === "new") return <WorkflowBuilder {...planProps} />;
+
   const workflow = await db.workflow.findFirst({
     where: { id: workflowId },
     include: {
@@ -31,6 +45,7 @@ export default async function WorkflowPage({
 
   return (
     <WorkflowBuilder
+      {...planProps}
       initial={{
         id: workflow.id,
         name: workflow.name,

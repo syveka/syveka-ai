@@ -17,7 +17,9 @@ export async function saveWorkflowAction(
   const ctx = await requirePermission("workflows:manage");
   const parsed = workflowSchema.safeParse(payload);
   if (!parsed.success) {
-    return { error: parsed.error.issues[0]?.message ?? "invalid_input" };
+    // A stable code the builder can translate, never a raw validator message.
+    const duplicateStep = parsed.error.issues.some((i) => i.message === "duplicate_step_id");
+    return { error: duplicateStep ? "duplicate_step_id" : "invalid_input" };
   }
 
   let workflow;
