@@ -5,6 +5,8 @@
  * messages and error names); Run history and the notifications page show
  * only the translated reason for its code.
  */
+import type { Prisma } from "@/generated/prisma/client/client";
+
 export const WORKFLOW_RUN_FAILURES = [
   "contact_missing_test_run",
   "contact_missing",
@@ -41,6 +43,29 @@ export const TERMINAL_RUN_ERRORS = {
   ],
   prefixes: [INVALID_RECIPIENT_ERROR_PREFIX],
 } as const;
+
+/**
+ * Database form of "a FAILED run that is not terminal": the runs a redelivery
+ * may reclaim. Matches exactly the FAILED runs for which isTerminalRunError()
+ * is false, including runs with no recorded error (SQL NULL), which take the
+ * explicit `error: null` branch because NOT over NULL is not true in SQL.
+ */
+export function retryableFailedRunWhere(): Prisma.WorkflowRunWhereInput {
+  return {
+    status: "FAILED",
+    OR: [
+      { error: null },
+      {
+        NOT: {
+          OR: [
+            { error: { in: [...TERMINAL_RUN_ERRORS.exact] } },
+            ...TERMINAL_RUN_ERRORS.prefixes.map((prefix) => ({ error: { startsWith: prefix } })),
+          ],
+        },
+      },
+    ],
+  };
+}
 
 export function isTerminalRunError(error: string | null): boolean {
   if (!error) return false;

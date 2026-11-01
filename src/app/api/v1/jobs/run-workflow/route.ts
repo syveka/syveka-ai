@@ -10,7 +10,7 @@ import {
   CONTACT_NOT_FOUND_ERROR,
   INVALID_RECIPIENT_ERROR_PREFIX,
   isTerminalRunError,
-  TERMINAL_RUN_ERRORS,
+  retryableFailedRunWhere,
 } from "@/lib/workflows/run-failure";
 
 export const runtime = "nodejs";
@@ -320,20 +320,7 @@ export async function POST(request: Request): Promise<NextResponse> {
   // TERMINAL_RUN_ERRORS): a terminal failure was acknowledged with 200 and
   // must not run again when the same message is delivered again. A run with
   // no recorded error (crash) or any other error stays retryable.
-  const retryableFailedRun: Prisma.WorkflowRunWhereInput = {
-    status: "FAILED",
-    OR: [
-      { error: null },
-      {
-        NOT: {
-          OR: [
-            { error: { in: [...TERMINAL_RUN_ERRORS.exact] } },
-            ...TERMINAL_RUN_ERRORS.prefixes.map((prefix) => ({ error: { startsWith: prefix } })),
-          ],
-        },
-      },
-    ],
-  };
+  const retryableFailedRun = retryableFailedRunWhere();
 
   // Fail closed rather than silently creating an unprotected duplicate-prone
   // run: every fresh-trigger caller (emitWorkflowEvent) supplies
@@ -955,7 +942,6 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch (err) {
     const message = failureText(err, "step failed").slice(0, 500);
     results.push({ stepId: "error", status: "failed", output: message });
-    await persist("FAILED", message);
     console.error(
       JSON.stringify({
         event: "workflow_run_failed",
@@ -970,20 +956,45 @@ export async function POST(request: Request): Promise<NextResponse> {
     // A refusal or a step error (invalid recipient, missing or unknown
     // contact) fails the same way on every attempt, so it ends the job now.
     const terminal = err instanceof WorkflowStepRefusedError || err instanceof WorkflowStepError;
-    if (
-      (terminal || !jobWillBeRetried(request)) &&
-      (await isCurrentMember(unscopedPrisma, orgId, workflow.createdById))
-    ) {
-      await unscopedPrisma.notification.create({
-        data: {
-          organizationId: orgId,
-          userId: workflow.createdById,
-          type: "workflow.failed",
-          title: workflow.name,
-          body: message,
-          href: `/workflows/${workflowId}`,
-        },
+    // The FAILED state and the creator's notification commit together. A
+    // terminal failure is never run again (TERMINAL_RUN_ERRORS) and a final
+    // attempt has no retry left, so a notification written separately after
+    // the run had failed, and lost to an error, would never be written.
+    try {
+      await unscopedPrisma.$transaction(async (tx) => {
+        await tx.workflowRun.update({
+          where: { id: run.id },
+          data: {
+            stepResults: results as Prisma.InputJsonValue,
+            status: "FAILED",
+            finishedAt: new Date(),
+            error: message,
+          },
+        });
+        if (
+          (terminal || !jobWillBeRetried(request)) &&
+          (await isCurrentMember(tx, orgId, workflow.createdById))
+        ) {
+          await tx.notification.create({
+            data: {
+              organizationId: orgId,
+              userId: workflow.createdById,
+              type: "workflow.failed",
+              title: workflow.name,
+              body: message,
+              href: `/workflows/${workflowId}`,
+            },
+          });
+        }
       });
+    } catch (recordErr) {
+      // Nothing was recorded. A retryable failure (not a terminal text) lets
+      // the redelivery run the step again and record both; if even this write
+      // fails, the run stays RUNNING and is reclaimed once stale, like a crash.
+      await persist("FAILED", failureText(recordErr, "failure not recorded")).catch(
+        () => undefined,
+      );
+      return NextResponse.json({ error: message }, { status: 500 });
     }
     if (err instanceof WorkflowStepRefusedError) {
       // Deliberate refusal, not a transient error: a retry would only fail
