@@ -925,7 +925,7 @@
       "WAITING": "Waiting"
     },
     "runFailure": {
-      "contact_missing_test_run": "Test runs have no trigger data, so there was no contact to add the activity to. To try this step, activate the workflow and create a contact.",
+      "contact_missing_test_run": "Test runs have no trigger data, so there was no contact to add the activity to. This step runs when an active workflow's trigger includes a contact, such as a new contact.",
       "contact_missing": "The contact field didn't point to a contact. This trigger may not include one (deal events don't, for example).",
       "contact_not_found": "The contact wasn't found in this workspace.",
       "invalid_recipient": "The email recipient isn't a valid address.",

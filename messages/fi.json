@@ -925,7 +925,7 @@
       "WAITING": "Odottaa"
     },
     "runFailure": {
-      "contact_missing_test_run": "Testiajossa ei ole laukaisimen tietoja, joten CRM-tapahtumalle ei ollut kontaktia. Kokeile vaihetta aktivoimalla työnkulku ja luomalla kontakti.",
+      "contact_missing_test_run": "Testiajossa ei ole laukaisimen tietoja, joten CRM-tapahtumalle ei ollut kontaktia. Vaihe toimii, kun käytössä olevan työnkulun laukaisin sisältää kontaktin, esimerkiksi uuden kontaktin.",
       "contact_missing": "Kontaktikenttä ei viitannut kontaktiin. Tämä laukaisin ei välttämättä sisällä kontaktia (esimerkiksi kaupan tapahtumat eivät sisällä).",
       "contact_not_found": "Kontaktia ei löytynyt tästä työtilasta.",
       "invalid_recipient": "Sähköpostin vastaanottaja ei ole kelvollinen osoite.",
