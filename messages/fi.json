@@ -924,6 +924,15 @@
       "CANCELED": "Peruttu",
       "WAITING": "Odottaa"
     },
+    "runFailure": {
+      "contact_missing": "Aktiviteetille ei ole yhteyshenkilöä. Testiajossa ei ole käynnistystietoja, joten luo yhteyshenkilö ajaaksesi tämän työnkulun.",
+      "contact_not_found": "Yhteyshenkilöä ei löytynyt tästä työtilasta.",
+      "invalid_recipient": "Sähköpostin vastaanottaja ei ole kelvollinen osoite.",
+      "ai_quota_exceeded": "Työtilan tekoälyn käyttöraja täyttyi.",
+      "step_not_allowed": "Tämän työtilan työnkulut voivat käyttää vain sisäisiä vaiheita.",
+      "workflow_deactivated": "Työnkulku poistettiin käytöstä ennen kuin ajo valmistui.",
+      "internal": "Vaihe epäonnistui teknisestä syystä. Yritä uudelleen; jos ongelma jatkuu, ota yhteyttä tukeen."
+    },
     "toggleLabel": "{name}",
     "entitlement": {
       "notIncluded": "Automaatiot eivät sisälly nykyiseen tilaukseesi. Voit rakentaa ja tallentaa automaatioita luonnoksina, mutta niiden aktivointi ja testiajo vaativat tilauksen, johon automaatiot sisältyvät.",

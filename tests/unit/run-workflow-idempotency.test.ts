@@ -27,7 +27,9 @@ const mocks = vi.hoisted(() => {
     stepExecUpdateMany: vi.fn(async (_args: unknown) => ({ count: 1 })),
     stepExecFindFirst: vi.fn(async (_args: unknown) => null as Record<string, unknown> | null),
     stepExecFindFirstOrThrow: vi.fn(async (_args: unknown) => ({}) as Record<string, unknown>),
-    contactFindFirst: vi.fn(async (_args: unknown) => ({ id: "contact-1" })),
+    contactFindFirst: vi.fn(async (_args: unknown) => ({
+      id: "c0000001-0000-4000-8000-000000000001",
+    })),
     activityCreate: vi.fn(async (_args: unknown) => ({})),
     notificationCreate: vi.fn(async (_args: unknown) => ({})),
     enqueue: vi.fn(async (..._args: unknown[]) => undefined),
@@ -173,7 +175,7 @@ beforeEach(() => {
   mocks.runUpdateMany.mockResolvedValue({ count: 1 });
   mocks.runFindFirst.mockResolvedValue(null);
   mocks.runFindFirstOrThrow.mockResolvedValue(runRow());
-  mocks.contactFindFirst.mockResolvedValue({ id: "contact-1" });
+  mocks.contactFindFirst.mockResolvedValue({ id: "c0000001-0000-4000-8000-000000000001" });
 });
 
 async function post(body: Record<string, unknown>) {
@@ -453,17 +455,20 @@ describe("booking triggers: the default CRM step reaches the trigger's contact",
       await post(
         freshTriggerPayload({
           triggerType,
-          triggerData: { bookingId: "bk-1", contactId: "contact-1" },
+          triggerData: { bookingId: "bk-1", contactId: "c0000001-0000-4000-8000-000000000001" },
           sourceEventKey: `${triggerType}:bk-1`,
         }),
       );
 
       expect(mocks.contactFindFirst).toHaveBeenCalledWith({
-        where: { id: "contact-1", organizationId: ORG },
+        where: { id: "c0000001-0000-4000-8000-000000000001", organizationId: ORG },
       });
       expect(mocks.activityCreate).toHaveBeenCalledTimes(1);
       expect(mocks.activityCreate).toHaveBeenCalledWith({
-        data: expect.objectContaining({ organizationId: ORG, contactId: "contact-1" }),
+        data: expect.objectContaining({
+          organizationId: ORG,
+          contactId: "c0000001-0000-4000-8000-000000000001",
+        }),
       });
     },
   );
@@ -476,13 +481,13 @@ describe("booking triggers: the default CRM step reaches the trigger's contact",
     await post(
       freshTriggerPayload({
         triggerType: "booking.canceled",
-        triggerData: { bookingId: "bk-1", contactId: "contact-of-another-org" },
+        triggerData: { bookingId: "bk-1", contactId: "c0000009-0000-4000-8000-000000000009" },
         sourceEventKey: "booking.canceled:bk-1",
       }),
     ).catch(() => undefined);
 
     expect(mocks.contactFindFirst).toHaveBeenCalledWith({
-      where: { id: "contact-of-another-org", organizationId: ORG },
+      where: { id: "c0000009-0000-4000-8000-000000000009", organizationId: ORG },
     });
     expect(mocks.activityCreate).not.toHaveBeenCalled();
   });
@@ -504,12 +509,16 @@ describe("trigger-level idempotency: representative side-effect proof", () => {
       }),
     );
 
-    await post(freshTriggerPayload({ triggerData: { contactId: "contact-1" } }));
+    await post(
+      freshTriggerPayload({ triggerData: { contactId: "c0000001-0000-4000-8000-000000000001" } }),
+    );
     expect(mocks.activityCreate).toHaveBeenCalledTimes(1);
 
     mocks.runCreate.mockRejectedValueOnce(new FakePrismaKnownError("P2002"));
     mocks.runFindFirst.mockResolvedValueOnce(runRow({ status: "SUCCEEDED" }));
-    await post(freshTriggerPayload({ triggerData: { contactId: "contact-1" } }));
+    await post(
+      freshTriggerPayload({ triggerData: { contactId: "c0000001-0000-4000-8000-000000000001" } }),
+    );
 
     expect(mocks.activityCreate).toHaveBeenCalledTimes(1);
   });

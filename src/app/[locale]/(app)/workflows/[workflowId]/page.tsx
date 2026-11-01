@@ -8,6 +8,7 @@ import { getViewerTimeZone } from "@/server/services/viewer-time-zone";
 import { getWorkflowActivation } from "@/server/services/workflow-activation";
 import { WorkflowBuilder } from "@/components/workflows/workflow-builder";
 import type { WorkflowStep, WorkflowTrigger } from "@/lib/validators/workflows";
+import { workflowRunFailure } from "@/lib/workflows/run-failure";
 
 export default async function WorkflowPage({
   params,
@@ -57,7 +58,8 @@ export default async function WorkflowPage({
           id: r.id,
           status: r.status,
           startedAt: r.startedAt.toISOString(),
-          error: r.error,
+          // Only a translatable code leaves the server, never the stored text.
+          failure: workflowRunFailure(r.error),
         })),
       }}
     />

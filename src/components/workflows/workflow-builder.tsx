@@ -18,6 +18,7 @@ import {
   type WorkflowActivationBlock,
 } from "@/lib/workflows/activation";
 import { WorkflowEntitlementNotice } from "@/components/workflows/workflow-entitlement-notice";
+import type { WorkflowRunFailure } from "@/lib/workflows/run-failure";
 
 const NOTICE_ID = "workflow-builder-entitlement-notice";
 const SAVE_ERROR_CODES = [
@@ -44,7 +45,12 @@ type Initial = {
   trigger: WorkflowTrigger;
   steps: WorkflowStep[];
   isActive?: boolean;
-  runs?: Array<{ id: string; status: string; startedAt: string; error: string | null }>;
+  runs?: Array<{
+    id: string;
+    status: string;
+    startedAt: string;
+    failure: WorkflowRunFailure | null;
+  }>;
 };
 
 function newStep(type: (typeof STEP_TYPES)[number], id: string): WorkflowStep {
@@ -247,25 +253,31 @@ export function WorkflowBuilder({
           </CardHeader>
           <CardContent className="space-y-2">
             {initial.runs.map((r) => (
-              <div key={r.id} className="flex items-center justify-between text-sm">
-                <time className="text-muted-foreground" dateTime={r.startedAt}>
-                  {formatDateTimeInTimeZone(r.startedAt, locale, timeZone, {
-                    dateStyle: "short",
-                    timeStyle: "medium",
-                  })}
-                </time>
-                <span
-                  className={cn(
-                    "rounded-full px-2 py-0.5 text-xs",
-                    r.status === "SUCCEEDED" && "bg-success/15 text-success",
-                    r.status === "FAILED" && "bg-destructive/15 text-destructive",
-                  )}
-                  title={r.error ?? undefined}
-                >
-                  {(RUN_STATUSES as readonly string[]).includes(r.status)
-                    ? t(`runStatus.${r.status as (typeof RUN_STATUSES)[number]}`)
-                    : r.status}
-                </span>
+              <div key={r.id} className="text-sm">
+                <div className="flex items-center justify-between">
+                  <time className="text-muted-foreground" dateTime={r.startedAt}>
+                    {formatDateTimeInTimeZone(r.startedAt, locale, timeZone, {
+                      dateStyle: "short",
+                      timeStyle: "medium",
+                    })}
+                  </time>
+                  <span
+                    className={cn(
+                      "rounded-full px-2 py-0.5 text-xs",
+                      r.status === "SUCCEEDED" && "bg-success/15 text-success",
+                      r.status === "FAILED" && "bg-destructive/15 text-destructive",
+                    )}
+                  >
+                    {(RUN_STATUSES as readonly string[]).includes(r.status)
+                      ? t(`runStatus.${r.status as (typeof RUN_STATUSES)[number]}`)
+                      : r.status}
+                  </span>
+                </div>
+                {r.failure && (r.status === "FAILED" || r.status === "CANCELED") ? (
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    {t(`runFailure.${r.failure}`)}
+                  </p>
+                ) : null}
               </div>
             ))}
           </CardContent>

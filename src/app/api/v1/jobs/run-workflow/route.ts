@@ -4,6 +4,11 @@ import { jobPayloadJson, jobWillBeRetried } from "@/server/jobs/payload";
 import type { Prisma } from "@/generated/prisma/client/client";
 import { WorkflowNotificationEmail } from "../../../../../../emails/workflow-notification";
 import type { WorkflowStep } from "@/lib/validators/workflows";
+import {
+  CONTACT_MISSING_ERROR,
+  CONTACT_NOT_FOUND_ERROR,
+  INVALID_RECIPIENT_ERROR_PREFIX,
+} from "@/lib/workflows/run-failure";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -77,6 +82,8 @@ function resolveField(path: string, ctx: Ctx): unknown {
       { trigger: ctx.trigger, vars: ctx.vars } as Record<string, unknown>,
     );
 }
+
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function isUniqueViolation(err: unknown): boolean {
   return typeof err === "object" && err !== null && "code" in err && err.code === "P2002";
@@ -662,7 +669,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           try {
             const to = interpolate(step.to, ctx);
             if (!to.includes("@"))
-              throw new WorkflowStepError(`email.send: invalid recipient "${to}"`);
+              throw new WorkflowStepError(`${INVALID_RECIPIENT_ERROR_PREFIX} "${to}"`);
             const sent = await sendEmail({
               to,
               subject: interpolate(step.subject, ctx),
@@ -709,11 +716,21 @@ export async function POST(request: Request): Promise<NextResponse> {
             );
           }
           try {
-            const contactId = String(resolveField(step.contactIdVar, ctx) ?? "");
-            const contact = await unscopedPrisma.contact.findFirst({
-              where: { id: contactId, organizationId: orgId },
-            });
-            if (!contact) throw new WorkflowStepError("crm.create_activity: contact not found");
+            // A manual test run carries no trigger record, so the contact
+            // field can be empty. Contact ids are UUIDs: anything else is
+            // refused here, before a query Postgres would reject with a
+            // driver error (22P02) instead of a reason the creator can act on.
+            const rawContactId = resolveField(step.contactIdVar, ctx);
+            if (rawContactId === undefined || rawContactId === null || rawContactId === "") {
+              throw new WorkflowStepError(CONTACT_MISSING_ERROR);
+            }
+            const contactId = String(rawContactId);
+            const contact = UUID_RE.test(contactId)
+              ? await unscopedPrisma.contact.findFirst({
+                  where: { id: contactId, organizationId: orgId },
+                })
+              : null;
+            if (!contact) throw new WorkflowStepError(CONTACT_NOT_FOUND_ERROR);
             // DB-local side effect: creating the Activity and marking the
             // step SUCCEEDED commit atomically together, so there is no
             // crash window between them at all (unlike email/AI, which

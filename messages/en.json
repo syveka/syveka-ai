@@ -924,6 +924,15 @@
       "CANCELED": "Canceled",
       "WAITING": "Waiting"
     },
+    "runFailure": {
+      "contact_missing": "No contact to add the activity to. Test runs have no trigger data, so create a contact to run this workflow.",
+      "contact_not_found": "The contact wasn't found in this workspace.",
+      "invalid_recipient": "The email recipient isn't a valid address.",
+      "ai_quota_exceeded": "The workspace's AI usage limit was reached.",
+      "step_not_allowed": "This workspace's workflows may only use internal steps.",
+      "workflow_deactivated": "The workflow was deactivated before the run finished.",
+      "internal": "A step failed for a technical reason. Try again; if it keeps failing, contact support."
+    },
     "toggleLabel": "{name}",
     "entitlement": {
       "notIncluded": "Workflows aren't included in your current plan. You can build and save workflows as drafts, but activating them or running a test requires a plan that includes workflows.",
