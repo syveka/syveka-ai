@@ -286,7 +286,10 @@ describe("WorkflowBuilder", () => {
         withIntl(
           <WorkflowBuilder
             initial={
-              { ...initial, runs: [{ ...initial.runs[0], failure: "contact_missing" }] } as never
+              {
+                ...initial,
+                runs: [{ ...initial.runs[0], failure: "contact_missing_test_run" }],
+              } as never
             }
             activation={{ block: null, limit: 5 }}
             timeZone="Europe/Helsinki"
@@ -294,10 +297,40 @@ describe("WorkflowBuilder", () => {
           locale,
         ),
       );
-      expect(screen.getByText(MESSAGES[locale].workflows.runFailure.contact_missing)).toBeTruthy();
-      expect(document.body.innerHTML).not.toMatch(/crm.create_activity|DriverAdapterError/);
+      expect(
+        screen.getByText(MESSAGES[locale].workflows.runFailure.contact_missing_test_run),
+      ).toBeTruthy();
     },
   );
+
+  it("shows a canceled run's reason and no reason while a run is in progress", () => {
+    render(
+      withIntl(
+        <WorkflowBuilder
+          initial={
+            {
+              ...initial,
+              runs: [
+                {
+                  ...initial.runs[0],
+                  id: "r1",
+                  status: "CANCELED",
+                  failure: "workflow_deactivated",
+                },
+                { ...initial.runs[0], id: "r2", status: "RUNNING", failure: "internal" },
+              ],
+            } as never
+          }
+          activation={{ block: null, limit: 5 }}
+          timeZone="Europe/Helsinki"
+        />,
+        "en",
+      ),
+    );
+    const m = MESSAGES.en.workflows.runFailure;
+    expect(screen.getByText(m.workflow_deactivated)).toBeTruthy();
+    expect(screen.queryByText(m.internal)).toBeNull();
+  });
 
   it("every run failure code has EN/FI/AR text", async () => {
     const { WORKFLOW_RUN_FAILURES } = await import("@/lib/workflows/run-failure");

@@ -1,10 +1,12 @@
 /**
  * Why a workflow run failed or was canceled, as a fixed code the Run history
- * can translate. The run record keeps the job's own text (also used in the
- * creator's notification); only the code reaches the browser, so no provider,
- * database or other internal text is ever shown.
+ * can translate. The run record keeps the job's own text; Run history sends
+ * only the code to the browser. (The creator's workflow.failed notification
+ * still shows that text, which failureText() limits to step messages and
+ * error names.)
  */
 export const WORKFLOW_RUN_FAILURES = [
+  "contact_missing_test_run",
   "contact_missing",
   "contact_not_found",
   "invalid_recipient",
@@ -17,12 +19,15 @@ export const WORKFLOW_RUN_FAILURES = [
 export type WorkflowRunFailure = (typeof WORKFLOW_RUN_FAILURES)[number];
 
 /** Step errors written by the run-workflow job for the workflow's creator. */
+export const CONTACT_MISSING_TEST_RUN_ERROR =
+  "crm.create_activity: a test run has no trigger data, so no contact";
 export const CONTACT_MISSING_ERROR = "crm.create_activity: no contact in the contact field";
 export const CONTACT_NOT_FOUND_ERROR = "crm.create_activity: contact not found";
 export const INVALID_RECIPIENT_ERROR_PREFIX = "email.send: invalid recipient";
 
 export function workflowRunFailure(error: string | null): WorkflowRunFailure | null {
   if (!error) return null;
+  if (error === CONTACT_MISSING_TEST_RUN_ERROR) return "contact_missing_test_run";
   if (error === CONTACT_MISSING_ERROR) return "contact_missing";
   if (error === CONTACT_NOT_FOUND_ERROR) return "contact_not_found";
   if (error.startsWith(INVALID_RECIPIENT_ERROR_PREFIX)) return "invalid_recipient";

@@ -925,8 +925,9 @@
       "WAITING": "Odottaa"
     },
     "runFailure": {
-      "contact_missing": "Aktiviteetille ei ole yhteyshenkilöä. Testiajossa ei ole käynnistystietoja, joten luo yhteyshenkilö ajaaksesi tämän työnkulun.",
-      "contact_not_found": "Yhteyshenkilöä ei löytynyt tästä työtilasta.",
+      "contact_missing_test_run": "Testiajossa ei ole laukaisimen tietoja, joten CRM-tapahtumalle ei ollut kontaktia. Kokeile vaihetta aktivoimalla työnkulku ja luomalla kontakti.",
+      "contact_missing": "Kontaktikenttä ei viitannut kontaktiin. Tämä laukaisin ei välttämättä sisällä kontaktia (esimerkiksi kaupan tapahtumat eivät sisällä).",
+      "contact_not_found": "Kontaktia ei löytynyt tästä työtilasta.",
       "invalid_recipient": "Sähköpostin vastaanottaja ei ole kelvollinen osoite.",
       "ai_quota_exceeded": "Työtilan tekoälyn käyttöraja täyttyi.",
       "step_not_allowed": "Tämän työtilan työnkulut voivat käyttää vain sisäisiä vaiheita.",

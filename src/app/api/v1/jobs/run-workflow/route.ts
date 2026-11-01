@@ -6,6 +6,7 @@ import { WorkflowNotificationEmail } from "../../../../../../emails/workflow-not
 import type { WorkflowStep } from "@/lib/validators/workflows";
 import {
   CONTACT_MISSING_ERROR,
+  CONTACT_MISSING_TEST_RUN_ERROR,
   CONTACT_NOT_FOUND_ERROR,
   INVALID_RECIPIENT_ERROR_PREFIX,
 } from "@/lib/workflows/run-failure";
@@ -716,13 +717,16 @@ export async function POST(request: Request): Promise<NextResponse> {
             );
           }
           try {
-            // A manual test run carries no trigger record, so the contact
-            // field can be empty. Contact ids are UUIDs: anything else is
+            // The contact field can be empty: a manual test run carries no
+            // trigger record, and some triggers (deal events) have no
+            // contact. Contact ids are canonical UUIDs: anything else is
             // refused here, before a query Postgres would reject with a
             // driver error (22P02) instead of a reason the creator can act on.
             const rawContactId = resolveField(step.contactIdVar, ctx);
             if (rawContactId === undefined || rawContactId === null || rawContactId === "") {
-              throw new WorkflowStepError(CONTACT_MISSING_ERROR);
+              throw new WorkflowStepError(
+                ctx.trigger.test === true ? CONTACT_MISSING_TEST_RUN_ERROR : CONTACT_MISSING_ERROR,
+              );
             }
             const contactId = String(rawContactId);
             const contact = UUID_RE.test(contactId)

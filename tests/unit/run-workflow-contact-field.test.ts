@@ -173,6 +173,7 @@ import "@/server/jobs/organization-guard";
 import { POST } from "@/app/api/v1/jobs/run-workflow/route";
 import {
   CONTACT_MISSING_ERROR,
+  CONTACT_MISSING_TEST_RUN_ERROR,
   CONTACT_NOT_FOUND_ERROR,
   workflowRunFailure,
 } from "@/lib/workflows/run-failure";
@@ -247,9 +248,12 @@ describe("crm.create_activity: contact field resolution", () => {
     expect(state.contactLookups).toBe(0);
     expect(state.activities).toEqual([]);
     const run = state.runs[0]!;
-    expect(run).toMatchObject({ status: "FAILED", error: CONTACT_MISSING_ERROR });
-    expect(workflowRunFailure(run.error as string)).toBe("contact_missing");
-    expect(state.steps[0]).toMatchObject({ status: "FAILED", error: CONTACT_MISSING_ERROR });
+    expect(run).toMatchObject({ status: "FAILED", error: CONTACT_MISSING_TEST_RUN_ERROR });
+    expect(workflowRunFailure(run.error as string)).toBe("contact_missing_test_run");
+    expect(state.steps[0]).toMatchObject({
+      status: "FAILED",
+      error: CONTACT_MISSING_TEST_RUN_ERROR,
+    });
   });
 
   it("a redelivered failed test run stays FAILED and creates nothing", async () => {
@@ -262,9 +266,24 @@ describe("crm.create_activity: contact field resolution", () => {
     });
     expect(res.status).toBe(500);
     expect(state.runs).toHaveLength(1);
-    expect(state.runs[0]).toMatchObject({ status: "FAILED", error: CONTACT_MISSING_ERROR });
+    expect(state.runs[0]).toMatchObject({
+      status: "FAILED",
+      error: CONTACT_MISSING_TEST_RUN_ERROR,
+    });
     expect(state.activities).toEqual([]);
     expect(state.contactLookups).toBe(0);
+  });
+
+  it("a live trigger without a contact (deal.won) gets the general reason, not the test-run one", async () => {
+    await deliver({
+      triggerType: "deal.won",
+      triggerData: { dealId: "deal-1", title: "Pilot deal", valueCents: 100000 },
+      sourceEventKey: "deal.won:deal-1",
+    });
+    expect(state.contactLookups).toBe(0);
+    expect(state.activities).toEqual([]);
+    expect(state.runs[0]).toMatchObject({ status: "FAILED", error: CONTACT_MISSING_ERROR });
+    expect(workflowRunFailure(state.runs[0]!.error as string)).toBe("contact_missing");
   });
 
   it.each([["not-a-uuid"], [42]])(
@@ -304,6 +323,7 @@ describe("crm.create_activity: contact field resolution", () => {
 describe("workflowRunFailure", () => {
   it.each([
     [null, null],
+    [CONTACT_MISSING_TEST_RUN_ERROR, "contact_missing_test_run"],
     [CONTACT_MISSING_ERROR, "contact_missing"],
     [CONTACT_NOT_FOUND_ERROR, "contact_not_found"],
     ['email.send: invalid recipient "x"', "invalid_recipient"],
