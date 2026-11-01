@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef, type Ref } from "react";
 import { useTranslations } from "next-intl";
 import { FileText, Loader2, Mic, Square, Trash2, X } from "lucide-react";
 import { MAX_RECORDING_SECONDS, PILOT_DAILY_ATTEMPTS } from "@/lib/voice/audio";
@@ -24,15 +25,18 @@ export function MicrophoneButton({
   status,
   disabled,
   onStart,
+  buttonRef,
 }: {
   status: VoiceRecorderStatus;
   disabled?: boolean;
   onStart: () => void;
+  buttonRef?: Ref<HTMLButtonElement>;
 }) {
   const t = useTranslations("chat.voice");
   const active = status !== "idle";
   return (
     <button
+      ref={buttonRef}
       type="button"
       onClick={onStart}
       disabled={disabled || active}
@@ -83,8 +87,39 @@ export function VoiceStatusBar({
     ? t(`errors.${error}`, { seconds: MAX_RECORDING_SECONDS, limit: PILOT_DAILY_ATTEMPTS })
     : "";
 
+  // Each step replaces the control that had focus (the microphone is
+  // disabled, Stop disappears, Transcribe is disabled while it runs), so a
+  // keyboard or screen-reader user would drop to the top of the page. Move
+  // focus to the next step's main control, but only when focus was lost or
+  // was already inside these panels: never away from the text box.
+  const container = useRef<HTMLDivElement>(null);
+  const stopButton = useRef<HTMLButtonElement>(null);
+  const recordingCancelButton = useRef<HTMLButtonElement>(null);
+  const transcribeButton = useRef<HTMLButtonElement>(null);
+  const discardButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    const active = document.activeElement as HTMLElement | null;
+    const lost =
+      !active ||
+      active === document.body ||
+      (active as HTMLButtonElement).disabled === true ||
+      (container.current?.contains(active) ?? false);
+    if (!lost) return;
+    const target =
+      status === "requesting"
+        ? recordingCancelButton.current
+        : status === "recording"
+          ? stopButton.current
+          : status === "review"
+            ? transcribeButton.current
+            : status === "transcribing"
+              ? discardButton.current
+              : null;
+    target?.focus();
+  }, [status]);
+
   return (
-    <>
+    <div ref={container} className="contents">
       <p className="sr-only" aria-live="polite" aria-atomic="true">
         {announcement}
       </p>
@@ -125,6 +160,7 @@ export function VoiceStatusBar({
             <span className="ms-auto flex shrink-0 items-center gap-2">
               {status === "recording" ? (
                 <button
+                  ref={stopButton}
                   type="button"
                   onClick={onStop}
                   className={cn(control, "bg-primary text-primary-foreground")}
@@ -134,6 +170,7 @@ export function VoiceStatusBar({
                 </button>
               ) : null}
               <button
+                ref={recordingCancelButton}
                 type="button"
                 onClick={onCancel}
                 className={cn(control, "border bg-background")}
@@ -181,6 +218,7 @@ export function VoiceStatusBar({
             </span>
             <span className="ms-auto flex shrink-0 items-center gap-2">
               <button
+                ref={transcribeButton}
                 type="button"
                 onClick={onTranscribe}
                 disabled={status !== "review" || !pending}
@@ -190,6 +228,7 @@ export function VoiceStatusBar({
                 {t("transcribe")}
               </button>
               <button
+                ref={discardButton}
                 type="button"
                 onClick={onDiscard}
                 className={cn(control, "border bg-background")}
@@ -233,6 +272,6 @@ export function VoiceStatusBar({
           </button>
         </div>
       ) : null}
-    </>
+    </div>
   );
 }

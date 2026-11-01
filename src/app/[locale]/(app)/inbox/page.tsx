@@ -142,8 +142,8 @@ async function EmailChannelStatus({ ctx }: { ctx: TenantContext }) {
   }
   if (status === "verification_required") {
     return (
-      <p className="flex items-center gap-1.5 text-sm text-amber-600">
-        <AlertCircle className="size-4" aria-hidden="true" />
+      <p className="flex items-center gap-1.5 text-sm text-foreground">
+        <AlertCircle className="size-4 shrink-0 text-warning" aria-hidden="true" />
         {t("channelStatus.configuredUnverified")}
       </p>
     );

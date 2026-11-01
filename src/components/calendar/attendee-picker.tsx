@@ -50,7 +50,7 @@ export function AttendeePicker({
             type="button"
             variant="ghost"
             size="sm"
-            className="h-7 px-2 text-xs"
+            className="min-h-10 px-3 text-xs"
             onClick={() => onChange([])}
           >
             {t("clear")}
@@ -76,7 +76,7 @@ export function AttendeePicker({
                   type="button"
                   onClick={() => toggle(id, false)}
                   aria-label={t("remove", { name })}
-                  className="inline-flex size-5 shrink-0 items-center justify-center rounded-full hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  className="-my-2 -me-1.5 inline-flex size-8 shrink-0 items-center justify-center rounded-full hover:bg-primary/20 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 >
                   <X className="size-3" aria-hidden="true" />
                 </button>

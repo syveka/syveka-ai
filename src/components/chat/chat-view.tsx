@@ -174,7 +174,7 @@ function ChatSession({
   };
 
   return (
-    <div ref={rootRef} className="flex h-[calc(100vh-3rem)] flex-col md:h-[calc(100vh-4.5rem)]">
+    <div ref={rootRef} className="flex h-[calc(100dvh-3rem)] flex-col md:h-[calc(100dvh-4.5rem)]">
       <div className="flex shrink-0 items-center justify-end border-b px-4 py-2">
         <Button
           type="button"

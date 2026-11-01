@@ -193,6 +193,36 @@ describe("Composer voice input: recorded-message journey (mocked microphone and 
     expect(screen.getByText(v.recordingDiscarded)).toBeTruthy();
   });
 
+  it("keyboard focus follows each step: Stop, then Transcribe, then back to the microphone", async () => {
+    installFakeMedia();
+    const { v } = renderComposer();
+    const mic = button(v.record);
+    mic.focus();
+    await act(async () => {
+      fireEvent.click(mic);
+    });
+    await waitFor(() => expect(document.activeElement).toBe(button(v.stop)));
+    await act(async () => {
+      fireEvent.click(button(v.stop));
+    });
+    await waitFor(() => expect(document.activeElement).toBe(button(v.transcribe)));
+    fireEvent.click(button(v.discard));
+    await waitFor(() => expect(document.activeElement).toBe(button(v.record)));
+  });
+
+  it("never pulls focus out of the text box when a step changes", async () => {
+    installFakeMedia();
+    const { v, textarea } = renderComposer();
+    await act(async () => {
+      fireEvent.click(button(v.record));
+    });
+    textarea.focus();
+    await act(async () => {
+      fireEvent.click(button(v.stop));
+    });
+    expect(document.activeElement).toBe(textarea);
+  });
+
   it("appends to an existing typed draft instead of overwriting it", async () => {
     const { v, textarea } = renderComposer();
     fireEvent.change(textarea, { target: { value: "Hi Syveka,  " } });

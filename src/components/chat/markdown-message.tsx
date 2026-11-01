@@ -12,10 +12,10 @@ export type MessageCitation = { documentId: string; title: string };
  * through the Markdown parser; nothing a user or model types can produce one
  * (they are removed from the reply first).
  */
-const CITE_OPEN = "";
-const CITE_CLOSE = "";
-const CITE_TOKEN = /(\d+)/g;
-const ANY_CITE_CHAR = /[]/g;
+const CITE_OPEN = "\uE000";
+const CITE_CLOSE = "\uE001";
+const CITE_TOKEN = /\uE000(\d+)\uE001/g;
+const ANY_CITE_CHAR = /[\uE000\uE001]/g;
 
 /** Every `[doc:…]` marker, well-formed or not (never more than one line). */
 const DOC_MARKER = /[ \t]*\[doc:([^\]\n]*)\]/gi;

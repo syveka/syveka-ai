@@ -76,7 +76,9 @@ export async function ActivityTimeline({
         const shown = displayActivity(a, displayContext);
         return (
           <div key={a.id} className="border-s-2 border-border ps-3">
-            <p className="text-sm font-medium">{shown.subject}</p>
+            <p dir="auto" className="text-sm font-medium">
+              {shown.subject}
+            </p>
             <p className="text-xs text-muted-foreground">
               {t(`activityTypes.${a.type}` as never)} ·{" "}
               <time dateTime={a.createdAt.toISOString()}>
@@ -96,7 +98,9 @@ export async function ActivityTimeline({
               ) : null}
             </p>
             {shown.body && a.body !== a.subject ? (
-              <p className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">{shown.body}</p>
+              <p dir="auto" className="mt-1 whitespace-pre-wrap text-sm text-muted-foreground">
+                {shown.body}
+              </p>
             ) : null}
           </div>
         );

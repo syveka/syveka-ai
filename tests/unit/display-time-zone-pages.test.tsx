@@ -5,7 +5,8 @@ import React from "react";
 import fs from "node:fs";
 import path from "node:path";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { renderToStaticMarkup } from "react-dom/server";
+import { renderToStaticMarkup as renderMarkup } from "react-dom/server";
+
 import { createTranslator } from "next-intl";
 import { DEFAULT_PIPELINE_STAGES } from "@/lib/constants";
 import type { CrmDashboard } from "@/server/services/dashboard";
@@ -75,6 +76,10 @@ import { ActivityTimeline } from "@/components/crm/activity-timeline";
 import { CrmDashboardView } from "@/components/dashboard/crm-dashboard";
 import { formatDateTimeInTimeZone } from "@/lib/date-time";
 import { getViewerTimeZone } from "@/server/services/viewer-time-zone";
+
+/** Inserted values are wrapped in Unicode isolates; assertions read the visible text. */
+const renderToStaticMarkup = (node: Parameters<typeof renderMarkup>[0]) =>
+  renderMarkup(node).replace(/[\u2068\u2069]/g, "");
 
 const OBSERVED = new Date("2026-11-01T10:15:00.000Z"); // 12:15 in Helsinki (EET, UTC+2)
 

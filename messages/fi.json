@@ -499,7 +499,7 @@
     "searchCompaniesPlaceholder": "Hae nimellä, verkkotunnuksella, toimialalla…",
     "search": "Hae",
     "clearSearch": "Tyhjennä haku",
-    "noContactsMatch": "Haulla ”{query}” ei löytynyt yhteystietoja.",
+    "noContactsMatch": "Haulla ”{query}” ei löytynyt kontakteja.",
     "noCompaniesMatch": "Haulla ”{query}” ei löytynyt yrityksiä.",
     "contactCount": "{count} kontaktia",
     "dealCount": "{count} myyntimahdollisuutta",
@@ -831,7 +831,7 @@
     "noAiMessages": "Ei AI-viestejä viimeisen 30 päivän aikana.",
     "noCalls": "Ei puheluita viimeisen 30 päivän aikana.",
     "chartSummary": "{count, plural, one {# päivä, jolta on tietoja} other {# päivää, joilta on tietoja}}, suurin {max}.",
-    "chartDate": "Päivä",
+    "chartDate": "Päivämäärä",
     "chartValue": "Määrä"
   },
   "prompts": {
@@ -1071,7 +1071,7 @@
       "mock": "Testisähköpostipalvelu käytössä — viestit ovat simuloituja, eivät oikeita",
       "notConfigured": "Sähköpostia ei ole vielä määritetty",
       "configuredUnverified": "Sähköpostipalvelu määritetty — ei vielä vahvistettu: saapuvaa sähköpostia ei ole vastaanotettu",
-      "receiving": "Sähköpostikanava vastaanottaa: saapuvaa sähköpostia on tullut"
+      "receiving": "Saapuvaa sähköpostia vastaanotettu: vähintään yksi oikea viesti on saapunut"
     },
     "status": {
       "OPEN": "Avoin",

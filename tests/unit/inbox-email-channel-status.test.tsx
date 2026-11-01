@@ -129,10 +129,10 @@ describe("Inbox email channel status matches the Dashboard readiness", () => {
     },
   );
 
-  it("says receiving only after a real inbound email, matching Dashboard 'ready'", async () => {
+  it("says inbound email received only after a real inbound email, matching Dashboard 'ready'", async () => {
     state.inbound = { id: "thread-1" };
     const html = await renderInbox("en");
-    expect(html).toContain("Email channel receiving: inbound email has arrived");
+    expect(html).toContain("Inbound email received: at least one real email has arrived");
     expect(html).not.toMatch(/send/i);
     expect(await dashboardEmailState()).toBe("ready");
   });

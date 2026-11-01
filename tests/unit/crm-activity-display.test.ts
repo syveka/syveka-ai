@@ -4,10 +4,18 @@ import { describe, expect, it } from "vitest";
 import { createTranslator } from "next-intl";
 import { DEFAULT_PIPELINE_STAGES } from "@/lib/constants";
 import {
-  displayActivity,
+  displayActivity as isolatedDisplayActivity,
   type ActivityDisplayContext,
   type ActivityStage,
+  type DisplayableActivity,
 } from "@/lib/crm/activity-display";
+
+/** Inserted values are wrapped in Unicode isolates (asserted below); compare the visible text. */
+const unisolate = (s: string) => s.replace(/[\u2068\u2069]/g, "");
+const displayActivity = (activity: DisplayableActivity, ctx: ActivityDisplayContext) => {
+  const shown = isolatedDisplayActivity(activity, ctx);
+  return { subject: unisolate(shown.subject), body: shown.body && unisolate(shown.body) };
+};
 import { DEFAULT_PIPELINE_NAME, pipelineLabel } from "@/lib/crm/stage-labels";
 
 /**
@@ -103,6 +111,22 @@ const booking = (kind: string, subject: string, body: string | null) => ({
 });
 
 describe("system booking entries", () => {
+  it("isolates every inserted value so a Latin name can't flip an Arabic line (and vice versa)", () => {
+    const shown = isolatedDisplayActivity(
+      booking("booked", "Booking: Intro call", "Ann Lee (ann@example.test) booked Intro call."),
+      contextFor("ar"),
+    );
+    expect(shown.subject).toBe("حجز جديد: \u2068Intro call\u2069");
+    expect(shown.body).toContain("\u2068Ann Lee\u2069");
+    expect(shown.body).toContain("(\u2068ann@example.test\u2069)");
+    // A user-written entry is untouched: no isolates are added to stored text.
+    const note = { type: "NOTE", subject: "Called Ann", body: "Left a message", metadata: null };
+    expect(isolatedDisplayActivity(note, contextFor("ar"))).toEqual({
+      subject: "Called Ann",
+      body: "Left a message",
+    });
+  });
+
   it("localizes the booked subject and body, keeping names and e-mail verbatim", () => {
     const entry = booking(
       "booked",

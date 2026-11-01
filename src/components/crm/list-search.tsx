@@ -32,6 +32,7 @@ export function ListSearch({
   const [text, setText] = useState(value);
   const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const applied = useRef(value);
+  const input = useRef<HTMLInputElement>(null);
 
   // Follow the URL when it changes elsewhere (back button, the empty state's
   // clear button) — but not when it is our own search landing, which would
@@ -69,13 +70,14 @@ export function ListSearch({
     >
       <div className="relative min-w-0 flex-1">
         <Input
+          ref={input}
           type="search"
           enterKeyHint="search"
-          aria-label={searchLabel}
+          aria-label={placeholder}
           placeholder={placeholder}
           value={text}
           maxLength={200}
-          className="pe-8 [&::-webkit-search-cancel-button]:appearance-none"
+          className="pe-10 [&::-webkit-search-cancel-button]:appearance-none"
           onChange={(e) => {
             const next = e.target.value;
             setText(next);
@@ -87,10 +89,12 @@ export function ListSearch({
           <button
             type="button"
             aria-label={clearLabel}
-            className="absolute inset-y-0 end-0 flex w-8 items-center justify-center text-muted-foreground hover:text-foreground"
+            className="absolute inset-y-0 end-0 flex w-10 items-center justify-center text-muted-foreground hover:text-foreground"
             onClick={() => {
               setText("");
               commit("");
+              // The clear button disappears with the text; keep focus in the box.
+              input.current?.focus();
             }}
           >
             <X className="size-4" />

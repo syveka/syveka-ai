@@ -45,7 +45,7 @@ export function PublicLanguageSwitcher() {
                 hrefLang={locale}
                 aria-current={active ? "page" : undefined}
                 className={cn(
-                  "inline-flex min-h-8 items-center rounded px-2.5 py-1 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  "inline-flex min-h-10 items-center rounded px-3 py-1 hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   active && "bg-primary font-medium text-primary-foreground hover:bg-primary",
                 )}
               >

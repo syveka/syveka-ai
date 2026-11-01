@@ -3,12 +3,16 @@
 import { useEffect, useId, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
+const FOCUSABLE =
+  'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"])';
+
 /**
  * The modal frame shared by the calendar's event and booking-page editors.
  * It always fits the visible viewport: dvh follows the mobile browser's
  * toolbar and on-screen keyboard, the width never exceeds the screen minus the
  * gutter, and long content scrolls inside the card instead of the page.
- * Escape closes it, and focus moves into the dialog and back on close.
+ * Escape closes it, Tab and Shift+Tab stay inside it, and focus moves into
+ * the dialog and back on close.
  */
 export function CalendarModal({
   title,
@@ -31,7 +35,34 @@ export function CalendarModal({
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
+      if (e.key === "Escape") {
+        onClose();
+        return;
+      }
+      if (e.key !== "Tab" || !dialogRef.current) return;
+      // Keep keyboard focus inside the dialog: the calendar behind it stays
+      // in the page, so without this Tab walks into it.
+      const focusable = Array.from(
+        dialogRef.current.querySelectorAll<HTMLElement>(FOCUSABLE),
+      ).filter((el) => !el.hasAttribute("disabled") && el.getAttribute("aria-hidden") !== "true");
+      if (focusable.length === 0) {
+        e.preventDefault();
+        return;
+      }
+      const first = focusable[0]!;
+      const last = focusable[focusable.length - 1]!;
+      const active = document.activeElement;
+      const inside = active instanceof Node && dialogRef.current.contains(active);
+      if (!inside || active === dialogRef.current) {
+        e.preventDefault();
+        (e.shiftKey ? last : first).focus();
+      } else if (e.shiftKey && active === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && active === last) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);

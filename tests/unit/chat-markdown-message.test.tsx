@@ -172,8 +172,8 @@ describe("citations", () => {
   });
 
   it("model text can't forge a citation token", () => {
-    expect(withCitationTokens("x 1 y", citations)).toBe("x 1 y");
-    expect(withCitationTokens(`x [doc:${KNOWN}]`, citations)).toBe("x1");
+    expect(withCitationTokens("x \uE0001\uE001 y", citations)).toBe("x 1 y");
+    expect(withCitationTokens(`x [doc:${KNOWN}]`, citations)).toBe("x\uE0001\uE001");
   });
 });
 

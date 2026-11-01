@@ -205,7 +205,7 @@ describe("search box (client)", () => {
 
   it("is labelled, has a search button, and stays within the 200-character limit", () => {
     renderContacts();
-    expect(searchBox().getAttribute("aria-label")).toBe(messages.crm.search);
+    expect(searchBox().getAttribute("aria-label")).toBe(messages.crm.searchPlaceholder);
     expect(searchBox().getAttribute("maxlength")).toBe("200");
     expect(searchBox().getAttribute("enterkeyhint")).toBe("search");
     expect(screen.getByRole("button", { name: messages.crm.search })).toBeTruthy();
@@ -311,6 +311,7 @@ describe("search box (client)", () => {
     fireEvent.click(screen.getAllByRole("button", { name: messages.crm.clearSearch })[0]!);
     expect(lastUrl()).toBe("/crm/contacts?");
     expect((searchBox() as HTMLInputElement).value).toBe("");
+    expect(document.activeElement).toBe(searchBox());
   });
 
   it("unmounting with a pending search sends nothing", () => {

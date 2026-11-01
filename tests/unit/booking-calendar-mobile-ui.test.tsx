@@ -146,6 +146,33 @@ describe("event dialog on a phone", () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it("keeps Tab and Shift+Tab inside the dialog (the calendar behind stays out of reach)", async () => {
+    const host = await render(eventDialog());
+    const dialog = host.querySelector<HTMLElement>('[role="dialog"]')!;
+    const focusable = Array.from(
+      dialog.querySelectorAll<HTMLElement>(
+        'a[href], button, input:not([type="hidden"]), select, textarea, [tabindex]:not([tabindex="-1"])',
+      ),
+    ).filter((el) => !el.hasAttribute("disabled"));
+    const first = focusable[0]!;
+    const last = focusable.at(-1)!;
+    const tab = (shiftKey = false) =>
+      act(async () => {
+        document.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "Tab", shiftKey, cancelable: true }),
+        );
+      });
+
+    // Focus starts on the dialog itself: Tab enters at the first control.
+    expect(document.activeElement).toBe(dialog);
+    await tab();
+    expect(document.activeElement).toBe(first);
+    await tab(true);
+    expect(document.activeElement).toBe(last);
+    await tab();
+    expect(document.activeElement).toBe(first);
+  });
+
   it("fits the viewport: dynamic-viewport height, screen-bound width, scrolls inside", async () => {
     const host = await render(eventDialog());
     const card = host.querySelector('[role="dialog"] > div')!;

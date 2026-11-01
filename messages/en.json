@@ -1071,7 +1071,7 @@
       "mock": "Using a test email provider — messages are simulated, not real",
       "notConfigured": "Email not configured yet",
       "configuredUnverified": "Email provider configured — not verified yet: no inbound email has been received",
-      "receiving": "Email channel receiving: inbound email has arrived"
+      "receiving": "Inbound email received: at least one real email has arrived"
     },
     "status": {
       "OPEN": "Open",

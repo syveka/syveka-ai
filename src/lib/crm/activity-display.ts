@@ -201,15 +201,36 @@ function localizedBooking(
   };
 }
 
+/**
+ * Every inserted value (stage names, booking type, guest, e-mail, times,
+ * reasons) is wrapped in a Unicode first-strong isolate, so it keeps its own
+ * direction: a Latin "Lead → Won" inside the Arabic sentence, or an Arabic
+ * name in a Finnish one, can't flip the arrow or move the brackets.
+ */
+const FSI = "\u2068";
+const PDI = "\u2069";
+
+function isolatingValues(ctx: ActivityDisplayContext): ActivityDisplayContext {
+  return {
+    ...ctx,
+    translate: (key, values) =>
+      ctx.translate(
+        key,
+        Object.fromEntries(Object.entries(values).map(([k, v]) => [k, `${FSI}${v}${PDI}`])),
+      ),
+  };
+}
+
 /** Subject and body to show for a timeline entry (stored values unless a known system pattern). */
 export function displayActivity(
   activity: DisplayableActivity,
   ctx: ActivityDisplayContext,
 ): { subject: string; body: string | null } {
   const stored = { subject: activity.subject, body: activity.body ?? null };
+  const isolated = isolatingValues(ctx);
   if (activity.type === "STAGE_CHANGE") {
-    const subject = localizedStageChange(activity, ctx);
+    const subject = localizedStageChange(activity, isolated);
     return subject ? { ...stored, subject } : stored;
   }
-  return localizedBooking(activity, ctx) ?? stored;
+  return localizedBooking(activity, isolated) ?? stored;
 }

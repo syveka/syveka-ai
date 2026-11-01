@@ -58,8 +58,11 @@ export function Composer({
   // text already typed (never replacing it) and is sent only when the user
   // presses Send.
   const [voiceAnnouncement, setVoiceAnnouncement] = useState("");
+  const micRef = useRef<HTMLButtonElement>(null);
+  const transcriptArrived = useRef(false);
   const voice = useVoiceRecorder({
     onTranscript: (transcript) => {
+      transcriptArrived.current = true;
       setText((current) => {
         if (!current.trim()) return transcript;
         const trimmed = current.replace(/[ \t]+$/, "");
@@ -78,6 +81,22 @@ export function Composer({
   useEffect(() => {
     onVoiceBusyChange?.(voiceBusy);
   }, [voiceBusy, onVoiceBusyChange]);
+
+  // After a discard, cancel or error the voice panel disappears with the
+  // focused control in it; give focus back to the microphone. A transcript
+  // instead focuses the text box (above).
+  const wasVoiceBusy = useRef(false);
+  useEffect(() => {
+    const ended = wasVoiceBusy.current && !voiceBusy;
+    wasVoiceBusy.current = voiceBusy;
+    if (!ended) return;
+    if (transcriptArrived.current) {
+      transcriptArrived.current = false;
+      return;
+    }
+    const active = document.activeElement;
+    if (!active || active === document.body) micRef.current?.focus();
+  }, [voiceBusy]);
 
   const startRecording = () => {
     onRecordingStart?.();
@@ -241,7 +260,7 @@ export function Composer({
           <BookOpen className="size-4" />
         </button>
         {voiceInputEnabled ? (
-          <MicrophoneButton status={voice.status} onStart={startRecording} />
+          <MicrophoneButton status={voice.status} onStart={startRecording} buttonRef={micRef} />
         ) : null}
         <Button
           size="icon"
