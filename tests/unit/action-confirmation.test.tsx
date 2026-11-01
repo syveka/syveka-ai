@@ -496,11 +496,38 @@ describe("ActionConfirmation — a request that got no usable answer can be sent
 });
 
 describe("ActionConfirmation — a proposal replaced by a newer one", () => {
+  const hoursAndLanguages = (): ProposedActionView =>
+    action({
+      tool: "proposeBusinessDnaUpdate",
+      details: {
+        tool: "proposeBusinessDnaUpdate",
+        missingAfter: [],
+        changes: [
+          {
+            field: "openingHours",
+            kind: "modified",
+            before: null,
+            after: {
+              type: "hours",
+              days: [{ day: "monday", closed: false, open: "08:00", close: "17:00" }],
+            },
+          },
+          {
+            field: "supportedLocales",
+            kind: "added",
+            before: null,
+            after: { type: "list", items: ["FI", "EN"] },
+          },
+        ],
+      },
+    });
+  const replaced = { notCarriedOver: [] };
+
   it("is shown as replaced, can't be decided, and releases the view at once", () => {
     const onSettled = vi.fn();
     render(
       <NextIntlClientProvider locale="en" messages={en}>
-        <ActionConfirmation action={action()} superseded onSettled={onSettled} />
+        <ActionConfirmation action={action()} superseded={replaced} onSettled={onSettled} />
       </NextIntlClientProvider>,
     );
     expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.superseded);
@@ -512,10 +539,108 @@ describe("ActionConfirmation — a proposal replaced by a newer one", () => {
   it("a card already decided is not changed by a later proposal", () => {
     render(
       <NextIntlClientProvider locale="en" messages={en}>
-        <ActionConfirmation action={{ ...action(), restored: "done" }} superseded />
+        <ActionConfirmation action={{ ...action(), restored: "done" }} superseded={replaced} />
       </NextIntlClientProvider>,
     );
     expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.done);
+  });
+
+  it("is offered again once the newer proposal is withdrawn, if still unexpired; announced, not focused", () => {
+    const onSettled = vi.fn();
+    const view = render(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <ActionConfirmation action={hoursAndLanguages()} onSettled={onSettled} />
+      </NextIntlClientProvider>,
+    );
+    expect(screen.getByRole("button", { name: en.chat.actions.confirm })).toBeTruthy();
+    view.rerender(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <ActionConfirmation
+          action={hoursAndLanguages()}
+          superseded={replaced}
+          onSettled={onSettled}
+        />
+      </NextIntlClientProvider>,
+    );
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.superseded);
+    expect(screen.queryByRole("button", { name: en.chat.actions.confirm })).toBeNull();
+    expect(onSettled).toHaveBeenCalledTimes(1);
+    view.rerender(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <ActionConfirmation action={hoursAndLanguages()} onSettled={onSettled} />
+      </NextIntlClientProvider>,
+    );
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.nothingYet);
+    expect(screen.getByRole("button", { name: en.chat.actions.confirm })).toBeTruthy();
+    expect(document.activeElement).toBe(document.body);
+    expect(fetchMock).not.toHaveBeenCalled();
+    // Replaced again later: reported again, so a held redirect is released again.
+    view.rerender(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <ActionConfirmation
+          action={hoursAndLanguages()}
+          superseded={replaced}
+          onSettled={onSettled}
+        />
+      </NextIntlClientProvider>,
+    );
+    expect(onSettled).toHaveBeenCalledTimes(2);
+  });
+
+  it("a proposal that expired while replaced is expired, not confirmable, when the newer one is withdrawn", () => {
+    const expiresAt = Date.now() + 1_000;
+    const a = { ...hoursAndLanguages(), expiresAt };
+    const view = render(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <ActionConfirmation action={a} superseded={replaced} />
+      </NextIntlClientProvider>,
+    );
+    vi.useFakeTimers();
+    vi.setSystemTime(expiresAt + 1);
+    try {
+      view.rerender(
+        <NextIntlClientProvider locale="en" messages={en}>
+          <ActionConfirmation action={a} />
+        </NextIntlClientProvider>,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.expired);
+    expect(screen.queryByRole("button", { name: en.chat.actions.confirm })).toBeNull();
+  });
+
+  it.each([
+    ["en", en, "The newer request doesn’t include Supported languages."],
+    ["fi", fi, "Uudempi pyyntö ei sisällä kohtaa Tuetut kielet."],
+    ["ar", ar, "الطلب الأحدث لا يشمل اللغات المدعومة."],
+  ])("names the fields the newer request doesn't carry over (%s)", (locale, messages, expected) => {
+    render(
+      <NextIntlClientProvider locale={locale} messages={messages}>
+        <ActionConfirmation
+          action={hoursAndLanguages()}
+          superseded={{ notCarriedOver: ["supportedLocales"] }}
+        />
+      </NextIntlClientProvider>,
+    );
+    const status = screen.getByRole("status").textContent ?? "";
+    expect(status.startsWith(messages.chat.actions.result.superseded)).toBe(true);
+    expect(status).toContain(expected);
+    expect(screen.queryByRole("button", { name: messages.chat.actions.confirm })).toBeNull();
+  });
+
+  it("lists several fields in the interface language", () => {
+    render(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <ActionConfirmation
+          action={hoursAndLanguages()}
+          superseded={{ notCarriedOver: ["supportedLocales", "openingHours"] }}
+        />
+      </NextIntlClientProvider>,
+    );
+    expect(screen.getByRole("status").textContent).toContain(
+      "doesn’t include Supported languages and Opening hours.",
+    );
   });
 });
 

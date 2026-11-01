@@ -6,7 +6,8 @@ import { Check, RotateCcw, ShieldCheck, X } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "@/i18n/routing";
 import type { ProposedActionView, RestoredActionState } from "@/lib/validators/chat";
-import { BusinessDnaChanges } from "./business-dna-changes";
+import type { Supersession } from "@/lib/chat/superseded-actions";
+import { BusinessDnaChanges, businessDnaFieldLabel } from "./business-dna-changes";
 
 type State =
   | "pending"
@@ -103,16 +104,17 @@ function settledOutcome(state: State): RestoredActionState | "superseded" {
  */
 export function ActionConfirmation({
   action,
-  superseded = false,
+  superseded,
   onSettled,
 }: {
   action: ProposedActionView & { restored?: RestoredActionState };
-  /** A newer proposal in this conversation changes the same fields (see supersededActionIds). */
-  superseded?: boolean;
+  /** Set while a newer proposal in this conversation replaces this one (see supersededActions). */
+  superseded?: Supersession;
   /** Called once the action can't be decided here any more (not after a request that can be sent again), with the outcome. */
   onSettled?: (actionId: string, outcome: RestoredActionState | "superseded") => void;
 }) {
   const t = useTranslations("chat.actions");
+  const field = useTranslations("businessDna");
   const locale = useLocale();
   // A reopened conversation shows the recorded outcome (never executable);
   // otherwise a pending card, or "expired" once it can't be decided any more.
@@ -136,14 +138,23 @@ export function ActionConfirmation({
 
   // A proposal replaced by a newer one (from the start, or while this card
   // was pending) is no longer this view's business: a held redirect may
-  // proceed. Reported once.
+  // proceed. Reported once per replacement. When the newer proposal is
+  // canceled (or fails before any write), this one is offered again, as
+  // long as it was never decided and hasn't expired meanwhile.
   const releasedRef = useRef(false);
   useEffect(() => {
-    if (!superseded || releasedRef.current) return;
-    if (state === "pending") setState("superseded");
-    if (state === "pending" || state === "superseded") {
-      releasedRef.current = true;
-      onSettled?.(action.id, "superseded");
+    if (superseded) {
+      if (releasedRef.current) return;
+      if (state === "pending") setState("superseded");
+      if (state === "pending" || state === "superseded") {
+        releasedRef.current = true;
+        onSettled?.(action.id, "superseded");
+      }
+      return;
+    }
+    if (state === "superseded" && !decidedRef.current && !action.restored) {
+      releasedRef.current = false;
+      setState(action.expiresAt > Date.now() ? "pending" : "expired");
     }
     // onSettled is a stable callback from the chat hook.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -253,6 +264,9 @@ export function ActionConfirmation({
   const deciding = state === "pending" || submitting;
   // One live region in every state, so a change the user didn't make
   // (replaced by a newer request) is announced, not only an inserted node.
+  // A replacement that covers only some of this proposal's fields names the
+  // rest, so no change is dropped silently.
+  const notCarriedOver = state === "superseded" ? (superseded?.notCarriedOver ?? []) : [];
   const status =
     state === "pending"
       ? t("nothingYet")
@@ -260,7 +274,13 @@ export function ActionConfirmation({
         ? t("confirming")
         : retrying
           ? t("retrying")
-          : t(`result.${state}`);
+          : notCarriedOver.length > 0
+            ? `${t("result.superseded")} ${t("notCarriedOver", {
+                fields: new Intl.ListFormat(locale, { type: "conjunction" }).format(
+                  notCarriedOver.map((f) => businessDnaFieldLabel(field, f)),
+                ),
+              })}`
+            : t(`result.${state}`);
   return (
     <section
       aria-label={t("title")}

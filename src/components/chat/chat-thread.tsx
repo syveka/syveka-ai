@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import type { UiMessage } from "@/hooks/use-chat";
 import type { RestoredActionState } from "@/lib/validators/chat";
 import type { PlaybackFailure } from "@/hooks/use-speech-playback";
-import { supersededActionIds } from "@/lib/chat/superseded-actions";
+import { supersededActions, type Supersession } from "@/lib/chat/superseded-actions";
 import { ActionConfirmation } from "./action-confirmation";
 import { MarkdownMessage } from "./markdown-message";
 
@@ -42,12 +42,14 @@ export function ChatThread({
 
   // Outcomes decided in this view (a reload restores them from the record),
   // so that what a later proposal replaces follows the user's decisions.
-  const [decided, setDecided] = useState<Map<string, RestoredActionState | "superseded">>(
-    () => new Map(),
-  );
+  // "Superseded" is derived from the thread, never recorded as a decision:
+  // once the newer proposal is canceled, the earlier one is offered again.
+  const [decided, setDecided] = useState<Map<string, RestoredActionState>>(() => new Map());
   const handleSettled = useCallback(
     (actionId: string, outcome: RestoredActionState | "superseded") => {
-      setDecided((prev) => new Map(prev).set(actionId, outcome));
+      if (outcome !== "superseded") {
+        setDecided((prev) => new Map(prev).set(actionId, outcome));
+      }
       onActionSettled?.(actionId);
     },
     [onActionSettled],
@@ -64,7 +66,7 @@ export function ChatThread({
 
   // A Business DNA proposal replaced by a later one about the same fields
   // (the user corrected a fact) is shown as such instead of staying confirmable.
-  const superseded = supersededActionIds(
+  const superseded = supersededActions(
     messages.flatMap((m) => (m.role === "assistant" ? (m.actions ?? []) : [])),
     Date.now(),
     decided,
@@ -119,7 +121,7 @@ function MessageBubble({
   message: UiMessage;
   playback?: ReplyPlayback;
   turn?: string;
-  superseded: ReadonlySet<string>;
+  superseded: ReadonlyMap<string, Supersession>;
   onActionSettled?: (actionId: string, outcome: RestoredActionState | "superseded") => void;
 }) {
   const toolStatus = useTranslations("chat.toolStatus");
@@ -159,7 +161,7 @@ function MessageBubble({
               <ActionConfirmation
                 key={action.id}
                 action={action}
-                superseded={superseded.has(action.id)}
+                superseded={superseded.get(action.id)}
                 onSettled={onActionSettled}
               />
             ))

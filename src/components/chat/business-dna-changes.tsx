@@ -15,12 +15,19 @@ import type {
  * takes its direction from its own text (`dir="auto"`), and so does each
  * list item, so a list can mix languages.
  */
+/** The settings page's label for a field, so chat and the form name it the same way. */
+export function businessDnaFieldLabel(
+  field: ReturnType<typeof useTranslations<"businessDna">>,
+  name: BusinessDnaChange["field"],
+): string {
+  return name === "openingHours" ? field("sections.openingHours") : field(`fields.${name}`);
+}
+
 export function BusinessDnaChanges({ changes }: { changes: BusinessDnaChange[] }) {
   const t = useTranslations("chat.actions.businessDna");
   const field = useTranslations("businessDna");
 
-  const label = (name: BusinessDnaChange["field"]) =>
-    name === "openingHours" ? field("sections.openingHours") : field(`fields.${name}`);
+  const label = (name: BusinessDnaChange["field"]) => businessDnaFieldLabel(field, name);
 
   const value = (v: BusinessDnaDisplayValue) => {
     if (v.type === "text") return v.value;

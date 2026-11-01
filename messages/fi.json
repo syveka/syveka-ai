@@ -412,7 +412,8 @@
         "planLimit": "Tilauksesi ei salli tätä muutosta. Katso Laskutus."
       },
       "tryAgain": "Yritä uudelleen",
-      "retrying": "Lähetetään uudelleen…"
+      "retrying": "Lähetetään uudelleen…",
+      "notCarriedOver": "Uudempi pyyntö ei sisällä kohtaa {fields}. Pyydä Syvekaa muuttamaan myös se."
     },
     "toolStatus": {
       "searchKnowledgeBase": "Haetaan dokumenteista…",

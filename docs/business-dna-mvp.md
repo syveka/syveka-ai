@@ -297,12 +297,21 @@ keys aren't accepted by any route yet):
 ### Corrections, retries and reopened conversations
 
 - **A corrected fact replaces the earlier card.** When the user corrects something before
-  confirming ("actually we close at 16"), the assistant proposes again. An undecided proposal is
-  shown as _replaced_ (not confirmable) when a later undecided proposal in the conversation
-  changes any of the same fields (`src/lib/chat/superseded-actions.ts`); proposals about
-  different fields (hours, then languages) stay independent. This is a view decision: the server
-  still binds every confirmation to its own proposal, and an old proposal confirmed through the
-  API after the newer one was applied to the same field is refused as stale.
+  confirming ("actually we close at 16"), the assistant proposes again. An undecided, unexpired
+  proposal is shown as _replaced_ (not confirmable) while a later proposal in the conversation
+  that changes any of the same fields is still open (undecided and unexpired) or has been
+  applied (`src/lib/chat/superseded-actions.ts`); proposals about different fields (hours, then
+  languages) stay independent. Canceling the newer proposal, or a newer one that expired or
+  failed before writing, replaces nothing: the earlier card is offered again at once, provided
+  it was never decided and hasn't expired meanwhile (an expired one reads as expired). Applying
+  the newer proposal keeps the earlier one replaced. Outcomes decided in the open view and
+  outcomes restored on reload count the same way, so a reopened conversation shows the same
+  thing. When the newer proposal covers only some of the earlier one's fields (A proposed hours
+  and languages, B corrects only the hours), the earlier card says which fields the newer
+  request doesn't include, so nothing is dropped silently; the user asks again for those. This
+  is a view decision: the server still binds every confirmation to its own proposal, and an old
+  proposal confirmed through the API after the newer one was applied to the same field is
+  refused as stale (the whole patch, so stale hours never overwrite the correction).
 - **A confirmation that got no usable answer can be sent again.** When the chat limit or the
   action store was unavailable (503), the limit was reached (429), or the connection dropped, the
   card offers _Try again_, which sends the same decision. The server runs an action at most once

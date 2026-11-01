@@ -412,7 +412,8 @@
         "planLimit": "Your plan doesn’t allow this change. See Billing."
       },
       "tryAgain": "Try again",
-      "retrying": "Sending again…"
+      "retrying": "Sending again…",
+      "notCarriedOver": "The newer request doesn’t include {fields}. Ask Syveka again to change that too."
     },
     "toolStatus": {
       "searchKnowledgeBase": "Searching your documents…",
