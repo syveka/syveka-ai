@@ -3,7 +3,7 @@ import React from "react";
 import fs from "node:fs";
 import path from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { NextIntlClientProvider } from "next-intl";
 
 /**
@@ -123,5 +123,32 @@ describe("DealBoard follows revalidated server data", () => {
     view.rerender(ui(initial, true));
     expect(header("Proposal")).toContain("€500.00");
     expect(header("Contacted")).toContain("€0.00");
+  });
+
+  it("a failed move falls back to the latest server data, not the drop-time board", async () => {
+    let reject!: (e: Error) => void;
+    moves.moveDealAction.mockImplementationOnce(
+      () => new Promise<{ ok: boolean }>((_resolve, r) => (reject = r)),
+    );
+    const view = render(ui(stages([deal("drag", 50_000, null)]), true));
+    const dataTransfer = { setData: vi.fn(), getData: vi.fn(), effectAllowed: "", dropEffect: "" };
+    fireEvent.dragStart(screen.getByText("Deal drag").closest("[draggable]")!, { dataTransfer });
+    const proposalColumn = screen
+      .getByText("Proposal", { selector: "span" })
+      .closest("div.border-b")!.parentElement!;
+    fireEvent.drop(proposalColumn, { dataTransfer });
+    expect(header("Proposal")).toContain("€500.00");
+
+    // While the move is pending, a refresh brings a deal created meanwhile.
+    view.rerender(ui(stages([deal("drag", 50_000, null), deal("created", 100_000, 50)]), true));
+    expect(screen.getByText("Deal created")).toBeTruthy();
+
+    // The move fails: the board shows the server's view, including the new deal.
+    await act(async () => {
+      reject(new Error("move refused"));
+    });
+    expect(screen.getByText("Deal created")).toBeTruthy();
+    expect(header("Contacted")).toContain("€1,500.00");
+    expect(header("Proposal")).toContain("€0.00");
   });
 });

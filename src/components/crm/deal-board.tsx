@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { CalendarClock } from "lucide-react";
 import { Link, RTL_LOCALES } from "@/i18n/routing";
@@ -67,6 +67,13 @@ export function DealBoard({
     setServerStages(initial);
     setStages(initial);
   }
+  // A failed move falls back to the latest server data, not to the board as
+  // it was at the drop: a refresh may have arrived meanwhile (a new deal, another
+  // move), and the drop-time snapshot would hide it again.
+  const latestServerStages = useRef(serverStages);
+  useEffect(() => {
+    latestServerStages.current = serverStages;
+  }, [serverStages]);
   const [dragged, setDragged] = useState<{ dealId: string; fromStageId: string } | null>(null);
   const [dropTarget, setDropTarget] = useState<string | null>(null);
   const [, startTransition] = useTransition();
@@ -112,7 +119,7 @@ export function DealBoard({
       try {
         await moveDealAction({ dealId, stageId: toStageId, position });
       } catch {
-        setStages(prev); // rollback
+        setStages(latestServerStages.current); // rollback to the server's view
       }
     });
   };
