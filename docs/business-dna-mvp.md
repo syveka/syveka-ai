@@ -294,6 +294,48 @@ keys aren't accepted by any route yet):
    `400 invalid_input`: `expectedUpdatedAt` missing or malformed (requests written before it
    existed now get this). `429`/`503`: rate limited / limit unavailable.
 
+### Corrections, retries and reopened conversations
+
+- **A corrected fact replaces the earlier card.** When the user corrects something before
+  confirming ("actually we close at 16"), the assistant proposes again. An undecided, unexpired
+  proposal is shown as _replaced_ (not confirmable) while a later proposal in the conversation
+  that changes any of the same fields is still open (undecided and unexpired) or has been
+  applied (`src/lib/chat/superseded-actions.ts`); proposals about different fields (hours, then
+  languages) stay independent. Canceling the newer proposal, or a newer one that expired or
+  failed before writing, replaces nothing: the earlier card is offered again at once, provided
+  it was never decided and hasn't expired meanwhile (an expired one reads as expired). Applying
+  the newer proposal keeps the earlier one replaced. Outcomes decided in the open view and
+  outcomes restored on reload count the same way, so a reopened conversation shows the same
+  thing. When the newer proposal covers only some of the earlier one's fields (A proposed hours
+  and languages, B corrects only the hours), the earlier card says which fields the newer
+  request doesn't include, so nothing is dropped silently; the user asks again for those. This
+  is a view decision: the server still binds every confirmation to its own proposal, and an old
+  proposal confirmed through the API after the newer one was applied to the same field is
+  refused as stale (the whole patch, so stale hours never overwrite the correction).
+- **A confirmation that got no usable answer can be sent again.** When the chat limit or the
+  action store was unavailable (503), the limit was reached (429), or the connection dropped, the
+  card offers _Try again_, which sends the same decision. The server runs an action at most once
+  (the decision is single-use), so a repeat after a lost answer is refused as `already_decided`
+  and the endpoint returns the recorded outcome of the first decision (the deciding user's own
+  audit record, in their organization); the card then shows what happened. A repeat that lands
+  after the store's expiry reads as not found in the store, so the endpoint answers it from the
+  same record: the user's own outcome if the decision was made, else not found (nothing is
+  revealed to another user or organization). Refusals that consumed the action or can't change
+  (plan limit, permission, expired, altered payload, a failure while running) offer no retry; a
+  refusal issued before any decision (signed out, malformed request) can be sent again. A card
+  awaiting a repeat is open on the server too, so a correction replaces it as well: its repeat
+  is withheld (never sent with a replaced value) and offered again once the newer proposal is
+  withdrawn.
+- **Reopening the conversation** (`src/server/ai/tool-action-history.ts`) shows each saved
+  proposal with its recorded outcome; an undecided one is offered again only while the action
+  store still holds it as pending and it hasn't expired (10 minutes from the proposal,
+  `ACTION_TTL_SECONDS`). After that it reads as expired or unavailable: ask the assistant again.
+- After the user's own decision, keyboard focus moves to the card (its live region reads the
+  result once); never on mount, never for a replacement the user didn't make. Buttons are never
+  `disabled` while a request is in flight (browsers drop focus from a control that becomes
+  disabled); they carry `aria-disabled`/`aria-busy`, and the one-request guard ignores a second
+  activation.
+
 Known limit: chat changes don't change the website-extraction provenance (`sourceUrl`,
 `extractedAt`).
 

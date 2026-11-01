@@ -119,6 +119,26 @@ export async function POST(
     return error("service_unavailable", 503);
   }
   if (!outcome.ok) {
+    if (outcome.reason === "already_decided" || outcome.reason === "not_found") {
+      // A repeated decision (a retry after a lost answer, a double submit):
+      // nothing runs again, and the recorded outcome of the first decision
+      // is returned with the refusal, so the user sees what happened rather
+      // than only that it was handled. The record is this organization's
+      // and this user's own; a missing or unreadable record leaves it out.
+      // A repeat that lands after the store's expiry reads as not found in
+      // the store, so the same lookup decides it: the user's own recorded
+      // decision, if there is one, else not found as before (nothing is
+      // revealed to anyone but the user who decided).
+      const { recordedActionOutcomes } = await import("@/server/ai/tool-action-history");
+      const recorded = await recordedActionOutcomes(ctx.orgId, [id], ctx.userId).catch(() => null);
+      const previous = recorded?.get(id);
+      if (outcome.reason === "already_decided" || previous) {
+        return NextResponse.json(
+          { error: { code: "already_decided", ...(previous ? { outcome: previous } : {}) } },
+          { status: REFUSALS.already_decided },
+        );
+      }
+    }
     // These happen after the action was marked decided (it can't run again):
     // record them, so a reopened conversation shows "failed", not "unknown".
     const recorded = CONSUMED_FAILURES[outcome.reason];
