@@ -779,6 +779,44 @@ describe("the decision endpoint", () => {
       vi.useRealTimers();
     }
   });
+
+  it("a repeated confirmation (lost answer, double submit) applies nothing again and reports the first decision's outcome", async () => {
+    vi.useFakeTimers({ now: m.now + 1_000, toFake: ["Date"] });
+    try {
+      const p = await propose(carRepairShop);
+      m.ctx = { orgId: ORG, userId: USER, role: "MANAGER" };
+
+      const first = await post(p.action!);
+      expect(first.status).toBe(200);
+      const updatedAt = m.profiles.get(ORG)!.updatedAt;
+
+      const again = await post(p.action!);
+
+      expect(again.status).toBe(409);
+      expect(await again.json()).toEqual({ error: { code: "already_decided", outcome: "done" } });
+      expect(m.profiles.get(ORG)!.updatedAt).toBe(updatedAt);
+      expect(m.audits.filter((a) => a.action === "business_dna.create")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a repeated confirmation from another organization is still refused as not found, without any outcome", async () => {
+    vi.useFakeTimers({ now: m.now + 1_000, toFake: ["Date"] });
+    try {
+      const p = await propose(carRepairShop);
+      m.ctx = { orgId: ORG, userId: USER, role: "MANAGER" };
+      expect((await post(p.action!)).status).toBe(200);
+      m.ctx = { orgId: OTHER_ORG, userId: USER, role: "OWNER" };
+
+      const res = await post(p.action!);
+
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: { code: "not_found" } });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("the settings form never overwrites newer changes", () => {

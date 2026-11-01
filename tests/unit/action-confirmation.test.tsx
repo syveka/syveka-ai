@@ -309,3 +309,159 @@ describe("ActionConfirmation — Business DNA changes", () => {
     expect(arabic.getAttribute("dir")).toBe("auto");
   });
 });
+
+describe("ActionConfirmation — a request that got no usable answer can be sent again", () => {
+  const dnaAction = (): ProposedActionView =>
+    action({
+      tool: "proposeBusinessDnaUpdate",
+      details: {
+        tool: "proposeBusinessDnaUpdate",
+        missingAfter: [],
+        changes: [
+          {
+            field: "industry",
+            kind: "added",
+            before: null,
+            after: { type: "text", value: "Car repair" },
+          },
+        ],
+      },
+    });
+  const confirm = () =>
+    act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.chat.actions.confirm }));
+    });
+  const tryAgain = () =>
+    act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.chat.actions.tryAgain }));
+    });
+
+  it("the limit couldn't be checked (503): Try again sends the same decision and shows the result", async () => {
+    response = { status: 503, body: { error: { code: "service_unavailable" } } };
+    show(dnaAction());
+    await confirm();
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.failed);
+    expect(document.activeElement).toBe(screen.getByRole("status"));
+
+    response = {
+      status: 200,
+      body: { data: { status: "done", tool: "proposeBusinessDnaUpdate" } },
+    };
+    await tryAgain();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const bodies = fetchMock.mock.calls.map((c) =>
+      JSON.parse(String((c as unknown as [string, RequestInit])[1].body)),
+    );
+    expect(bodies[1]).toEqual(bodies[0]);
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.done);
+    expect(screen.queryByRole("button", { name: en.chat.actions.tryAgain })).toBeNull();
+    expect(screen.getByRole("link", { name: en.chat.actions.businessDna.review })).toBeTruthy();
+  });
+
+  it("rate limited (429): says so and offers to try again", async () => {
+    response = { status: 429, body: { error: { code: "rate_limited" } } };
+    show(dnaAction());
+    await confirm();
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.rateLimited);
+    expect(screen.getByRole("button", { name: en.chat.actions.tryAgain })).toBeTruthy();
+  });
+
+  it("no answer, then a repeat refused as already decided: the first decision's recorded outcome is shown", async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    show(dnaAction());
+    await confirm();
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.unknown);
+
+    response = { status: 409, body: { error: { code: "already_decided", outcome: "done" } } };
+    await tryAgain();
+
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.done);
+    expect(screen.getByRole("link", { name: en.chat.actions.businessDna.review })).toBeTruthy();
+  });
+
+  it("a repeat refused as already decided without a recorded outcome stays 'already handled'", async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    show(dnaAction());
+    await confirm();
+    response = { status: 409, body: { error: { code: "already_decided" } } };
+    await tryAgain();
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.alreadyDecided);
+    expect(screen.queryByRole("button", { name: en.chat.actions.tryAgain })).toBeNull();
+  });
+
+  it.each([
+    [402, { error: { code: "plan_limit" } }, "failed"],
+    [403, { error: { code: "permission_denied" } }, "permission"],
+    [404, { error: { code: "not_found" } }, "expired"],
+    [409, { error: { code: "mismatch" } }, "failed"],
+    [500, { error: { code: "action_failed" } }, "unknown"],
+  ])(
+    "%s %j: a refusal that decided or can't change (%s) offers no retry",
+    async (status, body, state) => {
+      response = { status, body };
+      show(dnaAction());
+      await confirm();
+      expect(screen.getByRole("status").textContent).toBe(
+        (en.chat.actions.result as Record<string, string>)[state],
+      );
+      expect(screen.queryByRole("button", { name: en.chat.actions.tryAgain })).toBeNull();
+    },
+  );
+
+  it("Cancel that got no answer can be sent again as Cancel", async () => {
+    vi.mocked(fetch).mockRejectedValueOnce(new TypeError("Failed to fetch"));
+    show(dnaAction());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.chat.actions.cancel }));
+    });
+    response = { status: 200, body: { data: { status: "canceled" } } };
+    await tryAgain();
+    const bodies = fetchMock.mock.calls.map((c) =>
+      JSON.parse(String((c as unknown as [string, RequestInit])[1].body)),
+    );
+    expect(bodies.map((b) => b.decision)).toEqual(["cancel", "cancel"]);
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.canceled);
+  });
+
+  it("is localized (FI and AR)", async () => {
+    response = { status: 429, body: { error: { code: "rate_limited" } } };
+    show(dnaAction(), fi, "fi");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: fi.chat.actions.confirm }));
+    });
+    expect(screen.getByRole("status").textContent).toBe(fi.chat.actions.result.rateLimited);
+    expect(screen.getByRole("button", { name: fi.chat.actions.tryAgain })).toBeTruthy();
+    cleanup();
+    show(dnaAction(), ar, "ar");
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: ar.chat.actions.confirm }));
+    });
+    expect(screen.getByRole("status").textContent).toBe(ar.chat.actions.result.rateLimited);
+    expect(screen.getByRole("button", { name: ar.chat.actions.tryAgain })).toBeTruthy();
+  });
+});
+
+describe("ActionConfirmation — a proposal replaced by a newer one", () => {
+  it("is shown as replaced, can't be decided, and releases the view at once", () => {
+    const onSettled = vi.fn();
+    render(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <ActionConfirmation action={action()} superseded onSettled={onSettled} />
+      </NextIntlClientProvider>,
+    );
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.superseded);
+    expect(screen.queryByRole("button", { name: en.chat.actions.confirm })).toBeNull();
+    expect(onSettled).toHaveBeenCalledWith(action().id);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("a card already decided is not changed by a later proposal", () => {
+    render(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <ActionConfirmation action={{ ...action(), restored: "done" }} superseded />
+      </NextIntlClientProvider>,
+    );
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.done);
+  });
+});
