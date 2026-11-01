@@ -812,7 +812,14 @@
   "notifications": {
     "title": "Notifications",
     "markAllRead": "Mark all read",
-    "empty": "You're all caught up."
+    "empty": "You're all caught up.",
+    "workflowFailed": "Workflow failed: <name></name>",
+    "booking": {
+      "confirmation": "New booking: <type></type> — <guest></guest>",
+      "reschedule": "Booking rescheduled: <type></type> — <guest></guest>",
+      "cancellation": "Booking canceled: <type></type> — <guest></guest>",
+      "reminder": "Upcoming meeting: <type></type> — <guest></guest>"
+    }
   },
   "analytics": {
     "title": "Analytics",
@@ -950,7 +957,8 @@
       "duplicate_step_id": "Two steps have the same identifier. Remove one and add it again.",
       "recipient_not_member": "The notification recipient must be a member of this organization.",
       "step_not_allowed": "This workspace's workflows can only use internal steps: conditions, CRM activities and in-app notifications to members. Remove email, AI, wait and scheduled steps."
-    }
+    },
+    "internalOnlyHint": "This workspace's workflows can only use internal steps. Email, AI and wait steps aren't available here."
   },
   "billingPage": {
     "title": "Billing",

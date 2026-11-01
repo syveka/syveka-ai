@@ -19,6 +19,7 @@ vi.mock("@/server/services/workflow-activation", () => ({
   getWorkflowActivation: async () => ({ block: null, limit: 1 }),
 }));
 vi.mock("@/components/workflows/workflow-builder", () => ({ WorkflowBuilder: () => null }));
+vi.mock("@/server/services/workflows", () => ({ isInternalOnlyWorkflowOrg: async () => false }));
 vi.mock("next/navigation", () => ({ notFound: vi.fn() }));
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: () => ({

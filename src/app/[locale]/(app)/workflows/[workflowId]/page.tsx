@@ -6,6 +6,7 @@ import { can } from "@/server/auth/permissions";
 import { tenantDb } from "@/server/db/tenant";
 import { getViewerTimeZone } from "@/server/services/viewer-time-zone";
 import { getWorkflowActivation } from "@/server/services/workflow-activation";
+import { isInternalOnlyWorkflowOrg } from "@/server/services/workflows";
 import { WorkflowBuilder } from "@/components/workflows/workflow-builder";
 import type { WorkflowStep, WorkflowTrigger } from "@/lib/validators/workflows";
 import { workflowRunFailure } from "@/lib/workflows/run-failure";
@@ -19,15 +20,17 @@ export default async function WorkflowPage({
   const ctx = await requirePermission("workflows:manage");
   const db = tenantDb(ctx.orgId);
 
-  const [activeCount, timeZone] = await Promise.all([
+  const [activeCount, timeZone, internalOnly] = await Promise.all([
     db.workflow.count({ where: { isActive: true } }),
     getViewerTimeZone(ctx.userId),
+    isInternalOnlyWorkflowOrg(ctx.orgId),
   ]);
   const activation = await getWorkflowActivation(ctx.orgId, activeCount);
   const planProps = {
     activation,
     timeZone,
     canViewPlans: can(ctx.role, "billing:view"),
+    internalOnly,
   };
 
   if (workflowId === "new") return <WorkflowBuilder {...planProps} />;

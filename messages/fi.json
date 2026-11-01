@@ -812,7 +812,14 @@
   "notifications": {
     "title": "Ilmoitukset",
     "markAllRead": "Merkitse kaikki luetuiksi",
-    "empty": "Ei uusia ilmoituksia."
+    "empty": "Ei uusia ilmoituksia.",
+    "workflowFailed": "Työnkulku epäonnistui: <name></name>",
+    "booking": {
+      "confirmation": "Uusi varaus: <type></type> — <guest></guest>",
+      "reschedule": "Varaus siirretty: <type></type> — <guest></guest>",
+      "cancellation": "Varaus peruttu: <type></type> — <guest></guest>",
+      "reminder": "Tuleva tapaaminen: <type></type> — <guest></guest>"
+    }
   },
   "analytics": {
     "title": "Analytiikka",
@@ -950,7 +957,8 @@
       "duplicate_step_id": "Kahdella vaiheella on sama tunniste. Poista toinen ja lisää se uudelleen.",
       "recipient_not_member": "Ilmoituksen vastaanottajan on oltava tämän organisaation jäsen.",
       "step_not_allowed": "Tämän työtilan työnkuluissa voi käyttää vain sisäisiä vaiheita: ehtoja, CRM-aktiviteetteja ja jäsenille näkyviä sovelluksen sisäisiä ilmoituksia. Poista sähköposti-, tekoäly-, odotus- ja ajastusvaiheet."
-    }
+    },
+    "internalOnlyHint": "Tämän työtilan työnkuluissa voi käyttää vain sisäisiä vaiheita. Sähköposti-, tekoäly- ja odotusvaiheet eivät ole käytettävissä."
   },
   "billingPage": {
     "title": "Laskutus",

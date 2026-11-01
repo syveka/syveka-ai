@@ -933,7 +933,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     );
     // Only a creator who is still a member of this (not deleted) org is told,
     // and only once per run: not for an attempt QStash will deliver again.
-    const terminal = err instanceof WorkflowStepRefusedError;
+    // A refusal or a step error (invalid recipient, missing or unknown
+    // contact) fails the same way on every attempt, so it ends the job now.
+    const terminal = err instanceof WorkflowStepRefusedError || err instanceof WorkflowStepError;
     if (
       (terminal || !jobWillBeRetried(request)) &&
       (await isCurrentMember(unscopedPrisma, orgId, workflow.createdById))
@@ -953,6 +955,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       // Deliberate refusal, not a transient error: a retry would only fail
       // again and notify the creator again.
       return NextResponse.json({ error: message, refused: err.reason });
+    }
+    if (err instanceof WorkflowStepError) {
+      // Deterministic: the same input fails the same way, so a retry would
+      // only repeat the failure. The run stays FAILED with its reason.
+      return NextResponse.json({ error: message, failed: true });
     }
     // QStash retries (3x) then DLQ (§17.2)
     return NextResponse.json({ error: message }, { status: 500 });

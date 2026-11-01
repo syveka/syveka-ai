@@ -1,9 +1,9 @@
 /**
  * Why a workflow run failed or was canceled, as a fixed code the Run history
- * can translate. The run record keeps the job's own text; Run history sends
- * only the code to the browser. (The creator's workflow.failed notification
- * still shows that text, which failureText() limits to step messages and
- * error names.)
+ * can translate. The run record and the creator's workflow.failed
+ * notification keep the job's own text (failureText() limits it to step
+ * messages and error names); Run history and the notifications page show
+ * only the translated reason for its code.
  */
 export const WORKFLOW_RUN_FAILURES = [
   "contact_missing_test_run",
