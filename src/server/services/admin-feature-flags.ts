@@ -5,12 +5,13 @@ import { audit } from "./audit";
 import { isFeatureEnabled, setFeatureEnabled } from "./feature-flags";
 
 /**
- * Per-organization feature flags a superadmin may switch from /admin. Only
- * flags whose effect is opening screens belong here: creator_studio_v1
- * shows Creator Studio, but every generation still reserves credits first
- * (creator-credits.ts), and a FREE organization gets none, so turning it on
- * never enables a paid provider call by itself. creator_studio_autopilot is
- * deliberately not toggleable.
+ * Per-organization feature flags a superadmin may switch from /admin.
+ * creator_studio_v1 opens Creator Studio. Every generation still reserves
+ * credits first (creator-credits.ts) and a FREE organization gets none, so
+ * turning it on never enables a paid provider call by itself. It does let
+ * members connect a social account (Meta OAuth, their own action) and
+ * schedule approved posts to it, which publishes externally; the admin page
+ * says so. creator_studio_autopilot is deliberately not toggleable.
  */
 export const ADMIN_TOGGLEABLE_FEATURES = ["creator_studio_v1"] as const;
 export type AdminToggleableFeature = (typeof ADMIN_TOGGLEABLE_FEATURES)[number];

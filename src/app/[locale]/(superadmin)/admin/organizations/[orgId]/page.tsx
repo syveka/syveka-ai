@@ -117,10 +117,11 @@ export default async function AdminOrganizationDetailPage({
         </CardHeader>
         <CardContent className="space-y-3">
           <p className="text-xs text-muted-foreground">
-            Opens Creator Studio&apos;s screens for this organization only. It grants no credits:
-            every generation still needs credits, which a FREE organization does not have, so no
-            paid generation becomes possible. Superadmin-only and recorded in the
-            organization&apos;s audit log.
+            Opens Creator Studio for this organization only. It grants no credits: every generation
+            still needs credits, which a FREE organization does not have, so no paid generation
+            becomes possible. Members can then also connect a social account (Meta sign-in) and
+            schedule approved posts, which publishes externally — for a test organization, do not
+            connect one. Superadmin-only and recorded in the organization&apos;s audit log.
           </p>
           <FeatureToggleForm
             organizationId={orgId}
