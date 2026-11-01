@@ -180,12 +180,16 @@ The run-workflow job recorded a failure in two separate writes:
 Since #386, a terminal failure is never run again. So a notification write that failed after step
 1 (or a failed membership read) was lost permanently: the redelivery skips the terminal run.
 
-**Fix.** Branch `fix/workflow-failure-record-atomic`:
+**Fix.** [#388](https://github.com/syveka/syveka-ai/pull/388), branch `fix/workflow-failure-record-atomic`, head `2d9376405b544d13ec2ab4b1a16a44a2e807c561`:
 
 - The FAILED state and the notification commit in one transaction.
 - If that fails, the run keeps a retryable error, so the redelivery runs the step again and records
-  both.
-- An opt-in PostgreSQL suite proves the reclaim predicate's SQL behaviour and the races involved.
+  both. The fallback only touches a run that is still RUNNING, so a commit that succeeded but
+  reported an error is never overwritten.
+- An opt-in PostgreSQL suite (7/7 locally) proves the reclaim predicate's SQL behaviour, including
+  NULL, three simultaneous reclaims, and a reclaim blocked on a row lock, with a control. It is not
+  in CI until the §4.3 change is authorized.
+- An independent reliability review approved it for human review; its findings are addressed.
 
 **Limits.** This is not exactly-once delivery:
 
