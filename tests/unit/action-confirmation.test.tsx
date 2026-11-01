@@ -352,7 +352,9 @@ describe("ActionConfirmation — a request that got no usable answer can be sent
     show(dnaAction());
     await confirm();
     expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.failed);
-    expect(document.activeElement).toBe(screen.getByRole("status"));
+    expect(document.activeElement).toBe(
+      screen.getByRole("region", { name: en.chat.actions.title }),
+    );
 
     response = {
       status: 200,
@@ -611,7 +613,7 @@ describe("ActionConfirmation — a proposal replaced by a newer one", () => {
   });
 
   it.each([
-    ["en", en, "The newer request doesn’t include Supported languages."],
+    ["en", en, "The newer request doesn't include Supported languages."],
     ["fi", fi, "Uudempi pyyntö ei sisällä kohtaa Tuetut kielet."],
     ["ar", ar, "الطلب الأحدث لا يشمل اللغات المدعومة."],
   ])("names the fields the newer request doesn't carry over (%s)", (locale, messages, expected) => {
@@ -629,6 +631,62 @@ describe("ActionConfirmation — a proposal replaced by a newer one", () => {
     expect(screen.queryByRole("button", { name: messages.chat.actions.confirm })).toBeNull();
   });
 
+  it.each([
+    [{ status: 429, body: { error: { code: "rate_limited" } } }],
+    [{ status: 503, body: { error: { code: "service_unavailable" } } }],
+    [{ status: 500, body: { notJson: true } }],
+  ])(
+    "%j: a card awaiting a repeat is replaced by a correction too; its repeat is withheld, then offered again",
+    async (reply) => {
+      response = reply;
+      const onSettled = vi.fn();
+      const view = render(
+        <NextIntlClientProvider locale="en" messages={en}>
+          <ActionConfirmation action={hoursAndLanguages()} onSettled={onSettled} />
+        </NextIntlClientProvider>,
+      );
+      await act(async () => {
+        fireEvent.click(screen.getByRole("button", { name: en.chat.actions.confirm }));
+      });
+      expect(screen.getByRole("button", { name: en.chat.actions.tryAgain })).toBeTruthy();
+      expect(onSettled).not.toHaveBeenCalled();
+
+      view.rerender(
+        <NextIntlClientProvider locale="en" messages={en}>
+          <ActionConfirmation
+            action={hoursAndLanguages()}
+            superseded={{ notCarriedOver: ["supportedLocales"] }}
+            onSettled={onSettled}
+          />
+        </NextIntlClientProvider>,
+      );
+      expect(screen.getByRole("status").textContent).toBe(
+        `${en.chat.actions.result.superseded} The newer request doesn't include Supported languages. Ask Syveka again to change that too.`,
+      );
+      expect(screen.queryByRole("button", { name: en.chat.actions.tryAgain })).toBeNull();
+      expect(screen.queryByRole("button", { name: en.chat.actions.confirm })).toBeNull();
+      expect(onSettled).toHaveBeenCalledTimes(1);
+      expect(onSettled).toHaveBeenCalledWith(hoursAndLanguages().id, "superseded");
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+
+      // The correction is withdrawn: the repeat is offered again, and sends
+      // the same decision (refused with the first one's outcome if it ran).
+      view.rerender(
+        <NextIntlClientProvider locale="en" messages={en}>
+          <ActionConfirmation action={hoursAndLanguages()} onSettled={onSettled} />
+        </NextIntlClientProvider>,
+      );
+      const again = screen.getByRole("button", { name: en.chat.actions.tryAgain });
+      expect(again).toBeTruthy();
+      response = { status: 409, body: { error: { code: "already_decided", outcome: "done" } } };
+      await act(async () => {
+        fireEvent.click(again);
+      });
+      expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.done);
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    },
+  );
+
   it("lists several fields in the interface language", () => {
     render(
       <NextIntlClientProvider locale="en" messages={en}>
@@ -639,7 +697,7 @@ describe("ActionConfirmation — a proposal replaced by a newer one", () => {
       </NextIntlClientProvider>,
     );
     expect(screen.getByRole("status").textContent).toContain(
-      "doesn’t include Supported languages and Opening hours.",
+      "doesn't include Supported languages and Opening hours.",
     );
   });
 });
@@ -658,15 +716,76 @@ describe("ActionConfirmation — while a repeat is in flight", () => {
       fireEvent.click(screen.getByRole("button", { name: en.chat.actions.tryAgain }));
     });
 
-    const busy = screen.getByRole("button", { name: en.chat.actions.retrying });
-    expect(busy.hasAttribute("disabled")).toBe(true);
+    // Never `disabled` (browsers blur a control that becomes disabled, dropping
+    // keyboard focus to the page); the one-request guard ignores a second click.
+    const busy = screen.getByRole("button", { name: en.chat.actions.tryAgain });
+    expect(busy.hasAttribute("disabled")).toBe(false);
+    expect(busy.getAttribute("aria-disabled")).toBe("true");
     expect(busy.getAttribute("aria-busy")).toBe("true");
+    await act(async () => {
+      fireEvent.click(busy);
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(screen.queryByRole("button", { name: en.chat.actions.confirm })).toBeNull();
     expect(screen.getByRole("status").textContent).toBe(en.chat.actions.retrying);
     await act(async () => {
       release(new Response(JSON.stringify({ data: { status: "done" } }), { status: 200 }));
     });
     expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.done);
+  });
+
+  it("a refusal issued before any decision (signed out) can be sent again and settles nothing", async () => {
+    response = { status: 401, body: { error: { code: "unauthenticated" } } };
+    const onSettled = vi.fn();
+    render(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <ActionConfirmation action={action()} onSettled={onSettled} />
+      </NextIntlClientProvider>,
+    );
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.chat.actions.confirm }));
+    });
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.failed);
+    expect(screen.getByRole("button", { name: en.chat.actions.tryAgain })).toBeTruthy();
+    expect(onSettled).not.toHaveBeenCalled();
+  });
+
+  it("a recorded outcome the card doesn't know reads as unknown, never as a success or a stuck card", async () => {
+    response = { status: 409, body: { error: { code: "already_decided", outcome: "applied" } } };
+    show(action());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.chat.actions.confirm }));
+    });
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.unknown);
+    expect(screen.queryByRole("button", { name: en.chat.actions.tryAgain })).toBeNull();
+  });
+
+  it("Confirm and Cancel are never disabled while a request is in flight (focus stays on the card)", async () => {
+    let release!: (r: Response) => void;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((r) => (release = r)));
+    show(action());
+    const confirm = screen.getByRole("button", { name: en.chat.actions.confirm });
+    confirm.focus();
+    await act(async () => {
+      fireEvent.click(confirm);
+    });
+    expect(confirm.hasAttribute("disabled")).toBe(false);
+    expect(confirm.getAttribute("aria-disabled")).toBe("true");
+    expect(confirm.getAttribute("aria-busy")).toBe("true");
+    expect(confirm.textContent).toContain(en.chat.actions.confirm);
+    expect(document.activeElement).toBe(confirm);
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.confirming);
+    await act(async () => {
+      fireEvent.click(confirm);
+      fireEvent.click(screen.getByRole("button", { name: en.chat.actions.cancel }));
+    });
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      release(new Response(JSON.stringify({ data: { status: "done" } }), { status: 200 }));
+    });
+    expect(document.activeElement).toBe(
+      screen.getByRole("region", { name: en.chat.actions.title }),
+    );
   });
 
   it("Confirm then Cancel clicked in a row: only the first decision is sent", async () => {

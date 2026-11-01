@@ -61,9 +61,14 @@ All of the following are **implemented and tested** with mocked providers unless
 - **Corrections.** When the user corrects a fact ("actually we close at 16") and the assistant
   proposes again about the same field, the earlier card reads "Replaced by a newer request."
   and can no longer be confirmed. Proposals about different fields stay independent. Cancel
-  the newer one and the earlier one is offered again; apply it and the earlier stays replaced.
+  the newer one and the earlier one is offered again at once (if it was never decided and
+  hasn't expired); apply it and the earlier stays replaced. When the newer request covers
+  only some of the earlier fields, the earlier card names the fields it doesn't include.
   Decisions made in this view and outcomes restored after a reload count the same way.
-  (`superseded-actions.test.ts`, card tests "a proposal replaced by a newer one".)
+  _Corrected 2026-11-02:_ the first version of this report and of the PR said both "offered
+  again" and "stays replaced until reload"; the code did the latter. The thread and card now
+  do the former, proven by `chat-thread-supersession.test.tsx` (see the overnight follow-up,
+  `docs/chat-business-dna-overnight-2026-11-02.md`).
 - **Returning after a reload or in a reopened conversation.** Decided cards show their recorded
   outcome; a replaced one is computed again from the thread. (Existing behaviour, now covered
   for the new states.)
@@ -147,7 +152,7 @@ behaviour and concurrency; UX, accessibility and locale). Findings and what was 
 | Security           | Recommendation: `already_decided` without an outcome must not read as a success.                                                                                                                                                                       | Applied: reads as "unknown" (`f1d6dbd`).                                                                  |
 | Security           | Recommendation: supersession should follow decisions made in this session, not only restored ones.                                                                                                                                                     | Applied: the thread passes the decided outcomes to `supersededActionIds` (`f1d6dbd`).                     |
 | Behaviour          | D1: non-retryable consumed refusals never released the held redirect of a new chat.                                                                                                                                                                    | Fixed: `onSettled` fires for every outcome that can't be sent again; navigation test updated (`f1d6dbd`). |
-| Behaviour          | D2: a canceled newer proposal kept the earlier one replaced until reload.                                                                                                                                                                              | Fixed by the decided map (same commit).                                                                   |
+| Behaviour          | D2: a canceled newer proposal kept the earlier one replaced until reload.                                                                                                                                                                              | Partly fixed by the decided map (same commit); fully fixed on 2026-11-02 (`6c34f55`), see the follow-up.  |
 | Behaviour          | D3: `dir="auto"` only on inline spans.                                                                                                                                                                                                                 | Fixed: on the value block and each list item, with an RTL test (`f1d6dbd`).                               |
 | Behaviour          | D4: a minor note, no behaviour change asked for.                                                                                                                                                                                                       | Noted; no code change.                                                                                    |
 | UX / a11y / locale | Six defects, each matched by a fix on the branch: no label while a repeat is in flight, focus moved on mount, result inserted rather than announced, plan limit read as a failure, review link below touch size, values not laid out as blocks in RTL. | All fixed (`3d8abbc`, `2e75843`, `f1d6dbd`).                                                              |
@@ -173,9 +178,9 @@ behaviour and concurrency; UX, accessibility and locale). Findings and what was 
 - **Deferred:** clearing a field to empty from chat is handled by the existing server path but
   has no new end-to-end test here; a proposal that expires while the user is away is shown as
   expired from its timestamp but there is no live countdown.
-- **Deferred:** the view keeps a replaced card replaced for the rest of the session even if
-  the newer one is later canceled; a reload offers it again. Acceptable for an MVP; a revert
-  in place would need the card to go back from "replaced" to confirmable.
+- ~~**Deferred:** the view keeps a replaced card replaced for the rest of the session even if
+  the newer one is later canceled.~~ Resolved 2026-11-02: canceling the newer proposal offers
+  the earlier one again in place (`6c34f55`).
 - **Blocked by authorization (by design):** no staging verification, no paid AI request, no
   merge, no deployment.
 

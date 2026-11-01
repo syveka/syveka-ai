@@ -316,15 +316,25 @@ keys aren't accepted by any route yet):
   action store was unavailable (503), the limit was reached (429), or the connection dropped, the
   card offers _Try again_, which sends the same decision. The server runs an action at most once
   (the decision is single-use), so a repeat after a lost answer is refused as `already_decided`
-  and the endpoint returns the recorded outcome of the first decision (this organization's audit
-  record only); the card then shows what happened. Refusals that consumed the action or can't
-  change (plan limit, permission, expired, altered payload, a failure while running) offer no
-  retry.
+  and the endpoint returns the recorded outcome of the first decision (the deciding user's own
+  audit record, in their organization); the card then shows what happened. A repeat that lands
+  after the store's expiry reads as not found in the store, so the endpoint answers it from the
+  same record: the user's own outcome if the decision was made, else not found (nothing is
+  revealed to another user or organization). Refusals that consumed the action or can't change
+  (plan limit, permission, expired, altered payload, a failure while running) offer no retry; a
+  refusal issued before any decision (signed out, malformed request) can be sent again. A card
+  awaiting a repeat is open on the server too, so a correction replaces it as well: its repeat
+  is withheld (never sent with a replaced value) and offered again once the newer proposal is
+  withdrawn.
 - **Reopening the conversation** (`src/server/ai/tool-action-history.ts`) shows each saved
   proposal with its recorded outcome; an undecided one is offered again only while the action
   store still holds it as pending and it hasn't expired (10 minutes from the proposal,
   `ACTION_TTL_SECONDS`). After that it reads as expired or unavailable: ask the assistant again.
-- After a decision, keyboard focus moves to the result line, which replaced the buttons.
+- After the user's own decision, keyboard focus moves to the card (its live region reads the
+  result once); never on mount, never for a replacement the user didn't make. Buttons are never
+  `disabled` while a request is in flight (browsers drop focus from a control that becomes
+  disabled); they carry `aria-disabled`/`aria-busy`, and the one-request guard ignores a second
+  activation.
 
 Known limit: chat changes don't change the website-extraction provenance (`sourceUrl`,
 `extractedAt`).

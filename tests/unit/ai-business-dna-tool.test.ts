@@ -176,13 +176,19 @@ vi.mock("@/server/db/tenant", () => {
         findMany: async ({
           where,
         }: {
-          where: { organizationId: string; resourceId: { in: string[] }; action: { in: string[] } };
+          where: {
+            organizationId: string;
+            resourceId: { in: string[] };
+            action: { in: string[] };
+            actorId?: string;
+          };
         }) =>
           m.audits.filter(
             (r) =>
               r.organizationId === where.organizationId &&
               where.resourceId.in.includes(String(r.resourceId)) &&
-              where.action.in.includes(String(r.action)),
+              where.action.in.includes(String(r.action)) &&
+              (!where.actorId || r.actorId === where.actorId),
           ),
       },
     },
@@ -801,6 +807,41 @@ describe("the decision endpoint", () => {
       expect(await again.json()).toEqual({ error: { code: "already_decided", outcome: "done" } });
       expect(m.profiles.get(ORG)!.updatedAt).toBe(updatedAt);
       expect(m.audits.filter((a) => a.action === "business_dna.create")).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a repeat that lands after the proposal's expiry still reports the user's own recorded outcome; nobody else's", async () => {
+    vi.useFakeTimers({ now: m.now + 1_000, toFake: ["Date"] });
+    try {
+      const p = await propose(carRepairShop);
+      m.ctx = { orgId: ORG, userId: USER, role: "MANAGER" };
+      expect((await post(p.action!)).status).toBe(200);
+      const updatedAt = m.profiles.get(ORG)!.updatedAt;
+
+      // The answer was lost; the retry comes after the store's 10 minutes.
+      vi.setSystemTime(m.now + 601_000);
+      const late = await post(p.action!);
+      expect(late.status).toBe(409);
+      expect(await late.json()).toEqual({ error: { code: "already_decided", outcome: "done" } });
+      expect(m.profiles.get(ORG)!.updatedAt).toBe(updatedAt);
+
+      // Another user of the same organization learns nothing from the id.
+      m.ctx = { orgId: ORG, userId: "33333333-3333-4333-8333-333333333333", role: "OWNER" };
+      const other = await post(p.action!);
+      expect(other.status).toBe(404);
+      expect(await other.json()).toEqual({ error: { code: "not_found" } });
+      // Nor does anyone from another organization.
+      m.ctx = { orgId: OTHER_ORG, userId: USER, role: "OWNER" };
+      expect((await post(p.action!)).status).toBe(404);
+      // An expired proposal that was never decided stays not found.
+      m.ctx = { orgId: ORG, userId: USER, role: "MANAGER" };
+      const never = await propose({ set: { industry: "Tyre shop" } });
+      vi.setSystemTime(m.now + 1_202_000);
+      const gone = await post(never.action!);
+      expect(gone.status).toBe(404);
+      expect(await gone.json()).toEqual({ error: { code: "not_found" } });
     } finally {
       vi.useRealTimers();
     }

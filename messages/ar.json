@@ -413,7 +413,7 @@
       },
       "tryAgain": "حاول مرة أخرى",
       "retrying": "جارٍ الإرسال مرة أخرى…",
-      "notCarriedOver": "الطلب الأحدث لا يشمل {fields}. اطلب من Syveka مرة أخرى لتغيير ذلك أيضًا."
+      "notCarriedOver": "الطلب الأحدث لا يشمل {fields}. اطلب من سيفيكا مرة أخرى لتغييرها أيضًا."
     },
     "toolStatus": {
       "searchKnowledgeBase": "جارٍ البحث في مستنداتك…",

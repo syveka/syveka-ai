@@ -133,7 +133,7 @@ export function ActionConfirmation({
   const d = action.details;
   // One decision per card: a fast double click must not send a second request.
   const sentRef = useRef(false);
-  const resultRef = useRef<HTMLParagraphElement>(null);
+  const cardRef = useRef<HTMLElement>(null);
   const decidedRef = useRef(false);
 
   // A proposal replaced by a newer one (from the start, or while this card
@@ -141,32 +141,36 @@ export function ActionConfirmation({
   // proceed. Reported once per replacement. When the newer proposal is
   // canceled (or fails before any write), this one is offered again, as
   // long as it was never decided and hasn't expired meanwhile.
+  // A card whose request can be sent again is open on the server too, so a
+  // correction replaces it as well: its repeat is withheld (never sent with
+  // a replaced value) and offered again once the newer proposal is withdrawn.
   const releasedRef = useRef(false);
   useEffect(() => {
     if (superseded) {
       if (releasedRef.current) return;
       if (state === "pending") setState("superseded");
-      if (state === "pending" || state === "superseded") {
+      if (state === "pending" || state === "superseded" || retryable) {
         releasedRef.current = true;
         onSettled?.(action.id, "superseded");
       }
       return;
     }
+    releasedRef.current = false;
     if (state === "superseded" && !decidedRef.current && !action.restored) {
-      releasedRef.current = false;
       setState(action.expiresAt > Date.now() ? "pending" : "expired");
     }
     // onSettled is a stable callback from the chat hook.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [superseded, action.id, state]);
+  }, [superseded, action.id, state, retryable]);
 
   // After the user's decision, the result is where their attention should go:
-  // the buttons they used are gone, so focus moves to the outcome (and the
-  // retry button, when there is one, follows it in tab order). Never on
-  // mount, and never for a change the user didn't make (superseded).
+  // the buttons they used are gone, so focus moves to the card (its live
+  // region reads the result once; the retry button, when there is one,
+  // follows in tab order). Never on mount, and never for a change the user
+  // didn't make (superseded).
   useEffect(() => {
     if (decidedRef.current && state !== "submitting" && state !== "retrying") {
-      resultRef.current?.focus();
+      cardRef.current?.focus();
     }
   }, [state]);
 
@@ -233,7 +237,7 @@ export function ActionConfirmation({
               : "done";
       } else if (code === "already_decided" && body?.error?.outcome) {
         // The first decision went through (its answer was lost): show its result.
-        next = RECORDED_STATE[body.error.outcome];
+        next = RECORDED_STATE[body.error.outcome] ?? "unknown";
       } else if (code in REFUSAL_STATE) {
         next = REFUSAL_STATE[code]!;
         // Not decided on the server: sending again is safe.
@@ -241,9 +245,11 @@ export function ActionConfirmation({
       } else {
         // No usable answer (a server error without a known refusal, or no
         // JSON at all): the action may have run. A repeat is still safe, as
-        // it is refused with the first decision's outcome.
+        // it is refused with the first decision's outcome. Any other refusal
+        // without a known code came before the decision (signed out, a
+        // malformed request): nothing was consumed, so it can be sent again.
         next = res.status >= 500 ? "noAnswer" : "failed";
-        canRetry = res.status >= 500;
+        canRetry = true;
       }
     } catch {
       // No answer: the server may or may not have run it. A repeat is safe.
@@ -262,11 +268,14 @@ export function ActionConfirmation({
   const submitting = state === "submitting";
   const retrying = state === "retrying";
   const deciding = state === "pending" || submitting;
+  // Replaced by a newer proposal: shown as such, whether this card was still
+  // pending or awaiting a repeat.
+  const replaced = !!superseded && (state === "superseded" || retryable);
   // One live region in every state, so a change the user didn't make
   // (replaced by a newer request) is announced, not only an inserted node.
   // A replacement that covers only some of this proposal's fields names the
   // rest, so no change is dropped silently.
-  const notCarriedOver = state === "superseded" ? (superseded?.notCarriedOver ?? []) : [];
+  const notCarriedOver = replaced ? superseded!.notCarriedOver : [];
   const status =
     state === "pending"
       ? t("nothingYet")
@@ -274,17 +283,27 @@ export function ActionConfirmation({
         ? t("confirming")
         : retrying
           ? t("retrying")
-          : notCarriedOver.length > 0
-            ? `${t("result.superseded")} ${t("notCarriedOver", {
-                fields: new Intl.ListFormat(locale, { type: "conjunction" }).format(
-                  notCarriedOver.map((f) => businessDnaFieldLabel(field, f)),
-                ),
-              })}`
+          : replaced
+            ? [
+                t("result.superseded"),
+                notCarriedOver.length > 0
+                  ? t("notCarriedOver", {
+                      count: notCarriedOver.length,
+                      fields: new Intl.ListFormat(locale, { type: "conjunction" }).format(
+                        notCarriedOver.map((f) => businessDnaFieldLabel(field, f)),
+                      ),
+                    })
+                  : null,
+              ]
+                .filter(Boolean)
+                .join(" ")
             : t(`result.${state}`);
   return (
     <section
+      ref={cardRef}
+      tabIndex={-1}
       aria-label={t("title")}
-      className="mt-2 rounded-md border border-border/60 bg-background/70 p-2.5 text-sm"
+      className="mt-2 rounded-md border border-border/60 bg-background/70 p-2.5 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
     >
       <p className="flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
         <ShieldCheck aria-hidden className="size-3.5" />
@@ -309,12 +328,10 @@ export function ActionConfirmation({
         </div>
       ) : null}
       <p
-        ref={resultRef}
-        tabIndex={-1}
         role="status"
         aria-live="polite"
         className={cn(
-          "mt-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          "mt-1 text-xs",
           state === "done" ? "text-success" : "text-muted-foreground",
           (state === "failed" || state === "permission" || state === "planLimit") &&
             "text-destructive",
@@ -326,35 +343,36 @@ export function ActionConfirmation({
         <div className="mt-2 flex flex-wrap gap-2">
           <button
             type="button"
-            disabled={submitting}
+            aria-disabled={submitting || undefined}
+            aria-busy={submitting || undefined}
             onClick={() => void decide("confirm")}
-            className="inline-flex min-h-10 items-center gap-1.5 rounded-md bg-primary px-3 text-sm text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-md bg-primary px-3 text-sm text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-disabled:opacity-50"
           >
             <Check aria-hidden className="size-4" />
-            {submitting ? t("confirming") : t("confirm")}
+            {t("confirm")}
           </button>
           <button
             type="button"
-            disabled={submitting}
+            aria-disabled={submitting || undefined}
             onClick={() => void decide("cancel")}
-            className="inline-flex min-h-10 items-center gap-1.5 rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-disabled:opacity-50"
           >
             <X aria-hidden className="size-4" />
             {t("cancel")}
           </button>
         </div>
-      ) : retryable || retrying ? (
+      ) : (retryable || retrying) && !superseded ? (
         // The retry button stays in place while the repeat is in flight, so
         // keyboard focus never falls off the card.
         <button
           type="button"
-          disabled={retrying}
+          aria-disabled={retrying || undefined}
           aria-busy={retrying || undefined}
           onClick={() => void decide(lastDecisionRef.current, true)}
-          className="mt-2 inline-flex min-h-10 items-center gap-1.5 rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          className="mt-2 inline-flex min-h-10 items-center gap-1.5 rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring aria-disabled:opacity-50"
         >
           <RotateCcw aria-hidden className="size-4" />
-          {retrying ? t("retrying") : t("tryAgain")}
+          {t("tryAgain")}
         </button>
       ) : null}
       {d.tool === "proposeBusinessDnaUpdate" && state === "done" ? (

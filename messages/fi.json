@@ -413,7 +413,7 @@
       },
       "tryAgain": "Yritä uudelleen",
       "retrying": "Lähetetään uudelleen…",
-      "notCarriedOver": "Uudempi pyyntö ei sisällä kohtaa {fields}. Pyydä Syvekaa muuttamaan myös se."
+      "notCarriedOver": "{count, plural, one {Uudempi pyyntö ei sisällä kohtaa {fields}. Pyydä Syvekaa muuttamaan myös se.} other {Uudempi pyyntö ei sisällä kohtia {fields}. Pyydä Syvekaa muuttamaan myös ne.}}"
     },
     "toolStatus": {
       "searchKnowledgeBase": "Haetaan dokumenteista…",

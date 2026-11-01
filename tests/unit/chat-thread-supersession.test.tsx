@@ -202,7 +202,7 @@ describe("a correction in the thread", () => {
     ]);
     const [a, b] = cards();
     expect(statusOf(a!)).toBe(
-      `${en.chat.actions.result.superseded} The newer request doesn’t include Supported languages. Ask Syveka again to change that too.`,
+      `${en.chat.actions.result.superseded} The newer request doesn't include Supported languages. Ask Syveka again to change that too.`,
     );
     expect(confirmable(a!)).toBe(false);
     await click(b!, en.chat.actions.cancel);
@@ -319,5 +319,37 @@ describe("several open proposals", () => {
       expect(statusOf(a!)).toBe(en.chat.actions.result[restored]);
       expect(confirmable(a!)).toBe(false);
     }
+  });
+});
+
+describe("a proposal awaiting a repeat", () => {
+  it("is replaced by a correction too, and its repeat returns when the correction is canceled", async () => {
+    decision = { status: 429, body: { error: { code: "rate_limited" } } };
+    const view = renderThread([message("m1", [dna(A, ["openingHours"])])]);
+    await click(cards()[0]!, en.chat.actions.confirm);
+    expect(
+      within(cards()[0]!).getByRole("button", { name: en.chat.actions.tryAgain }),
+    ).toBeTruthy();
+
+    view.rerender(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <ChatThread
+          messages={[
+            message("m1", [dna(A, ["openingHours"])]),
+            message("m2", [dna(B, ["openingHours"])]),
+          ]}
+          onActionSettled={settled}
+        />
+      </NextIntlClientProvider>,
+    );
+    const [a, b] = cards();
+    expect(statusOf(a!)).toBe(en.chat.actions.result.superseded);
+    expect(within(a!).queryByRole("button", { name: en.chat.actions.tryAgain })).toBeNull();
+    expect(settled).toHaveBeenCalledWith(A);
+
+    decision = { status: 200, body: { data: { status: "canceled" } } };
+    await click(b!, en.chat.actions.cancel);
+    expect(within(a!).getByRole("button", { name: en.chat.actions.tryAgain })).toBeTruthy();
+    expect(statusOf(a!)).toBe(en.chat.actions.result.rateLimited);
   });
 });
