@@ -6,6 +6,7 @@ import { getTenantContext } from "@/server/auth/session";
 import { requirePermission } from "@/server/auth/guard";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { audit } from "@/server/services/audit";
+import { updateOrganizationProfile } from "@/server/services/organization-settings";
 
 export type SettingsActionState = { error?: string; message?: string };
 
@@ -52,21 +53,23 @@ export async function updateOrganizationAction(
 
   const before = await unscopedPrisma.organization.findUniqueOrThrow({
     where: { id: ctx.orgId },
-    select: { name: true, settings: true },
+    select: { name: true },
   });
 
-  await unscopedPrisma.organization.update({
-    where: { id: ctx.orgId },
-    data: {
+  // One statement: the columns plus only this form's own settings key, on the
+  // current value, so a concurrent change to another key (a feature flag, an
+  // operator restriction) can't be overwritten by a copy read earlier.
+  await updateOrganizationProfile(
+    ctx.orgId,
+    {
       name: parsed.data.name,
       businessId: parsed.data.businessId || null,
       vatId: parsed.data.vatId || null,
-      settings: {
-        ...(before.settings as object),
-        aiInstructions: parsed.data.aiInstructions || undefined,
-      },
     },
-  });
+    parsed.data.aiInstructions
+      ? { set: { aiInstructions: parsed.data.aiInstructions } }
+      : { remove: ["aiInstructions"] },
+  );
 
   await audit(ctx, {
     action: "org.update",

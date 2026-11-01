@@ -190,10 +190,13 @@ async function prepare(prisma: PrismaClient): Promise<void> {
   if (activeOrg.error) fail("failed to set the fixture identity's active organization");
 
   if (settings[PAID_IMAGE_TEST.featureFlag] !== true) {
-    await prisma.organization.update({
-      where: { id: org.id },
-      data: { settings: { ...settings, [PAID_IMAGE_TEST.featureFlag]: true } },
-    });
+    // Only this key, atomically on the current value (src/server/services/organization-settings.ts).
+    await prisma.$executeRaw`
+      update organizations
+         set settings = (case when jsonb_typeof(settings) = 'object' then settings else '{}'::jsonb end)
+                        || jsonb_build_object(${PAID_IMAGE_TEST.featureFlag}::text, true),
+             updated_at = now() at time zone 'UTC'
+       where id = ${org.id}::uuid`;
     console.log(
       `${LOG_PREFIX}: enabled ${PAID_IMAGE_TEST.featureFlag} on the fixture organization only.`,
     );
@@ -268,10 +271,13 @@ async function claim(prisma: PrismaClient): Promise<void> {
       githubRunId: requireEnv("GITHUB_RUN_ID"),
       githubRunAttempt: requireEnv("GITHUB_RUN_ATTEMPT"),
     };
-    await tx.organization.update({
-      where: { id: org.id },
-      data: { settings: { ...settings, [PAID_IMAGE_TEST.claimKey]: record } },
-    });
+    // Only the claim key, on the current (row-locked) value.
+    await tx.$executeRaw`
+      update organizations
+         set settings = (case when jsonb_typeof(settings) = 'object' then settings else '{}'::jsonb end)
+                        || jsonb_build_object(${PAID_IMAGE_TEST.claimKey}::text, ${JSON.stringify(record)}::jsonb),
+             updated_at = now() at time zone 'UTC'
+       where id = ${org.id}::uuid`;
     return decision;
   });
 
@@ -332,18 +338,15 @@ async function verify(prisma: PrismaClient): Promise<void> {
 
   const claimRecord = readClaim(settings);
   if (claimRecord && generations.length === 1 && !claimRecord.generationId) {
-    await prisma.organization.update({
-      where: { id: org.id },
-      data: {
-        settings: {
-          ...settings,
-          [PAID_IMAGE_TEST.claimKey]: {
-            ...claimRecord,
-            generationId: generations[0]!.id,
-          },
-        },
-      },
-    });
+    // Only claim.generationId, on the current value of the claim.
+    await prisma.$executeRaw`
+      update organizations
+         set settings = jsonb_set(settings, array[${PAID_IMAGE_TEST.claimKey}::text, 'generationId'],
+                                  to_jsonb(${generations[0]!.id}::text)),
+             updated_at = now() at time zone 'UTC'
+       where id = ${org.id}::uuid
+         and jsonb_typeof(settings -> ${PAID_IMAGE_TEST.claimKey}::text) = 'object'
+         and not (settings -> ${PAID_IMAGE_TEST.claimKey}::text ? 'generationId')`;
   }
 
   const result = classifyOutcome({
