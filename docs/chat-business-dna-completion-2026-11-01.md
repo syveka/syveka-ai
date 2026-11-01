@@ -9,16 +9,16 @@ claim launch readiness; see §10 for the release decision it asks for.
 
 ## 1. Ground truth
 
-| Item                       | Value                                                                             |
-| -------------------------- | --------------------------------------------------------------------------------- |
-| Starting `main` SHA        | `19581f274e87e876343d0eb3be8cf51547485569` (merge of #384; branch base, verified) |
-| Branch                     | `claude/chat-business-dna-completion`                                             |
-| Final head                 | `TBD-HEAD` (this report is the last commit)                                       |
-| Pull request               | TBD-PR (draft, into `main`)                                                       |
-| Commits on the branch      | 5 (3 features/fixes, 1 docs, 1 report)                                            |
-| Code changed (before docs) | 13 files, +788 / −101 (`git diff --stat origin/main..f1d6dbd`)                    |
-| Schema / migrations        | none (`git diff origin/main..HEAD -- prisma supabase` is empty)                   |
-| Environment contract       | unchanged (no new variable, no changed default)                                   |
+| Item                       | Value                                                                                                                                                                                    |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Starting `main` SHA        | `19581f274e87e876343d0eb3be8cf51547485569` (merge of #384; branch base, verified)                                                                                                        |
+| Branch                     | `claude/chat-business-dna-completion`                                                                                                                                                    |
+| Final head                 | `f1d6dbd` is the last code commit; two documentation commits follow it (`3a18023` and the one carrying this final update), so the pull request's head is the latest commit on the branch |
+| Pull request               | [syveka/syveka-ai#385](https://github.com/syveka/syveka-ai/pull/385) (draft, into `main`)                                                                                                |
+| Commits on the branch      | 5 (3 features/fixes, 1 docs, 1 report)                                                                                                                                                   |
+| Code changed (before docs) | 13 files, +788 / −101 (`git diff --stat origin/main..f1d6dbd`)                                                                                                                           |
+| Schema / migrations        | none (`git diff origin/main..HEAD -- prisma supabase` is empty)                                                                                                                          |
+| Environment contract       | unchanged (no new variable, no changed default)                                                                                                                                          |
 
 ## 2. Existing work reused (not duplicated)
 
@@ -124,7 +124,7 @@ branch head (see §1), with exit codes read from the logs.
 | `npm audit --omit=dev --audit-level=high`                                                         | **PASS** at high (12 low/moderate findings in production dependencies, pre-existing, none introduced here) |
 | `npm run test:e2e`                                                                                | **NOT APPLICABLE** — needs a running app with Supabase and Redis; not available in this session.           |
 
-CI actually observed on the pull request: TBD-CI.
+CI actually observed on the pull request: run 41352784675 on `3a18023` (identical code to the final head; only this report changed after it): all 19 checks green, including `CI required`, Lint, TypeScript typecheck, Unit and integration tests, Production build, both RLS isolation suites, the migration suites, Prisma validate, i18n key parity, Secret scan and both dependency audits. Read, not re-run.
 
 Tests added or extended on this branch: `tests/unit/action-confirmation.test.tsx` (retry after
 503 / 429 / network loss / non-JSON, replay returning the recorded outcome, replay without an
