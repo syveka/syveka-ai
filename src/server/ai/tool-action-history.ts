@@ -26,10 +26,14 @@ const OUTCOMES: Record<string, RestoredActionState> = {
   unknown: "unknown",
 };
 
-/** Outcomes recorded for these actions in this organization (latest record wins). */
+/**
+ * Outcomes recorded for these actions in this organization (latest record
+ * wins); with `decidedBy`, only the decisions that user made.
+ */
 export async function recordedActionOutcomes(
   orgId: string,
   actionIds: string[],
+  decidedBy?: string,
 ): Promise<Map<string, RestoredActionState>> {
   const outcomes = new Map<string, RestoredActionState>();
   if (actionIds.length === 0) return outcomes;
@@ -39,6 +43,7 @@ export async function recordedActionOutcomes(
       resourceType: "ai_action",
       resourceId: { in: actionIds },
       action: { in: ["ai_action.confirm", "ai_action.cancel"] },
+      ...(decidedBy ? { actorId: decidedBy } : {}),
     },
     orderBy: { createdAt: "asc" },
     select: { organizationId: true, resourceId: true, after: true },

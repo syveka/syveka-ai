@@ -1,11 +1,13 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Sparkles, Volume2, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UiMessage } from "@/hooks/use-chat";
+import type { RestoredActionState } from "@/lib/validators/chat";
 import type { PlaybackFailure } from "@/hooks/use-speech-playback";
+import { supersededActions, type Supersession } from "@/lib/chat/superseded-actions";
 import { ActionConfirmation } from "./action-confirmation";
 import { MarkdownMessage } from "./markdown-message";
 
@@ -38,6 +40,21 @@ export function ChatThread({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Outcomes decided in this view (a reload restores them from the record),
+  // so that what a later proposal replaces follows the user's decisions.
+  // "Superseded" is derived from the thread, never recorded as a decision:
+  // once the newer proposal is canceled, the earlier one is offered again.
+  const [decided, setDecided] = useState<Map<string, RestoredActionState>>(() => new Map());
+  const handleSettled = useCallback(
+    (actionId: string, outcome: RestoredActionState | "superseded") => {
+      if (outcome !== "superseded") {
+        setDecided((prev) => new Map(prev).set(actionId, outcome));
+      }
+      onActionSettled?.(actionId);
+    },
+    [onActionSettled],
+  );
+
   if (messages.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
@@ -47,6 +64,14 @@ export function ChatThread({
     );
   }
 
+  // A Business DNA proposal replaced by a later one about the same fields
+  // (the user corrected a fact) is shown as such instead of staying confirmable.
+  const superseded = supersededActions(
+    messages.flatMap((m) => (m.role === "assistant" ? (m.actions ?? []) : [])),
+    Date.now(),
+    decided,
+  );
+
   return (
     <div className="flex-1 space-y-4 overflow-y-auto p-4">
       {messages.map((m, i) => (
@@ -55,7 +80,8 @@ export function ChatThread({
           message={m}
           playback={playback}
           turn={m.role === "assistant" ? precedingUserText(messages, i) : undefined}
-          onActionSettled={onActionSettled}
+          superseded={superseded}
+          onActionSettled={handleSettled}
         />
       ))}
       <div ref={bottomRef} />
@@ -89,12 +115,14 @@ function MessageBubble({
   message,
   playback,
   turn,
+  superseded,
   onActionSettled,
 }: {
   message: UiMessage;
   playback?: ReplyPlayback;
   turn?: string;
-  onActionSettled?: (actionId: string) => void;
+  superseded: ReadonlyMap<string, Supersession>;
+  onActionSettled?: (actionId: string, outcome: RestoredActionState | "superseded") => void;
 }) {
   const toolStatus = useTranslations("chat.toolStatus");
   const isUser = message.role === "user";
@@ -130,7 +158,12 @@ function MessageBubble({
 
         {!isUser && message.actions?.length
           ? message.actions.map((action) => (
-              <ActionConfirmation key={action.id} action={action} onSettled={onActionSettled} />
+              <ActionConfirmation
+                key={action.id}
+                action={action}
+                superseded={superseded.get(action.id)}
+                onSettled={onActionSettled}
+              />
             ))
           : null}
 

@@ -161,24 +161,42 @@ describe("a new chat whose first reply proposes a write", () => {
 
   it.each([
     ["a network failure", "network_error" as const],
-    ["a server error", { status: 500, body: { error: { code: "action_failed" } } }],
+    ["an unavailable service", { status: 503, body: { error: { code: "service_unavailable" } } }],
     ["a rate limit", { status: 429, body: { error: { code: "rate_limited" } } }],
-  ])("D. %s: the card stays and nothing navigates", async (_l, failure) => {
+  ])(
+    "D. %s: the request can be sent again, so the card stays and nothing navigates",
+    async (_l, failure) => {
+      decision = failure;
+      renderChat();
+      await sendFirstMessage();
+      await click(en.chat.actions.confirm);
+      expect(card()).not.toBeNull();
+      expect(nav.replace).not.toHaveBeenCalled();
+      expect(nav.refresh).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([
+    ["expired", { status: 404, body: { error: { code: "not_found" } } }, "expired"],
+    // The decision was consumed: whatever happened, it can't be sent again.
+    [
+      "failed while running",
+      { status: 500, body: { error: { code: "action_failed" } } },
+      "unknown",
+    ],
+    [
+      "refused by role",
+      { status: 403, body: { error: { code: "permission_denied" } } },
+      "permission",
+    ],
+  ])("an action %s is settled: it then navigates once", async (_l, failure, state) => {
     decision = failure;
     renderChat();
     await sendFirstMessage();
     await click(en.chat.actions.confirm);
-    expect(card()).not.toBeNull();
-    expect(nav.replace).not.toHaveBeenCalled();
-    expect(nav.refresh).not.toHaveBeenCalled();
-  });
-
-  it("an expired or already-handled action is settled: it then navigates once", async () => {
-    decision = { status: 404, body: { error: { code: "not_found" } } };
-    renderChat();
-    await sendFirstMessage();
-    await click(en.chat.actions.confirm);
-    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.expired);
+    expect(screen.getByRole("status").textContent).toBe(
+      (en.chat.actions.result as Record<string, string>)[state],
+    );
     expect(nav.replace).toHaveBeenCalledTimes(1);
   });
 });

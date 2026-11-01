@@ -410,14 +410,20 @@
         "slotTaken": "That time is no longer free. Nothing was booked.",
         "stale": "Business DNA was changed elsewhere after this was shown. Nothing was changed — ask Syveka again.",
         "expired": "This request expired. Ask Syveka again.",
-        "alreadyDecided": "This action was already handled.",
         "permission": "You don't have permission to do this.",
         "failed": "It couldn't be completed. Try again or do it manually.",
         "pending": "Waiting for your confirmation.",
         "submitting": "Confirming…",
         "unavailable": "This request is no longer available. No result was recorded for it.",
-        "unknown": "The result couldn't be confirmed. Check your records before asking again."
-      }
+        "unknown": "The result couldn't be confirmed. Check your records before asking again.",
+        "superseded": "Replaced by a newer request.",
+        "rateLimited": "Too many requests right now. Wait a moment and try again.",
+        "noAnswer": "No answer was received. Try again; it won't be done twice.",
+        "planLimit": "Your plan doesn't allow this change. See Billing."
+      },
+      "tryAgain": "Try again",
+      "retrying": "Sending again…",
+      "notCarriedOver": "{count, plural, one {The newer request doesn't include {fields}. Ask Syveka again to change that too.} other {The newer request doesn't include {fields}. Ask Syveka again to change those too.}}"
     },
     "toolStatus": {
       "searchKnowledgeBase": "Searching your documents…",
