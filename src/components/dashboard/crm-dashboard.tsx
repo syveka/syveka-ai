@@ -6,7 +6,7 @@ import {
   HandCoins,
   Mail,
   MessageSquare,
-  Sparkles,
+  Lightbulb,
   TrendingUp,
   UserPlus,
   Users,
@@ -61,8 +61,8 @@ type DashboardLabels = {
   calendarWidget: string;
   upcomingMeetings: string;
   upcomingTasks: string;
-  aiInsights: string;
-  generatedWith: string;
+  insightsTitle: string;
+  insightsSource: string;
   aiConversation: string;
   billingStatus: string;
   currentPeriodEnds: string;
@@ -476,8 +476,8 @@ function AiInsights({ dashboard, labels }: DashboardProps & { labels: DashboardL
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0">
-        <CardTitle className="text-base">{labels.aiInsights}</CardTitle>
-        <Sparkles className="size-4 text-primary" aria-hidden="true" />
+        <CardTitle className="text-base">{labels.insightsTitle}</CardTitle>
+        <Lightbulb className="size-4 text-primary" aria-hidden="true" />
       </CardHeader>
       <CardContent>
         <ul className="space-y-3">
@@ -488,9 +488,8 @@ function AiInsights({ dashboard, labels }: DashboardProps & { labels: DashboardL
             </li>
           ))}
         </ul>
-        <p className="mt-4 text-xs text-muted-foreground">
-          {labels.generatedWith}: {dashboard.insights.provider} / {dashboard.insights.model}
-        </p>
+        {/* Rule-based text from CRM counts: no AI model is called for it. */}
+        <p className="mt-4 text-xs text-muted-foreground">{labels.insightsSource}</p>
       </CardContent>
     </Card>
   );
@@ -553,8 +552,8 @@ export async function CrmDashboardView({ dashboard: data, locale, timeZone }: Da
     calendarWidget: t("calendarWidget"),
     upcomingMeetings: t("upcomingMeetings"),
     upcomingTasks: t("upcomingTasks"),
-    aiInsights: t("aiInsights"),
-    generatedWith: t("generatedWith"),
+    insightsTitle: t("insightsTitle"),
+    insightsSource: t("insightsSource"),
     aiConversation: t("aiConversation"),
     billingStatus: t("billingStatus"),
     currentPeriodEnds: t("currentPeriodEnds", { date: "{date}" }),

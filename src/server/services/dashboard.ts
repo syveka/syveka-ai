@@ -1,6 +1,5 @@
 import "server-only";
 
-import { routeModel } from "@/server/ai/router";
 import { can } from "@/server/auth/permissions";
 import type { TenantContext } from "@/server/auth/session";
 import { tenantDb } from "@/server/db/tenant";
@@ -205,7 +204,6 @@ export async function getCrmDashboard(ctx: TenantContext) {
     }),
   );
 
-  const summaryModel = routeModel("summary");
   const customerGrowthPct = percentChange(currentCustomers, previousCustomers);
 
   return {
@@ -286,8 +284,6 @@ export async function getCrmDashboard(ctx: TenantContext) {
       })),
     },
     insights: {
-      model: summaryModel.model,
-      provider: summaryModel.provider,
       activeDeals,
       overdueTasks,
       customerGrowthPct,
