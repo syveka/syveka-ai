@@ -35,7 +35,7 @@ export function ForgotPasswordForm() {
           <input type="hidden" name="locale" value={locale} />
           <div className="space-y-2">
             <Label htmlFor="email">{t("email")}</Label>
-            <Input id="email" name="email" type="email" required />
+            <Input id="email" name="email" type="email" dir="ltr" required />
           </div>
           <Button type="submit" className="w-full" disabled={pending}>
             {pending ? tc("loading") : tc("confirm")}

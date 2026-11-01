@@ -46,6 +46,7 @@ export function BookingTypesManager({
   baseUrl: string;
 }) {
   const t = useTranslations("calendar");
+  const tBooking = useTranslations("booking");
   const [editing, setEditing] = useState<BookingTypeData | "new" | null>(null);
 
   return (
@@ -79,7 +80,7 @@ export function BookingTypesManager({
               </CardHeader>
               <CardContent className="space-y-2 text-sm">
                 <p className="text-muted-foreground">
-                  {bt.durationMinutes} min ·{" "}
+                  {tBooking("durationLabel", { minutes: bt.durationMinutes })} ·{" "}
                   {t(
                     `bookingTypes.locations.${bt.locationType}` as
                       | "bookingTypes.locations.VIDEO"
@@ -213,6 +214,7 @@ function BookingTypeDialog({
               name="slug"
               defaultValue={bookingType?.slug}
               pattern="[a-z0-9]+(-[a-z0-9]+)*"
+              dir="ltr"
               required
             />
           </div>

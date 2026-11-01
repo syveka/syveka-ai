@@ -19,6 +19,7 @@ import {
 } from "@/lib/workflows/activation";
 import { WorkflowEntitlementNotice } from "@/components/workflows/workflow-entitlement-notice";
 import type { WorkflowRunFailure } from "@/lib/workflows/run-failure";
+import { INTERNAL_STEP_TYPES } from "@/lib/workflows/internal-scope";
 
 const NOTICE_ID = "workflow-builder-entitlement-notice";
 const SAVE_ERROR_CODES = [
@@ -75,6 +76,7 @@ export function WorkflowBuilder({
   activation = { block: null, limit: 0 },
   timeZone,
   canViewPlans = false,
+  internalOnly = false,
 }: {
   initial?: Initial;
   /** Why the plan does not allow activation (display only; the server enforces). */
@@ -82,6 +84,11 @@ export function WorkflowBuilder({
   /** The viewer's zone for run times (server render and hydration agree). */
   timeZone: string;
   canViewPlans?: boolean;
+  /**
+   * The org's workflows are limited to internal steps (display only: save,
+   * activation, test runs and the job each enforce it on the server).
+   */
+  internalOnly?: boolean;
 }) {
   const t = useTranslations("workflows");
   const tc = useTranslations("common");
@@ -192,19 +199,30 @@ export function WorkflowBuilder({
         </div>
       ))}
 
+      {/* Before the buttons, so it is read before the unavailable steps. */}
+      {internalOnly ? (
+        <p id="workflow-internal-only-hint" className="text-xs text-muted-foreground">
+          {t("internalOnlyHint")}
+        </p>
+      ) : null}
       <div className="flex flex-wrap gap-2">
-        {STEP_TYPES.map((st) => (
-          <Button
-            key={st}
-            variant="outline"
-            size="sm"
-            className="gap-1"
-            onClick={() => setSteps((prev) => [...prev, newStep(st, `s${Date.now()}`)])}
-          >
-            <Plus className="size-3" />
-            {t(`stepTypes.${st}` as never)}
-          </Button>
-        ))}
+        {STEP_TYPES.map((st) => {
+          const unavailable = internalOnly && !INTERNAL_STEP_TYPES.includes(st);
+          return (
+            <Button
+              key={st}
+              variant="outline"
+              size="sm"
+              className="gap-1"
+              disabled={unavailable}
+              aria-describedby={unavailable ? "workflow-internal-only-hint" : undefined}
+              onClick={() => setSteps((prev) => [...prev, newStep(st, `s${Date.now()}`)])}
+            >
+              <Plus className="size-3" />
+              {t(`stepTypes.${st}` as never)}
+            </Button>
+          );
+        })}
       </div>
 
       {error ? (

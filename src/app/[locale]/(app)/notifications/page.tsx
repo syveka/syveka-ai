@@ -10,10 +10,12 @@ import { Card, CardContent } from "@/components/ui/card";
 import { cn } from "@/lib/utils";
 import { formatDateTimeInTimeZone } from "@/lib/date-time";
 import { getViewerTimeZone } from "@/server/services/viewer-time-zone";
+import { displayNotification } from "@/lib/notifications/display";
 
 export default async function NotificationsPage() {
   const ctx = await getTenantContext();
   const t = await getTranslations("notifications");
+  const tWorkflows = await getTranslations("workflows");
   const locale = await getLocale();
   const [notifications, timeZone] = await Promise.all([
     listNotifications(ctx),
@@ -36,10 +38,34 @@ export default async function NotificationsPage() {
             <p className="p-8 text-center text-sm text-muted-foreground">{t("empty")}</p>
           ) : (
             notifications.map((n) => {
+              // Stored text is shown as stored, except what the viewer's
+              // language can safely replace; names and other user data are
+              // isolated so mixed Arabic/Latin text keeps its order.
+              const shown = displayNotification(n);
+              const title =
+                shown.kind === "workflow_failed"
+                  ? t.rich("workflowFailed", {
+                      name: () => <bdi>{shown.workflowName}</bdi>,
+                    })
+                  : shown.kind === "booking"
+                    ? t.rich(`booking.${shown.action}`, {
+                        type: () => <bdi>{shown.bookingType}</bdi>,
+                        guest: () => <bdi>{shown.guest}</bdi>,
+                      })
+                    : shown.title;
+              const body =
+                shown.kind === "workflow_failed"
+                  ? tWorkflows(`runFailure.${shown.failure}`)
+                  : shown.body;
               const inner = (
                 <div className={cn("p-4", !n.readAt && "bg-primary/5")}>
                   <div className="flex items-baseline justify-between gap-2">
-                    <p className="text-sm font-medium">{n.title}</p>
+                    <p
+                      dir={shown.kind === "plain" ? "auto" : undefined}
+                      className="text-sm font-medium"
+                    >
+                      {title}
+                    </p>
                     <time
                       className="shrink-0 text-xs text-muted-foreground"
                       dateTime={new Date(n.createdAt).toISOString()}
@@ -50,7 +76,14 @@ export default async function NotificationsPage() {
                       })}
                     </time>
                   </div>
-                  {n.body ? <p className="mt-0.5 text-sm text-muted-foreground">{n.body}</p> : null}
+                  {body ? (
+                    <p
+                      dir={shown.kind === "workflow_failed" ? undefined : "auto"}
+                      className="mt-0.5 text-sm text-muted-foreground"
+                    >
+                      {body}
+                    </p>
+                  ) : null}
                 </div>
               );
               return n.href ? (

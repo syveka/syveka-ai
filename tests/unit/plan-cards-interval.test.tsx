@@ -41,6 +41,21 @@ afterEach(() => {
   bindCalls.length = 0;
 });
 
+/** Prices as each locale writes them (Arabic: Latin digits after a right-to-left mark). */
+const PRICES = {
+  en: { monthly: ["€29", "€79"], annual: ["€290", "€790"], equivalent: ["€24.17", "€65.83"] },
+  fi: {
+    monthly: ["29\u00a0€", "79\u00a0€"],
+    annual: ["290\u00a0€", "790\u00a0€"],
+    equivalent: ["24,17\u00a0€", "65,83\u00a0€"],
+  },
+  ar: {
+    monthly: ["\u200f29\u00a0€", "\u200f79\u00a0€"],
+    annual: ["\u200f290\u00a0€", "\u200f790\u00a0€"],
+    equivalent: ["\u200f24.17\u00a0€", "\u200f65.83\u00a0€"],
+  },
+};
+
 describe.each(["en", "fi", "ar"] as const)("PlanCards interval toggle (%s)", (locale) => {
   it("is a labelled group of two non-submitting toggle buttons", () => {
     const m = renderCards(locale);
@@ -54,17 +69,22 @@ describe.each(["en", "fi", "ar"] as const)("PlanCards interval toggle (%s)", (lo
   it("switching to annual keeps the same price rule and checkout arguments", () => {
     const m = renderCards(locale);
     const text = () => document.body.textContent ?? "";
-    expect(text()).toMatch(/29\s€/);
-    expect(text()).toMatch(/79\s€/);
+    for (const price of PRICES[locale].monthly) expect(text()).toContain(price);
+    expect(text()).toContain(m.priceMonthlyUnit);
+    expect(text()).not.toMatch(/€\s*\//); // no "€/user/mo" slash form
     expect(bindCalls).toContainEqual(["PRO", "monthly"]);
 
     fireEvent.click(screen.getByRole("button", { name: m.interval.annual }));
     expect(
       screen.getByRole("button", { name: m.interval.annual }).getAttribute("aria-pressed"),
     ).toBe("true");
-    // round(monthly * 10 / 12): 29 -> 24, 79 -> 66 (unchanged calculation).
-    expect(text()).toMatch(/24\s€/);
-    expect(text()).toMatch(/66\s€/);
+    // The yearly charge (10 x monthly) and its exact monthly equivalent;
+    // never a rounded figure (24, 66) whose 12 x differs from the charge.
+    for (const price of [...PRICES[locale].annual, ...PRICES[locale].equivalent]) {
+      expect(text()).toContain(price);
+    }
+    expect(text()).toContain(m.priceAnnualUnit);
+    expect(text()).not.toMatch(/(^|[^\d.,])(24|66)(\u00a0€|$)/);
     expect(bindCalls).toContainEqual(["PRO", "annual"]);
     expect(bindCalls).toContainEqual(["STARTER", "annual"]);
   });

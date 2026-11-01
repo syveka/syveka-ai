@@ -39,7 +39,7 @@ export function LoginForm({
           ) : null}
           <div className="space-y-2">
             <Label htmlFor="email">{t("email")}</Label>
-            <Input id="email" name="email" type="email" autoComplete="email" required />
+            <Input id="email" name="email" type="email" dir="ltr" autoComplete="email" required />
           </div>
           <div className="space-y-2">
             <div className="flex items-center justify-between">

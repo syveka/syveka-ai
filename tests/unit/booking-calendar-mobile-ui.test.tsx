@@ -200,8 +200,12 @@ describe("event dialog on a phone", () => {
     );
     expect(input.placeholder).toBe("");
     const hint = document.getElementById(input.getAttribute("aria-describedby")!)!;
-    expect(hint.textContent).toBe(fi.calendar.fields.guestEmailsHint);
+    expect(hint.textContent).toBe(fi.calendar.fields.guestEmailsHint.replace(/<\/?ltr>/g, ""));
     expect(hint.className).toContain("break-words");
+    // The example addresses keep left-to-right order inside right-to-left text.
+    const example = hint.querySelector('bdi[dir="ltr"]');
+    expect(example?.textContent).toBe("anna@example.com, ben@example.com");
+    expect(input.getAttribute("dir")).toBe("ltr");
   });
 });
 
@@ -355,6 +359,24 @@ describe("booking pages: public URL and copy", () => {
     expect(url.getAttribute("dir")).toBe("ltr");
     expect(url.className).toContain("break-all");
     expect(url.className).not.toContain("truncate");
+  });
+
+  it("shows the card's duration in the interface language", async () => {
+    expect((await manager("ar")).textContent).toContain("60 دقيقة");
+    expect(document.body.textContent).not.toContain("60 min");
+  });
+
+  it("shows the card's duration in English as minutes", async () => {
+    expect((await manager("en")).textContent).toContain("60 min");
+  });
+
+  it("the slug is typed left-to-right in every language", async () => {
+    const host = await manager("ar");
+    const edit = [...host.querySelectorAll("button")].find(
+      (b) => b.textContent === ar.calendar.bookingTypes.edit,
+    )!;
+    await act(async () => edit.click());
+    expect(document.querySelector("#bt-slug")?.getAttribute("dir")).toBe("ltr");
   });
 
   it("copies the URL and announces it", async () => {

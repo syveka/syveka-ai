@@ -152,7 +152,7 @@ export function DealDialog({
                 />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 [&>*]:min-w-0">
               <div className="space-y-1.5">
                 <Label htmlFor="contactId">{t("fields.contact")}</Label>
                 <select
@@ -186,7 +186,7 @@ export function DealDialog({
                 </select>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 [&>*]:min-w-0">
               <div className="space-y-1.5">
                 <Label htmlFor="ownerId">{t("dealFields.owner")}</Label>
                 <select

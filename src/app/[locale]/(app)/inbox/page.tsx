@@ -5,7 +5,7 @@ import { AlertCircle, CheckCircle2, CloudOff, XCircle } from "lucide-react";
 import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";
 import { listThreads } from "@/server/services/inbox";
-import { getEmailChannelStatus } from "@/server/services/setup-readiness";
+import { getEmailChannelStatus, getEmailReceivingAddress } from "@/server/services/setup-readiness";
 import { getViewerTimeZone } from "@/server/services/viewer-time-zone";
 import type { TenantContext } from "@/server/auth/session";
 import { formatDateTimeInTimeZone } from "@/lib/date-time";
@@ -141,10 +141,32 @@ async function EmailChannelStatus({ ctx }: { ctx: TenantContext }) {
     );
   }
   if (status === "verification_required") {
+    const address = await getEmailReceivingAddress(ctx);
+    return (
+      <div className="space-y-1 text-sm">
+        <p className="flex items-center gap-1.5 text-foreground">
+          <AlertCircle className="size-4 shrink-0 text-warning" aria-hidden="true" />
+          {t("channelStatus.configuredUnverified")}
+        </p>
+        {address ? (
+          <p className="text-muted-foreground">
+            {t.rich("channelStatus.verifyWithAddress", {
+              address: () => (
+                <bdi dir="ltr" className="font-medium text-foreground">
+                  {address}
+                </bdi>
+              ),
+            })}
+          </p>
+        ) : null}
+      </div>
+    );
+  }
+  if (status === "no_address") {
     return (
       <p className="flex items-center gap-1.5 text-sm text-foreground">
         <AlertCircle className="size-4 shrink-0 text-warning" aria-hidden="true" />
-        {t("channelStatus.configuredUnverified")}
+        {t("channelStatus.noAddress")}
       </p>
     );
   }

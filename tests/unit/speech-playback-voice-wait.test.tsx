@@ -25,6 +25,7 @@ vi.mock("@/i18n/routing", () => ({
 class FakeUtterance {
   lang = "";
   voice: { name: string; lang: string } | null = null;
+  onstart: (() => void) | null = null;
   onend: (() => void) | null = null;
   onerror: ((e: { error: string }) => void) | null = null;
   constructor(public text: string) {}
@@ -87,6 +88,22 @@ describe("chooseVoice language variants", () => {
 
   it("never treats another language with the same prefix as a match (fil is not fi)", () => {
     expect(chooseVoice("fi", [v("fil-PH")] as never)).toEqual({ ok: false, reason: "no_voice" });
+    expect(chooseVoice("ar", [v("arz-EG"), v("fa-IR")] as never)).toEqual({
+      ok: false,
+      reason: "no_voice",
+    });
+  });
+
+  it("matches three-letter engine codes for the reply languages and speaks a two-letter tag", () => {
+    expect(primaryLanguage("ara-SAU")).toBe("ar");
+    expect(primaryLanguage("fin_FIN")).toBe("fi");
+    expect(primaryLanguage("eng-USA")).toBe("en");
+    expect(chooseVoice("ar", [v("eng-USA"), v("ara-SAU", "samsung-ar")] as never)).toMatchObject({
+      ok: true,
+      lang: "ar",
+      voice: { name: "samsung-ar" },
+    });
+    expect(chooseVoice("fi", [v("fil-PHL")] as never)).toEqual({ ok: false, reason: "no_voice" });
   });
 
   it("prefers on-device voices, then the default region", () => {
@@ -149,7 +166,7 @@ describe("useSpeechPlayback voice wait", () => {
     expect(result.current.loadingId).toBe("m1");
     wait(1);
     expect(result.current.loadingId).toBeNull();
-    expect(result.current.error).toEqual({ id: "m1", code: "no_voice", language: "ar" });
+    expect(result.current.error).toEqual({ id: "m1", code: "no_voice", language: "ar", listed: 2 });
     expect(synth.speak).not.toHaveBeenCalled();
     expect(listeners).toHaveLength(0);
     // A later list doesn't start speech the user no longer expects.
@@ -157,12 +174,60 @@ describe("useSpeechPlayback voice wait", () => {
     expect(synth.speak).not.toHaveBeenCalled();
   });
 
-  it("empty list throughout: unavailable after the bound, never left to the engine", () => {
+  it("empty list throughout: no voices listed after the bound, never left to the engine", () => {
     const { result } = renderHook(() => useSpeechPlayback());
     act(() => result.current.play("m1", ENGLISH));
     wait(VOICE_WAIT_MS);
     expect(synth.speak).not.toHaveBeenCalled();
-    expect(result.current.error).toEqual({ id: "m1", code: "no_voice", language: "en" });
+    expect(result.current.error).toEqual({ id: "m1", code: "no_voices_listed", language: "en" });
+  });
+
+  it("an empty list that later gains the voice within the bound still speaks", () => {
+    const { result } = renderHook(() => useSpeechPlayback());
+    act(() => result.current.play("m1", ARABIC));
+    wait(VOICE_WAIT_MS - 100);
+    voicesChanged([v("ar-SA", "ar")]);
+    expect(spoken[0]!.voice!.name).toBe("ar");
+    expect(result.current.error).toBeNull();
+  });
+
+  it("a list without the language reports how many voices the browser offered", () => {
+    voices = [v("en-US"), v("en-GB"), v("ko-KR")];
+    const { result } = renderHook(() => useSpeechPlayback());
+    act(() => result.current.play("m1", ARABIC));
+    wait(VOICE_WAIT_MS);
+    expect(result.current.error).toEqual({ id: "m1", code: "no_voice", language: "ar", listed: 3 });
+  });
+
+  it("an engine that never starts a chunk is reported, not treated as finished", () => {
+    voices = [v("ar-SA", "ar")];
+    const { result } = renderHook(() => useSpeechPlayback());
+    act(() => result.current.play("m1", ARABIC));
+    expect(result.current.playingId).toBe("m1");
+    wait(60_000);
+    expect(result.current.playingId).toBeNull();
+    expect(result.current.error).toEqual({ id: "m1", code: "playback_failed" });
+  });
+
+  it("a started chunk that never ends advances on the watchdog without an error", () => {
+    voices = [v("ar-SA", "ar")];
+    const { result } = renderHook(() => useSpeechPlayback());
+    act(() => result.current.play("m1", ARABIC));
+    act(() => spoken[0]!.onstart?.());
+    wait(60_000);
+    expect(result.current.playingId).toBeNull();
+    expect(result.current.error).toBeNull();
+  });
+
+  it("speak() throwing is reported as a playback failure", () => {
+    voices = [v("ar-SA", "ar")];
+    synth.speak.mockImplementationOnce(() => {
+      throw new Error("engine unavailable");
+    });
+    const { result } = renderHook(() => useSpeechPlayback());
+    act(() => result.current.play("m1", ARABIC));
+    expect(result.current.playingId).toBeNull();
+    expect(result.current.error).toEqual({ id: "m1", code: "playback_failed" });
   });
 
   it("utterance onerror: playback_failed", () => {
@@ -281,10 +346,43 @@ describe("ChatThread Listen across interface languages", () => {
     wait(VOICE_WAIT_MS);
     const status = screen.getByRole("status");
     expect(status.textContent).toContain("arabia");
-    expect(status.textContent).toContain("asetuksista");
+    expect(status.textContent).toContain("2 puheääntä");
+    expect(status.textContent).toContain("toista selainta");
     expect(synth.speak).not.toHaveBeenCalled();
     expect(document.body.textContent).toContain(ARABIC);
     expect(screen.getByRole("button", { name: fi.listenLabel })).toBeTruthy();
+  });
+
+  it("the browser's empty voice list is never described as a device without voices", () => {
+    for (const locale of ["en", "fi", "ar"]) {
+      voices = [];
+      const copy = renderThread(locale, ARABIC, "مرحبا");
+      fireEvent.click(screen.getByRole("button", { name: copy.listenLabel }));
+      wait(VOICE_WAIT_MS);
+      expect(screen.getByRole("status").textContent).toBe(copy.playbackErrors.no_voices_listed);
+      cleanup();
+    }
+    const en = messages("en").chat;
+    for (const text of [
+      en.voice.playbackErrors.no_voice,
+      en.voice.playbackErrors.no_voices_listed,
+      en.live.notices.no_voice,
+      en.live.voiceUnavailable,
+      en.live.voiceUnknown,
+    ]) {
+      expect(text).not.toMatch(/device has no|no .* installed on this device|not installed/i);
+    }
+  });
+
+  it("Arabic UI explains a missing Arabic voice in Arabic with the count", () => {
+    voices = [v("en-US"), v("en-GB"), v("ko-KR")];
+    const ar = renderThread("ar", ARABIC, "مرحبا");
+    fireEvent.click(screen.getByRole("button", { name: ar.listenLabel }));
+    wait(VOICE_WAIT_MS);
+    const text = screen.getByRole("status").textContent!;
+    expect(text).toContain("3 أصوات");
+    expect(text).toContain("العربية");
+    expect(text).toContain("متصفحًا آخر");
   });
 
   it("Finnish answer in English UI uses the Finnish voice", () => {

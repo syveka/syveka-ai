@@ -5,9 +5,21 @@ export type VoiceChoice =
   | { ok: true; lang: string; voice: SpeechSynthesisVoice | undefined }
   | { ok: false; reason: "no_voice" };
 
-/** Primary language subtag, lower-case: "ar_SA", "ar-XA", "AR" → "ar". */
+/**
+ * Three-letter codes some Android speech engines report for the languages
+ * replies are read in. Only exact codes are mapped ("fil" stays Filipino).
+ */
+const THREE_LETTER_LANGUAGES: Record<string, string> = {
+  ara: "ar",
+  arb: "ar",
+  eng: "en",
+  fin: "fi",
+};
+
+/** Primary language subtag, lower-case: "ar_SA", "ar-XA", "AR", "ara-SAU" → "ar". */
 export function primaryLanguage(tag: string): string {
-  return tag.split(/[-_]/)[0]!.toLowerCase();
+  const language = tag.split(/[-_]/)[0]!.toLowerCase();
+  return THREE_LETTER_LANGUAGES[language] ?? language;
 }
 
 /** Region subtag, upper-case, if any: "fi_fi" → "FI". */
@@ -15,12 +27,15 @@ function regionOf(tag: string): string | undefined {
   return tag.split(/[-_]/)[1]?.toUpperCase();
 }
 
-/** Hyphenated BCP-47 form of a device voice tag: "ar_sa" → "ar-SA". */
+/** Hyphenated BCP-47 form of a device voice tag: "ar_sa" → "ar-SA", "ara-SAU" → "ar". */
 function normalizeTag(tag: string): string {
   const [language = "", ...rest] = tag.split(/[-_]/);
-  return [language.toLowerCase(), ...rest.map((p) => (p.length === 2 ? p.toUpperCase() : p))].join(
-    "-",
-  );
+  return [
+    primaryLanguage(language),
+    ...rest
+      .filter((p) => !/^[a-z]{3}$/i.test(p))
+      .map((p) => (p.length === 2 ? p.toUpperCase() : p)),
+  ].join("-");
 }
 
 /**

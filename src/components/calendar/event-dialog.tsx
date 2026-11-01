@@ -321,13 +321,16 @@ export function EventDialog({
           <Input
             id="guestEmails"
             inputMode="email"
+            dir="ltr"
             value={guestEmails}
             onChange={(e) => setGuestEmails(e.target.value)}
             disabled={readOnly}
             aria-describedby="guestEmailsHint"
           />
           <p id="guestEmailsHint" className="break-words text-xs text-muted-foreground">
-            {t("fields.guestEmailsHint")}
+            {t.rich("fields.guestEmailsHint", {
+              ltr: (chunks) => <bdi dir="ltr">{chunks}</bdi>,
+            })}
           </p>
         </div>
 

@@ -191,7 +191,9 @@ export function BookingWidget({
           <p className="text-sm">{fullFmt.format(new Date(confirmed.startsAt))}</p>
           <p className="text-xs text-muted-foreground">({guestTz})</p>
           {confirmed.confirmationMessage ? (
-            <p className="text-sm text-muted-foreground">{confirmed.confirmationMessage}</p>
+            <p dir="auto" className="text-sm text-muted-foreground">
+              {confirmed.confirmationMessage}
+            </p>
           ) : null}
           <p className="text-sm text-muted-foreground">
             {confirmed.confirmationEmailSent
@@ -314,12 +316,12 @@ export function BookingWidget({
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="bk-email">{t("fields.email")}</Label>
-                <Input id="bk-email" name="email" type="email" required maxLength={320} />
+                <Input id="bk-email" name="email" type="email" dir="ltr" required maxLength={320} />
               </div>
               {collectPhone ? (
                 <div className="space-y-1.5">
                   <Label htmlFor="bk-phone">{t("fields.phone")}</Label>
-                  <Input id="bk-phone" name="phone" type="tel" maxLength={40} />
+                  <Input id="bk-phone" name="phone" type="tel" dir="ltr" maxLength={40} />
                 </div>
               ) : null}
               {collectCompany ? (

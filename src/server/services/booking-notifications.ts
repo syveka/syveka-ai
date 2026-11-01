@@ -10,6 +10,7 @@ import {
   type BookingEmailKind,
   type BookingEmailLocale,
 } from "../../../emails/booking-email";
+import { BOOKING_NOTIFICATION_ACTIONS } from "@/lib/notifications/display";
 
 /**
  * Booking lifecycle notifications: guest email + owner email + in-app row.
@@ -86,28 +87,10 @@ function formatWhen(startsAt: Date, endsAt: Date, timezone: string, locale: stri
  * The owner's in-app notification names what happened first, so the list
  * reads "New booking: Intro call — Anna" rather than just the meeting name.
  * Stored text, written in the owner's own language when the row is created;
- * rows written earlier keep the wording they had.
+ * rows written earlier keep the wording they had. The notifications page
+ * recognises these words and shows the action in the viewer's language
+ * (src/lib/notifications/display.ts).
  */
-const OWNER_NOTIFICATION_ACTIONS: Record<BookingEmailLocale, Record<BookingEmailKind, string>> = {
-  en: {
-    confirmation: "New booking",
-    reschedule: "Booking rescheduled",
-    cancellation: "Booking canceled",
-    reminder: "Upcoming meeting",
-  },
-  fi: {
-    confirmation: "Uusi varaus",
-    reschedule: "Varaus siirretty",
-    cancellation: "Varaus peruttu",
-    reminder: "Tuleva tapaaminen",
-  },
-  ar: {
-    confirmation: "حجز جديد",
-    reschedule: "تمت إعادة جدولة الحجز",
-    cancellation: "تم إلغاء الحجز",
-    reminder: "اجتماع قادم",
-  },
-};
 
 function toNotificationLocale(locale: string | null | undefined): BookingEmailLocale {
   return locale === "FI" ? "fi" : locale === "AR" ? "ar" : "en";
@@ -119,7 +102,7 @@ export function ownerNotificationTitle(
   bookingTypeName: string,
   guestName: string,
 ): string {
-  return `${OWNER_NOTIFICATION_ACTIONS[locale][kind]}: ${bookingTypeName} — ${guestName}`;
+  return `${BOOKING_NOTIFICATION_ACTIONS[locale][kind]}: ${bookingTypeName} — ${guestName}`;
 }
 
 export async function sendBookingLifecycleNotifications(params: {

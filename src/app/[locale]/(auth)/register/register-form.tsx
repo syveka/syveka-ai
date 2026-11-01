@@ -39,7 +39,7 @@ export function RegisterForm({ next }: { next?: string | null }) {
           </div>
           <div className="space-y-2">
             <Label htmlFor="email">{t("email")}</Label>
-            <Input id="email" name="email" type="email" autoComplete="email" required />
+            <Input id="email" name="email" type="email" dir="ltr" autoComplete="email" required />
           </div>
           <div className="space-y-2">
             <Label htmlFor="password">{t("password")}</Label>

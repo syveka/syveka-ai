@@ -3,10 +3,16 @@ import "server-only";
 import { tenantDb } from "@/server/db/tenant";
 import { getBusinessDnaContext } from "@/server/business-dna/context";
 import { getEmailChannelAdapter } from "@/server/channels/email";
+import { getEntitlements } from "@/server/services/billing/entitlements";
 import type { TenantContext } from "@/server/auth/session";
 
 export type ReadinessState =
-  "ready" | "setup_required" | "not_configured" | "blocked" | "verification_required";
+  | "ready"
+  | "setup_required"
+  | "not_configured"
+  | "blocked"
+  | "verification_required"
+  | "plan_required";
 
 export type ReadinessItemKey = "businessDna" | "emailChannel" | "booking" | "crm" | "voice";
 
@@ -39,13 +45,19 @@ function businessDnaHasAnyFact(dna: Awaited<ReturnType<typeof getBusinessDnaCont
  *
  * - `mock`: the test provider is active; messages are simulated.
  * - `not_configured`: Resend credentials are missing.
- * - `verification_required`: credentials are present, but no real inbound
- *   email has been received yet, so nothing proves mail actually reaches the
- *   inbox (credentials alone are not end-to-end capability).
- * - `ready`: a real inbound email (with a provider message id) has been
- *   received. This proves receiving only; it says nothing about sending.
+ * - `no_address`: credentials are present, but this organization has no
+ *   receiving address (InboxMailbox row), so inbound email can't be routed to
+ *   it: the inbound webhooks only accept mail addressed to a known mailbox.
+ * - `verification_required`: credentials and a receiving address are
+ *   present, but no real inbound email has been received yet, so nothing
+ *   proves mail actually reaches the inbox (configuration alone is not
+ *   end-to-end capability).
+ * - `ready`: the organization has a receiving address and a real inbound
+ *   email (with a provider message id) has been received. This proves
+ *   receiving only; it says nothing about sending.
  */
-export type EmailChannelStatus = "mock" | "not_configured" | "verification_required" | "ready";
+export type EmailChannelStatus =
+  "mock" | "not_configured" | "no_address" | "verification_required" | "ready";
 
 export async function getEmailChannelStatus(ctx: TenantContext): Promise<EmailChannelStatus> {
   const adapter = getEmailChannelAdapter();
@@ -58,7 +70,19 @@ export async function getEmailChannelStatus(ctx: TenantContext): Promise<EmailCh
     },
     select: { id: true },
   });
+  // Mail received in the past proves nothing once the receiving address is
+  // gone: without a mailbox the webhooks refuse every new email.
+  if (!(await getEmailReceivingAddress(ctx))) return "no_address";
   return hasReceivedRealEmail ? "ready" : "verification_required";
+}
+
+/** The organization's own inbound address, if one has been set up. */
+export async function getEmailReceivingAddress(ctx: TenantContext): Promise<string | null> {
+  const mailbox = await tenantDb(ctx.orgId).inboxMailbox.findFirst({
+    where: { channel: "EMAIL" },
+    select: { address: true },
+  });
+  return mailbox?.address ?? null;
 }
 
 /**
@@ -90,6 +114,7 @@ export async function getOrgSetupReadiness(ctx: TenantContext): Promise<Readines
     emailStatus,
     activeVoiceAssistant,
     hasCompletedRealCall,
+    entitlements,
   ] = await Promise.all([
     getBusinessDnaContext(ctx.orgId),
     db.bookingType.count({ where: { isActive: true, deletedAt: null } }),
@@ -99,13 +124,24 @@ export async function getOrgSetupReadiness(ctx: TenantContext): Promise<Readines
       select: { id: true },
     }),
     db.voiceCall.findFirst({ where: { status: "COMPLETED" }, select: { id: true } }),
+    getEntitlements(ctx.orgId),
   ]);
 
-  // The simulated test provider is not a configured channel.
-  const emailState: ReadinessState = emailStatus === "mock" ? "not_configured" : emailStatus;
+  // The simulated test provider is not a configured channel; an org without
+  // a receiving address has setup left to do before any email can arrive.
+  const emailState: ReadinessState =
+    emailStatus === "mock"
+      ? "not_configured"
+      : emailStatus === "no_address"
+        ? "setup_required"
+        : emailStatus;
 
+  // A plan without voice assistants can't set one up: say so rather than
+  // pointing at a setup page that will refuse.
   const voiceState: ReadinessState = !activeVoiceAssistant
-    ? "setup_required"
+    ? entitlements.voiceAssistants > 0
+      ? "setup_required"
+      : "plan_required"
     : hasCompletedRealCall
       ? "ready"
       : "verification_required";

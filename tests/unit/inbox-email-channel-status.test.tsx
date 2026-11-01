@@ -21,6 +21,7 @@ const state = vi.hoisted(() => ({
     isConfigured: () => boolean;
   },
   inbound: null as { id: string } | null,
+  mailbox: null as { address: string } | null,
   threads: [] as Array<Record<string, unknown>>,
 }));
 const load = (l: string) =>
@@ -56,6 +57,7 @@ vi.mock("@/server/business-dna/context", () => ({
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: vi.fn(() => ({
     inboxThread: { findFirst: vi.fn(async () => state.inbound) },
+    inboxMailbox: { findFirst: vi.fn(async () => state.mailbox) },
     bookingType: { count: vi.fn(async () => 0) },
     voiceAssistant: { findFirst: vi.fn(async () => null) },
     voiceCall: { findFirst: vi.fn(async () => null) },
@@ -63,6 +65,9 @@ vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {
     user: { findUnique: vi.fn(async () => ({ timezone: "Europe/Helsinki" })) },
   },
+}));
+vi.mock("@/server/services/billing/entitlements", () => ({
+  getEntitlements: vi.fn(async () => ({ plan: "FREE", voiceAssistants: 0 })),
 }));
 vi.mock("@/server/services/inbox", () => ({
   listThreads: vi.fn(async () => ({ data: state.threads })),
@@ -114,6 +119,7 @@ beforeEach(() => {
   state.role = "OWNER";
   state.adapter = { provider: "RESEND", isConfigured: () => true };
   state.inbound = null;
+  state.mailbox = { address: "syveka-pilot-acceptance-test@in.example.test" };
   state.threads = [];
 });
 
@@ -126,6 +132,25 @@ describe("Inbox email channel status matches the Dashboard readiness", () => {
       expect(html).toContain(MESSAGES[locale].inbox.empty);
       expect(html).not.toContain("Email connected");
       expect(await dashboardEmailState()).toBe("verification_required");
+      // The receiving address is shown, isolated left-to-right, with the
+      // manual verification step.
+      expect(html).toContain(
+        '<bdi dir="ltr" class="font-medium text-foreground">syveka-pilot-acceptance-test@in.example.test</bdi>',
+      );
+    },
+  );
+
+  it.each(["en", "fi", "ar"] as const)(
+    "an org without a receiving address is told email can't arrive yet (%s)",
+    async (locale) => {
+      state.mailbox = null;
+      const html = await renderInbox(locale);
+      expect(html.replaceAll("&#x27;", "'")).toContain(
+        MESSAGES[locale].inbox.channelStatus.noAddress,
+      );
+      expect(html).not.toContain(MESSAGES[locale].inbox.channelStatus.configuredUnverified);
+      expect(html).not.toContain("<bdi");
+      expect(await dashboardEmailState()).toBe("setup_required");
     },
   );
 
@@ -135,6 +160,15 @@ describe("Inbox email channel status matches the Dashboard readiness", () => {
     expect(html).toContain("Inbound email received: at least one real email has arrived");
     expect(html).not.toMatch(/send/i);
     expect(await dashboardEmailState()).toBe("ready");
+  });
+
+  it("historical mail without a current receiving address says email can't arrive, not 'received'", async () => {
+    state.inbound = { id: "thread-from-before" };
+    state.mailbox = null;
+    const html = (await renderInbox("en")).replaceAll("&#x27;", "'");
+    expect(html).toContain(MESSAGES.en.inbox.channelStatus.noAddress);
+    expect(html).not.toContain(MESSAGES.en.inbox.channelStatus.receiving);
+    expect(await dashboardEmailState()).toBe("setup_required");
   });
 
   it("reports missing credentials as not configured on both", async () => {

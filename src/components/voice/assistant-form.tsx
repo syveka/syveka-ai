@@ -146,6 +146,7 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
                 id="transferNumber"
                 name="transferNumber"
                 type="tel"
+                dir="ltr"
                 defaultValue={initial?.transferNumber}
                 placeholder="+358401234567"
               />

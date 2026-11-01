@@ -91,19 +91,31 @@ export function ContactDialog({
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="email">{t("fields.email")}</Label>
-              <Input id="email" name="email" type="email" defaultValue={contact?.email ?? ""} />
+              <Input
+                id="email"
+                name="email"
+                type="email"
+                dir="ltr"
+                defaultValue={contact?.email ?? ""}
+              />
             </div>
             <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1.5">
                 <Label htmlFor="phone">{t("fields.phone")}</Label>
-                <Input id="phone" name="phone" type="tel" defaultValue={contact?.phone ?? ""} />
+                <Input
+                  id="phone"
+                  name="phone"
+                  type="tel"
+                  dir="ltr"
+                  defaultValue={contact?.phone ?? ""}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label htmlFor="title">{t("fields.title")}</Label>
                 <Input id="title" name="title" defaultValue={contact?.title ?? ""} />
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 [&>*]:min-w-0">
               <div className="space-y-1.5">
                 <Label htmlFor="companyId">{t("fields.company")}</Label>
                 <select
