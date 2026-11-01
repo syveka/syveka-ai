@@ -51,6 +51,7 @@ export function AttachPhoneNumberForm({ assistantId }: { assistantId: string }) 
               id="phoneNumber"
               name="phoneNumber"
               type="tel"
+              dir="ltr"
               placeholder="+358401234567"
               required
             />

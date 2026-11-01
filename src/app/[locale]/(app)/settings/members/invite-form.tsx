@@ -38,6 +38,7 @@ export function InviteForm() {
             id="invite-email"
             name="email"
             type="email"
+            dir="ltr"
             autoComplete="email"
             placeholder={t("emailPlaceholder")}
             required

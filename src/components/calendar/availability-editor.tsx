@@ -1,7 +1,7 @@
 "use client";
 
 import { useActionState, useMemo, useState } from "react";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { Plus, Trash2 } from "lucide-react";
 import {
   saveScheduleAction,
@@ -98,7 +98,8 @@ function ScheduleForm({ schedule, canDelete }: { schedule?: ScheduleData; canDel
   );
   const [overrides, setOverrides] = useState<Override[]>(schedule?.overrides ?? []);
 
-  const weekdayFmt = new Intl.DateTimeFormat(undefined, { weekday: "long", timeZone: "UTC" });
+  const locale = useLocale();
+  const weekdayFmt = new Intl.DateTimeFormat(locale, { weekday: "long", timeZone: "UTC" });
   const weekdayName = (d: number) => weekdayFmt.format(new Date(Date.UTC(2024, 0, 7 + d))); // 2024-01-07 = Sunday
 
   return (

@@ -18,7 +18,8 @@ vi.mock("@/i18n/routing", () => ({
 }));
 
 import {
-  displayedMonthlyPriceEur,
+  annualMonthlyEquivalentEur,
+  annualPriceEur,
   PLAN_LIMITS,
   PLAN_MONTHLY_PRICE_EUR,
   PUBLIC_PLANS,
@@ -41,9 +42,13 @@ describe("plan catalog", () => {
 
   it("keeps today's displayed prices, monthly and annual (2 months free)", () => {
     expect(PLAN_MONTHLY_PRICE_EUR).toEqual({ FREE: 0, STARTER: 29, PRO: 79 });
-    expect(displayedMonthlyPriceEur("STARTER", "annual")).toBe(24);
-    expect(displayedMonthlyPriceEur("PRO", "annual")).toBe(66);
-    expect(displayedMonthlyPriceEur("FREE", "annual")).toBe(0);
+    // Annual is charged once a year: 10 months of the monthly price.
+    expect(annualPriceEur("STARTER")).toBe(290);
+    expect(annualPriceEur("PRO")).toBe(790);
+    expect(annualPriceEur("FREE")).toBe(0);
+    // The monthly equivalent is unrounded, so 12 x it is the annual charge.
+    expect(annualMonthlyEquivalentEur("STARTER") * 12).toBeCloseTo(290, 10);
+    expect(annualMonthlyEquivalentEur("PRO").toFixed(2)).toBe("65.83");
   });
 
   it("prices every self-serve plan above zero and lists it publicly", () => {

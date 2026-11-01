@@ -112,8 +112,20 @@ export const PLAN_CARD_EXTRAS: Record<
   PRO: { contacts: false, apiWebhooks: false, auditRetention: true },
 };
 
-/** Displayed price per seat per month for a billing interval, rounded to whole euros. */
-export function displayedMonthlyPriceEur(plan: PublicPlan, interval: "monthly" | "annual"): number {
-  const monthly = PLAN_MONTHLY_PRICE_EUR[plan];
-  return interval === "annual" ? Math.round((monthly * ANNUAL_BILLED_MONTHS) / 12) : monthly;
+/**
+ * Displayed annual price per seat, charged once a year: ANNUAL_BILLED_MONTHS
+ * months of the monthly price (€290 Starter, €790 Pro). The STRIPE_PRICE_*_ANNUAL
+ * prices must charge the same amount (see the note at the top of this file).
+ */
+export function annualPriceEur(plan: PublicPlan): number {
+  return PLAN_MONTHLY_PRICE_EUR[plan] * ANNUAL_BILLED_MONTHS;
+}
+
+/**
+ * The annual price spread over 12 months (€24.17 Starter, €65.83 Pro, shown
+ * to the cent). The amount charged is the annual price; this is only its
+ * equivalent, closer than whole euros (€24, €66) that implied €288 and €792.
+ */
+export function annualMonthlyEquivalentEur(plan: PublicPlan): number {
+  return annualPriceEur(plan) / 12;
 }

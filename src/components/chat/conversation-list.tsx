@@ -2,6 +2,7 @@ import { Pin } from "lucide-react";
 import { getTranslations } from "next-intl/server";
 import { Link } from "@/i18n/routing";
 import { cn } from "@/lib/utils";
+import { conversationTitle } from "@/lib/chat/conversation-title";
 
 type Item = { id: string; title: string; isPinned: boolean };
 
@@ -36,7 +37,7 @@ export async function ConversationList({
           >
             {c.isPinned ? <Pin className="size-3 shrink-0" /> : null}
             <span dir="auto" className="truncate">
-              {c.title}
+              {conversationTitle(c.title, t("newConversation"))}
             </span>
           </Link>
         ))}

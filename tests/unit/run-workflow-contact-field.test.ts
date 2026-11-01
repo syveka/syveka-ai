@@ -39,10 +39,42 @@ const state = vi.hoisted(() => ({
   activities: [] as Array<Record<string, unknown>>,
   notifications: [] as Array<Record<string, unknown>>,
   contactLookups: 0,
+  /** Step executions started: a create, or a reclaim of a FAILED/stale step. */
+  stepClaims: 0,
 }));
 
+/**
+ * Evaluates a Prisma where clause the way the database would for the operators
+ * the job uses, so the claim and reclaim conditions are actually exercised.
+ */
+function fieldMatches(value: unknown, condition: unknown): boolean {
+  if (condition instanceof Date) {
+    return value instanceof Date && value.getTime() === condition.getTime();
+  }
+  if (condition === null || typeof condition !== "object") return value === condition;
+  return Object.entries(condition as Row).every(([op, arg]) => {
+    switch (op) {
+      case "in":
+        return (arg as unknown[]).includes(value);
+      case "startsWith":
+        return typeof value === "string" && value.startsWith(arg as string);
+      case "lt":
+        return value instanceof Date && value < (arg as Date);
+      case "not":
+        return arg === null ? value != null : !fieldMatches(value, arg);
+      default:
+        throw new Error(`fake where: unsupported operator ${op}`);
+    }
+  });
+}
+
 function matches(row: Row, where: Row): boolean {
-  return Object.entries(where).every(([k, v]) => k === "OR" || row[k] === v);
+  return Object.entries(where).every(([k, v]) => {
+    if (k === "OR") return (v as Row[]).some((w) => matches(row, w));
+    if (k === "AND") return (v as Row[]).every((w) => matches(row, w));
+    if (k === "NOT") return !([v].flat() as Row[]).some((w) => matches(row, w));
+    return fieldMatches(row[k], v);
+  });
 }
 
 const db = {
@@ -71,7 +103,11 @@ const db = {
     findFirstOrThrow: vi.fn(async ({ where }: { where: Row }) =>
       state.runs.find((r) => matches(r, where))!,
     ),
-    updateMany: vi.fn(async () => ({ count: 0 })),
+    updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
+      const hits = state.runs.filter((r) => matches(r, where));
+      for (const run of hits) Object.assign(run, data);
+      return { count: hits.length };
+    }),
     update: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
       const run = state.runs.find((r) => matches(r, where));
       if (!run) throw new FakePrismaKnownError("P2025");
@@ -86,6 +122,7 @@ const db = {
       ) {
         throw new FakePrismaKnownError("P2002");
       }
+      state.stepClaims += 1;
       const step = {
         id: `step-${state.steps.length + 1}`,
         startedAt: new Date(),
@@ -107,6 +144,7 @@ const db = {
           (where.OR === undefined || s.status === "FAILED"),
       );
       if (!step) return { count: 0 };
+      if (data.status === "CLAIMED") state.stepClaims += 1;
       Object.assign(step, data);
       return { count: 1 };
     }),
@@ -178,10 +216,11 @@ import {
   workflowRunFailure,
 } from "@/lib/workflows/run-failure";
 
-function deliver(payload: Record<string, unknown>) {
+function deliver(payload: Record<string, unknown>, headers: Record<string, string> = {}) {
   return POST(
     new Request("https://example.test/api/v1/jobs/run-workflow", {
       method: "POST",
+      headers,
       body: JSON.stringify({ workflowId: WORKFLOW, orgId: ORG, ...payload }),
     }),
   );
@@ -238,13 +277,22 @@ beforeEach(() => {
   state.activities = [];
   state.notifications = [];
   state.contactLookups = 0;
+  state.stepClaims = 0;
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
 describe("crm.create_activity: contact field resolution", () => {
   it("a test run (no contact in its trigger data) fails with a reason, not a driver error", async () => {
     const res = await testRun();
-    expect(res.status).toBe(500);
+    // Deterministic: ends the job (no QStash retry) and tells the creator
+    // now, on the first attempt, instead of after three identical failures.
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ failed: true });
+    expect(state.notifications).toHaveLength(1);
+    expect(state.notifications[0]).toMatchObject({
+      type: "workflow.failed",
+      body: CONTACT_MISSING_TEST_RUN_ERROR,
+    });
     expect(state.contactLookups).toBe(0);
     expect(state.activities).toEqual([]);
     const run = state.runs[0]!;
@@ -264,7 +312,8 @@ describe("crm.create_activity: contact field resolution", () => {
       runId: TEST_RUN,
       resumeFromIndex: 0,
     });
-    expect(res.status).toBe(500);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ skipped: "terminal_failure" });
     expect(state.runs).toHaveLength(1);
     expect(state.runs[0]).toMatchObject({
       status: "FAILED",
@@ -272,6 +321,115 @@ describe("crm.create_activity: contact field resolution", () => {
     });
     expect(state.activities).toEqual([]);
     expect(state.contactLookups).toBe(0);
+    // The step ran once, and the creator was told once.
+    expect(state.stepClaims).toBe(1);
+    expect(state.notifications).toHaveLength(1);
+  });
+
+  it("the same terminal event delivered twice (same sourceEventKey) stays FAILED, runs once, notifies once", async () => {
+    const UNKNOWN = "e0e0e0e0-e0e0-4e0e-8e0e-e0e0e0e0e0e0";
+    const event = {
+      triggerType: "contact.created",
+      triggerData: { contactId: UNKNOWN },
+      sourceEventKey: `contact.created:${UNKNOWN}`,
+    };
+    const first = await deliver(event, { "upstash-retried": "0" });
+    expect(first.status).toBe(200);
+    expect(state.runs[0]).toMatchObject({ status: "FAILED", error: CONTACT_NOT_FOUND_ERROR });
+
+    const again = await deliver(event, { "upstash-retried": "0" });
+    expect(again.status).toBe(200);
+    expect(await again.json()).toEqual({ skipped: "terminal_failure" });
+    expect(state.runs).toHaveLength(1);
+    expect(state.runs[0]).toMatchObject({ status: "FAILED", error: CONTACT_NOT_FOUND_ERROR });
+    expect(state.contactLookups).toBe(1);
+    expect(state.stepClaims).toBe(1);
+    expect(state.steps[0]).toMatchObject({ status: "FAILED", error: CONTACT_NOT_FOUND_ERROR });
+    expect(state.notifications).toHaveLength(1);
+    expect(state.activities).toEqual([]);
+  });
+
+  it("a transient failure is still retried by redelivery and then succeeds once", async () => {
+    const event = {
+      triggerType: "contact.created",
+      triggerData: { contactId: CONTACT },
+      sourceEventKey: `contact.created:${CONTACT}`,
+    };
+    const contacts = state.contacts;
+    state.contacts = null as never; // the lookup fails: a database error, not a step error
+    const first = await deliver(event, { "upstash-retried": "0" });
+    expect(first.status).toBe(500);
+    expect(state.runs[0]).toMatchObject({ status: "FAILED" });
+    expect(workflowRunFailure(state.runs[0]!.error as string)).toBe("internal");
+
+    state.contacts = contacts; // the database is back
+    const retry = await deliver(event, { "upstash-retried": "1" });
+    expect(retry.status).toBe(200);
+    expect(await retry.json()).toEqual({ ok: true });
+    expect(state.runs).toHaveLength(1);
+    expect(state.runs[0]).toMatchObject({ status: "SUCCEEDED" });
+    expect(state.activities).toHaveLength(1);
+    expect(state.stepClaims).toBe(2); // first attempt + the reclaim
+    expect(state.notifications).toEqual([]);
+  });
+
+  it("a transient failure of a manual run with runId is still resumable", async () => {
+    const triggerData = { contactId: CONTACT, triggeredBy: CREATOR };
+    state.runs.push({
+      id: TEST_RUN,
+      workflowId: WORKFLOW,
+      organizationId: ORG,
+      triggerData,
+      status: "RUNNING",
+      stepResults: [],
+      startedAt: new Date(),
+      error: null,
+    });
+    const payload = { triggerType: "manual", triggerData, runId: TEST_RUN, resumeFromIndex: 0 };
+    const contacts = state.contacts;
+    state.contacts = null as never;
+    expect((await deliver(payload, { "upstash-retried": "0" })).status).toBe(500);
+    expect(state.runs[0]).toMatchObject({ status: "FAILED" });
+
+    state.contacts = contacts;
+    const retry = await deliver(payload, { "upstash-retried": "1" });
+    expect(retry.status).toBe(200);
+    expect(state.runs[0]).toMatchObject({ status: "SUCCEEDED" });
+    expect(state.activities).toHaveLength(1);
+    expect(state.notifications).toEqual([]);
+  });
+
+  it("a step error on a first attempt (QStash would retry) ends the job and notifies once", async () => {
+    const res = await deliver(
+      {
+        triggerType: "deal.won",
+        triggerData: { dealId: "deal-1", title: "Pilot deal", valueCents: 100000 },
+        sourceEventKey: "deal.won:deal-1",
+      },
+      { "upstash-retried": "0" },
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ error: CONTACT_MISSING_ERROR, failed: true });
+    expect(state.runs[0]).toMatchObject({ status: "FAILED", error: CONTACT_MISSING_ERROR });
+    expect(state.notifications).toHaveLength(1);
+    expect(state.notifications[0]).toMatchObject({ type: "workflow.failed" });
+  });
+
+  it("an unexpected error on a first attempt still returns 500 for a retry, without notifying", async () => {
+    // The contact lookup itself fails (a database error, not a step error).
+    state.contacts = null as never;
+    const res = await deliver(
+      {
+        triggerType: "contact.created",
+        triggerData: { contactId: CONTACT },
+        sourceEventKey: `contact.created:${CONTACT}`,
+      },
+      { "upstash-retried": "0" },
+    );
+    expect(res.status).toBe(500);
+    expect(state.notifications).toEqual([]);
+    expect(state.runs[0]).toMatchObject({ status: "FAILED" });
+    expect(workflowRunFailure(state.runs[0]!.error as string)).toBe("internal");
   });
 
   it("a live trigger without a contact (deal.won) gets the general reason, not the test-run one", async () => {

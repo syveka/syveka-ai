@@ -216,6 +216,11 @@ function ListenControl({
         <span role="status" className="text-xs text-muted-foreground">
           {t(`playbackErrors.${failure.code}`, {
             language: languageName(failure.language ?? "", locale),
+            count: failure.listed ?? 0,
+            // Latin digits in Arabic too, like the other counts in the app.
+            countText: new Intl.NumberFormat(locale === "ar" ? "ar-u-nu-latn" : locale).format(
+              failure.listed ?? 0,
+            ),
           })}
         </span>
       ) : null}

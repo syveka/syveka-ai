@@ -183,8 +183,8 @@
     "currentPeriodEnds": "Nykyinen laskutusjakso päättyy: {date}",
     "completed": "Valmis",
     "emptyValue": "—",
-    "paymentSummary": "{plan} / {status}",
-    "stageSummary": "{count} / {value}",
+    "paymentSummary": "{plan} · {status}",
+    "stageSummary": "{count, plural, one {{countText} myyntimahdollisuus} other {{countText} myyntimahdollisuutta}} · {value}",
     "noPipeline": "Myyntiputkea ei ole määritetty.",
     "emptyActivity": "Ei tapahtumia vielä.",
     "emptyPayments": "Ei laskutustapahtumia vielä.",
@@ -201,7 +201,16 @@
     "errorTitle": "Työpöytää ei voitu ladata",
     "errorDescription": "Päivitä työpöytä tai yritä hetken kuluttua uudelleen.",
     "retry": "Yritä uudelleen",
-    "pipelineForecast": "Painotettu ennuste"
+    "pipelineForecast": "Painotettu ennuste",
+    "subscriptionStatus": {
+      "ACTIVE": "Aktiivinen",
+      "TRIALING": "Kokeilu",
+      "PAST_DUE": "Maksu myöhässä",
+      "CANCELED": "Peruttu",
+      "INCOMPLETE": "Maksu odottaa",
+      "PAUSED": "Keskeytetty"
+    },
+    "stageBarsMetric": "Palkin pituus kertoo vaiheen myyntimahdollisuuksien määrän, ei niiden arvoa."
   },
   "billing": {
     "title": "Laskutus",
@@ -257,9 +266,10 @@
       "preparingVoice": "Valmistellaan puheääntä…",
       "playbackErrors": {
         "unsupported": "Tämä selain ei osaa lukea vastauksia ääneen.",
-        "no_voice": "Tähän laitteeseen ei ole asennettu puheääntä kielelle {language}. Jos haluat kuunnella vastauksia, asenna puhedata kielelle {language} laitteen tekstistä puheeksi -asetuksista. Voit silti lukea vastauksen yllä.",
+        "no_voice": "Tämä selain tarjosi Syvekalle {count, plural, one {{countText} puheäänen} other {{countText} puheääntä}}, mutta ei yhtään kielelle {language}, joten vastausta ei luettu ääneen. Jos laitteeseesi on asennettu puheääni kielelle {language}, kokeile toista selainta tai tarkista laitteen tekstistä puheeksi -asetukset. Voit silti lukea vastauksen yllä.",
         "unknown_language": "Tämän vastauksen kieltä ei voitu yhdistää puheääneen.",
-        "playback_failed": "Vastausta ei voitu lukea ääneen."
+        "playback_failed": "Vastausta ei voitu lukea ääneen. Yritä uudelleen; jos ääntä ei kuulu, kokeile toista selainta.",
+        "no_voices_listed": "Tämä selain ei antanut Syvekan käyttöön yhtään puheääntä, joten vastausta ei luettu ääneen. Laitteeseesi asennetut puheäänet voivat silti toimia toisessa selaimessa. Voit silti lukea vastauksen yllä."
       },
       "errors": {
         "unsupported": "Tämä selain ei tue puhesyötettä. Voit silti kirjoittaa viestisi.",
@@ -325,7 +335,7 @@
       },
       "notices": {
         "not_heard": "En saanut selvää. Sano se uudelleen.",
-        "no_voice": "Tässä laitteessa ei ole puheääntä tämän vastauksen kielelle, joten se näytetään tekstinä. Voit jatkaa puhumista.",
+        "no_voice": "Tämä selain ei tarjoa puheääntä tämän vastauksen kielelle, joten se näytetään tekstinä. Voit jatkaa puhumista.",
         "language_unknown": "Tämä vastaus näytetään tekstinä, koska sen kieltä ei voitu yhdistää puheääneen. Voit jatkaa puhumista.",
         "turn_too_long": "Puheenvuoro oli liian pitkä. Sano asia lyhyemmissä osissa.",
         "speech_blocked": "Selain ei sallinut Syvekan puhua. Kuule vastaus napauttamalla ”Ota puhutut vastaukset käyttöön”; keskustelu jatkuu.",
@@ -351,8 +361,8 @@
         "rate_limited": "Liian monta puhepyyntöä lyhyessä ajassa. Odota hetki ja yritä uudelleen."
       },
       "voiceChecking": "Tarkistetaan puheääniä…",
-      "voiceUnavailable": "Tässä laitteessa ei ole puheääntä tälle kielelle, joten Syveka ei voi vastata ääneen. Voit puhua ja lukea vastaukset tai käyttää sanelua.",
-      "voiceUnknown": "Laitteesi ei vielä kertonut puheääniään. Jos et kuule vastauksia, lopeta keskustelu ja aloita uudelleen tekstivastauksin.",
+      "voiceUnavailable": "Tämä selain ei tarjoa puheääntä tälle kielelle, joten Syveka ei voi vastata ääneen tässä selaimessa. Laitteeseesi asennettu puheääni voi toimia toisessa selaimessa. Voit puhua ja lukea vastaukset tai käyttää sanelua.",
+      "voiceUnknown": "Tämä selain ei ole vielä kertonut puheääniään. Jos et kuule vastauksia, lopeta keskustelu ja aloita uudelleen tekstivastauksin.",
       "startTextOnly": "Aloita tekstivastauksin",
       "useDictation": "Käytä sanelua",
       "textOnlyHint": "Vastaukset näytetään vain tekstinä.",
@@ -605,7 +615,9 @@
       "bookingCanceledBodyAt": "{guest} perui tapaamisen {time}.",
       "bookingCanceledBodyAtWithReason": "{guest} perui tapaamisen {time}. Syy: {reason}",
       "bookingRescheduledBodyFromTo": "{guest} siirsi tapaamisen ajasta {from} aikaan {to}."
-    }
+    },
+    "taskTitleLabel": "Tehtävä",
+    "taskDueLabel": "Määräaika ja kellonaika (valinnainen)"
   },
   "voice": {
     "title": "Puheavustaja",
@@ -657,7 +669,9 @@
       "title": "Puhe-AI vaatii Starter-tason tai korkeamman",
       "description": "Organisaatiollasi on {plan}-taso, joka ei sisällä puhe-AI:ta.",
       "currentPlan": "Nykyinen taso",
-      "upgradeButton": "Päivitä taso"
+      "upgradeButton": "Päivitä taso",
+      "limitTitle": "Puheavustajien enimmäismäärä on täynnä",
+      "limitDescription": "{plan}-tasoon sisältyy {limit, plural, one {{limitText} puheavustaja} other {{limitText} puheavustajaa}}, ja ne ovat jo kaikki käytössä."
     },
     "errors": {
       "entitlement_exceeded": "Puhe-AI vaatii Starter-tason tai korkeamman — päivitä tasoa jatkaaksesi.",
@@ -705,7 +719,7 @@
       "attendees": "Osallistujat",
       "guestEmails": "Vieraiden sähköpostit (pilkuin eroteltuna)",
       "guestEmailsLabel": "Vieraiden sähköpostit",
-      "guestEmailsHint": "Vieraille, jotka eivät ole kontakteja. Erota useampi osoite pilkuilla, esimerkiksi anna@example.com, ben@example.com."
+      "guestEmailsHint": "Vieraille, jotka eivät ole kontakteja. Erota useampi osoite pilkuilla, esimerkiksi <ltr>anna@example.com, ben@example.com</ltr>."
     },
     "views": {
       "day": "Päivä",
@@ -787,7 +801,7 @@
       "bufferBefore": "Puskuri ennen (min)",
       "bufferAfter": "Puskuri jälkeen (min)",
       "minNotice": "Väh. varoaika (min)",
-      "maxWindow": "Enint. aikaikkuna (pv)",
+      "maxWindow": "Varattavissa enintään (päivää etukäteen)",
       "brandColor": "Brändiväri",
       "active": "Aktiivinen",
       "requireConsent": "Vaadi suostumus",
@@ -815,7 +829,14 @@
   "notifications": {
     "title": "Ilmoitukset",
     "markAllRead": "Merkitse kaikki luetuiksi",
-    "empty": "Ei uusia ilmoituksia."
+    "empty": "Ei uusia ilmoituksia.",
+    "workflowFailed": "Työnkulku epäonnistui: <name></name>",
+    "booking": {
+      "confirmation": "Uusi varaus: <type></type> — <guest></guest>",
+      "reschedule": "Varaus siirretty: <type></type> — <guest></guest>",
+      "cancellation": "Varaus peruttu: <type></type> — <guest></guest>",
+      "reminder": "Tuleva tapaaminen: <type></type> — <guest></guest>"
+    }
   },
   "analytics": {
     "title": "Analytiikka",
@@ -953,7 +974,8 @@
       "duplicate_step_id": "Kahdella vaiheella on sama tunniste. Poista toinen ja lisää se uudelleen.",
       "recipient_not_member": "Ilmoituksen vastaanottajan on oltava tämän organisaation jäsen.",
       "step_not_allowed": "Tämän työtilan työnkuluissa voi käyttää vain sisäisiä vaiheita: ehtoja, CRM-aktiviteetteja ja jäsenille näkyviä sovelluksen sisäisiä ilmoituksia. Poista sähköposti-, tekoäly-, odotus- ja ajastusvaiheet."
-    }
+    },
+    "internalOnlyHint": "Tämän työtilan työnkuluissa voi käyttää vain sisäisiä vaiheita. Sähköposti-, tekoäly- ja odotusvaiheet eivät ole käytettävissä."
   },
   "billingPage": {
     "title": "Laskutus",
@@ -964,7 +986,6 @@
     "plans": "Tilaukset",
     "current": "Nykyinen tilaus",
     "choosePlan": "Valitse tilaus",
-    "perUserMonth": "käyttäjä/kk",
     "intervalLabel": "Laskutusväli",
     "interval": {
       "monthly": "Kuukausittain",
@@ -990,7 +1011,10 @@
     "planChangeUnavailable": "Tilauksen muutosta ei voi aloittaa juuri nyt. Yritä hetken kuluttua uudelleen.",
     "paymentPending": "Tilauksesi odottaa ensimmäistä maksua. Viimeistele maksu, niin pakettisi otetaan käyttöön.",
     "completePayment": "Viimeistele maksu",
-    "redirecting": "Avataan…"
+    "redirecting": "Avataan…",
+    "priceMonthlyUnit": "käyttäjää kohden kuukaudessa, laskutetaan kuukausittain",
+    "priceAnnualUnit": "käyttäjää kohden vuodessa, laskutetaan kerran vuodessa",
+    "annualEquivalent": "Vastaa {price} käyttäjää kohden kuukaudessa: 12 kuukautta 10 kuukauden hinnalla."
   },
   "booking": {
     "durationLabel": "{minutes} min",
@@ -1088,7 +1112,9 @@
       "mock": "Testisähköpostipalvelu käytössä — viestit ovat simuloituja, eivät oikeita",
       "notConfigured": "Sähköpostia ei ole vielä määritetty",
       "configuredUnverified": "Sähköpostipalvelu määritetty — ei vielä vahvistettu: saapuvaa sähköpostia ei ole vastaanotettu",
-      "receiving": "Saapuvaa sähköpostia vastaanotettu: vähintään yksi oikea viesti on saapunut"
+      "receiving": "Saapuvaa sähköpostia vastaanotettu: vähintään yksi oikea viesti on saapunut",
+      "noAddress": "Sähköpostipalvelu on määritetty, mutta tällä organisaatiolla ei vielä ole vastaanotto-osoitetta, joten saapuva sähköposti ei voi tulla tähän saapuneet-kansioon. Ylläpitäjän on määritettävä osoite ennen kuin sähköpostia voi testata.",
+      "verifyWithAddress": "Vahvista lähettämällä sähköposti omasta postilaatikostasi osoitteeseen <address></address>. Kun viesti näkyy täällä, tila muuttuu vastaanotetuksi."
     },
     "status": {
       "OPEN": "Avoin",
@@ -1289,7 +1315,8 @@
       "setup_required": "Vaatii määrityksen",
       "not_configured": "Ei määritetty",
       "blocked": "Estynyt",
-      "verification_required": "Vaatii vahvistuksen"
+      "verification_required": "Vaatii vahvistuksen",
+      "plan_required": "Vaatii Starter-tason tai korkeamman"
     }
   },
   "creatorStudio": {

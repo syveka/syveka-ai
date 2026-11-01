@@ -132,6 +132,7 @@ describe("Notifications page", () => {
     state.notifications = [
       {
         id: "n1",
+        type: "workflow.notification",
         title: "Intro call — Ann",
         body: null,
         href: null,
@@ -289,6 +290,86 @@ describe("Dashboard", () => {
       }),
     );
   };
+
+  /** The pilot acceptance data: €250 open at 10%, €1,000 won, €1,000 lost. */
+  const acceptanceDashboard = () => {
+    const base = dashboardFixture("Sales pipeline") as unknown as Record<string, unknown> & {
+      pipeline: { stages: Array<Record<string, unknown>> };
+    };
+    const counts: Record<string, [number, number]> = {
+      s0: [1, 250_00],
+      s4: [1, 1_000_00],
+      s5: [1, 1_000_00],
+    };
+    return {
+      ...base,
+      permissions: { ...(base.permissions as object), canUseChat: true, canViewBilling: true },
+      feed: {
+        ...(base.feed as object),
+        aiActivities: [
+          { id: "c1", title: "New conversation", at: OBSERVED, model: null },
+          { id: "c2", title: "Pilot question", at: OBSERVED, model: null },
+        ],
+        payments: [
+          { id: "sub-1", plan: "FREE", status: "ACTIVE", at: OBSERVED, currentPeriodEnd: null },
+        ],
+      },
+      pipeline: {
+        ...base.pipeline,
+        stages: base.pipeline.stages.map((s) => {
+          const [count, valueCents] = counts[s.id as string] ?? [0, 0];
+          return { ...s, count, valueCents };
+        }),
+        openValueCents: 250_00,
+        forecastValueCents: 25_00,
+      },
+    } as unknown as CrmDashboard;
+  };
+  const renderAcceptance = async (locale: "en" | "fi" | "ar") => {
+    state.locale = locale;
+    return renderToStaticMarkup(
+      await CrmDashboardView({
+        dashboard: acceptanceDashboard(),
+        locale,
+        timeZone: "Europe/Helsinki",
+      }),
+    );
+  };
+
+  it("names the plan and subscription state, never the raw enum values", async () => {
+    const en = await renderAcceptance("en");
+    expect(en).toContain("Free · Active");
+    const ar = await renderAcceptance("ar");
+    expect(ar).toContain("Free · نشط");
+    for (const html of [en, ar, await renderAcceptance("fi")]) {
+      expect(html).not.toContain("FREE");
+      expect(html).not.toContain("ACTIVE");
+    }
+  });
+
+  it("shows the default conversation title in the interface language and others as written", async () => {
+    const ar = await renderAcceptance("ar");
+    expect(ar).toContain("محادثة جديدة");
+    expect(ar).not.toContain("New conversation");
+    expect(ar).toContain("Pilot question");
+  });
+
+  it("says the stage bars count deals, sizes them by count and draws nothing for an empty stage", async () => {
+    for (const locale of ["en", "fi", "ar"] as const) {
+      const html = await renderAcceptance(locale);
+      expect(html).toContain(MESSAGES[locale].dashboard.stageBarsMetric);
+    }
+    const en = await renderAcceptance("en");
+    expect(en).toContain("1 deal · €250.00");
+    expect(en).toContain("0 deals · €0.00");
+    // €250 and €1,000 stages each hold one deal: equal bars, by design.
+    expect(en.match(/style="width:100%"/g)).toHaveLength(3);
+    expect(en.match(/style="width:0%"/g)).toHaveLength(3);
+    expect(en).not.toContain("width:4%");
+    // Totals and forecast are unchanged.
+    expect(en).toContain("€250.00");
+    expect(en).toContain("€25.00");
+  });
 
   it("shows the seeded default pipeline name in the interface language", async () => {
     const en = await renderDashboard("en");

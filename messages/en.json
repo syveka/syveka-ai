@@ -183,8 +183,8 @@
     "currentPeriodEnds": "Current period ends: {date}",
     "completed": "Completed",
     "emptyValue": "—",
-    "paymentSummary": "{plan} / {status}",
-    "stageSummary": "{count} / {value}",
+    "paymentSummary": "{plan} · {status}",
+    "stageSummary": "{count, plural, one {{countText} deal} other {{countText} deals}} · {value}",
     "noPipeline": "No pipeline configured.",
     "emptyActivity": "No activity yet.",
     "emptyPayments": "No billing activity yet.",
@@ -201,7 +201,16 @@
     "errorTitle": "Dashboard could not load",
     "errorDescription": "Refresh the dashboard or try again in a moment.",
     "retry": "Try again",
-    "pipelineForecast": "Weighted forecast"
+    "pipelineForecast": "Weighted forecast",
+    "subscriptionStatus": {
+      "ACTIVE": "Active",
+      "TRIALING": "Trial",
+      "PAST_DUE": "Payment overdue",
+      "CANCELED": "Canceled",
+      "INCOMPLETE": "Payment pending",
+      "PAUSED": "Paused"
+    },
+    "stageBarsMetric": "Bar length shows the number of deals in each stage, not their value."
   },
   "billing": {
     "title": "Billing",
@@ -257,9 +266,10 @@
       "preparingVoice": "Preparing the voice…",
       "playbackErrors": {
         "unsupported": "This browser can't read replies aloud.",
-        "no_voice": "No {language} voice is installed on this device. To hear replies, install the {language} voice data in your device's text-to-speech settings. You can still read the reply above.",
+        "no_voice": "This browser offered Syveka {count, plural, one {{countText} voice} other {{countText} voices}}, but none for {language}, so the reply wasn't read aloud. If your device has a voice for {language} installed, try another browser or check your device's text-to-speech settings. You can still read the reply above.",
         "unknown_language": "The language of this reply couldn't be matched to a voice.",
-        "playback_failed": "The reply couldn't be read aloud."
+        "playback_failed": "The reply couldn't be read aloud. Try again; if it stays silent, try another browser.",
+        "no_voices_listed": "This browser didn't make any voices available to Syveka, so the reply wasn't read aloud. Voices installed on your device may still work in another browser. You can still read the reply above."
       },
       "errors": {
         "unsupported": "Voice input isn't supported in this browser. You can still type your message.",
@@ -325,7 +335,7 @@
       },
       "notices": {
         "not_heard": "Didn't catch that. Please say it again.",
-        "no_voice": "This device has no voice for this reply's language, so it's shown as text. You can keep talking.",
+        "no_voice": "This browser doesn't offer a voice for this reply's language, so it's shown as text. You can keep talking.",
         "language_unknown": "This reply is shown as text because its language couldn't be matched to a voice. You can keep talking.",
         "turn_too_long": "That was too long for one turn. Please say it in shorter parts.",
         "speech_blocked": "Your browser didn't allow Syveka to speak. Tap \"Enable spoken replies\" to hear the reply; the conversation continues.",
@@ -351,8 +361,8 @@
         "rate_limited": "Too many voice requests in a short time. Wait a moment and try again."
       },
       "voiceChecking": "Checking voices…",
-      "voiceUnavailable": "This device has no voice for this language, so Syveka can't answer aloud. You can talk and read the replies, or use dictation instead.",
-      "voiceUnknown": "Your device didn't list its voices yet. If you don't hear replies, end the conversation and start again with text replies.",
+      "voiceUnavailable": "This browser doesn't offer a voice for this language, so Syveka can't answer aloud here. A voice installed on your device may work in another browser. You can talk and read the replies, or use dictation instead.",
+      "voiceUnknown": "This browser hasn't listed any voices yet. If you don't hear replies, end the conversation and start again with text replies.",
       "startTextOnly": "Start with text replies",
       "useDictation": "Use dictation instead",
       "textOnlyHint": "Replies are shown as text only.",
@@ -605,7 +615,9 @@
       "bookingCanceledBodyAt": "{guest} canceled the meeting on {time}.",
       "bookingCanceledBodyAtWithReason": "{guest} canceled the meeting on {time}. Reason: {reason}",
       "bookingRescheduledBodyFromTo": "{guest} moved the meeting from {from} to {to}."
-    }
+    },
+    "taskTitleLabel": "Task",
+    "taskDueLabel": "Due date and time (optional)"
   },
   "voice": {
     "title": "Voice AI",
@@ -657,7 +669,9 @@
       "title": "Voice AI requires Starter or higher",
       "description": "Your organization is on the {plan} plan, which doesn't include Voice AI.",
       "currentPlan": "Current plan",
-      "upgradeButton": "Upgrade plan"
+      "upgradeButton": "Upgrade plan",
+      "limitTitle": "Voice assistant limit reached",
+      "limitDescription": "The {plan} plan includes {limit, plural, one {{limitText} voice assistant} other {{limitText} voice assistants}}, and your organization already uses all of them."
     },
     "errors": {
       "entitlement_exceeded": "Voice AI requires Starter or higher — upgrade your plan to continue.",
@@ -705,7 +719,7 @@
       "attendees": "Attendees",
       "guestEmails": "Guest emails (comma-separated)",
       "guestEmailsLabel": "Guest emails",
-      "guestEmailsHint": "For guests who aren't contacts. Separate several addresses with commas, for example anna@example.com, ben@example.com."
+      "guestEmailsHint": "For guests who aren't contacts. Separate several addresses with commas, for example <ltr>anna@example.com, ben@example.com</ltr>."
     },
     "views": {
       "day": "Day",
@@ -787,7 +801,7 @@
       "bufferBefore": "Buffer before (min)",
       "bufferAfter": "Buffer after (min)",
       "minNotice": "Min notice (min)",
-      "maxWindow": "Max window (days)",
+      "maxWindow": "Bookable up to (days ahead)",
       "brandColor": "Brand color",
       "active": "Active",
       "requireConsent": "Require consent",
@@ -815,7 +829,14 @@
   "notifications": {
     "title": "Notifications",
     "markAllRead": "Mark all read",
-    "empty": "You're all caught up."
+    "empty": "You're all caught up.",
+    "workflowFailed": "Workflow failed: <name></name>",
+    "booking": {
+      "confirmation": "New booking: <type></type> — <guest></guest>",
+      "reschedule": "Booking rescheduled: <type></type> — <guest></guest>",
+      "cancellation": "Booking canceled: <type></type> — <guest></guest>",
+      "reminder": "Upcoming meeting: <type></type> — <guest></guest>"
+    }
   },
   "analytics": {
     "title": "Analytics",
@@ -953,7 +974,8 @@
       "duplicate_step_id": "Two steps have the same identifier. Remove one and add it again.",
       "recipient_not_member": "The notification recipient must be a member of this organization.",
       "step_not_allowed": "This workspace's workflows can only use internal steps: conditions, CRM activities and in-app notifications to members. Remove email, AI, wait and scheduled steps."
-    }
+    },
+    "internalOnlyHint": "This workspace's workflows can only use internal steps. Email, AI and wait steps aren't available here."
   },
   "billingPage": {
     "title": "Billing",
@@ -964,7 +986,6 @@
     "plans": "Plans",
     "current": "Current plan",
     "choosePlan": "Choose plan",
-    "perUserMonth": "user/mo",
     "intervalLabel": "Billing interval",
     "interval": {
       "monthly": "Monthly",
@@ -990,7 +1011,10 @@
     "planChangeUnavailable": "Plan changes can't be started right now. Please try again shortly.",
     "paymentPending": "Your subscription is waiting for its first payment. Complete the payment to activate your plan.",
     "completePayment": "Complete payment",
-    "redirecting": "Opening…"
+    "redirecting": "Opening…",
+    "priceMonthlyUnit": "per user per month, billed monthly",
+    "priceAnnualUnit": "per user per year, billed once a year",
+    "annualEquivalent": "Equals {price} per user per month: 12 months for the price of 10."
   },
   "booking": {
     "durationLabel": "{minutes} min",
@@ -1088,7 +1112,9 @@
       "mock": "Using a test email provider — messages are simulated, not real",
       "notConfigured": "Email not configured yet",
       "configuredUnverified": "Email provider configured — not verified yet: no inbound email has been received",
-      "receiving": "Inbound email received: at least one real email has arrived"
+      "receiving": "Inbound email received: at least one real email has arrived",
+      "noAddress": "Email provider configured, but this organization has no receiving address yet, so incoming email can't reach this inbox. An administrator needs to set one up before email can be tested.",
+      "verifyWithAddress": "To verify, send an email from your own mailbox to <address></address>. When it appears here, the status changes to received."
     },
     "status": {
       "OPEN": "Open",
@@ -1289,7 +1315,8 @@
       "setup_required": "Setup required",
       "not_configured": "Not configured",
       "blocked": "Blocked",
-      "verification_required": "Verification required"
+      "verification_required": "Verification required",
+      "plan_required": "Requires Starter or higher"
     }
   },
   "creatorStudio": {

@@ -226,6 +226,12 @@ describe("WorkflowToggle server refusal", () => {
   });
 });
 
+const addStepButton = (locale: "en" | "fi" | "ar", type: string) => {
+  const label = type.split(".").reduce((m, k) => m[k], MESSAGES[locale].workflows.stepTypes);
+  // A step card can show the same label; the add-step buttons come last.
+  return screen.getAllByRole("button", { name: label }).at(-1) as HTMLButtonElement;
+};
+
 describe("WorkflowBuilder", () => {
   const initial = {
     id: "wf-1",
@@ -260,6 +266,49 @@ describe("WorkflowBuilder", () => {
     const testRun = screen.getByRole("button", { name: "Test run" });
     expect((testRun as HTMLButtonElement).disabled).toBe(true);
     expect(testRun.getAttribute("aria-describedby")).toBe(notice.id);
+  });
+
+  it.each(["en", "fi", "ar"] as const)(
+    "an internal-only workspace offers only internal steps and says why (%s)",
+    (locale) => {
+      render(
+        withIntl(
+          <WorkflowBuilder
+            initial={initial as never}
+            activation={{ block: null, limit: 1 }}
+            timeZone="Europe/Helsinki"
+            internalOnly
+          />,
+          locale,
+        ),
+      );
+      const hint = screen.getByText(MESSAGES[locale].workflows.internalOnlyHint);
+      for (const blocked of ["ai.generate", "email.send", "wait.duration"]) {
+        const button = addStepButton(locale, blocked) as HTMLButtonElement;
+        expect(button.disabled).toBe(true);
+        expect(button.getAttribute("aria-describedby")).toBe(hint.id);
+      }
+      for (const allowed of ["condition", "crm.create_activity", "notify.member"]) {
+        const button = addStepButton(locale, allowed) as HTMLButtonElement;
+        expect(button.disabled).toBe(false);
+      }
+      cleanup();
+    },
+  );
+
+  it("an unrestricted workspace offers every step without the hint", () => {
+    render(
+      withIntl(
+        <WorkflowBuilder
+          initial={initial as never}
+          activation={{ block: null, limit: 1 }}
+          timeZone="Europe/Helsinki"
+        />,
+        "en",
+      ),
+    );
+    expect((addStepButton("en", "email.send") as HTMLButtonElement).disabled).toBe(false);
+    expect(screen.queryByText(MESSAGES.en.workflows.internalOnlyHint)).toBeNull();
   });
 
   it("shows run history in the viewer's zone with a localized status", () => {
