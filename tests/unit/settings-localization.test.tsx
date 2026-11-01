@@ -347,8 +347,9 @@ describe.each(LOCALES)("Settings pages render real %s translations", (locale) =>
     expect(text).toContain("Pro");
     expect(text).not.toMatch(/\bSTARTER\b|\bPRO\b/);
     // Prices and limits are the same numbers in every locale (Latin digits in Arabic too).
-    expect(text).toMatch(/29\s€/);
-    expect(text).toMatch(/79\s€/);
+    // Locale currency order: "€29" in English, "29 €" in Finnish and Arabic.
+    expect(text).toMatch(/€29\b|29\s€/);
+    expect(text).toMatch(/€79\b|79\s€/);
     for (const n of [/1[\s,.  ]?000/, /5[\s,.  ]?000/, /100\b/, /500\b/, /25\b/]) {
       expect(text).toMatch(n);
     }
