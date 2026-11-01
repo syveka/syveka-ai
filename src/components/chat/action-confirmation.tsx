@@ -11,22 +11,26 @@ import { BusinessDnaChanges } from "./business-dna-changes";
 type State =
   | "pending"
   | "submitting"
+  | "retrying"
   | "done"
   | "canceled"
   | "slotTaken"
   | "stale"
   | "expired"
-  | "alreadyDecided"
   | "superseded"
   | "permission"
+  | "planLimit"
   | "rateLimited"
   | "failed"
+  | "noAnswer"
   | "unknown"
   | "unavailable";
 
 const REFUSAL_STATE: Record<string, State> = {
   not_found: "expired",
-  already_decided: "alreadyDecided",
+  // Decided before, but the first decision's outcome isn't recorded (yet):
+  // the result can't be confirmed from here. A reload shows the record.
+  already_decided: "unknown",
   mismatch: "failed",
   // The tool ran into an error after the action was consumed: its write may
   // or may not have happened -- never claim it failed.
@@ -36,7 +40,7 @@ const REFUSAL_STATE: Record<string, State> = {
   rate_limited: "rateLimited",
   permission_denied: "permission",
   // The plan's limit (or a read-only workspace) refused it before any write.
-  plan_limit: "failed",
+  plan_limit: "planLimit",
 };
 
 /**
@@ -67,16 +71,26 @@ function formatWhen(iso: string, timeZone: string | undefined, locale: string) {
   }).format(new Date(iso));
 }
 
-/** Outcomes after which the action can't be decided again. */
-const SETTLED = new Set<State>([
-  "done",
-  "canceled",
-  "slotTaken",
-  "stale",
-  "expired",
-  "alreadyDecided",
-  "superseded",
-]);
+/**
+ * What the thread is told once a card is settled: a result it can restore,
+ * or "superseded". Refusals that consumed the action count as failed.
+ */
+function settledOutcome(state: State): RestoredActionState | "superseded" {
+  switch (state) {
+    case "done":
+    case "canceled":
+    case "slotTaken":
+    case "stale":
+    case "unknown":
+    case "unavailable":
+    case "superseded":
+      return state;
+    case "expired":
+      return "unavailable";
+    default:
+      return "failed";
+  }
+}
 
 /**
  * A write the assistant proposed. Nothing happens until the user confirms
@@ -95,8 +109,8 @@ export function ActionConfirmation({
   action: ProposedActionView & { restored?: RestoredActionState };
   /** A newer proposal in this conversation changes the same fields (see supersededActionIds). */
   superseded?: boolean;
-  /** Called once the action is decided for good (not after a failed request). */
-  onSettled?: (actionId: string) => void;
+  /** Called once the action can't be decided here any more (not after a request that can be sent again), with the outcome. */
+  onSettled?: (actionId: string, outcome: RestoredActionState | "superseded") => void;
 }) {
   const t = useTranslations("chat.actions");
   const locale = useLocale();
@@ -129,7 +143,7 @@ export function ActionConfirmation({
     if (state === "pending") setState("superseded");
     if (state === "pending" || state === "superseded") {
       releasedRef.current = true;
-      onSettled?.(action.id);
+      onSettled?.(action.id, "superseded");
     }
     // onSettled is a stable callback from the chat hook.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -137,9 +151,10 @@ export function ActionConfirmation({
 
   // After the user's decision, the result is where their attention should go:
   // the buttons they used are gone, so focus moves to the outcome (and the
-  // retry button, when there is one, follows it in tab order).
+  // retry button, when there is one, follows it in tab order). Never on
+  // mount, and never for a change the user didn't make (superseded).
   useEffect(() => {
-    if (decidedRef.current && state !== "submitting" && state !== "pending") {
+    if (decidedRef.current && state !== "submitting" && state !== "retrying") {
       resultRef.current?.focus();
     }
   }, [state]);
@@ -172,13 +187,13 @@ export function ActionConfirmation({
   const content =
     d.tool === "logActivity" ? d.body : d.tool === "bookMeeting" ? d.notes : undefined;
 
-  const decide = async (decision: "confirm" | "cancel") => {
+  const decide = async (decision: "confirm" | "cancel", repeat = false) => {
     if (sentRef.current) return;
     sentRef.current = true;
     decidedRef.current = true;
     lastDecisionRef.current = decision;
     setRetryable(false);
-    setState("submitting");
+    setState(repeat ? "retrying" : "submitting");
     let next: State;
     let canRetry = false;
     try {
@@ -208,26 +223,44 @@ export function ActionConfirmation({
       } else if (code === "already_decided" && body?.error?.outcome) {
         // The first decision went through (its answer was lost): show its result.
         next = RECORDED_STATE[body.error.outcome];
+      } else if (code in REFUSAL_STATE) {
+        next = REFUSAL_STATE[code]!;
+        // Not decided on the server: sending again is safe.
+        canRetry = RETRYABLE_REFUSALS.has(code);
       } else {
-        next = REFUSAL_STATE[code] ?? (res.status >= 500 ? "unknown" : "failed");
-        // Not decided on the server: sending again is safe. Without a known
-        // refusal on a server error the action may have run; a repeat is still
-        // safe (refused with the first decision's outcome).
-        canRetry = RETRYABLE_REFUSALS.has(code) || (res.status >= 500 && !code);
+        // No usable answer (a server error without a known refusal, or no
+        // JSON at all): the action may have run. A repeat is still safe, as
+        // it is refused with the first decision's outcome.
+        next = res.status >= 500 ? "noAnswer" : "failed";
+        canRetry = res.status >= 500;
       }
     } catch {
       // No answer: the server may or may not have run it. A repeat is safe.
-      next = "unknown";
+      next = "noAnswer";
       canRetry = true;
     }
     setState(next);
     setRetryable(canRetry);
     if (canRetry) sentRef.current = false;
-    if (SETTLED.has(next)) onSettled?.(action.id);
+    // Whatever can't be sent again is settled for this view: a consumed
+    // refusal (permission, plan limit, a failure while running) as much as
+    // a result, so a held redirect never waits for a card that can't change.
+    if (!canRetry) onSettled?.(action.id, settledOutcome(next));
   };
 
-  const busy = state === "submitting";
-  const retry = () => void decide(lastDecisionRef.current);
+  const submitting = state === "submitting";
+  const retrying = state === "retrying";
+  const deciding = state === "pending" || submitting;
+  // One live region in every state, so a change the user didn't make
+  // (replaced by a newer request) is announced, not only an inserted node.
+  const status =
+    state === "pending"
+      ? t("nothingYet")
+      : submitting
+        ? t("confirming")
+        : retrying
+          ? t("retrying")
+          : t(`result.${state}`);
   return (
     <section
       aria-label={t("title")}
@@ -255,60 +288,59 @@ export function ActionConfirmation({
           </p>
         </div>
       ) : null}
-      {state === "pending" || busy ? (
-        <>
-          <p className="mt-1 text-xs text-muted-foreground">{t("nothingYet")}</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void decide("confirm")}
-              className="inline-flex min-h-10 items-center gap-1.5 rounded-md bg-primary px-3 text-sm text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-            >
-              <Check aria-hidden className="size-4" />
-              {busy ? t("confirming") : t("confirm")}
-            </button>
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void decide("cancel")}
-              className="inline-flex min-h-10 items-center gap-1.5 rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
-            >
-              <X aria-hidden className="size-4" />
-              {t("cancel")}
-            </button>
-          </div>
-        </>
-      ) : (
-        <>
-          <p
-            ref={resultRef}
-            tabIndex={-1}
-            role="status"
-            className={cn(
-              "mt-2 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              state === "done" ? "text-success" : "text-muted-foreground",
-              (state === "failed" || state === "permission") && "text-destructive",
-            )}
+      <p
+        ref={resultRef}
+        tabIndex={-1}
+        role="status"
+        aria-live="polite"
+        className={cn(
+          "mt-1 text-xs focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+          state === "done" ? "text-success" : "text-muted-foreground",
+          (state === "failed" || state === "permission" || state === "planLimit") &&
+            "text-destructive",
+        )}
+      >
+        {status}
+      </p>
+      {deciding ? (
+        <div className="mt-2 flex flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => void decide("confirm")}
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-md bg-primary px-3 text-sm text-primary-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           >
-            {t(`result.${state}`)}
-          </p>
-          {retryable ? (
-            <button
-              type="button"
-              onClick={retry}
-              className="mt-2 inline-flex min-h-10 items-center gap-1.5 rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-            >
-              <RotateCcw aria-hidden className="size-4" />
-              {t("tryAgain")}
-            </button>
-          ) : null}
-        </>
-      )}
+            <Check aria-hidden className="size-4" />
+            {submitting ? t("confirming") : t("confirm")}
+          </button>
+          <button
+            type="button"
+            disabled={submitting}
+            onClick={() => void decide("cancel")}
+            className="inline-flex min-h-10 items-center gap-1.5 rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+          >
+            <X aria-hidden className="size-4" />
+            {t("cancel")}
+          </button>
+        </div>
+      ) : retryable || retrying ? (
+        // The retry button stays in place while the repeat is in flight, so
+        // keyboard focus never falls off the card.
+        <button
+          type="button"
+          disabled={retrying}
+          aria-busy={retrying || undefined}
+          onClick={() => void decide(lastDecisionRef.current, true)}
+          className="mt-2 inline-flex min-h-10 items-center gap-1.5 rounded-md border bg-background px-3 text-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+        >
+          <RotateCcw aria-hidden className="size-4" />
+          {retrying ? t("retrying") : t("tryAgain")}
+        </button>
+      ) : null}
       {d.tool === "proposeBusinessDnaUpdate" && state === "done" ? (
         <Link
           href="/settings/business-dna"
-          className="mt-1 inline-block text-xs text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className="mt-1 inline-flex min-h-10 items-center text-xs text-primary underline-offset-4 hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         >
           {t("businessDna.review")}
         </Link>

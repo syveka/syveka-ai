@@ -99,6 +99,18 @@ describe("supersededActionIds", () => {
     ).toBe(0);
   });
 
+  it("decisions made in this view count like restored ones: cancel the correction and the earlier one is offered again; apply it and the earlier one stays replaced", () => {
+    const thread = [dna("hours-17", ["openingHours"]), dna("hours-16", ["openingHours"])];
+    expect([...supersededActionIds(thread, NOW, new Map())]).toEqual(["hours-17"]);
+    expect(supersededActionIds(thread, NOW, new Map([["hours-16", "canceled"]])).size).toBe(0);
+    expect(supersededActionIds(thread, NOW, new Map([["hours-16", "failed"]])).size).toBe(0);
+    expect([...supersededActionIds(thread, NOW, new Map([["hours-16", "done"]]))]).toEqual([
+      "hours-17",
+    ]);
+    // Once the earlier one is decided (e.g. restored after a reload), nothing is superseded.
+    expect(supersededActionIds(thread, NOW, new Map([["hours-17", "superseded"]])).size).toBe(0);
+  });
+
   it("other tools' proposals are never superseded and supersede nothing", () => {
     const ids = supersededActionIds(
       [booking("meeting-1"), dna("hours", ["openingHours"]), booking("meeting-2")],

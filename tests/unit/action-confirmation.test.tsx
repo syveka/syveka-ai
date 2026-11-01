@@ -103,14 +103,16 @@ describe("ActionConfirmation", () => {
     [200, { data: { status: "canceled" } }, "cancel", "canceled"],
     [200, { data: { status: "not_done", reason: "slot_taken" } }, "confirm", "slotTaken"],
     [404, { error: { code: "not_found" } }, "confirm", "expired"],
-    [409, { error: { code: "already_decided" } }, "confirm", "alreadyDecided"],
+    // Decided before, outcome not recorded (yet): never shown as a success.
+    [409, { error: { code: "already_decided" } }, "confirm", "unknown"],
     [403, { error: { code: "permission_denied" } }, "confirm", "permission"],
     // An error while the tool ran may come after its write: never "failed".
     [500, { error: { code: "action_failed" } }, "confirm", "unknown"],
     // Refused by the plan before any write: nothing was done.
-    [402, { error: { code: "plan_limit" } }, "confirm", "failed"],
+    [402, { error: { code: "plan_limit" } }, "confirm", "planLimit"],
     [503, { error: { code: "service_unavailable" } }, "confirm", "failed"],
-    [500, { notJson: true }, "confirm", "unknown"],
+    // No usable answer: the action may have run; a repeat is safe (see below).
+    [500, { notJson: true }, "confirm", "noAnswer"],
   ])("%s %j → %s shows '%s'", async (status, body, button, state) => {
     response = { status, body };
     show();
@@ -161,13 +163,13 @@ describe("ActionConfirmation", () => {
     expect(screen.getByTestId("action-content").textContent).toBe("Rivi 1\nRivi 2");
   });
 
-  it("no answer to Confirm (network loss) shows an unknown outcome, never 'failed'", async () => {
+  it("no answer to Confirm (network loss) says so and never claims it failed", async () => {
     vi.mocked(fetch).mockRejectedValueOnce(new TypeError("Failed to fetch"));
     show();
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: en.chat.actions.confirm }));
     });
-    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.unknown);
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.noAnswer);
     expect(screen.queryByRole("button", { name: en.chat.actions.confirm })).toBeNull();
   });
 
@@ -305,8 +307,17 @@ describe("ActionConfirmation — Business DNA changes", () => {
     expect(changes.textContent).toContain(messages.businessDna.fields.industry);
     expect(changes.textContent).toContain(messages.businessDna.weekdays.monday);
     expect(changes.textContent).toContain(messages.chat.actions.businessDna.kind.removed);
+    // The value's block takes its direction from the text itself, so an
+    // Arabic paragraph is laid out right-to-left inside a Finnish or English
+    // interface (and the other way round), whole lines included.
     const arabic = screen.getByText("أصحاب السيارات في هلسنكي");
+    expect(arabic.tagName).toBe("DIV");
     expect(arabic.getAttribute("dir")).toBe("auto");
+    const english = screen.getByText("Car and van repair");
+    expect(english.getAttribute("dir")).toBe("auto");
+    for (const item of ["FI", "EN", "AR"]) {
+      expect(screen.getByText(item).getAttribute("dir")).toBe("auto");
+    }
   });
 });
 
@@ -371,7 +382,7 @@ describe("ActionConfirmation — a request that got no usable answer can be sent
     vi.mocked(fetch).mockRejectedValueOnce(new TypeError("Failed to fetch"));
     show(dnaAction());
     await confirm();
-    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.unknown);
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.noAnswer);
 
     response = { status: 409, body: { error: { code: "already_decided", outcome: "done" } } };
     await tryAgain();
@@ -380,18 +391,18 @@ describe("ActionConfirmation — a request that got no usable answer can be sent
     expect(screen.getByRole("link", { name: en.chat.actions.businessDna.review })).toBeTruthy();
   });
 
-  it("a repeat refused as already decided without a recorded outcome stays 'already handled'", async () => {
+  it("a repeat refused as already decided without a recorded outcome reads as unknown, not as a success", async () => {
     vi.mocked(fetch).mockRejectedValueOnce(new TypeError("Failed to fetch"));
     show(dnaAction());
     await confirm();
     response = { status: 409, body: { error: { code: "already_decided" } } };
     await tryAgain();
-    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.alreadyDecided);
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.unknown);
     expect(screen.queryByRole("button", { name: en.chat.actions.tryAgain })).toBeNull();
   });
 
   it.each([
-    [402, { error: { code: "plan_limit" } }, "failed"],
+    [402, { error: { code: "plan_limit" } }, "planLimit"],
     [403, { error: { code: "permission_denied" } }, "permission"],
     [404, { error: { code: "not_found" } }, "expired"],
     [409, { error: { code: "mismatch" } }, "failed"],
@@ -440,6 +451,48 @@ describe("ActionConfirmation — a request that got no usable answer can be sent
     expect(screen.getByRole("status").textContent).toBe(ar.chat.actions.result.rateLimited);
     expect(screen.getByRole("button", { name: ar.chat.actions.tryAgain })).toBeTruthy();
   });
+
+  it.each([
+    [{ status: 403, body: { error: { code: "permission_denied" } } }, "failed"],
+    [{ status: 402, body: { error: { code: "plan_limit" } } }, "failed"],
+    [{ status: 409, body: { error: { code: "mismatch" } } }, "failed"],
+    [{ status: 500, body: { error: { code: "action_failed" } } }, "unknown"],
+    [{ status: 404, body: { error: { code: "not_found" } } }, "unavailable"],
+  ])(
+    "%j settles the card (it can't be sent again), with outcome %s, so a held redirect goes on",
+    async (reply, outcome) => {
+      response = reply;
+      const onSettled = vi.fn();
+      render(
+        <NextIntlClientProvider locale="en" messages={en}>
+          <ActionConfirmation action={dnaAction()} onSettled={onSettled} />
+        </NextIntlClientProvider>,
+      );
+      await confirm();
+      expect(onSettled).toHaveBeenCalledTimes(1);
+      expect(onSettled).toHaveBeenCalledWith(dnaAction().id, outcome);
+    },
+  );
+
+  it.each([
+    [{ status: 503, body: { error: { code: "service_unavailable" } } }],
+    [{ status: 429, body: { error: { code: "rate_limited" } } }],
+    [{ status: 500, body: { notJson: true } }],
+  ])("%j can be sent again, so the card is not settled yet", async (reply) => {
+    response = reply;
+    const onSettled = vi.fn();
+    render(
+      <NextIntlClientProvider locale="en" messages={en}>
+        <ActionConfirmation action={dnaAction()} onSettled={onSettled} />
+      </NextIntlClientProvider>,
+    );
+    await confirm();
+    expect(onSettled).not.toHaveBeenCalled();
+    expect(screen.getByRole("button", { name: en.chat.actions.tryAgain })).toBeTruthy();
+    response = { status: 200, body: { data: { status: "done" } } };
+    await tryAgain();
+    expect(onSettled).toHaveBeenCalledWith(dnaAction().id, "done");
+  });
 });
 
 describe("ActionConfirmation — a proposal replaced by a newer one", () => {
@@ -452,7 +505,7 @@ describe("ActionConfirmation — a proposal replaced by a newer one", () => {
     );
     expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.superseded);
     expect(screen.queryByRole("button", { name: en.chat.actions.confirm })).toBeNull();
-    expect(onSettled).toHaveBeenCalledWith(action().id);
+    expect(onSettled).toHaveBeenCalledWith(action().id, "superseded");
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -463,5 +516,37 @@ describe("ActionConfirmation — a proposal replaced by a newer one", () => {
       </NextIntlClientProvider>,
     );
     expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.done);
+  });
+});
+
+describe("ActionConfirmation — while a repeat is in flight", () => {
+  it("keeps the retry button in place (disabled, busy) instead of showing Confirm/Cancel again", async () => {
+    let release!: (r: Response) => void;
+    response = { status: 503, body: { error: { code: "service_unavailable" } } };
+    show(action());
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.chat.actions.confirm }));
+    });
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((r) => (release = r)));
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: en.chat.actions.tryAgain }));
+    });
+
+    const busy = screen.getByRole("button", { name: en.chat.actions.retrying });
+    expect(busy.hasAttribute("disabled")).toBe(true);
+    expect(busy.getAttribute("aria-busy")).toBe("true");
+    expect(screen.queryByRole("button", { name: en.chat.actions.confirm })).toBeNull();
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.retrying);
+    await act(async () => {
+      release(new Response(JSON.stringify({ data: { status: "done" } }), { status: 200 }));
+    });
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.result.done);
+  });
+
+  it("the live region exists while pending too, so a replacement is announced, not inserted", () => {
+    show(action());
+    expect(screen.getByRole("status").textContent).toBe(en.chat.actions.nothingYet);
+    expect(screen.getByRole("status").getAttribute("aria-live")).toBe("polite");
   });
 });

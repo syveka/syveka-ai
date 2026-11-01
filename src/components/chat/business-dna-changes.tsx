@@ -11,7 +11,9 @@ import type {
  * The Business DNA changes an AI action would make, shown in full: every
  * field with its value before and after. Labels come from the Business DNA
  * settings page, so chat and the form name fields the same way. Values are
- * the user's own text, in whatever language they wrote it (`dir="auto"`).
+ * the user's own text, in whatever language they wrote it: each value block
+ * takes its direction from its own text (`dir="auto"`), and so does each
+ * list item, so a list can mix languages.
  */
 export function BusinessDnaChanges({ changes }: { changes: BusinessDnaChange[] }) {
   const t = useTranslations("chat.actions.businessDna");
@@ -21,7 +23,7 @@ export function BusinessDnaChanges({ changes }: { changes: BusinessDnaChange[] }
     name === "openingHours" ? field("sections.openingHours") : field(`fields.${name}`);
 
   const value = (v: BusinessDnaDisplayValue) => {
-    if (v.type === "text") return <span dir="auto">{v.value}</span>;
+    if (v.type === "text") return v.value;
     if (v.type === "list") {
       return (
         <ul className="list-inside list-disc">
@@ -66,6 +68,7 @@ export function BusinessDnaChanges({ changes }: { changes: BusinessDnaChange[] }
             <div className="mt-0.5 text-muted-foreground">
               <span className="me-1">{t("before")}</span>
               <div
+                dir="auto"
                 className={cn(
                   "whitespace-pre-wrap break-words",
                   c.kind === "removed" && "line-through",
@@ -78,7 +81,9 @@ export function BusinessDnaChanges({ changes }: { changes: BusinessDnaChange[] }
           {c.after ? (
             <div className="mt-0.5">
               <span className="me-1 text-muted-foreground">{t("after")}</span>
-              <div className="whitespace-pre-wrap break-words">{value(c.after)}</div>
+              <div dir="auto" className="whitespace-pre-wrap break-words">
+                {value(c.after)}
+              </div>
             </div>
           ) : null}
         </li>

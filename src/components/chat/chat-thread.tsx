@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Sparkles, Volume2, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { UiMessage } from "@/hooks/use-chat";
+import type { RestoredActionState } from "@/lib/validators/chat";
 import type { PlaybackFailure } from "@/hooks/use-speech-playback";
 import { supersededActionIds } from "@/lib/chat/superseded-actions";
 import { ActionConfirmation } from "./action-confirmation";
@@ -39,6 +40,19 @@ export function ChatThread({
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
+  // Outcomes decided in this view (a reload restores them from the record),
+  // so that what a later proposal replaces follows the user's decisions.
+  const [decided, setDecided] = useState<Map<string, RestoredActionState | "superseded">>(
+    () => new Map(),
+  );
+  const handleSettled = useCallback(
+    (actionId: string, outcome: RestoredActionState | "superseded") => {
+      setDecided((prev) => new Map(prev).set(actionId, outcome));
+      onActionSettled?.(actionId);
+    },
+    [onActionSettled],
+  );
+
   if (messages.length === 0) {
     return (
       <div className="flex flex-1 flex-col items-center justify-center gap-2 text-center text-muted-foreground">
@@ -52,6 +66,8 @@ export function ChatThread({
   // (the user corrected a fact) is shown as such instead of staying confirmable.
   const superseded = supersededActionIds(
     messages.flatMap((m) => (m.role === "assistant" ? (m.actions ?? []) : [])),
+    Date.now(),
+    decided,
   );
 
   return (
@@ -63,7 +79,7 @@ export function ChatThread({
           playback={playback}
           turn={m.role === "assistant" ? precedingUserText(messages, i) : undefined}
           superseded={superseded}
-          onActionSettled={onActionSettled}
+          onActionSettled={handleSettled}
         />
       ))}
       <div ref={bottomRef} />
@@ -104,7 +120,7 @@ function MessageBubble({
   playback?: ReplyPlayback;
   turn?: string;
   superseded: ReadonlySet<string>;
-  onActionSettled?: (actionId: string) => void;
+  onActionSettled?: (actionId: string, outcome: RestoredActionState | "superseded") => void;
 }) {
   const toolStatus = useTranslations("chat.toolStatus");
   const isUser = message.role === "user";

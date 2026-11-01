@@ -20,20 +20,30 @@ function changedFields(action: ProposedActionView): string[] {
  * Purely a view decision: the server still binds every confirmation to its
  * own proposal, and a superseded one that is confirmed through the API is
  * refused as stale once the newer one has been applied to the same field.
+ * Outcomes decided in this session and outcomes restored on reload count
+ * the same way, so the view agrees with itself after a reload.
  */
 export function supersededActionIds(
   actionsInOrder: readonly ActionInThread[],
   now: number = Date.now(),
+  /** Outcomes decided in this session (the card reports them), by action id. */
+  decided: ReadonlyMap<string, RestoredActionState | "superseded"> = new Map(),
 ): Set<string> {
-  const open = actionsInOrder.filter(
-    (a) => a.details.tool === "proposeBusinessDnaUpdate" && !a.restored && a.expiresAt > now,
-  );
+  const outcome = (a: ActionInThread) => a.restored ?? decided.get(a.id);
+  const dna = actionsInOrder.filter((a) => a.details.tool === "proposeBusinessDnaUpdate");
+  // Still confirmable: no outcome yet, and not expired.
+  const isOpen = (a: ActionInThread) => !outcome(a) && a.expiresAt > now;
+  // Replaces earlier ones about the same fields: still open, or applied (the
+  // field now holds the newer value). A canceled, expired or failed newer
+  // proposal replaces nothing: the earlier one is offered again.
+  const replaces = (a: ActionInThread) => isOpen(a) || outcome(a) === "done";
   const superseded = new Set<string>();
-  for (let i = 0; i < open.length; i++) {
-    const fields = new Set(changedFields(open[i]!));
-    for (let j = i + 1; j < open.length; j++) {
-      if (changedFields(open[j]!).some((f) => fields.has(f))) {
-        superseded.add(open[i]!.id);
+  for (let i = 0; i < dna.length; i++) {
+    if (!isOpen(dna[i]!)) continue;
+    const fields = new Set(changedFields(dna[i]!));
+    for (let j = i + 1; j < dna.length; j++) {
+      if (replaces(dna[j]!) && changedFields(dna[j]!).some((f) => fields.has(f))) {
+        superseded.add(dna[i]!.id);
         break;
       }
     }
