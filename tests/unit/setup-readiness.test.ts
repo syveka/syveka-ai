@@ -1,11 +1,13 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TenantContext } from "@/server/auth/session";
 
-const { tenantDbMock, getBusinessDnaContextMock, getEmailChannelAdapterMock } = vi.hoisted(() => ({
-  tenantDbMock: vi.fn(),
-  getBusinessDnaContextMock: vi.fn(),
-  getEmailChannelAdapterMock: vi.fn(),
-}));
+const { tenantDbMock, getBusinessDnaContextMock, getEmailChannelAdapterMock, getEntitlementsMock } =
+  vi.hoisted(() => ({
+    tenantDbMock: vi.fn(),
+    getBusinessDnaContextMock: vi.fn(),
+    getEmailChannelAdapterMock: vi.fn(),
+    getEntitlementsMock: vi.fn(),
+  }));
 
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: tenantDbMock,
@@ -15,6 +17,9 @@ vi.mock("@/server/business-dna/context", () => ({
 }));
 vi.mock("@/server/channels/email", () => ({
   getEmailChannelAdapter: getEmailChannelAdapterMock,
+}));
+vi.mock("@/server/services/billing/entitlements", () => ({
+  getEntitlements: getEntitlementsMock,
 }));
 
 import { getOrgSetupReadiness } from "@/server/services/setup-readiness";
@@ -53,6 +58,11 @@ function baseDb() {
   return {
     bookingType: { count: vi.fn(async () => 0) },
     inboxThread: { findFirst: vi.fn(async () => null as { id: string } | null) },
+    inboxMailbox: {
+      findFirst: vi.fn(
+        async () => ({ address: "org-a@in.example.test" }) as { address: string } | null,
+      ),
+    },
     voiceAssistant: { findFirst: vi.fn(async () => null as { id: string } | null) },
     voiceCall: { findFirst: vi.fn(async () => null as { id: string } | null) },
   };
@@ -67,6 +77,7 @@ describe("getOrgSetupReadiness", () => {
     tenantDbMock.mockReturnValue(db);
     getBusinessDnaContextMock.mockResolvedValue(null);
     getEmailChannelAdapterMock.mockReturnValue({ provider: "MOCK", isConfigured: () => true });
+    getEntitlementsMock.mockResolvedValue({ plan: "STARTER", voiceAssistants: 1 });
   });
 
   it("marks Business DNA setup_required when no profile exists", async () => {
@@ -111,6 +122,20 @@ describe("getOrgSetupReadiness", () => {
     expect(items.find((i) => i.key === "emailChannel")?.state).toBe("verification_required");
   });
 
+  it("marks the email channel setup_required when the org has no receiving address", async () => {
+    // Inbound webhooks only accept mail addressed to a known mailbox, so no
+    // email can arrive until one exists: that is setup, not verification.
+    getEmailChannelAdapterMock.mockReturnValue({ provider: "RESEND", isConfigured: () => true });
+    db.inboxThread.findFirst.mockResolvedValue(null);
+    db.inboxMailbox.findFirst.mockResolvedValue(null);
+    const items = await getOrgSetupReadiness(ctx());
+    expect(items.find((i) => i.key === "emailChannel")?.state).toBe("setup_required");
+    expect(db.inboxMailbox.findFirst).toHaveBeenCalledWith({
+      where: { channel: "EMAIL" },
+      select: { address: true },
+    });
+  });
+
   it("marks the email channel ready when Resend is configured and a real inbound email has been received", async () => {
     getEmailChannelAdapterMock.mockReturnValue({ provider: "RESEND", isConfigured: () => true });
     db.inboxThread.findFirst.mockResolvedValue({ id: "thread-1" });
@@ -150,6 +175,21 @@ describe("getOrgSetupReadiness", () => {
     db.voiceAssistant.findFirst.mockResolvedValue(null);
     const items = await getOrgSetupReadiness(ctx());
     expect(items.find((i) => i.key === "voice")?.state).toBe("setup_required");
+  });
+
+  it("marks voice plan_required, not setup_required, when the plan includes no assistants", async () => {
+    getEntitlementsMock.mockResolvedValue({ plan: "FREE", voiceAssistants: 0 });
+    db.voiceAssistant.findFirst.mockResolvedValue(null);
+    const items = await getOrgSetupReadiness(ctx("org-b"));
+    expect(items.find((i) => i.key === "voice")?.state).toBe("plan_required");
+    expect(getEntitlementsMock).toHaveBeenCalledWith("org-b");
+  });
+
+  it("keeps an existing active assistant's state even if the plan no longer includes one", async () => {
+    getEntitlementsMock.mockResolvedValue({ plan: "FREE", voiceAssistants: 0 });
+    db.voiceAssistant.findFirst.mockResolvedValue({ id: "assistant-1" });
+    const items = await getOrgSetupReadiness(ctx());
+    expect(items.find((i) => i.key === "voice")?.state).toBe("verification_required");
   });
 
   it("marks voice verification_required once active but with no completed call yet", async () => {

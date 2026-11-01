@@ -1,5 +1,5 @@
 import { getTranslations } from "next-intl/server";
-import { CheckCircle2, AlertCircle, XCircle, HelpCircle } from "lucide-react";
+import { CheckCircle2, AlertCircle, XCircle, HelpCircle, Lock } from "lucide-react";
 import { can } from "@/server/auth/permissions";
 import { getOrgSetupReadiness, type ReadinessState } from "@/server/services/setup-readiness";
 import type { TenantContext } from "@/server/auth/session";
@@ -8,9 +8,15 @@ import { Link } from "@/i18n/routing";
 
 const ACTION_HREF: Partial<Record<string, string>> = {
   businessDna: "/settings/business-dna",
+  emailChannel: "/inbox",
   booking: "/calendar/booking-types",
   voice: "/voice",
 };
+
+/** A plan restriction is resolved on the billing page, not the feature's setup page. */
+function actionHref(key: string, state: ReadinessState): string | undefined {
+  return state === "plan_required" ? "/settings/billing" : ACTION_HREF[key];
+}
 
 /**
  * Owner/admin-only readiness checklist for the org's core MVP loop. Never
@@ -35,7 +41,7 @@ export async function OrgSetupReadiness({ ctx }: { ctx: TenantContext }) {
       </CardHeader>
       <CardContent className="space-y-2">
         {items.map((item) => {
-          const href = ACTION_HREF[item.key];
+          const href = actionHref(item.key, item.state);
           const row = (
             <div className="flex items-center justify-between gap-2 py-1 text-sm">
               <span>{t(`items.${item.key}`)}</span>
@@ -91,6 +97,14 @@ function StateBadge({
       <span className="flex items-center gap-1 text-amber-600">
         <HelpCircle className="size-4" />
         {t("state.verification_required")}
+      </span>
+    );
+  }
+  if (state === "plan_required") {
+    return (
+      <span className="flex items-center gap-1 text-muted-foreground">
+        <Lock className="size-4" />
+        {t("state.plan_required")}
       </span>
     );
   }

@@ -6,6 +6,7 @@ import { requirePermission } from "@/server/auth/guard";
 import { tenantDb } from "@/server/db/tenant";
 import { getEntitlements } from "@/server/services/billing/entitlements";
 import { AssistantForm } from "@/components/voice/assistant-form";
+import { PLAN_NAMES } from "@/components/billing/plan-display";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Link } from "@/i18n/routing";
@@ -30,13 +31,21 @@ export default async function AssistantPage({
     ]);
     if (count >= ent.voiceAssistants) {
       const t = await getTranslations("voice.entitlementBlocked");
+      const plan = PLAN_NAMES[ent.plan];
+      // A plan without assistants needs an upgrade; a plan at its limit
+      // already includes Voice AI and has used every assistant it allows.
+      const atLimit = ent.voiceAssistants > 0;
       return (
         <Card className="mx-auto max-w-md">
           <CardContent className="space-y-3 py-8 text-center">
-            <h1 className="text-lg font-semibold">{t("title")}</h1>
-            <p className="text-sm text-muted-foreground">{t("description", { plan: ent.plan })}</p>
+            <h1 className="text-lg font-semibold">{atLimit ? t("limitTitle") : t("title")}</h1>
+            <p className="text-sm text-muted-foreground">
+              {atLimit
+                ? t("limitDescription", { plan, limit: ent.voiceAssistants })
+                : t("description", { plan })}
+            </p>
             <p className="text-xs text-muted-foreground">
-              {t("currentPlan")}: <span className="font-medium">{ent.plan}</span>
+              {t("currentPlan")}: <span className="font-medium">{plan}</span>
             </p>
             <Button asChild>
               <Link href="/settings/billing">{t("upgradeButton")}</Link>

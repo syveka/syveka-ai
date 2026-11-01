@@ -652,7 +652,9 @@
       "title": "Puhe-AI vaatii Starter-tason tai korkeamman",
       "description": "Organisaatiollasi on {plan}-taso, joka ei sisällä puhe-AI:ta.",
       "currentPlan": "Nykyinen taso",
-      "upgradeButton": "Päivitä taso"
+      "upgradeButton": "Päivitä taso",
+      "limitTitle": "Puheavustajien enimmäismäärä täynnä",
+      "limitDescription": "{plan}-tasoon sisältyy {limit, plural, one {# puheavustaja} other {# puheavustajaa}}, ja organisaatiollasi on jo niin monta."
     },
     "errors": {
       "entitlement_exceeded": "Puhe-AI vaatii Starter-tason tai korkeamman — päivitä tasoa jatkaaksesi.",
@@ -1083,7 +1085,9 @@
       "mock": "Testisähköpostipalvelu käytössä — viestit ovat simuloituja, eivät oikeita",
       "notConfigured": "Sähköpostia ei ole vielä määritetty",
       "configuredUnverified": "Sähköpostipalvelu määritetty — ei vielä vahvistettu: saapuvaa sähköpostia ei ole vastaanotettu",
-      "receiving": "Saapuvaa sähköpostia vastaanotettu: vähintään yksi oikea viesti on saapunut"
+      "receiving": "Saapuvaa sähköpostia vastaanotettu: vähintään yksi oikea viesti on saapunut",
+      "noAddress": "Sähköpostipalvelu on määritetty, mutta tällä organisaatiolla ei vielä ole vastaanotto-osoitetta, joten saapuva sähköposti ei voi tulla tähän saapuneet-kansioon. Ylläpitäjän on määritettävä osoite ennen kuin sähköpostia voi testata.",
+      "verifyWithAddress": "Vahvista lähettämällä sähköposti omasta postilaatikostasi osoitteeseen <address></address>. Kun viesti näkyy täällä, tila muuttuu vastaanotetuksi."
     },
     "status": {
       "OPEN": "Avoin",
@@ -1284,7 +1288,8 @@
       "setup_required": "Vaatii määrityksen",
       "not_configured": "Ei määritetty",
       "blocked": "Estynyt",
-      "verification_required": "Vaatii vahvistuksen"
+      "verification_required": "Vaatii vahvistuksen",
+      "plan_required": "Vaatii Starter-tason tai korkeamman"
     }
   },
   "creatorStudio": {

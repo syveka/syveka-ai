@@ -652,7 +652,9 @@
       "title": "Voice AI requires Starter or higher",
       "description": "Your organization is on the {plan} plan, which doesn't include Voice AI.",
       "currentPlan": "Current plan",
-      "upgradeButton": "Upgrade plan"
+      "upgradeButton": "Upgrade plan",
+      "limitTitle": "Voice assistant limit reached",
+      "limitDescription": "The {plan} plan includes {limit, plural, one {# voice assistant} other {# voice assistants}}, and your organization already has that many."
     },
     "errors": {
       "entitlement_exceeded": "Voice AI requires Starter or higher — upgrade your plan to continue.",
@@ -1083,7 +1085,9 @@
       "mock": "Using a test email provider — messages are simulated, not real",
       "notConfigured": "Email not configured yet",
       "configuredUnverified": "Email provider configured — not verified yet: no inbound email has been received",
-      "receiving": "Inbound email received: at least one real email has arrived"
+      "receiving": "Inbound email received: at least one real email has arrived",
+      "noAddress": "Email provider configured, but this organization has no receiving address yet, so incoming email can't reach this inbox. An administrator needs to set one up before email can be tested.",
+      "verifyWithAddress": "To verify, send an email from your own mailbox to <address></address>. When it appears here, the status changes to received."
     },
     "status": {
       "OPEN": "Open",
@@ -1284,7 +1288,8 @@
       "setup_required": "Setup required",
       "not_configured": "Not configured",
       "blocked": "Blocked",
-      "verification_required": "Verification required"
+      "verification_required": "Verification required",
+      "plan_required": "Requires Starter or above"
     }
   },
   "creatorStudio": {
