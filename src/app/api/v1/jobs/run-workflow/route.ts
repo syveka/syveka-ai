@@ -439,20 +439,41 @@ export async function POST(request: Request): Promise<NextResponse> {
     // Bind the resumed run to the workflow and org it was loaded for above, so
     // a mismatched payload can never rewrite another tenant's run record.
     // A run that already failed terminally stays failed: a repeated delivery
-    // of its message executes nothing and notifies no one again.
+    // of its message executes nothing and notifies no one again. A finished
+    // run (SUCCEEDED or CANCELED) is never reopened, and a resume behind a
+    // later wait step that already succeeded (its own resume is scheduled, or
+    // has run) is a duplicate: QStash deduplicates resumes only for 10
+    // minutes, so this is decided here, from the step ledger.
     // The condition is part of the update itself, so it is atomic.
     const runWhere = { id: runId, workflowId, organizationId: orgId };
+    const laterWaitIds = (workflow.steps as unknown as WorkflowStep[])
+      .slice(resumeFromIndex ?? 0)
+      .filter((s) => s.type === "wait.duration")
+      .map((s) => s.id);
+    const laterWaitSucceeded: Prisma.WorkflowStepExecutionWhereInput = {
+      stepId: { in: laterWaitIds },
+      status: "SUCCEEDED",
+    };
     try {
       run = await unscopedPrisma.workflowRun.update({
-        where: { ...runWhere, OR: [{ status: { not: "FAILED" } }, retryableFailedRun] },
+        where: {
+          ...runWhere,
+          OR: [{ status: { in: ["RUNNING", "WAITING"] } }, retryableFailedRun],
+          stepExecutions: { none: laterWaitSucceeded },
+        },
         data: { status: "RUNNING" },
       });
     } catch (err) {
       if (!isRecordNotFound(err)) throw err;
       const existing = await unscopedPrisma.workflowRun.findFirst({ where: runWhere });
-      return NextResponse.json(
-        existing ? { skipped: "terminal_failure" } : { skipped: "run not found for workflow" },
-      );
+      if (!existing) return NextResponse.json({ skipped: "run not found for workflow" });
+      if (existing.status === "SUCCEEDED" || existing.status === "CANCELED") {
+        return NextResponse.json({ skipped: "run_finished" });
+      }
+      if (existing.status === "FAILED" && isTerminalRunError(existing.error)) {
+        return NextResponse.json({ skipped: "terminal_failure" });
+      }
+      return NextResponse.json({ skipped: "resume_superseded" });
     }
   } else {
     try {
@@ -469,9 +490,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (!isUniqueViolation(err)) throw err;
 
       // Lost the create to an existing row for this exact source event.
-      // SUCCEEDED, WAITING with its resume scheduled, or RUNNING within
-      // STALE_RUNNING_MS, means another delivery already owns or finished this
-      // event - acknowledge without reprocessing. Only FAILED, RUNNING past the
+      // SUCCEEDED, a run past its first wait step (resume messages own it),
+      // WAITING with its resume scheduled, or RUNNING within STALE_RUNNING_MS,
+      // means another delivery already owns or finished this event -
+      // acknowledge without reprocessing. Only FAILED, RUNNING past the
       // staleness window (inferred crash - nothing left to resume it), or
       // WAITING with no resume scheduled (below) is reclaimable.
       const existing = await unscopedPrisma.workflowRun.findFirst({
@@ -481,6 +503,31 @@ export async function POST(request: Request): Promise<NextResponse> {
       const staleStepSince = new Date(Date.now() - STALE_STEP_CLAIM_MS);
       if (existing?.status === "FAILED" && isTerminalRunError(existing.error)) {
         return NextResponse.json({ skipped: "terminal_failure" });
+      }
+      // This message owns the run only until its first wait step succeeds:
+      // from then on, the run belongs to resume messages (each recovers its
+      // own part when redelivered), and a fresh walk would stop at that wait
+      // anyway. A run past it is acknowledged, however long it has been
+      // RUNNING (a resume keeps the run's first startedAt) or if it failed.
+      const runSteps = workflow.steps as unknown as WorkflowStep[];
+      const firstWait = runSteps.findIndex((s) => s.type === "wait.duration");
+      const firstWaitId = firstWait === -1 ? undefined : runSteps[firstWait]!.id;
+      const firstWaitSucceeded: Prisma.WorkflowStepExecutionWhereInput = {
+        stepId: firstWaitId,
+        status: "SUCCEEDED",
+      };
+      if (
+        existing &&
+        firstWaitId &&
+        (await unscopedPrisma.workflowStepExecution.findFirst({
+          where: { organizationId: orgId, workflowRunId: existing.id, ...firstWaitSucceeded },
+          select: { id: true },
+        }))
+      ) {
+        return NextResponse.json({
+          skipped: "duplicate_trigger",
+          duplicate: existing.status === "SUCCEEDED",
+        });
       }
       let reclaimable: Prisma.WorkflowRunWhereInput;
       if (existing?.status === "WAITING") {
@@ -504,8 +551,6 @@ export async function POST(request: Request): Promise<NextResponse> {
           where: { organizationId: orgId, workflowRunId: existing.id },
           orderBy: { startedAt: "desc" },
         });
-        const runSteps = workflow.steps as unknown as WorkflowStep[];
-        const firstWait = runSteps.findIndex((s) => s.type === "wait.duration");
         const latestIndex = latestStep ? runSteps.findIndex((s) => s.id === latestStep.stepId) : -1;
         const ownedByThisMessage =
           latestIndex !== -1 && firstWait !== -1 && latestIndex <= firstWait;
@@ -554,6 +599,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         }
         reclaimable = {
           OR: [retryableFailedRun, { status: "RUNNING", startedAt: { lt: staleSince } }],
+          ...(firstWaitId ? { stepExecutions: { none: firstWaitSucceeded } } : {}),
         };
       }
 
@@ -615,7 +661,24 @@ export async function POST(request: Request): Promise<NextResponse> {
     ]),
   };
 
-  const persist = (status?: "SUCCEEDED" | "FAILED" | "WAITING", error?: string) =>
+  /**
+   * Marks the run SUCCEEDED only while it is RUNNING. A duplicate delivery
+   * that walked the same steps (each run once, by the step ledger) finds it
+   * finished: it neither overwrites the outcome nor counts the run again.
+   */
+  const finish = async (): Promise<boolean> =>
+    (
+      await unscopedPrisma.workflowRun.updateMany({
+        where: { id: run.id, organizationId: orgId, status: "RUNNING" },
+        data: {
+          stepResults: results as Prisma.InputJsonValue,
+          status: "SUCCEEDED",
+          finishedAt: new Date(),
+        },
+      })
+    ).count === 1;
+
+  const persist = (status?: "FAILED" | "WAITING", error?: string) =>
     unscopedPrisma.workflowRun.update({
       where: { id: run.id },
       data: {
@@ -657,7 +720,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             for (let j = i + 1; j < steps.length; j++) {
               results.push({ stepId: steps[j]!.id, status: "skipped" });
             }
-            await persist("SUCCEEDED");
+            await finish();
             return NextResponse.json({ ok: true, stoppedAt: step.id });
           }
           break;
@@ -1015,7 +1078,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       await persist(); // checkpoint after every step (resumable)
     }
 
-    await persist("SUCCEEDED");
+    if (!(await finish())) return NextResponse.json({ skipped: "run_superseded" });
     // Best-effort, like the per-step usage: a usage write that fails must not
     // turn a run that succeeded into a failure.
     await recordUsage(orgId, "WORKFLOW_RUNS", 1, { workflowId }).catch((usageErr: unknown) => {

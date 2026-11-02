@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fakeFailureRecord } from "./helpers/fake-workflow-run";
+import { fakeFailureRecord, fakeRunFinish } from "./helpers/fake-workflow-run";
 
 /**
  * Plan and AI-quota gating in the run-workflow job: a fresh trigger needs a
@@ -78,7 +78,9 @@ function createFakeDb() {
         }: {
           where: Record<string, unknown>;
           data: Record<string, unknown>;
-        }) => fakeFailureRecord(runs.values() as never, where, data) ?? { count: 0 },
+        }) =>
+          fakeFailureRecord(runs.values() as never, where, data) ??
+          fakeRunFinish(runs.values() as never, where, data) ?? { count: 0 },
       ),
       findFirst: vi.fn(async () => null),
       findFirstOrThrow: vi.fn(),

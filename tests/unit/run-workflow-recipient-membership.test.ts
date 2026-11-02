@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fakeFailureRecord } from "./helpers/fake-workflow-run";
+import { fakeFailureRecord, fakeRunFinish } from "./helpers/fake-workflow-run";
 
 /**
  * #73 residual: notify.member and workflow.failed notifications are written
@@ -68,7 +68,9 @@ const db = {
       state.runs.find((r) => matches(r, where))!,
     ),
     updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
-      const recorded = fakeFailureRecord(state.runs as never, where, data);
+      const recorded =
+        fakeFailureRecord(state.runs as never, where, data) ??
+        fakeRunFinish(state.runs, where, data);
       if (recorded) return recorded;
       const run = state.runs.find((r) => matches(r, where) && r.status === "FAILED");
       if (!run) return { count: 0 };

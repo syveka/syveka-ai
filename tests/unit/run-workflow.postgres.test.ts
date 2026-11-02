@@ -90,6 +90,8 @@ const holder = vi.hoisted(() => ({
   failNextUsage: false,
   failNextEnqueue: false,
   enqueued: 0,
+  /** Completed runs counted for billing (WORKFLOW_RUNS usage records). */
+  runsCounted: 0,
   emailsSent: 0,
   contactLookups: 0,
   barrier: null as null | {
@@ -142,11 +144,12 @@ vi.mock("@/server/integrations/resend", () => ({
   }),
 }));
 vi.mock("@/server/services/billing/entitlements", () => ({
-  recordUsage: vi.fn(async () => {
+  recordUsage: vi.fn(async (_orgId: string, metric: string) => {
     if (holder.failNextUsage) {
       holder.failNextUsage = false;
       throw new Error("usage write failed");
     }
+    if (metric === "WORKFLOW_RUNS") holder.runsCounted += 1;
   }),
   getEntitlements: async () => ({ readOnly: false, activeWorkflows: 1 }),
 }));
@@ -495,6 +498,7 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
       failNextUsage: false,
       failNextEnqueue: false,
       enqueued: 0,
+      runsCounted: 0,
       emailsSent: 0,
       contactLookups: 0,
       barrier: null,
@@ -949,6 +953,165 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
     expect(holder.enqueued).toBe(1);
     expect(await f.count("activities")).toBe(1);
     expect(await f.steps()).toEqual({ s1: "SUCCEEDED", w1: "SUCCEEDED" });
+  });
+
+  /** The event's run row: status and claim times. */
+  const runRow = async (orgId: string) =>
+    (
+      await sql.query(
+        `select status::text as status, started_at, finished_at from workflow_runs where organization_id = $1`,
+        [orgId],
+      )
+    ).rows[0]!;
+  /** A run parked on its first wait long enough ago that its startedAt is stale. */
+  async function waitingLongAgo(steps: unknown[]) {
+    holder.internalOnly = false;
+    const f = await fixture({ steps });
+    expect(await (await f.deliver(f.event(f.contactId))).json()).toMatchObject({ waiting: 60 });
+    // A resume keeps the run's first start time: after a long wait it is
+    // past the stale window while the resume runs.
+    await sql.query(
+      `update workflow_runs set started_at = started_at - interval '10 minutes' where organization_id = $1`,
+      [f.orgId],
+    );
+    const [run] = await f.runs();
+    return { f, runId: run!.id };
+  }
+
+  it("an active resume is not reclaimed as stale by a fresh duplicate of the event", async () => {
+    const { f, runId } = await waitingLongAgo(AROUND_A_WAIT);
+    const before = await runRow(f.orgId);
+    let duplicate!: Response;
+    // The resume is held at its next step's claim, RUNNING; meanwhile the
+    // event is delivered again.
+    const [resumed] = await atTheSameClaim(
+      "workflowStepExecution",
+      1,
+      () => f.deliver(f.resume(runId, 2)),
+      "create",
+      async () => {
+        duplicate = await f.deliver(f.event(f.contactId), "1");
+      },
+    );
+    expect(await duplicate.json()).toEqual({ skipped: "duplicate_trigger", duplicate: false });
+    expect(await resumed!.json()).toEqual({ ok: true });
+    const after = await runRow(f.orgId);
+    expect(after.status).toBe("SUCCEEDED");
+    expect(after.started_at).toEqual(before.started_at); // never reclaimed
+    expect(await f.count("activities")).toBe(2);
+    expect(holder.runsCounted).toBe(1);
+    expect(await f.count("notifications")).toBe(0);
+  });
+
+  it("a resume that died mid-step is left to its own message, which recovers it once stale", async () => {
+    const { f, runId } = await waitingLongAgo(AROUND_A_WAIT);
+    // The resume dies at its step: the database is unreachable from the
+    // contact lookup on, so nothing about the failure is recorded.
+    holder.beforeContactLookup = async () => {
+      holder.databaseDown = true;
+    };
+    holder.failNextContactLookup = true;
+    expect((await f.deliver(f.resume(runId, 2))).status).toBe(500);
+    holder.databaseDown = false;
+    expect((await runRow(f.orgId)).status).toBe("RUNNING");
+    expect(await f.steps()).toMatchObject({ w1: "SUCCEEDED", s2: "CLAIMED" });
+
+    // The event's duplicate can't recover a resume's part: acknowledged.
+    expect(await (await f.deliver(f.event(f.contactId), "1")).json()).toEqual({
+      skipped: "duplicate_trigger",
+      duplicate: false,
+    });
+    // The resume's redelivery waits for the claim to go stale, then recovers.
+    expectRetryAfter(await f.deliver(f.resume(runId, 2), "1"), STALE_SECONDS);
+    await f.passTime(7);
+    expect(await (await f.deliver(f.resume(runId, 2), "2")).json()).toEqual({ ok: true });
+    expect((await runRow(f.orgId)).status).toBe("SUCCEEDED");
+    expect(await f.count("activities")).toBe(2);
+    expect(holder.runsCounted).toBe(1);
+    expect(await f.count("notifications")).toBe(0);
+  });
+
+  it("a run killed before its first wait is still reclaimed by the event once stale", async () => {
+    holder.internalOnly = false;
+    const f = await fixture({ steps: AROUND_A_WAIT });
+    holder.beforeContactLookup = async () => {
+      holder.databaseDown = true;
+    };
+    holder.failNextContactLookup = true;
+    expect((await f.deliver(f.event(f.contactId))).status).toBe(500);
+    holder.databaseDown = false;
+    expect((await runRow(f.orgId)).status).toBe("RUNNING");
+    expect(await f.steps()).toEqual({ s1: "CLAIMED" });
+
+    expectRetryAfter(await f.deliver(f.event(f.contactId), "1"), STALE_SECONDS);
+    await sql.query(
+      `update workflow_runs set started_at = started_at - interval '7 minutes' where organization_id = $1`,
+      [f.orgId],
+    );
+    await f.passTime(7);
+    expect(await (await f.deliver(f.event(f.contactId), "2")).json()).toMatchObject({
+      waiting: 60,
+    });
+    expect(await f.count("activities")).toBe(1);
+    expect(holder.enqueued).toBe(1);
+  });
+
+  it("a duplicate resume after the run finished changes nothing and counts nothing", async () => {
+    const { f, runId } = await waitingLongAgo(AROUND_A_WAIT);
+    expect(await (await f.deliver(f.resume(runId, 2))).json()).toEqual({ ok: true });
+    const finished = await runRow(f.orgId);
+    expect(finished.status).toBe("SUCCEEDED");
+    expect(holder.runsCounted).toBe(1);
+
+    // The same resume published again, past QStash's deduplication window.
+    expect(await (await f.deliver(f.resume(runId, 2))).json()).toEqual({
+      skipped: "run_finished",
+    });
+    expect(await runRow(f.orgId)).toEqual(finished);
+    expect(await f.count("activities")).toBe(2);
+    expect(holder.runsCounted).toBe(1);
+  });
+
+  it("a duplicate resume behind a later wait leaves the run WAITING on its scheduled resume", async () => {
+    const { f, runId } = await waitingLongAgo([
+      ...AROUND_A_WAIT,
+      { ...WAIT_STEP, id: "w2" },
+      { ...CRM_STEP, id: "s3" },
+    ]);
+    expect(await (await f.deliver(f.resume(runId, 2))).json()).toMatchObject({ waiting: 60 });
+    expect(await (await f.deliver(f.resume(runId, 2))).json()).toEqual({
+      skipped: "resume_superseded",
+    });
+    expect((await runRow(f.orgId)).status).toBe("WAITING");
+    expect(holder.enqueued).toBe(2);
+
+    expect(await (await f.deliver(f.resume(runId, 4))).json()).toEqual({ ok: true });
+    expect((await runRow(f.orgId)).status).toBe("SUCCEEDED");
+    expect(await f.count("activities")).toBe(3);
+    expect(holder.runsCounted).toBe(1);
+  });
+
+  it("two duplicate resumes released together at the run's success write count it once", async () => {
+    const { f, runId } = await waitingLongAgo(AROUND_A_WAIT);
+    expect(await (await f.deliver(f.resume(runId, 2))).json()).toEqual({ ok: true });
+    // As if that resume died after its last step, before the success write.
+    await sql.query(
+      `update workflow_runs set status = 'RUNNING', finished_at = null where organization_id = $1`,
+      [f.orgId],
+    );
+    holder.runsCounted = 0;
+
+    const responses = await atTheSameClaim(
+      "workflowRun",
+      2,
+      () => f.deliver(f.resume(runId, 2), "1"),
+      "updateMany",
+    );
+    const bodies = await Promise.all(responses.map((r) => r.json()));
+    expect(bodies).toEqual(expect.arrayContaining([{ ok: true }, { skipped: "run_superseded" }]));
+    expect((await runRow(f.orgId)).status).toBe("SUCCEEDED");
+    expect(await f.count("activities")).toBe(2);
+    expect(holder.runsCounted).toBe(1);
   });
 
   it("a usage write that fails after success leaves the run SUCCEEDED and tells no one", async () => {

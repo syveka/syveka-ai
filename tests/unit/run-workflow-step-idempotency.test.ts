@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import { fakeFailureRecord } from "./helpers/fake-workflow-run";
+import { fakeFailureRecord, fakeRunFinish } from "./helpers/fake-workflow-run";
 
 class FakePrismaKnownError extends Error {
   code: string;
@@ -106,7 +106,9 @@ function createFakeDb() {
           };
           data: Partial<Run>;
         }) => {
-          const recorded = fakeFailureRecord(runs.values() as never, where, data);
+          const recorded =
+            fakeFailureRecord(runs.values() as never, where, data) ??
+            fakeRunFinish(runs.values() as never, where, data);
           if (recorded) return recorded;
           let count = 0;
           for (const r of runs.values()) {

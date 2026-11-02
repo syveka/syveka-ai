@@ -77,6 +77,14 @@ function matches(row: Row, where: Row): boolean {
     if (k === "OR") return (v as Row[]).some((w) => matches(row, w));
     if (k === "AND") return (v as Row[]).every((w) => matches(row, w));
     if (k === "NOT") return !([v].flat() as Row[]).some((w) => matches(row, w));
+    if (k === "stepExecutions") {
+      const own = state.steps.filter((s) => s.workflowRunId === row.id);
+      const filter = v as { some?: Row; none?: Row };
+      return (
+        (!filter.some || own.some((s) => matches(s, filter.some!))) &&
+        (!filter.none || !own.some((s) => matches(s, filter.none!)))
+      );
+    }
     return fieldMatches(row[k], v);
   });
 }

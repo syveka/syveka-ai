@@ -33,3 +33,26 @@ export function fakeFailureRecord(
   }
   return { count: 0 };
 }
+
+/**
+ * Fake-database support for the run-workflow job's success write (finish in
+ * the route): an updateMany on one run by id and organization, only while it
+ * is RUNNING. Returns null for any other updateMany shape.
+ */
+export function fakeRunFinish(
+  runs: Iterable<Record<string, unknown>>,
+  where: Record<string, unknown>,
+  data: Record<string, unknown>,
+): { count: number } | null {
+  if (where.status !== "RUNNING" || typeof where.id !== "string" || "startedAt" in where) {
+    return null;
+  }
+  for (const run of runs) {
+    if (run.id === where.id && run.organizationId === where.organizationId) {
+      if (run.status !== "RUNNING") return { count: 0 };
+      Object.assign(run, data);
+      return { count: 1 };
+    }
+  }
+  return { count: 0 };
+}

@@ -219,6 +219,13 @@ describe("trigger-level idempotency: sequential duplicate delivery", () => {
     expect(first.status).toBe(200);
     expect(await first.json()).toEqual({ ok: true });
     expect(mocks.notificationCreate).toHaveBeenCalledTimes(1);
+    // The run's success write: only while it is RUNNING.
+    expect(mocks.runUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ organizationId: ORG, status: "RUNNING" }),
+      }),
+    );
+    mocks.runUpdateMany.mockClear();
 
     // Second delivery of the exact same source event: create() now collides
     // (simulating the real unique constraint), and the existing row is
@@ -311,7 +318,14 @@ describe("trigger-level idempotency: stale RUNNING reclaim (inferred crash)", ()
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(mocks.runUpdateMany).toHaveBeenCalledTimes(1);
+    // The reclaim, once, then the run's success write.
+    expect(mocks.runUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.runUpdateMany.mock.calls[0]![0]).toMatchObject({
+      where: { sourceEventKey: expect.any(String) },
+    });
+    expect(mocks.runUpdateMany.mock.calls[1]![0]).toMatchObject({
+      where: { organizationId: ORG, status: "RUNNING" },
+    });
   });
 });
 
@@ -431,8 +445,11 @@ describe("trigger-level idempotency: resumes are unaffected by the claim path", 
         id: runId,
         workflowId: WORKFLOW,
         organizationId: ORG,
-        // A terminally failed run is never resumed (see run-workflow-contact-field).
-        OR: [{ status: { not: "FAILED" } }, RETRYABLE_FAILED_RUN],
+        // A terminally failed or finished run is never resumed (see
+        // run-workflow-contact-field), nor is a resume behind a later wait
+        // step that already succeeded (none here; see run-workflow.postgres).
+        OR: [{ status: { in: ["RUNNING", "WAITING"] } }, RETRYABLE_FAILED_RUN],
+        stepExecutions: { none: { stepId: { in: [] }, status: "SUCCEEDED" } },
       },
       data: { status: "RUNNING" },
     });
