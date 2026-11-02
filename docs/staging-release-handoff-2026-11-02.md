@@ -226,7 +226,7 @@ the job route, `run-failure.ts` and tests only. The final head and exact-head CI
 
 **Evidence (local, disposable PostgreSQL `pgvector/pgvector:pg15` with the full migration history):**
 
-- **`run-workflow.postgres.test.ts` (37 tests)** drives the real route on PostgreSQL with real
+- **`run-workflow.postgres.test.ts` (41 tests)** drives the real route on PostgreSQL with real
   QStash signature checks (test-only keys). Its faults:
   - a PostgreSQL trigger refuses a notification insert;
   - commit-then-error and fail-before-start transactions, and a query error, injected at the Prisma
@@ -318,6 +318,13 @@ the job route, `run-failure.ts` and tests only. The final head and exact-head CI
   - duplicate resumes, with no deduplication, run no step twice and count usage once, and leave
     the right final status;
   - abandoned runs, before and after the first wait, are still recovered.
+- **A duplicate's failure never fails a run another delivery took over** (`67ed688`, `f92f9d3`).
+  - The failure record first takes a lock-holding no-op write on the step this delivery failed. It
+    records nothing if another delivery reclaimed that step.
+  - The success write and parking take over a retryable failure recorded before the takeover, but
+    never the administrative `step_not_allowed` stop.
+  - On `ecb446b` the reproduced interleaving ended FAILED with one false notice, although every step
+    succeeded.
 
 **Limits (not exactly-once):**
 
@@ -334,7 +341,12 @@ the job route, `run-failure.ts` and tests only. The final head and exact-head CI
 
 - **Remaining narrow windows.** All were reviewed and are bounded; each step still runs once.
   - A resume between its run update and its first step claim looks unowned to a fresh duplicate.
-  - A duplicate resume's final-attempt failure can mark FAILED a run its other resume completed.
+  - **Residual notice.** A duplicate resume's final-attempt failure recorded **before** the other
+    resume takes over the failed step leaves the run SUCCEEDED, but the notice is not withdrawn.
+    Withdrawing it needs a run id on `Notification`, which is a schema change. If the takeover
+    comes first, nothing is recorded or notified (fixed in `67ed688` and `f92f9d3`).
+  - A superseded duplicate that is not on its final attempt acknowledges and relies on the other
+    delivery; a DLQ replay recovers the run if that one exhausts its retries.
   - Deactivation during a resume ends the run CANCELED.
   - `stepResults` checkpoints are unconditional.
 - **One check for CI.** Confirm in CI PostgreSQL that Prisma puts the relation filters in the
