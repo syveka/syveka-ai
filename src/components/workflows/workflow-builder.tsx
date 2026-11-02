@@ -96,13 +96,10 @@ export function WorkflowBuilder({
   const locale = useLocale();
   const testRunBlocked = blocksTestRun(activation.block);
   // A test run carries no trigger record (testWorkflowAction), so a saved CRM
-  // step that takes its contact from the trigger fails in one: say so before
-  // the run rather than only in its failure reason.
+  // step has no contact if the run reaches it: say so before the run rather
+  // than only in its failure reason.
   const testRunHasNoContact =
-    !testRunBlocked &&
-    (initial?.steps ?? []).some(
-      (s) => s.type === "crm.create_activity" && s.contactIdVar.trim().startsWith("trigger."),
-    );
+    !testRunBlocked && (initial?.steps ?? []).some((s) => s.type === "crm.create_activity");
   const saveErrorMessage = (code: string) =>
     (SAVE_ERROR_CODES as readonly string[]).includes(code)
       ? t(`saveErrors.${code as (typeof SAVE_ERROR_CODES)[number]}`)

@@ -938,7 +938,7 @@
       }
     },
     "testRun": "Test run",
-    "testRunNoContact": "Test runs have no trigger data, so the “{step}” step will have no contact and the test will fail there. It runs when this workflow is active and its trigger includes a contact, such as a new contact.",
+    "testRunNoContact": "Test runs have no trigger data, so if a test run reaches the “{step}” step, it has no contact and the test fails there. This step runs when this workflow is active and its trigger includes a contact, such as a new contact.",
     "testErrors": {
       "quota": "Your plan doesn't include workflows. Upgrade to run a test.",
       "rateLimited": "Too many test runs. Try again later.",

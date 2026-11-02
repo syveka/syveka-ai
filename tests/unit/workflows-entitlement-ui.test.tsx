@@ -467,19 +467,11 @@ describe("WorkflowBuilder", () => {
     },
   );
 
-  it("shows no contact hint when no step takes its contact from the trigger", () => {
+  it("shows no contact hint for a workflow without a CRM activity step", () => {
     render(
       withIntl(
         <WorkflowBuilder
-          initial={
-            {
-              ...pilot,
-              steps: [
-                { ...pilot.steps[0], contactIdVar: "vars.contactId" },
-                { id: "s2", type: "notify.member", title: "Hi" },
-              ],
-            } as never
-          }
+          initial={initial as never}
           activation={{ block: null, limit: 5 }}
           timeZone="Europe/Helsinki"
         />,

@@ -938,7 +938,7 @@
       }
     },
     "testRun": "Testiajo",
-    "testRunNoContact": "Testiajossa ei ole laukaisimen tietoja, joten vaiheella ”{step}” ei ole kontaktia ja testi epäonnistuu siinä. Vaihe toimii, kun työnkulku on käytössä ja sen laukaisin sisältää kontaktin, esimerkiksi uuden kontaktin.",
+    "testRunNoContact": "Testiajossa ei ole laukaisimen tietoja, joten jos testiajo etenee vaiheeseen ”{step}”, vaiheella ei ole kontaktia ja testi epäonnistuu siinä. Vaihe toimii, kun työnkulku on käytössä ja sen laukaisin sisältää kontaktin, esimerkiksi uuden kontaktin.",
     "testErrors": {
       "quota": "Tilaukseesi eivät sisälly työnkulut. Päivitä tilaus testataksesi.",
       "rateLimited": "Liian monta testiajoa. Yritä myöhemmin uudelleen.",
