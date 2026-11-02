@@ -815,6 +815,47 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
     expect(await f.count("activities")).toBe(3);
   });
 
+  it("an unfinished claim past the first wait is left to the resume message, not the event", async () => {
+    holder.internalOnly = false;
+    const f = await fixture({
+      steps: [...AROUND_A_WAIT, { ...WAIT_STEP, id: "w2" }, { ...CRM_STEP, id: "s3" }],
+    });
+    expect(await (await f.deliver(f.event(f.contactId))).json()).toMatchObject({ waiting: 60 });
+    const [run] = await f.runs();
+    // The resume can't enqueue the second wait's resume, and nothing is recorded
+    // but the wait step's failure.
+    holder.failNextEnqueue = true;
+    holder.onEnqueueFailure = () => (holder.failTransactions = 2);
+    expect((await f.deliver(f.resume(run!.id, 2))).status).toBe(500);
+    expect(await f.runs()).toMatchObject([{ status: "WAITING" }]);
+    expect(await f.steps()).toMatchObject({ s2: "SUCCEEDED", w2: "FAILED" });
+
+    // A duplicate of the original event can't recover that part: acknowledged,
+    // the run and its results untouched.
+    expect(await (await f.deliver(f.event(f.contactId), "1")).json()).toEqual({
+      skipped: "duplicate_trigger",
+      duplicate: false,
+    });
+    expect(await f.runs()).toMatchObject([{ status: "WAITING" }]);
+    const stored = await sql.query(`select step_results from workflow_runs where id = $1`, [
+      run!.id,
+    ]);
+    expect(stored.rows[0]!.step_results).toEqual(
+      expect.arrayContaining([expect.objectContaining({ stepId: "s2", status: "ok" })]),
+    );
+    expect(holder.enqueued).toBe(1);
+
+    // The resume message's own redelivery recovers it.
+    expect(await (await f.deliver(f.resume(run!.id, 2), "1")).json()).toMatchObject({
+      waiting: 60,
+    });
+    expect(holder.enqueued).toBe(2);
+    expect(await (await f.deliver(f.resume(run!.id, 4))).json()).toEqual({ ok: true });
+    expect(await f.runs()).toMatchObject([{ status: "SUCCEEDED" }]);
+    expect(await f.count("activities")).toBe(3);
+    expect(await f.count("notifications")).toBe(0);
+  });
+
   it("a WAITING run a resume takes between the read and the reclaim is not reclaimed", async () => {
     holder.internalOnly = false;
     const f = await fixture({ steps: AROUND_A_WAIT });

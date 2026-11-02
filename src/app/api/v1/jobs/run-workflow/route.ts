@@ -495,18 +495,28 @@ export async function POST(request: Request): Promise<NextResponse> {
         // If the resume was enqueued after all (only the completion write was
         // lost), the reclaim enqueues the same resume again under the same
         // deduplicationId, which QStash drops within its 10-minute window.
+        //
+        // This message owns the run only up to its first wait step: a fresh
+        // walk stops at that wait once it has succeeded. A latest claim
+        // beyond it was made by a resume message, which recovers it itself
+        // (its redelivery reclaims the step), so it is acknowledged here.
         const latestStep = await unscopedPrisma.workflowStepExecution.findFirst({
           where: { organizationId: orgId, workflowRunId: existing.id },
           orderBy: { startedAt: "desc" },
         });
-        if (latestStep?.status === "CLAIMED" && latestStep.startedAt >= staleStepSince) {
+        const runSteps = workflow.steps as unknown as WorkflowStep[];
+        const firstWait = runSteps.findIndex((s) => s.type === "wait.duration");
+        const latestIndex = latestStep ? runSteps.findIndex((s) => s.id === latestStep.stepId) : -1;
+        const ownedByThisMessage =
+          latestIndex !== -1 && firstWait !== -1 && latestIndex <= firstWait;
+        if (!latestStep || latestStep.status === "SUCCEEDED" || !ownedByThisMessage) {
+          return NextResponse.json({ skipped: "duplicate_trigger", duplicate: false });
+        }
+        if (latestStep.status === "CLAIMED" && latestStep.startedAt >= staleStepSince) {
           return retryWhenStale(
             { error: "run_in_progress" },
             new Date(latestStep.startedAt.getTime() + STALE_STEP_CLAIM_MS),
           );
-        }
-        if (!latestStep || latestStep.status === "SUCCEEDED") {
-          return NextResponse.json({ skipped: "duplicate_trigger", duplicate: false });
         }
         // Fenced on the state read here, so a resume that set the run
         // RUNNING meanwhile (or claimed a newer step) is never reclaimed.
