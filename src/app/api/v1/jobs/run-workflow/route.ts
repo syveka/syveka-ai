@@ -1028,8 +1028,11 @@ export async function POST(request: Request): Promise<NextResponse> {
       //   so the redelivery runs the step again and records both;
       // - the final attempt: nothing will deliver again, so tell the creator
       //   now, together with the retryable failure.
-      // Limit: if this write fails too, the run stays RUNNING or WAITING; a
-      // fresh-event redelivery reclaims it once stale, a runId resume at once.
+      // Limit: if this write fails too (the database is unreachable), the run
+      // keeps its status: RUNNING is reclaimed by a fresh-event redelivery
+      // once stale and by a runId resume at once; WAITING only by a runId
+      // resume, so a WAITING fresh-event run whose resume was never enqueued
+      // stays WAITING.
       await unscopedPrisma
         .$transaction((tx) =>
           recordFailure(tx, failureText(recordErr, "failure not recorded"), finalAttempt),
