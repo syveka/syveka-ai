@@ -211,14 +211,27 @@ the job route, `run-failure.ts` and tests only. The final head and exact-head CI
   pre-existing.
 - **`WORKFLOW_RUNS` usage** is best-effort, so a usage write can't turn a success into a failure.
   This was pre-existing.
+- **A run left WAITING with no resume is recovered.** This is the case where the resume enqueue
+  failed and the database was then unreachable, so neither the wait step's failure nor the run's
+  failure could be recorded. Before, every redelivery of the event acknowledged it and it stayed
+  WAITING for good. A fresh-event redelivery now decides on the run's latest step claim:
+  - **SUCCEEDED**, or a claim past the first wait step (the resume message recovers that part
+    itself): acknowledged.
+  - **CLAIMED within 6 minutes:** 409 with `Retry-After`.
+  - **FAILED or stale:** reclaimed by an update fenced on the state read.
+- **The resume enqueue carries a deterministic `deduplicationId`.**
+- **Every 409 that waits for a claim to go stale carries `Retry-After`.** QStash doesn't document
+  whether its first default retry comes after 12 s or 1 s. If it is 1 s, all three retries can fall
+  inside the 6-minute window.
 
 **Evidence (local, disposable PostgreSQL `pgvector/pgvector:pg15` with the full migration history):**
 
-- **`run-workflow.postgres.test.ts` (17 tests)** drives the real route on PostgreSQL with real
+- **`run-workflow.postgres.test.ts` (27 tests)** drives the real route on PostgreSQL with real
   QStash signature checks (test-only keys). Its faults:
   - a PostgreSQL trigger refuses a notification insert;
   - commit-then-error and fail-before-start transactions, and a query error, injected at the Prisma
-    client boundary.
+    client boundary;
+  - after an enqueue, failing transactions or an unreachable database.
 
   Its cases:
   - repeated terminal deliveries, both fresh event and `runId`;
@@ -234,13 +247,28 @@ the job route, `run-failure.ts` and tests only. The final head and exact-head CI
   - a superseded run;
   - five deliveries released together at the run claim, for a failing event and a successful one;
   - two `runId` resumes released together at the step claim;
-  - a cross-organization `runId`.
+  - a cross-organization `runId`;
+  - WAITING recovery:
+    - nothing recorded: 409 with `Retry-After`, then a reclaim once stale;
+    - a FAILED wait step;
+    - two redeliveries released together at the reclaim;
+    - a lost completion write, re-enqueued under the same `deduplicationId`;
+    - a leftover claim on an earlier wait;
+    - a claim past the first wait, left to the resume message;
+    - a resume taking the run between the read and the reclaim;
+    - `Retry-After` on the run-level and step-level 409s;
+    - a scheduled resume, which is acknowledged only.
 
 - **Fail-first.** The new cases fail on the previous implementation:
   - 5 fail on `3c5edd2`;
   - 6 fail on `main`'s route.
 
   The other cases pass on both, because they pin behaviour `main` already had.
+
+  For the WAITING work:
+  - 7 of the new tests fail on `5cf6e77`, the head before this work;
+  - for each review finding, its test fails on the revision the finding was raised against (3 on
+    `a5e4fb5`, 1 on `16375f5`).
 
 - **`workflow-run-reclaim.postgres.test.ts` (7 tests).**
   - The reclaim predicate agrees with `isTerminalRunError()` for every stored error kind,
@@ -261,33 +289,35 @@ the job route, `run-failure.ts` and tests only. The final head and exact-head CI
   the test database is guarded as local-only and cleanup is narrowed.
 - **Test fidelity:** approve on condition of accurate claims. The lock probe, stale case, names,
   barrier scope and fake rollback are fixed, and the CI claims are corrected here and in the PR.
+- **Concurrency review of the WAITING recovery:** approve after two rounds. Its findings are fixed:
+  - the decision used the oldest unfinished step;
+  - the WAITING reclaim shared an `OR` with the RUNNING-stale branch;
+  - one 409 had no `Retry-After`;
+  - the event message reclaimed beyond its first wait.
 
 **Limits (not exactly-once):**
 
-- If the database is unreachable for the fallback too, the run keeps its status and the job
-  answers 500, so QStash redelivers the same message (3 retries, then the DLQ):
-  - **RUNNING** recovers automatically: a fresh-event redelivery reclaims it once it is 6 minutes
-    stale, and a `runId` redelivery reclaims it at once.
-  - **WAITING reached through a `runId` resume** (a later `wait.duration` whose enqueue failed)
-    also recovers automatically, within the 3 retries. The redelivered `runId` message sets the run
-    RUNNING, skips the steps already SUCCEEDED, and claims that wait step again: at once if it was
-    marked FAILED, or once its claim is 6 minutes stale (earlier retries get 409). The wait step
-    becomes SUCCEEDED only after its resume is enqueued.
-  - **WAITING on a fresh-event run** whose first resume was never enqueued has **no automatic
-    recovery**. The redelivered fresh-event message finds the WAITING run and acknowledges it as
-    `duplicate_trigger` (200); a DLQ replay of that message does the same. No sweeper or cron
-    reads workflow runs, and there is no cancel or retry action for a run. The run stays WAITING:
-    no further step runs, nothing is sent twice, and the creator is not notified.
-  - **Manual workaround (not a mechanism):** an owner-authorized data change that marks that one
-    run `FAILED`, so it no longer shows as waiting; the rest of the workflow runs only on the next
-    trigger event. This is a protected remote data change, so it was not done or tested here.
-- Recovery relies on QStash's default retry backoff (about 12 s, 150 s, 30 min) reaching past the
-  6-minute stale window.
-- Two concurrent `runId` deliveries are separated by the step ledger, not at the run level. On a
-  terminal step both can record a failure.
+- **Database outage.** If the database is unreachable for the fallback too, the run keeps its status
+  and the job answers 500. Recovery then comes from the same message's redelivery:
+  - **RUNNING:** reclaimed once stale.
+  - **WAITING with no resume:** the event's redelivery reclaims it, or the resume's redelivery if
+    the claim is past the first wait.
 
-These are pre-existing and are candidates for a separate change: an explicit `retryDelay` or a
-sweeper.
+  The 409 before that carries `Retry-After` for the time until the claim is stale. The database must
+  be back within the message's retries, or the message ends in the DLQ; replaying it recovers the run
+  the same way. `Retry-After` and deduplication are QStash's documented mechanisms, but neither was
+  tested against live QStash.
+
+- **Deduplication miss.** If a reclaim after a lost completion write comes more than 10 minutes after
+  the first resume was published, there are two resumes. Each step still runs once, but usage is
+  counted twice and the run can be left RUNNING.
+- **Tracked follow-up (pre-existing).** A `runId` resume keeps the run's first `startedAt`. A
+  fresh-event duplicate arriving during a resume, more than 6 minutes after the first claim, can
+  reclaim it as stale RUNNING. Suggested fix, with no migration: treat RUNNING as stale only when the
+  latest step claim is stale too.
+- **Concurrent resumes.** Two concurrent `runId` deliveries are separated by the step ledger, not at
+  the run level, and a resumed run rebuilds variables from `stepResults`.
+- **Edited workflows** use the current step list for the decision.
 
 ## 6. PR #385
 
