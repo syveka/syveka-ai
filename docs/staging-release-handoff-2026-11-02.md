@@ -264,8 +264,23 @@ the job route, `run-failure.ts` and tests only. The final head and exact-head CI
 
 **Limits (not exactly-once):**
 
-- If the database is unreachable for the fallback too, a RUNNING run is reclaimed later. A
-  fresh-event WAITING run whose resume was never enqueued stays WAITING: there is no sweeper.
+- If the database is unreachable for the fallback too, the run keeps its status and the job
+  answers 500, so QStash redelivers the same message (3 retries, then the DLQ):
+  - **RUNNING** recovers automatically: a fresh-event redelivery reclaims it once it is 6 minutes
+    stale, and a `runId` redelivery reclaims it at once.
+  - **WAITING reached through a `runId` resume** (a later `wait.duration` whose enqueue failed)
+    also recovers automatically, within the 3 retries. The redelivered `runId` message sets the run
+    RUNNING, skips the steps already SUCCEEDED, and claims that wait step again: at once if it was
+    marked FAILED, or once its claim is 6 minutes stale (earlier retries get 409). The wait step
+    becomes SUCCEEDED only after its resume is enqueued.
+  - **WAITING on a fresh-event run** whose first resume was never enqueued has **no automatic
+    recovery**. The redelivered fresh-event message finds the WAITING run and acknowledges it as
+    `duplicate_trigger` (200); a DLQ replay of that message does the same. No sweeper or cron
+    reads workflow runs, and there is no cancel or retry action for a run. The run stays WAITING:
+    no further step runs, nothing is sent twice, and the creator is not notified.
+  - **Manual workaround (not a mechanism):** an owner-authorized data change that marks that one
+    run `FAILED`, so it no longer shows as waiting; the rest of the workflow runs only on the next
+    trigger event. This is a protected remote data change, so it was not done or tested here.
 - Recovery relies on QStash's default retry backoff (about 12 s, 150 s, 30 min) reaching past the
   6-minute stale window.
 - Two concurrent `runId` deliveries are separated by the step ledger, not at the run level. On a
