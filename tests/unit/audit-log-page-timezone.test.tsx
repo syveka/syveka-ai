@@ -185,6 +185,8 @@ describe("Settings → Audit log change details on an Arabic page", () => {
     expect(pre![1]).toContain(String.raw`<bdi>قال \&quot;مرحبا\&quot; للعملاء</bdi>`);
     // A backslash escape stays inside its value's isolate.
     expect(pre![1]).toContain(String.raw`<bdi>السطر الأول\nsecond line\tC:\\tmp\\ملف</bdi>`);
+    expect(pre![1]).toContain("<bdi>https://example.test/ar/حجز?q=موعد&amp;lang=ar#top</bdi>");
+    expect(pre![1]).toContain("<bdi>خطة Pro بسعر 79 € شهريًا</bdi>");
     // Keys and ids are isolated too, and never translated.
     expect(pre![1]).toContain("<bdi>b19dfc96-efff-4f88-89ff-bcaf5be12e02</bdi>");
   });
