@@ -85,6 +85,8 @@ const holder = vi.hoisted(() => ({
   onEnqueueFailure: null as null | (() => void),
   /** Runs when an enqueue succeeds (to lose the completion write after it). */
   onEnqueueSuccess: null as null | (() => void),
+  /** Runs before the next transaction starts (to act between two writes). */
+  beforeNextTransaction: null as null | (() => Promise<void>),
   /** The next step-ledger updateMany fails (a lost completion write). */
   failNextStepUpdate: false,
   /** Each enqueue's deduplicationId. */
@@ -398,6 +400,9 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
         }
         if (prop === "$transaction") {
           return async (fn: unknown, opts?: unknown) => {
+            const before = holder.beforeNextTransaction;
+            holder.beforeNextTransaction = null;
+            if (before) await before();
             if (holder.failNextTransaction || holder.failTransactions > 0) {
               holder.failNextTransaction = false;
               holder.failTransactions = Math.max(0, holder.failTransactions - 1);
@@ -510,6 +515,7 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
       enqueued: 0,
       runsCounted: 0,
       failNextStepUpdate: false,
+      beforeNextTransaction: null,
       emailsSent: 0,
       contactLookups: 0,
       barrier: null,
@@ -1275,6 +1281,83 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
     expect((await runRow(f.orgId)).status).toBe("SUCCEEDED");
     expect(await f.count("activities")).toBe(3);
     expect(holder.runsCounted).toBe(1);
+  });
+
+  it("a duplicate resume's final-attempt failure doesn't fail a run its other resume took over", async () => {
+    holder.internalOnly = false;
+    const f = await fixture({ steps: AROUND_A_WAIT });
+    expect(await (await f.deliver(f.event(f.contactId))).json()).toMatchObject({ waiting: 60 });
+    const [run] = await f.runs();
+    let reached!: () => void;
+    const otherAtItsStep = new Promise<void>((r) => (reached = r));
+    let releaseOther!: () => void;
+    const otherMayFinish = new Promise<void>((r) => (releaseOther = r));
+    let other!: Promise<Response>;
+    // D, on its final attempt, fails s2. Between its step failure and its
+    // failure record, the other delivery R of the same resume reclaims s2
+    // and is held there, mid-step.
+    holder.failNextContactLookup = true;
+    holder.beforeContactLookup = async () => {
+      holder.beforeNextTransaction = async () => {
+        holder.beforeContactLookup = async () => {
+          reached();
+          await otherMayFinish;
+        };
+        other = f.deliver(f.resume(run!.id, 2));
+        await otherAtItsStep;
+      };
+    };
+    const duplicate = await f.deliver(f.resume(run!.id, 2), "3");
+    const whileHeld = (await runRow(f.orgId)).status;
+    releaseOther();
+    const finished = await other;
+
+    // The outcome first: the run succeeded, and no one was told it failed.
+    const after = await sql.query(
+      `select status::text as status, error from workflow_runs where id = $1`,
+      [run!.id],
+    );
+    expect(after.rows[0]).toEqual({ status: "SUCCEEDED", error: null });
+    expect(await f.count("notifications")).toBe(0);
+    expect(whileHeld).toBe("RUNNING"); // D never failed the run
+    expect(await duplicate.json()).toEqual({ skipped: "run_superseded" });
+    expect(await finished.json()).toEqual({ ok: true });
+    expect(await f.steps()).toMatchObject({ s2: "SUCCEEDED" });
+    expect(await f.count("activities")).toBe(2);
+    expect(holder.runsCounted).toBe(1);
+  });
+
+  it("a duplicate resume's failure recorded before the other resume took over its step: the run still ends SUCCEEDED", async () => {
+    holder.internalOnly = false;
+    const f = await fixture({ steps: AROUND_A_WAIT });
+    expect(await (await f.deliver(f.event(f.contactId))).json()).toMatchObject({ waiting: 60 });
+    const [run] = await f.runs();
+    let duplicate!: Response;
+    // R is held before claiming s2; meanwhile D, on its final attempt, claims
+    // and fails s2 and records the run failed (no other delivery holds a step).
+    const [other] = await atTheSameClaim(
+      "workflowStepExecution",
+      1,
+      () => f.deliver(f.resume(run!.id, 2)),
+      "create",
+      async () => {
+        holder.failNextContactLookup = true;
+        duplicate = await f.deliver(f.resume(run!.id, 2), "3");
+      },
+    );
+    expect(duplicate.status).toBe(500);
+    // R then takes over the failed step and completes the run.
+    expect(await other!.json()).toEqual({ ok: true });
+    const after = await sql.query(
+      `select status::text as status, error from workflow_runs where id = $1`,
+      [run!.id],
+    );
+    expect(after.rows[0]).toEqual({ status: "SUCCEEDED", error: null });
+    expect(await f.count("activities")).toBe(2);
+    expect(holder.runsCounted).toBe(1);
+    // D's notice was written when the run had failed and no delivery held a
+    // step; it is not withdrawn (see the PR's limits).
+    expect(await f.count("notifications")).toBe(1);
   });
 
   it("a usage write that fails after success leaves the run SUCCEEDED and tells no one", async () => {

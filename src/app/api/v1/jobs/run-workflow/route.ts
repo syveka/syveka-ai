@@ -672,19 +672,37 @@ export async function POST(request: Request): Promise<NextResponse> {
    * finished: it neither overwrites the outcome nor counts the run again.
    * WAITING is unfinished too: a delivery that gets here has passed every
    * remaining step, so a WAITING status was left by a stale delivery parking
-   * on an earlier wait, and the run did complete.
+   * on an earlier wait, and the run did complete. So is a retryable failure
+   * recorded by a concurrent delivery of the same resume before this one took
+   * over its failed step: every step has now succeeded.
    */
   const finish = async (): Promise<boolean> =>
     (
       await unscopedPrisma.workflowRun.updateMany({
-        where: { id: run.id, organizationId: orgId, status: { in: ["RUNNING", "WAITING"] } },
+        where: {
+          id: run.id,
+          organizationId: orgId,
+          OR: [{ status: { in: ["RUNNING", "WAITING"] } }, retryableFailedRun],
+        },
         data: {
           stepResults: results as Prisma.InputJsonValue,
           status: "SUCCEEDED",
           finishedAt: new Date(),
+          error: null,
         },
       })
     ).count === 1;
+
+  /**
+   * The step claim this delivery failed last (each failure is rethrown to
+   * the run-level catch below). Its run failure is recorded only while that
+   * claim is still this delivery's own.
+   */
+  let failedClaim: { stepExecutionId: string; startedAt: Date } | null = null;
+  const failOwnStep = (claim: { stepExecutionId: string; startedAt: Date }, error: string) => {
+    failedClaim = claim;
+    return failStep(unscopedPrisma, claim, error);
+  };
 
   /**
    * Parks the run on a wait step, only while it is still this delivery's
@@ -831,7 +849,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             }
           } catch (stepErr) {
             if (!(stepErr instanceof StepFencedError)) {
-              await failStep(unscopedPrisma, claim, failureText(stepErr, "ai.generate failed"));
+              await failOwnStep(claim, failureText(stepErr, "ai.generate failed"));
             }
             throw stepErr;
           }
@@ -877,7 +895,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             results.push({ stepId: step.id, status: "ok" });
           } catch (stepErr) {
             if (!(stepErr instanceof StepFencedError)) {
-              await failStep(unscopedPrisma, claim, failureText(stepErr, "email.send failed"));
+              await failOwnStep(claim, failureText(stepErr, "email.send failed"));
             }
             throw stepErr;
           }
@@ -952,11 +970,7 @@ export async function POST(request: Request): Promise<NextResponse> {
               results.push({ stepId: step.id, status: "ok" });
               break;
             }
-            await failStep(
-              unscopedPrisma,
-              claim,
-              failureText(stepErr, "crm.create_activity failed"),
-            );
+            await failOwnStep(claim, failureText(stepErr, "crm.create_activity failed"));
             throw stepErr;
           }
           break;
@@ -1024,7 +1038,7 @@ export async function POST(request: Request): Promise<NextResponse> {
               results.push({ stepId: step.id, status: "ok" });
               break;
             }
-            await failStep(unscopedPrisma, claim, failureText(stepErr, "notify.member failed"));
+            await failOwnStep(claim, failureText(stepErr, "notify.member failed"));
             throw stepErr;
           }
           break;
@@ -1094,7 +1108,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           } catch (enqueueErr) {
             // No resume is scheduled: the step must not stay CLAIMED, or the
             // retry that reclaims this run would find it "in progress" forever.
-            await failStep(unscopedPrisma, claim, failureText(enqueueErr, "wait.duration failed"));
+            await failOwnStep(claim, failureText(enqueueErr, "wait.duration failed"));
             throw enqueueErr;
           }
           try {
@@ -1156,6 +1170,27 @@ export async function POST(request: Request): Promise<NextResponse> {
       error: string,
       notify: boolean,
     ): Promise<boolean> => {
+      // Concurrent deliveries of one resume share the run's startedAt, so the
+      // run fence alone can't tell them apart. The step this delivery failed
+      // decides: if another delivery reclaimed it (a reclaim always writes a
+      // new startedAt), that one is completing the run, and this failure is
+      // not the run's. Its status doesn't matter: it is FAILED, still CLAIMED
+      // if failStep couldn't write, or SUCCEEDED if its own transaction
+      // committed before the client got an error. The write changes nothing
+      // but takes the step row's lock, so a reclaim arriving meanwhile waits
+      // for this transaction instead of crossing it.
+      const ownFailedClaim = failedClaim;
+      if (ownFailedClaim) {
+        const stillOwn = await tx.workflowStepExecution.updateMany({
+          where: {
+            id: ownFailedClaim.stepExecutionId,
+            organizationId: orgId,
+            startedAt: ownFailedClaim.startedAt,
+          },
+          data: { startedAt: ownFailedClaim.startedAt },
+        });
+        if (stillOwn.count === 0) return false;
+      }
       const failed = await tx.workflowRun.updateMany({
         where: {
           id: run.id,

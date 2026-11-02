@@ -224,7 +224,7 @@ describe("trigger-level idempotency: sequential duplicate delivery", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           organizationId: ORG,
-          status: { in: ["RUNNING", "WAITING"] },
+          OR: [{ status: { in: ["RUNNING", "WAITING"] } }, RETRYABLE_FAILED_RUN],
         }),
       }),
     );
@@ -327,7 +327,10 @@ describe("trigger-level idempotency: stale RUNNING reclaim (inferred crash)", ()
       where: { sourceEventKey: expect.any(String) },
     });
     expect(mocks.runUpdateMany.mock.calls[1]![0]).toMatchObject({
-      where: { organizationId: ORG, status: { in: ["RUNNING", "WAITING"] } },
+      where: {
+        organizationId: ORG,
+        OR: [{ status: { in: ["RUNNING", "WAITING"] } }, RETRYABLE_FAILED_RUN],
+      },
     });
   });
 });
