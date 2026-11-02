@@ -132,12 +132,19 @@ describe("Settings → Audit log timestamps", () => {
 describe("Settings → Audit log change details on an Arabic page", () => {
   const ORIGINAL = "نشاط لاختبار الملف التجاري والحجوزات، ولا يستقبل عملاء حقيقيين.";
   const TEMPORARY = "شركة تجريبية لاختبار تحديث الهوية التجارية من الدردشة";
-  // The owner-observed restoration row (business_dna.update), plus a value
-  // with escaped quotes to check that each string stays one isolated value.
+  // The owner-observed restoration row (business_dna.update), plus values
+  // that JSON escapes or that mix scripts, to check that each string stays one
+  // isolated value with its exact text.
   const before = { fields: { description: TEMPORARY } };
   const after = {
     via: "ai_chat",
-    fields: { description: ORIGINAL, tagline: 'قال "مرحبا" للعملاء' },
+    fields: {
+      description: ORIGINAL,
+      tagline: 'قال "مرحبا" للعملاء',
+      notes: "السطر الأول\nsecond line\tC:\\tmp\\ملف",
+      website: "https://example.test/ar/حجز?q=موعد&lang=ar#top",
+      plan: "خطة Pro بسعر 79 € شهريًا",
+    },
     actionId: "b19dfc96-efff-4f88-89ff-bcaf5be12e02",
     conversationId: "b75b7893-61d0-4060-8f6e-1a700e56dcf8",
   };
@@ -176,12 +183,18 @@ describe("Settings → Audit log change details on an Arabic page", () => {
     expect(pre![1]).toContain(`<bdi>${ORIGINAL}</bdi>`);
     expect(pre![1]).toContain(`<bdi>${TEMPORARY}</bdi>`);
     expect(pre![1]).toContain(String.raw`<bdi>قال \&quot;مرحبا\&quot; للعملاء</bdi>`);
+    // A backslash escape stays inside its value's isolate.
+    expect(pre![1]).toContain(String.raw`<bdi>السطر الأول\nsecond line\tC:\\tmp\\ملف</bdi>`);
     // Keys and ids are isolated too, and never translated.
     expect(pre![1]).toContain("<bdi>b19dfc96-efff-4f88-89ff-bcaf5be12e02</bdi>");
   });
 
   it("shows exactly the stored before and after values, unchanged", async () => {
-    const pre = (await render()).match(/<pre[^>]*>([\s\S]*?)<\/pre>/)![1]!;
+    const html = await render();
+    const pre = html.match(/<pre[^>]*>([\s\S]*?)<\/pre>/)![1]!;
     expect(decode(pre)).toBe(JSON.stringify({ before, after }, null, 2));
+    expect(JSON.parse(decode(pre))).toEqual({ before, after });
+    // The canonical action code is shown as stored.
+    expect(html).toMatch(/<code dir="ltr"[^>]*>business_dna\.update<\/code>/);
   });
 });
