@@ -347,6 +347,8 @@ the job route, `run-failure.ts` and tests only. The final head and exact-head CI
     comes first, nothing is recorded or notified (fixed in `67ed688` and `f92f9d3`).
   - A superseded duplicate that is not on its final attempt acknowledges and relies on the other
     delivery; a DLQ replay recovers the run if that one exhausts its retries.
+    - A variant: after an enqueue failure, if the other delivery is also on its final attempt, the
+      run can stay WAITING with no resume and no notice. That needs three faults together.
   - Deactivation during a resume ends the run CANCELED.
   - `stepResults` checkpoints are unconditional.
 - **One check for CI.** Confirm in CI PostgreSQL that Prisma puts the relation filters in the
