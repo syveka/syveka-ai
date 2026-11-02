@@ -85,6 +85,8 @@ const holder = vi.hoisted(() => ({
   onEnqueueFailure: null as null | (() => void),
   /** Runs when an enqueue succeeds (to lose the completion write after it). */
   onEnqueueSuccess: null as null | (() => void),
+  /** The next step-ledger updateMany fails (a lost completion write). */
+  failNextStepUpdate: false,
   /** Each enqueue's deduplicationId. */
   deduplicationIds: [] as Array<string | undefined>,
   failNextUsage: false,
@@ -328,6 +330,14 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
   const heldCreate = (model: Barrier["on"], delegate: Record<string, unknown>) =>
     new Proxy(delegate, {
       get(d, p, r) {
+        if (model === "workflowStepExecution" && p === "updateMany" && holder.failNextStepUpdate) {
+          holder.failNextStepUpdate = false;
+          return async () => {
+            throw Object.assign(new Error("Connection terminated unexpectedly"), {
+              name: "DriverAdapterError",
+            });
+          };
+        }
         const barrier = holder.barrier;
         if (barrier?.on !== model || p !== barrier.method) return Reflect.get(d, p, r);
         return async (args: unknown) => {
@@ -499,6 +509,7 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
       failNextEnqueue: false,
       enqueued: 0,
       runsCounted: 0,
+      failNextStepUpdate: false,
       emailsSent: 0,
       contactLookups: 0,
       barrier: null,
@@ -1110,6 +1121,123 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
     const bodies = await Promise.all(responses.map((r) => r.json()));
     expect(bodies).toEqual(expect.arrayContaining([{ ok: true }, { skipped: "run_superseded" }]));
     expect((await runRow(f.orgId)).status).toBe("SUCCEEDED");
+    expect(await f.count("activities")).toBe(2);
+    expect(holder.runsCounted).toBe(1);
+  });
+
+  /**
+   * The first wait's resume is enqueued but its completion write is lost:
+   * the wait stays CLAIMED, the run is recorded FAILED (retryable), and the
+   * resume is scheduled all the same.
+   */
+  async function resumeScheduledCompletionLost() {
+    holder.internalOnly = false;
+    const f = await fixture({ steps: AROUND_A_WAIT });
+    holder.onEnqueueSuccess = () => (holder.failNextStepUpdate = true);
+    expect((await f.deliver(f.event(f.contactId))).status).toBe(500);
+    holder.onEnqueueSuccess = null;
+    expect(await f.runs()).toMatchObject([{ status: "FAILED" }]);
+    expect(await f.steps()).toEqual({ s1: "SUCCEEDED", w1: "CLAIMED" });
+    expect(holder.enqueued).toBe(1);
+    const [run] = await f.runs();
+    return { f, runId: run!.id };
+  }
+  /** Lets the run's first start time fall past the stale window, with its claims. */
+  async function longAgo(f: { orgId: string; passTime: (m: number) => Promise<unknown> }) {
+    await sql.query(
+      `update workflow_runs set started_at = started_at - interval '10 minutes' where organization_id = $1`,
+      [f.orgId],
+    );
+    await f.passTime(7);
+  }
+
+  it("a fresh duplicate is acknowledged once a resume has claimed a step, though the first wait stayed CLAIMED", async () => {
+    const { f, runId } = await resumeScheduledCompletionLost();
+    let duplicate!: Response;
+    let startedAt: unknown;
+    // While the resume is at its step (s2 claimed), the event comes again,
+    // the run's first start time past the stale window (the live claim is
+    // left as it is).
+    holder.beforeContactLookup = async () => {
+      await sql.query(
+        `update workflow_runs set started_at = started_at - interval '10 minutes' where organization_id = $1`,
+        [f.orgId],
+      );
+      startedAt = (await runRow(f.orgId)).started_at;
+      duplicate = await f.deliver(f.event(f.contactId), "1");
+    };
+    expect(await (await f.deliver(f.resume(runId, 2))).json()).toEqual({ ok: true });
+    expect(await duplicate.json()).toEqual({ skipped: "duplicate_trigger", duplicate: false });
+    const after = await runRow(f.orgId);
+    expect(after.status).toBe("SUCCEEDED");
+    expect(after.started_at).toEqual(startedAt); // never reclaimed
+    expect(holder.enqueued).toBe(1);
+    expect(await f.count("activities")).toBe(2);
+    expect(holder.runsCounted).toBe(1);
+  });
+
+  it("a resume finishes a run that a stale delivery re-parked on its first wait meanwhile", async () => {
+    const { f, runId } = await resumeScheduledCompletionLost();
+    let reparked!: Response;
+    // The resume holds before claiming its first step; meanwhile a stale
+    // event delivery reclaims the run and parks it on the first wait again.
+    const [resumed] = await atTheSameClaim(
+      "workflowStepExecution",
+      1,
+      () => f.deliver(f.resume(runId, 2)),
+      "create",
+      async () => {
+        await longAgo(f);
+        reparked = await f.deliver(f.event(f.contactId), "1");
+      },
+    );
+    expect(await reparked.json()).toMatchObject({ waiting: 60 });
+    expect(await resumed!.json()).toEqual({ ok: true });
+    expect((await runRow(f.orgId)).status).toBe("SUCCEEDED");
+    expect(holder.runsCounted).toBe(1);
+
+    // The resume that delivery scheduled again finds the run finished.
+    expect(holder.enqueued).toBe(2);
+    expect(await (await f.deliver(f.resume(runId, 2))).json()).toEqual({
+      skipped: "run_finished",
+    });
+    expect(await f.count("activities")).toBe(2);
+    expect(holder.runsCounted).toBe(1);
+  });
+
+  it("a stale delivery reaching its wait after the run finished neither re-parks it nor schedules a resume", async () => {
+    const { f, runId } = await resumeScheduledCompletionLost();
+    let staleDelivery!: Promise<Response>;
+    let releaseStale!: () => void;
+    const [resumed] = await atTheSameClaim(
+      "workflowStepExecution",
+      1,
+      () => f.deliver(f.resume(runId, 2)),
+      "create",
+      async () => {
+        await longAgo(f);
+        // A stale event delivery reclaims the run and is held at the wait
+        // step's reclaim, before parking.
+        const barrier: Barrier = {
+          on: "workflowStepExecution",
+          method: "updateMany",
+          arrived: 0,
+          release: new Promise<void>((r) => (releaseStale = r)),
+        };
+        holder.barrier = barrier;
+        staleDelivery = f.deliver(f.event(f.contactId), "1");
+        await vi.waitFor(() => expect(barrier.arrived).toBe(1), { timeout: 10_000 });
+        holder.barrier = null;
+      },
+    );
+    // The resume finished the run while that delivery was held.
+    expect(await resumed!.json()).toEqual({ ok: true });
+    expect((await runRow(f.orgId)).status).toBe("SUCCEEDED");
+    releaseStale();
+    expect(await (await staleDelivery).json()).toEqual({ skipped: "run_superseded" });
+    expect((await runRow(f.orgId)).status).toBe("SUCCEEDED");
+    expect(holder.enqueued).toBe(1);
+    expect(await f.steps()).toMatchObject({ w1: "FAILED", s2: "SUCCEEDED" });
     expect(await f.count("activities")).toBe(2);
     expect(holder.runsCounted).toBe(1);
   });

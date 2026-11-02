@@ -35,21 +35,32 @@ export function fakeFailureRecord(
 }
 
 /**
- * Fake-database support for the run-workflow job's success write (finish in
- * the route): an updateMany on one run by id and organization, only while it
- * is RUNNING. Returns null for any other updateMany shape.
+ * Fake-database support for the run-workflow job's conditional status writes
+ * on one run by id and organization: the success write (finish: while
+ * RUNNING or WAITING) and parking on a wait (park: while RUNNING with the
+ * claim's startedAt). Returns null for any other updateMany shape, including
+ * the failure record (fakeFailureRecord), which also carries startedAt but a
+ * status list.
  */
 export function fakeRunFinish(
   runs: Iterable<Record<string, unknown>>,
   where: Record<string, unknown>,
   data: Record<string, unknown>,
 ): { count: number } | null {
-  if (where.status !== "RUNNING" || typeof where.id !== "string" || "startedAt" in where) {
-    return null;
-  }
+  const status = where.status as string | { in?: string[] } | undefined;
+  const allowed = typeof status === "string" ? [status] : status?.in;
+  const isFinish = !("startedAt" in where) && Array.isArray(allowed);
+  const isPark = where.startedAt instanceof Date && typeof status === "string";
+  if (typeof where.id !== "string" || !(isFinish || isPark)) return null;
   for (const run of runs) {
     if (run.id === where.id && run.organizationId === where.organizationId) {
-      if (run.status !== "RUNNING") return { count: 0 };
+      const startedAt = run.startedAt as Date | undefined;
+      if (
+        !allowed!.includes(run.status as string) ||
+        (isPark && startedAt?.getTime() !== (where.startedAt as Date).getTime())
+      ) {
+        return { count: 0 };
+      }
       Object.assign(run, data);
       return { count: 1 };
     }

@@ -219,10 +219,13 @@ describe("trigger-level idempotency: sequential duplicate delivery", () => {
     expect(first.status).toBe(200);
     expect(await first.json()).toEqual({ ok: true });
     expect(mocks.notificationCreate).toHaveBeenCalledTimes(1);
-    // The run's success write: only while it is RUNNING.
+    // The run's success write: only while it is unfinished.
     expect(mocks.runUpdateMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        where: expect.objectContaining({ organizationId: ORG, status: "RUNNING" }),
+        where: expect.objectContaining({
+          organizationId: ORG,
+          status: { in: ["RUNNING", "WAITING"] },
+        }),
       }),
     );
     mocks.runUpdateMany.mockClear();
@@ -324,7 +327,7 @@ describe("trigger-level idempotency: stale RUNNING reclaim (inferred crash)", ()
       where: { sourceEventKey: expect.any(String) },
     });
     expect(mocks.runUpdateMany.mock.calls[1]![0]).toMatchObject({
-      where: { organizationId: ORG, status: "RUNNING" },
+      where: { organizationId: ORG, status: { in: ["RUNNING", "WAITING"] } },
     });
   });
 });
