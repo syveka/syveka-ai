@@ -147,6 +147,11 @@ const RETRYABLE_FAILED_RUN = {
   ],
 };
 
+/** A retryable failure a delivery completing the steps may take over (not an admin stop). */
+const TAKEOVERABLE_FAILED_RUN = {
+  AND: [RETRYABLE_FAILED_RUN, { OR: [{ error: null }, { NOT: { error: "step_not_allowed" } }] }],
+};
+
 const ORG = "11111111-1111-4111-8111-111111111111";
 const WORKFLOW = "22222222-2222-4222-8222-222222222222";
 
@@ -224,7 +229,7 @@ describe("trigger-level idempotency: sequential duplicate delivery", () => {
       expect.objectContaining({
         where: expect.objectContaining({
           organizationId: ORG,
-          OR: [{ status: { in: ["RUNNING", "WAITING"] } }, RETRYABLE_FAILED_RUN],
+          OR: [{ status: { in: ["RUNNING", "WAITING"] } }, TAKEOVERABLE_FAILED_RUN],
         }),
       }),
     );
@@ -329,7 +334,7 @@ describe("trigger-level idempotency: stale RUNNING reclaim (inferred crash)", ()
     expect(mocks.runUpdateMany.mock.calls[1]![0]).toMatchObject({
       where: {
         organizationId: ORG,
-        OR: [{ status: { in: ["RUNNING", "WAITING"] } }, RETRYABLE_FAILED_RUN],
+        OR: [{ status: { in: ["RUNNING", "WAITING"] } }, TAKEOVERABLE_FAILED_RUN],
       },
     });
   });

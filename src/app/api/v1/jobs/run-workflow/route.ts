@@ -352,6 +352,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   // must not run again when the same message is delivered again. A run with
   // no recorded error (crash) or any other error stays retryable.
   const retryableFailedRun = retryableFailedRunWhere();
+  // A retryable failure that a delivery completing the run's steps may take
+  // over: one another delivery of this run recorded for a step it failed.
+  // The internal-only restriction's step_not_allowed (below) is retryable for
+  // a reclaim, but it is an administrative stop, never taken over.
+  const takeoverableFailedRun: Prisma.WorkflowRunWhereInput = {
+    AND: [retryableFailedRun, { OR: [{ error: null }, { NOT: { error: "step_not_allowed" } }] }],
+  };
 
   // Fail closed rather than silently creating an unprotected duplicate-prone
   // run: every fresh-trigger caller (emitWorkflowEvent) supplies
@@ -674,7 +681,11 @@ export async function POST(request: Request): Promise<NextResponse> {
    * remaining step, so a WAITING status was left by a stale delivery parking
    * on an earlier wait, and the run did complete. So is a retryable failure
    * recorded by a concurrent delivery of the same resume before this one took
-   * over its failed step: every step has now succeeded.
+   * over its failed step: every step has now succeeded (an administrative
+   * step_not_allowed stop is never taken over). Not fenced on startedAt: a
+   * delivery whose step claim went stale and was reclaimed meanwhile counts
+   * that step as done elsewhere; that relies on the stale window (6 minutes)
+   * outlasting this route's maxDuration (300 s).
    */
   const finish = async (): Promise<boolean> =>
     (
@@ -682,7 +693,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         where: {
           id: run.id,
           organizationId: orgId,
-          OR: [{ status: { in: ["RUNNING", "WAITING"] } }, retryableFailedRun],
+          OR: [{ status: { in: ["RUNNING", "WAITING"] } }, takeoverableFailedRun],
         },
         data: {
           stepResults: results as Prisma.InputJsonValue,
@@ -708,13 +719,25 @@ export async function POST(request: Request): Promise<NextResponse> {
    * Parks the run on a wait step, only while it is still this delivery's
    * RUNNING run (its startedAt): a delivery superseded by a reclaim, or one
    * reaching an earlier wait after another finished the run, must not
-   * re-park it or schedule another resume.
+   * re-park it or schedule another resume. Like finish(), it takes over a
+   * failure another delivery of this run recorded for a step this one then
+   * completed.
    */
   const park = async (): Promise<boolean> =>
     (
       await unscopedPrisma.workflowRun.updateMany({
-        where: { id: run.id, organizationId: orgId, startedAt: run.startedAt, status: "RUNNING" },
-        data: { stepResults: results as Prisma.InputJsonValue, status: "WAITING" },
+        where: {
+          id: run.id,
+          organizationId: orgId,
+          startedAt: run.startedAt,
+          OR: [{ status: "RUNNING" }, takeoverableFailedRun],
+        },
+        data: {
+          stepResults: results as Prisma.InputJsonValue,
+          status: "WAITING",
+          error: null,
+          finishedAt: null,
+        },
       })
     ).count === 1;
 

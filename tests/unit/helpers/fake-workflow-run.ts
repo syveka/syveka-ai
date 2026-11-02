@@ -39,8 +39,9 @@ export function fakeFailureRecord(
 /**
  * Fake-database support for the run-workflow job's conditional status writes
  * on one run by id and organization: the success write (finish: while
- * RUNNING or WAITING, or FAILED with a retryable error) and parking on a wait
- * (park: while RUNNING with the claim's startedAt). Returns null for any other
+ * RUNNING or WAITING) and parking on a wait (park: while RUNNING with the
+ * claim's startedAt), each also over a retryable failure other than
+ * step_not_allowed when the write lists that alternative. Returns null for any other
  * updateMany shape, including the failure record (fakeFailureRecord), which
  * also carries startedAt but a status list.
  */
@@ -56,7 +57,7 @@ export function fakeRunFinish(
     string | { in?: string[] } | undefined;
   const allowed = typeof status === "string" ? [status] : status?.in;
   const isFinish = !("startedAt" in where) && Array.isArray(allowed);
-  const isPark = where.startedAt instanceof Date && typeof status === "string" && !alternatives;
+  const isPark = where.startedAt instanceof Date && typeof status === "string";
   if (typeof where.id !== "string" || !(isFinish || isPark)) return null;
   for (const run of runs) {
     if (run.id === where.id && run.organizationId === where.organizationId) {
@@ -64,6 +65,7 @@ export function fakeRunFinish(
       const retryableFailure =
         alternatives !== null &&
         run.status === "FAILED" &&
+        run.error !== "step_not_allowed" &&
         !isTerminalRunError((run.error as string | null | undefined) ?? null);
       if (
         !(allowed!.includes(run.status as string) || retryableFailure) ||

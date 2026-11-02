@@ -1360,6 +1360,67 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
     expect(await f.count("notifications")).toBe(1);
   });
 
+  it("a duplicate's failure recorded before the takeover is taken over at a later wait too", async () => {
+    holder.internalOnly = false;
+    const f = await fixture({
+      steps: [...AROUND_A_WAIT, { ...WAIT_STEP, id: "w2" }, { ...CRM_STEP, id: "s3" }],
+    });
+    expect(await (await f.deliver(f.event(f.contactId))).json()).toMatchObject({ waiting: 60 });
+    const [run] = await f.runs();
+    let duplicate!: Response;
+    const [other] = await atTheSameClaim(
+      "workflowStepExecution",
+      1,
+      () => f.deliver(f.resume(run!.id, 2)),
+      "create",
+      async () => {
+        holder.failNextContactLookup = true;
+        duplicate = await f.deliver(f.resume(run!.id, 2), "3");
+      },
+    );
+    expect(duplicate.status).toBe(500);
+    // R completes s2 and parks on w2 over the recorded failure.
+    expect(await other!.json()).toMatchObject({ waiting: 60 });
+    const parked = await sql.query(
+      `select status::text as status, error, finished_at from workflow_runs where id = $1`,
+      [run!.id],
+    );
+    expect(parked.rows[0]).toEqual({ status: "WAITING", error: null, finished_at: null });
+    expect(await (await f.deliver(f.resume(run!.id, 4))).json()).toEqual({ ok: true });
+    expect((await runRow(f.orgId)).status).toBe("SUCCEEDED");
+    expect(await f.count("activities")).toBe(3);
+    expect(holder.runsCounted).toBe(1);
+    expect(await f.count("notifications")).toBe(1); // written while the run had failed
+  });
+
+  it("an administrative step_not_allowed stop is never taken over by a delivery completing the steps", async () => {
+    holder.internalOnly = false;
+    const f = await fixture({ steps: AROUND_A_WAIT });
+    expect(await (await f.deliver(f.event(f.contactId))).json()).toMatchObject({ waiting: 60 });
+    const [run] = await f.runs();
+    // While the resume is held before its step, another delivery of this run
+    // stops it under the internal-only restriction.
+    const [resumed] = await atTheSameClaim(
+      "workflowStepExecution",
+      1,
+      () => f.deliver(f.resume(run!.id, 2)),
+      "create",
+      async () => {
+        await sql.query(
+          `update workflow_runs set status = 'FAILED', error = 'step_not_allowed', finished_at = now() where id = $1`,
+          [run!.id],
+        );
+      },
+    );
+    expect(await resumed!.json()).toEqual({ skipped: "run_superseded" });
+    const after = await sql.query(
+      `select status::text as status, error from workflow_runs where id = $1`,
+      [run!.id],
+    );
+    expect(after.rows[0]).toEqual({ status: "FAILED", error: "step_not_allowed" });
+    expect(holder.runsCounted).toBe(0);
+  });
+
   it("a usage write that fails after success leaves the run SUCCEEDED and tells no one", async () => {
     const f = await fixture();
     holder.failNextUsage = true;
