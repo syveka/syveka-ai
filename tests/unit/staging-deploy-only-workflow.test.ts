@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -37,7 +38,7 @@ const TOKEN = /STAGING_VERCEL_TOKEN|VERCEL_TOKEN|--token/;
 const VERCEL_BUILD = /vercel@\$VERCEL_CLI_VERSION" build\b|\bvercel build\b/;
 const RUNS_REPO_CODE =
   /\bnpm (ci|install|test|run)\b|\bnpx (tsx|playwright|prisma|next)\b|\bnode (--env-file|scripts\/|-e)|\bnext build\b|\bpsql\b/;
-const PINNED = "611fd74ecf99d405252eb3bcfc291e363f5f970e";
+const PINNED = "62af0635be6751f7d32735d6fda0329e96f8c592";
 
 const PULL = "Pull stable staging alias config (Vercel credentials)";
 const BUILD = "Build pinned candidate for the stable staging alias (no Vercel credentials)";
@@ -262,6 +263,136 @@ describe("staging-deploy-only.yml Vercel credential isolation", () => {
     expect(pull.run).toMatch(/vercel@\$VERCEL_CLI_VERSION" pull/);
     expect(pull.run).toContain("# >>> token-persistence guard");
     expect(guardBlock(workflow)).toBe(guardBlock(read("staging-release.yml")));
+  });
+});
+
+/** Runs a step's shell script as the workflow does (bash), with only the given environment. */
+function runStep(name: string, env: Record<string, string>, cwd?: string) {
+  const base: Record<string, string> = {};
+  for (const key of ["PATH", "Path", "SystemRoot", "SYSTEMROOT", "TEMP", "TMP", "HOME"]) {
+    if (process.env[key]) base[key] = process.env[key]!;
+  }
+  const result = spawnSync("bash", ["-c", stepNamed(name).run], {
+    cwd,
+    // The repo's ProcessEnv augmentation requires NODE_ENV; the steps never read it.
+    env: { ...base, NODE_ENV: "test", ...env },
+    encoding: "utf8",
+  });
+  return { status: result.status, out: `${result.stdout}${result.stderr}` };
+}
+
+describe("staging-deploy-only.yml target and source gates (executed with synthetic inputs)", () => {
+  const pin = workflow.match(/^ {2}PINNED_SOURCE_SHA: ([0-9a-f]+)$/m)?.[1];
+  const valid = {
+    PINNED_SOURCE_SHA: pin ?? "",
+    CONFIRM_STAGING_PROJECT_REF: "stagingrefstagingref",
+    STAGING_SUPABASE_PROJECT_REF: "stagingrefstagingref",
+    PRODUCTION_SUPABASE_PROJECT_REF: "productionrefproduct",
+    CONFIRM_SOURCE_SHA: pin ?? "",
+    RUN_REF: "refs/heads/main",
+    STAGING_VERCEL_PROJECT_ID: "prj_staging",
+    STAGING_VERCEL_ORG_ID: "team_syveka",
+    PRODUCTION_VERCEL_PROJECT_ID: "prj_production",
+  };
+  const refuse = (env: Partial<typeof valid>) =>
+    runStep("Refuse non-staging targets", { ...valid, ...env });
+
+  it("pins one full, immutable commit id", () => {
+    expect(pin).toMatch(/^[0-9a-f]{40}$/);
+    expect(pin).toBe(PINNED);
+  });
+
+  it("accepts only the exact pinned source for the confirmed staging project from main", () => {
+    expect(refuse({}).status).toBe(0);
+  });
+
+  it.each([
+    ["another commit", { CONFIRM_SOURCE_SHA: "0".repeat(40) }, "does not equal the pinned"],
+    [
+      "a short commit id",
+      { CONFIRM_SOURCE_SHA: (pin ?? "").slice(0, 7) },
+      "does not equal the pinned",
+    ],
+    ["a branch name", { CONFIRM_SOURCE_SHA: "main" }, "does not equal the pinned"],
+    [
+      "the wrong project ref",
+      { CONFIRM_STAGING_PROJECT_REF: "zzzzzzzzzzzzzzzzzzzz" },
+      "does not match",
+    ],
+    ["a malformed project ref", { CONFIRM_STAGING_PROJECT_REF: "Staging" }, "20-character"],
+    ["a run outside main", { RUN_REF: "refs/heads/feature" }, "only allowed from main"],
+    [
+      "staging equal to production (Supabase)",
+      { PRODUCTION_SUPABASE_PROJECT_REF: "stagingrefstagingref" },
+      "must be present and different",
+    ],
+    [
+      "staging equal to production (Vercel)",
+      { PRODUCTION_VERCEL_PROJECT_ID: "prj_staging" },
+      "different from production",
+    ],
+  ])("refuses %s", (_label, env, message) => {
+    const r = refuse(env);
+    expect(r.status).toBe(1);
+    expect(r.out).toContain(message);
+  });
+
+  it("builds only a pinned commit that is checked out and part of main's history", () => {
+    const repo = fs.mkdtempSync(path.join(os.tmpdir(), "deploy-pin-"));
+    const git = (...args: string[]) => {
+      const r = spawnSync("git", args, { cwd: repo, encoding: "utf8" });
+      expect(r.status, r.stderr).toBe(0);
+      return r.stdout.trim();
+    };
+    try {
+      git("init", "-q");
+      git(
+        "-c",
+        "user.email=t@example.test",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "main",
+      );
+      const onMain = git("rev-parse", "HEAD");
+      git("update-ref", "refs/remotes/origin/main", onMain);
+      git("checkout", "-q", "-b", "unreviewed");
+      git(
+        "-c",
+        "user.email=t@example.test",
+        "-c",
+        "user.name=t",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "side",
+      );
+      const offMain = git("rev-parse", "HEAD");
+      const verify = (sha: string) =>
+        runStep(
+          "Verify the pinned source is reviewed main history",
+          { PINNED_SOURCE_SHA: sha },
+          repo,
+        );
+
+      // HEAD is the unreviewed commit: pinning it is refused (not in main).
+      const outside = verify(offMain);
+      expect(outside.status).toBe(1);
+      expect(outside.out).toContain("is not part of main's history");
+      // HEAD differs from the pin: refused.
+      const mismatch = verify(onMain);
+      expect(mismatch.status).toBe(1);
+      expect(mismatch.out).toContain("is not the pinned source");
+      // The pinned main commit checked out: accepted.
+      git("checkout", "-q", "--detach", onMain);
+      expect(verify(onMain).status).toBe(0);
+    } finally {
+      fs.rmSync(repo, { recursive: true, force: true });
+    }
   });
 });
 

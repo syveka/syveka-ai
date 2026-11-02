@@ -38,7 +38,9 @@ concurrency:
 env:
   NODE_VERSION: "22"
   VERCEL_CLI_VERSION: "56.3.2"
-  PINNED_SOURCE_SHA: 611fd74ecf99d405252eb3bcfc291e363f5f970e
+  # Release candidate: main at the #385 merge (includes #386 and #385; excludes
+  # anything merged later, such as #388). Change only with a reviewed PR.
+  PINNED_SOURCE_SHA: 62af0635be6751f7d32735d6fda0329e96f8c592
   STAGING_VERCEL_PROJECT_NAME: syveka-ai-staging
   STAGING_STABLE_URL: https://syveka-ai-staging.vercel.app
 
