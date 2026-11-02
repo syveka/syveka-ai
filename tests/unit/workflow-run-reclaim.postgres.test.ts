@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
 import {
   CONTACT_MISSING_ERROR,
@@ -67,6 +67,11 @@ const ERRORS: Array<string | null> = [
 
 describe.skipIf(!PG_URL)("workflow run reclaim conditions on PostgreSQL", () => {
   let db: Db;
+  let sql: {
+    connect: () => Promise<void>;
+    query: (q: string) => Promise<{ rows: Array<Record<string, unknown>> }>;
+    end: () => Promise<void>;
+  };
   let orgId: string;
   let workflowId: string;
 
@@ -88,10 +93,15 @@ describe.skipIf(!PG_URL)("workflow run reclaim conditions on PostgreSQL", () => 
   });
 
   beforeAll(async () => {
-    const [{ PrismaClient }, { PrismaPg }] = await Promise.all([
+    const [{ PrismaClient }, { PrismaPg }, pg] = await Promise.all([
       import("@/generated/prisma/client/client"),
       import("@prisma/adapter-pg"),
+      import("pg"),
     ]);
+    sql = new (pg.default ?? pg).Client({
+      connectionString: PG_URL,
+    } as never) as never;
+    await sql.connect();
     db = new PrismaClient({
       adapter: new PrismaPg({ connectionString: PG_URL!, max: 6 }),
     }) as unknown as Db;
@@ -117,6 +127,7 @@ describe.skipIf(!PG_URL)("workflow run reclaim conditions on PostgreSQL", () => 
     if (!db) return;
     await db.organization.delete({ where: { id: orgId } }); // cascades to workflow and runs
     await db.$disconnect();
+    await sql.end();
   });
 
   it("matches exactly the FAILED runs isTerminalRunError() calls retryable, NULL included", async () => {
@@ -181,97 +192,87 @@ describe.skipIf(!PG_URL)("workflow run reclaim conditions on PostgreSQL", () => 
     expect(counts.sort()).toEqual([0, 0, 1]);
   });
 
-  it("a reclaim waiting on a terminal failure's row lock finds it terminal and does nothing", async () => {
-    // Committed as a retryable failure, so the reclaim matches it and has to
-    // wait for the transaction that turns it terminal.
-    const run = await createRun("FAILED", "step failed (DriverAdapterError)");
+  /**
+   * Opens a transaction that turns the run terminal and keeps it open, holding
+   * the row lock, until commit() is called: a barrier, not a timed sleep.
+   */
+  async function holdTerminalFailure(runId: string) {
     let locked!: () => void;
+    let commit!: () => void;
     const lockHeld = new Promise<void>((resolve) => (locked = resolve));
-    const terminalFailure = db.$transaction(
+    const committed = new Promise<void>((resolve) => (commit = resolve));
+    const done = db.$transaction(
       async (tx) => {
         await tx.workflowRun.update({
-          where: { id: run.id },
+          where: { id: runId },
           data: { status: "FAILED", error: CONTACT_NOT_FOUND_ERROR },
         });
         locked();
-        await tx.$executeRaw`select pg_sleep(0.5)`;
+        await committed;
       },
-      { timeout: 10_000 },
+      { timeout: 20_000 },
     );
     await lockHeld;
-    // Sent now (a Prisma query is lazy until awaited), while the failing
-    // transaction holds the row lock: Postgres blocks it, then evaluates it
-    // again against the committed row.
-    let settled = false;
+    return { commit, done };
+  }
+
+  /** Proof from the server that a statement on workflow_runs waits for a lock. */
+  async function waitingOnRowLock(): Promise<number> {
+    const { rows } = await sql.query(
+      `select count(*)::int as n from pg_stat_activity
+       where datname = current_database() and wait_event_type = 'Lock'
+         and query ilike '%workflow_runs%'`,
+    );
+    return Number(rows[0]!.n);
+  }
+
+  it("a reclaim blocked on a terminal failure's row lock re-checks the committed row and takes nothing", async () => {
+    // Committed as a retryable failure, so the reclaim matches the row it sees
+    // and must wait for the transaction that turns it terminal.
+    const run = await createRun("FAILED", "step failed (DriverAdapterError)");
+    const failure = await holdTerminalFailure(run.id);
+    // .then() sends the query now: a Prisma query is lazy until awaited.
     const reclaim = db.workflowRun
       .updateMany({
         where: { id: run.id, ...retryableFailedRunWhere() },
         data: { status: "RUNNING" },
       })
-      .then((r) => {
-        settled = true;
-        return r;
-      });
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(settled).toBe(false); // it is waiting on the lock
-    await terminalFailure;
+      .then((r) => r);
+    await vi.waitFor(async () => expect(await waitingOnRowLock()).toBe(1), { timeout: 10_000 });
+    failure.commit();
+    await failure.done;
     expect((await reclaim).count).toBe(0);
+    expect(await waitingOnRowLock()).toBe(0);
     expect(await db.workflowRun.findUniqueOrThrow({ where: { id: run.id } })).toMatchObject({
       status: "FAILED",
       error: CONTACT_NOT_FOUND_ERROR,
     });
   });
 
-  it("control: the same blocked reclaim without the terminal exclusion would take the run", async () => {
+  it("control: the same blocked reclaim with the pre-#386 condition (any FAILED run) takes it", async () => {
     const run = await createRun("FAILED", "step failed (DriverAdapterError)");
-    let locked!: () => void;
-    const lockHeld = new Promise<void>((resolve) => (locked = resolve));
-    const terminalFailure = db.$transaction(
-      async (tx) => {
-        await tx.workflowRun.update({
-          where: { id: run.id },
-          data: { status: "FAILED", error: CONTACT_NOT_FOUND_ERROR },
-        });
-        locked();
-        await tx.$executeRaw`select pg_sleep(0.3)`;
-      },
-      { timeout: 10_000 },
-    );
-    await lockHeld;
+    const failure = await holdTerminalFailure(run.id);
     const reclaim = db.workflowRun
       .updateMany({ where: { id: run.id, status: "FAILED" }, data: { status: "RUNNING" } })
       .then((r) => r);
-    await terminalFailure;
-    // The pre-#386 condition: any FAILED run. It wins the race, which is what
-    // the terminal exclusion above prevents.
+    await vi.waitFor(async () => expect(await waitingOnRowLock()).toBe(1), { timeout: 10_000 });
+    failure.commit();
+    await failure.done;
     expect((await reclaim).count).toBe(1);
   });
 
-  it("the job's own case: a reclaim during a RUNNING run's failure record takes nothing", async () => {
-    // A run being failed by the job is RUNNING; a reclaim's FAILED condition
-    // doesn't match the committed row, so it neither waits nor takes it.
+  it("the job's own case: a reclaim while a RUNNING run's failure is recorded neither waits nor takes it", async () => {
+    // The job records a failure on a RUNNING run; a reclaim's FAILED
+    // condition doesn't match the committed row, so it doesn't wait for the lock.
     const run = await createRun("RUNNING", null);
-    let locked!: () => void;
-    const lockHeld = new Promise<void>((resolve) => (locked = resolve));
-    const terminalFailure = db.$transaction(
-      async (tx) => {
-        await tx.workflowRun.update({
-          where: { id: run.id },
-          data: { status: "FAILED", error: CONTACT_NOT_FOUND_ERROR },
-        });
-        locked();
-        await tx.$executeRaw`select pg_sleep(0.3)`;
-      },
-      { timeout: 10_000 },
-    );
-    await lockHeld;
+    const failure = await holdTerminalFailure(run.id);
     const reclaim = await db.workflowRun.updateMany({
       where: { id: run.id, ...retryableFailedRunWhere() },
       data: { status: "RUNNING" },
     });
-    expect(reclaim.count).toBe(0);
-    await terminalFailure;
-    // Once committed, it is terminal for every later reclaim too.
+    expect(reclaim.count).toBe(0); // returned while the lock is still held
+    failure.commit();
+    await failure.done;
     expect(
       (
         await db.workflowRun.updateMany({
