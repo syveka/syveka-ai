@@ -1,47 +1,61 @@
-# Staging release handoff — 2026-11-02
+# Staging release handoff — 2026-11-02 (updated)
 
-Status of the authorized staging release of PR #386, the inbound-email setup investigation, and
+Status of the staging release of the merged Android Arabic acceptance fixes (#386) and the Business
+DNA follow-up (#385), the workflow reliability PR #388, the inbound-email setup investigation, and
 plans for the deferred acceptance items.
 
-Nothing here changed staging, production, the database, CI policy or provider settings.
+No merge, deployment, workflow dispatch, environment approval, remote SQL, configuration change or
+paid provider call has been made by this work.
 
-## 1. Release status: blocked by the deploy-only workflow's pinned source
+## 1. Current state (verified 2026-11-02)
 
-| Item                                     | Evidence                                                                                              |
-| ---------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| Authorized candidate                     | `af75e17414d6becfd03d2563403d806a619b8baa`: the PR #386 merge, and current `main`                     |
-| Merge-commit CI                          | [run 41357275509](https://github.com/syveka/syveka-ai/actions/runs/41357275509): success on `af75e17` |
-| Staging before and after                 | `/api/health` reports build `19581f274e87e876343d0eb3be8cf51547485569` (unchanged)                    |
-| Migrations between staging and candidate | none (`git diff 19581f2 af75e17 -- prisma supabase` is empty)                                         |
+| Item                                  | State                                                                                    |
+| ------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `main`                                | `62af0635be6751f7d32735d6fda0329e96f8c592`: the #385 merge, including #386 (`af75e17`)   |
+| CI on `main`                          | [run 41363216530](https://github.com/syveka/syveka-ai/actions/runs/41363216530): success |
+| Staging `/api/health`                 | healthy, build `19581f274e87e876343d0eb3be8cf51547485569`: has neither #386 nor #385     |
+| Migrations between staging and `main` | none (`git diff 19581f2 62af063 -- prisma supabase` is empty)                            |
+| #388 (workflow reliability)           | draft, not merged; main merged in normally; see §5                                       |
+| Deploy-only workflow pin              | `611fd74…` (PR #371): cannot deploy `main`                                               |
 
-**Blocker.** `.github/workflows/staging-deploy-only.yml` deploys only its hardcoded
-`PINNED_SOURCE_SHA` (`611fd74…`, PR #371):
+**Why staging is behind.** `.github/workflows/staging-deploy-only.yml` deploys only its hardcoded
+`PINNED_SOURCE_SHA`:
 
 - the dispatch input must equal the pin;
-- checkout, build, `NEXT_PUBLIC_BUILD_SHA` and both health gates all use the pin.
+- checkout, build, `NEXT_PUBLIC_BUILD_SHA` and both health gates all use it.
 
-It cannot deploy `af75e17` without editing the workflow, which is a protected CI/workflow-policy
-change.
+`staging-release.yml`, the other way to deploy `main`, writes to the staging database
+(`prisma migrate deploy`, Storage SQL, the E2E fixture and password steps), and it was excluded as
+a substitute.
 
-**Not used.** The only other mechanism that deploys `main`, `staging-release.yml`, was not used.
-It writes to the staging database:
+**Prepared, not yet a PR: moving the pin to `62af063`.**
 
-- `prisma migrate deploy` (no migrations are pending);
-- the rerunnable Storage SQL;
-- the E2E organization fixture;
-- the auth-journey password step.
-
-The release authorization excluded using it as a substitute.
-
-**One owner decision unblocks the release.** Either:
-
-1. **Authorize `staging-release.yml` for `af75e17`.** This is how #383 and #384 were released.
-   - It runs the full validation, RLS and storage checks, smoke tests and auth journeys.
-   - It deploys only `main`'s HEAD, which is `af75e17` as long as `main` doesn't move.
-2. **Authorize a workflow PR that changes `PINNED_SOURCE_SHA`** in `staging-deploy-only.yml` to
-   `af75e17…`, then dispatch deploy-only.
-   - This runs no migrations, fixtures or smoke tests.
-   - Proof is limited to the health gate on the stable alias.
+- **Branch:** `ci/staging-deploy-only-pin-62af063`, worktree `C:\Users\lenovo\Desktop\syveka-deploy-pin`.
+- **Committed there:** the test change, at `eb49351026ec0da512d70457bdbac8b5542590d5`.
+- **Not committed:** the one-line workflow change. The repository's command guard reserves
+  `.github/workflows/*` changes for a human, so it is ready, uncommitted, in that worktree for the
+  owner to commit (§7).
+- **What the change is:** `PINNED_SOURCE_SHA` set to `62af0635…`, plus a comment naming the
+  candidate. All 30 workflow tests pass with it locally.
+- **New executed tests (bash, synthetic inputs):**
+  - wrong, short or branch-name source ids are refused;
+  - a wrong or malformed project ref is refused;
+  - a run outside `main` is refused;
+  - staging equal to production is refused;
+  - a pinned commit outside `main`'s history, or not the checked-out one, is refused;
+  - the pin is one full 40-character id.
+- **Kept unchanged:**
+  - input-to-pin equality and the ancestry check;
+  - staging/production separation and credential isolation;
+  - the preview and stable-alias health gates that check the build id;
+  - `concurrency: staging-release` and `environment: staging`;
+  - no migration or SQL step.
+- **Candidate contents.** `62af063` contains #386 and #385 and **excludes #388**.
+- **Build-relevant changes since the old pin `611fd74`:**
+  - the workflow's two repository scripts (`verify-prisma-engine.mjs`, `validate-staging-config.mjs`)
+    are unchanged;
+  - one reviewed dependency was added (`react-markdown`, merged with CI green);
+  - there are no migrations.
 
 ## 2. Inbound email: what is required and how to check it
 
@@ -163,51 +177,155 @@ The opt-in job runs only named files. Proposed diff, **not applied**:
 +          WORKFLOW_PG_URL: ${{ env.SCRATCH_URL }}
          run: |
 -          npx vitest run tests/unit/invitation-seat-limit.postgres.test.ts tests/unit/post-call-concurrency.postgres.test.ts --reporter=default --reporter=json --outputFile=opt-in-postgres.json
-+          npx vitest run tests/unit/invitation-seat-limit.postgres.test.ts tests/unit/post-call-concurrency.postgres.test.ts tests/unit/organization-settings.postgres.test.ts tests/unit/workflow-run-reclaim.postgres.test.ts --reporter=default --reporter=json --outputFile=opt-in-postgres.json
++          npx vitest run tests/unit/invitation-seat-limit.postgres.test.ts tests/unit/post-call-concurrency.postgres.test.ts tests/unit/organization-settings.postgres.test.ts tests/unit/workflow-run-reclaim.postgres.test.ts tests/unit/run-workflow.postgres.test.ts --reporter=default --reporter=json --outputFile=opt-in-postgres.json
 ```
 
 - The job's "must run, not skip" check stays as is.
-- `workflow-run-reclaim.postgres.test.ts` is added by the workflow failure-record PR (§5). Apply
-  this diff only after that PR is merged.
+- `workflow-run-reclaim.postgres.test.ts` and `run-workflow.postgres.test.ts` come with #388. Apply
+  this diff only after #388 is merged.
+- The route suite refuses any non-local database URL. The CI scratch URL is local to the job; check
+  that before wiring.
+- Until then, **neither workflow PostgreSQL suite runs in CI**; they ran locally only.
 
-## 5. Follow-up code (draft PR, not merged or deployed)
+## 5. #388: workflow failure record (draft, not merged or deployed)
 
-The run-workflow job recorded a failure in two separate writes:
+[#388](https://github.com/syveka/syveka-ai/pull/388), branch `fix/workflow-failure-record-atomic`.
+`main` (`62af063`) was merged in normally, with no rebase or force-push. Its diff against `main` is
+the job route, `run-failure.ts` and tests only. The final head and exact-head CI are in the PR.
 
-1. It marked the run FAILED.
-2. It then wrote the creator's notification.
+**What it fixes**, all in `src/app/api/v1/jobs/run-workflow/route.ts`:
 
-Since #386, a terminal failure is never run again. So a notification write that failed after step
-1 (or a failed membership read) was lost permanently: the redelivery skips the terminal run.
+- **Atomic failure record.** The run's FAILED state and the creator's `workflow.failed`
+  notification commit in one transaction. Before, a failed notification write after a terminal
+  failure was lost forever: the redelivery skips terminal runs since #386.
+- **Fenced.** The failure record only fails the run this delivery claimed (its `startedAt`),
+  while it is RUNNING or WAITING, in this organization:
+  - a run reclaimed by another delivery is left alone (`run_superseded`);
+  - a SUCCEEDED or CANCELED result is never overwritten;
+  - a commit that succeeded but whose reply was lost is not written or notified twice;
+  - a run already WAITING when its resume could not be enqueued is failed retryably.
+- **Fallback.** If the record can't be written, a retryable failure is recorded so the redelivery
+  runs the step again. On the final attempt, the creator is told in the same fenced transaction.
+- **`failStep`** only fails a step still CLAIMED. A step whose own transaction committed but whose
+  reply was lost is skipped on redelivery, not repeated (no duplicate activity). This was
+  pre-existing.
+- **`WORKFLOW_RUNS` usage** is best-effort, so a usage write can't turn a success into a failure.
+  This was pre-existing.
 
-**Fix.** [#388](https://github.com/syveka/syveka-ai/pull/388), branch `fix/workflow-failure-record-atomic`, head `2d9376405b544d13ec2ab4b1a16a44a2e807c561`:
+**Evidence (local, disposable PostgreSQL `pgvector/pgvector:pg15` with the full migration history):**
 
-- The FAILED state and the notification commit in one transaction.
-- If that fails, the run keeps a retryable error, so the redelivery runs the step again and records
-  both. The fallback only touches a run that is still RUNNING, so a commit that succeeded but
-  reported an error is never overwritten.
-- An opt-in PostgreSQL suite (7/7 locally) proves the reclaim predicate's SQL behaviour, including
-  NULL, three simultaneous reclaims, and a reclaim blocked on a row lock, with a control. It is not
-  in CI until the §4.3 change is authorized.
-- An independent reliability review approved it for human review; its findings are addressed.
+- **`run-workflow.postgres.test.ts` (17 tests)** drives the real route on PostgreSQL with real
+  QStash signature checks (test-only keys). Its faults:
+  - a PostgreSQL trigger refuses a notification insert;
+  - commit-then-error and fail-before-start transactions, and a query error, injected at the Prisma
+    client boundary.
 
-**Limits.** This is not exactly-once delivery:
+  Its cases:
+  - repeated terminal deliveries, both fresh event and `runId`;
+  - an invalid-recipient terminal failure;
+  - rollback, then recovery;
+  - a committed but errored failure record;
+  - a committed but errored step;
+  - transient recovery;
+  - the final attempt, including a failed record;
+  - a non-member creator;
+  - a WAITING run with a failed enqueue and a failed record;
+  - a usage failure after success;
+  - a superseded run;
+  - five deliveries released together at the run claim, for a failing event and a successful one;
+  - two `runId` resumes released together at the step claim;
+  - a cross-organization `runId`.
 
-- If even the fallback write fails, the run stays RUNNING and is reclaimed once stale, like a crash.
-- A final transient attempt whose record fails ends in the queue's dead-letter list with the run
-  marked failed and no notification.
+- **Fail-first.** The new cases fail on the previous implementation:
+  - 5 fail on `3c5edd2`;
+  - 6 fail on `main`'s route.
 
-## 6. Coordination with PR #385 (owned by another session)
+  The other cases pass on both, because they pin behaviour `main` already had.
 
-- **#385:** `claude/chat-business-dna-completion` at `9fcc93e5a9c555bfc355f2c7f2f6ddbbb56bcad6`,
-  draft.
-- **Shared files with what is now on `main` from #386:**
-  - `messages/en.json`, `messages/fi.json`, `messages/ar.json`;
-  - `src/components/chat/chat-thread.tsx`.
-- **Status.** GitHub reports MERGEABLE/CLEAN, and a local `git merge-tree` of `main` and
-  `9fcc93e` has no conflicts.
-- **Before merging, its owner should rerun:**
-  - `npm run i18n:check`;
-  - the Listen tests (`speech-playback-voice-wait`, `use-speech-playback`), because #386 changed
-    `chat-thread.tsx`'s Listen error rendering.
-- #385 was not modified and is not part of any release here.
+- **`workflow-run-reclaim.postgres.test.ts` (7 tests).**
+  - The reclaim predicate agrees with `isTerminalRunError()` for every stored error kind,
+    including SQL NULL. A check shows the NULL branch is required.
+  - The resume condition.
+  - A conditional reclaim is taken once.
+  - Reclaims blocked on a terminal failure's row lock are proven with `pg_blocking_pids` of the
+    holding transaction, which is kept open by a barrier rather than a sleep. A control shows the
+    pre-#386 condition would take the run.
+  - A non-stale RUNNING run, and a stale RUNNING run that waits and then takes nothing.
+- **Neither suite runs in CI** (§4.3). The fake-database unit suites (16 files) run in CI.
+
+**Independent reviews:**
+
+- **Transactions and recovery:** approve. Its WAITING, final-attempt, fencing and `failStep`
+  findings are fixed.
+- **Tenant isolation and privacy:** no blocking issues. Org binding is added to the failure writes;
+  the test database is guarded as local-only and cleanup is narrowed.
+- **Test fidelity:** approve on condition of accurate claims. The lock probe, stale case, names,
+  barrier scope and fake rollback are fixed, and the CI claims are corrected here and in the PR.
+
+**Limits (not exactly-once):**
+
+- If the database is unreachable for the fallback too, a RUNNING run is reclaimed later. A
+  fresh-event WAITING run whose resume was never enqueued stays WAITING: there is no sweeper.
+- Recovery relies on QStash's default retry backoff (about 12 s, 150 s, 30 min) reaching past the
+  6-minute stale window.
+- Two concurrent `runId` deliveries are separated by the step ledger, not at the run level. On a
+  terminal step both can record a failure.
+
+These are pre-existing and are candidates for a separate change: an explicit `retryDelay` or a
+sweeper.
+
+## 6. PR #385
+
+#385 merged as `62af063` (current `main`), with CI green. Its shared files with #386
+(`messages/*.json`, `chat-thread.tsx`) merged without conflict. #388's diff against `main` touches
+none of them. Draft #389 (another session: tests and docs) doesn't overlap these files.
+
+## 7. Release sequence and the decisions it needs
+
+Recommended order, one decision at a time:
+
+1. **Choose the candidate.**
+   - **(a) Release `62af063` now:** #386 and #385, without #388.
+   - **(b) Merge #388 first**, after reviewing it, then release its merge commit.
+   - #388 changes only job reliability, and staging already runs without it. **(a)** gets the
+     acceptance fixes onto staging soonest; **(b)** needs one more merge decision first.
+2. **Commit the pin (owner, because of the guard).** For (a), in a terminal opened in
+   `C:\Users\lenovo\Desktop\syveka-deploy-pin`:
+
+   ```
+   git add .github/workflows/staging-deploy-only.yml
+   git commit -m "ci(staging): deploy-only builds the reviewed 62af063 candidate"
+   git push -u origin ci/staging-deploy-only-pin-62af063
+   ```
+
+   For (b), first set `PINNED_SOURCE_SHA` and `PINNED` in the test to #388's merge commit, once it
+   exists.
+
+3. **Open the draft PR and review it.** CI must be green on its exact head.
+4. **Authorize merging the workflow PR.** `workflow_dispatch` runs the workflow file from `main`, so
+   the pin must be on `main`. The workflow revision is then that merge commit; the application
+   source it builds is the pin.
+5. **Authorize the dispatch and the `staging` environment approval.** Existing input names (not run):
+
+   ```
+   gh workflow run staging-deploy-only.yml -R syveka/syveka-ai --ref main \
+     -f staging_project_ref=<the 20-character staging Supabase ref> \
+     -f source_sha=62af0635be6751f7d32735d6fda0329e96f8c592
+   ```
+
+6. **Verify.**
+   - The workflow's own gates: the preview health with build id, then promotion, then the
+     stable-alias health with build id.
+   - Then independently: `https://syveka-ai-staging.vercel.app/api/health` reports the pin.
+   - Deploy-only runs no smoke tests or auth journeys. Behaviour checks are the manual device
+     checklist in `docs/android-ar-acceptance-2026-11-01.md`.
+
+**Rollback.** Deploy-only can redeploy any reviewed `main` commit through the same pin process.
+For example, `19581f2`, which staging serves today and which needs no migrations.
+
+**Separate from code (owner actions, unchanged):**
+
+- the inbound mailbox mapping and Resend routing (§2);
+- Stripe annual price confirmation (§3);
+- phone assistant: plan restriction and issue #380;
+- physical Android Listen and screen-reader checks.
