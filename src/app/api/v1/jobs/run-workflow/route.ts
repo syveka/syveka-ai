@@ -1056,7 +1056,21 @@ export async function POST(request: Request): Promise<NextResponse> {
           results.push({ stepId: step.id, status: "ok" });
           if (!(await park())) {
             await failStep(unscopedPrisma, claim, "run superseded before parking");
-            return NextResponse.json({ skipped: "run_superseded" });
+            // Finished meanwhile: nothing left to schedule. Otherwise another
+            // delivery parked or holds the run, and this wait may be the one
+            // left to schedule: this message is delivered again shortly, and
+            // its redelivery reclaims the failed wait claim and parks.
+            const current = await unscopedPrisma.workflowRun.findFirst({
+              where: { id: run.id, organizationId: orgId },
+              select: { status: true, error: true },
+            });
+            const finished =
+              !current ||
+              current.status === "SUCCEEDED" ||
+              current.status === "CANCELED" ||
+              (current.status === "FAILED" && isTerminalRunError(current.error));
+            if (finished) return NextResponse.json({ skipped: "run_superseded" });
+            return retryWhenStale({ error: "run_in_progress" }, new Date());
           }
           try {
             await enqueue(

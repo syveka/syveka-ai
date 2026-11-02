@@ -1242,6 +1242,41 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
     expect(holder.runsCounted).toBe(1);
   });
 
+  it("a resume whose park is refused while the run is unfinished is delivered again and parks", async () => {
+    const { f, runId } = await waitingLongAgo([
+      ...AROUND_A_WAIT,
+      { ...WAIT_STEP, id: "w2" },
+      { ...CRM_STEP, id: "s3" },
+    ]);
+    // While the resume is held before its first claim, another delivery
+    // parks the run on the first wait again (as a stale event delivery can).
+    const [refused] = await atTheSameClaim(
+      "workflowStepExecution",
+      1,
+      () => f.deliver(f.resume(runId, 2)),
+      "create",
+      async () => {
+        await sql.query(`update workflow_runs set status = 'WAITING' where organization_id = $1`, [
+          f.orgId,
+        ]);
+      },
+    );
+    // Not acknowledged: nothing else would schedule the second wait's resume.
+    expectRetryAfter(refused!, 0);
+    expect(await f.steps()).toMatchObject({ s2: "SUCCEEDED", w2: "FAILED" });
+    expect(holder.enqueued).toBe(1);
+
+    expect(await (await f.deliver(f.resume(runId, 2), "1")).json()).toMatchObject({
+      waiting: 60,
+    });
+    expect((await runRow(f.orgId)).status).toBe("WAITING");
+    expect(holder.enqueued).toBe(2);
+    expect(await (await f.deliver(f.resume(runId, 4))).json()).toEqual({ ok: true });
+    expect((await runRow(f.orgId)).status).toBe("SUCCEEDED");
+    expect(await f.count("activities")).toBe(3);
+    expect(holder.runsCounted).toBe(1);
+  });
+
   it("a usage write that fails after success leaves the run SUCCEEDED and tells no one", async () => {
     const f = await fixture();
     holder.failNextUsage = true;
