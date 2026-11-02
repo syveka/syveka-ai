@@ -226,7 +226,7 @@ the job route, `run-failure.ts` and tests only. The final head and exact-head CI
 
 **Evidence (local, disposable PostgreSQL `pgvector/pgvector:pg15` with the full migration history):**
 
-- **`run-workflow.postgres.test.ts` (27 tests)** drives the real route on PostgreSQL with real
+- **`run-workflow.postgres.test.ts` (37 tests)** drives the real route on PostgreSQL with real
   QStash signature checks (test-only keys). Its faults:
   - a PostgreSQL trigger refuses a notification insert;
   - commit-then-error and fail-before-start transactions, and a query error, injected at the Prisma
@@ -294,6 +294,30 @@ the job route, `run-failure.ts` and tests only. The final head and exact-head CI
   - the WAITING reclaim shared an `OR` with the RUNNING-stale branch;
   - one 409 had no `Retry-After`;
   - the event message reclaimed beyond its first wait.
+- **Independent review of the ownership and duplicate-resume fix:** approve after three rounds.
+  Its findings are fixed:
+  - a lost completion write left the first wait CLAIMED while its resume ran;
+  - a re-park by a stale delivery could block the success write;
+  - a refused park was acknowledged while the run was unfinished.
+
+**Ownership and duplicate resumes, without QStash deduplication** (`c311f8e`, `83e777d`,
+`ecb446b`):
+
+- **Ownership.** A resume keeps the run's first `startedAt`, so an active resume looked stale and a
+  fresh duplicate could reclaim it. The event's message now gives up the run once the step ledger
+  shows its first wait SUCCEEDED or any claim on a later step.
+- **No reopening, no running behind.** A `runId` resume never reopens a finished run, and a resume
+  behind an already-succeeded later wait is a duplicate.
+- **Fenced status writes.**
+  - Parking is fenced on RUNNING and the delivery's `startedAt`. A refused park is retried unless
+    the run finished.
+  - The success write only moves an unfinished run to SUCCEEDED, and `WORKFLOW_RUNS` usage is
+    recorded only for that transition.
+- **Tests.** Ten real-PostgreSQL tests with barriers prove the following:
+  - an active resume can't be reclaimed;
+  - duplicate resumes, with no deduplication, run no step twice and count usage once, and leave
+    the right final status;
+  - abandoned runs, before and after the first wait, are still recovered.
 
 **Limits (not exactly-once):**
 
@@ -308,13 +332,13 @@ the job route, `run-failure.ts` and tests only. The final head and exact-head CI
   the same way. `Retry-After` and deduplication are QStash's documented mechanisms, but neither was
   tested against live QStash.
 
-- **Deduplication miss.** If a reclaim after a lost completion write comes more than 10 minutes after
-  the first resume was published, there are two resumes. Each step still runs once, but usage is
-  counted twice and the run can be left RUNNING.
-- **Tracked follow-up (pre-existing).** A `runId` resume keeps the run's first `startedAt`. A
-  fresh-event duplicate arriving during a resume, more than 6 minutes after the first claim, can
-  reclaim it as stale RUNNING. Suggested fix, with no migration: treat RUNNING as stale only when the
-  latest step claim is stale too.
+- **Remaining narrow windows.** All were reviewed and are bounded; each step still runs once.
+  - A resume between its run update and its first step claim looks unowned to a fresh duplicate.
+  - A duplicate resume's final-attempt failure can mark FAILED a run its other resume completed.
+  - Deactivation during a resume ends the run CANCELED.
+  - `stepResults` checkpoints are unconditional.
+- **One check for CI.** Confirm in CI PostgreSQL that Prisma puts the relation filters in the
+  UPDATE statement itself.
 - **Concurrent resumes.** Two concurrent `runId` deliveries are separated by the step ledger, not at
   the run level, and a resumed run rebuilds variables from `stepResults`.
 - **Edited workflows** use the current step list for the decision.
