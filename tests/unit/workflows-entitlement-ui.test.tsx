@@ -438,7 +438,7 @@ describe("WorkflowBuilder", () => {
     );
 
   it.each(["en", "fi", "ar"] as const)(
-    "explains before a test run that a step using the trigger's contact will have none (%s)",
+    "explains before a test run that a CRM activity step will have no contact (%s)",
     async (locale) => {
       actions.testWorkflowAction.mockClear();
       actions.testWorkflowAction.mockResolvedValueOnce({});
@@ -466,6 +466,25 @@ describe("WorkflowBuilder", () => {
       cleanup();
     },
   );
+
+  it("explains it whatever field the CRM step reads its contact from", () => {
+    render(
+      withIntl(
+        <WorkflowBuilder
+          initial={
+            { ...pilot, steps: [{ ...pilot.steps[0], contactIdVar: "vars.contactId" }] } as never
+          }
+          activation={{ block: null, limit: 5 }}
+          timeZone="Europe/Helsinki"
+        />,
+        "en",
+      ),
+    );
+    const hint = screen.getByText(contactHint("en"));
+    expect(screen.getByRole("button", { name: "Test run" }).getAttribute("aria-describedby")).toBe(
+      hint.id,
+    );
+  });
 
   it("shows no contact hint for a workflow without a CRM activity step", () => {
     render(
