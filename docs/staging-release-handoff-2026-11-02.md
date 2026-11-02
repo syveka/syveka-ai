@@ -7,6 +7,21 @@ plans for the deferred acceptance items.
 No merge, deployment, workflow dispatch, environment approval, remote SQL, configuration change or
 paid provider call has been made by this work.
 
+## Update — 2026-11-02 23:38 UTC (later state; the sections below are the historical record)
+
+- **The pin blocker in §1 is resolved.** #390 moved `PINNED_SOURCE_SHA` to `62af063` and was
+  merged as `a02b4d6` (the owner committed the workflow line).
+- **Staging is deployed.** Claude dispatched the deploy-only
+  [run 41453444188](https://github.com/syveka/syveka-ai/actions/runs/41453444188) and approved its
+  `staging` environment, under Ehab's explicit authorization for that one release. It deployed
+  `62af0635be6751f7d32735d6fda0329e96f8c592`. `/api/health` reports healthy, database `ok`,
+  Redis `ok`, with that build. `staging-release.yml` was not used, and no migration or SQL ran.
+- **Owner-observed acceptance** of that release is in `staging-acceptance-2026-11-02.md`.
+- **Still open:** the inbox receiving address and Resend routing (§2), the Stripe Price check
+  (§3), and #388, an unmerged draft that is not deployed.
+- **Draft follow-ups, not deployed:** #391 (audit-log change details on Arabic pages) and #392
+  (a note before a workflow test run).
+
 ## 1. Current state (verified 2026-11-02)
 
 | Item                                  | State                                                                                    |

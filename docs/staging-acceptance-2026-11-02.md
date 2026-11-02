@@ -6,7 +6,7 @@ phone.
 
 - Deployed by [run 41453444188](https://github.com/syveka/syveka-ai/actions/runs/41453444188)
   (workflow file from main `a02b4d6`, the #390 merge).
-- Re-checked on 2026-11-03: `/api/health` reports `healthy`, database `ok`, Redis `ok`, build
+- Re-checked at 2026-11-02 23:38 UTC: `/api/health` reports `healthy`, database `ok`, Redis `ok`, build
   `62af0635be6751f7d32735d6fda0329e96f8c592`.
 - The fixes below are in draft PRs. They are **not deployed**, so nothing here was observed with
   them on a device.
@@ -25,14 +25,15 @@ phone.
 | ------------------------- | --------------------------------------------------------- | -------------------- |
 | Chat → Business DNA       | Preview, cancel, confirm, restore and audit rows work     | OWNER-OBSERVED PASS  |
 | Audit log on Arabic page  | Change-details JSON hard to read (direction)              | FAIL → fixed in PR   |
-| Listen, Samsung Internet  | Arabic reply is read aloud                                | OWNER-OBSERVED PASS  |
-| Listen, Chrome            | 92 voices listed, none Arabic; nothing read               | FAIL (browser), open |
+| Listen, Samsung Internet  | Arabic reply is read aloud                                | OWNER-REPORTED PASS  |
+| Listen, Chrome            | 92 voices listed, none Arabic; nothing read               | FAIL, unresolved     |
 | Billing display           | Monthly and annual amounts and copy as designed           | OWNER-OBSERVED PASS  |
 | Stripe Price objects      | Not inspected                                             | BLOCKED              |
 | Inbox                     | No receiving address for the pilot org; warning shown     | BLOCKED (config)     |
 | Workflow, contact trigger | New contact → one CRM activity, run succeeded             | OWNER-OBSERVED PASS  |
 | Workflow, Test run        | Fails without a contact; explained only after the failure | UX gap → fixed in PR |
 | TalkBack                  | No reliable result                                        | NOT COMPLETED        |
+| FI/EN browser journeys    | Not performed in this session                             | NOT TESTED           |
 
 ## A. Chat → Business DNA
 
@@ -82,9 +83,18 @@ What Ehab observed:
   - The stored data, the visible text and horizontal scrolling are unchanged.
 - **Tests.** `tests/unit/audit-log-page-timezone.test.tsx` renders the real page in Arabic with
   the observed restoration payload.
-  - It asserts that the block is LTR and each value isolated, including an escaped quote.
-  - It asserts that the visible text equals the stored JSON exactly.
+  - It asserts that the block is LTR and each value isolated, including escaped quotes, a
+    newline/tab/backslash value, an Arabic URL with a query and a mixed Arabic/Latin value.
+  - It asserts that the visible text equals the stored JSON exactly and parses back to it, and
+    that the canonical action code is shown as stored.
   - The isolation test fails on unchanged main.
+- **Local browser check (automated, not a device).** The real page's server markup was rendered
+  in Arabic into a static page and opened in desktop Chrome at a 360 px page width:
+  - the fixed block computes `direction: ltr`; the main version computes `rtl` and shows the
+    braces mirrored and the key/value order rearranged, as observed on the phone;
+  - both blocks are 293 px wide in a 359 px column and scroll their 601 px content inside
+    themselves, so the page does not widen;
+  - the text content of both blocks is identical.
 - **Action names** stay canonical codes. Translating them is the deferred design note C5 in
   `android-ar-acceptance-2026-11-01.md`, and it is unchanged here.
 - **Device check after deployment.** Open Settings → Audit log in Arabic and expand "Changes" on a
@@ -93,14 +103,14 @@ What Ehab observed:
 
 ## C. Arabic Listen
 
-**Samsung Internet: owner-observed pass.** Ehab confirmed that an Arabic reply is read aloud.
+**Samsung Internet: owner-reported pass.** Ehab confirmed that an Arabic reply is read aloud.
 
-**Chrome: fail, unresolved; no application defect found.**
+**Chrome: unresolved in the observed session.**
 
 - **Observation.** The app reported 92 available voices, none matching Arabic, and read nothing.
   The diagnostic message appeared correctly.
-- This answers the open question in A1 of `android-ar-acceptance-2026-11-01.md`. Chrome exposes a
-  voice list to the page, and that list has no Arabic voice. It is not an empty or late list.
+- Relative to A1 in `android-ar-acceptance-2026-11-01.md`: in this session the page received a
+  non-empty voice list (92 voices) in which nothing matched Arabic, rather than an empty list.
 - **Code trace.**
   - `src/hooks/use-speech-playback.ts` waits up to 2.5 s for voice-list updates (`voiceschanged`),
     then decides.
@@ -109,15 +119,17 @@ What Ehab observed:
   - `tests/unit/speech-playback-voice-wait.test.tsx` covers these tags, late and partial lists,
     and the "listed but none Arabic" diagnostic. A 92-voice list containing any of these tags
     would have been used.
-- **Conclusion.**
-  - The evidence points to Chrome's voice exposure on this phone, not to Syveka's matching.
-  - Samsung Internet's success does not show that Chrome can speak Arabic. Chrome's 92-voice list
-    does not show that the device lacks Arabic voices.
-  - No code change was made.
-  - Paid or server TTS was not added. That would be a product decision.
-- **Optional owner check (no TalkBack).** In Android Settings → Text-to-speech output, note the
-  preferred engine and whether its Arabic voice data is installed. Then retry Listen in Chrome.
-  This is diagnostic only. Chrome audio is unverified until a device result says otherwise.
+- **Conclusion.** No application defect was identified in the investigated path. Arabic playback
+  remains unavailable in the observed Chrome session; the underlying browser/device cause is not
+  conclusively established.
+  - Samsung Internet's result does not show that Chrome can speak Arabic, and Chrome's list does
+    not show that the device lacks Arabic voices.
+  - The exact tags in Chrome's 92-voice list were not captured, so a tag form outside the
+    tested set cannot be excluded.
+  - No code change was made. Paid or server TTS was not added; that would be a product
+    decision.
+- **Optional, later.** A future Chrome session could record the listed voices' `lang` values. No
+  device setting needs to change for that, and no retest is required for this record.
 
 ## D. Billing display
 
@@ -140,8 +152,11 @@ read. The charge is whatever the Prices behind `STRIPE_PRICE_STARTER_ANNUAL` and
     quantity.
   - An unknown price id is stored as FREE and logs `stripe_unknown_price`.
 
-**Fields to confirm in the Stripe dashboard (test mode for staging), for each of the four
-Prices:**
+**Stripe mode used by staging: unknown.** It is set by the staging secret key, which was not
+read. A key starting `sk_test_`/`rk_test_` means test mode. Open the dashboard in the mode where
+the staging Price ids exist.
+
+**Fields to confirm in the Stripe dashboard, for each of the four Prices:**
 
 | Field          | Starter annual         | Pro annual             | Starter monthly | Pro monthly |
 | -------------- | ---------------------- | ---------------------- | --------------- | ----------- |
@@ -155,7 +170,10 @@ Prices:**
 | Tax behavior   | Record it              | Record it              | Record it       | Record it   |
 | Product        | Starter                | Pro                    | Starter         | Pro         |
 
-- **Per unit and licensed** make the quantity (seats) multiply the amount.
+- **Per unit and licensed** make the quantity (seats) multiply the amount: 3 seats on Starter
+  annual is 3 × €290 per year.
+- **Display versus provider.** The page computes €290/€790 and €24.17/€65.83 from constants
+  (owner-observed correct). Only the Price objects decide what is charged.
 - **Tax behavior** decides whether VAT is added on top of the €290/€790 the page shows (exclusive)
   or included in them (inclusive). This is a product decision if it does not match the intended
   display.
@@ -196,6 +214,16 @@ and both inbound webhook routes are unchanged since #387's handoff.
 
    In Resend's log, 401 means an unknown recipient and 503 means the secret is missing.
 
+**Reading the results:**
+
+- **Ready to test inbound:** the query returns one row whose address is on the Resend inbound
+  domain, `organization_deleted_at` is empty, and the Inbox page no longer shows the warning.
+- **Still blocked:**
+  - no row (step 3 not done);
+  - an address on another domain (it must match `INBOX_EMAIL_DOMAIN` and Resend's inbound
+    domain);
+  - Resend inbound not pointing at the route, or the secret not set (401/503 in Resend's log).
+
 ## F. Workflows
 
 **Contact trigger: owner-observed pass.** The workflow was "Pilot contact workflow test" (active):
@@ -233,6 +261,7 @@ What Ehab observed:
 - **Tests.** `tests/unit/workflows-entitlement-ui.test.tsx` (EN/FI/AR) covers:
   - the note and its link;
   - the button still enabled, with the test run called with only the workflow id;
+  - the note also for a CRM step whose contact field is not `trigger.*`;
   - no note without a CRM activity step;
   - the plan notice still taking precedence.
 
@@ -260,5 +289,6 @@ off was very difficult.
   - TalkBack;
   - Chrome Arabic audio;
   - workflow redelivery and deduplication;
+  - FI/EN browser journeys;
   - the two UI fixes on a device.
 - These partial results are not a customer-launch readiness signal.
