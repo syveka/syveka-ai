@@ -28,7 +28,7 @@ paid provider call has been made by this work.
 (`prisma migrate deploy`, Storage SQL, the E2E fixture and password steps), and it was excluded as
 a substitute.
 
-**Prepared, not yet a PR: moving the pin to `62af063`.**
+**Prepared as draft [#390](https://github.com/syveka/syveka-ai/pull/390): moving the pin to `62af063`.**
 
 - **Branch:** `ci/staging-deploy-only-pin-62af063`, worktree `C:\Users\lenovo\Desktop\syveka-deploy-pin`.
 - **Committed there:** the test change, at `eb49351026ec0da512d70457bdbac8b5542590d5`.
@@ -301,7 +301,7 @@ Recommended order, one decision at a time:
    For (b), first set `PINNED_SOURCE_SHA` and `PINNED` in the test to #388's merge commit, once it
    exists.
 
-3. **Open the draft PR and review it.** CI must be green on its exact head.
+3. **Review #390.** CI must be green on its exact head.
 4. **Authorize merging the workflow PR.** `workflow_dispatch` runs the workflow file from `main`, so
    the pin must be on `main`. The workflow revision is then that merge commit; the application
    source it builds is the pin.
