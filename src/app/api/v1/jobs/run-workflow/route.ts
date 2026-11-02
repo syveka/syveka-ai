@@ -45,8 +45,8 @@ const STALE_STEP_CLAIM_MS = STALE_RUNNING_MS;
  * reclaimable. QStash's default backoff is documented as about 12 s, 2.5 min
  * and 30 min, but not which retry starts the series; if it starts at 1 s, all
  * three retries land inside the 6-minute window and the message ends in the
- * DLQ with the claim never reclaimed. The margin covers the clock difference
- * between this server and the database.
+ * DLQ with the claim never reclaimed. The margin covers clock differences
+ * between the servers that write and read a claim's time.
  */
 const RETRY_AFTER_MARGIN_SECONDS = 10;
 
@@ -482,55 +482,69 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (existing?.status === "FAILED" && isTerminalRunError(existing.error)) {
         return NextResponse.json({ skipped: "terminal_failure" });
       }
-      // A WAITING run normally has its resume scheduled: the wait step is
-      // marked SUCCEEDED only after the resume is enqueued. An unfinished step
-      // means the resume may never have been enqueued (the enqueue failed and
-      // the failure could not be recorded either), and nothing else would ever
-      // deliver this run again: once that step is FAILED or its claim is
-      // stale, the run is reclaimed like a stale RUNNING one. If the resume
-      // was enqueued after all (only its completion write was lost), both
-      // continue, separated by the step ledger as for any two resumes.
-      const unfinishedStep =
-        existing?.status === "WAITING"
-          ? await unscopedPrisma.workflowStepExecution.findFirst({
-              where: {
-                organizationId: orgId,
-                workflowRunId: existing.id,
-                status: { not: "SUCCEEDED" },
-              },
-              orderBy: { startedAt: "asc" },
-            })
-          : null;
-      if (
-        unfinishedStep &&
-        unfinishedStep.status === "CLAIMED" &&
-        unfinishedStep.startedAt >= staleStepSince
-      ) {
-        return retryWhenStale(
-          { error: "run_in_progress" },
-          new Date(unfinishedStep.startedAt.getTime() + STALE_STEP_CLAIM_MS),
-        );
-      }
-      const isReclaimable =
-        existing?.status === "FAILED" ||
-        (existing?.status === "RUNNING" && existing.startedAt < staleSince) ||
-        unfinishedStep !== null;
-      if (!existing || !isReclaimable) {
-        // RUNNING within the window: another delivery is working on it now,
-        // or was killed by the platform less than STALE_RUNNING_MS ago. A 2xx
-        // here would end this message's retries, so a killed run would never
-        // be reclaimed; 409 makes QStash deliver again later, when the run has
-        // finished (acknowledged then) or gone stale (reclaimed then).
-        if (existing?.status === "RUNNING") {
+      let reclaimable: Prisma.WorkflowRunWhereInput;
+      if (existing?.status === "WAITING") {
+        // A WAITING run normally has its resume scheduled: a wait step is
+        // marked SUCCEEDED only after its resume is enqueued, and the run's
+        // latest step claim is that wait step. If that latest claim is
+        // unfinished, the resume may never have been enqueued (the enqueue
+        // failed and nothing could be recorded) and nothing else would ever
+        // deliver this run again: once that claim is FAILED or stale, the
+        // run is reclaimed. Only the latest claim decides: an older
+        // unfinished one is left behind by a resume that already moved on.
+        // If the resume was enqueued after all (only the completion write was
+        // lost), the reclaim enqueues the same resume again under the same
+        // deduplicationId, which QStash drops within its 10-minute window.
+        const latestStep = await unscopedPrisma.workflowStepExecution.findFirst({
+          where: { organizationId: orgId, workflowRunId: existing.id },
+          orderBy: { startedAt: "desc" },
+        });
+        if (latestStep?.status === "CLAIMED" && latestStep.startedAt >= staleStepSince) {
           return retryWhenStale(
             { error: "run_in_progress" },
-            new Date(existing.startedAt.getTime() + STALE_RUNNING_MS),
+            new Date(latestStep.startedAt.getTime() + STALE_STEP_CLAIM_MS),
           );
         }
-        return NextResponse.json({
-          skipped: "duplicate_trigger",
-          duplicate: existing?.status === "SUCCEEDED",
-        });
+        if (!latestStep || latestStep.status === "SUCCEEDED") {
+          return NextResponse.json({ skipped: "duplicate_trigger", duplicate: false });
+        }
+        // Fenced on the state read here, so a resume that set the run
+        // RUNNING meanwhile (or claimed a newer step) is never reclaimed.
+        reclaimable = {
+          status: "WAITING",
+          startedAt: existing.startedAt,
+          stepExecutions: {
+            some: {
+              id: latestStep.id,
+              OR: [{ status: "FAILED" }, { status: "CLAIMED", startedAt: { lt: staleStepSince } }],
+            },
+            none: { startedAt: { gt: latestStep.startedAt } },
+          },
+        };
+      } else {
+        const isReclaimable =
+          existing?.status === "FAILED" ||
+          (existing?.status === "RUNNING" && existing.startedAt < staleSince);
+        if (!existing || !isReclaimable) {
+          // RUNNING within the window: another delivery is working on it now,
+          // or was killed by the platform less than STALE_RUNNING_MS ago. A 2xx
+          // here would end this message's retries, so a killed run would never
+          // be reclaimed; 409 makes QStash deliver again later, when the run has
+          // finished (acknowledged then) or gone stale (reclaimed then).
+          if (existing?.status === "RUNNING") {
+            return retryWhenStale(
+              { error: "run_in_progress" },
+              new Date(existing.startedAt.getTime() + STALE_RUNNING_MS),
+            );
+          }
+          return NextResponse.json({
+            skipped: "duplicate_trigger",
+            duplicate: existing?.status === "SUCCEEDED",
+          });
+        }
+        reclaimable = {
+          OR: [retryableFailedRun, { status: "RUNNING", startedAt: { lt: staleSince } }],
+        };
       }
 
       // Atomic reclaim: a conditional UPDATE, not read-then-write. Under two
@@ -547,26 +561,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       // already-completed step (once from the stale checkpoint, once from
       // the skip logic) without adding any correctness benefit.
       const reclaimed = await unscopedPrisma.workflowRun.updateMany({
-        where: {
-          organizationId: orgId,
-          workflowId,
-          sourceEventKey,
-          OR: [
-            retryableFailedRun,
-            { status: "RUNNING", startedAt: { lt: staleSince } },
-            {
-              status: "WAITING",
-              stepExecutions: {
-                some: {
-                  OR: [
-                    { status: "FAILED" },
-                    { status: "CLAIMED", startedAt: { lt: staleStepSince } },
-                  ],
-                },
-              },
-            },
-          ],
-        },
+        where: { organizationId: orgId, workflowId, sourceEventKey, ...reclaimable },
         data: {
           status: "RUNNING",
           stepResults: [],
@@ -577,7 +572,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       });
       if (reclaimed.count === 0) {
         // A concurrent delivery reclaimed it first and is running it now.
-        return NextResponse.json({ error: "run_in_progress" }, { status: 409 });
+        return retryWhenStale(
+          { error: "run_in_progress" },
+          new Date(Date.now() + STALE_RUNNING_MS),
+        );
       }
       run = await unscopedPrisma.workflowRun.findFirstOrThrow({
         where: { organizationId: orgId, workflowId, sourceEventKey },
@@ -977,7 +975,13 @@ export async function POST(request: Request): Promise<NextResponse> {
                 runId: run.id,
                 resumeFromIndex: i + 1,
               },
-              { delaySeconds: step.seconds },
+              // One resume per run and wait step: a reclaim that enqueues it
+              // again after a lost completion write is dropped by QStash if it
+              // comes within the 10-minute deduplication window.
+              {
+                delaySeconds: step.seconds,
+                deduplicationId: `workflow-resume:${run.id}:${step.id}`,
+              },
             );
           } catch (enqueueErr) {
             // No resume is scheduled: the step must not stay CLAIMED, or the

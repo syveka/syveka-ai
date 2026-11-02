@@ -60,6 +60,7 @@ type AnyClient = Record<string | symbol, unknown> & {
 };
 type Barrier = {
   on: "workflowRun" | "workflowStepExecution";
+  method: "create" | "updateMany";
   arrived: number;
   release: Promise<void>;
 };
@@ -82,6 +83,10 @@ const holder = vi.hoisted(() => ({
   databaseDown: false,
   /** Runs when an enqueue fails (to fail the database writes that follow). */
   onEnqueueFailure: null as null | (() => void),
+  /** Runs when an enqueue succeeds (to lose the completion write after it). */
+  onEnqueueSuccess: null as null | (() => void),
+  /** Each enqueue's deduplicationId. */
+  deduplicationIds: [] as Array<string | undefined>,
   failNextUsage: false,
   failNextEnqueue: false,
   enqueued: 0,
@@ -89,6 +94,7 @@ const holder = vi.hoisted(() => ({
   contactLookups: 0,
   barrier: null as null | {
     on: "workflowRun" | "workflowStepExecution";
+    method: "create" | "updateMany";
     arrived: number;
     release: Promise<void>;
   },
@@ -115,13 +121,15 @@ vi.mock("@/server/services/feature-flags", () => ({
   isRestrictionSet: vi.fn(async () => holder.internalOnly),
 }));
 vi.mock("@/server/jobs/queue", () => ({
-  enqueue: vi.fn(async () => {
+  enqueue: vi.fn(async (_job: string, _payload: unknown, opts?: { deduplicationId?: string }) => {
     if (holder.failNextEnqueue) {
       holder.failNextEnqueue = false;
       holder.onEnqueueFailure?.();
       throw new Error("QStash unavailable");
     }
     holder.enqueued += 1;
+    holder.deduplicationIds.push(opts?.deduplicationId);
+    holder.onEnqueueSuccess?.();
   }),
 }));
 vi.mock("@/server/integrations/anthropic", () => ({
@@ -274,12 +282,12 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
           )
         ).rows.map((r) => [r.step_id, r.status]),
       );
-    /** Moves a step's claim back in time (the time a redelivery waits for). */
-    const ageClaim = (stepId: string, minutes: number) =>
+    /** Lets time pass for the step claims: all move back together. */
+    const passTime = (minutes: number) =>
       sql.query(
-        `update workflow_step_executions set started_at = started_at - make_interval(mins => $3)
-         where organization_id = $1 and step_id = $2`,
-        [orgId, stepId, minutes],
+        `update workflow_step_executions set started_at = started_at - make_interval(mins => $2)
+         where organization_id = $1`,
+        [orgId, minutes],
       );
     /** The resume message the job enqueues for a run parked on a wait. */
     const resume = (runId: string, resumeFromIndex: number) => ({
@@ -307,22 +315,22 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
       count,
       runs,
       steps,
-      ageClaim,
+      passTime,
       resume,
       manualRun,
     };
   }
 
-  /** Wraps one model's create so the active barrier can hold it. */
+  /** Wraps one model's create or updateMany so the active barrier can hold it. */
   const heldCreate = (model: Barrier["on"], delegate: Record<string, unknown>) =>
     new Proxy(delegate, {
       get(d, p, r) {
-        if (p !== "create" || holder.barrier?.on !== model) return Reflect.get(d, p, r);
+        const barrier = holder.barrier;
+        if (barrier?.on !== model || p !== barrier.method) return Reflect.get(d, p, r);
         return async (args: unknown) => {
-          const barrier = holder.barrier!;
           barrier.arrived += 1;
           await barrier.release;
-          return (d.create as (a: unknown) => Promise<unknown>)(args);
+          return (d[p] as (a: unknown) => Promise<unknown>)(args);
         };
       },
     });
@@ -433,22 +441,41 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
 
   /**
    * Starts n deliveries one after another, holds each at the given model's
-   * create (the run claim or the step claim), and releases them together once
-   * all n are waiting there.
+   * create (the run claim or the step claim) or updateMany (the run reclaim),
+   * runs `meanwhile` once all n are waiting there, then releases them
+   * together. A delivery that finishes without reaching that call fails the
+   * test at once (and leaves no wait behind for later tests).
    */
   async function atTheSameClaim(
     on: Barrier["on"],
     n: number,
     start: () => Promise<Response>,
+    method: Barrier["method"] = "create",
+    meanwhile?: () => Promise<void>,
   ): Promise<Response[]> {
     let release!: () => void;
-    holder.barrier = { on, arrived: 0, release: new Promise<void>((r) => (release = r)) };
+    const barrier: Barrier = {
+      on,
+      method,
+      arrived: 0,
+      release: new Promise<void>((r) => (release = r)),
+    };
+    holder.barrier = barrier;
     const pending: Array<Promise<Response>> = [];
-    for (let i = 1; i <= n; i++) {
-      pending.push(start());
-      await vi.waitFor(() => expect(holder.barrier!.arrived).toBe(i), { timeout: 10_000 });
+    try {
+      for (let i = 1; i <= n; i++) {
+        const started = start();
+        pending.push(started);
+        const arrived = await Promise.race([
+          vi.waitFor(() => expect(barrier.arrived).toBe(i), { timeout: 10_000 }).then(() => true),
+          started.then(() => false),
+        ]);
+        if (!arrived) throw new Error(`delivery ${i} finished without reaching ${on}.${method}`);
+      }
+    } finally {
+      holder.barrier = null; // later calls (redeliveries) aren't held
     }
-    holder.barrier = null; // later claims (redeliveries) aren't held
+    await meanwhile?.();
     release();
     return Promise.all(pending);
   }
@@ -463,6 +490,8 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
       failTransactions: 0,
       databaseDown: false,
       onEnqueueFailure: null,
+      onEnqueueSuccess: null,
+      deduplicationIds: [],
       failNextUsage: false,
       failNextEnqueue: false,
       enqueued: 0,
@@ -652,7 +681,7 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
     expectRetryAfter(await f.deliver(f.event(f.contactId), "1"), STALE_SECONDS);
     expect(await f.runs()).toMatchObject([{ status: "WAITING" }]);
 
-    await f.ageClaim("w1", 7);
+    await f.passTime(7);
     const recovered = await f.deliver(f.event(f.contactId), "2");
     expect(await recovered.json()).toMatchObject({ ok: true, waiting: 60 });
     expect(holder.enqueued).toBe(1);
@@ -691,15 +720,18 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
     expect(await f.count("notifications")).toBe(0);
   });
 
-  it("two redeliveries of a WAITING run with no resume, released together at the run claim, enqueue one resume", async () => {
+  it("two redeliveries of a WAITING run with no resume, released together at the run reclaim, enqueue one resume", async () => {
     holder.internalOnly = false;
     const f = await fixture({ steps: AROUND_A_WAIT });
     holder.failNextEnqueue = true;
     holder.onEnqueueFailure = () => (holder.failTransactions = 2);
     expect((await f.deliver(f.event(f.contactId))).status).toBe(500);
 
-    const responses = await atTheSameClaim("workflowRun", 2, () =>
-      f.deliver(f.event(f.contactId), "1"),
+    const responses = await atTheSameClaim(
+      "workflowRun",
+      2,
+      () => f.deliver(f.event(f.contactId), "1"),
+      "updateMany",
     );
     for (const res of responses) expect([200, 409]).toContain(res.status);
     const bodies = await Promise.all(responses.map((r) => r.json()));
@@ -714,6 +746,115 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
       duplicate: false,
     });
     expect(holder.enqueued).toBe(1);
+  });
+
+  it("a resume enqueued whose wait completion was lost is enqueued again under the same deduplicationId", async () => {
+    holder.internalOnly = false;
+    const f = await fixture({ steps: AROUND_A_WAIT });
+    // The resume is enqueued, then the database is unreachable: the wait step
+    // stays CLAIMED although its resume is scheduled.
+    holder.onEnqueueSuccess = () => (holder.databaseDown = true);
+    expect((await f.deliver(f.event(f.contactId))).status).toBe(500);
+    holder.databaseDown = false;
+    holder.onEnqueueSuccess = null;
+    expect(await f.steps()).toEqual({ s1: "SUCCEEDED", w1: "CLAIMED" });
+
+    expectRetryAfter(await f.deliver(f.event(f.contactId), "1"), STALE_SECONDS);
+    await f.passTime(7);
+    expect(await (await f.deliver(f.event(f.contactId), "2")).json()).toMatchObject({
+      waiting: 60,
+    });
+    // The same resume again: QStash keeps one of the two (deduplication).
+    const [run] = await f.runs();
+    expect(holder.deduplicationIds).toEqual([
+      `workflow-resume:${run!.id}:w1`,
+      `workflow-resume:${run!.id}:w1`,
+    ]);
+    expect(await f.count("activities")).toBe(1);
+
+    expect(await (await f.deliver(f.resume(run!.id, 2))).json()).toEqual({ ok: true });
+    expect(await f.runs()).toMatchObject([{ status: "SUCCEEDED" }]);
+    expect(await f.count("activities")).toBe(2);
+    expect(await f.count("notifications")).toBe(0);
+  });
+
+  it("a stale claim left behind on an earlier wait doesn't reclaim a run its resume moved on", async () => {
+    holder.internalOnly = false;
+    const f = await fixture({
+      steps: [...AROUND_A_WAIT, { ...WAIT_STEP, id: "w2" }, { ...CRM_STEP, id: "s3" }],
+    });
+    holder.onEnqueueSuccess = () => (holder.databaseDown = true);
+    expect((await f.deliver(f.event(f.contactId))).status).toBe(500);
+    holder.databaseDown = false;
+    holder.onEnqueueSuccess = null;
+    const [run] = await f.runs();
+    // The scheduled resume runs on and parks on the second wait.
+    expect(await (await f.deliver(f.resume(run!.id, 2))).json()).toMatchObject({ waiting: 60 });
+    await f.passTime(7);
+    expect(await f.steps()).toEqual({
+      s1: "SUCCEEDED",
+      w1: "CLAIMED",
+      s2: "SUCCEEDED",
+      w2: "SUCCEEDED",
+    });
+
+    expect(await (await f.deliver(f.event(f.contactId), "1")).json()).toEqual({
+      skipped: "duplicate_trigger",
+      duplicate: false,
+    });
+    expect(holder.enqueued).toBe(2);
+    const stored = await sql.query(`select step_results from workflow_runs where id = $1`, [
+      run!.id,
+    ]);
+    expect(stored.rows[0]!.step_results).toEqual(
+      expect.arrayContaining([expect.objectContaining({ stepId: "s2", status: "ok" })]),
+    );
+
+    expect(await (await f.deliver(f.resume(run!.id, 4))).json()).toEqual({ ok: true });
+    expect(await f.runs()).toMatchObject([{ status: "SUCCEEDED" }]);
+    expect(await f.count("activities")).toBe(3);
+  });
+
+  it("a WAITING run a resume takes between the read and the reclaim is not reclaimed", async () => {
+    holder.internalOnly = false;
+    const f = await fixture({ steps: AROUND_A_WAIT });
+    holder.failNextEnqueue = true;
+    holder.onEnqueueFailure = () => (holder.failTransactions = 2);
+    expect((await f.deliver(f.event(f.contactId))).status).toBe(500);
+    // A resumed run keeps its first start time, here past the stale window.
+    await sql.query(
+      `update workflow_runs set started_at = started_at - interval '10 minutes' where organization_id = $1`,
+      [f.orgId],
+    );
+    const before = (
+      await sql.query(`select started_at from workflow_runs where organization_id = $1`, [f.orgId])
+    ).rows[0]!.started_at;
+
+    // Held at the reclaim; meanwhile a resume of this run sets it RUNNING
+    // (its start time unchanged).
+    const [res] = await atTheSameClaim(
+      "workflowRun",
+      1,
+      () => f.deliver(f.event(f.contactId), "1"),
+      "updateMany",
+      async () => {
+        await sql.query(`update workflow_runs set status = 'RUNNING' where organization_id = $1`, [
+          f.orgId,
+        ]);
+      },
+    );
+
+    expectRetryAfter(res!, STALE_SECONDS);
+    const after = (
+      await sql.query(
+        `select status::text as status, started_at from workflow_runs where organization_id = $1`,
+        [f.orgId],
+      )
+    ).rows[0]!;
+    expect(after.status).toBe("RUNNING");
+    expect(after.started_at).toEqual(before);
+    expect(holder.enqueued).toBe(0);
+    expect(await f.count("activities")).toBe(1);
   });
 
   it("a run left WAITING by a resume whose enqueue and records failed is recovered by that resume's redelivery", async () => {
@@ -733,7 +874,7 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
     expectRetryAfter(early, STALE_SECONDS);
     expect(await early.json()).toEqual({ error: "step_in_progress", stepId: "w2" });
 
-    await f.ageClaim("w2", 7);
+    await f.passTime(7);
     const recovered = await f.deliver(f.resume(run!.id, 2), "2");
     expect(await recovered.json()).toMatchObject({ ok: true, waiting: 60 });
     expect(holder.enqueued).toBe(2);
