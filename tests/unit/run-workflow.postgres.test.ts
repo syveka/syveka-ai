@@ -36,7 +36,9 @@ function signed(body: string): string {
  *   names the workflows it refuses);
  * - at the Prisma client boundary: a transaction that commits but whose
  *   client gets an error, a transaction that fails before it starts, and a
- *   query error in the contact lookup (the pool itself stays healthy).
+ *   query error in the contact lookup (the pool itself stays healthy);
+ * - after an enqueue fails: the next transactions failing, or the database
+ *   unreachable for every query until the test brings it back.
  *
  * Concurrency is controlled with barriers: deliveries start one after another
  * (the route loads its modules per request, and simultaneous first loads race
@@ -74,6 +76,12 @@ const holder = vi.hoisted(() => ({
   errorAfterNextCommit: false,
   /** The next transaction fails before it starts (nothing commits). */
   failNextTransaction: false,
+  /** This many next transactions fail before they start. */
+  failTransactions: 0,
+  /** Every query fails, as when the database is unreachable. */
+  databaseDown: false,
+  /** Runs when an enqueue fails (to fail the database writes that follow). */
+  onEnqueueFailure: null as null | (() => void),
   failNextUsage: false,
   failNextEnqueue: false,
   enqueued: 0,
@@ -110,6 +118,7 @@ vi.mock("@/server/jobs/queue", () => ({
   enqueue: vi.fn(async () => {
     if (holder.failNextEnqueue) {
       holder.failNextEnqueue = false;
+      holder.onEnqueueFailure?.();
       throw new Error("QStash unavailable");
     }
     holder.enqueued += 1;
@@ -158,6 +167,19 @@ const CRM_STEP = {
   activityType: "TASK",
   subject: "Pilot workflow activity test",
 };
+const WAIT_STEP = { id: "w1", type: "wait.duration", seconds: 60 };
+/** Activity, wait, activity: what a recovered run must do exactly once each. */
+const AROUND_A_WAIT = [CRM_STEP, WAIT_STEP, { ...CRM_STEP, id: "s2" }];
+/** The step and run claims' stale window, in seconds. */
+const STALE_SECONDS = 360;
+
+/** A 409 telling QStash to deliver again just after `seconds` from now. */
+function expectRetryAfter(res: Response, seconds: number) {
+  expect(res.status).toBe(409);
+  const retryAfter = Number(res.headers.get("retry-after"));
+  expect(retryAfter).toBeGreaterThan(seconds - 30);
+  expect(retryAfter).toBeLessThanOrEqual(seconds + 10);
+}
 
 describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
   let real: AnyClient;
@@ -242,6 +264,30 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
           [orgId],
         )
       ).rows as Array<{ id: string; status: string; error: string | null }>;
+    /** Each step's ledger status, by step id. */
+    const steps = async () =>
+      Object.fromEntries(
+        (
+          await sql.query(
+            `select step_id, status::text as status from workflow_step_executions where organization_id = $1`,
+            [orgId],
+          )
+        ).rows.map((r) => [r.step_id, r.status]),
+      );
+    /** Moves a step's claim back in time (the time a redelivery waits for). */
+    const ageClaim = (stepId: string, minutes: number) =>
+      sql.query(
+        `update workflow_step_executions set started_at = started_at - make_interval(mins => $3)
+         where organization_id = $1 and step_id = $2`,
+        [orgId, stepId, minutes],
+      );
+    /** The resume message the job enqueues for a run parked on a wait. */
+    const resume = (runId: string, resumeFromIndex: number) => ({
+      triggerType: "contact.created",
+      triggerData: { contactId },
+      runId,
+      resumeFromIndex,
+    });
     const manualRun = async (triggerData: Record<string, unknown>) => {
       const runId = randomUUID();
       await sql.query(
@@ -260,6 +306,9 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
       event,
       count,
       runs,
+      steps,
+      ageClaim,
+      resume,
       manualRun,
     };
   }
@@ -294,6 +343,14 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
     // boundary only when a test asks for them.
     holder.client = new Proxy(real, {
       get(target, prop, receiver) {
+        if (holder.databaseDown) {
+          const unreachable = async () => {
+            throw Object.assign(new Error("Can't reach database server"), {
+              name: "DriverAdapterError",
+            });
+          };
+          return prop === "$transaction" ? unreachable : new Proxy({}, { get: () => unreachable });
+        }
         if (prop === "contact") {
           const contact = Reflect.get(target, prop, receiver) as Record<string, unknown>;
           return new Proxy(contact, {
@@ -320,8 +377,9 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
         }
         if (prop === "$transaction") {
           return async (fn: unknown, opts?: unknown) => {
-            if (holder.failNextTransaction) {
+            if (holder.failNextTransaction || holder.failTransactions > 0) {
               holder.failNextTransaction = false;
+              holder.failTransactions = Math.max(0, holder.failTransactions - 1);
               throw new Error("Transaction API error: could not start a transaction");
             }
             const result = await target.$transaction(fn, opts);
@@ -402,6 +460,9 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
       beforeContactLookup: null,
       errorAfterNextCommit: false,
       failNextTransaction: false,
+      failTransactions: 0,
+      databaseDown: false,
+      onEnqueueFailure: null,
       failNextUsage: false,
       failNextEnqueue: false,
       enqueued: 0,
@@ -572,6 +633,140 @@ describe.skipIf(!PG_URL)("run-workflow job on PostgreSQL", () => {
     expect(await retry.json()).toMatchObject({ ok: true, waiting: 60 });
     expect(await f.runs()).toMatchObject([{ status: "WAITING" }]);
     expect(holder.enqueued).toBe(1);
+  });
+
+  it("a fresh-event run left WAITING with nothing recorded is reclaimed once its wait claim is stale", async () => {
+    holder.internalOnly = false;
+    const f = await fixture({ steps: AROUND_A_WAIT });
+    // The resume can't be enqueued, and then the database is unreachable: the
+    // wait step can't be failed and the run's failure can't be recorded.
+    holder.failNextEnqueue = true;
+    holder.onEnqueueFailure = () => (holder.databaseDown = true);
+    expect((await f.deliver(f.event(f.contactId))).status).toBe(500);
+    holder.databaseDown = false;
+    expect(await f.runs()).toMatchObject([{ status: "WAITING" }]);
+    expect(await f.steps()).toEqual({ s1: "SUCCEEDED", w1: "CLAIMED" });
+
+    // The redelivery can't tell yet whether that worker is alive: QStash is
+    // told to come back just after the claim goes stale, not acknowledged.
+    expectRetryAfter(await f.deliver(f.event(f.contactId), "1"), STALE_SECONDS);
+    expect(await f.runs()).toMatchObject([{ status: "WAITING" }]);
+
+    await f.ageClaim("w1", 7);
+    const recovered = await f.deliver(f.event(f.contactId), "2");
+    expect(await recovered.json()).toMatchObject({ ok: true, waiting: 60 });
+    expect(holder.enqueued).toBe(1);
+    expect(await f.count("activities")).toBe(1);
+    expect(await f.steps()).toEqual({ s1: "SUCCEEDED", w1: "SUCCEEDED" });
+
+    const [run] = await f.runs();
+    expect(await (await f.deliver(f.resume(run!.id, 2))).json()).toEqual({ ok: true });
+    expect(await f.runs()).toMatchObject([{ status: "SUCCEEDED" }]);
+    expect(await f.count("activities")).toBe(2);
+    expect(await f.count("notifications")).toBe(0);
+
+    // A later delivery of the event changes nothing.
+    expect(await (await f.deliver(f.event(f.contactId), "3")).json()).toEqual({
+      skipped: "duplicate_trigger",
+      duplicate: true,
+    });
+    expect(holder.enqueued).toBe(1);
+    expect(await f.count("activities")).toBe(2);
+  });
+
+  it("a fresh-event run left WAITING with its wait step failed is reclaimed by the next redelivery", async () => {
+    holder.internalOnly = false;
+    const f = await fixture({ steps: AROUND_A_WAIT });
+    holder.failNextEnqueue = true;
+    holder.onEnqueueFailure = () => (holder.failTransactions = 2); // the record and its fallback
+    expect((await f.deliver(f.event(f.contactId))).status).toBe(500);
+    expect(await f.runs()).toMatchObject([{ status: "WAITING" }]);
+    expect(await f.steps()).toEqual({ s1: "SUCCEEDED", w1: "FAILED" });
+
+    const recovered = await f.deliver(f.event(f.contactId), "1");
+    expect(await recovered.json()).toMatchObject({ ok: true, waiting: 60 });
+    expect(await f.runs()).toMatchObject([{ status: "WAITING" }]);
+    expect(holder.enqueued).toBe(1);
+    expect(await f.count("activities")).toBe(1);
+    expect(await f.count("notifications")).toBe(0);
+  });
+
+  it("two redeliveries of a WAITING run with no resume, released together at the run claim, enqueue one resume", async () => {
+    holder.internalOnly = false;
+    const f = await fixture({ steps: AROUND_A_WAIT });
+    holder.failNextEnqueue = true;
+    holder.onEnqueueFailure = () => (holder.failTransactions = 2);
+    expect((await f.deliver(f.event(f.contactId))).status).toBe(500);
+
+    const responses = await atTheSameClaim("workflowRun", 2, () =>
+      f.deliver(f.event(f.contactId), "1"),
+    );
+    for (const res of responses) expect([200, 409]).toContain(res.status);
+    const bodies = await Promise.all(responses.map((r) => r.json()));
+    expect(bodies.filter((b) => b.waiting === 60)).toHaveLength(1);
+    expect(holder.enqueued).toBe(1);
+    expect(await f.steps()).toEqual({ s1: "SUCCEEDED", w1: "SUCCEEDED" });
+    expect(await f.count("activities")).toBe(1);
+    expect(await f.count("notifications")).toBe(0);
+    // The loser's redelivery finds the resume scheduled.
+    expect(await (await f.deliver(f.event(f.contactId), "2")).json()).toEqual({
+      skipped: "duplicate_trigger",
+      duplicate: false,
+    });
+    expect(holder.enqueued).toBe(1);
+  });
+
+  it("a run left WAITING by a resume whose enqueue and records failed is recovered by that resume's redelivery", async () => {
+    holder.internalOnly = false;
+    const f = await fixture({
+      steps: [...AROUND_A_WAIT, { ...WAIT_STEP, id: "w2" }, { ...CRM_STEP, id: "s3" }],
+    });
+    expect(await (await f.deliver(f.event(f.contactId))).json()).toMatchObject({ waiting: 60 });
+    const [run] = await f.runs();
+    holder.failNextEnqueue = true;
+    holder.onEnqueueFailure = () => (holder.databaseDown = true);
+    expect((await f.deliver(f.resume(run!.id, 2))).status).toBe(500);
+    holder.databaseDown = false;
+    expect(await f.steps()).toMatchObject({ s2: "SUCCEEDED", w2: "CLAIMED" });
+
+    const early = await f.deliver(f.resume(run!.id, 2), "1");
+    expectRetryAfter(early, STALE_SECONDS);
+    expect(await early.json()).toEqual({ error: "step_in_progress", stepId: "w2" });
+
+    await f.ageClaim("w2", 7);
+    const recovered = await f.deliver(f.resume(run!.id, 2), "2");
+    expect(await recovered.json()).toMatchObject({ ok: true, waiting: 60 });
+    expect(holder.enqueued).toBe(2);
+    expect(await f.count("activities")).toBe(2);
+
+    expect(await (await f.deliver(f.resume(run!.id, 4))).json()).toEqual({ ok: true });
+    expect(await f.runs()).toMatchObject([{ status: "SUCCEEDED" }]);
+    expect(await f.count("activities")).toBe(3);
+    expect(await f.count("notifications")).toBe(0);
+  });
+
+  it("a delivery finding the event's run RUNNING within the stale window is retried just after it", async () => {
+    const f = await fixture();
+    await sql.query(
+      `insert into workflow_runs (workflow_id, organization_id, status, trigger_data, source_event_key, started_at)
+       values ($1, $2, 'RUNNING', '{}', $3, now() - interval '5 minutes')`,
+      [f.workflowId, f.orgId, f.event(f.contactId).sourceEventKey],
+    );
+    expectRetryAfter(await f.deliver(f.event(f.contactId), "1"), STALE_SECONDS - 300);
+    expect(await f.count("activities")).toBe(0);
+  });
+
+  it("a WAITING run whose resume is scheduled is only acknowledged by a redelivery", async () => {
+    holder.internalOnly = false;
+    const f = await fixture({ steps: AROUND_A_WAIT });
+    expect(await (await f.deliver(f.event(f.contactId))).json()).toMatchObject({ waiting: 60 });
+    expect(await (await f.deliver(f.event(f.contactId), "1")).json()).toEqual({
+      skipped: "duplicate_trigger",
+      duplicate: false,
+    });
+    expect(holder.enqueued).toBe(1);
+    expect(await f.count("activities")).toBe(1);
+    expect(await f.steps()).toEqual({ s1: "SUCCEEDED", w1: "SUCCEEDED" });
   });
 
   it("a usage write that fails after success leaves the run SUCCEEDED and tells no one", async () => {

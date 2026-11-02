@@ -289,7 +289,21 @@ describe("trigger-level idempotency: retry after FAILED", () => {
           organizationId: ORG,
           workflowId: WORKFLOW,
           sourceEventKey: "booking.created:bk-1",
-          OR: [RETRYABLE_FAILED_RUN, { status: "RUNNING", startedAt: { lt: expect.any(Date) } }],
+          OR: [
+            RETRYABLE_FAILED_RUN,
+            { status: "RUNNING", startedAt: { lt: expect.any(Date) } },
+            {
+              status: "WAITING",
+              stepExecutions: {
+                some: {
+                  OR: [
+                    { status: "FAILED" },
+                    { status: "CLAIMED", startedAt: { lt: expect.any(Date) } },
+                  ],
+                },
+              },
+            },
+          ],
         }),
         data: expect.objectContaining({ status: "RUNNING" }),
       }),
@@ -315,8 +329,8 @@ describe("trigger-level idempotency: stale RUNNING reclaim (inferred crash)", ()
   });
 });
 
-describe("trigger-level idempotency: WAITING is never reclaimed regardless of age", () => {
-  it("treats a long-WAITING run (mid wait.duration step) as in-flight, not stale/crashed", async () => {
+describe("trigger-level idempotency: a WAITING run with its resume scheduled is never reclaimed", () => {
+  it("treats a long-WAITING run whose steps all succeeded as in-flight, not stale/crashed", async () => {
     mocks.runCreate.mockRejectedValueOnce(new FakePrismaKnownError("P2002"));
     mocks.runFindFirst.mockResolvedValueOnce(
       runRow({ status: "WAITING", startedAt: new Date(Date.now() - 24 * 60 * 60_000) }), // 1 day
@@ -326,8 +340,14 @@ describe("trigger-level idempotency: WAITING is never reclaimed regardless of ag
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ skipped: "duplicate_trigger", duplicate: false });
-    // WAITING is never a reclaim candidate - the guarded updateMany must not
-    // even be attempted, regardless of how long the wait has been running.
+    // No unfinished step: the resume is scheduled, so the guarded updateMany
+    // must not even be attempted, regardless of how long the wait has been
+    // running. (A WAITING run with an unfinished step: run-workflow.postgres.)
+    expect(mocks.stepExecFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ organizationId: ORG, status: { not: "SUCCEEDED" } }),
+      }),
+    );
     expect(mocks.runUpdateMany).not.toHaveBeenCalled();
   });
 });

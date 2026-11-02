@@ -39,6 +39,25 @@ const STALE_RUNNING_MS = 6 * 60_000;
  */
 const STALE_STEP_CLAIM_MS = STALE_RUNNING_MS;
 
+/**
+ * A 409 for a claim that is not yet stale: QStash delivers the message again
+ * after Retry-After, set to just past the moment the claim becomes
+ * reclaimable. QStash's default backoff is documented as about 12 s, 2.5 min
+ * and 30 min, but not which retry starts the series; if it starts at 1 s, all
+ * three retries land inside the 6-minute window and the message ends in the
+ * DLQ with the claim never reclaimed. The margin covers the clock difference
+ * between this server and the database.
+ */
+const RETRY_AFTER_MARGIN_SECONDS = 10;
+
+function retryWhenStale(body: Record<string, unknown>, staleAt: Date): NextResponse {
+  const seconds = Math.max(
+    1,
+    Math.ceil((staleAt.getTime() - Date.now()) / 1000) + RETRY_AFTER_MARGIN_SECONDS,
+  );
+  return NextResponse.json(body, { status: 409, headers: { "Retry-After": String(seconds) } });
+}
+
 const payloadSchema = z.object({
   workflowId: z.string().guid(),
   orgId: z.string().guid(),
@@ -99,7 +118,7 @@ function isRecordNotFound(err: unknown): boolean {
 type StepClaimResult =
   | { claimed: true; stepExecutionId: string; startedAt: Date }
   | { claimed: false; reason: "succeeded"; output: unknown }
-  | { claimed: false; reason: "in_progress" };
+  | { claimed: false; reason: "in_progress"; staleAt: Date };
 
 /**
  * Thrown when a step's completion/failure write loses an optimistic-
@@ -201,7 +220,11 @@ async function claimStep(
     const staleSince = new Date(Date.now() - STALE_STEP_CLAIM_MS);
     const isReclaimable = existing.status === "FAILED" || existing.startedAt < staleSince;
     if (!isReclaimable) {
-      return { claimed: false, reason: "in_progress" };
+      return {
+        claimed: false,
+        reason: "in_progress",
+        staleAt: new Date(existing.startedAt.getTime() + STALE_STEP_CLAIM_MS),
+      };
     }
 
     // Atomic reclaim: a conditional UPDATE, not read-then-write - same
@@ -215,7 +238,12 @@ async function claimStep(
       data: { status: "CLAIMED", error: null, startedAt: reclaimedStartedAt, finishedAt: null },
     });
     if (reclaimed.count === 0) {
-      return { claimed: false, reason: "in_progress" };
+      // Another delivery reclaimed it just now: its claim is fresh.
+      return {
+        claimed: false,
+        reason: "in_progress",
+        staleAt: new Date(Date.now() + STALE_STEP_CLAIM_MS),
+      };
     }
     return { claimed: true, stepExecutionId: existing.id, startedAt: reclaimedStartedAt };
   }
@@ -441,20 +469,52 @@ export async function POST(request: Request): Promise<NextResponse> {
       if (!isUniqueViolation(err)) throw err;
 
       // Lost the create to an existing row for this exact source event.
-      // SUCCEEDED/WAITING, or RUNNING within STALE_RUNNING_MS, means another
-      // delivery already owns or finished this event - acknowledge without
-      // reprocessing. Only FAILED, or RUNNING past the staleness window
-      // (inferred crash - nothing left to resume it), is reclaimable.
+      // SUCCEEDED, WAITING with its resume scheduled, or RUNNING within
+      // STALE_RUNNING_MS, means another delivery already owns or finished this
+      // event - acknowledge without reprocessing. Only FAILED, RUNNING past the
+      // staleness window (inferred crash - nothing left to resume it), or
+      // WAITING with no resume scheduled (below) is reclaimable.
       const existing = await unscopedPrisma.workflowRun.findFirst({
         where: { organizationId: orgId, workflowId, sourceEventKey },
       });
       const staleSince = new Date(Date.now() - STALE_RUNNING_MS);
+      const staleStepSince = new Date(Date.now() - STALE_STEP_CLAIM_MS);
       if (existing?.status === "FAILED" && isTerminalRunError(existing.error)) {
         return NextResponse.json({ skipped: "terminal_failure" });
       }
+      // A WAITING run normally has its resume scheduled: the wait step is
+      // marked SUCCEEDED only after the resume is enqueued. An unfinished step
+      // means the resume may never have been enqueued (the enqueue failed and
+      // the failure could not be recorded either), and nothing else would ever
+      // deliver this run again: once that step is FAILED or its claim is
+      // stale, the run is reclaimed like a stale RUNNING one. If the resume
+      // was enqueued after all (only its completion write was lost), both
+      // continue, separated by the step ledger as for any two resumes.
+      const unfinishedStep =
+        existing?.status === "WAITING"
+          ? await unscopedPrisma.workflowStepExecution.findFirst({
+              where: {
+                organizationId: orgId,
+                workflowRunId: existing.id,
+                status: { not: "SUCCEEDED" },
+              },
+              orderBy: { startedAt: "asc" },
+            })
+          : null;
+      if (
+        unfinishedStep &&
+        unfinishedStep.status === "CLAIMED" &&
+        unfinishedStep.startedAt >= staleStepSince
+      ) {
+        return retryWhenStale(
+          { error: "run_in_progress" },
+          new Date(unfinishedStep.startedAt.getTime() + STALE_STEP_CLAIM_MS),
+        );
+      }
       const isReclaimable =
         existing?.status === "FAILED" ||
-        (existing?.status === "RUNNING" && existing.startedAt < staleSince);
+        (existing?.status === "RUNNING" && existing.startedAt < staleSince) ||
+        unfinishedStep !== null;
       if (!existing || !isReclaimable) {
         // RUNNING within the window: another delivery is working on it now,
         // or was killed by the platform less than STALE_RUNNING_MS ago. A 2xx
@@ -462,7 +522,10 @@ export async function POST(request: Request): Promise<NextResponse> {
         // be reclaimed; 409 makes QStash deliver again later, when the run has
         // finished (acknowledged then) or gone stale (reclaimed then).
         if (existing?.status === "RUNNING") {
-          return NextResponse.json({ error: "run_in_progress" }, { status: 409 });
+          return retryWhenStale(
+            { error: "run_in_progress" },
+            new Date(existing.startedAt.getTime() + STALE_RUNNING_MS),
+          );
         }
         return NextResponse.json({
           skipped: "duplicate_trigger",
@@ -488,7 +551,21 @@ export async function POST(request: Request): Promise<NextResponse> {
           organizationId: orgId,
           workflowId,
           sourceEventKey,
-          OR: [retryableFailedRun, { status: "RUNNING", startedAt: { lt: staleSince } }],
+          OR: [
+            retryableFailedRun,
+            { status: "RUNNING", startedAt: { lt: staleSince } },
+            {
+              status: "WAITING",
+              stepExecutions: {
+                some: {
+                  OR: [
+                    { status: "FAILED" },
+                    { status: "CLAIMED", startedAt: { lt: staleStepSince } },
+                  ],
+                },
+              },
+            },
+          ],
         },
         data: {
           status: "RUNNING",
@@ -591,10 +668,7 @@ export async function POST(request: Request): Promise<NextResponse> {
               results.push({ stepId: step.id, status: "ok", output: text });
               break;
             }
-            return NextResponse.json(
-              { error: "step_in_progress", stepId: step.id },
-              { status: 409 },
-            );
+            return retryWhenStale({ error: "step_in_progress", stepId: step.id }, claim.staleAt);
           }
           try {
             // Checked only for a step this attempt actually claimed: a
@@ -686,10 +760,7 @@ export async function POST(request: Request): Promise<NextResponse> {
               results.push({ stepId: step.id, status: "ok" });
               break;
             }
-            return NextResponse.json(
-              { error: "step_in_progress", stepId: step.id },
-              { status: 409 },
-            );
+            return retryWhenStale({ error: "step_in_progress", stepId: step.id }, claim.staleAt);
           }
           try {
             const to = interpolate(step.to, ctx);
@@ -735,10 +806,7 @@ export async function POST(request: Request): Promise<NextResponse> {
               results.push({ stepId: step.id, status: "ok" });
               break;
             }
-            return NextResponse.json(
-              { error: "step_in_progress", stepId: step.id },
-              { status: 409 },
-            );
+            return retryWhenStale({ error: "step_in_progress", stepId: step.id }, claim.staleAt);
           }
           try {
             // The contact field can be empty: a manual test run carries no
@@ -823,10 +891,7 @@ export async function POST(request: Request): Promise<NextResponse> {
               );
               break;
             }
-            return NextResponse.json(
-              { error: "step_in_progress", stepId: step.id },
-              { status: 409 },
-            );
+            return retryWhenStale({ error: "step_in_progress", stepId: step.id }, claim.staleAt);
           }
           try {
             // Same atomic-transaction + fencing treatment as
@@ -897,10 +962,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                 stepId: step.id,
               });
             }
-            return NextResponse.json(
-              { error: "step_in_progress", stepId: step.id },
-              { status: 409 },
-            );
+            return retryWhenStale({ error: "step_in_progress", stepId: step.id }, claim.staleAt);
           }
           results.push({ stepId: step.id, status: "ok" });
           await persist("WAITING");
@@ -1028,11 +1090,12 @@ export async function POST(request: Request): Promise<NextResponse> {
       //   so the redelivery runs the step again and records both;
       // - the final attempt: nothing will deliver again, so tell the creator
       //   now, together with the retryable failure.
-      // Limit: if this write fails too (the database is unreachable), the run
-      // keeps its status: RUNNING is reclaimed by a fresh-event redelivery
-      // once stale and by a runId resume at once; WAITING only by a runId
-      // resume, so a WAITING fresh-event run whose resume was never enqueued
-      // stays WAITING.
+      // If this write fails too (the database is unreachable), the run keeps
+      // its status and the step its claim. The redelivery of this message
+      // recovers it once that claim is stale, whether the run is RUNNING or
+      // WAITING; until then it answers 409 with Retry-After. Limit: the
+      // database must be back within QStash's retries, or the message ends in
+      // the DLQ (replaying it from there recovers the run the same way).
       await unscopedPrisma
         .$transaction((tx) =>
           recordFailure(tx, failureText(recordErr, "failure not recorded"), finalAttempt),
