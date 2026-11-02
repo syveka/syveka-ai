@@ -11,12 +11,11 @@ import {
 
 /**
  * The run-workflow job's reclaim and resume conditions on real PostgreSQL:
- * SQL NULL semantics, agreement with isTerminalRunError(), simultaneous
- * reclaims, and a reclaim blocked on a terminal failure's row lock. The last
- * test only checks that the notification's foreign key makes the shared
- * transaction roll back; the job's own behaviour is covered by
- * run-workflow-contact-field.test.ts. Not wired into CI yet (protected ci.yml
- * change): run it with WORKFLOW_PG_URL set.
+ * SQL NULL semantics, agreement with isTerminalRunError(), the conditional
+ * reclaim taken once, and reclaims blocked on a terminal failure's row lock
+ * (proven with pg_blocking_pids against the holding transaction). The route
+ * itself runs on PostgreSQL in run-workflow.postgres.test.ts. Not wired into
+ * CI yet (protected ci.yml change): run it with WORKFLOW_PG_URL set.
  *
  * Skipped unless WORKFLOW_PG_URL points at a scratch database prepared as in
  * CI (tests/migrations/supabase-compatibility.sql, then `prisma migrate
@@ -33,6 +32,7 @@ type Tx = {
   };
   notification: { create: (a: { data: Where }) => Promise<unknown> };
   $executeRaw: (q: TemplateStringsArray, ...v: unknown[]) => Promise<number>;
+  $queryRaw: <T>(q: TemplateStringsArray, ...v: unknown[]) => Promise<T>;
 };
 type Db = Tx & {
   $transaction: <T>(fn: (tx: Tx) => Promise<T>, opts?: object) => Promise<T>;
@@ -69,7 +69,7 @@ describe.skipIf(!PG_URL)("workflow run reclaim conditions on PostgreSQL", () => 
   let db: Db;
   let sql: {
     connect: () => Promise<void>;
-    query: (q: string) => Promise<{ rows: Array<Record<string, unknown>> }>;
+    query: (q: string, values?: unknown[]) => Promise<{ rows: Array<Record<string, unknown>> }>;
     end: () => Promise<void>;
   };
   let orgId: string;
@@ -181,7 +181,9 @@ describe.skipIf(!PG_URL)("workflow run reclaim conditions on PostgreSQL", () => 
     );
   });
 
-  it("two simultaneous reclaims of one retryable run: exactly one wins", async () => {
+  it("of several attempts to reclaim one retryable run, exactly one takes it", async () => {
+    // The conditional update is the guard: once one attempt has set RUNNING,
+    // the others no longer match, whatever order they run in.
     const run = await createRun("FAILED", "step failed (DriverAdapterError)");
     const reclaim = () =>
       db.workflowRun.updateMany({
@@ -195,11 +197,12 @@ describe.skipIf(!PG_URL)("workflow run reclaim conditions on PostgreSQL", () => 
   /**
    * Opens a transaction that turns the run terminal and keeps it open, holding
    * the row lock, until commit() is called: a barrier, not a timed sleep.
+   * Returns the holding backend's pid, to prove who is blocked by it.
    */
   async function holdTerminalFailure(runId: string) {
-    let locked!: () => void;
+    let locked!: (pid: number) => void;
     let commit!: () => void;
-    const lockHeld = new Promise<void>((resolve) => (locked = resolve));
+    const lockHeld = new Promise<number>((resolve) => (locked = resolve));
     const committed = new Promise<void>((resolve) => (commit = resolve));
     const done = db.$transaction(
       async (tx) => {
@@ -207,21 +210,23 @@ describe.skipIf(!PG_URL)("workflow run reclaim conditions on PostgreSQL", () => 
           where: { id: runId },
           data: { status: "FAILED", error: CONTACT_NOT_FOUND_ERROR },
         });
-        locked();
+        const [backend] = await tx.$queryRaw<
+          Array<{ pid: number }>
+        >`select pg_backend_pid() as pid`;
+        locked(Number(backend!.pid));
         await committed;
       },
       { timeout: 20_000 },
     );
-    await lockHeld;
-    return { commit, done };
+    const holderPid = await lockHeld;
+    return { commit, done, holderPid };
   }
 
-  /** Proof from the server that a statement on workflow_runs waits for a lock. */
-  async function waitingOnRowLock(): Promise<number> {
+  /** Proof from the server: how many backends are blocked by this holder's locks. */
+  async function blockedBy(holderPid: number): Promise<number> {
     const { rows } = await sql.query(
-      `select count(*)::int as n from pg_stat_activity
-       where datname = current_database() and wait_event_type = 'Lock'
-         and query ilike '%workflow_runs%'`,
+      `select count(*)::int as n from pg_stat_activity where $1 = any(pg_blocking_pids(pid))`,
+      [holderPid],
     );
     return Number(rows[0]!.n);
   }
@@ -238,11 +243,12 @@ describe.skipIf(!PG_URL)("workflow run reclaim conditions on PostgreSQL", () => 
         data: { status: "RUNNING" },
       })
       .then((r) => r);
-    await vi.waitFor(async () => expect(await waitingOnRowLock()).toBe(1), { timeout: 10_000 });
+    await vi.waitFor(async () => expect(await blockedBy(failure.holderPid)).toBe(1), {
+      timeout: 10_000,
+    });
     failure.commit();
     await failure.done;
     expect((await reclaim).count).toBe(0);
-    expect(await waitingOnRowLock()).toBe(0);
     expect(await db.workflowRun.findUniqueOrThrow({ where: { id: run.id } })).toMatchObject({
       status: "FAILED",
       error: CONTACT_NOT_FOUND_ERROR,
@@ -255,56 +261,55 @@ describe.skipIf(!PG_URL)("workflow run reclaim conditions on PostgreSQL", () => 
     const reclaim = db.workflowRun
       .updateMany({ where: { id: run.id, status: "FAILED" }, data: { status: "RUNNING" } })
       .then((r) => r);
-    await vi.waitFor(async () => expect(await waitingOnRowLock()).toBe(1), { timeout: 10_000 });
+    await vi.waitFor(async () => expect(await blockedBy(failure.holderPid)).toBe(1), {
+      timeout: 10_000,
+    });
     failure.commit();
     await failure.done;
     expect((await reclaim).count).toBe(1);
   });
 
-  it("the job's own case: a reclaim while a RUNNING run's failure is recorded neither waits nor takes it", async () => {
-    // The job records a failure on a RUNNING run; a reclaim's FAILED
-    // condition doesn't match the committed row, so it doesn't wait for the lock.
+  it("a run still RUNNING within the stale window: a reclaim during its failure record neither waits nor takes it", async () => {
     const run = await createRun("RUNNING", null);
     const failure = await holdTerminalFailure(run.id);
+    const staleSince = new Date(Date.now() - 6 * 60_000);
     const reclaim = await db.workflowRun.updateMany({
-      where: { id: run.id, ...retryableFailedRunWhere() },
+      where: {
+        id: run.id,
+        OR: [retryableFailedRunWhere(), { status: "RUNNING", startedAt: { lt: staleSince } }],
+      },
       data: { status: "RUNNING" },
     });
     expect(reclaim.count).toBe(0); // returned while the lock is still held
+    expect(await blockedBy(failure.holderPid)).toBe(0);
     failure.commit();
     await failure.done;
-    expect(
-      (
-        await db.workflowRun.updateMany({
-          where: { id: run.id, ...retryableFailedRunWhere() },
-          data: { status: "RUNNING" },
-        })
-      ).count,
-    ).toBe(0);
   });
 
-  it("schema check: a failed notification insert rolls back the run update in the same transaction", async () => {
-    const run = await createRun("RUNNING", null);
-    // Same shape as the job's failure record; the notification's user does
-    // not exist, so the insert fails on its foreign key.
-    await expect(
-      db.$transaction(async (tx) => {
-        await tx.workflowRun.update({
-          where: { id: run.id },
-          data: { status: "FAILED", error: CONTACT_NOT_FOUND_ERROR, finishedAt: new Date() },
-        });
-        await tx.notification.create({
-          data: {
-            organizationId: orgId,
-            userId: randomUUID(),
-            type: "workflow.failed",
-            title: "Reclaim test",
-          },
-        });
-      }),
-    ).rejects.toThrow();
-    // Nothing terminal was recorded, so a redelivery can still run and notify.
-    const after = await db.workflowRun.findUniqueOrThrow({ where: { id: run.id } });
-    expect(after).toMatchObject({ status: "RUNNING", error: null });
+  it("a stale RUNNING run: the job's full reclaim waits on its failure record, then takes nothing", async () => {
+    // A worker still recording the failure of a run older than the stale
+    // window: the route's reclaim matches the stale row and has to wait.
+    const run = await createRun("RUNNING", null, new Date(Date.now() - 10 * 60_000));
+    const failure = await holdTerminalFailure(run.id);
+    const staleSince = new Date(Date.now() - 6 * 60_000);
+    const reclaim = db.workflowRun
+      .updateMany({
+        where: {
+          id: run.id,
+          OR: [retryableFailedRunWhere(), { status: "RUNNING", startedAt: { lt: staleSince } }],
+        },
+        data: { status: "RUNNING" },
+      })
+      .then((r) => r);
+    await vi.waitFor(async () => expect(await blockedBy(failure.holderPid)).toBe(1), {
+      timeout: 10_000,
+    });
+    failure.commit();
+    await failure.done;
+    expect((await reclaim).count).toBe(0);
+    expect(await db.workflowRun.findUniqueOrThrow({ where: { id: run.id } })).toMatchObject({
+      status: "FAILED",
+      error: CONTACT_NOT_FOUND_ERROR,
+    });
   });
 });

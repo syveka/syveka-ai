@@ -272,10 +272,13 @@ async function failStep(
   // FAILED status/error from the same thrown error, so a failure recording
   // this step's own status must never mask or replace that. Also
   // fencing-guarded (see completeStep) so a superseded worker's failure
-  // can never overwrite a reclaiming worker's SUCCEEDED/FAILED status.
+  // can never overwrite a reclaiming worker's SUCCEEDED/FAILED status, and
+  // only a step still CLAIMED is failed: if the step's own transaction
+  // committed but the client got an error, the step stays SUCCEEDED and a
+  // redelivery skips it instead of repeating its side effect.
   await unscopedPrisma.workflowStepExecution
     .updateMany({
-      where: { id: claim.stepExecutionId, startedAt: claim.startedAt },
+      where: { id: claim.stepExecutionId, startedAt: claim.startedAt, status: "CLAIMED" },
       data: { status: "FAILED", error: error.slice(0, 500), finishedAt: new Date() },
     })
     .catch(() => undefined);
@@ -937,7 +940,17 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
 
     await persist("SUCCEEDED");
-    await recordUsage(orgId, "WORKFLOW_RUNS", 1, { workflowId });
+    // Best-effort, like the per-step usage: a usage write that fails must not
+    // turn a run that succeeded into a failure.
+    await recordUsage(orgId, "WORKFLOW_RUNS", 1, { workflowId }).catch((usageErr: unknown) => {
+      console.error("run-workflow: usage recording failed", {
+        orgId,
+        workflowId,
+        runId: run.id,
+        metric: "WORKFLOW_RUNS",
+        errorClass: usageErr instanceof Error ? usageErr.name : typeof usageErr,
+      });
+    });
     return NextResponse.json({ ok: true });
   } catch (err) {
     const message = failureText(err, "step failed").slice(0, 500);
@@ -956,58 +969,78 @@ export async function POST(request: Request): Promise<NextResponse> {
     // A refusal or a step error (invalid recipient, missing or unknown
     // contact) fails the same way on every attempt, so it ends the job now.
     const terminal = err instanceof WorkflowStepRefusedError || err instanceof WorkflowStepError;
+    const finalAttempt = !jobWillBeRetried(request);
+    /**
+     * Fails this worker's own unfinished run and, if asked, tells the creator,
+     * in the caller's transaction. Fenced: only the run this delivery claimed
+     * (its startedAt; a stale reclaim gives the run a new one), only while it
+     * is RUNNING or WAITING (never over a SUCCEEDED or CANCELED result), and
+     * only in this organization. Returns false when there was nothing to fail.
+     */
+    const recordFailure = async (
+      tx: Prisma.TransactionClient,
+      error: string,
+      notify: boolean,
+    ): Promise<boolean> => {
+      const failed = await tx.workflowRun.updateMany({
+        where: {
+          id: run.id,
+          organizationId: orgId,
+          startedAt: run.startedAt,
+          status: { in: ["RUNNING", "WAITING"] },
+        },
+        data: {
+          stepResults: results as Prisma.InputJsonValue,
+          status: "FAILED",
+          finishedAt: new Date(),
+          error,
+        },
+      });
+      if (failed.count === 0) return false;
+      if (notify && (await isCurrentMember(tx, orgId, workflow.createdById))) {
+        await tx.notification.create({
+          data: {
+            organizationId: orgId,
+            userId: workflow.createdById,
+            type: "workflow.failed",
+            title: workflow.name,
+            body: message,
+            href: `/workflows/${workflowId}`,
+          },
+        });
+      }
+      return true;
+    };
     // The FAILED state and the creator's notification commit together. A
     // terminal failure is never run again (TERMINAL_RUN_ERRORS) and a final
     // attempt has no retry left, so a notification written separately after
     // the run had failed, and lost to an error, would never be written.
+    let recorded: boolean;
     try {
-      await unscopedPrisma.$transaction(async (tx) => {
-        await tx.workflowRun.update({
-          where: { id: run.id },
-          data: {
-            stepResults: results as Prisma.InputJsonValue,
-            status: "FAILED",
-            finishedAt: new Date(),
-            error: message,
-          },
-        });
-        if (
-          (terminal || !jobWillBeRetried(request)) &&
-          (await isCurrentMember(tx, orgId, workflow.createdById))
-        ) {
-          await tx.notification.create({
-            data: {
-              organizationId: orgId,
-              userId: workflow.createdById,
-              type: "workflow.failed",
-              title: workflow.name,
-              body: message,
-              href: `/workflows/${workflowId}`,
-            },
-          });
-        }
-      });
+      recorded = await unscopedPrisma.$transaction((tx) =>
+        recordFailure(tx, message, terminal || finalAttempt),
+      );
     } catch (recordErr) {
-      // Normally nothing was recorded: leave a retryable failure (not a
-      // terminal text) so a redelivery runs the step again and records both.
-      // Only a run still RUNNING is touched, so a commit that succeeded but
-      // reported an error is not overwritten (which would notify twice).
-      // Limits: if this write fails too, the run stays RUNNING and is
-      // reclaimed once stale, like a crash; on the final attempt there is no
-      // redelivery, so the notification is lost and the run shows a generic
-      // failure (the step's own text stays in stepResults).
-      await unscopedPrisma.workflowRun
-        .updateMany({
-          where: { id: run.id, status: "RUNNING" },
-          data: {
-            stepResults: results as Prisma.InputJsonValue,
-            status: "FAILED",
-            finishedAt: new Date(),
-            error: failureText(recordErr, "failure not recorded"),
-          },
-        })
+      // Normally nothing committed. If the commit did succeed and only the
+      // reply was lost, the run is FAILED now and the fenced write below
+      // matches nothing, so nothing is written or notified twice. Otherwise:
+      // - a retry is coming: leave a retryable failure (not a terminal text)
+      //   so the redelivery runs the step again and records both;
+      // - the final attempt: nothing will deliver again, so tell the creator
+      //   now, together with the retryable failure.
+      // Limit: if this write fails too, the run stays RUNNING or WAITING; a
+      // fresh-event redelivery reclaims it once stale, a runId resume at once.
+      await unscopedPrisma
+        .$transaction((tx) =>
+          recordFailure(tx, failureText(recordErr, "failure not recorded"), finalAttempt),
+        )
         .catch(() => undefined);
       return NextResponse.json({ error: message }, { status: 500 });
+    }
+    if (!recorded) {
+      // Another delivery reclaimed this run (or it finished meanwhile): its
+      // outcome stands, and this delivery has nothing left to do.
+      return NextResponse.json({ skipped: "run_superseded" });
     }
     if (err instanceof WorkflowStepRefusedError) {
       // Deliberate refusal, not a transient error: a retry would only fail

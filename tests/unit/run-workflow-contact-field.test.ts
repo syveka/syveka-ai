@@ -198,7 +198,9 @@ const db = {
       return result;
     } catch (err) {
       if ((err as { committed?: boolean }).committed) throw err; // committed: nothing to undo
-      state.runs.forEach((run, i) => Object.assign(run, runs[i]));
+      // Restore the snapshots wholesale: rows added inside the transaction go,
+      // and fields set inside it don't survive on the restored rows.
+      state.runs.splice(0, Infinity, ...runs);
       state.notifications.splice(0, Infinity, ...notifications);
       throw err;
     }
