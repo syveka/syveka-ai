@@ -128,3 +128,60 @@ describe("Settings → Audit log timestamps", () => {
     expect(html).toContain("28.9.2026");
   });
 });
+
+describe("Settings → Audit log change details on an Arabic page", () => {
+  const ORIGINAL = "نشاط لاختبار الملف التجاري والحجوزات، ولا يستقبل عملاء حقيقيين.";
+  const TEMPORARY = "شركة تجريبية لاختبار تحديث الهوية التجارية من الدردشة";
+  // The owner-observed restoration row (business_dna.update), plus a value
+  // with escaped quotes to check that each string stays one isolated value.
+  const before = { fields: { description: TEMPORARY } };
+  const after = {
+    via: "ai_chat",
+    fields: { description: ORIGINAL, tagline: 'قال "مرحبا" للعملاء' },
+    actionId: "b19dfc96-efff-4f88-89ff-bcaf5be12e02",
+    conversationId: "b75b7893-61d0-4060-8f6e-1a700e56dcf8",
+  };
+  const decode = (s: string) =>
+    s
+      .replace(/<[^>]+>/g, "")
+      .replace(/&quot;/g, '"')
+      .replace(/&#x27;/g, "'")
+      .replace(/&lt;/g, "<")
+      .replace(/&gt;/g, ">")
+      .replace(/&amp;/g, "&");
+
+  beforeEach(() => {
+    mocks.locale = "ar";
+    mocks.viewerTimezone = "Europe/Helsinki";
+    mocks.logs = [
+      {
+        id: "log-2",
+        action: "business_dna.update",
+        createdAt: new Date("2026-11-02T16:30:00.000Z"),
+        actorId: "22222222-2222-4222-8222-222222222222",
+        actorType: "USER",
+        resourceType: "business_dna",
+        resourceId: "44444444-4444-4444-8444-444444444444",
+        ip: null,
+        before,
+        after,
+      },
+    ];
+  });
+
+  it("lays the JSON out left to right with each Arabic value isolated", async () => {
+    const html = await render();
+    const pre = html.match(/<pre[^>]*>([\s\S]*?)<\/pre>/);
+    expect(pre?.[0]).toMatch(/^<pre dir="ltr"/);
+    expect(pre![1]).toContain(`<bdi>${ORIGINAL}</bdi>`);
+    expect(pre![1]).toContain(`<bdi>${TEMPORARY}</bdi>`);
+    expect(pre![1]).toContain(String.raw`<bdi>قال \&quot;مرحبا\&quot; للعملاء</bdi>`);
+    // Keys and ids are isolated too, and never translated.
+    expect(pre![1]).toContain("<bdi>b19dfc96-efff-4f88-89ff-bcaf5be12e02</bdi>");
+  });
+
+  it("shows exactly the stored before and after values, unchanged", async () => {
+    const pre = (await render()).match(/<pre[^>]*>([\s\S]*?)<\/pre>/)![1]!;
+    expect(decode(pre)).toBe(JSON.stringify({ before, after }, null, 2));
+  });
+});

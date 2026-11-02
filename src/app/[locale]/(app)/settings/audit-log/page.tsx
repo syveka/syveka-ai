@@ -1,10 +1,31 @@
 export const dynamic = "force-dynamic";
 
+import { Fragment } from "react";
 import { getLocale, getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDateTimeInTimeZone, resolveDisplayTimeZone } from "@/lib/date-time";
+
+// The JSON structure always reads left to right, also on Arabic pages. Each
+// string value is isolated, so an Arabic value keeps its own order and its
+// trailing punctuation instead of being reordered with the surrounding JSON.
+function ChangeDetails({ value }: { value: unknown }) {
+  const parts = JSON.stringify(value, null, 2).split(/"((?:[^"\\]|\\.)*)"/);
+  return (
+    <pre dir="ltr" className="mt-1 overflow-x-auto rounded bg-muted p-2 text-xs">
+      {parts.map((part, i) =>
+        i % 2 === 1 ? (
+          <Fragment key={i}>
+            &quot;<bdi>{part}</bdi>&quot;
+          </Fragment>
+        ) : (
+          part
+        ),
+      )}
+    </pre>
+  );
+}
 
 export default async function AuditLogPage({
   searchParams,
@@ -88,9 +109,7 @@ export default async function AuditLogPage({
                     <summary className="cursor-pointer text-xs text-muted-foreground">
                       {t("details")}
                     </summary>
-                    <pre className="mt-1 overflow-x-auto rounded bg-muted p-2 text-xs">
-                      {JSON.stringify({ before: log.before, after: log.after }, null, 2)}
-                    </pre>
+                    <ChangeDetails value={{ before: log.before, after: log.after }} />
                   </details>
                 ) : null}
               </div>
