@@ -274,7 +274,8 @@ function runStep(name: string, env: Record<string, string>, cwd?: string) {
   }
   const result = spawnSync("bash", ["-c", stepNamed(name).run], {
     cwd,
-    env: { ...base, ...env },
+    // The repo's ProcessEnv augmentation requires NODE_ENV; the steps never read it.
+    env: { ...base, NODE_ENV: "test", ...env },
     encoding: "utf8",
   });
   return { status: result.status, out: `${result.stdout}${result.stderr}` };
