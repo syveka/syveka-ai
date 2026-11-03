@@ -147,6 +147,11 @@ const RETRYABLE_FAILED_RUN = {
   ],
 };
 
+/** A retryable failure a delivery completing the steps may take over (not an admin stop). */
+const TAKEOVERABLE_FAILED_RUN = {
+  AND: [RETRYABLE_FAILED_RUN, { OR: [{ error: null }, { NOT: { error: "step_not_allowed" } }] }],
+};
+
 const ORG = "11111111-1111-4111-8111-111111111111";
 const WORKFLOW = "22222222-2222-4222-8222-222222222222";
 
@@ -219,6 +224,16 @@ describe("trigger-level idempotency: sequential duplicate delivery", () => {
     expect(first.status).toBe(200);
     expect(await first.json()).toEqual({ ok: true });
     expect(mocks.notificationCreate).toHaveBeenCalledTimes(1);
+    // The run's success write: only while it is unfinished.
+    expect(mocks.runUpdateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          organizationId: ORG,
+          OR: [{ status: { in: ["RUNNING", "WAITING"] } }, TAKEOVERABLE_FAILED_RUN],
+        }),
+      }),
+    );
+    mocks.runUpdateMany.mockClear();
 
     // Second delivery of the exact same source event: create() now collides
     // (simulating the real unique constraint), and the existing row is
@@ -311,12 +326,22 @@ describe("trigger-level idempotency: stale RUNNING reclaim (inferred crash)", ()
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: true });
-    expect(mocks.runUpdateMany).toHaveBeenCalledTimes(1);
+    // The reclaim, once, then the run's success write.
+    expect(mocks.runUpdateMany).toHaveBeenCalledTimes(2);
+    expect(mocks.runUpdateMany.mock.calls[0]![0]).toMatchObject({
+      where: { sourceEventKey: expect.any(String) },
+    });
+    expect(mocks.runUpdateMany.mock.calls[1]![0]).toMatchObject({
+      where: {
+        organizationId: ORG,
+        OR: [{ status: { in: ["RUNNING", "WAITING"] } }, TAKEOVERABLE_FAILED_RUN],
+      },
+    });
   });
 });
 
-describe("trigger-level idempotency: WAITING is never reclaimed regardless of age", () => {
-  it("treats a long-WAITING run (mid wait.duration step) as in-flight, not stale/crashed", async () => {
+describe("trigger-level idempotency: a WAITING run with its resume scheduled is never reclaimed", () => {
+  it("treats a long-WAITING run whose latest step succeeded as in-flight, not stale/crashed", async () => {
     mocks.runCreate.mockRejectedValueOnce(new FakePrismaKnownError("P2002"));
     mocks.runFindFirst.mockResolvedValueOnce(
       runRow({ status: "WAITING", startedAt: new Date(Date.now() - 24 * 60 * 60_000) }), // 1 day
@@ -326,8 +351,16 @@ describe("trigger-level idempotency: WAITING is never reclaimed regardless of ag
 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ skipped: "duplicate_trigger", duplicate: false });
-    // WAITING is never a reclaim candidate - the guarded updateMany must not
-    // even be attempted, regardless of how long the wait has been running.
+    // No unfinished latest step claim: the resume is scheduled, so the
+    // guarded updateMany must not even be attempted, regardless of how long
+    // the wait has been running. (A WAITING run whose latest claim is
+    // unfinished: run-workflow.postgres.test.ts.)
+    expect(mocks.stepExecFindFirst).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ organizationId: ORG }),
+        orderBy: { startedAt: "desc" },
+      }),
+    );
     expect(mocks.runUpdateMany).not.toHaveBeenCalled();
   });
 });
@@ -423,8 +456,11 @@ describe("trigger-level idempotency: resumes are unaffected by the claim path", 
         id: runId,
         workflowId: WORKFLOW,
         organizationId: ORG,
-        // A terminally failed run is never resumed (see run-workflow-contact-field).
-        OR: [{ status: { not: "FAILED" } }, RETRYABLE_FAILED_RUN],
+        // A terminally failed or finished run is never resumed (see
+        // run-workflow-contact-field), nor is a resume behind a later wait
+        // step that already succeeded (none here; see run-workflow.postgres).
+        OR: [{ status: { in: ["RUNNING", "WAITING"] } }, RETRYABLE_FAILED_RUN],
+        stepExecutions: { none: { stepId: { in: [] }, status: "SUCCEEDED" } },
       },
       data: { status: "RUNNING" },
     });

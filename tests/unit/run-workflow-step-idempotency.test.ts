@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fakeFailureRecord, fakeRunFinish } from "./helpers/fake-workflow-run";
 
 class FakePrismaKnownError extends Error {
   code: string;
@@ -105,6 +106,10 @@ function createFakeDb() {
           };
           data: Partial<Run>;
         }) => {
+          const recorded =
+            fakeFailureRecord(runs.values() as never, where, data) ??
+            fakeRunFinish(runs.values() as never, where, data);
+          if (recorded) return recorded;
           let count = 0;
           for (const r of runs.values()) {
             if (
@@ -203,7 +208,12 @@ function createFakeDb() {
           where,
           data,
         }: {
-          where: { id: string; OR?: Array<Record<string, unknown>>; startedAt?: Date };
+          where: {
+            id: string;
+            OR?: Array<Record<string, unknown>>;
+            startedAt?: Date;
+            status?: string;
+          };
           data: Partial<StepExec>;
         }) => {
           const s = stepExecs.get(where.id);
@@ -223,7 +233,9 @@ function createFakeDb() {
               return false;
             });
           } else {
-            matches = s.startedAt.getTime() === where.startedAt!.getTime();
+            matches =
+              s.startedAt.getTime() === where.startedAt!.getTime() &&
+              (where.status === undefined || s.status === where.status);
           }
           if (!matches) return { count: 0 };
           Object.assign(s, data);
