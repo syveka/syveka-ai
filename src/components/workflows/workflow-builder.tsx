@@ -22,6 +22,7 @@ import type { WorkflowRunFailure } from "@/lib/workflows/run-failure";
 import { INTERNAL_STEP_TYPES } from "@/lib/workflows/internal-scope";
 
 const NOTICE_ID = "workflow-builder-entitlement-notice";
+const TEST_CONTACT_HINT_ID = "workflow-builder-test-contact-hint";
 const SAVE_ERROR_CODES = [
   "invalid_input",
   "duplicate_step_id",
@@ -94,6 +95,11 @@ export function WorkflowBuilder({
   const tc = useTranslations("common");
   const locale = useLocale();
   const testRunBlocked = blocksTestRun(activation.block);
+  // A test run carries no trigger record (testWorkflowAction), so a saved CRM
+  // step has no contact if the run reaches it: say so before the run rather
+  // than only in its failure reason.
+  const testRunHasNoContact =
+    !testRunBlocked && (initial?.steps ?? []).some((s) => s.type === "crm.create_activity");
   const saveErrorMessage = (code: string) =>
     (SAVE_ERROR_CODES as readonly string[]).includes(code)
       ? t(`saveErrors.${code as (typeof SAVE_ERROR_CODES)[number]}`)
@@ -240,7 +246,9 @@ export function WorkflowBuilder({
           <Button
             variant="outline"
             disabled={pending || testRunBlocked}
-            aria-describedby={testRunBlocked ? NOTICE_ID : undefined}
+            aria-describedby={
+              testRunBlocked ? NOTICE_ID : testRunHasNoContact ? TEST_CONTACT_HINT_ID : undefined
+            }
             onClick={() =>
               startTransition(async () => {
                 setError(null);
@@ -263,6 +271,11 @@ export function WorkflowBuilder({
           </Button>
         ) : null}
       </div>
+      {initial?.id && testRunHasNoContact ? (
+        <p id={TEST_CONTACT_HINT_ID} className="text-xs text-muted-foreground">
+          {t("testRunNoContact", { step: t("stepTypes.crm.create_activity") })}
+        </p>
+      ) : null}
 
       {initial?.runs && initial.runs.length > 0 ? (
         <Card>

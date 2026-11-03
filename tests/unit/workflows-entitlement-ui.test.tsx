@@ -413,4 +413,109 @@ describe("WorkflowBuilder", () => {
     });
     expect((await screen.findByRole("alert")).textContent).toContain(MESSAGES.ar.common.error);
   });
+
+  // The owner-observed pilot workflow: its test run failed only afterwards,
+  // with "no contact". A test run carries no trigger record.
+  const pilot = {
+    ...initial,
+    name: "Pilot contact workflow test",
+    isActive: true,
+    steps: [
+      {
+        id: "s1",
+        type: "crm.create_activity" as const,
+        contactIdVar: "trigger.contactId",
+        activityType: "TASK" as const,
+        subject: "Pilot workflow activity test",
+      },
+    ],
+    runs: [],
+  };
+  const contactHint = (locale: "en" | "fi" | "ar") =>
+    MESSAGES[locale].workflows.testRunNoContact.replace(
+      "{step}",
+      MESSAGES[locale].workflows.stepTypes.crm.create_activity,
+    );
+
+  it.each(["en", "fi", "ar"] as const)(
+    "explains before a test run that a CRM activity step will have no contact (%s)",
+    async (locale) => {
+      actions.testWorkflowAction.mockClear();
+      actions.testWorkflowAction.mockResolvedValueOnce({});
+      render(
+        withIntl(
+          <WorkflowBuilder
+            initial={pilot as never}
+            activation={{ block: null, limit: 5 }}
+            timeZone="Europe/Helsinki"
+          />,
+          locale,
+        ),
+      );
+      const hint = screen.getByText(contactHint(locale));
+      const testRun = screen.getByRole("button", {
+        name: MESSAGES[locale].workflows.testRun,
+      }) as HTMLButtonElement;
+      // Still allowed: the hint informs, it does not choose a contact.
+      expect(testRun.disabled).toBe(false);
+      expect(testRun.getAttribute("aria-describedby")).toBe(hint.id);
+      await act(async () => {
+        fireEvent.click(testRun);
+      });
+      expect(actions.testWorkflowAction).toHaveBeenCalledWith("wf-1");
+      cleanup();
+    },
+  );
+
+  it("explains it whatever field the CRM step reads its contact from", () => {
+    render(
+      withIntl(
+        <WorkflowBuilder
+          initial={
+            { ...pilot, steps: [{ ...pilot.steps[0], contactIdVar: "vars.contactId" }] } as never
+          }
+          activation={{ block: null, limit: 5 }}
+          timeZone="Europe/Helsinki"
+        />,
+        "en",
+      ),
+    );
+    const hint = screen.getByText(contactHint("en"));
+    expect(screen.getByRole("button", { name: "Test run" }).getAttribute("aria-describedby")).toBe(
+      hint.id,
+    );
+  });
+
+  it("shows no contact hint for a workflow without a CRM activity step", () => {
+    render(
+      withIntl(
+        <WorkflowBuilder
+          initial={initial as never}
+          activation={{ block: null, limit: 5 }}
+          timeZone="Europe/Helsinki"
+        />,
+        "en",
+      ),
+    );
+    expect(screen.queryByText(contactHint("en"))).toBeNull();
+    const testRun = screen.getByRole("button", { name: "Test run" });
+    expect(testRun.getAttribute("aria-describedby")).toBeNull();
+  });
+
+  it("keeps the plan notice as the test run's only reason when the plan blocks it", () => {
+    render(
+      withIntl(
+        <WorkflowBuilder
+          initial={pilot as never}
+          activation={{ block: "not_included", limit: 0 }}
+          timeZone="Europe/Helsinki"
+        />,
+        "en",
+      ),
+    );
+    const notice = screen.getByText(MESSAGES.en.workflows.entitlement.notIncluded);
+    expect(screen.queryByText(contactHint("en"))).toBeNull();
+    const testRun = screen.getByRole("button", { name: "Test run" });
+    expect(testRun.getAttribute("aria-describedby")).toBe(notice.id);
+  });
 });
