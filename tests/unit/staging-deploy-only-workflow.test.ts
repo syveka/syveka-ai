@@ -38,7 +38,7 @@ const TOKEN = /STAGING_VERCEL_TOKEN|VERCEL_TOKEN|--token/;
 const VERCEL_BUILD = /vercel@\$VERCEL_CLI_VERSION" build\b|\bvercel build\b/;
 const RUNS_REPO_CODE =
   /\bnpm (ci|install|test|run)\b|\bnpx (tsx|playwright|prisma|next)\b|\bnode (--env-file|scripts\/|-e)|\bnext build\b|\bpsql\b/;
-const PINNED = "62af0635be6751f7d32735d6fda0329e96f8c592";
+const PINNED = "b129d41601749caa6c8df9f0346ba5cd45a4a50b";
 
 const PULL = "Pull stable staging alias config (Vercel credentials)";
 const BUILD = "Build pinned candidate for the stable staging alias (no Vercel credentials)";
