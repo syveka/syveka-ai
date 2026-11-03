@@ -75,6 +75,8 @@ vi.mock("@/server/db/tenant", () => ({
       update: mocks.ledgerUpdate,
     },
     organization: { findUnique: mocks.organizationFindUnique },
+    // Read before the transaction (planRaiseHold); same stored row as inside it.
+    subscription: { findUnique: mocks.txSubscriptionFindUnique },
     $transaction: mocks.transaction,
   },
 }));
