@@ -88,4 +88,18 @@ describe.each(["en", "fi", "ar"] as const)("PlanCards interval toggle (%s)", (lo
     expect(bindCalls).toContainEqual(["PRO", "annual"]);
     expect(bindCalls).toContainEqual(["STARTER", "annual"]);
   });
+
+  it("the current plan stays marked but can switch its billing interval", () => {
+    const m = renderCards(locale);
+    const monthly = screen.getByRole("button", { name: m.useThisInterval });
+    expect(monthly.hasAttribute("disabled")).toBe(false);
+    expect(screen.getAllByText(m.current)).toHaveLength(1);
+
+    fireEvent.click(screen.getByRole("button", { name: m.interval.annual }));
+    const annual = screen.getByRole("button", { name: m.useThisInterval });
+    expect(annual.hasAttribute("disabled")).toBe(false);
+    expect(bindCalls.at(-2)).toEqual(["STARTER", "annual"]);
+    // The other plan keeps its normal choice button.
+    expect(screen.getByRole("button", { name: m.choosePlan })).toBeTruthy();
+  });
 });

@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { sanitizeErrorMessage as sanitizeErrorMessageShared } from "@/server/security/error-sanitization";
 import type Stripe from "stripe";
-import type { Prisma } from "@/generated/prisma/client/client";
+import type { Plan, Prisma } from "@/generated/prisma/client/client";
 import type { unscopedPrisma as prismaClient } from "@/server/db/tenant";
 import type { planForPriceId as resolvePlanForPriceId } from "@/server/integrations/stripe";
 import type { invalidateEntitlements as invalidateBillingEntitlements } from "@/server/services/billing/entitlements";
@@ -71,6 +71,268 @@ function customerIdOf(sub: Stripe.Subscription): string | null {
 const PAYING_STRIPE_STATUSES: ReadonlySet<string> = new Set(["active", "trialing"]);
 /** Our stored statuses of a current subscription that pays nothing and can be superseded. */
 const SUPERSEDABLE_BY_PAYING: ReadonlySet<string> = new Set(["CANCELED", "INCOMPLETE"]);
+
+/** Stripe statuses of a subscription whose latest payment failed and is being retried. */
+const UNPAID_STRIPE_STATUSES: ReadonlySet<string> = new Set(["past_due", "unpaid"]);
+const PLAN_RANK: Record<Plan, number> = { FREE: 0, STARTER: 1, PRO: 2, ENTERPRISE: 3 };
+
+/**
+ * Why a higher plan on the org's current subscription isn't granted yet:
+ * - subscription_unpaid: Stripe reports it past_due/unpaid;
+ * - invoice_unpaid: the change's own invoice (see planRaiseHold) still has
+ *   an amount remaining, or its invoices can't be read in full;
+ * - deferred_amount_due: the change's proration was left for a later
+ *   invoice and that invoice will charge for it;
+ * - invoice_voided: the change's invoice was voided and no replacement for
+ *   it (a revision Stripe links to it) has been paid.
+ */
+type PlanRaiseHold =
+  "subscription_unpaid" | "invoice_unpaid" | "deferred_amount_due" | "invoice_voided";
+
+/**
+ * The pre-transaction check's answer, and the stored plan it was made
+ * against (null when the org's row wasn't this subscription's). The
+ * transaction re-reads the row; a raise checked against anything else is
+ * never applied (see applySubscriptionUpsert).
+ */
+type PlanRaiseCheck = { hold: PlanRaiseHold | null; checkedFrom: Plan | null };
+
+function idOf(ref: string | { id: string } | null | undefined): string | null {
+  return typeof ref === "string" ? ref : (ref?.id ?? null);
+}
+
+/** Lines beyond the first page, bounded; null when there are more than that. */
+const MAX_LINE_PAGES = 10;
+async function allLines(
+  first: Stripe.ApiList<Stripe.InvoiceLineItem>,
+  nextPage: (startingAfter: string) => Promise<Stripe.ApiList<Stripe.InvoiceLineItem>>,
+): Promise<Stripe.InvoiceLineItem[] | null> {
+  const lines = [...first.data];
+  let page = first;
+  for (let n = 0; page.has_more; n++) {
+    const last = page.data.at(-1)?.id;
+    if (n >= MAX_LINE_PAGES || !last) return null;
+    page = await nextPage(last);
+    lines.push(...page.data);
+  }
+  return lines;
+}
+
+/** What a line charges after its own discounts. */
+function netOfDiscounts(line: Stripe.InvoiceLineItem): number {
+  return line.amount - (line.discount_amounts ?? []).reduce((sum, d) => sum + d.amount, 0);
+}
+
+/**
+ * Before the transaction (Stripe calls), for a plan change that would raise
+ * the org's plan on its own current subscription: has Stripe been paid what
+ * the change owes, in Stripe's current state? Only the change's own
+ * evidence counts:
+ *
+ * 1. Deferred part (read first, so a proration moving from the upcoming
+ *    invoice into a new draft is seen in one place or the other): the
+ *    upcoming invoice's proration lines for this subscription, net of their
+ *    discounts, capped by what that invoice will actually charge
+ *    (amount_due, after customer balance). Positive → held. With no upcoming
+ *    invoice (set to cancel), this subscription's pending items must net to
+ *    nothing owed.
+ * 2. Immediate part: newest first, this subscription's invoices back to the
+ *    last regular period (a renewal or the first invoice, or a line billing
+ *    the stored plan); older ones predate the change. The change's invoice
+ *    charges the new price (a proration, or the new period of an interval
+ *    change) and credits the old plan's unused time. It must be paid or
+ *    have nothing remaining (amount_remaining is after discounts and
+ *    credits). Voided, it holds until a replacement is paid (see
+ *    voidedChangeReplacement). No such invoice: nothing was charged at once.
+ *    A regular period that already bills the new price comes after the
+ *    change, so the search goes on past it.
+ *
+ * So an old paid invoice, an old unpaid renewal, or another subscription's
+ * lines never decide it. Null: not a raise on this subscription, or nothing
+ * owed (a change with nothing due is granted once Stripe has applied it).
+ * What can't be read in full holds; a Stripe error fails the event, and
+ * Stripe's retry checks again.
+ */
+async function planRaiseHold(
+  client: Stripe,
+  db: typeof prismaClient,
+  sub: Stripe.Subscription,
+  deps: RuntimeDeps,
+): Promise<PlanRaiseCheck> {
+  const orgId = sub.metadata.orgId;
+  const targetPriceId = sub.items.data[0]?.price.id ?? "";
+  const plan = deps.planForPriceId(targetPriceId);
+  if (!orgId || !plan) return { hold: null, checkedFrom: null };
+  const stored = await db.subscription.findUnique({
+    where: { organizationId: orgId },
+    select: { plan: true, stripeSubscriptionId: true },
+  });
+  if (!stored || stored.stripeSubscriptionId !== sub.id) return { hold: null, checkedFrom: null };
+  const checked = (hold: PlanRaiseHold | null) => ({ hold, checkedFrom: stored.plan });
+  if (PLAN_RANK[plan] <= PLAN_RANK[stored.plan]) return checked(null);
+
+  let upcoming: Stripe.UpcomingInvoice | null = null;
+  try {
+    upcoming = await client.invoices.retrieveUpcoming({ subscription: sub.id });
+  } catch (err) {
+    if ((err as { code?: unknown })?.code !== "invoice_upcoming_none") throw err;
+  }
+  if (!upcoming) {
+    // No upcoming invoice (for example, set to cancel at period end): a
+    // deferred proration may then never be invoiced, so this subscription's
+    // pending items themselves must net to nothing owed.
+    const customerId = customerIdOf(sub);
+    if (!customerId) return checked("deferred_amount_due");
+    let pending = 0;
+    let startingAfter: string | undefined;
+    for (let n = 0; ; n++) {
+      if (n >= MAX_LINE_PAGES) return checked("deferred_amount_due");
+      const items = await client.invoiceItems.list({
+        customer: customerId,
+        pending: true,
+        limit: 100,
+        ...(startingAfter ? { starting_after: startingAfter } : {}),
+      });
+      pending += items.data
+        .filter((i) => idOf(i.subscription) === sub.id)
+        .reduce((sum, i) => sum + i.amount, 0);
+      startingAfter = items.data.at(-1)?.id;
+      if (!items.has_more) break;
+      if (!startingAfter) return checked("deferred_amount_due");
+    }
+    if (pending > 0) return checked("deferred_amount_due");
+  } else {
+    const lines = await allLines(upcoming.lines, (startingAfter) =>
+      client.invoices.listUpcomingLines({
+        subscription: sub.id,
+        limit: 100,
+        starting_after: startingAfter,
+      }),
+    );
+    if (!lines) return checked("deferred_amount_due");
+    const deferred = lines
+      .filter((l) => l.proration && idOf(l.subscription) === sub.id)
+      .reduce((sum, l) => sum + netOfDiscounts(l), 0);
+    if (Math.min(deferred, upcoming.amount_due) > 0) return checked("deferred_amount_due");
+  }
+
+  // The change's invoice charges the new price and credits the unused time
+  // of the old one (any price that isn't the new plan's, legacy prices
+  // included). A later seat-change proration on the new plan has no such
+  // credit, so it never stands in for the change's invoice.
+  const carriesChange = (invoice: Stripe.Invoice, lines: Stripe.InvoiceLineItem[]) => {
+    const ofThis = lines.filter((l) => idOf(l.subscription) === sub.id);
+    const chargesNew = ofThis.some(
+      (l) =>
+        l.price?.id === targetPriceId &&
+        (l.proration || invoice.billing_reason === "subscription_update"),
+    );
+    const creditsOld = ofThis.some(
+      (l) => l.proration && l.amount < 0 && (!l.price || deps.planForPriceId(l.price.id) !== plan),
+    );
+    return chargesNew && creditsOld;
+  };
+  const linesOf = (invoice: Stripe.Invoice) => {
+    const invoiceId = invoice.id!;
+    return allLines(invoice.lines, (startingAfter) =>
+      client.invoices.listLineItems(invoiceId, { limit: 100, starting_after: startingAfter }),
+    );
+  };
+
+  const recent = await client.invoices.list({ subscription: sub.id, limit: 10 });
+  for (const invoice of recent.data) {
+    if (idOf(invoice.subscription) !== sub.id || !invoice.id) continue;
+    // A revision counts only as the replacement its voided original links
+    // to (voidedChangeReplacement), never by resembling the change.
+    if (invoice.from_invoice) continue;
+    const lines = await linesOf(invoice);
+    if (!lines) return checked(historyUnreadable(sub, "lines"));
+    if (carriesChange(invoice, lines)) {
+      if (invoice.status === "void") {
+        const replacement = await voidedChangeReplacement(client, sub, invoice, (revision) =>
+          linesOf(revision).then((l) => (l ? carriesChange(revision, l) : null)),
+        );
+        // Voided by an operator: never paid, so an operator should look,
+        // whatever happens next.
+        console.warn(
+          JSON.stringify({
+            alert: "stripe_plan_raise_on_void_invoice",
+            subscriptionId: sub.id,
+            invoiceId: invoice.id,
+            replacement,
+          }),
+        );
+        return checked(replacement === "paid" ? null : "invoice_voided");
+      }
+      const settled = invoice.status === "paid" || invoice.amount_remaining <= 0;
+      return checked(settled ? null : "invoice_unpaid");
+    }
+    // An earlier regular period (whatever its price, unless it already bills
+    // the new one) or the old plan billed: everything older predates the
+    // change.
+    const ofThis = lines.filter((l) => idOf(l.subscription) === sub.id);
+    const billsNew = ofThis.some((l) => !l.proration && l.price?.id === targetPriceId);
+    const regularPeriod =
+      !billsNew &&
+      (invoice.billing_reason === "subscription_cycle" ||
+        invoice.billing_reason === "subscription_create");
+    const billedOldPlan = ofThis.some(
+      (l) => !l.proration && l.price && deps.planForPriceId(l.price.id) === stored.plan,
+    );
+    if (regularPeriod || billedOldPlan) return checked(null);
+  }
+  // Neither the change's invoice nor an earlier period among the newest:
+  // can't tell which invoice is the change's, so it's held.
+  return checked(recent.has_more ? historyUnreadable(sub, "invoices") : null);
+}
+
+/** How many revisions of a voided change invoice are followed. */
+const MAX_REVISIONS = 5;
+
+/**
+ * A voided change invoice's replacement, by Stripe's own link only: the
+ * voided invoice's latest_revision, which must point back to it
+ * (from_invoice, action "revision"), be for the same customer, and still
+ * carry the change. A voided revision is followed to its own revision.
+ * - paid: the replacement is paid (Stripe marks a zero-total one paid);
+ * - unpaid: a valid replacement is still owed;
+ * - none: no replacement;
+ * - unlinked: something claims to replace it but can't be tied to the
+ *   change, or the chain is longer than followed.
+ */
+async function voidedChangeReplacement(
+  client: Stripe,
+  sub: Stripe.Subscription,
+  voided: Stripe.Invoice,
+  carriesChange: (revision: Stripe.Invoice) => Promise<boolean | null>,
+): Promise<"paid" | "unpaid" | "none" | "unlinked"> {
+  let current = voided;
+  for (let n = 0; n < MAX_REVISIONS; n++) {
+    const ref = current.latest_revision;
+    if (!ref) return "none";
+    const revision = typeof ref === "string" ? await client.invoices.retrieve(ref) : ref;
+    const linked =
+      revision.from_invoice?.action === "revision" &&
+      idOf(revision.from_invoice.invoice) === current.id &&
+      idOf(revision.customer) === customerIdOf(sub) &&
+      (await carriesChange(revision)) === true;
+    if (!linked) return "unlinked";
+    if (revision.status === "void") {
+      current = revision;
+      continue;
+    }
+    return revision.status === "paid" ? "paid" : "unpaid";
+  }
+  return "unlinked";
+}
+
+/** A hold because the subscription's invoices couldn't be read in full: an operator should look. */
+function historyUnreadable(sub: Stripe.Subscription, what: string): PlanRaiseHold {
+  console.warn(
+    JSON.stringify({ alert: "stripe_plan_raise_history_unreadable", subscriptionId: sub.id, what }),
+  );
+  return "invoice_unpaid";
+}
 
 /** Structured, non-sensitive alert: ids and statuses only, never customer data. */
 function alertSkippedSubscription(fields: Record<string, string | null>): void {
@@ -149,6 +411,7 @@ async function applySubscriptionUpsert(
   tx: Prisma.TransactionClient,
   sub: Stripe.Subscription,
   deps: RuntimeDeps,
+  raiseCheck: PlanRaiseCheck,
 ): Promise<{ orgId: string; applied: boolean }> {
   const orgId = sub.metadata.orgId;
   if (!orgId) throw new Error(`Subscription ${sub.id} missing orgId metadata`);
@@ -156,7 +419,47 @@ async function applySubscriptionUpsert(
 
   const item = sub.items.data[0];
   const priceId = item?.price.id ?? "";
-  const plan = deps.planForPriceId(priceId);
+  let plan = deps.planForPriceId(priceId);
+  // Stripe applies a plan change to the subscription's items before (or
+  // without) it being paid: a failed payment leaves it past_due on the new
+  // price, and a change whose proration is left for a later invoice is
+  // active on the new price with nothing paid. The higher plan is granted
+  // only once Stripe reports the amount due for it paid (see planRaiseHold);
+  // a later event (invoice.paid, the next update) re-applies Stripe's state.
+  // Lower or equal plans, and changes with nothing owed, apply at once.
+  const hold = UNPAID_STRIPE_STATUSES.has(sub.status) ? "subscription_unpaid" : raiseCheck.hold;
+  const stored = plan
+    ? await tx.subscription.findUnique({
+        where: { organizationId: orgId },
+        select: { plan: true, stripeSubscriptionId: true },
+      })
+    : null;
+  const raises = Boolean(plan && stored && PLAN_RANK[plan] > PLAN_RANK[stored.plan]);
+  if (
+    raises &&
+    hold === null &&
+    stored?.stripeSubscriptionId === sub.id &&
+    raiseCheck.checkedFrom !== stored.plan
+  ) {
+    // The row changed after the payment check (a concurrent event): the
+    // check doesn't apply to this raise. Failing makes Stripe retry, and the
+    // retry checks again against the row as it is then.
+    throw new Error("stripe_plan_raise_check_stale");
+  }
+  if (plan && stored && hold) {
+    if (raises) {
+      console.warn(
+        JSON.stringify({
+          alert: "stripe_plan_raise_deferred_unpaid",
+          organizationId: orgId,
+          subscriptionId: sub.id,
+          subscriptionStatus: sub.status,
+          reason: hold,
+        }),
+      );
+      plan = stored.plan;
+    }
+  }
   if (!plan) {
     // A price outside STRIPE_PRICE_* (a new or legacy price, another
     // currency): a new subscription is stored as FREE and an existing one
@@ -323,8 +626,9 @@ export async function POST(request: Request): Promise<NextResponse> {
             });
             sub.metadata.orgId = session.metadata.orgId;
           }
+          const raiseCheck = await planRaiseHold(stripe, unscopedPrisma, sub, deps);
           await unscopedPrisma.$transaction(async (tx) => {
-            ({ orgId: resolvedOrgId } = await applySubscriptionUpsert(tx, sub, deps));
+            ({ orgId: resolvedOrgId } = await applySubscriptionUpsert(tx, sub, deps, raiseCheck));
             await tx.stripeWebhookEvent.update({
               where: { stripeEventId: event.id },
               data: {
@@ -355,8 +659,9 @@ export async function POST(request: Request): Promise<NextResponse> {
           await markCompleted(unscopedPrisma, event.id, resolvedOrgId, sub.id);
           break;
         }
+        const raiseCheck = await planRaiseHold(stripe, unscopedPrisma, sub, deps);
         await unscopedPrisma.$transaction(async (tx) => {
-          ({ orgId: resolvedOrgId } = await applySubscriptionUpsert(tx, sub, deps));
+          ({ orgId: resolvedOrgId } = await applySubscriptionUpsert(tx, sub, deps, raiseCheck));
           await tx.stripeWebhookEvent.update({
             where: { stripeEventId: event.id },
             data: {
@@ -408,8 +713,9 @@ export async function POST(request: Request): Promise<NextResponse> {
             : invoice.subscription?.id;
         if (subId) {
           const sub = await stripe.subscriptions.retrieve(subId);
+          const raiseCheck = await planRaiseHold(stripe, unscopedPrisma, sub, deps);
           await unscopedPrisma.$transaction(async (tx) => {
-            ({ orgId: resolvedOrgId } = await applySubscriptionUpsert(tx, sub, deps)); // clears PAST_DUE
+            ({ orgId: resolvedOrgId } = await applySubscriptionUpsert(tx, sub, deps, raiseCheck)); // clears PAST_DUE
             await tx.stripeWebhookEvent.update({
               where: { stripeEventId: event.id },
               data: {

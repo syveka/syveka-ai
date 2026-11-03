@@ -41,13 +41,14 @@ describe("startCheckoutAction", () => {
   it.each([
     ["checkout", "https://checkout.test/cs_1"],
     ["portal", "https://portal.test/cus_a"],
+    ["confirm", "https://portal.test/confirm/cus_a"],
     ["payment", "https://invoice.test/in_1"],
   ])("follows a %s result", async (kind, url) => {
     mocks.startPlanChange.mockResolvedValueOnce({ kind, url });
     await expect(startCheckoutAction("PRO", "annual")).rejects.toThrow(`NEXT_REDIRECT:${url}`);
   });
 
-  it.each(["busy", "unavailable"])(
+  it.each(["busy", "unavailable", "already_current", "cancellation_pending", "not_offered"])(
     "a %s refusal returns to the billing page saying so",
     async (reason) => {
       mocks.startPlanChange.mockResolvedValueOnce({ kind: "refused", reason });
@@ -61,6 +62,8 @@ describe("startCheckoutAction", () => {
     ["FREE", "monthly"],
     ["ENTERPRISE", "monthly"],
     ["PRO", "weekly"],
+    // A Stripe price id in place of a plan is never passed on.
+    ["price_1Legacy9999", "monthly"],
   ])(
     "refuses a non-self-serve choice (%s, %s) without starting anything",
     async (plan, interval) => {

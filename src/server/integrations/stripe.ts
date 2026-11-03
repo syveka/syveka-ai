@@ -288,7 +288,25 @@ export async function createCheckoutSession(params: {
   };
 }
 
-export async function createPortalSession(customerId: string): Promise<string> {
+/**
+ * A portal session's URL plus what identifies its setup: the portal
+ * configuration Stripe applied (the default one when none is passed) and
+ * whether it is live mode. Only the latter two are ever logged; the URL is a
+ * customer's credential for the portal.
+ */
+export type PortalSession = { url: string; configurationId: string | null; livemode: boolean };
+
+function portalSessionOf(session: Stripe.BillingPortal.Session): PortalSession {
+  const configuration = session.configuration as string | { id: string } | null | undefined;
+  return {
+    url: session.url,
+    configurationId:
+      typeof configuration === "string" ? configuration : (configuration?.id ?? null),
+    livemode: session.livemode === true,
+  };
+}
+
+export async function createPortalSession(customerId: string): Promise<PortalSession> {
   const { NEXT_PUBLIC_APP_URL } = getStripeEnv();
   const session = await bounded(
     getStripe().billingPortal.sessions.create(
@@ -299,5 +317,99 @@ export async function createPortalSession(customerId: string): Promise<string> {
       BOUNDED_REQUEST,
     ),
   );
-  return session.url;
+  return portalSessionOf(session);
+}
+
+/** What a plan change needs to know about a subscription, read from Stripe itself. */
+export type PlanChangeSubscription = {
+  id: string;
+  customerId: string | null;
+  /** The orgId our Checkout put in the subscription's metadata, if any. */
+  orgId: string | null;
+  status: Stripe.Subscription.Status;
+  /** A customer-requested cancellation is waiting for its date. */
+  cancellationPending: boolean;
+  /** A subscription schedule controls it; the portal can't change it then. */
+  scheduled: boolean;
+  collectionMethod: Stripe.Subscription.CollectionMethod;
+  items: Array<{ id: string; priceId: string; quantity: number; metered: boolean }>;
+};
+
+export async function retrieveSubscriptionForPlanChange(
+  subscriptionId: string,
+): Promise<PlanChangeSubscription> {
+  const sub = await bounded(
+    getStripe().subscriptions.retrieve(subscriptionId, {}, BOUNDED_REQUEST),
+  );
+  return {
+    id: sub.id,
+    customerId: typeof sub.customer === "string" ? sub.customer : (sub.customer?.id ?? null),
+    orgId: sub.metadata?.orgId ?? null,
+    status: sub.status,
+    cancellationPending: sub.cancel_at_period_end === true || sub.cancel_at != null,
+    scheduled: sub.schedule != null,
+    collectionMethod: sub.collection_method,
+    items: (sub.items?.data ?? []).map((item) => ({
+      id: item.id,
+      priceId: item.price.id,
+      quantity: item.quantity ?? 1,
+      metered: item.price.recurring?.usage_type === "metered",
+    })),
+  };
+}
+
+/**
+ * A portal session that shows the customer one specific change to their
+ * subscription (the item's new price, same quantity) for them to review and
+ * confirm. Stripe shows the amounts, takes any payment and applies the
+ * change; nothing changes unless the customer confirms. Stripe requires the
+ * price to be in the portal configuration's subscription_update products,
+ * and refuses the session otherwise.
+ */
+export async function createPlanChangePortalSession(params: {
+  customerId: string;
+  subscriptionId: string;
+  itemId: string;
+  priceId: string;
+  quantity: number;
+}): Promise<PortalSession> {
+  const { NEXT_PUBLIC_APP_URL } = getStripeEnv();
+  const session = await bounded(
+    getStripe().billingPortal.sessions.create(
+      {
+        customer: params.customerId,
+        return_url: `${NEXT_PUBLIC_APP_URL}/settings/billing`,
+        flow_data: {
+          type: "subscription_update_confirm",
+          subscription_update_confirm: {
+            subscription: params.subscriptionId,
+            items: [{ id: params.itemId, price: params.priceId, quantity: params.quantity }],
+          },
+          after_completion: {
+            type: "redirect",
+            redirect: {
+              return_url: `${NEXT_PUBLIC_APP_URL}/settings/billing?status=plan_change_submitted`,
+            },
+          },
+        },
+      },
+      BOUNDED_REQUEST,
+    ),
+  );
+  return portalSessionOf(session);
+}
+
+/**
+ * Stripe's own reason for refusing a request (type, code and the parameter
+ * it names), never its message or anything from the request.
+ */
+export function stripeRefusal(err: unknown): { type: string; code: string; param: string } | null {
+  if (typeof err !== "object" || err === null) return null;
+  const { type, code, param } = err as { type?: unknown; code?: unknown; param?: unknown };
+  if (type !== "StripeInvalidRequestError") return null;
+  return {
+    type,
+    code: typeof code === "string" ? code : "none",
+    param: typeof param === "string" ? param : "none",
+  };
 }

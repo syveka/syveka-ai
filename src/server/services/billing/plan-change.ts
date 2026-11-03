@@ -6,6 +6,7 @@ import { unscopedPrisma } from "@/server/db/tenant";
 import { redis } from "@/server/integrations/redis";
 import {
   createCheckoutSession,
+  createPlanChangePortalSession,
   createPortalSession,
   expireCheckoutSession,
   findLiveSubscription,
@@ -13,22 +14,39 @@ import {
   listOpenCheckoutSessions,
   pendingPaymentUrl,
   priceIdFor,
+  retrieveSubscriptionForPlanChange,
   STRIPE_BILLING_CALL_HARD_LIMIT_MS,
   StripeCallTimeoutError,
+  stripeRefusal,
   type BillingInterval,
   type OpenCheckoutSession,
+  type PortalSession,
 } from "@/server/integrations/stripe";
 import { actionRateLimitError } from "@/server/security/rate-limit";
 import type { TenantContext } from "@/server/auth/session";
 import { audit } from "../audit";
 
+/**
+ * Why a plan choice goes nowhere:
+ * - busy / unavailable: try again later;
+ * - already_current: the subscription already has that plan and interval;
+ * - cancellation_pending: the subscription is set to end; it must be renewed
+ *   (in the portal) before its plan can change;
+ * - not_offered: this subscription can't be changed online (Stripe's portal
+ *   limits, or Stripe refused the change), so nothing was opened.
+ */
+export type PlanChangeRefusal =
+  "busy" | "unavailable" | "already_current" | "cancellation_pending" | "not_offered";
+
 /** Where a billing choice sends the member, or why it can't go anywhere right now. */
 export type PlanChangeResult =
   | { kind: "checkout"; url: string }
   | { kind: "portal"; url: string }
+  /** The portal page that shows one specific plan change for the customer to confirm. */
+  | { kind: "confirm"; url: string }
   /** A subscription waiting for its first payment: its hosted invoice page. */
   | { kind: "payment"; url: string }
-  | { kind: "refused"; reason: "busy" | "unavailable" };
+  | { kind: "refused"; reason: PlanChangeRefusal };
 
 /** Our webhook-fed statuses that mean the org still has a subscription to change. */
 const LIVE_STATUSES: ReadonlySet<string> = new Set([
@@ -64,7 +82,7 @@ function lockKey(orgId: string): string {
 }
 
 class Refused extends Error {
-  constructor(readonly reason: "busy" | "unavailable") {
+  constructor(readonly reason: PlanChangeRefusal) {
     super(reason);
   }
 }
@@ -144,6 +162,7 @@ async function expireAll(
  * otherwise the Billing Portal, which changes that same subscription.
  */
 async function existingSubscriptionDestination(
+  orgId: string,
   customerId: string,
   awaitingFirstPaymentId: string | null,
 ): Promise<PlanChangeResult> {
@@ -151,7 +170,122 @@ async function existingSubscriptionDestination(
     const url = await pendingPaymentUrl(awaitingFirstPaymentId);
     if (url) return { kind: "payment", url };
   }
-  return { kind: "portal", url: await createPortalSession(customerId) };
+  const session = await createPortalSession(customerId);
+  logPortalSession("general", orgId, session);
+  return { kind: "portal", url: session.url };
+}
+
+/**
+ * Which portal configuration Stripe applied, and in which mode: what decides
+ * the options the portal shows. Never the session URL.
+ */
+function logPortalSession(flow: string, orgId: string, session: PortalSession): void {
+  logBillingEvent("billing_portal_session_created", {
+    flow,
+    orgId,
+    configurationId: session.configurationId ?? "unknown",
+    livemode: session.livemode ? "true" : "false",
+  });
+}
+
+/**
+ * For a paying (active) subscription: the portal page that shows the change
+ * to the chosen plan and interval, for the customer to confirm in Stripe.
+ * The price comes from our own allowlist (priceIdFor), never the client;
+ * the seat count stays what it is. Nothing changes until the customer
+ * confirms, and our plan follows only from Stripe's webhook afterwards.
+ *
+ * Read from Stripe first: the subscription must belong to the org's own
+ * customer (and our orgId, when its metadata names one), and be one the
+ * portal can change: no schedule, a single licensed item, charged
+ * automatically. Any other status keeps the general portal (or the payment
+ * page), as before.
+ */
+async function planChangeDestination(
+  ctx: Pick<TenantContext, "orgId" | "userId" | "email" | "locale">,
+  plan: Plan,
+  interval: BillingInterval,
+  customerId: string,
+  subscriptionId: string,
+  targetPriceId: string,
+  beforeEachCall: () => Promise<void>,
+): Promise<PlanChangeResult> {
+  const { orgId } = ctx;
+  await beforeEachCall();
+  let sub: Awaited<ReturnType<typeof retrieveSubscriptionForPlanChange>>;
+  try {
+    sub = await retrieveSubscriptionForPlanChange(subscriptionId);
+  } catch (err) {
+    if (err instanceof StripeCallTimeoutError) throw err;
+    // A stored id Stripe no longer has (resource_missing), or Stripe failing:
+    // nothing is opened, and only ids and Stripe's error code are logged.
+    logBillingEvent("billing_plan_change_subscription_unreadable", {
+      orgId,
+      subscriptionId,
+      code: stripeRefusal(err)?.code ?? "unknown",
+    });
+    throw new Refused("unavailable");
+  }
+  if (sub.customerId !== customerId || (sub.orgId !== null && sub.orgId !== orgId)) {
+    logBillingEvent("billing_plan_change_ownership_mismatch", { orgId, subscriptionId });
+    throw new Refused("unavailable");
+  }
+  if (sub.status !== "active") {
+    await beforeEachCall();
+    return existingSubscriptionDestination(
+      orgId,
+      customerId,
+      sub.status === "incomplete" ? sub.id : null,
+    );
+  }
+  if (sub.cancellationPending) throw new Refused("cancellation_pending");
+
+  const item = sub.items.length === 1 ? sub.items[0] : undefined;
+  const notOffered = sub.scheduled
+    ? "schedule"
+    : !item
+      ? "item_count"
+      : item.metered
+        ? "metered"
+        : sub.collectionMethod !== "charge_automatically"
+          ? "collection_method"
+          : null;
+  if (notOffered || !item) {
+    logBillingEvent("billing_plan_change_not_offered", {
+      orgId,
+      subscriptionId,
+      reason: notOffered ?? "item_count",
+    });
+    throw new Refused("not_offered");
+  }
+  if (item.priceId === targetPriceId) throw new Refused("already_current");
+
+  // Who asked for which change; whether it happens is Stripe's to report.
+  await audit(ctx, {
+    action: "billing.plan_change_started",
+    resourceType: "subscription",
+    after: { plan, interval },
+  });
+  await beforeEachCall();
+  let session: PortalSession;
+  try {
+    session = await createPlanChangePortalSession({
+      customerId,
+      subscriptionId: sub.id,
+      itemId: item.id,
+      priceId: targetPriceId,
+      quantity: item.quantity,
+    });
+  } catch (err) {
+    const refusal = stripeRefusal(err);
+    if (!refusal) throw err;
+    // For example, the price isn't in the portal configuration's
+    // subscription_update products. Nothing was opened or changed.
+    logBillingEvent("billing_plan_change_flow_refused", { orgId, subscriptionId, ...refusal });
+    throw new Refused("not_offered");
+  }
+  logPortalSession("subscription_update_confirm", orgId, session);
+  return { kind: "confirm", url: session.url };
 }
 
 /**
@@ -233,10 +367,22 @@ async function underClaim(
     org.subscription?.stripeSubscriptionId &&
     LIVE_STATUSES.has(org.subscription.status)
   ) {
-    await keep();
-    return existingSubscriptionDestination(
+    if (org.subscription.status === "INCOMPLETE") {
+      await keep();
+      return existingSubscriptionDestination(
+        ctx.orgId,
+        org.stripeCustomerId,
+        org.subscription.stripeSubscriptionId,
+      );
+    }
+    return planChangeDestination(
+      ctx,
+      plan,
+      interval,
       org.stripeCustomerId,
-      org.subscription.status === "INCOMPLETE" ? org.subscription.stripeSubscriptionId : null,
+      org.subscription.stripeSubscriptionId,
+      priceIdFor(plan, interval),
+      keep,
     );
   }
 
@@ -278,8 +424,20 @@ async function underClaim(
   await keep();
   const live = await findLiveSubscription(customerId);
   if (live) {
+    if (live.status === "active") {
+      return planChangeDestination(
+        ctx,
+        plan,
+        interval,
+        customerId,
+        live.id,
+        priceIdFor(plan, interval),
+        keep,
+      );
+    }
     await keep();
     return existingSubscriptionDestination(
+      ctx.orgId,
       customerId,
       live.status === "incomplete" ? live.id : null,
     );
@@ -412,7 +570,11 @@ async function subscriptionCreatedMeanwhile(
     orgId,
     subscriptionStatus: live.status,
   });
-  return existingSubscriptionDestination(customerId, live.status === "incomplete" ? live.id : null);
+  return existingSubscriptionDestination(
+    orgId,
+    customerId,
+    live.status === "incomplete" ? live.id : null,
+  );
 }
 
 /** Expires a session this attempt created; a failure is logged, never silent. */
@@ -450,6 +612,7 @@ export async function openBillingPortal(
   const sub = org.subscription;
   try {
     return await existingSubscriptionDestination(
+      ctx.orgId,
       org.stripeCustomerId,
       sub?.status === "INCOMPLETE" ? (sub.stripeSubscriptionId ?? null) : null,
     );
