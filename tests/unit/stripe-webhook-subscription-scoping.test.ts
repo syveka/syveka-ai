@@ -598,3 +598,129 @@ describe("idempotent retries", () => {
     expect(row()!.seats).toBe(99);
   });
 });
+
+describe("a plan change confirmed in the portal follows Stripe's state", () => {
+  // Org B: Starter monthly on sub_b.
+  const proMonthly = { data: [{ price: { id: "price_pro_monthly" }, quantity: 1 }] };
+
+  it("an upgrade whose payment failed (past_due on the Pro price) doesn't grant Pro yet", async () => {
+    stripeSub("sub_b", {
+      customer: "cus_b",
+      metadata: { orgId: "org-b" },
+      status: "past_due",
+      items: proMonthly,
+    });
+    expect(
+      await deliver(
+        "customer.subscription.updated",
+        structuredClone(state.stripeSubs.get("sub_b")!),
+      ),
+    ).toEqual({
+      status: 200,
+      ledger: "COMPLETED",
+    });
+    expect(row("org-b")).toMatchObject({ plan: "STARTER", status: "PAST_DUE" });
+    expect(alerts()).toContainEqual({
+      alert: "stripe_plan_raise_deferred_unpaid",
+      organizationId: "org-b",
+      subscriptionId: "sub_b",
+      subscriptionStatus: "past_due",
+    });
+
+    // Paid later: invoice.paid applies Stripe's current state, now paying.
+    state.stripeSubs.get("sub_b")!.status = "active";
+    await deliver("invoice.paid", { id: "in_1", subscription: "sub_b", customer: "cus_b" });
+    expect(row("org-b")).toMatchObject({ plan: "PRO", status: "ACTIVE" });
+  });
+
+  it("a confirmed, paid upgrade to annual Pro is applied", async () => {
+    stripeSub("sub_b", {
+      customer: "cus_b",
+      metadata: { orgId: "org-b" },
+      items: { data: [{ price: { id: "price_pro_annual" }, quantity: 3 }] },
+    });
+    await deliver("customer.subscription.updated", structuredClone(state.stripeSubs.get("sub_b")!));
+    expect(row("org-b")).toMatchObject({ plan: "PRO", status: "ACTIVE", seats: 3 });
+  });
+
+  it("a renewal failing on the plan the org already has still keeps that plan (dunning)", async () => {
+    stripeSub("sub_new", { status: "past_due" });
+    await deliver(
+      "customer.subscription.updated",
+      structuredClone(state.stripeSubs.get("sub_new")!),
+    );
+    expect(row()).toMatchObject({ plan: "PRO", status: "PAST_DUE" });
+    expect(alerts()).toEqual([]);
+  });
+
+  it("a downgrade is applied even while past_due (fewer limits are never unpaid)", async () => {
+    stripeSub("sub_new", {
+      status: "past_due",
+      items: { data: [{ price: { id: "price_starter_monthly" }, quantity: 1 }] },
+    });
+    await deliver(
+      "customer.subscription.updated",
+      structuredClone(state.stripeSubs.get("sub_new")!),
+    );
+    expect(row()).toMatchObject({ plan: "STARTER", status: "PAST_DUE" });
+  });
+});
+
+describe("a cancellation at period end, and its reversal", () => {
+  it("is stored with its date; plan and status stay until the period ends", async () => {
+    stripeSub("sub_new", { cancel_at_period_end: true, current_period_end: 1_796_256_000 });
+    await deliver(
+      "customer.subscription.updated",
+      structuredClone(state.stripeSubs.get("sub_new")!),
+    );
+    expect(row()).toMatchObject({
+      stripeSubscriptionId: "sub_new",
+      plan: "PRO",
+      status: "ACTIVE",
+      cancelAtPeriodEnd: true,
+      currentPeriodEnd: new Date(1_796_256_000 * 1000),
+    });
+  });
+
+  it("renewing clears it, and a late retry of the cancel event can't bring it back", async () => {
+    const cancelled = stripeSub("sub_new", { cancel_at_period_end: true });
+    const cancelEvent = structuredClone(cancelled);
+    await deliver("customer.subscription.updated", cancelEvent, "evt_cancel");
+    expect(row()).toMatchObject({ cancelAtPeriodEnd: true });
+
+    stripeSub("sub_new", { cancel_at_period_end: false });
+    await deliver(
+      "customer.subscription.updated",
+      structuredClone(state.stripeSubs.get("sub_new")!),
+      "evt_renew",
+    );
+    expect(row()).toMatchObject({ plan: "PRO", status: "ACTIVE", cancelAtPeriodEnd: false });
+
+    // The same cancel event again: a duplicate, nothing changes.
+    expect(await deliver("customer.subscription.updated", cancelEvent, "evt_cancel")).toEqual({
+      status: 200,
+      ledger: "COMPLETED",
+    });
+    // An older event (another id) with the cancelled copy, delivered out of
+    // order: Stripe's current state is applied, not the event's copy.
+    await deliver("customer.subscription.updated", cancelEvent, "evt_cancel_older");
+    expect(row()).toMatchObject({ cancelAtPeriodEnd: false });
+  });
+
+  it("a cancellation event for another org's subscription never touches this org", async () => {
+    stripeSub("sub_b", {
+      customer: "cus_b",
+      metadata: { orgId: "org-b" },
+      items: { data: [{ price: { id: "price_starter_monthly" }, quantity: 1 }] },
+      cancel_at_period_end: true,
+    });
+    await deliver("customer.subscription.updated", structuredClone(state.stripeSubs.get("sub_b")!));
+    expect(row("org-b")).toMatchObject({ cancelAtPeriodEnd: true });
+    expect(row()).toEqual({
+      stripeSubscriptionId: "sub_new",
+      plan: "PRO",
+      status: "ACTIVE",
+      seats: 1,
+    });
+  });
+});

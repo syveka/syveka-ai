@@ -1015,7 +1015,14 @@
     "redirecting": "Avataan…",
     "priceMonthlyUnit": "käyttäjää kohden kuukaudessa, laskutetaan kuukausittain",
     "priceAnnualUnit": "käyttäjää kohden vuodessa, laskutetaan kerran vuodessa",
-    "annualEquivalent": "Vastaa {price} käyttäjää kohden kuukaudessa: 12 kuukautta 10 kuukauden hinnalla."
+    "annualEquivalent": "Vastaa {price} käyttäjää kohden kuukaudessa: 12 kuukautta 10 kuukauden hinnalla.",
+    "useThisInterval": "Käytä tätä laskutusjaksoa",
+    "planChangeAlreadyCurrent": "Tämä on jo nykyinen tilauksesi ja laskutusjaksosi. Mitään ei muutettu.",
+    "planChangeCancellationPending": "Tilauksesi on asetettu päättymään, joten sen tasoa ei voi muuttaa. Uusi tilaus ensin Stripe-portaalissa ja valitse sitten uusi taso. Mitään ei muutettu.",
+    "planChangeNotOffered": "Tätä tilauksen muutosta ei voi tehdä verkossa tilauksellesi. Mitään ei muutettu. Ota yhteyttä tukeen, niin autamme muutoksessa.",
+    "planChangeSubmitted": "Tilauksen muutos lähetettiin Stripeen. Tässä näkyvä tilaus päivittyy, kun Stripe vahvistaa muutoksen, yleensä minuutin kuluessa. Jos muutos vaatii maksun eikä maksu onnistu, nykyinen tilauksesi jatkuu.",
+    "cancellationScheduled": "{plan}-tilauksesi päättyy {date}. {plan}-ominaisuudet ovat käytössäsi siihen asti, eikä sinulta veloiteta enää. Jos haluat jatkaa tilausta, uusi se Stripe-portaalissa.",
+    "renewInPortal": "Uusi Stripe-portaalissa"
   },
   "booking": {
     "durationLabel": "{minutes} min",

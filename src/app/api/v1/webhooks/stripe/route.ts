@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 import { sanitizeErrorMessage as sanitizeErrorMessageShared } from "@/server/security/error-sanitization";
 import type Stripe from "stripe";
-import type { Prisma } from "@/generated/prisma/client/client";
+import type { Plan, Prisma } from "@/generated/prisma/client/client";
 import type { unscopedPrisma as prismaClient } from "@/server/db/tenant";
 import type { planForPriceId as resolvePlanForPriceId } from "@/server/integrations/stripe";
 import type { invalidateEntitlements as invalidateBillingEntitlements } from "@/server/services/billing/entitlements";
@@ -71,6 +71,10 @@ function customerIdOf(sub: Stripe.Subscription): string | null {
 const PAYING_STRIPE_STATUSES: ReadonlySet<string> = new Set(["active", "trialing"]);
 /** Our stored statuses of a current subscription that pays nothing and can be superseded. */
 const SUPERSEDABLE_BY_PAYING: ReadonlySet<string> = new Set(["CANCELED", "INCOMPLETE"]);
+
+/** Stripe statuses of a subscription whose latest payment failed and is being retried. */
+const UNPAID_STRIPE_STATUSES: ReadonlySet<string> = new Set(["past_due", "unpaid"]);
+const PLAN_RANK: Record<Plan, number> = { FREE: 0, STARTER: 1, PRO: 2, ENTERPRISE: 3 };
 
 /** Structured, non-sensitive alert: ids and statuses only, never customer data. */
 function alertSkippedSubscription(fields: Record<string, string | null>): void {
@@ -156,7 +160,32 @@ async function applySubscriptionUpsert(
 
   const item = sub.items.data[0];
   const priceId = item?.price.id ?? "";
-  const plan = deps.planForPriceId(priceId);
+  let plan = deps.planForPriceId(priceId);
+  if (plan && UNPAID_STRIPE_STATUSES.has(sub.status)) {
+    // By default Stripe applies a plan change even when its payment fails,
+    // leaving the subscription past_due on the new price. PAST_DUE keeps the
+    // stored plan's limits (entitlements), so writing the higher plan now
+    // would grant it unpaid. The plan is raised once Stripe reports the
+    // subscription paying again (invoice.paid / the next update). This only
+    // covers a change invoiced when it is made (portal proration
+    // "always_invoice"); a change left for the next invoice stays active on
+    // the new price, and its plan applies at once.
+    const stored = await tx.subscription.findUnique({
+      where: { organizationId: orgId },
+      select: { plan: true },
+    });
+    if (stored && PLAN_RANK[plan] > PLAN_RANK[stored.plan]) {
+      console.warn(
+        JSON.stringify({
+          alert: "stripe_plan_raise_deferred_unpaid",
+          organizationId: orgId,
+          subscriptionId: sub.id,
+          subscriptionStatus: sub.status,
+        }),
+      );
+      plan = stored.plan;
+    }
+  }
   if (!plan) {
     // A price outside STRIPE_PRICE_* (a new or legacy price, another
     // currency): a new subscription is stored as FREE and an existing one

@@ -9,7 +9,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * expiring keys. No live Stripe call.
  *
  * Checks that an organization with any existing subscription is sent to the
- * Billing Portal (or its first invoice) instead of a second Checkout, that
+ * Billing Portal (or its first invoice) instead of a second Checkout, that a
+ * paying subscriber's chosen plan and interval reach Stripe as a change to
+ * confirm (an allowlisted price, on its own subscription only), that
  * two tabs, a double click or a Stripe call slower than the claim can't leave
  * two usable Checkouts, that the Stripe customer is created once per
  * organization, and that nothing touches another organization.
@@ -55,8 +57,47 @@ const s = vi.hoisted(() => ({
   afterSubscriptionsList: null as null | (() => void),
   calls: { customersCreate: 0, sessionsCreate: 0, portal: 0 },
   createOptions: [] as Array<Record<string, unknown>>,
+  /** What Stripe holds for a subscription beyond its list entry (see subscriptionFields). */
+  subFields: new Map<string, Record<string, unknown>>(),
+  /** Every Billing Portal session request, as sent. */
+  portalParams: [] as Array<Record<string, unknown>>,
+  /** The portal configuration's subscription_update prices; a flow to any other is refused. */
+  portalPrices: new Set<string>(),
   clock: 1_800_000_000,
 }));
+
+/** Customer, metadata and one licensed item (current price, 2 seats), unless a test overrides them. */
+function subscriptionFields(id: string): Record<string, unknown> {
+  let customer: string | null = null;
+  let status = "canceled";
+  for (const [cus, subs] of s.stripeSubs) {
+    const found = subs.find((x) => x.id === id);
+    if (found) {
+      customer = cus;
+      status = found.status;
+    }
+  }
+  const orgId = [...s.orgs].find(([, o]) => o.stripeCustomerId === customer)?.[0];
+  return {
+    customer,
+    status,
+    metadata: orgId ? { orgId } : {},
+    cancel_at_period_end: false,
+    cancel_at: null,
+    schedule: null,
+    collection_method: "charge_automatically",
+    items: {
+      data: [
+        {
+          id: `si_${id}`,
+          price: { id: "price_starter_m", recurring: { usage_type: "licensed" } },
+          quantity: 2,
+        },
+      ],
+    },
+    ...s.subFields.get(id),
+  };
+}
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 async function respond(method: string) {
@@ -96,7 +137,9 @@ vi.mock("stripe", () => ({
       },
       retrieve: async (id: string) => {
         await respond("subscriptions.retrieve");
-        return { id, latest_invoice: s.invoices.get(id) ?? null };
+        const thrown = s.subFields.get(id)?.throws;
+        if (thrown) throw thrown;
+        return { id, ...subscriptionFields(id), latest_invoice: s.invoices.get(id) ?? null };
       },
     };
     checkout = {
@@ -155,10 +198,29 @@ vi.mock("stripe", () => ({
     };
     billingPortal = {
       sessions: {
-        create: async ({ customer }: { customer: string }) => {
-          s.calls.portal++;
+        create: async (params: {
+          customer: string;
+          flow_data?: { subscription_update_confirm: { items: Array<{ price: string }> } };
+        }) => {
+          s.portalParams.push(params);
           await respond("portal.create");
-          return { url: `https://portal.test/${customer}` };
+          const price = params.flow_data?.subscription_update_confirm.items[0]?.price;
+          if (price !== undefined && !s.portalPrices.has(price)) {
+            // Stripe's shape for a refused request; its message is never logged.
+            throw Object.assign(new Error(`The price ${price} is not in the configuration`), {
+              type: "StripeInvalidRequestError",
+              code: "parameter_invalid",
+              param: "flow_data[subscription_update_confirm][items][0][price]",
+            });
+          }
+          s.calls.portal++;
+          return {
+            url: params.flow_data
+              ? `https://portal.test/confirm/${params.customer}`
+              : `https://portal.test/${params.customer}`,
+            configuration: "bpc_default",
+            livemode: false,
+          };
         },
       },
     };
@@ -242,6 +304,7 @@ vi.mock("@/server/db/tenant", () => ({
 
 import { openBillingPortal, startPlanChange } from "@/server/services/billing/plan-change";
 import { actionRateLimitError } from "@/server/security/rate-limit";
+import { audit } from "@/server/services/audit";
 import {
   STRIPE_BILLING_CALL_HARD_LIMIT_MS,
   STRIPE_BILLING_CALL_TIMEOUT_MS,
@@ -300,6 +363,9 @@ beforeEach(() => {
   s.afterSubscriptionsList = null;
   s.calls = { customersCreate: 0, sessionsCreate: 0, portal: 0 };
   s.createOptions = [];
+  s.subFields = new Map();
+  s.portalParams = [];
+  s.portalPrices = new Set(["price_starter_m", "price_starter_a", "price_pro_m", "price_pro_a"]);
   s.clock = Math.floor(Date.now() / 1000);
   warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
 });
@@ -399,20 +465,36 @@ describe("reuse distinguishes price and seats", () => {
 });
 
 describe("an organization with a subscription goes to the Billing Portal", () => {
-  it.each(["ACTIVE", "TRIALING", "PAST_DUE", "PAUSED"])(
-    "our stored status %s → portal, no Checkout",
-    async (status) => {
-      Object.assign(s.orgs.get("org-a")!, {
-        stripeCustomerId: "cus_a",
-        subscription: { stripeSubscriptionId: "sub_1", status },
-      });
-      const result = await startPlanChange(ctxA, "STARTER", "annual");
-      expect(result).toEqual({ kind: "portal", url: "https://portal.test/cus_a" });
-      expect(s.calls.sessionsCreate).toBe(0);
-    },
-  );
+  it.each([
+    ["TRIALING", "trialing"],
+    ["PAST_DUE", "past_due"],
+    ["PAUSED", "paused"],
+  ])("our stored status %s (Stripe: %s) → general portal, no Checkout", async (status, stripe) => {
+    Object.assign(s.orgs.get("org-a")!, {
+      stripeCustomerId: "cus_a",
+      subscription: { stripeSubscriptionId: "sub_1", status },
+    });
+    s.stripeSubs.set("cus_a", [{ id: "sub_1", status: stripe }]);
+    const result = await startPlanChange(ctxA, "STARTER", "annual");
+    expect(result).toEqual({ kind: "portal", url: "https://portal.test/cus_a" });
+    expect(s.calls.sessionsCreate).toBe(0);
+    expect(s.portalParams[0]).not.toHaveProperty("flow_data");
+  });
 
-  it.each(["active", "trialing", "past_due", "unpaid", "paused"])(
+  it("stored ACTIVE, but Stripe has since ended it → general portal, never a second Checkout", async () => {
+    Object.assign(s.orgs.get("org-a")!, {
+      stripeCustomerId: "cus_a",
+      subscription: { stripeSubscriptionId: "sub_1", status: "ACTIVE" },
+    });
+    s.stripeSubs.set("cus_a", [{ id: "sub_1", status: "canceled" }]);
+    expect(await startPlanChange(ctxA, "PRO", "monthly")).toEqual({
+      kind: "portal",
+      url: "https://portal.test/cus_a",
+    });
+    expect(s.calls.sessionsCreate).toBe(0);
+  });
+
+  it.each(["trialing", "past_due", "unpaid", "paused"])(
     "Stripe reports %s before our webhook has stored it → portal, no Checkout",
     async (status) => {
       s.orgs.get("org-a")!.stripeCustomerId = "cus_a";
@@ -431,6 +513,235 @@ describe("an organization with a subscription goes to the Billing Portal", () =>
       subscription: { stripeSubscriptionId: null, status: "CANCELED" },
     });
     expect((await startPlanChange(ctxA, "PRO", "monthly")).kind).toBe("checkout");
+  });
+});
+
+describe("a paying (active) subscriber choosing another plan or interval", () => {
+  beforeEach(() => {
+    // Starter monthly, 2 seats, as checked out by this app.
+    Object.assign(s.orgs.get("org-a")!, {
+      stripeCustomerId: "cus_a",
+      subscription: { stripeSubscriptionId: "sub_1", status: "ACTIVE" },
+    });
+    s.stripeSubs.set("cus_a", [{ id: "sub_1", status: "active" }]);
+  });
+  const flowItems = () =>
+    (
+      s.portalParams.at(-1) as {
+        flow_data?: { subscription_update_confirm: { subscription: string; items: unknown[] } };
+      }
+    ).flow_data?.subscription_update_confirm;
+
+  it.each([
+    ["PRO", "monthly", "price_pro_m"],
+    ["PRO", "annual", "price_pro_a"],
+    ["STARTER", "annual", "price_starter_a"],
+  ] as const)(
+    "%s %s → Stripe's confirmation page for exactly that price, same seats",
+    async (plan, interval, price) => {
+      const result = await startPlanChange(ctxA, plan, interval);
+      expect(result).toEqual({ kind: "confirm", url: "https://portal.test/confirm/cus_a" });
+      expect(s.portalParams.at(-1)).toEqual({
+        customer: "cus_a",
+        return_url: "https://app.test/settings/billing",
+        flow_data: {
+          type: "subscription_update_confirm",
+          subscription_update_confirm: {
+            subscription: "sub_1",
+            items: [{ id: "si_sub_1", price, quantity: 2 }],
+          },
+          after_completion: {
+            type: "redirect",
+            redirect: {
+              return_url: "https://app.test/settings/billing?status=plan_change_submitted",
+            },
+          },
+        },
+      });
+      expect(audit).toHaveBeenCalledWith(ctxA, {
+        action: "billing.plan_change_started",
+        resourceType: "subscription",
+        after: { plan, interval },
+      });
+      // Never a second subscription, and nothing applied from the click itself.
+      expect(s.calls.sessionsCreate).toBe(0);
+      expect(s.calls.customersCreate).toBe(0);
+      expect(s.stripeSubs.get("cus_a")).toEqual([{ id: "sub_1", status: "active" }]);
+      expect(s.orgs.get("org-a")!.subscription).toEqual({
+        stripeSubscriptionId: "sub_1",
+        status: "ACTIVE",
+      });
+      expect(s.locks.size).toBe(0);
+    },
+  );
+
+  it("before our webhook stored it, Stripe's active subscription still gets the confirmation page", async () => {
+    s.orgs.get("org-a")!.subscription = null;
+    expect((await startPlanChange(ctxA, "PRO", "monthly")).kind).toBe("confirm");
+    expect(flowItems()?.subscription).toBe("sub_1");
+    expect(s.calls.sessionsCreate).toBe(0);
+  });
+
+  it("the plan and interval it already has → already_current, no portal session", async () => {
+    expect(await startPlanChange(ctxA, "STARTER", "monthly")).toEqual({
+      kind: "refused",
+      reason: "already_current",
+    });
+    expect(s.portalParams).toEqual([]);
+  });
+
+  it("logs which portal configuration and mode Stripe used, never the session URL", async () => {
+    await startPlanChange(ctxA, "PRO", "monthly");
+    expect(events()).toContainEqual({
+      event: "billing_portal_session_created",
+      flow: "subscription_update_confirm",
+      orgId: "org-a",
+      configurationId: "bpc_default",
+      livemode: "false",
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("portal.test");
+  });
+
+  it("Stripe refuses the change (price not in the portal configuration) → not_offered, nothing opened", async () => {
+    s.portalPrices = new Set(["price_starter_m"]);
+    expect(await startPlanChange(ctxA, "PRO", "monthly")).toEqual({
+      kind: "refused",
+      reason: "not_offered",
+    });
+    expect(s.calls.portal).toBe(0);
+    expect(events()).toContainEqual({
+      event: "billing_plan_change_flow_refused",
+      orgId: "org-a",
+      subscriptionId: "sub_1",
+      type: "StripeInvalidRequestError",
+      code: "parameter_invalid",
+      param: "flow_data[subscription_update_confirm][items][0][price]",
+    });
+    // Stripe's message (with the price id) isn't logged.
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("not in the configuration");
+  });
+
+  it("a cancellation is pending → cancellation_pending, no portal session", async () => {
+    s.subFields.set("sub_1", { cancel_at_period_end: true, cancel_at: s.clock + 86_400 });
+    expect(await startPlanChange(ctxA, "PRO", "monthly")).toEqual({
+      kind: "refused",
+      reason: "cancellation_pending",
+    });
+    expect(s.portalParams).toEqual([]);
+  });
+
+  it.each([
+    ["schedule", { schedule: "sub_sched_1" }],
+    [
+      "item_count",
+      {
+        items: {
+          data: [
+            { id: "si_1", price: { id: "price_starter_m", recurring: { usage_type: "licensed" } } },
+            { id: "si_2", price: { id: "price_addon", recurring: { usage_type: "licensed" } } },
+          ],
+        },
+      },
+    ],
+    [
+      "metered",
+      {
+        items: {
+          data: [
+            {
+              id: "si_1",
+              price: { id: "price_starter_m", recurring: { usage_type: "metered" } },
+            },
+          ],
+        },
+      },
+    ],
+    ["collection_method", { collection_method: "send_invoice" }],
+  ])(
+    "Stripe's portal can't change it (%s) → not_offered, no portal session",
+    async (reason, fields) => {
+      s.subFields.set("sub_1", fields);
+      expect(await startPlanChange(ctxA, "PRO", "monthly")).toEqual({
+        kind: "refused",
+        reason: "not_offered",
+      });
+      expect(s.portalParams).toEqual([]);
+      expect(events()).toContainEqual({
+        event: "billing_plan_change_not_offered",
+        orgId: "org-a",
+        subscriptionId: "sub_1",
+        reason,
+      });
+    },
+  );
+
+  it("our stored subscription id points at another customer's subscription → refused, nothing opened", async () => {
+    // A stale or corrupted mapping: sub_b belongs to org B's customer.
+    s.stripeSubs.set("cus_b", [{ id: "sub_b", status: "active" }]);
+    s.orgs.get("org-a")!.subscription = { stripeSubscriptionId: "sub_b", status: "ACTIVE" };
+    expect(await startPlanChange(ctxA, "PRO", "monthly")).toEqual({
+      kind: "refused",
+      reason: "unavailable",
+    });
+    expect(s.portalParams).toEqual([]);
+    expect(s.calls.sessionsCreate).toBe(0);
+    expect(events()).toContainEqual({
+      event: "billing_plan_change_ownership_mismatch",
+      orgId: "org-a",
+      subscriptionId: "sub_b",
+    });
+  });
+
+  it("a stored subscription id Stripe no longer has → unavailable, nothing opened, ids-only log", async () => {
+    s.subFields.set("sub_1", {
+      throws: Object.assign(new Error("No such subscription: 'sub_1'"), {
+        type: "StripeInvalidRequestError",
+        code: "resource_missing",
+        param: "id",
+      }),
+    });
+    expect(await startPlanChange(ctxA, "PRO", "monthly")).toEqual({
+      kind: "refused",
+      reason: "unavailable",
+    });
+    expect(s.portalParams).toEqual([]);
+    expect(s.calls.sessionsCreate).toBe(0);
+    expect(events()).toContainEqual({
+      event: "billing_plan_change_subscription_unreadable",
+      orgId: "org-a",
+      subscriptionId: "sub_1",
+      code: "resource_missing",
+    });
+    expect(JSON.stringify(warn.mock.calls)).not.toContain("No such subscription");
+    expect(s.locks.size).toBe(0);
+  });
+
+  it("a subscription on our customer whose metadata names another org → refused, nothing opened", async () => {
+    s.subFields.set("sub_1", { metadata: { orgId: "org-b" } });
+    expect(await startPlanChange(ctxA, "PRO", "monthly")).toEqual({
+      kind: "refused",
+      reason: "unavailable",
+    });
+    expect(s.portalParams).toEqual([]);
+  });
+
+  it("two tabs at once: one gets the confirmation page, the other is busy", async () => {
+    const results = await Promise.all([
+      startPlanChange(ctxA, "PRO", "monthly"),
+      startPlanChange(ctxA, "PRO", "annual"),
+    ]);
+    expect(results.map((r) => r.kind).sort()).toEqual(["confirm", "refused"]);
+    expect(results).toContainEqual({ kind: "refused", reason: "busy" });
+    expect(s.portalParams).toHaveLength(1);
+    expect(s.calls.sessionsCreate).toBe(0);
+  });
+
+  it("the Manage button still opens the general portal", async () => {
+    expect(await openBillingPortal(ctxA)).toEqual({
+      kind: "portal",
+      url: "https://portal.test/cus_a",
+    });
+    expect(s.portalParams[0]).not.toHaveProperty("flow_data");
   });
 });
 
@@ -477,7 +788,7 @@ describe("a subscription waiting for its first payment (INCOMPLETE)", () => {
       { id: "sub_1", status: "active" },
     ]);
     s.invoices.set("sub_9", { status: "open", hosted_invoice_url: "https://invoice.test/in_9" });
-    expect((await startPlanChange(ctxA, "PRO", "monthly")).kind).toBe("portal");
+    expect((await startPlanChange(ctxA, "PRO", "monthly")).kind).toBe("confirm");
   });
 
   it("the portal button sends an INCOMPLETE org to its payment page too", async () => {
