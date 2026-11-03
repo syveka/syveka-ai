@@ -21,7 +21,12 @@ type FakeLine = {
 type FakeInvoice = {
   id: string;
   created: number;
+  customer: string;
   subscription: string;
+  /** Set on a revision: the invoice it replaces. */
+  from_invoice: { action: string; invoice: string } | null;
+  /** Set on a revised (voided) invoice: its replacement. */
+  latest_revision: string | null;
   status: string;
   billing_reason: string;
   amount_remaining: number;
@@ -178,6 +183,11 @@ vi.mock("@/server/integrations/stripe", () => ({
           data: all.slice(0, limit).map((i) => ({ ...structuredClone(i), lines: page(i.lines) })),
           has_more: all.length > limit,
         };
+      },
+      retrieve: async (id: string) => {
+        if (state.stripeReadsFail) throw new Error("Stripe unavailable");
+        const invoice = state.invoices.find((i) => i.id === id)!;
+        return { ...structuredClone(invoice), lines: page(invoice.lines) };
       },
       listLineItems: async (id: string, { starting_after }: { starting_after: string }) => {
         if (state.stripeReadsFail) throw new Error("Stripe unavailable");
@@ -718,14 +728,25 @@ describe("Starter → Pro is granted only once what the change owes is paid", ()
     status: string,
     amount_remaining: number,
     lines: FakeLine[] = [],
-    opts: { reason?: string; created?: number } = {},
+    opts: {
+      reason?: string;
+      created?: number;
+      fromInvoice?: string;
+      action?: string;
+      customer?: string;
+    } = {},
   ) => {
     const existing = state.invoices.find((i) => i.id === id);
     if (existing) return Object.assign(existing, { status, amount_remaining });
     state.invoices.push({
       id,
       created: opts.created ?? ++clock,
+      customer: opts.customer ?? "cus_b",
       subscription: "sub_b",
+      from_invoice: opts.fromInvoice
+        ? { action: opts.action ?? "revision", invoice: opts.fromInvoice }
+        : null,
+      latest_revision: null,
       status,
       billing_reason: opts.reason ?? "subscription_cycle",
       amount_remaining,
@@ -733,17 +754,37 @@ describe("Starter → Pro is granted only once what the change owes is paid", ()
     });
   };
   /** The proration invoice of Starter → Pro monthly, charged when the change is made. */
+  const changeLines = () => [
+    line("price_starter_monthly", -2000, { proration: true }),
+    line("price_pro_monthly", 5000, { proration: true }),
+  ];
   const changeInvoice = (id: string, status: string, amount_remaining: number) =>
-    invoice(
-      id,
-      status,
-      amount_remaining,
-      [
-        line("price_starter_monthly", -2000, { proration: true }),
-        line("price_pro_monthly", 5000, { proration: true }),
-      ],
-      { reason: "subscription_update" },
-    );
+    invoice(id, status, amount_remaining, changeLines(), { reason: "subscription_update" });
+  /**
+   * Stripe's "Revise invoice" on a voided one: a new invoice whose
+   * from_invoice points back, and the original's latest_revision forward.
+   */
+  const revise = (
+    original: string,
+    id: string,
+    status: string,
+    amount_remaining: number,
+    opts: { lines?: FakeLine[]; action?: string; customer?: string } = {},
+  ) => {
+    invoice(id, status, amount_remaining, opts.lines ?? changeLines(), {
+      reason: "manual",
+      fromInvoice: original,
+      action: opts.action,
+      customer: opts.customer,
+    });
+    state.invoices.find((i) => i.id === original)!.latest_revision = id;
+  };
+  const voidAlert = (replacement: string) => ({
+    alert: "stripe_plan_raise_on_void_invoice",
+    subscriptionId: "sub_b",
+    invoiceId: "in_change",
+    replacement,
+  });
   const updated = (id?: string) =>
     deliver("customer.subscription.updated", structuredClone(state.stripeSubs.get("sub_b")!), id);
   const paid = (invoiceId: string, id?: string) =>
@@ -1075,15 +1116,90 @@ describe("Starter → Pro is granted only once what the change owes is paid", ()
     });
   });
 
-  it("a voided change invoice owes nothing: the change applies, with an alert", async () => {
-    changeInvoice("in_change", "void", 3000);
-    pro();
-    await updated();
-    expect(plan()).toBe("PRO");
-    expect(alerts()).toContainEqual({
-      alert: "stripe_plan_raise_on_void_invoice",
-      subscriptionId: "sub_b",
-      invoiceId: "in_change",
+  describe("the change's invoice was voided", () => {
+    beforeEach(() => {
+      changeInvoice("in_change", "void", 3000);
+      pro();
+    });
+
+    it("no replacement → Starter, with the alert", async () => {
+      await updated();
+      expect(plan()).toBe("STARTER");
+      expect(alerts()).toContainEqual(voidAlert("none"));
+      expect(alerts()).toContainEqual(held("invoice_voided"));
+    });
+
+    it("a replacement (revision) still unpaid → Starter", async () => {
+      revise("in_change", "in_change_r1", "open", 3000);
+      await updated();
+      expect(plan()).toBe("STARTER");
+      expect(alerts()).toContainEqual(voidAlert("unpaid"));
+    });
+
+    it("the matching replacement paid → Pro, and the alert stays", async () => {
+      revise("in_change", "in_change_r1", "open", 3000);
+      await updated();
+      expect(plan()).toBe("STARTER");
+
+      invoice("in_change_r1", "paid", 0);
+      await paid("in_change_r1");
+      expect(plan()).toBe("PRO");
+      expect(alerts()).toContainEqual(voidAlert("paid"));
+    });
+
+    it("a replacement that was itself voided and revised again → Pro only once the last one is paid", async () => {
+      revise("in_change", "in_change_r1", "void", 3000);
+      revise("in_change_r1", "in_change_r2", "open", 3000);
+      await updated();
+      expect(plan()).toBe("STARTER");
+      invoice("in_change_r2", "paid", 0);
+      await updated();
+      expect(plan()).toBe("PRO");
+    });
+
+    it("an unrelated paid invoice never unlocks it: a one-off charge or a later Pro renewal", async () => {
+      invoice("in_oneoff", "paid", 0, [line("price_setup_fee", 5000, { sub: null })], {
+        reason: "manual",
+      });
+      invoice("in_dec", "paid", 0, [line("price_pro_monthly", 7900)]);
+      await paid("in_oneoff");
+      await paid("in_dec");
+      expect(plan()).toBe("STARTER");
+      expect(alerts()).toContainEqual(voidAlert("none"));
+    });
+
+    it("a paid invoice that claims to replace another invoice, or no longer carries the change, doesn't count", async () => {
+      // Linked from the voided one, but its from_invoice points elsewhere.
+      revise("in_change", "in_other_r1", "paid", 0);
+      state.invoices.find((i) => i.id === "in_other_r1")!.from_invoice = {
+        action: "revision",
+        invoice: "in_oct",
+      };
+      await updated();
+      expect(plan()).toBe("STARTER");
+      expect(alerts()).toContainEqual(voidAlert("unlinked"));
+
+      // A real revision, but rewritten to a flat charge without the change.
+      state.invoices = state.invoices.filter((i) => i.id !== "in_other_r1");
+      revise("in_change", "in_flat_r1", "paid", 0, { lines: [line("price_setup_fee", 3000)] });
+      await updated();
+      expect(plan()).toBe("STARTER");
+
+      // A revision for another customer.
+      state.invoices = state.invoices.filter((i) => i.id !== "in_flat_r1");
+      revise("in_change", "in_foreign_r1", "paid", 0, { customer: "cus_a" });
+      await updated();
+      expect(plan()).toBe("STARTER");
+    });
+
+    it("Stripe can't read the replacement → the event fails, Starter stays; the retry decides", async () => {
+      revise("in_change", "in_change_r1", "paid", 0);
+      state.stripeReadsFail = true;
+      expect(await updated("evt_void")).toEqual({ status: 500, ledger: "FAILED" });
+      expect(plan()).toBe("STARTER");
+      state.stripeReadsFail = false;
+      expect(await updated("evt_void")).toEqual({ status: 200, ledger: "COMPLETED" });
+      expect(plan()).toBe("PRO");
     });
   });
 

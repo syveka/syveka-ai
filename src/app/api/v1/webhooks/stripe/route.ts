@@ -82,9 +82,12 @@ const PLAN_RANK: Record<Plan, number> = { FREE: 0, STARTER: 1, PRO: 2, ENTERPRIS
  * - invoice_unpaid: the change's own invoice (see planRaiseHold) still has
  *   an amount remaining, or its invoices can't be read in full;
  * - deferred_amount_due: the change's proration was left for a later
- *   invoice and that invoice will charge for it.
+ *   invoice and that invoice will charge for it;
+ * - invoice_voided: the change's invoice was voided and no replacement for
+ *   it (a revision Stripe links to it) has been paid.
  */
-type PlanRaiseHold = "subscription_unpaid" | "invoice_unpaid" | "deferred_amount_due";
+type PlanRaiseHold =
+  "subscription_unpaid" | "invoice_unpaid" | "deferred_amount_due" | "invoice_voided";
 
 /**
  * The pre-transaction check's answer, and the stored plan it was made
@@ -137,9 +140,12 @@ function netOfDiscounts(line: Stripe.InvoiceLineItem): number {
  *    last regular period (a renewal or the first invoice, or a line billing
  *    the stored plan); older ones predate the change. The change's invoice
  *    charges the new price (a proration, or the new period of an interval
- *    change) and credits the old plan's unused time. It must be paid, void
- *    (alerted), or have nothing remaining (amount_remaining is after
- *    discounts and credits). No such invoice: nothing was charged at once.
+ *    change) and credits the old plan's unused time. It must be paid or
+ *    have nothing remaining (amount_remaining is after discounts and
+ *    credits). Voided, it holds until a replacement is paid (see
+ *    voidedChangeReplacement). No such invoice: nothing was charged at once.
+ *    A regular period that already bills the new price comes after the
+ *    change, so the search goes on past it.
  *
  * So an old paid invoice, an old unpaid renewal, or another subscription's
  * lines never decide it. Null: not a raise on this subscription, or nothing
@@ -210,19 +216,12 @@ async function planRaiseHold(
     if (Math.min(deferred, upcoming.amount_due) > 0) return checked("deferred_amount_due");
   }
 
-  const recent = await client.invoices.list({ subscription: sub.id, limit: 10 });
-  for (const invoice of recent.data) {
-    if (idOf(invoice.subscription) !== sub.id || !invoice.id) continue;
-    const invoiceId = invoice.id;
-    const lines = await allLines(invoice.lines, (startingAfter) =>
-      client.invoices.listLineItems(invoiceId, { limit: 100, starting_after: startingAfter }),
-    );
-    if (!lines) return checked(historyUnreadable(sub, "lines"));
+  // The change's invoice charges the new price and credits the unused time
+  // of the old one (any price that isn't the new plan's, legacy prices
+  // included). A later seat-change proration on the new plan has no such
+  // credit, so it never stands in for the change's invoice.
+  const carriesChange = (invoice: Stripe.Invoice, lines: Stripe.InvoiceLineItem[]) => {
     const ofThis = lines.filter((l) => idOf(l.subscription) === sub.id);
-    // The change's invoice charges the new price and credits the unused time
-    // of the old one (any price that isn't the new plan's, legacy prices
-    // included). A later seat-change proration on the new plan has no such
-    // credit, so it never stands in for the change's invoice.
     const chargesNew = ofThis.some(
       (l) =>
         l.price?.id === targetPriceId &&
@@ -231,27 +230,52 @@ async function planRaiseHold(
     const creditsOld = ofThis.some(
       (l) => l.proration && l.amount < 0 && (!l.price || deps.planForPriceId(l.price.id) !== plan),
     );
-    if (chargesNew && creditsOld) {
+    return chargesNew && creditsOld;
+  };
+  const linesOf = (invoice: Stripe.Invoice) => {
+    const invoiceId = invoice.id!;
+    return allLines(invoice.lines, (startingAfter) =>
+      client.invoices.listLineItems(invoiceId, { limit: 100, starting_after: startingAfter }),
+    );
+  };
+
+  const recent = await client.invoices.list({ subscription: sub.id, limit: 10 });
+  for (const invoice of recent.data) {
+    if (idOf(invoice.subscription) !== sub.id || !invoice.id) continue;
+    // A revision counts only as the replacement its voided original links
+    // to (voidedChangeReplacement), never by resembling the change.
+    if (invoice.from_invoice) continue;
+    const lines = await linesOf(invoice);
+    if (!lines) return checked(historyUnreadable(sub, "lines"));
+    if (carriesChange(invoice, lines)) {
       if (invoice.status === "void") {
-        // Voided by an operator: nothing is owed, so the plan applies, but
-        // it was never paid; worth a look.
+        const replacement = await voidedChangeReplacement(client, sub, invoice, (revision) =>
+          linesOf(revision).then((l) => (l ? carriesChange(revision, l) : null)),
+        );
+        // Voided by an operator: never paid, so an operator should look,
+        // whatever happens next.
         console.warn(
           JSON.stringify({
             alert: "stripe_plan_raise_on_void_invoice",
             subscriptionId: sub.id,
-            invoiceId,
+            invoiceId: invoice.id,
+            replacement,
           }),
         );
-        return checked(null);
+        return checked(replacement === "paid" ? null : "invoice_voided");
       }
       const settled = invoice.status === "paid" || invoice.amount_remaining <= 0;
       return checked(settled ? null : "invoice_unpaid");
     }
-    // An earlier regular period (whatever its price) or the old plan billed:
-    // everything older predates the change.
+    // An earlier regular period (whatever its price, unless it already bills
+    // the new one) or the old plan billed: everything older predates the
+    // change.
+    const ofThis = lines.filter((l) => idOf(l.subscription) === sub.id);
+    const billsNew = ofThis.some((l) => !l.proration && l.price?.id === targetPriceId);
     const regularPeriod =
-      invoice.billing_reason === "subscription_cycle" ||
-      invoice.billing_reason === "subscription_create";
+      !billsNew &&
+      (invoice.billing_reason === "subscription_cycle" ||
+        invoice.billing_reason === "subscription_create");
     const billedOldPlan = ofThis.some(
       (l) => !l.proration && l.price && deps.planForPriceId(l.price.id) === stored.plan,
     );
@@ -260,6 +284,46 @@ async function planRaiseHold(
   // Neither the change's invoice nor an earlier period among the newest:
   // can't tell which invoice is the change's, so it's held.
   return checked(recent.has_more ? historyUnreadable(sub, "invoices") : null);
+}
+
+/** How many revisions of a voided change invoice are followed. */
+const MAX_REVISIONS = 5;
+
+/**
+ * A voided change invoice's replacement, by Stripe's own link only: the
+ * voided invoice's latest_revision, which must point back to it
+ * (from_invoice, action "revision"), be for the same customer, and still
+ * carry the change. A voided revision is followed to its own revision.
+ * - paid: the replacement is paid (Stripe marks a zero-total one paid);
+ * - unpaid: a valid replacement is still owed;
+ * - none: no replacement;
+ * - unlinked: something claims to replace it but can't be tied to the
+ *   change, or the chain is longer than followed.
+ */
+async function voidedChangeReplacement(
+  client: Stripe,
+  sub: Stripe.Subscription,
+  voided: Stripe.Invoice,
+  carriesChange: (revision: Stripe.Invoice) => Promise<boolean | null>,
+): Promise<"paid" | "unpaid" | "none" | "unlinked"> {
+  let current = voided;
+  for (let n = 0; n < MAX_REVISIONS; n++) {
+    const ref = current.latest_revision;
+    if (!ref) return "none";
+    const revision = typeof ref === "string" ? await client.invoices.retrieve(ref) : ref;
+    const linked =
+      revision.from_invoice?.action === "revision" &&
+      idOf(revision.from_invoice.invoice) === current.id &&
+      idOf(revision.customer) === customerIdOf(sub) &&
+      (await carriesChange(revision)) === true;
+    if (!linked) return "unlinked";
+    if (revision.status === "void") {
+      current = revision;
+      continue;
+    }
+    return revision.status === "paid" ? "paid" : "unpaid";
+  }
+  return "unlinked";
 }
 
 /** A hold because the subscription's invoices couldn't be read in full: an operator should look. */
