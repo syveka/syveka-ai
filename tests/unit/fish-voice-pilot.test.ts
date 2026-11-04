@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
+import FishVoicePilotPage from "@/app/[locale]/(app)/voice/fish-pilot/page";
 import {
   PILOT_LANGUAGES,
   PILOT_SCENARIOS,
@@ -45,6 +47,12 @@ const m = vi.hoisted(() => {
 vi.mock("@/server/auth/session", () => ({ AuthError: m.AuthError }));
 vi.mock("@/server/auth/guard", () => ({ requirePermission: m.requirePermission }));
 vi.mock("@/server/security/rate-limit", () => ({ rateLimitRefusal: m.rateLimitRefusal }));
+vi.mock("next/navigation", () => ({
+  notFound: () => {
+    throw new Error("NEXT_NOT_FOUND");
+  },
+}));
+vi.mock("@/components/voice/fish-pilot-demo", () => ({ FishPilotDemo: () => null }));
 
 const ORG_A = "11111111-1111-4111-8111-111111111111";
 const ORG_B = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -112,6 +120,29 @@ describe("development-only gate", () => {
     expect(isFishVoicePilotEnabled({ ...flag, VERCEL: "1" })).toBe(false);
     expect(isFishVoicePilotEnabled({ ...flag, VERCEL_ENV: "preview" })).toBe(false);
     expect(isFishVoicePilotEnabled({ ...flag, VERCEL_ENV: "production" })).toBe(false);
+  });
+});
+
+describe("development-only gate, as built", () => {
+  it("reads the one form of NODE_ENV that Next inlines at build time", () => {
+    const source = fs.readFileSync("src/server/voice/fish-pilot/gate.ts", "utf8");
+    expect(source).toContain('process.env.NODE_ENV === "development"');
+  });
+
+  it("the page is not found when the pilot is off, before any auth", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    vi.stubEnv("FISH_VOICE_PILOT_ENABLED", "1");
+    await expect(FishVoicePilotPage()).rejects.toThrow("NEXT_NOT_FOUND");
+    expect(m.requirePermission).not.toHaveBeenCalled();
+  });
+
+  it("the page requires the permission when the pilot is on", async () => {
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("VERCEL", "");
+    vi.stubEnv("VERCEL_ENV", "");
+    vi.stubEnv("FISH_VOICE_PILOT_ENABLED", "1");
+    await FishVoicePilotPage();
+    expect(m.requirePermission).toHaveBeenCalledWith("voice:configure");
   });
 });
 
@@ -241,6 +272,16 @@ describe("tenant isolation", () => {
     expect(runPilotTurn(colleague, shared).ok).toBe(true);
   });
 
+  it("one identity exhausting its write cap does not affect any other", () => {
+    for (let i = 0; i < 3; i++) runPilotTurn(USER_A, turn("booking"));
+    expect(results(runPilotTurn(USER_A, turn("booking")))[0]).toMatchObject({
+      error: "call_write_limit",
+    });
+    const colleague = { ...USER_A, userId: "33333333-3333-4333-8333-333333333333" };
+    expect(results(runPilotTurn(colleague, turn("booking")))[0]).toMatchObject({ booked: true });
+    expect(results(runPilotTurn(USER_B, turn("booking")))[0]).toMatchObject({ booked: true });
+  });
+
   it("does not reuse another organization's contact for its booking", () => {
     runPilotTurn(USER_A, turn("contact"));
     const booking = results(runPilotTurn(USER_B, turn("booking")));
@@ -333,15 +374,64 @@ describe("speech stream guard", () => {
   });
 
   it("empty chunks can't extend the wait for the first audio", async () => {
+    const startedAt = performance.now();
     await expect(
       collect(
         guardSpeechStream(dripping([], 10), request, never, {
           firstChunkTimeoutMs: 60,
-          idleTimeoutMs: 1_000,
-          totalTimeoutMs: 1_000,
+          idleTimeoutMs: 5_000,
+          totalTimeoutMs: 5_000,
         }),
       ),
     ).rejects.toMatchObject({ code: "provider_timeout" });
+    expect(performance.now() - startedAt).toBeLessThan(2_000);
+  });
+
+  it("times out a provider that stalls after its first audio", async () => {
+    const provider: SpeechProvider = {
+      ...providerOf([]),
+      async *stream() {
+        yield new Uint8Array([1, 2]);
+        await new Promise(() => undefined);
+      },
+    };
+    const startedAt = performance.now();
+    await expect(
+      collect(
+        guardSpeechStream(provider, request, never, {
+          firstChunkTimeoutMs: 5_000,
+          idleTimeoutMs: 60,
+          totalTimeoutMs: 5_000,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "provider_timeout" });
+    expect(performance.now() - startedAt).toBeLessThan(2_000);
+  });
+
+  it("a provider answering every read at once can't outlive the deadline", async () => {
+    const provider: SpeechProvider = {
+      ...providerOf([]),
+      async *stream() {
+        while (true) yield new Uint8Array([1, 2]);
+      },
+    };
+    await expect(
+      collect(
+        guardSpeechStream(provider, request, never, {
+          firstChunkTimeoutMs: 1_000,
+          idleTimeoutMs: 1_000,
+          totalTimeoutMs: 30,
+        }),
+      ),
+    ).rejects.toMatchObject({ code: "provider_timeout" });
+  });
+
+  it("does not start the provider's audio for an already-aborted signal", async () => {
+    const abort = new AbortController();
+    abort.abort();
+    await expect(
+      collect(guardSpeechStream(createMockSpeechProvider(), request, abort.signal)),
+    ).rejects.toMatchObject({ code: "interrupted" });
   });
 
   it("does not leak an unexpected provider error's text", async () => {
@@ -409,6 +499,21 @@ describe("Fish adapter (fetch mocked; never reaches the network)", () => {
     vi.stubGlobal("fetch", fetchMock);
     return fetchMock;
   }
+
+  it("accepts an octet-stream body with parameters, and refuses a look-alike type", async () => {
+    stubFetch(
+      new Response(new Uint8Array([1, 2]), {
+        headers: { "content-type": "application/octet-stream; charset=binary" },
+      }),
+    );
+    expect((await run()).length).toBe(1);
+    stubFetch(
+      new Response(new Uint8Array([1, 2]), {
+        headers: { "content-type": "application/octet-streamX" },
+      }),
+    );
+    await expect(run()).rejects.toMatchObject({ code: "malformed_audio" });
+  });
 
   it("sends the documented request and streams the body", async () => {
     const fetchMock = stubFetch(
@@ -641,9 +746,18 @@ describe("turn route", () => {
       vi.stubGlobal("fetch", fetchMock);
       const { reserveRealTurn } = await import("@/server/voice/fish-pilot/config");
       for (let i = 0; i < 100; i++) reserveRealTurn();
-      const response = await post(turn("greeting"));
+      const input = turn("booking");
+      const response = await post(input);
       expect(response.status).toBe(429);
-      expect(await response.json()).toEqual({ error: { code: "real_turn_budget_used" } });
+      // Refused before it took effect: no mock write, and its id stays usable after a reset.
+      expect(pilotBookingCountOf(ORG_A)).toBe(0);
+      resetRealTurnsForTests();
+      expect((await post(input)).status).toBe(200);
+      fetchMock.mockClear();
+      for (let i = 0; i < 100; i++) reserveRealTurn();
+      const refusedAgain = await post(turn("greeting"));
+      expect(refusedAgain.status).toBe(429);
+      expect(await refusedAgain.json()).toEqual({ error: { code: "real_turn_budget_used" } });
       expect(fetchMock).not.toHaveBeenCalled();
     });
 
@@ -669,6 +783,29 @@ describe("turn route", () => {
       expect(providerSignal?.aborted).toBe(false);
       await reader.cancel();
       expect(providerSignal?.aborted).toBe(true);
+    });
+
+    it("does not call Fish for a request aborted before streaming starts", async () => {
+      enableRealCalls();
+      const fetchMock = vi.fn(
+        async (_url: string, init: RequestInit) =>
+          new Promise<Response>((_, reject) => {
+            if (init.signal?.aborted) reject(new DOMException("aborted", "AbortError"));
+          }),
+      );
+      vi.stubGlobal("fetch", fetchMock);
+      vi.spyOn(console, "warn").mockImplementation(() => undefined);
+      const { POST } = await import("@/app/api/v1/dev/fish-voice-pilot/turn/route");
+      const abort = new AbortController();
+      abort.abort();
+      const response = await POST(
+        new Request("http://localhost/api/v1/dev/fish-voice-pilot/turn", {
+          method: "POST",
+          body: JSON.stringify(turn("greeting")),
+          signal: abort.signal,
+        }),
+      );
+      expect(await response.text()).toContain('"code":"interrupted"');
     });
 
     it("closes the stream when the request itself is aborted", async () => {

@@ -53,7 +53,10 @@ export function createFishSpeechProvider(config: {
       }
       // An allowlist: a gateway's error page must not be played, or reported, as audio.
       const contentType = response.headers.get("content-type") ?? "";
-      if (!response.body || !/^(audio\/|application\/octet-stream)/i.test(contentType)) {
+      if (
+        !response.body ||
+        !/^(audio\/[^;\s]+|application\/octet-stream)\s*(;|$)/i.test(contentType)
+      ) {
         await response.body?.cancel().catch(() => undefined);
         throw new SpeechError("malformed_audio");
       }

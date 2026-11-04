@@ -34,14 +34,16 @@ export function selectSpeechProvider(
   });
 }
 
-/** A hard stop on real calls per server process, on top of the per-user rate limit. */
+/** A stop on real calls until restart or hot reload, on top of the per-user rate limit. */
 const MAX_REAL_TURNS_PER_PROCESS = 100;
 let realTurns = 0;
 
-export function reserveRealTurn(): boolean {
-  if (realTurns >= MAX_REAL_TURNS_PER_PROCESS) return false;
+export function hasRealTurnBudget(): boolean {
+  return realTurns < MAX_REAL_TURNS_PER_PROCESS;
+}
+
+export function reserveRealTurn(): void {
   realTurns++;
-  return true;
 }
 
 export function resetRealTurnsForTests(): void {

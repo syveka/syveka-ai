@@ -22,7 +22,7 @@ export async function POST(request: Request): Promise<Response> {
   if (!isFishVoicePilotEnabled()) return new NextResponse(null, { status: 404 });
 
   const [
-    { selectSpeechProvider, reserveRealTurn, FishPilotConfigError },
+    { selectSpeechProvider, hasRealTurnBudget, reserveRealTurn, FishPilotConfigError },
     { requirePermission },
     { AuthError },
     { rateLimitRefusal },
@@ -73,6 +73,11 @@ export async function POST(request: Request): Promise<Response> {
     return NextResponse.json({ error: { code: "mock_failure_needs_mock" } }, { status: 400 });
   }
 
+  // Before the turn takes effect, so a refusal here leaves its turn id unused for a retry.
+  if (!provider.syntheticTiming && !hasRealTurnBudget()) {
+    return NextResponse.json({ error: { code: "real_turn_budget_used" } }, { status: 429 });
+  }
+
   const turn = runPilotTurn({ orgId: ctx.orgId, userId: ctx.userId }, parsed.data);
   if (!turn.ok) {
     return NextResponse.json(
@@ -80,9 +85,7 @@ export async function POST(request: Request): Promise<Response> {
       { status: REFUSAL_STATUS[turn.code] ?? 400 },
     );
   }
-  if (!provider.syntheticTiming && !reserveRealTurn()) {
-    return NextResponse.json({ error: { code: "real_turn_budget_used" } }, { status: 429 });
-  }
+  if (!provider.syntheticTiming) reserveRealTurn();
 
   const abort = new AbortController();
   if (request.signal.aborted) abort.abort();

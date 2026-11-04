@@ -125,6 +125,8 @@ export async function* guardSpeechStream(
   }
 
   async function nextChunk(timeoutMs: number): Promise<IteratorResult<Uint8Array>> {
+    // A provider answering every read at once would otherwise always win the race below.
+    if (timeoutMs <= 0) throw new SpeechError("provider_timeout");
     let timer: ReturnType<typeof setTimeout> | undefined;
     let onAbort: (() => void) | undefined;
     try {

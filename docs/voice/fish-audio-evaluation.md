@@ -5,8 +5,8 @@ fetch tool, so check legal wording against the source before relying on it. This
 analysis, not legal advice.
 
 **Decision: keep the current stack. Do not adopt Fish Audio now. Reject Fish Agents and
-self-hosting for phone calls. Allow one small further step for Fish TTS: a listening test, only
-after Fish answers the data-protection questions in §3.**
+self-hosting for phone calls. Allow one small further step for Fish TTS, if the owner approves it:
+a listening test on synthetic text only. No real customer data reaches Fish unless it clears §3.**
 
 No real audio was generated or heard, and no paid API was called. Nothing here shows how Fish, or
 Syveka's current stack, sounds or performs on a phone call.
@@ -101,23 +101,23 @@ no-training commitment. The training clause alone blocks production use as publi
 Ratings marked **untested** have no measurement behind them. "Blocked" means a stated gate must
 clear first.
 
-| Criterion                 | A: Current (Vapi)                            | B: Vapi + Fish TTS                                   | C: Fish Agents                                | D: Self-hosted Fish                            | E: LiveKit + best-of-breed                       |
-| ------------------------- | -------------------------------------------- | ---------------------------------------------------- | --------------------------------------------- | ---------------------------------------------- | ------------------------------------------------ |
-| End-to-end latency        | Untested in repo                             | Untested. Adds our server and a likely US round trip | Untested. US-hosted inference likely          | Untested. Vendor: ~100 ms on an H200           | Untested. Region pinning available on paid plans |
-| Voice quality             | Untested                                     | Untested. Fish's main possible advantage             | Untested                                      | Untested                                       | Untested, provider of choice                     |
-| Finnish                   | Azure lists fi-FI; untested                  | Listed for S2-Pro, unconfirmed for S2.1-Pro          | Listed; untested                              | S2-Pro "other" tier                            | Choice of Azure, ElevenLabs, Cartesia            |
-| Arabic and dialects       | One default locale, 16+ available            | Generic `ar`, no dialects                            | Generic `ar`, no dialects                     | Generic `ar`, no dialects                      | Best available: Azure locales                    |
-| Interruption, turn-taking | Vapi's, unmeasured here                      | Unchanged                                            | Built-in, public beta                         | Unchanged if kept on Vapi                      | Must be tuned by us                              |
-| Phone reliability         | Hosted; live-unverified here                 | New failure point: our TTS server                    | Beta; BYO SIP for +358, untested              | Lowest: our GPU fleet is in the path           | Ours to run; mature SIP stack                    |
-| Tools and booking         | Implemented with write caps and replay guard | Unchanged                                            | Rebuild against Fish webhooks                 | Unchanged if kept on Vapi                      | Rebuild the webhook layer in-process             |
-| CRM integration           | Implemented                                  | Unchanged                                            | Rebuild post-call input                       | Unchanged                                      | Rebuild post-call input                          |
-| Multi-tenant isolation    | Bound to the signed assistant                | Unchanged, plus tenant routing on the TTS endpoint   | Workspaces only; no reseller model found      | Ours to build                                  | Ours to build, full control                      |
-| Operational complexity    | Low                                          | Low to medium                                        | Medium (migration)                            | High                                           | High                                             |
-| Scaling                   | Vapi's limits                                | Fish: 5 concurrent under $100 prepaid, 429 at limit  | Same credit-based limits                      | GPU planning; 24–48 GB VRAM minimum            | Good, at our effort                              |
-| Vendor lock-in            | High on Vapi                                 | Same, TTS swappable                                  | Highest                                       | Lowest code lock-in, high licence risk         | Lowest                                           |
-| Commercial licence        | Standard API                                 | API terms; clarify free-plan conflict                | Beta terms                                    | **Blocked** above $500k or as a hosted service | Apache-2.0 and BSD-2-Clause frameworks           |
-| GDPR                      | Sub-processor list is incomplete             | **Blocked**, see §3                                  | **Blocked**, plus third-party STT in the path | Best possible if the licence clears            | Good: EU regions at Deepgram, Azure, Google      |
-| Cost per minute (§5)      | $0.088                                       | $0.089 FI, $0.093 AR                                 | ~$0.098, low confidence                       | $0.083 plus fixed GPU cost                     | ~$0.047, plus build cost                         |
+| Criterion                 | A: Current (Vapi)                            | B: Vapi + Fish TTS                                   | C: Fish Agents                                | D: Self-hosted Fish                                                                                       | E: LiveKit + best-of-breed                                              |
+| ------------------------- | -------------------------------------------- | ---------------------------------------------------- | --------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| End-to-end latency        | Untested in repo                             | Untested. Adds our server and a likely US round trip | Untested. US-hosted inference likely          | Untested. Vendor: ~100 ms on an H200                                                                      | Untested. Region pinning available on paid plans                        |
+| Voice quality             | Untested                                     | Untested. Fish's main possible advantage             | Untested                                      | Untested                                                                                                  | Untested, provider of choice                                            |
+| Finnish                   | Azure lists fi-FI; untested                  | Listed for S2-Pro, unconfirmed for S2.1-Pro          | Listed; untested                              | S2-Pro "other" tier                                                                                       | Choice of Azure, ElevenLabs, Cartesia                                   |
+| Arabic and dialects       | One default locale, 16+ available            | Generic `ar`, no dialects                            | Generic `ar`, no dialects                     | Generic `ar`, no dialects                                                                                 | Best available: Azure locales                                           |
+| Interruption, turn-taking | Vapi's, unmeasured here                      | Unchanged                                            | Built-in, public beta                         | Unchanged if kept on Vapi                                                                                 | Must be tuned by us                                                     |
+| Phone reliability         | Hosted; live-unverified here                 | New failure point: our TTS server                    | Beta; BYO SIP for +358, untested              | Lowest: our GPU fleet is in the path                                                                      | Ours to run; mature SIP stack                                           |
+| Tools and booking         | Implemented with write caps and replay guard | Unchanged                                            | Rebuild against Fish webhooks                 | Unchanged if kept on Vapi                                                                                 | Rebuild the webhook layer in-process                                    |
+| CRM integration           | Implemented                                  | Unchanged                                            | Rebuild post-call input                       | Unchanged                                                                                                 | Rebuild post-call input                                                 |
+| Multi-tenant isolation    | Bound to the signed assistant                | Unchanged, plus tenant routing on the TTS endpoint   | Workspaces only; no reseller model found      | Ours to build                                                                                             | Ours to build, full control                                             |
+| Operational complexity    | Low                                          | Low to medium                                        | Medium (migration)                            | High                                                                                                      | High                                                                    |
+| Scaling                   | Vapi's limits                                | Fish: 5 concurrent under $100 prepaid, 429 at limit  | Same credit-based limits                      | GPU planning; 24–48 GB VRAM minimum                                                                       | Good, at our effort                                                     |
+| Vendor lock-in            | High on Vapi                                 | Same, TTS swappable                                  | Highest                                       | Lowest code lock-in, high licence risk                                                                    | Lowest                                                                  |
+| Commercial licence        | Standard API                                 | API terms; clarify free-plan conflict                | Beta terms                                    | **Blocked:** S2-Pro at any revenue without a separate licence; Drama 3 above $500k or as a hosted service | Apache-2.0 and BSD-2-Clause frameworks                                  |
+| GDPR                      | Sub-processor list is incomplete             | **Blocked**, see §3                                  | **Blocked**, plus third-party STT in the path | Best possible if the licence clears                                                                       | Good for Deepgram, Azure, Google EU regions; Soniox EU status not found |
+| Cost per minute (§5)      | $0.088                                       | $0.089 FI, $0.093 AR                                 | ~$0.098, low confidence                       | $0.083 plus fixed GPU cost                                                                                | ~$0.047, plus build cost                                                |
 
 **A TTS provider can't replace a phone agent.** Fish TTS replaces one of the five parts of Vapi's
 call. The other four, plus Syveka's tool and post-call layers, remain.
@@ -131,9 +131,23 @@ All figures in USD. **Treat these as estimates, not quotes.** List prices are fr
 characters per second, so 360 characters per minute. Bytes per character are 1.03 for Finnish and
 1.8 for Arabic. The LLM uses 12,000 uncached input and 200 output tokens per minute. Deepgram
 Nova-3 multilingual is the proxy for Nova-2, whose price wasn't verified. Twilio inbound at
-$0.0107/min. GPU at an estimated $2 an hour, always on, two for redundancy. Operational time at
-$75 an hour, with invented but explicit hours in the model. EUR 1 = USD 1.10. **Real figures should
-replace these once `costCents` has real calls behind it.**
+$0.0107/min. GPU at an estimated $2 an hour, always on. Operational time at $75 an hour; the hours
+below are judgement, not data. EUR 1 = USD 1.10. **Real figures should replace these once
+`costCents` has real calls behind it.**
+
+Unit prices: Fish $15 per million bytes, Azure $15 and ElevenLabs Flash $40 per million characters,
+Haiku 4.5 $1/$5 per million tokens.
+
+| Fixed monthly item, by volume (100 / 1,000 / 10,000 / 100,000 min)   | Amount                            | Applies to |
+| -------------------------------------------------------------------- | --------------------------------- | ---------- |
+| Vapi Core plan                                                       | $29 at every volume               | A, B, D    |
+| Finnish mobile numbers at $6.60 (1 / 2 / 10 / 50 numbers)            | $7 / $13 / $66 / $330             | All        |
+| LiveKit plan                                                         | $0 / $50 / $50 / $500             | E          |
+| GPUs at $1,460 each (2 / 2 / 2 / 6, assuming peaks, with redundancy) | $2,920 / $2,920 / $2,920 / $8,760 | D          |
+
+| Operational hours a month (100 / 1,000 / 10,000 / 100,000 min) | A               | B                | C                | D                  | E                 |
+| -------------------------------------------------------------- | --------------- | ---------------- | ---------------- | ------------------ | ----------------- |
+| Hours                                                          | 2 / 5 / 10 / 20 | 6 / 10 / 16 / 30 | 6 / 10 / 20 / 40 | 40 / 40 / 60 / 120 | 20 / 20 / 30 / 60 |
 
 ### Variable cost per connected minute
 
@@ -148,7 +162,8 @@ replace these once `costCents` has real calls behind it.**
 | **Total** | **$0.0883** | **$0.0887** | **$0.0928** | **~$0.098**         | **$0.0473**                     |
 
 The Fish Agents price is derived from "$5 trial, about 60 minutes". The official per-minute rate
-wasn't found, and neither was what it includes, so treat that column as low confidence.
+wasn't found, and neither was what it includes. If speech recognition or the LLM is billed on top,
+that column is understated, so treat it as low confidence.
 
 ### Monthly cost: direct cost / with operational time
 
@@ -169,24 +184,31 @@ Excludes one-off engineering. E also needs an estimated 8–12 engineer-weeks to
 
 - **TTS is about 6% of the call. Switching it barely moves cost.** Against Azure at 100,000
   minutes, Fish costs about $36 a month more in Finnish and $452 more in Arabic. Fish bills by
-  byte, so Arabic costs about 80% more per spoken character. Against ElevenLabs Flash it saves about
-  $864 a month in Finnish.
-- **Vapi's $0.05 is 57% of the call.** That is the real cost lever, and only option E touches it.
+  byte, so Arabic costs about 80% more per character than Azure, and 75% more than Fish's own
+  Finnish. Against ElevenLabs Flash it saves about $864 a month in Finnish.
+- **Vapi's $0.05 is 57% of the call.** That is the real cost lever, and only option E lowers it.
 - **The cheapest change is the LLM:** Haiku 5.5 would save about $0.0117 a minute with no
   migration, if Vapi accepts it and it holds up on calls. List price $0.10/$0.50 per million tokens
   against $1/$5.
 - **Self-hosting never pays at these volumes.** Fish's API TTS is about $550–970 a month at 100,000
-  minutes. Against two GPUs, the break-even is about 525,000 min/month in Finnish or 300,000 in
-  Arabic. With half an engineer, it is about 1.4M or 815,000. Against Fish's own hosted
-  self-deployment ($10k a month minimum), about 1.8M or 1.0M. The licence blocks it before that.
-- **E pays back only at volume.** It saves $0.041 a minute: about $410 a month at 10,000 minutes,
-  which never realistically repays 8–12 engineer-weeks, against about $3,600 a month at 100,000,
-  which repays in under a year. Revisit at a sustained 50,000 minutes a month.
+  minutes, against an estimated $8,760 in GPUs. Even holding the fleet at two GPUs ($2,920), the
+  break-even would be about 525,000 min/month in Finnish or 300,000 in Arabic, and two GPUs can't
+  carry that load, so the true break-even is higher or doesn't exist. Adding an estimated $5,000 a
+  month of engineering moves that floor to about 1.4M or 815,000. Fish's own hosted self-deployment
+  ($10k a month minimum) breaks even at about 1.8M or 1.0M. The licence blocks self-hosting first.
+- **E doesn't pay back at today's volumes, and its case depends on operational cost.** The build
+  is an estimated 8–12 engineer-weeks ($24,000–36,000 at $75 an hour, plus a two-week spike). On
+  direct cost alone it saves about $389 a month at 10,000 minutes and $3,629 at 100,000, a payback of
+  7–10 months at the higher volume. With the assumed operational time it costs $1,111 a month more
+  at 10,000 minutes and saves only $629 at 100,000, a payback of 38–57 months, with break-even near
+  67,000 minutes. Revisit at a sustained 100,000 minutes a month, or if Vapi limits force it.
 
 ### Gross margin, voice cost only
 
-Revenue is at list price with full use of the included minutes and one number. AI messages and
-other product costs are excluded, so real margins are lower.
+Revenue is at list price per customer, with full use of the included minutes and one number. AI
+messages and other product costs are excluded, so real margins are lower. **The $29 Vapi plan is
+shared across all customers and is left out of this table.** For a sole customer it decides the
+result: Starter on A falls to about -39%, and one-seat Pro to about 8%.
 
 | Plan                     | Revenue | A: Margin | E: Margin |
 | ------------------------ | ------- | --------- | --------- |
@@ -210,23 +232,24 @@ limit unless a contract sets one.
 A development-only pilot is included in this branch. **It proves the integration boundary and the
 safety properties. It doesn't evaluate Fish.**
 
-| Requirement               | Result                                                                                                                                                                                                                                                                                                       |
-| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Isolation                 | New route and page only, plus their two generated route-template lines. Open only under `next dev` with `FISH_VOICE_PILOT_ENABLED=1`; closed in production builds and on Vercel. No production voice code changed; no migration. The closed route still exists: it answers 404 to POST, 405 to other methods |
-| Two-way conversation      | **Partial.** Multi-turn call with state, but the caller and replies are scripted, and a scripted reply can contradict a tool refusal. No microphone, STT or LLM                                                                                                                                              |
-| FI and AR scenarios       | Lines exist, including a pronunciation set. Not reviewed by native speakers. **Audio played is a test tone**                                                                                                                                                                                                 |
-| Streaming                 | Tested with the mock. Handles samples split across chunks                                                                                                                                                                                                                                                    |
-| Interruption              | Stops the provider stream on cancel. This is client-initiated cancel only; there is no voice barge-in or phone echo handling                                                                                                                                                                                 |
-| Error handling            | First-chunk, idle and overall timeouts, provider errors, mid-stream failure and malformed audio all return stable codes, with no provider text                                                                                                                                                               |
-| Tool compatibility        | Real voice allowlist and real tool schemas, with a mock CRM and calendar. It doesn't touch the real tools                                                                                                                                                                                                    |
-| Keys and paid calls       | The key stays server-side. A key alone never starts paid use; a separate approval flag is required, then the live-voice rate limit and a stop at 100 real turns per process apply. Unit tests mock `fetch`                                                                                                   |
-| Tenancy and authorization | Identity from `requirePermission` only. Cross-tenant, replay, malicious-argument and client-supplied `orgId` cases have negative tests. Replay and caps are in memory, so they hold within one server process only, unlike the phone webhook's durable checks                                                |
-| Fish adapter              | Written from the API reference, **never run against the real API**. PCM byte order, headers and response content type aren't stated in the docs                                                                                                                                                              |
-| Browser page              | Compiles. **Never opened in a browser**, since it needs local Supabase and Redis credentials                                                                                                                                                                                                                 |
+| Requirement               | Result                                                                                                                                                                                                                                                                                                                                                          |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Isolation                 | New route and page only, plus their two generated route-template lines. Open only under `next dev` with `FISH_VOICE_PILOT_ENABLED=1`; closed in production builds and on Vercel. No production voice code changed; no migration. The closed route is unreachable but still compiled in: POST answers 404, and other methods get the framework's default answers |
+| Two-way conversation      | **Partial.** Multi-turn call with state, but the caller and replies are scripted, and a scripted reply can contradict a tool refusal. No microphone, STT or LLM                                                                                                                                                                                                 |
+| FI and AR scenarios       | Lines exist, including a pronunciation set. Not reviewed by native speakers. **Audio played is a test tone**                                                                                                                                                                                                                                                    |
+| Streaming                 | Tested with the mock. Handles samples split across chunks                                                                                                                                                                                                                                                                                                       |
+| Interruption              | Stops the provider stream on cancel. This is client-initiated cancel only; there is no voice barge-in or phone echo handling                                                                                                                                                                                                                                    |
+| Error handling            | First-chunk, idle and overall timeouts, provider errors, mid-stream failure and malformed audio all return stable codes, with no provider text                                                                                                                                                                                                                  |
+| Tool compatibility        | Real voice allowlist and real tool schemas, with a mock CRM and calendar. It doesn't touch the real tools                                                                                                                                                                                                                                                       |
+| Keys and paid calls       | The key stays server-side. A key alone never starts paid use; a separate approval flag is required, then the live-voice rate limit and a stop at 100 real turns until restart or hot reload apply. Unit tests mock `fetch`                                                                                                                                      |
+| Tenancy and authorization | Identity from `requirePermission` only. Cross-tenant, replay, malicious-argument and client-supplied `orgId` cases have negative tests. Replay and caps are in memory, so they hold within one server process only, unlike the phone webhook's durable checks                                                                                                   |
+| Fish adapter              | Written from the API reference, **never run against the real API**. PCM byte order, headers and response content type aren't stated in the docs                                                                                                                                                                                                                 |
+| Browser page              | Compiles. **Never opened in a browser**, since it needs local Supabase and Redis credentials                                                                                                                                                                                                                                                                    |
 
 **Measured latency** (200 samples, Windows laptop, mock provider): the guard adds about 0.2 ms to
 first audio at p50 (15.50 ms against 15.32 ms unguarded, which is within timer resolution, so
-effectively no measurable cost). Cancel reaches the caller in about 0.04 ms. **These numbers
+effectively no measurable cost). Cancel reaches the caller in about 0.04 ms. This was a one-off
+script, not committed, run on the guard before its final deadline check. **These numbers
 describe Syveka's code path only. They say nothing about Fish's latency or any phone call.**
 
 ### What the pilot exposed
@@ -260,13 +283,13 @@ Effort is an estimate. Each item is separately authorized.
 
 ### P1: gated Fish evaluation
 
-| Task                                                                                                               | Effort    | Depends on                                           |
-| ------------------------------------------------------------------------------------------------------------------ | --------- | ---------------------------------------------------- |
-| Ask Fish in writing for DPA, sub-processors, EU processing, no-training terms, S2.1-Pro language list              | 1 day     | Owner sends                                          |
-| Blind listening test, synthetic text: Fish, Azure, ElevenLabs, Cartesia. Native FI and AR raters, phone-band audio | 2–3 days  | Previous item, or synthetic-only with owner approval |
-| Measure time to first audio from an EU host                                                                        | 0.5 day   | Same approval                                        |
-| Extract the webhook's tool execution into a shared service                                                         | 3–5 days  | None                                                 |
-| Only if Fish wins and clears §3: Vapi custom TTS endpoint behind a per-assistant `voiceProvider` value             | 1–2 weeks | All above                                            |
+| Task                                                                                                               | Effort    | Depends on                          |
+| ------------------------------------------------------------------------------------------------------------------ | --------- | ----------------------------------- |
+| Ask Fish in writing for DPA, sub-processors, EU processing, no-training terms, S2.1-Pro language list              | 1 day     | Owner sends                         |
+| Blind listening test, synthetic text: Fish, Azure, ElevenLabs, Cartesia. Native FI and AR raters, phone-band audio | 2–3 days  | Owner approval; synthetic text only |
+| Measure time to first audio from an EU host                                                                        | 0.5 day   | Same approval                       |
+| Extract the webhook's tool execution into a shared service                                                         | 3–5 days  | None                                |
+| Only if Fish wins and clears §3: Vapi custom TTS endpoint behind a per-assistant `voiceProvider` value             | 1–2 weeks | All above                           |
 
 The free model, `s2.1-pro-free`, is documented as free for testing through 2026-11-30, so the
 listening test costs little if it runs before then. Any Fish production plan must also handle S2.1
@@ -274,15 +297,15 @@ language coverage and the short deprecation notice seen on S1.
 
 ### P2: only with sustained volume
 
-| Task                                                  | Effort     | Depends on                                 |
-| ----------------------------------------------------- | ---------- | ------------------------------------------ |
-| Spike option E on one test tenant                     | 2 weeks    | Sustained 50,000 min/month, or Vapi limits |
-| Soniox STT comparison for FI and AR (cheapest listed) | 2–3 days   | Baseline calls                             |
-| Migrate to option E with parallel running             | 8–12 weeks | Spike succeeds                             |
+| Task                                                  | Effort     | Depends on                                  |
+| ----------------------------------------------------- | ---------- | ------------------------------------------- |
+| Spike option E on one test tenant                     | 2 weeks    | Sustained 100,000 min/month, or Vapi limits |
+| Soniox STT comparison for FI and AR (cheapest listed) | 2–3 days   | Baseline calls                              |
+| Migrate to option E with parallel running             | 8–12 weeks | Spike succeeds                              |
 
 ### Rollback
 
-- **Pilot:** unset the flag, or don't merge. It has no production path and no data.
+- **Pilot:** unset the flag, or don't merge. It is unreachable in production and holds no data.
 - **Fish TTS, if ever adopted:** `voiceProvider` is per assistant and stored as a string, so switch
   back to `azure` and let the existing re-sync (`resyncActiveAssistants`) push it. No migration.
 - **Option E:** keep Vapi assistants live, and move numbers tenant by tenant.

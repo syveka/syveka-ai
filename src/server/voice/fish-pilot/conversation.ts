@@ -30,7 +30,10 @@ const MAX_TURNS_PER_SESSION = 40;
 const TURN_ID_RETENTION_MS = 24 * 60 * 60 * 1000;
 const MAX_REMEMBERED_TURNS = 10_000;
 
-/** Mirrors VOICE_CALL_WRITE_CAPS in the Vapi webhook, which a route can't export. */
+/**
+ * The same values as VOICE_CALL_WRITE_CAPS in the Vapi webhook, which a route can't
+ * export. Stricter in one way: a booking refused for a foreign contact keeps its slot.
+ */
 const WRITE_CAPS: ReadonlyMap<string, number> = new Map([
   ["bookMeeting", 2],
   ["createContact", 2],
