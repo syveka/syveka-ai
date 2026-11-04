@@ -118,6 +118,13 @@ export function toVapiPayload(cfg: VapiAssistantConfig) {
   return {
     name: cfg.name,
     firstMessage: cfg.firstMessage,
+    // The first message carries the mandatory AI and recording notice
+    // (buildVoiceFirstMessage), so it is always spoken first and in full, never
+    // replaced by a model-generated opening or cut off by the caller. Both are
+    // Vapi's documented defaults; sending them keeps a dashboard edit from
+    // turning the notice off, since every sync re-applies them.
+    firstMessageMode: "assistant-speaks-first",
+    firstMessageInterruptionsEnabled: false,
     model: {
       provider: "anthropic",
       // Sourced from the canonical model router, not a second hardcoded
@@ -140,7 +147,9 @@ export function toVapiPayload(cfg: VapiAssistantConfig) {
     // resolves the actual HMAC key server-side from the credential (§13.2).
     server: { url: cfg.serverUrl, credentialId: cfg.serverCredentialId },
     maxDurationSeconds: cfg.maxDurationSeconds,
-    recordingEnabled: true,
+    // Vapi's assistant schema has recording under artifactPlan only; a top-level
+    // recordingEnabled is not a documented field (CreateAssistantDTO/UpdateAssistantDTO).
+    artifactPlan: { recordingEnabled: true },
   };
 }
 
@@ -149,9 +158,20 @@ export async function upsertVapiAssistant(
   existingId?: string | null,
 ): Promise<{ id: string }> {
   if (existingId) {
+    // Vapi doesn't document whether PATCH merges or replaces a nested object. The
+    // assistant's current artifactPlan is sent back with only recordingEnabled set, so
+    // options set in the Vapi dashboard (recording format, storage, transcript...) survive
+    // either way.
+    const current = await vapiFetch<{ artifactPlan?: Record<string, unknown> | null }>(
+      `/assistant/${existingId}`,
+    );
+    const payload = toVapiPayload(cfg);
     return vapiFetch(`/assistant/${existingId}`, {
       method: "PATCH",
-      body: JSON.stringify(toVapiPayload(cfg)),
+      body: JSON.stringify({
+        ...payload,
+        artifactPlan: { ...(current.artifactPlan ?? {}), ...payload.artifactPlan },
+      }),
     });
   }
   return vapiFetch("/assistant", { method: "POST", body: JSON.stringify(toVapiPayload(cfg)) });
