@@ -412,7 +412,9 @@ describe("speech stream guard", () => {
     const provider: SpeechProvider = {
       ...providerOf([]),
       async *stream() {
-        while (true) yield new Uint8Array([1, 2]);
+        // Bounded, so losing the deadline check fails this test instead of starving its timers.
+        const giveUpAt = Date.now() + 2_000;
+        while (Date.now() < giveUpAt) yield new Uint8Array([1, 2]);
       },
     };
     await expect(
@@ -426,12 +428,21 @@ describe("speech stream guard", () => {
     ).rejects.toMatchObject({ code: "provider_timeout" });
   });
 
-  it("does not start the provider's audio for an already-aborted signal", async () => {
+  it("hands the provider an aborted signal when the caller has already gone", async () => {
     const abort = new AbortController();
     abort.abort();
-    await expect(
-      collect(guardSpeechStream(createMockSpeechProvider(), request, abort.signal)),
-    ).rejects.toMatchObject({ code: "interrupted" });
+    let abortedAtStart: boolean | undefined;
+    const provider: SpeechProvider = {
+      ...providerOf([]),
+      async *stream({ signal }) {
+        abortedAtStart = signal.aborted;
+        yield new Uint8Array([1, 2]);
+      },
+    };
+    await expect(collect(guardSpeechStream(provider, request, abort.signal))).rejects.toMatchObject(
+      { code: "interrupted" },
+    );
+    expect(abortedAtStart).toBe(true);
   });
 
   it("does not leak an unexpected provider error's text", async () => {
@@ -785,14 +796,13 @@ describe("turn route", () => {
       expect(providerSignal?.aborted).toBe(true);
     });
 
-    it("does not call Fish for a request aborted before streaming starts", async () => {
+    it("passes an already-aborted request's signal to Fish and reports it", async () => {
       enableRealCalls();
-      const fetchMock = vi.fn(
-        async (_url: string, init: RequestInit) =>
-          new Promise<Response>((_, reject) => {
-            if (init.signal?.aborted) reject(new DOMException("aborted", "AbortError"));
-          }),
-      );
+      let abortedAtFetch: boolean | undefined;
+      const fetchMock = vi.fn(async (_url: string, init: RequestInit) => {
+        abortedAtFetch = init.signal?.aborted;
+        throw new DOMException("aborted", "AbortError");
+      });
       vi.stubGlobal("fetch", fetchMock);
       vi.spyOn(console, "warn").mockImplementation(() => undefined);
       const { POST } = await import("@/app/api/v1/dev/fish-voice-pilot/turn/route");
@@ -806,6 +816,7 @@ describe("turn route", () => {
         }),
       );
       expect(await response.text()).toContain('"code":"interrupted"');
+      expect(abortedAtFetch).toBe(true);
     });
 
     it("closes the stream when the request itself is aborted", async () => {

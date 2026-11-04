@@ -197,7 +197,7 @@ Excludes one-off engineering. E also needs an estimated 8–12 engineer-weeks to
   month of engineering moves that floor to about 1.4M or 815,000. Fish's own hosted self-deployment
   ($10k a month minimum) breaks even at about 1.8M or 1.0M. The licence blocks self-hosting first.
 - **E doesn't pay back at today's volumes, and its case depends on operational cost.** The build
-  is an estimated 8–12 engineer-weeks ($24,000–36,000 at $75 an hour, plus a two-week spike). On
+  is an estimated 8–12 engineer-weeks ($24,000–36,000 at $75 an hour; the paybacks below exclude the $6,000 two-week spike). On
   direct cost alone it saves about $389 a month at 10,000 minutes and $3,629 at 100,000, a payback of
   7–10 months at the higher volume. With the assumed operational time it costs $1,111 a month more
   at 10,000 minutes and saves only $629 at 100,000, a payback of 38–57 months, with break-even near
@@ -206,9 +206,10 @@ Excludes one-off engineering. E also needs an estimated 8–12 engineer-weeks to
 ### Gross margin, voice cost only
 
 Revenue is at list price per customer, with full use of the included minutes and one number. AI
-messages and other product costs are excluded, so real margins are lower. **The $29 Vapi plan is
-shared across all customers and is left out of this table.** For a sole customer it decides the
-result: Starter on A falls to about -39%, and one-seat Pro to about 8%.
+messages and other product costs are excluded, so real margins are lower. **The $29 Vapi plan and any LiveKit plan
+fee are shared across all customers and are left out of this table.** For a sole customer it decides the
+result: Starter on A falls to about -39%, one-seat Pro on A to about 8%, and one-seat Pro on E with
+a $50 plan to about 8%.
 
 | Plan                     | Revenue | A: Margin | E: Margin |
 | ------------------------ | ------- | --------- | --------- |
@@ -261,8 +262,8 @@ including option E, should start by extracting that logic into a shared service.
 ### To run it locally
 
 Set `FISH_VOICE_PILOT_ENABLED=1` in a local environment that already has Supabase and Redis, sign in
-as a user with `voice:configure`, and open `/fi/voice/fish-pilot`. For real calls, which are paid
-unless the free model is chosen, also set `FISH_VOICE_PILOT_ALLOW_PAID_API=1`, `FISH_AUDIO_API_KEY`,
+as a user with `voice:configure`, and open `/fi/voice/fish-pilot`. Real calls need owner approval and are paid
+unless the free model is chosen. For those, also set `FISH_VOICE_PILOT_ALLOW_PAID_API=1`, `FISH_AUDIO_API_KEY`,
 `FISH_AUDIO_VOICE_ID` and optionally `FISH_AUDIO_MODEL=s2.1-pro-free`. Use only the scripted
 synthetic lines, because the terms allow training on content.
 
