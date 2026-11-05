@@ -532,8 +532,10 @@ export async function POST(request: Request): Promise<NextResponse> {
           console.warn(
             JSON.stringify({ event: "voice_call_refused", reason: admission.reason, ...ids }),
           );
+          // Marked before hanging up, so nothing can slip through while that's in progress.
+          await markCallRefused(orgId, message.call.id, "ended");
           const hungUp = await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
-          await markCallRefused(orgId, message.call.id, hungUp ? "ended" : "running");
+          if (!hungUp) await markCallRefused(orgId, message.call.id, "running");
           return NextResponse.json({ ok: true });
         }
         // Another organization's call id: nothing is recorded (logged in upsertOwnCall).

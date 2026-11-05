@@ -165,6 +165,7 @@ describe("a retried start", () => {
     await admitCall(ORG_A, "b");
     await admitCall(ORG_A, "c");
     // Usage has since passed the cap, and the database is even failing.
+    m.getEntitlements.mockRejectedValue(new Error("database down"));
     m.getVoiceUsageState.mockRejectedValue(new Error("database down"));
     expect(await admitCall(ORG_A, "a")).toEqual({ admitted: true });
     expect(held(ORG_A)).toBe(3);

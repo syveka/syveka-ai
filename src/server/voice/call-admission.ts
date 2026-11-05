@@ -45,6 +45,11 @@ export async function admitCall(
   const client = redis as unknown as SlotClient;
   let holdsSlot = false;
   try {
+    // First, and asking for nothing new: a retry for a call already admitted stays admitted,
+    // even if entitlements or usage can't be read right now.
+    const existing = await acquireCallSlot(client, orgId, vapiCallId, 0, now);
+    if (existing?.alreadyHeld) return { admitted: true };
+
     const ent = await getEntitlements(orgId);
     if (ent.readOnly) return { admitted: false, reason: "read_only" };
     const limit = callSlotLimit(ent);
@@ -92,7 +97,15 @@ export async function markCallRefused(
     .catch(() => undefined);
 }
 
-export async function callRefusal(orgId: string, vapiCallId: string): Promise<CallRefusal | null> {
-  const value = await redis.get<string>(refusedKey(orgId, vapiCallId)).catch(() => null);
-  return value === "ended" || value === "running" ? value : null;
+/** Whether this call was refused, or "unknown" when that can't be read. */
+export async function callRefusal(
+  orgId: string,
+  vapiCallId: string,
+): Promise<CallRefusal | "unknown" | null> {
+  try {
+    const value = await redis.get<string>(refusedKey(orgId, vapiCallId));
+    return value === "ended" || value === "running" ? value : null;
+  } catch {
+    return "unknown";
+  }
 }

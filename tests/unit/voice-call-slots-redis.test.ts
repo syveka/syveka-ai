@@ -111,6 +111,16 @@ describe.skipIf(!URL_)("voice call slots on a real Redis server", () => {
     expect(await acquireCallSlot(c, ORG_B, "other", 1, NOW)).toBeNull();
   });
 
+  it("asking with a limit of zero takes nothing, and reports a slot already held", async () => {
+    const c = client();
+    expect(await acquireCallSlot(c, ORG_A, "new", 0, NOW)).toBeNull();
+    await acquireCallSlot(c, ORG_A, "held", 1, NOW);
+    expect(await acquireCallSlot(c, ORG_A, "held", 0, NOW)).toEqual({
+      held: 1,
+      alreadyHeld: true,
+    });
+  });
+
   it("refuses everything at a limit of zero", async () => {
     expect(await acquireCallSlot(client(), ORG_A, "call", 0, NOW)).toBeNull();
   });

@@ -45,7 +45,10 @@ const mocks = vi.hoisted(() => {
     }),
     redisExpire: vi.fn(async (..._args: unknown[]) => 1),
     // Call slots: every call gets the only slot, unless a test says otherwise.
-    redisEval: vi.fn(async (..._args: unknown[]) => [1, 0] as unknown),
+    // The script's own arithmetic is proven on real Redis. A first ask has no slot to report.
+    redisEval: vi.fn(async (_script: unknown, _keys: unknown, args: unknown) =>
+      (args as string[])?.[2] === "0" ? ([-1, 0] as unknown) : ([1, 0] as unknown),
+    ),
   };
 });
 
@@ -1569,7 +1572,7 @@ describe("call limits at the webhook", () => {
   });
 
   it("ends the call and records no row at the concurrency limit", async () => {
-    mocks.redisEval.mockResolvedValueOnce([-1, 0]);
+    mocks.redisEval.mockResolvedValueOnce([-1, 0]).mockResolvedValueOnce([-1, 0]);
     const res = await POST(start());
     expect(res.status).toBe(200);
     expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -1644,8 +1647,8 @@ describe("call limits at the webhook", () => {
   });
 
   it("marks a refused call as running when the hang-up fails, and retries it once", async () => {
-    mocks.redisEval.mockResolvedValueOnce([-1, 0]);
-    fetchMock.mockResolvedValue(new Response("{}", { status: 500 }));
+    mocks.redisEval.mockResolvedValueOnce([-1, 0]).mockResolvedValueOnce([-1, 0]);
+    fetchMock.mockImplementation(async () => new Response("{}", { status: 500 }));
     await POST(start());
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(mocks.redisSet).toHaveBeenCalledWith(
@@ -1653,6 +1656,19 @@ describe("call limits at the webhook", () => {
       "running",
       expect.anything(),
     );
+  });
+
+  it("marks the refusal before hanging up, so nothing slips through meanwhile", async () => {
+    mocks.redisEval.mockResolvedValueOnce([-1, 0]).mockResolvedValueOnce([-1, 0]);
+    let markedAtHangUp = false;
+    fetchMock.mockImplementation(async () => {
+      markedAtHangUp = mocks.redisSet.mock.calls.some(
+        (c) => c[0] === "voice:refused:org-a:call-1" && c[1] === "ended",
+      );
+      return new Response("{}");
+    });
+    await POST(start());
+    expect(markedAtHangUp).toBe(true);
   });
 
   it("bills a refused call that really ran", async () => {

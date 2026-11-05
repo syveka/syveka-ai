@@ -107,7 +107,13 @@ vi.mock("@/server/integrations/vapi", () => {
 vi.mock("@/server/jobs/queue", () => ({ enqueue: m.enqueue }));
 vi.mock("@/server/voice/call-admission", () => ({
   callRefusal: async (_org: string, id: string) =>
-    id === "refused-call" ? "ended" : id === "running-refused-call" ? "running" : null,
+    id === "refused-call"
+      ? "ended"
+      : id === "running-refused-call"
+        ? "running"
+        : id === "unreadable-refusal"
+          ? "unknown"
+          : null,
 }));
 vi.mock("@/server/services/billing/entitlements", () => ({ getMonthUsage: m.getMonthUsage }));
 
@@ -499,6 +505,16 @@ describe("recovering lost webhooks", () => {
       { id: "assistant-a", organizationId: ORG_A, vapiAssistantId: "vapi-assistant-a" },
     ];
     m.listVapiCalls.mockResolvedValue([{ ...ENDED, id: "refused-call" }]);
+    const result = await reconcileVoiceCalls({ now: NOW });
+    expect(result.discovered).toBe(0);
+    expect(m.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("leaves a call for the next run when its refusal can't be read", async () => {
+    m.assistants = [
+      { id: "assistant-a", organizationId: ORG_A, vapiAssistantId: "vapi-assistant-a" },
+    ];
+    m.listVapiCalls.mockResolvedValue([{ ...ENDED, id: "unreadable-refusal" }]);
     const result = await reconcileVoiceCalls({ now: NOW });
     expect(result.discovered).toBe(0);
     expect(m.enqueue).not.toHaveBeenCalled();

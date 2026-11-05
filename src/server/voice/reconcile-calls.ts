@@ -258,7 +258,9 @@ async function discoverMissingCalls(
     for (const call of calls) {
       if (knownIds.has(call.id) || call.status !== "ended") continue;
       // Syveka ended this call itself and kept no row for it: it isn't the customer's usage.
-      if ((await callRefusal(assistant.organizationId, call.id)) === "ended") continue;
+      // If that can't be read, leave it for the next run, rather than bill a refused call.
+      const refusal = await callRefusal(assistant.organizationId, call.id);
+      if (refusal === "ended" || refusal === "unknown") continue;
       const outcome = outcomeFromProvider(call, now);
       const startedMs = call.startedAt ? Date.parse(call.startedAt) : Number.NaN;
       const written = await upsertOwnCall(unscopedPrisma, assistant.organizationId, {
