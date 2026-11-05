@@ -20,6 +20,7 @@ import type { TenantContext } from "@/server/auth/session";
 import {
   allowedVoiceTools,
   recordingEnabledFor,
+  recordingToApply,
   type VoiceAssistantInput,
   type AttachPhoneNumberInput,
 } from "@/lib/validators/voice";
@@ -160,7 +161,11 @@ export async function activateAssistant(
     resourceId: assistantId,
     // Provider response bodies can contain credentials or customer data.
     // Keep the operator-visible state without persisting the raw error.
-    after: { phoneNumber, phoneNumberProvisioned: Boolean(phoneNumber) },
+    after: {
+      phoneNumber,
+      phoneNumberProvisioned: Boolean(phoneNumber),
+      recordingEnabled: updated.recordingEnabled,
+    },
   });
   return { assistant: updated, phoneNumberError };
 }
@@ -332,9 +337,10 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
   });
 
   const toolNames = allowedVoiceTools(assistant.enabledTools);
-  // Never chosen here: an assistant already in Vapi keeps its dashboard choice, but a new one
-  // (including one re-created after deactivation) has none to keep, and Vapi's default records.
-  const recordingEnabled = assistant.recordingEnabled ?? (assistant.vapiAssistantId ? null : false);
+  const recordingEnabled = recordingToApply(
+    assistant.recordingEnabled,
+    Boolean(assistant.vapiAssistantId),
+  );
 
   // Mandatory AI disclosure (§13.3, §16.5): the fixed notice is spoken in the first message
   // (buildVoiceFirstMessage); the prompt keeps the model honest about it for the rest of the call.
@@ -369,13 +375,18 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
   };
 
   const { id } = await upsertVapiAssistant(config, assistant.vapiAssistantId);
-  if (
-    id !== assistant.vapiAssistantId ||
-    recordingEnabled !== (assistant.recordingEnabled ?? null)
-  ) {
+  if (id !== assistant.vapiAssistantId) {
     await unscopedPrisma.voiceAssistant.update({
       where: { id: assistantId },
-      data: { vapiAssistantId: id, recordingEnabled },
+      data: { vapiAssistantId: id },
+    });
+  }
+  // Stored only while still unset, so a choice saved meanwhile isn't overwritten. Its own save
+  // syncs it to Vapi.
+  if (assistant.recordingEnabled === null && recordingEnabled === false) {
+    await unscopedPrisma.voiceAssistant.updateMany({
+      where: { id: assistantId, organizationId: orgId, recordingEnabled: null },
+      data: { recordingEnabled: false },
     });
   }
   return id;

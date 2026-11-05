@@ -116,7 +116,7 @@ describe("toVapiPayload — per-language transcriber/voice selection", () => {
 });
 
 describe("toVapiPayload — call recording", () => {
-  // Syveka has no recording setting, so it must not override a choice made in Vapi.
+  // With no choice made in Syveka, a sync mustn't override the one made in Vapi.
   it.each([undefined, null])("doesn't set recording when none was chosen (%s)", (choice) => {
     const config = baseConfig({ recordingEnabled: choice });
     const payload: Record<string, unknown> = toVapiPayload(config);

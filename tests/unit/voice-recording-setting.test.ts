@@ -3,6 +3,7 @@ import type { TenantContext } from "@/server/auth/session";
 import {
   recordingChoice,
   recordingEnabledFor,
+  recordingToApply,
   voiceAssistantSchema,
   type VoiceAssistantInput,
 } from "@/lib/validators/voice";
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   tenantDb: vi.fn(),
   findFirstOrThrow: vi.fn(),
   unscopedUpdate: vi.fn(async () => ({})),
+  unscopedUpdateMany: vi.fn(async () => ({ count: 1 })),
   getEntitlements: vi.fn(async () => ({ voiceAssistants: 5 })),
   upsertVapiAssistant: vi.fn(async (_config: { recordingEnabled?: boolean | null }) => ({
     id: "vapi-1",
@@ -26,7 +28,11 @@ const mocks = vi.hoisted(() => ({
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: mocks.tenantDb,
   unscopedPrisma: {
-    voiceAssistant: { findFirstOrThrow: mocks.findFirstOrThrow, update: mocks.unscopedUpdate },
+    voiceAssistant: {
+      findFirstOrThrow: mocks.findFirstOrThrow,
+      update: mocks.unscopedUpdate,
+      updateMany: mocks.unscopedUpdateMany,
+    },
   },
 }));
 vi.mock("@/server/services/billing/entitlements", () => ({
@@ -126,6 +132,13 @@ describe("the form's choice", () => {
     expect(recordingChoice(true)).toBe("on");
   });
 
+  it("applies off to an assistant not in Vapi, and leaves one there alone", () => {
+    expect(recordingToApply(null, false)).toBe(false);
+    expect(recordingToApply(null, true)).toBeNull();
+    expect(recordingToApply(true, false)).toBe(true);
+    expect(recordingToApply(false, true)).toBe(false);
+  });
+
   it("makes keep, or no choice, mean off for a new assistant only", () => {
     expect(recordingEnabledFor(undefined, true)).toBe(false);
     expect(recordingEnabledFor("keep", true)).toBe(false);
@@ -173,6 +186,7 @@ describe("syncing to Vapi", () => {
     await activateAssistant(ctx, "assistant-1");
     expect(sentToVapi()).toBeNull();
     expect(mocks.unscopedUpdate).not.toHaveBeenCalled();
+    expect(mocks.unscopedUpdateMany).not.toHaveBeenCalled();
   });
 
   it("sends the stored choice for an assistant already in Vapi", async () => {
@@ -190,7 +204,25 @@ describe("syncing to Vapi", () => {
     expect(sentToVapi()).toBe(false);
     expect(mocks.unscopedUpdate).toHaveBeenCalledWith({
       where: { id: "assistant-1" },
-      data: { vapiAssistantId: "vapi-1", recordingEnabled: false },
+      data: { vapiAssistantId: "vapi-1" },
     });
+    // Only while still unset, so an "on" saved in the meantime isn't overwritten.
+    expect(mocks.unscopedUpdateMany).toHaveBeenCalledWith({
+      where: { id: "assistant-1", organizationId: "org-a", recordingEnabled: null },
+      data: { recordingEnabled: false },
+    });
+  });
+
+  it("records the recording applied when activating", async () => {
+    mocks.findFirstOrThrow.mockResolvedValue(row());
+    db.voiceAssistant.update.mockImplementation(async ({ data }) => ({
+      ...row({ recordingEnabled: false }),
+      ...data,
+    }));
+    await activateAssistant(ctx, "assistant-1");
+    expect(mocks.audit).toHaveBeenCalledWith(
+      ctx,
+      expect.objectContaining({ after: expect.objectContaining({ recordingEnabled: false }) }),
+    );
   });
 });

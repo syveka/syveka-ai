@@ -50,6 +50,15 @@ export function recordingChoice(recordingEnabled: boolean | null): VoiceRecordin
   return recordingEnabled ? "on" : "off";
 }
 
+/**
+ * The recording a sync applies. A choice not made here is left as set in Vapi for an assistant
+ * already there. One not yet in Vapi, or deleted by deactivation, has no such setting, and
+ * Vapi's own default records, so it gets off.
+ */
+export function recordingToApply(recordingEnabled: boolean | null, inVapi: boolean) {
+  return recordingEnabled ?? (inVapi ? null : false);
+}
+
 /** What to store for a choice. Undefined: leave the stored value alone. */
 export function recordingEnabledFor(
   choice: VoiceRecordingChoice | undefined,

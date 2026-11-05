@@ -640,7 +640,7 @@
     "toolsDescription": "What the assistant is allowed to do during calls. Actions that modify data always require caller confirmation.",
     "recording": {
       "title": "Call recording",
-      "description": "Sent to the voice provider each time this assistant is saved. New assistants start with recording off.",
+      "description": "Your choice is sent to the voice provider whenever this assistant's settings are saved. New assistants start with recording off.",
       "off": "Off: call audio isn't recorded",
       "on": "On: the voice provider records call audio",
       "keep": "Not set here: the voice provider's own setting applies"
