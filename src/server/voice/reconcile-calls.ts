@@ -228,6 +228,7 @@ async function discoverMissingCalls(
       listed = await listVapiCalls(
         assistant.vapiAssistantId as string,
         new Date(now.getTime() - DISCOVER_WINDOW_MS),
+        AbortSignal.timeout(VAPI_READ_TIMEOUT_MS),
       );
     } catch {
       log("voice_reconcile_unresolved", {
