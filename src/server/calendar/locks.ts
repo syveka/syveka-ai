@@ -77,6 +77,23 @@ export async function lockContactEmail(
 }
 
 /**
+ * Serializes the post-call job's contact find-then-create
+ * (src/app/api/v1/jobs/post-call/route.ts) for one (organization, caller)
+ * pair, keyed by the caller's canonical number (src/lib/crm/phone-identity.ts).
+ * Two different calls from the same new caller, processed at once, would
+ * otherwise each find no contact and each create one; the job's per-call lock
+ * doesn't serialize different calls. Fixed second key `4`, distinct from the
+ * other lock domains here (`0`-`2`) and the seat lock (`3`).
+ */
+export async function lockContactPhone(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+  canonicalPhone: string,
+): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId} || ':' || ${canonicalPhone}), 4)`;
+}
+
+/**
  * Serializes the phone-number check-then-write critical section in
  * attachPhoneNumber() (src/server/services/voice.ts) for one specific real
  * phone number -- deliberately NOT org-scoped, unlike the locks above: a
