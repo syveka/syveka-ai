@@ -3,6 +3,10 @@
 For whoever reviews #396–#402. Compared on 2026-11-05 against `origin/main` at `40f71ae7`. It lists what
 was corrected in #402, and what's stale elsewhere and left alone. No other PR was edited.
 
+> **Snapshot from before #403–#408.** What those PRs changed is in
+> [voice-economics-decision.md](voice-economics-decision.md). The Arabic summary fix below is now its own
+> draft PR, #409.
+
 ## Standing owner decisions
 
 - No Fish adoption, no Vapi replacement, no credits and no paid evaluation.
@@ -93,4 +97,5 @@ a useful PR.
 | Arabic disclosure                                    | Yes                                         | Already in #335, awaiting counsel. No new PR                                                                      |
 | Stale docs                                           | Docs only                                   | Optional small PR                                                                                                 |
 
-**Decision for the owner:** whether to authorize the Arabic summary fix as its own PR. Not started.
+The owner authorized the Arabic summary fix, and it's a separate draft PR, #409. It doesn't touch #316's phone-identity
+work.

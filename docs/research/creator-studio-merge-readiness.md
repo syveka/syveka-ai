@@ -15,11 +15,11 @@ alongside Kling and other AI video providers. It doesn't replace the existing ge
 
 ## Commits and CI
 
-| Pull request | Head SHA                                   | CI at that SHA                                                    | Status                  |
-| ------------ | ------------------------------------------ | ----------------------------------------------------------------- | ----------------------- |
-| #400         | `83821190c4f5b1cb92cbfa0d1432b7d987e130d8` | See the pull request; it reran on this SHA                        | Draft. **Do not merge** |
-| #401         | `e2293351e24d952073a785302092c4ec439f93ff` | **None,** since `ci.yml` targets `main`. Three Vercel checks only | Draft, stays stacked    |
-| #402         | This branch's head                         | See the pull request                                              | Draft, for final review |
+| Pull request | Head SHA                                                                      | CI at that SHA                                                    | Status                  |
+| ------------ | ----------------------------------------------------------------------------- | ----------------------------------------------------------------- | ----------------------- |
+| #400         | Reviewed: `83821190c4f5b1cb92cbfa0d1432b7d987e130d8`. The head adds docs only | Read at the PR's head                                             | Draft. **Do not merge** |
+| #401         | `e2293351e24d952073a785302092c4ec439f93ff`                                    | **None,** since `ci.yml` targets `main`. Three Vercel checks only | Draft, stays stacked    |
+| #402         | This branch's head                                                            | See the pull request                                              | Draft, for final review |
 
 `main` is unchanged at `40f71ae7df7c9d95781ed2f7537f386c49881ae0`. CI evidence for a PR must be read at its
 head SHA, since this document can't record the SHA of the commit containing it.

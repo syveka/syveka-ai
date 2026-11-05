@@ -25,7 +25,8 @@ was touched.
   `docker run -d --rm --name syveka-scratch-pg -e POSTGRES_PASSWORD=postgres -p 127.0.0.1:55432:5432 pgvector/pgvector:pg15`
 - **What I did.** I deleted only the dumps that came from my image, moved my own scratch files to D:,
   and restarted Docker Desktop. All other containers, images and named volumes were intact in the
-  listing afterward. I fixed the cause with `--ulimit=core=1`, and there were no dumps after that.
+  listing afterward. `--ulimit=core=1` stopped the dumps from accidental crashes, and there were none after that. It isn't a full
+  fix: a later review found that a process inside can lower its own limit, so a host needs its own policy.
 - **Still open.** **C: fell as low as 0.3 GB and had about 1.5 GB free at the end,** less than the
   3.3 GB when I started. About 2 GB is Docker's disk growing during my first image build, which doesn't
   shrink without compaction. A further temporary swing of
