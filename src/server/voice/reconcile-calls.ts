@@ -295,40 +295,38 @@ async function discoverMissingCalls(
       // config read now can't show what its caller heard. That includes a call refused by limits
       // that really ran. Unreadable state, or a record that can't say yet, waits for the next run.
       let messages: unknown = call.artifact?.messages;
-      {
-        const notice = await callDisclosureState(assistant.organizationId, call.id);
-        if (notice === "unknown") continue;
-        if (notice === "unverified") {
-          const judged = await confirmNoticeFromCallRecord({
+      const notice = await callDisclosureState(assistant.organizationId, call.id);
+      if (notice === "unknown") continue;
+      if (notice === "unverified") {
+        const judged = await confirmNoticeFromCallRecord({
+          orgId: assistant.organizationId,
+          vapiCallId: call.id,
+          language: assistant.language,
+          vapiAssistantId: assistant.vapiAssistantId as string,
+          messages: call.artifact?.messages,
+          calledAt: call.startedAt ?? call.createdAt,
+          now,
+        });
+        const confirmation = judged.outcome;
+        if (Array.isArray(judged.messages)) messages = judged.messages;
+        if (confirmation === "contradicted") {
+          // Recorded, so nothing later can bring this call back. If that fails, the next run
+          // reaches the same answer from the same record.
+          await markCallRefused(assistant.organizationId, call.id, "notice");
+          log("voice_reconcile_without_notice", {
             orgId: assistant.organizationId,
             vapiCallId: call.id,
-            language: assistant.language,
-            vapiAssistantId: assistant.vapiAssistantId as string,
-            messages: call.artifact?.messages,
-            calledAt: call.startedAt ?? call.createdAt,
-            now,
           });
-          const confirmation = judged.outcome;
-          if (Array.isArray(judged.messages)) messages = judged.messages;
-          if (confirmation === "contradicted") {
-            // Recorded, so nothing later can bring this call back. If that fails, the next run
-            // reaches the same answer from the same record.
-            await markCallRefused(assistant.organizationId, call.id, "notice");
-            log("voice_reconcile_without_notice", {
-              orgId: assistant.organizationId,
-              vapiCallId: call.id,
-            });
-            continue;
-          }
-          if (confirmation !== "ok") {
-            log("voice_reconcile_unresolved", {
-              orgId: assistant.organizationId,
-              vapiCallId: call.id,
-              reason: "no_notice_evidence",
-            });
-            result.unresolved++;
-            continue;
-          }
+          continue;
+        }
+        if (confirmation !== "ok") {
+          log("voice_reconcile_unresolved", {
+            orgId: assistant.organizationId,
+            vapiCallId: call.id,
+            reason: "no_notice_evidence",
+          });
+          result.unresolved++;
+          continue;
         }
       }
       const outcome = outcomeFromProvider(

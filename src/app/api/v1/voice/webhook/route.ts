@@ -180,7 +180,7 @@ function isVapiControlUrl(raw: string): boolean {
 
 /**
  * Vapi ignores any reply to a status-update, so ending a call has to go through
- * Live Call Control. Failure-tolerant: the webhook still answers 200. Logs ids
+ * Live Call Control. Failure-tolerant: this says whether it worked. Logs ids
  * and the error class only; the control URL is a capability and never logged.
  */
 async function endCallViaControlUrl(
