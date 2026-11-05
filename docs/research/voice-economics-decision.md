@@ -4,10 +4,62 @@ For the owner, to support a pricing decision. Read against `origin/main` at `40f
 **No prices, entitlements, Enterprise limits, Stripe settings or customer terms were changed, and no paid
 call was made.**
 
-**No measured cost exists.** No real call has been made and no real token data is in the repo, so every
-margin below is a model. The result that survives the uncertainty: **pooled allowances make one-seat
+**No measured cost exists yet.** No real call has been made, and the approved production read hasn't run, so
+every margin below is a model. The result that survives the uncertainty: **pooled allowances make one-seat
 customers the risk, and the AI message allowance, not voice, is the larger exposure.** Before changing
-prices, measure message cost and confirm how Vapi reports call length.
+prices, run the query below and confirm how Vapi reports call length.
+
+## Production measurement: not yet run
+
+**The owner approved a limited aggregate read on 2026-11-05. It hasn't run, so no figure below is measured.**
+
+**Blocker.** This environment has no approved production connection: no production URL is set, the Supabase
+tool isn't connected, and the repository's guard denies reading credential stores, `.env` files and
+`vercel env pull`. The documented route for read-only production queries is the Supabase SQL Editor, run by the
+owner (`docs/release-runbook.md`). Nothing was bypassed, and production wasn't touched.
+
+**The query is ready:** [usage-aggregate-query.sql](usage-aggregate-query.sql). It runs in one read-only
+transaction, with a 15-second statement limit and a 2-second lock limit, over the last 30 days. It was tested
+only on a disposable, in-memory database with synthetic data: it returned the right groups and timeouts, excluded
+older rows, and showed none of the planted names, ids or conversation text. Its speed on production's real table
+sizes is untested, which is what the timeout is for.
+
+**Results will show**, by plan and billing class, with model where it's recorded: organizations, messages, input
+and output tokens, reply-level percentiles, and missing records. Billing class says what state a subscription is
+in. **It doesn't show revenue,** so no revenue will be inferred from a plan's name.
+
+### What the records can and can't prove
+
+Read from the code on `40f71ae7`. **Tokens recorded are a lower bound on cost, not the full cost of a message.**
+
+| Path                                       | Tokens recorded?                                         | `AI_MESSAGES` counted?       | Effect on a cost figure                                         |
+| ------------------------------------------ | -------------------------------------------------------- | ---------------------------- | --------------------------------------------------------------- |
+| Chat, completed                            | **Yes, all tool rounds summed** (`anthropic.ts:121-124`) | Yes, 1 (`chat/route.ts:541`) | The one solid measure: tokens on `messages` and `usage_records` |
+| Chat, attempt that failed then retried     | **No**                                                   | No                           | Understates: a failed attempt may still be billed               |
+| Chat, provider error after earlier rounds  | **No** (`chat/route.ts:583`)                             | No                           | Understates: completed rounds were billed                       |
+| Chat, typed, aborted by the user           | **No:** only voice turns record partial use (`:574-579`) | No                           | Understates                                                     |
+| Chat, voice turn aborted or too large      | Yes, marked                                              | No                           | Cost with no message counted                                    |
+| Chat, blocked by moderation                | Yes, marked                                              | No                           | Cost with no message counted                                    |
+| Rolling conversation summary               | Yes, `task: summary`                                     | No                           | Cost with no message. Must be added to chat's cost              |
+| Inbox draft, deal insights, scheduling     | **No tokens at all** (`ai-spend.ts:55`)                  | Yes                          | **Messages with no measurable cost**                            |
+| Workflow `ai.generate`                     | **Output only, no model** (`run-workflow:658-660`)       | Yes                          | Input cost missing                                              |
+| Title, post-call summary, public assistant | **No**                                                   | No                           | Invisible here                                                  |
+| Cache tokens                               | **Not recorded,** and the code sets no `cache_control`   | n/a                          | Expected to be zero; not independently confirmed                |
+| Vapi, Deepgram, Azure on calls             | Not in these tables                                      | Minutes only                 | `voice_calls.cost_cents` is separate, and may be 0              |
+
+So **total tokens ÷ total messages is not a valid per-message cost:** the numerator misses some costs, and the
+denominator includes messages with no recorded tokens. The usable measure is **per saved chat reply,** kept
+apart from everything else, and the difference between replies and `AI_MESSAGES` shows how much is unmeasured.
+
+**Internal and test organizations can't be identified in the schema,** because there's no flag for them. They'll
+sit in these groups, and may be most of the sample. **If usage is low or mainly internal, the sample won't prove
+paid-customer profitability.**
+
+**Cost from tokens** would use Anthropic's official prices, per million input and output tokens: Sonnet 4.5
+$3/$15, Opus 4.8 $5/$25, Haiku 4.5 $1/$5, and it would be an **estimate, not an invoice.** Comparing it to the
+Anthropic bill for the same period would check it, and would also show how much the unrecorded paths add. That
+invoice isn't available here. `estimated_cost_usd` in the database uses `cost.ts`, whose Opus and Haiku prices are
+stale, so it isn't used as a price.
 
 ## Evidence labels
 
@@ -152,20 +204,22 @@ about $5.65 at Pro's full voice use (#399's risks still apply), while 40% fewer 
 
 All were read at their head SHAs on 2026-11-05: #396 `05e0c09d`, #397 `1d04ba19`, #398 `6bf979b5`, #399
 `b993aa71`, #403 `38982c7c`, #404 `9f8526d1`, #405 `42a00252`, #406 `90e36150`, #407 `bd314642`, #408 `a0787ddf`.
-All are unmerged, so `main` has none of these fixes.
+All are unmerged, so `main` has none of these fixes. #408 has since moved to `3cf63d2b`, and the review above
+reads that head, but these economics weren't changed by it.
 
 ## Smallest next engineering task
 
-**Independently review #404, ready for your merge decision.** It's already written, with 21 of 21 checks
-passing, so it is the smallest step, and it prevents the largest unmeasurable loss.
+**Decide on the merge path #404, #405, #406, #408, #411.** The independent review of #404 is done, and its
+defects are fixed in draft #411. No new code is needed for this step.
 
-| Item         | Detail                                                                                                                                                                                                    |
-| ------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Evidence     | `webhook/route.ts:487` reads a field absent from Vapi's published schema. No retry on `vapi.ts:141` (Vapi doesn't retry by default). Nothing recovers a lost report. Late reports land in the wrong month |
-| Scope        | Review only. No new code, unless the review finds defects                                                                                                                                                 |
-| Prevents     | Lost minutes, understated usage, and a limit check that counts too little. **It doesn't address AI message cost**                                                                                         |
-| Dependencies | **#408's stated merge path:** #404, #405 and #406 are reviewed individually, then merged through #408, because separately #404's reconciliation can re-create a call #406 refused                         |
-| After merge  | A QStash schedule and assistant re-sync, both live actions needing your authorization. Then Phase 0 of the call test must confirm Vapi's fields: `#399` lists its prerequisites                           |
+| Item           | Detail                                                                                                                                                                                                                                                                              |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Review of #404 | Sound on double billing, tenant isolation and logging. **Use #408's merge path:** if #406 lands on its own after #404, #404's reconciliation re-creates calls #406 refused                                                                                                          |
+| Defects found  | Uncertain calls had no exit, a never-connected call could stick, and the schedule was undocumented, plus batch and budget defects. All are fixed and tested in #411, on #408 at `3cf63d2b`                                                                                          |
+| Evidence       | Tests run on mocks. Postgres and Redis suites were skipped, and no real Vapi call has been made                                                                                                                                                                                     |
+| Prevents       | Lost minutes, understated usage, and a limit check that counts too little. **It doesn't address AI message cost**                                                                                                                                                                   |
+| Still open     | During a long outage, cap exposure of about one cap per 48 hours, a threshold being your decision. Known minutes keep counting while post-call fails. The billing page doesn't show uncertain minutes                                                                               |
+| After merge    | A QStash schedule and assistant re-sync, both live actions needing your authorization. `VOICE_DISCLOSURE_APPROVED_LANGUAGES` is empty by default, so every call is refused until it's set. Then Phase 0 of the call test must confirm Vapi's fields: `#399` lists its prerequisites |
 
 The largest exposure with **no PR at all** is typed chat's unbounded per-message cost, but the fix depends on
 real numbers, so measure first (decision 1 below).
@@ -186,9 +240,19 @@ contractual consequences, which counsel should check.
 | **F. Cheaper model for routine typed chat**                            | $0.016 instead of $0.034 would take Pro at 40% use from -3% to 40%; not a measured saving | No customer-visible price change                          | Quality risk, unmeasured. Engineering, not pricing          |
 | **G. Finite Enterprise default,** contract grants above it             | Removes unlimited exposure. #405 does this for voice only                                 | Small; contract-based                                     | Sales must set grants                                       |
 
-**My recommendation: A now, then decide with data.** The cost model swings from -79% to 71% for one-seat Pro on
-message cost alone, too wide to justify changing prices. G is the exception: it can be decided independently,
+**My recommendation: A now, and don't change prices until the query has run.** This is **not** based on measured
+data, since none exists yet. The model swings one-seat Pro from -79% to 71% on message cost alone, which is too
+wide to justify a price change that would affect customers. G is the exception: it can be decided independently,
 since "unlimited" has no defensible margin at any message cost.
+
+**How the results should decide it,** using break-even message cost for one-seat Pro: at 40% use it's $0.033:
+
+| Measured cost per chat reply, in a real paid sample | What it would suggest                                               |
+| --------------------------------------------------- | ------------------------------------------------------------------- |
+| Under about $0.015                                  | Keep prices and pools; watch one-seat Pro                           |
+| About $0.015 to $0.035                              | Check real allowance use. If it's well under 40%, keep; else C or B |
+| Over about $0.035                                   | Act: F (a cheaper chat model) first, then B or C                    |
+| Low usage, or mostly internal organizations         | **No pricing conclusion.** Keep A, and rerun with paying customers  |
 
 ## Method
 
@@ -210,9 +274,7 @@ showed no figures, so the retail feed is used. Finland's 25.5% VAT and the 1.10 
 
 ## Decisions for the owner
 
-1. **Authorize one read-only aggregate query** of production token usage and message counts per plan, without
-   content. The code already records tokens for chat, so this may replace the largest proxy. It's the
-   cheapest way to narrow the model. This is production access, so it needs your approval.
-2. Approve the Phase 0 prerequisites in #399 when ready: a real call is the only way to confirm Vapi's
-   length field.
+1. **Run the query in the Supabase SQL Editor** and share the results grid. It holds aggregates only, and this
+   document can then be updated with the measured figures.
+2. Approve the Phase 0 prerequisites in #399 when ready: a real call is the only way to confirm Vapi's length field.
 3. Choose among the options above once 1 and 2 are in.
