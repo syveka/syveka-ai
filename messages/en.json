@@ -732,7 +732,8 @@
       },
       "noPhoneNumber": {
         "title": "No phone number is attached",
-        "action": "Once this assistant is connected, attach a phone number on this page."
+        "action": "Attach a phone number on this page.",
+        "actionOnceConnected": "Once this assistant is connected, attach a phone number on this page."
       },
       "inactive": {
         "title": "This assistant is switched off",
@@ -743,7 +744,7 @@
         "action": "The workspace owner can check the plan in billing settings."
       },
       "minutesUsed": {
-        "title": "This month's voice minutes are used",
+        "title": "This month's voice minutes are used up",
         "action": "The workspace owner can check usage and the plan in billing settings."
       },
       "readOnly": {

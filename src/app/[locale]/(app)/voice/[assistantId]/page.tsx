@@ -110,7 +110,10 @@ export default async function AssistantPage({
             items: readiness.blockers.map((blocker) => ({
               key: blocker,
               title: t(`${blocker}.title`),
-              action: t(`${blocker}.action`),
+              action:
+                blocker === "noPhoneNumber" && !assistant.vapiAssistantId
+                  ? t("noPhoneNumber.actionOnceConnected")
+                  : t(`${blocker}.action`),
             })),
             noticeLabel: t("noticeLabel"),
             notice: readiness.notice,

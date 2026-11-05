@@ -237,6 +237,17 @@ describe("what the panel reports", () => {
     expect(html).toContain('lang="en"');
   });
 
+  it("asks for a number now once connected, and after connecting if not yet", async () => {
+    state.assistant = { ...readyAssistant(), phoneNumber: null };
+    let html = decode(await render());
+    expect(html).toContain(text("en").noPhoneNumber.action);
+    expect(html).not.toContain(text("en").noPhoneNumber.actionOnceConnected);
+
+    state.assistant = { ...readyAssistant(), phoneNumber: null, vapiAssistantId: null };
+    html = decode(await render());
+    expect(html).toContain(text("en").noPhoneNumber.actionOnceConnected);
+  });
+
   it("marks an unapproved notice as awaiting approval, and still shows it", async () => {
     vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "");
     const html = decode(await render());

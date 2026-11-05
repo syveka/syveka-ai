@@ -719,7 +719,7 @@
         "action": "Yhdistä se valitsemalla ”Aktivoi ja hanki numero”."
       },
       "syncOutdated": {
-        "title": "Palveluun lähetetyt asetukset ovat vanhentuneet",
+        "title": "Puhelinpalveluun lähetetyt asetukset ovat vanhentuneet",
         "action": "Tallenna tämä avustaja, niin sen nykyiset asetukset ja ilmoitus lähetetään."
       },
       "syncUnverifiable": {
@@ -732,7 +732,8 @@
       },
       "noPhoneNumber": {
         "title": "Puhelinnumeroa ei ole liitetty",
-        "action": "Kun avustaja on yhdistetty, liitä puhelinnumero tällä sivulla."
+        "action": "Liitä puhelinnumero tällä sivulla.",
+        "actionOnceConnected": "Kun avustaja on yhdistetty, liitä puhelinnumero tällä sivulla."
       },
       "inactive": {
         "title": "Tämä avustaja on pois päältä",

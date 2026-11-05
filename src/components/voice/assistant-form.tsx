@@ -51,8 +51,10 @@ export function AssistantForm({
         <Link href="/voice" className="text-sm text-muted-foreground hover:underline">
           ← {t("title")}
         </Link>
-        <div className="mt-1 flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">{initial?.name ?? t("newAssistant")}</h1>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+          <h1 className="min-w-0 break-words text-2xl font-semibold">
+            {initial?.name ?? t("newAssistant")}
+          </h1>
           {initial?.id && !initial.isActive ? (
             <form action={activateAction}>
               <Button type="submit" variant="default" disabled={activatePending}>
@@ -70,7 +72,7 @@ export function AssistantForm({
         </div>
         {initial?.phoneNumber ? (
           <p className="text-sm text-muted-foreground">
-            {t("phoneNumber")}: <strong>{initial.phoneNumber}</strong>
+            {t("phoneNumber")}: <strong dir="ltr">{initial.phoneNumber}</strong>
           </p>
         ) : null}
         {activateState.phoneNumberPending ? (
