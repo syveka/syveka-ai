@@ -417,6 +417,14 @@ describe("host-side mount and deadline rules", () => {
     expect(() => safe(path)).toThrow("unsafe_mount_path");
   });
 
+  it.each([
+    ["a filesystem root", "/", "/etc"],
+    ["a root that contains the home directory", "/home", "/home/other"],
+    ["the jobs root itself, which holds every job", "/jobs", "/jobs"],
+  ])("refuses %s", (_label, jobsRoot, inputDir) => {
+    expect(() => safe(inputDir, jobsRoot)).toThrow("unsafe_mount_path");
+  });
+
   it("fails closed when no jobs root is configured", () => {
     expect(() => resolveMountPath("/jobs/1", { home: "/home/someone" })).toThrow(
       "unsafe_mount_path",
@@ -576,12 +584,12 @@ describe("reading the worker's output on the host", () => {
 
   it("limits everything that isn't file content, across lines", () => {
     const { output } = reader();
-    const padding = "x".repeat(700_000);
-    output.push(Buffer.from(`RESULT {"a":"${padding}"}\n`));
+    output.push(Buffer.from(`RESULT {"a":"${"x".repeat(700_000)}"}\n`));
     expect(output.failure).toBeNull();
-    const second = reader();
-    second.output.push(Buffer.from(`RESULT {"a":"${"x".repeat(1_100_000)}"}\n`));
-    expect(second.output.failure).toBe("output_header_too_long");
+    const twoLines = reader();
+    const long = `FILE ${"x".repeat(200_000)}\n`;
+    twoLines.output.push(Buffer.from(`RESULT {"a":"${"x".repeat(1_100_000)}"}\n${long}`));
+    expect(twoLines.output.failure).toBe("output_header_too_long");
     const unterminated = reader();
     unterminated.output.push(Buffer.alloc(1_100_000, 0x61));
     expect(unterminated.output.failure).toBe("output_header_too_long");
@@ -638,10 +646,30 @@ describe("reading the worker's output on the host", () => {
     expect(JSON.stringify(result)).not.toContain("../../x");
   });
 
-  it("nothing succeeds when the job itself couldn't be read", () => {
-    const { output } = reader(null);
+  it("nothing succeeds, and nothing is written, when the job couldn't be read", () => {
+    const { dir, output } = reader(null);
     output.push(Buffer.from(`FILE ${NAME} 5\nhello${resultLine(item(0, NAME, "hello"))}`));
-    expect(output.finish()).toEqual({ ok: false, error: { code: "output_malformed" } });
+    expect(output.finish()).toEqual({ ok: false, error: { code: "output_name_refused" } });
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("writes nothing after an abort, even if more data is still in the pipe", () => {
+    const { dir, output } = reader();
+    output.abort();
+    output.push(Buffer.from(`FILE ${NAME} 5\nhello`));
+    expect(readdirSync(dir)).toEqual([]);
+    expect(output.finish().ok).toBe(false);
+  });
+
+  it("survives a file that can't be moved into place, and cleans up", () => {
+    const { dir, output } = reader();
+    output.push(Buffer.from(`FILE ${NAME} 5\nhel`));
+    // A directory now sits at the final path, so the rename at completion must fail.
+    mkdirSync(path.join(dir, NAME));
+    expect(() => output.push(Buffer.from("lo"))).not.toThrow();
+    expect(output.failure).toBe("output_malformed");
+    expect(readdirSync(dir)).toEqual([NAME]);
+    expect(output.finish().ok).toBe(false);
   });
 
   it("passes on a rejected job's known code and field paths, but nothing else", () => {
@@ -681,7 +709,7 @@ describe("reading the worker's output on the host", () => {
   });
 
   it("caps the job's total across announced files", () => {
-    const { output } = reader(null);
+    const { output } = reader([0, 1, 2, 3, 4, 5].map((i) => `job-${i}-product-ad-ar-9x16.mp4`));
     // Each file is announced at the limit, and the sixth would pass the job's total.
     for (let i = 0; i < 6 && !output.failure; i++) {
       output.push(Buffer.from(`FILE job-${i}-product-ad-ar-9x16.mp4 ${MAX_FILE_BYTES}\n`));

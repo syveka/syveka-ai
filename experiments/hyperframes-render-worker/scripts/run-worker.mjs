@@ -9,7 +9,7 @@ import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { mkdirSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { isAbsolute, relative, resolve } from "node:path";
+import { isAbsolute, parse, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { expectedOutputNames, WorkerOutputReader } from "./read-output.mjs";
 
@@ -38,10 +38,22 @@ function isInside(parent, child) {
   return !fromParent.startsWith("..") && !isAbsolute(fromParent);
 }
 
+/** @param {string} path A path that may not exist yet, which is the only failure tolerated. */
+function realPathOf(path) {
+  try {
+    return realpathSync(path);
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") return path;
+    throw new Error("unsafe_mount_path");
+  }
+}
+
 /**
- * The input mount must be inside one fixed jobs directory, which fails closed if not configured.
- * It returns the resolved path, and that is what gets mounted, so a link swapped in after this
- * check can't change the mount. Network paths are refused.
+ * The input mount must be a directory below one fixed jobs root, which fails closed if not
+ * configured. The root can't be a filesystem root or contain the home directory, so no input can
+ * be a home directory or sit beside one, and an input can't be the root itself, which would expose
+ * every other job. It returns the resolved path, and that is what gets mounted, so a link swapped
+ * in after this check can't change the mount. Network paths are refused.
  * @param {string} path
  * @param {{ jobsRoot?: string, home?: string }} [options]
  */
@@ -50,24 +62,18 @@ export function resolveMountPath(path, { jobsRoot, home = homedir() } = {}) {
   if (!isAbsolute(path) || /[,"'\n\r]/.test(path) || /^[\\/]{2}/.test(path)) {
     throw new Error("unsafe_mount_path");
   }
-  let real = path;
-  try {
-    real = realpathSync(path);
-  } catch {
-    // Not there yet: docker will report that itself, and the lexical checks still apply.
-  }
+  const real = realPathOf(path);
+  const realRoot = realPathOf(jobsRoot);
   if (/[,"'\n\r]/.test(real) || /^[\\/]{2}/.test(real)) throw new Error("unsafe_mount_path");
-  let realRoot = jobsRoot;
-  try {
-    realRoot = realpathSync(jobsRoot);
-  } catch {
-    // As above.
+  if (comparable(realRoot) === parse(comparable(realRoot)).root) {
+    throw new Error("unsafe_mount_path");
   }
-  if (!isInside(realRoot, real)) throw new Error("unsafe_mount_path");
+  if (isInside(realRoot, realPathOf(home))) throw new Error("unsafe_mount_path");
+  if (comparable(real) === comparable(realRoot) || !isInside(realRoot, real)) {
+    throw new Error("unsafe_mount_path");
+  }
   // Only below the root: the operator chose the root itself, and it may sit under AppData.
   if (CREDENTIAL_FOLDER.test(`/${relative(realRoot, real)}`)) throw new Error("unsafe_mount_path");
-  // The home directory itself, or anything above it, would expose every credential in it.
-  if (isInside(real, home)) throw new Error("unsafe_mount_path");
   return real;
 }
 
@@ -152,6 +158,8 @@ export function runWorker({
 
   return new Promise((done) => {
     let finished = false;
+    /** @type {import("node:child_process").ChildProcess | undefined} */
+    let child;
     /** @type {NodeJS.Timeout | undefined} */
     let deadline;
     /** @type {NodeJS.Timeout | undefined} */
@@ -162,6 +170,8 @@ export function runWorker({
       finished = true;
       clearTimeout(deadline);
       clearTimeout(forceStop);
+      // Stops anything still in the pipe from being written after the caller has its answer.
+      child?.stdout?.destroy?.();
       if (!outcome.ok && outcome.error) reader.abort();
       done(outcome);
     };
@@ -171,16 +181,21 @@ export function runWorker({
     const killContainer = () => {
       if (killState !== "none") return;
       killState = "running";
-      const kill = spawnProcess("docker", ["kill", name], { stdio: "ignore" });
-      kill.on("error", () => {
+      try {
+        const kill = spawnProcess("docker", ["kill", name], { stdio: "ignore" });
+        kill.on("error", () => {
+          killState = "none";
+        });
+        kill.on("close", (code) => {
+          killState = code === 0 ? "done" : "none";
+        });
+        // A hung kill must not keep this process alive after the caller has its answer.
+        kill.unref?.();
+      } catch {
         killState = "none";
-      });
-      kill.on("close", (code) => {
-        killState = code === 0 ? "done" : "none";
-      });
+      }
     };
 
-    let child;
     try {
       // Job content travels on stdin, so it never appears in a process list. stderr is dropped.
       child = spawnProcess("docker", args, { stdio: ["pipe", "pipe", "ignore"] });
@@ -203,6 +218,7 @@ export function runWorker({
     }, deadlineMs);
 
     child.on("error", () => finish({ ok: false, error: { code: "docker_unavailable" } }));
+    child.stdout?.on("error", () => reader.fail("output_truncated"));
     child.stdout?.on("data", (chunk) => {
       reader.push(chunk);
       // A stream that broke the rules gets no more chances to write.

@@ -67,6 +67,8 @@ These are preconditions, not features of the worker. Without them the threat mod
   Windows-side configuration by the operator. **Not verified:** the bypass comes from a review of the
   code and hasn't been tried, since a test would mean deliberately crashing on a disposable host.
 - **`RENDER_JOBS_ROOT`** set to a directory that holds nothing but job inputs. It fails closed if unset.
+  The input must be below it, and it can't be a filesystem root or contain the home directory.
+- **A fresh output directory per job.** A file or `.part` already there is refused, not overwritten.
 - **A global disk limit on outputs,** since the 1 GB limit is per job.
 - **No access to the Docker socket** from anything web-facing.
 

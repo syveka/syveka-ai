@@ -94,6 +94,7 @@ export class WorkerOutputReader {
     this.resultSeen = false;
     /** @type {string | null} */
     this.failure = null;
+    this.cleanupFailed = false;
   }
 
   /** @param {Buffer} chunk */
@@ -114,16 +115,35 @@ export class WorkerOutputReader {
     this.abort();
   }
 
-  /** Removes everything this job wrote, including anything half-written. Safe to call twice. */
+  /**
+   * Removes everything this job wrote, including anything half-written, and refuses any further
+   * data. Never throws: this runs from stream and timer callbacks, where a throw would take the
+   * host down. A removal that fails is reported through `finish`.
+   */
   abort() {
-    if (this.current) {
-      closeSync(this.current.fd);
-      rmSync(this.current.partPath, { force: true });
-      this.current = null;
+    this.failure ??= "output_aborted";
+    const current = this.current;
+    this.current = null;
+    if (current) {
+      try {
+        closeSync(current.fd);
+      } catch {
+        this.cleanupFailed = true;
+      }
+      this.removeFile(current.partPath);
     }
-    for (const name of this.files.keys()) rmSync(join(this.outputDir, name), { force: true });
+    for (const name of this.files.keys()) this.removeFile(join(this.outputDir, name));
     this.files.clear();
     this.buffer = Buffer.alloc(0);
+  }
+
+  /** @param {string} path */
+  removeFile(path) {
+    try {
+      rmSync(path, { force: true });
+    } catch {
+      this.cleanupFailed = true;
+    }
   }
 
   drain() {
@@ -164,10 +184,16 @@ export class WorkerOutputReader {
 
   completeFile() {
     const current = /** @type {NonNullable<typeof this.current>} */ (this.current);
-    closeSync(current.fd);
-    renameSync(current.partPath, join(this.outputDir, current.name));
-    this.files.set(current.name, { hash: current.hash.digest("hex"), size: current.size });
+    // Cleared first, so a failure below can't close the same descriptor twice.
     this.current = null;
+    closeSync(current.fd);
+    try {
+      renameSync(current.partPath, join(this.outputDir, current.name));
+    } catch (error) {
+      this.removeFile(current.partPath);
+      throw error;
+    }
+    this.files.set(current.name, { hash: current.hash.digest("hex"), size: current.size });
   }
 
   /** @param {string} header */
@@ -178,9 +204,8 @@ export class WorkerOutputReader {
     const name = /** @type {string} */ (match[1]);
     const size = Number(match[2]);
     if (!SAFE_OUTPUT_NAME.test(name)) throw new Error("output_name_refused");
-    if (this.expectedNames && !this.expectedNames.includes(name)) {
-      throw new Error("output_name_refused");
-    }
+    // Without a readable job nothing is expected, so nothing is accepted.
+    if (!this.expectedNames?.includes(name)) throw new Error("output_name_refused");
     if (this.files.has(name)) throw new Error("output_name_refused");
     if (!(size > 0) || size > MAX_FILE_BYTES) throw new Error("output_too_large");
     this.totalBytes += size;
@@ -200,7 +225,12 @@ export class WorkerOutputReader {
    */
   finish() {
     if (!this.failure && this.current) this.fail("output_truncated");
-    if (this.failure) return { ok: false, error: { code: this.failure } };
+    if (this.failure) {
+      return {
+        ok: false,
+        error: { code: this.cleanupFailed ? "output_cleanup_failed" : this.failure },
+      };
+    }
     const claimed = this.result;
     if (claimed === null || typeof claimed !== "object") {
       this.abort();
@@ -261,8 +291,9 @@ export class WorkerOutputReader {
 
     const verified = new Set(results.filter((item) => item.ok).map((item) => item.file));
     for (const name of this.files.keys()) {
-      if (!verified.has(name)) rmSync(join(this.outputDir, name), { force: true });
+      if (!verified.has(name)) this.removeFile(join(this.outputDir, name));
     }
+    if (this.cleanupFailed) return { ok: false, error: { code: "output_cleanup_failed" } };
     return {
       ok: results.length > 0 && results.every((item) => item.ok),
       results,
