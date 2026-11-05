@@ -3,6 +3,7 @@ import "server-only";
 import { randomUUID } from "node:crypto";
 import { allowedVoiceTools } from "@/lib/validators/voice";
 import {
+  detectCallerIntent,
   PILOT_SCRIPT,
   type PilotScenario,
   type PilotTurnInput,
@@ -226,7 +227,7 @@ export type PilotTurnOutcome =
  */
 export function runPilotTurn(
   identity: PilotIdentity,
-  input: Pick<PilotTurnInput, "turnId" | "language" | "scenario">,
+  input: Pick<PilotTurnInput, "turnId" | "language" | "scenario" | "callerText">,
   options: { now?: number; foreignContactId?: string } = {},
 ): PilotTurnOutcome {
   const now = options.now ?? Date.now();
@@ -243,11 +244,12 @@ export function runPilotTurn(
   session.turns++;
   seenTurns.set(turnKey, now + TURN_ID_RETENTION_MS);
 
-  const line = PILOT_SCRIPT[input.scenario][input.language];
+  const scenario = input.scenario ?? detectCallerIntent(input.callerText ?? "", input.language);
+  const line = PILOT_SCRIPT[scenario][input.language];
   const foreignContactId = options.foreignContactId ?? randomUUID();
-  const toolResults = plannedToolCalls(input.scenario, session, foreignContactId).map((call) => ({
+  const toolResults = plannedToolCalls(scenario, session, foreignContactId).map((call) => ({
     tool: call.name,
     result: JSON.stringify(runTool(identity, session, call)),
   }));
-  return { ok: true, caller: line.caller, reply: line.reply, toolResults };
+  return { ok: true, caller: input.callerText ?? line.caller, reply: line.reply, toolResults };
 }

@@ -14,6 +14,16 @@ const fishEnvSchema = z.object({
 export class FishPilotConfigError extends Error {}
 
 /**
+ * Read from Fish's pricing docs on 2026-11-05. The free model is documented as free through
+ * 2026-11-30. The others have no entry here: drama-3 has a time-limited price, and s2-pro wasn't
+ * confirmed, so a usage report says "unknown" rather than guessing.
+ */
+const FISH_USD_PER_MILLION_BYTES: Partial<Record<string, number>> = {
+  "s2.1-pro": 15,
+  "s2.1-pro-free": 0,
+};
+
+/**
  * The mock, unless real calls were explicitly allowed. An API key alone never starts
  * paid usage. When they are allowed, a missing setting is an error, not a silent mock:
  * a test run must not report mock timings as Fish's.
@@ -27,11 +37,13 @@ export function selectSpeechProvider(
   }
   const parsed = fishEnvSchema.safeParse(env);
   if (!parsed.success) throw new FishPilotConfigError("fish_pilot_not_configured");
-  return createFishSpeechProvider({
+  const provider = createFishSpeechProvider({
     apiKey: parsed.data.FISH_AUDIO_API_KEY,
     voiceId: parsed.data.FISH_AUDIO_VOICE_ID,
     model: parsed.data.FISH_AUDIO_MODEL,
   });
+  provider.usdPerMillionBytes = FISH_USD_PER_MILLION_BYTES[parsed.data.FISH_AUDIO_MODEL] ?? null;
+  return provider;
 }
 
 /** A stop on real calls until restart or hot reload, on top of the per-user rate limit. */
