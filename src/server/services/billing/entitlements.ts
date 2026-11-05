@@ -97,7 +97,7 @@ const CACHE_TTL_SECONDS = 60;
  * whenever PlanLimits' fields change.
  */
 export function entitlementsCacheKey(orgId: string): string {
-  return `ent:v2:${orgId}`;
+  return `ent:v3:${orgId}`;
 }
 
 /** Subscription statuses that keep the stored plan's limits. */

@@ -44,6 +44,8 @@ const mocks = vi.hoisted(() => {
       return counters.get(key)!;
     }),
     redisExpire: vi.fn(async (..._args: unknown[]) => 1),
+    // Call slots: every call gets the only slot, unless a test says otherwise.
+    redisEval: vi.fn(async (..._args: unknown[]) => 1 as number),
   };
 });
 
@@ -74,6 +76,7 @@ vi.mock("@/server/integrations/redis", () => ({
     incr: mocks.redisIncr,
     decr: mocks.redisDecr,
     expire: mocks.redisExpire,
+    eval: mocks.redisEval,
   },
 }));
 
@@ -1342,7 +1345,9 @@ describe("Vapi voice webhook — a call row is only ever written within the assi
 
   it("a status-update racing this organization's own first write retries once, with no conflict logged", async () => {
     mocks.voiceCallUpsert.mockRejectedValueOnce(uniqueViolation());
-    // The conflict check finds the row this organization's end-of-call-report just created.
+    // The replay check finds nothing yet, then the conflict check finds the row this
+    // organization's end-of-call-report just created.
+    mocks.voiceCallFindFirst.mockResolvedValueOnce(null);
     mocks.voiceCallFindFirst.mockResolvedValueOnce({ id: "row-1" } as never);
 
     const response = await POST(statusUpdate());
@@ -1526,5 +1531,125 @@ describe("end-of-call report — how long the call was", () => {
     });
     await POST(eocrRequest({ durationSeconds: undefined }));
     expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("call limits at the webhook", () => {
+  const CONTROL = "https://aws-us-west-2-production1-phone-call-websocket.vapi.ai/x/control";
+  const start = (overrides: Record<string, unknown> = {}) =>
+    new Request("http://localhost/api/v1/voice/webhook", {
+      method: "POST",
+      headers: { "x-vapi-signature": "sig" },
+      body: JSON.stringify({
+        message: {
+          type: "status-update",
+          status: "in-progress",
+          call: {
+            id: "call-1",
+            assistantId: "assistant-1",
+            monitor: { controlUrl: CONTROL },
+          },
+          ...overrides,
+        },
+      }),
+    });
+  const releases = () =>
+    mocks.redisEval.mock.calls.filter((c) => String(c[0]).includes('"ZREM", KEYS[1], ARGV[1]'));
+
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("ends the call and records no row at the concurrency limit", async () => {
+    mocks.redisEval.mockResolvedValueOnce(-1);
+    const res = await POST(start());
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    expect(mocks.redisSet).toHaveBeenCalledWith(
+      "voice:refused:org-a:call-1",
+      "1",
+      expect.objectContaining({ ex: expect.any(Number) }),
+    );
+  });
+
+  it("fails closed: ends the call when limits can't be checked", async () => {
+    mocks.redisEval.mockRejectedValueOnce(new Error("redis down"));
+    const res = await POST(start());
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+  });
+
+  it("ends a call for a deactivated assistant, without taking a slot", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce({
+      id: "assistant-1",
+      organizationId: "org-a",
+      enabledTools: [],
+      useKnowledgeBase: false,
+      isActive: false,
+      organization: { members: [{ userId: "owner-1" }] },
+    });
+    await POST(start());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.redisEval).not.toHaveBeenCalled();
+  });
+
+  it("a start replayed after the call ended takes no slot and writes nothing", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValueOnce({ endedAt: new Date("2026-11-20T10:00:00Z") });
+    const res = await POST(start());
+    await expect(res.json()).resolves.toEqual({ ok: true, duplicate: true });
+    expect(mocks.redisEval).not.toHaveBeenCalled();
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("admits a call within limits, and doesn't touch the control URL", async () => {
+    await POST(start());
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("frees the slot on the end-of-call report, and on an ended status", async () => {
+    await POST(eocrRequest());
+    expect(releases()).toHaveLength(1);
+    await POST(start({ status: "ended" }));
+    expect(releases()).toHaveLength(2);
+  });
+
+  it("a slot that can't be freed doesn't fail the report", async () => {
+    mocks.redisEval.mockRejectedValueOnce(new Error("redis down"));
+    const res = await POST(eocrRequest());
+    expect(res.status).toBe(200);
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed for tools when limits can't be checked: nothing runs", async () => {
+    mocks.getEntitlements.mockRejectedValueOnce(new Error("database down"));
+    const res = await POST(
+      new Request("http://localhost/api/v1/voice/webhook", {
+        method: "POST",
+        headers: { "x-vapi-signature": "sig" },
+        body: JSON.stringify({
+          message: {
+            type: "tool-calls",
+            call: { id: "call-1", assistantId: "assistant-1" },
+            toolCallList: [{ id: "t1", function: { name: "bookMeeting", arguments: "{}" } }],
+          },
+        }),
+      }),
+    );
+    await expect(res.json()).resolves.toEqual({
+      results: [{ toolCallId: "t1", result: JSON.stringify({ error: "limits_unavailable" }) }],
+    });
+    expect(mocks.executeTool).not.toHaveBeenCalled();
   });
 });

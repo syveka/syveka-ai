@@ -356,7 +356,19 @@ export async function POST(request: Request): Promise<NextResponse> {
       // Over quota: run no tool, say goodbye and end the call. Vapi acts on this
       // reply and ends the call once the line is spoken (endCallAfterSpokenEnabled).
       // Live Call Control is not used here: it would hang up before the goodbye.
-      if (await voiceQuotaExceeded(orgId, message.call?.id)) {
+      // Fails closed: when limits can't be checked, nothing runs, and writes can't slip through.
+      let overQuota: boolean;
+      try {
+        overQuota = await voiceQuotaExceeded(orgId, message.call?.id);
+      } catch {
+        console.error(JSON.stringify({ event: "voice_limits_unavailable", orgId }));
+        const results = (message.toolCallList ?? []).map((tc) => ({
+          toolCallId: tc.id,
+          result: JSON.stringify({ error: "limits_unavailable" }),
+        }));
+        return NextResponse.json({ results });
+      }
+      if (overQuota) {
         const content = QUOTA_EXCEEDED_GOODBYE[assistant.language] ?? QUOTA_EXCEEDED_GOODBYE.EN;
         const results = (message.toolCallList ?? []).map((tc) => ({
           toolCallId: tc.id,
@@ -460,14 +472,33 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     // ── Call started: entitlement gate + record (§14.2) ──
     case "status-update": {
+      const { admitCall, endCallSlot, markCallRefused } =
+        await import("@/server/voice/call-admission");
+      if (message.status === "ended" && message.call) {
+        await endCallSlot(orgId, message.call.id);
+      }
       if (message.status === "in-progress" && message.call) {
-        if (await voiceQuotaExceeded(orgId, message.call.id)) {
-          // Over quota: no call row, and end the call through Live Call Control
+        const ids = { orgId, vapiCallId: message.call.id };
+        // A signed start never expires. Replayed after the call, it must not take a slot.
+        const known = await unscopedPrisma.voiceCall
+          .findFirst({
+            where: { organizationId: orgId, vapiCallId: message.call.id },
+            select: { endedAt: true },
+          })
+          .catch(() => null);
+        if (known?.endedAt) return NextResponse.json({ ok: true, duplicate: true });
+
+        const admission = assistant.isActive
+          ? await admitCall(orgId, message.call.id)
+          : ({ admitted: false, reason: "assistant_inactive" } as const);
+        if (!admission.admitted) {
+          // No call row, and end the call through Live Call Control
           // (Vapi does not act on a reply to status-update).
-          await endCallViaControlUrl(message.call.monitor?.controlUrl, {
-            orgId,
-            vapiCallId: message.call.id,
-          });
+          console.warn(
+            JSON.stringify({ event: "voice_call_refused", reason: admission.reason, ...ids }),
+          );
+          await markCallRefused(orgId, message.call.id);
+          await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
           return NextResponse.json({ ok: true });
         }
         // Another organization's call id: nothing is recorded (logged in upsertOwnCall).
@@ -490,6 +521,8 @@ export async function POST(request: Request): Promise<NextResponse> {
     // ── Call ended: persist + hand off to post-call pipeline (§16.4) ──
     case "end-of-call-report": {
       if (!message.call) return NextResponse.json({ ok: true });
+      const { endCallSlot } = await import("@/server/voice/call-admission");
+      await endCallSlot(orgId, message.call.id);
       // Vapi documents these times on the report and on its call. Null means nothing
       // trustworthy said how long the call was: it stays unsettled, never "one minute".
       const startedAtText = message.startedAt ?? message.call.startedAt;

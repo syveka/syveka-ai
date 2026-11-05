@@ -102,6 +102,9 @@ vi.mock("@/server/integrations/vapi", () => {
   return { VapiHttpError, getVapiCall: m.getVapiCall, listVapiCalls: m.listVapiCalls };
 });
 vi.mock("@/server/jobs/queue", () => ({ enqueue: m.enqueue }));
+vi.mock("@/server/voice/call-admission", () => ({
+  wasCallRefused: async (_org: string, id: string) => id === "refused-call",
+}));
 vi.mock("@/server/services/billing/entitlements", () => ({ getMonthUsage: m.getMonthUsage }));
 
 const { VapiHttpError } = (await import("@/server/integrations/vapi")) as unknown as {
@@ -215,7 +218,13 @@ describe("billable and uncertain usage stay separate", () => {
     m.getMonthUsage.mockResolvedValue(10);
     m.rows = [row({ durationSeconds: 125, endedAt: MINUTES_AGO(50) })];
     const state = await getVoiceUsageState(ORG_A, { now: NOW });
-    expect(state).toEqual({ billableMinutes: 10, uncertainCalls: 1, uncertainMinutes: 3 });
+    expect(state).toEqual({
+      billableMinutes: 10,
+      uncertainCalls: 1,
+      uncertainMinutes: 3,
+      inFlightCalls: 0,
+      inFlightMinutes: 0,
+    });
   });
 
   it("assumes the longest length for a call with lost news", async () => {
@@ -230,9 +239,13 @@ describe("billable and uncertain usage stay separate", () => {
 
   it("counts a live call by its elapsed time, and leaves out the caller's own call", async () => {
     m.rows = [row({ startedAt: MINUTES_AGO(4) })];
-    expect((await getVoiceUsageState(ORG_A, { now: NOW })).uncertainMinutes).toBe(4);
+    expect(await getVoiceUsageState(ORG_A, { now: NOW })).toMatchObject({
+      uncertainMinutes: 0,
+      inFlightCalls: 1,
+      inFlightMinutes: 4,
+    });
     const own = await getVoiceUsageState(ORG_A, { now: NOW, excludeVapiCallId: "vapi-1" });
-    expect(own.uncertainMinutes).toBe(0);
+    expect(own.inFlightMinutes).toBe(0);
   });
 
   it("ignores other organizations' calls", async () => {
@@ -241,10 +254,16 @@ describe("billable and uncertain usage stay separate", () => {
   });
 
   it("counts both for limits, and the remainder is never negative", async () => {
-    const state = { billableMinutes: 90, uncertainCalls: 2, uncertainMinutes: 30 };
-    expect(minutesCountedForLimits(state)).toBe(120);
+    const state = {
+      billableMinutes: 90,
+      uncertainCalls: 2,
+      uncertainMinutes: 30,
+      inFlightCalls: 1,
+      inFlightMinutes: 5,
+    };
+    expect(minutesCountedForLimits(state)).toBe(125);
     expect(remainingVoiceMinutes(state, 100)).toBe(0);
-    expect(remainingVoiceMinutes(state, 500)).toBe(380);
+    expect(remainingVoiceMinutes(state, 500)).toBe(375);
   });
 });
 
@@ -418,6 +437,16 @@ describe("recovering lost webhooks", () => {
     const result = await reconcileVoiceCalls({ now: NOW });
     expect(result.discovered).toBe(0);
     expect(m.rows).toHaveLength(1);
+  });
+
+  it("doesn't bill a call Syveka itself refused", async () => {
+    m.assistants = [
+      { id: "assistant-a", organizationId: ORG_A, vapiAssistantId: "vapi-assistant-a" },
+    ];
+    m.listVapiCalls.mockResolvedValue([{ ...ENDED, id: "refused-call" }]);
+    const result = await reconcileVoiceCalls({ now: NOW });
+    expect(result.discovered).toBe(0);
+    expect(m.enqueue).not.toHaveBeenCalled();
   });
 
   it("survives a failed listing", async () => {

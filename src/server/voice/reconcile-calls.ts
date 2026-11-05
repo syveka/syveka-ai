@@ -5,6 +5,7 @@ import { unscopedPrisma } from "@/server/db/tenant";
 import { getVapiCall, listVapiCalls, VapiHttpError } from "@/server/integrations/vapi";
 import { enqueue } from "@/server/jobs/queue";
 import { STALE_CALL_MS } from "@/server/services/billing/voice-usage";
+import { wasCallRefused } from "@/server/voice/call-admission";
 import { callOutcomeFields, resolveCallDurationSeconds } from "@/server/voice/call-outcome";
 import { upsertOwnCall } from "@/server/voice/call-rows";
 
@@ -221,6 +222,8 @@ async function discoverMissingCalls(
 
     for (const call of calls) {
       if (knownIds.has(call.id) || call.status !== "ended") continue;
+      // Syveka ended this call itself and kept no row for it: it isn't the customer's usage.
+      if (await wasCallRefused(assistant.organizationId, call.id)) continue;
       const outcome = outcomeFromProvider(call, now);
       const startedMs = call.startedAt ? Date.parse(call.startedAt) : Number.NaN;
       const written = await upsertOwnCall(unscopedPrisma, assistant.organizationId, {
