@@ -190,6 +190,24 @@ contractual consequences, which counsel should check.
 message cost alone, too wide to justify changing prices. G is the exception: it can be decided independently,
 since "unlimited" has no defensible margin at any message cost.
 
+## Method
+
+Net revenue per month = (charge − charge × 1.255 × 2.7% − €0.25) × 1.10, with an annual charge divided by 12.
+The 2.7% is Stripe's 1.5% card fee, 0.7% Billing and 0.5% Tax, on a VAT-inclusive charge. Cost = messages × share ×
+$0.034 + minutes × share × the rate per minute + Creator credits × share, plus $6.60 for a Syveka-paid number.
+Margin = (net revenue − cost) ÷ net revenue. Example: Pro, one seat, monthly, tenant, 40%: net revenue $83.68;
+cost $68.00 + $15.52 + $2.40 = $85.92; margin -3%.
+
+## Sources
+
+Read 2026-11-05: [Anthropic](https://platform.claude.com/docs/en/about-claude/pricing),
+[OpenAI](https://developers.openai.com/api/docs/pricing), [Vapi](https://vapi.ai/pricing),
+[Vapi API schema](https://docs.vapi.ai/api-reference/assistants/create),
+[Twilio Finland](https://www.twilio.com/en-us/voice/pricing/fi), [Deepgram](https://deepgram.com/pricing),
+[Azure retail prices](https://prices.azure.com/api/retail/prices), [ElevenLabs](https://elevenlabs.io/pricing/api),
+[Stripe](https://stripe.com/en-fi/pricing). Some pages were read through a summarising tool. Azure's marketing page
+showed no figures, so the retail feed is used. Finland's 25.5% VAT and the 1.10 rate weren't re-read.
+
 ## Decisions for the owner
 
 1. **Authorize one read-only aggregate query** of production token usage and message counts per plan, without
