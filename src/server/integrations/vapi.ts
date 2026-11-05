@@ -56,7 +56,7 @@ async function vapiFetch<T>(path: string, init?: RequestInit): Promise<T> {
         "Content-Type": "application/json",
         ...init?.headers,
       },
-      signal: AbortSignal.timeout(VAPI_FETCH_TIMEOUT_MS),
+      signal: init?.signal ?? AbortSignal.timeout(VAPI_FETCH_TIMEOUT_MS),
     });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
@@ -187,8 +187,8 @@ export async function upsertVapiAssistant(
 }
 
 /** One call as Vapi has it. Read-only; the caller validates the untrusted shape. */
-export async function getVapiCall(id: string): Promise<unknown> {
-  return vapiFetch(`/call/${encodeURIComponent(id)}`);
+export async function getVapiCall(id: string, signal?: AbortSignal): Promise<unknown> {
+  return vapiFetch(`/call/${encodeURIComponent(id)}`, signal ? { signal } : undefined);
 }
 
 /** An assistant's recent calls, newest first. Read-only; the caller validates the shape. */
@@ -199,7 +199,9 @@ export async function listVapiCalls(assistantId: string, createdAtGe: Date): Pro
     limit: "100",
   });
   const calls = await vapiFetch<unknown>(`/call?${query.toString()}`);
-  return Array.isArray(calls) ? calls : [];
+  // An unexpected shape is an outage to report, not "this assistant had no calls".
+  if (!Array.isArray(calls)) throw new Error("Unexpected Vapi call list");
+  return calls;
 }
 
 export async function deleteVapiAssistant(id: string): Promise<void> {

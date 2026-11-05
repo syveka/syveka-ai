@@ -87,6 +87,9 @@ vi.mock("@/server/db/tenant", () => ({
     },
     voiceAssistant: {
       findMany: vi.fn(async () => m.assistants),
+      findFirst: vi.fn(async ({ where }: { where: { vapiAssistantId: string } }) =>
+        where.vapiAssistantId === "vapi-assistant-of-org-b" ? { organizationId: ORG_B } : null,
+      ),
     },
   },
 }));
@@ -283,9 +286,11 @@ describe("recovering lost webhooks", () => {
     expect(m.getVapiCall).not.toHaveBeenCalled();
   });
 
-  it("marks a call that never connected as zero seconds", async () => {
-    m.rows = [row()];
-    m.getVapiCall.mockResolvedValue({ ...ENDED, startedAt: null });
+  it("marks a call Syveka never saw, which never connected, as zero seconds", async () => {
+    m.assistants = [
+      { id: "assistant-a", organizationId: ORG_A, vapiAssistantId: "vapi-assistant-a" },
+    ];
+    m.listVapiCalls.mockResolvedValue([{ ...ENDED, startedAt: null }]);
     await reconcileVoiceCalls({ now: NOW });
     expect(m.rows[0]!.durationSeconds).toBe(0);
   });
@@ -369,6 +374,55 @@ describe("recovering lost webhooks", () => {
     expect((keys[0] as { deduplicationId: string }).deduplicationId).toBe(
       (keys[1] as { deduplicationId: string }).deduplicationId,
     );
+  });
+
+  it("settles a call whose assistant has since been given a new id", async () => {
+    m.rows = [row()];
+    m.getVapiCall.mockResolvedValue({ ...ENDED, assistantId: "an-old-deleted-assistant" });
+    const result = await reconcileVoiceCalls({ now: NOW });
+    expect(result.settled).toBe(1);
+  });
+
+  it("uses the row's own start when Vapi gives none, because the row proves it connected", async () => {
+    m.rows = [row({ startedAt: MINUTES_AGO(60) })];
+    m.getVapiCall.mockResolvedValue({ ...ENDED, startedAt: null });
+    await reconcileVoiceCalls({ now: NOW });
+    expect(m.rows[0]!.durationSeconds).toBe(180);
+  });
+
+  it("skips a scan already finished in this chain", async () => {
+    m.rows = [row()];
+    m.assistants = [
+      { id: "assistant-a", organizationId: ORG_A, vapiAssistantId: "vapi-assistant-a" },
+    ];
+    await reconcileVoiceCalls({ now: NOW, callsDone: true });
+    expect(m.getVapiCall).not.toHaveBeenCalled();
+    expect(m.listVapiCalls).toHaveBeenCalledTimes(1);
+    vi.clearAllMocks();
+    m.getVapiCall.mockResolvedValue(ENDED);
+    await reconcileVoiceCalls({ now: NOW, assistantsDone: true });
+    expect(m.getVapiCall).toHaveBeenCalledTimes(1);
+    expect(m.listVapiCalls).not.toHaveBeenCalled();
+  });
+
+  it("stops at its time budget and continues from there, after at least one call", async () => {
+    m.rows = [
+      row({
+        id: "aaaaaaaa-0000-4000-8000-000000000001",
+        vapiCallId: "v-1",
+        endedAt: MINUTES_AGO(40),
+        durationSeconds: 60,
+      }),
+      row({
+        id: "aaaaaaaa-0000-4000-8000-000000000002",
+        vapiCallId: "v-2",
+        endedAt: MINUTES_AGO(40),
+        durationSeconds: 60,
+      }),
+    ];
+    const result = await reconcileVoiceCalls({ now: NOW, deadlineMs: 0 });
+    expect(result.checked).toBe(1);
+    expect(result.nextCallCursor).toBe("aaaaaaaa-0000-4000-8000-000000000001");
   });
 
   it("gives a cursor when a page fills", async () => {

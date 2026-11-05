@@ -546,6 +546,9 @@ describe("post-call job — what a call's length means for usage", () => {
 
     expect(response.status).toBe(200);
     expect(mocks.recordUsage).not.toHaveBeenCalled();
+    expect(mocks.contactCreate).not.toHaveBeenCalled();
+    expect(mocks.anthropicCreate).not.toHaveBeenCalled();
+    expect(mocks.notificationCreate).not.toHaveBeenCalled();
     const updates = mocks.voiceCallUpdate.mock.calls as unknown as UpdateCall[];
     expect(updates.some(([u]) => "postCallProcessedAt" in u.data)).toBe(true);
   });

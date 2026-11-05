@@ -15,6 +15,10 @@ const UNPROCESSED_GRACE_MS = 30 * 60 * 1000;
 /** Vapi's own retention can be as short as 14 days; older calls stay reported as uncertain. */
 const LOOKBACK_MS = 35 * 24 * 60 * 60 * 1000;
 const DISCOVER_WINDOW_MS = 24 * 60 * 60 * 1000;
+/** Short per read, so one slow answer can't use up a whole delivery. */
+const VAPI_READ_TIMEOUT_MS = 5_000;
+/** Stops well before the route's 120 s limit, and the next page continues from there. */
+const WORK_BUDGET_MS = 90_000;
 
 /** Provider data is untrusted: an unreadable call changes nothing. */
 const vapiCallSchema = z.object({
@@ -50,18 +54,22 @@ function log(event: string, fields: Record<string, unknown>): void {
   console.warn(JSON.stringify({ event, ...fields }));
 }
 
-/** A call Vapi says has ended and never started had no minutes: that is a fact, not a gap. */
-function durationFromProvider(call: VapiCall): number | null {
-  if (!call.startedAt && call.endedAt) return 0;
-  return resolveCallDurationSeconds({ startedAt: call.startedAt, endedAt: call.endedAt });
+/**
+ * A call Vapi says has ended and never started had no minutes: that is a fact, not a gap. But
+ * a row proves the call did connect, and then its own start time gives the length.
+ */
+function durationFromProvider(call: VapiCall, rowStartedAt?: Date): number | null {
+  const startedAt = call.startedAt ?? rowStartedAt?.toISOString();
+  if (!startedAt && call.endedAt) return 0;
+  return resolveCallDurationSeconds({ startedAt, endedAt: call.endedAt });
 }
 
-function outcomeFromProvider(call: VapiCall, now: Date) {
+function outcomeFromProvider(call: VapiCall, now: Date, rowStartedAt?: Date) {
   const endedMs = call.endedAt ? Date.parse(call.endedAt) : Number.NaN;
   return callOutcomeFields({
     endedReason: call.endedReason,
     cost: call.cost,
-    durationSeconds: durationFromProvider(call),
+    durationSeconds: durationFromProvider(call, rowStartedAt),
     endedAt: Number.isNaN(endedMs) ? now : new Date(endedMs),
     messages: call.artifact?.messages,
     recordingUrl: call.artifact?.recordingUrl,
@@ -82,7 +90,9 @@ async function fetchProviderCall(
   vapiCallId: string,
 ): Promise<VapiCall | "unknown" | "unavailable"> {
   try {
-    const parsed = vapiCallSchema.safeParse(await getVapiCall(vapiCallId));
+    const parsed = vapiCallSchema.safeParse(
+      await getVapiCall(vapiCallId, AbortSignal.timeout(VAPI_READ_TIMEOUT_MS)),
+    );
     return parsed.success ? parsed.data : "unavailable";
   } catch (error) {
     return error instanceof VapiHttpError && error.status === 404 ? "unknown" : "unavailable";
@@ -93,6 +103,7 @@ async function reconcileKnownCalls(
   now: Date,
   cursor: string | undefined,
   result: ReconcileResult,
+  deadlineMs: number,
 ): Promise<void> {
   const rows = await unscopedPrisma.voiceCall.findMany({
     where: {
@@ -110,15 +121,22 @@ async function reconcileKnownCalls(
       id: true,
       organizationId: true,
       vapiCallId: true,
+      startedAt: true,
       durationSeconds: true,
-      assistant: { select: { vapiAssistantId: true } },
     },
     orderBy: { id: "asc" },
     take: RECONCILE_CALL_BATCH,
   });
   result.nextCallCursor = rows.length === RECONCILE_CALL_BATCH ? rows[rows.length - 1]!.id : null;
 
+  let lastId: string | null = null;
   for (const row of rows) {
+    // At least one per delivery, so running out of time can't loop on the same page.
+    if (lastId !== null && Date.now() > deadlineMs) {
+      result.nextCallCursor = lastId;
+      break;
+    }
+    lastId = row.id;
     result.checked++;
     const ids = { orgId: row.organizationId, callId: row.id };
 
@@ -135,10 +153,19 @@ async function reconcileKnownCalls(
       result.unresolved++;
       continue;
     }
-    // The row's binding came from a signed webhook. A provider answer contradicting it is
-    // never applied. An assistant since deactivated has no id left to compare.
-    const boundAssistant = row.assistant.vapiAssistantId;
-    if (call.id !== row.vapiCallId || (boundAssistant && call.assistantId !== boundAssistant)) {
+    // The row's organization came from a signed webhook, so an answer naming an assistant of
+    // another organization is never applied. An assistant id that nobody holds any more is
+    // fine: deactivating and reactivating an assistant gives it a new id.
+    const owner = call.assistantId
+      ? await unscopedPrisma.voiceAssistant.findFirst({
+          where: { vapiAssistantId: call.assistantId },
+          select: { organizationId: true },
+        })
+      : null;
+    if (
+      call.id !== row.vapiCallId ||
+      (owner !== null && owner.organizationId !== row.organizationId)
+    ) {
       log("voice_reconcile_binding_mismatch", ids);
       result.unresolved++;
       continue;
@@ -148,7 +175,7 @@ async function reconcileKnownCalls(
       result.unresolved++;
       continue;
     }
-    const outcome = outcomeFromProvider(call, now);
+    const outcome = outcomeFromProvider(call, now, row.startedAt);
     if (outcome.durationSeconds === null) {
       log("voice_reconcile_unresolved", { ...ids, reason: "no_duration" });
       result.unresolved++;
@@ -174,6 +201,7 @@ async function discoverMissingCalls(
   now: Date,
   cursor: string | undefined,
   result: ReconcileResult,
+  deadlineMs: number,
 ): Promise<void> {
   const assistants = await unscopedPrisma.voiceAssistant.findMany({
     where: {
@@ -188,7 +216,13 @@ async function discoverMissingCalls(
   result.nextAssistantCursor =
     assistants.length === RECONCILE_ASSISTANT_BATCH ? assistants[assistants.length - 1]!.id : null;
 
+  let lastId: string | null = null;
   for (const assistant of assistants) {
+    if (lastId !== null && Date.now() > deadlineMs) {
+      result.nextAssistantCursor = lastId;
+      break;
+    }
+    lastId = assistant.id;
     let listed: unknown[];
     try {
       listed = await listVapiCalls(
@@ -250,7 +284,15 @@ async function discoverMissingCalls(
  * call it can't resolve stays uncertain: counted against limits, never billed.
  */
 export async function reconcileVoiceCalls(
-  options: { now?: Date; callCursor?: string; assistantCursor?: string } = {},
+  options: {
+    now?: Date;
+    callCursor?: string;
+    assistantCursor?: string;
+    /** A scan already finished in this chain: without this it would restart from page one. */
+    callsDone?: boolean;
+    assistantsDone?: boolean;
+    deadlineMs?: number;
+  } = {},
 ): Promise<ReconcileResult> {
   const now = options.now ?? new Date();
   const result: ReconcileResult = {
@@ -262,7 +304,10 @@ export async function reconcileVoiceCalls(
     nextCallCursor: null,
     nextAssistantCursor: null,
   };
-  await reconcileKnownCalls(now, options.callCursor, result);
-  await discoverMissingCalls(now, options.assistantCursor, result);
+  const deadlineMs = options.deadlineMs ?? Date.now() + WORK_BUDGET_MS;
+  if (!options.callsDone) await reconcileKnownCalls(now, options.callCursor, result, deadlineMs);
+  if (!options.assistantsDone) {
+    await discoverMissingCalls(now, options.assistantCursor, result, deadlineMs);
+  }
   return result;
 }

@@ -120,8 +120,15 @@ export async function POST(request: Request): Promise<NextResponse> {
   // prior result, and emitWorkflowEvent has its own sourceEventKey-based
   // idempotency (see workflow-events.ts).
   const minutes = billableMinutes(call.durationSeconds);
+  // A call that never connected uses nothing: no usage, contact, summary or notification.
+  if (minutes === 0) {
+    await unscopedPrisma.voiceCall.update({
+      where: { id: call.id },
+      data: { postCallProcessedAt: new Date() },
+    });
+    return NextResponse.json({ ok: true, notConnected: true });
+  }
   await lockedStep(async (tx) => {
-    if (minutes === 0) return; // A call that never connected uses nothing.
     const usageAlreadyRecorded = await tx.usageRecord.findFirst({
       where: {
         organizationId: orgId,

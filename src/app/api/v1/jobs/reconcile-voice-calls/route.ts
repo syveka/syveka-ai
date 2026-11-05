@@ -9,6 +9,8 @@ const payloadSchema = z
   .object({
     callCursor: z.string().guid().optional(),
     assistantCursor: z.string().guid().optional(),
+    callsDone: z.boolean().optional(),
+    assistantsDone: z.boolean().optional(),
   })
   .strict();
 
@@ -51,8 +53,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       await enqueue(
         "reconcile-voice-calls",
         {
-          ...(result.nextCallCursor ? { callCursor: result.nextCallCursor } : {}),
-          ...(result.nextAssistantCursor ? { assistantCursor: result.nextAssistantCursor } : {}),
+          ...(result.nextCallCursor ? { callCursor: result.nextCallCursor } : { callsDone: true }),
+          ...(result.nextAssistantCursor
+            ? { assistantCursor: result.nextAssistantCursor }
+            : { assistantsDone: true }),
         },
         {
           deduplicationId: `reconcile-voice-calls-${result.nextCallCursor ?? "x"}-${result.nextAssistantCursor ?? "x"}`,
