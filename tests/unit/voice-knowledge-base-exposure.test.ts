@@ -30,7 +30,7 @@ vi.mock("@/server/voice/disclosure-gate", () => ({
   callDisclosureState: async () => "verified",
   callLiveness: async () => ({ liveness: "live", calledAt: new Date().toISOString() }),
   startedJustNow: () => true,
-  earliestCallTime: () => undefined,
+  earliestCallTime: (...times: unknown[]) => times.find((time) => typeof time === "string"),
   confirmNoticeFromMessages: async () => "ok",
   confirmNoticeFromCallRecord: async () => ({ outcome: "ok" }),
 }));
