@@ -570,9 +570,11 @@ export async function POST(request: Request): Promise<NextResponse> {
         const ids = { orgId, vapiCallId: message.call.id };
         // Replaying the start of a refused call changes nothing about that refusal.
         const refused = await callRefusal(orgId, message.call.id);
-        if (refused && refused !== "unknown") {
-          return NextResponse.json({ ok: true, duplicate: true });
+        // Not knowing isn't an answer: ask Vapi to retry, rather than decide on it for good.
+        if (refused === "unknown") {
+          return NextResponse.json({ error: "try again" }, { status: 503 });
         }
+        if (refused) return NextResponse.json({ ok: true, duplicate: true });
         // A signed start never expires. Replayed after the call, it must not take a slot.
         const known = await unscopedPrisma.voiceCall
           .findFirst({
@@ -590,8 +592,12 @@ export async function POST(request: Request): Promise<NextResponse> {
         // end a call whose notice was confirmed.
         const { callDisclosureState, verifyCallDisclosure } =
           await import("@/server/voice/disclosure-gate");
+        const noticeState = await callDisclosureState(orgId, message.call.id);
+        if (noticeState === "unknown") {
+          return NextResponse.json({ error: "try again" }, { status: 503 });
+        }
         const disclosure =
-          (await callDisclosureState(orgId, message.call.id)) === "verified"
+          noticeState === "verified"
             ? "ok"
             : await verifyCallDisclosure({
                 orgId,
@@ -649,6 +655,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       // Syveka ended this call itself, or its notice wasn't confirmed: it isn't the customer's
       // usage. One refused by limits that couldn't be hung up really ran, so it's billed below.
       const refusal = await callRefusal(orgId, message.call.id);
+      if (refusal === "unknown") {
+        return NextResponse.json({ error: "try again" }, { status: 503 });
+      }
       if (refusal === "ended" || refusal === "notice") {
         return NextResponse.json({ ok: true, refused: true });
       }

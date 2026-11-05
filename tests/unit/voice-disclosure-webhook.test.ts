@@ -23,6 +23,7 @@ const m = vi.hoisted(() => ({
   executeTool: vi.fn(async (..._args: unknown[]) => '{"booked":true}'),
   controlCalls: 0,
   existingRow: null as Record<string, unknown> | null,
+  noticeKeyDown: false,
 }));
 
 vi.mock("@/server/integrations/vapi", async (importOriginal) => ({
@@ -52,6 +53,7 @@ vi.mock("@/server/integrations/redis", () => ({
   redis: {
     get: vi.fn(async (key: string) => {
       if (m.redisDown || m.redisGetDown) throw new Error("redis down");
+      if (m.noticeKeyDown && key.startsWith("voice:disclosure-ok")) throw new Error("redis down");
       return m.store.get(key) ?? null;
     }),
     set: vi.fn(async (key: string, value: string) => {
@@ -128,6 +130,7 @@ beforeEach(() => {
   m.fetchFails = false;
   m.controlCalls = 0;
   m.existingRow = null;
+  m.noticeKeyDown = false;
   vi.clearAllMocks();
   vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI,EN,AR");
   vi.stubEnv("VAPI_API_KEY", "test-key");
@@ -331,13 +334,48 @@ describe("retries and replays", () => {
     expect(m.store.has("voice:refused:org-a:call-1")).toBe(false);
   });
 
-  it("a Redis blip refuses tools without ending a confirmed call", async () => {
+  it("a Redis blip on the refusal refuses tools without ending a confirmed call", async () => {
     await POST(start());
     m.redisGetDown = true;
     const res = await POST(toolCall());
     await expect(res.json()).resolves.toEqual({
       results: [{ toolCallId: "t1", result: JSON.stringify({ error: "limits_unavailable" }) }],
     });
+  });
+
+  it("a Redis blip on the notice refuses tools without ending a confirmed call", async () => {
+    await POST(start());
+    m.noticeKeyDown = true;
+    const res = await POST(toolCall());
+    await expect(res.json()).resolves.toEqual({
+      results: [{ toolCallId: "t1", result: JSON.stringify({ error: "limits_unavailable" }) }],
+    });
+  });
+
+  it("decides nothing on unreadable state: a start is retried, and nothing is refused", async () => {
+    await POST(start());
+    m.controlCalls = 0;
+    m.store.delete("voice:refused:org-a:call-1");
+    m.redisGetDown = true;
+    const res = await POST(start());
+    expect(res.status).toBe(503);
+    expect(m.controlCalls).toBe(0);
+    m.redisGetDown = false;
+    m.noticeKeyDown = true;
+    expect((await POST(start())).status).toBe(503);
+    expect(m.controlCalls).toBe(0);
+    expect(m.store.has("voice:refused:org-a:call-1")).toBe(false);
+  });
+
+  it("a report is retried when its refusal can't be read, so a refused call isn't kept", async () => {
+    m.liveAssistant = { firstMessage: "no notice" };
+    await POST(start());
+    m.liveAssistant = syncedAssistant("AR");
+    m.redisGetDown = true;
+    const res = await POST(report());
+    expect(res.status).toBe(503);
+    expect(m.upsert).not.toHaveBeenCalled();
+    expect(m.enqueue).not.toHaveBeenCalled();
   });
 });
 
