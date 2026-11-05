@@ -30,10 +30,10 @@ vi.mock("@/server/integrations/redis", () => ({
       }
       if (m.failEval) throw new Error("redis down");
       const [, callId, limit] = args as [string, string, string];
-      if (held.has(callId)) return held.size;
-      if (held.size >= Number(limit)) return -1;
+      if (held.has(callId)) return [held.size, 1];
+      if (held.size >= Number(limit)) return [-1, 0];
       held.add(callId);
-      return held.size;
+      return [held.size, 0];
     }),
     set: vi.fn(async (key: string, value: string) => {
       m.store.set(key, value);
@@ -48,7 +48,7 @@ vi.mock("@/server/services/billing/voice-usage", () => ({
   MAX_CALL_MINUTES: 15,
 }));
 
-const { admitCall, callSlotLimit, endCallSlot, markCallRefused, wasCallRefused } =
+const { admitCall, callRefusal, callSlotLimit, endCallSlot, markCallRefused } =
   await import("@/server/voice/call-admission");
 
 const held = (org: string) => m.slots.get(`voice:slots:${org}`)?.size ?? 0;
@@ -159,6 +159,25 @@ describe("admitting a call", () => {
   });
 });
 
+describe("a retried start", () => {
+  it("can't end a live call for what started after it", async () => {
+    await admitCall(ORG_A, "a");
+    await admitCall(ORG_A, "b");
+    await admitCall(ORG_A, "c");
+    // Usage has since passed the cap, and the database is even failing.
+    m.getVoiceUsageState.mockRejectedValue(new Error("database down"));
+    expect(await admitCall(ORG_A, "a")).toEqual({ admitted: true });
+    expect(held(ORG_A)).toBe(3);
+  });
+});
+
+describe("calls with a row but no slot", () => {
+  it("count too, so a call that ended with its report still on the way can't be missed", async () => {
+    m.getVoiceUsageState.mockResolvedValue({ ...usage(90), inFlightCalls: 1 });
+    expect(await admitCall(ORG_A, "a")).toEqual({ admitted: false, reason: "minutes_exhausted" });
+  });
+});
+
 describe("failing closed", () => {
   it("refuses when entitlements can't be read", async () => {
     m.getEntitlements.mockRejectedValue(new Error("database down"));
@@ -199,8 +218,10 @@ describe("failing closed", () => {
 
 describe("refused calls", () => {
   it("are remembered per organization", async () => {
-    await markCallRefused(ORG_A, "a");
-    expect(await wasCallRefused(ORG_A, "a")).toBe(true);
-    expect(await wasCallRefused(ORG_B, "a")).toBe(false);
+    await markCallRefused(ORG_A, "a", "ended");
+    await markCallRefused(ORG_A, "b", "running");
+    expect(await callRefusal(ORG_A, "a")).toBe("ended");
+    expect(await callRefusal(ORG_A, "b")).toBe("running");
+    expect(await callRefusal(ORG_B, "a")).toBeNull();
   });
 });

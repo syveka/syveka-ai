@@ -106,7 +106,8 @@ vi.mock("@/server/integrations/vapi", () => {
 });
 vi.mock("@/server/jobs/queue", () => ({ enqueue: m.enqueue }));
 vi.mock("@/server/voice/call-admission", () => ({
-  wasCallRefused: async (_org: string, id: string) => id === "refused-call",
+  callRefusal: async (_org: string, id: string) =>
+    id === "refused-call" ? "ended" : id === "running-refused-call" ? "running" : null,
 }));
 vi.mock("@/server/services/billing/entitlements", () => ({ getMonthUsage: m.getMonthUsage }));
 
@@ -501,6 +502,15 @@ describe("recovering lost webhooks", () => {
     const result = await reconcileVoiceCalls({ now: NOW });
     expect(result.discovered).toBe(0);
     expect(m.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("does bill a refused call that couldn't be hung up, because it really ran", async () => {
+    m.assistants = [
+      { id: "assistant-a", organizationId: ORG_A, vapiAssistantId: "vapi-assistant-a" },
+    ];
+    m.listVapiCalls.mockResolvedValue([{ ...ENDED, id: "running-refused-call" }]);
+    const result = await reconcileVoiceCalls({ now: NOW });
+    expect(result.discovered).toBe(1);
   });
 
   it("survives a failed listing", async () => {

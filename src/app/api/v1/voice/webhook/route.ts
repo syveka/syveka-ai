@@ -176,7 +176,7 @@ function isVapiControlUrl(raw: string): boolean {
 async function endCallViaControlUrl(
   controlUrl: string | null | undefined,
   ids: { orgId: string; vapiCallId: string },
-): Promise<void> {
+): Promise<boolean> {
   if (!controlUrl || !isVapiControlUrl(controlUrl)) {
     console.warn(
       JSON.stringify({
@@ -185,30 +185,39 @@ async function endCallViaControlUrl(
         ...ids,
       }),
     );
-    return;
+    return false;
   }
-  try {
-    const res = await fetch(controlUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ type: "end-call" }),
-      redirect: "error",
-      signal: AbortSignal.timeout(END_CALL_TIMEOUT_MS),
-    });
-    if (!res.ok) {
+  // One retry: a refused call left running is the case limits exist to prevent.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await fetch(controlUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "end-call" }),
+        redirect: "error",
+        signal: AbortSignal.timeout(END_CALL_TIMEOUT_MS),
+      });
+      if (res.ok) return true;
       console.warn(
-        JSON.stringify({ event: "voice_quota_end_call_failed", status: res.status, ...ids }),
+        JSON.stringify({
+          event: "voice_quota_end_call_failed",
+          status: res.status,
+          attempt,
+          ...ids,
+        }),
+      );
+    } catch (err) {
+      console.warn(
+        JSON.stringify({
+          event: "voice_quota_end_call_failed",
+          name: err instanceof Error ? err.name : "unknown",
+          attempt,
+          ...ids,
+        }),
       );
     }
-  } catch (err) {
-    console.warn(
-      JSON.stringify({
-        event: "voice_quota_end_call_failed",
-        name: err instanceof Error ? err.name : "unknown",
-        ...ids,
-      }),
-    );
   }
+  return false;
 }
 
 /**
@@ -332,7 +341,16 @@ export async function POST(request: Request): Promise<NextResponse> {
   const { message } = parsed.data;
 
   const assistant = await resolveAssistant(unscopedPrisma, message.call?.assistantId);
-  if (!assistant) return NextResponse.json({ error: "unknown assistant" }, { status: 404 });
+  if (!assistant) {
+    // A soft-deleted organization's number, or a stale one, must not keep talking to callers.
+    if (message.type === "status-update" && message.status === "in-progress" && message.call) {
+      await endCallViaControlUrl(message.call.monitor?.controlUrl, {
+        orgId: "unknown",
+        vapiCallId: message.call.id,
+      });
+    }
+    return NextResponse.json({ error: "unknown assistant" }, { status: 404 });
+  }
   const orgId = assistant.organizationId;
   const ownerUserId = assistant.organization.members[0]?.userId ?? "";
 
@@ -356,6 +374,21 @@ export async function POST(request: Request): Promise<NextResponse> {
       // Over quota: run no tool, say goodbye and end the call. Vapi acts on this
       // reply and ends the call once the line is spoken (endCallAfterSpokenEnabled).
       // Live Call Control is not used here: it would hang up before the goodbye.
+      // A refused call that couldn't be hung up: no tools, and this reply can end it.
+      {
+        const { callRefusal } = await import("@/server/voice/call-admission");
+        if (message.call && (await callRefusal(orgId, message.call.id))) {
+          const content = QUOTA_EXCEEDED_GOODBYE[assistant.language] ?? QUOTA_EXCEEDED_GOODBYE.EN;
+          const results = (message.toolCallList ?? []).map((tc) => ({
+            toolCallId: tc.id,
+            name: tc.name,
+            error: "call_refused",
+            message: { type: "request-failed", content, endCallAfterSpokenEnabled: true },
+          }));
+          return NextResponse.json({ results });
+        }
+      }
+
       // Fails closed: when limits can't be checked, nothing runs, and writes can't slip through.
       let overQuota: boolean;
       try {
@@ -487,6 +520,8 @@ export async function POST(request: Request): Promise<NextResponse> {
           })
           .catch(() => null);
         if (known?.endedAt) return NextResponse.json({ ok: true, duplicate: true });
+        // A retry for a call already recorded as running: already admitted, nothing to do.
+        if (known) return NextResponse.json({ ok: true, duplicate: true });
 
         const admission = assistant.isActive
           ? await admitCall(orgId, message.call.id)
@@ -497,8 +532,8 @@ export async function POST(request: Request): Promise<NextResponse> {
           console.warn(
             JSON.stringify({ event: "voice_call_refused", reason: admission.reason, ...ids }),
           );
-          await markCallRefused(orgId, message.call.id);
-          await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
+          const hungUp = await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
+          await markCallRefused(orgId, message.call.id, hungUp ? "ended" : "running");
           return NextResponse.json({ ok: true });
         }
         // Another organization's call id: nothing is recorded (logged in upsertOwnCall).
@@ -521,8 +556,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     // ── Call ended: persist + hand off to post-call pipeline (§16.4) ──
     case "end-of-call-report": {
       if (!message.call) return NextResponse.json({ ok: true });
-      const { endCallSlot } = await import("@/server/voice/call-admission");
+      const { callRefusal, endCallSlot } = await import("@/server/voice/call-admission");
       await endCallSlot(orgId, message.call.id);
+      // Syveka ended this call itself: it isn't the customer's usage. One that couldn't be hung
+      // up really ran, so it continues below and is billed.
+      if ((await callRefusal(orgId, message.call.id)) === "ended") {
+        return NextResponse.json({ ok: true, refused: true });
+      }
       // Vapi documents these times on the report and on its call. Null means nothing
       // trustworthy said how long the call was: it stays unsettled, never "one minute".
       const startedAtText = message.startedAt ?? message.call.startedAt;

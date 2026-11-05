@@ -66,7 +66,8 @@ describe.skipIf(!URL_)("voice call slots on a real Redis server", () => {
     );
     const granted = results.filter((r) => r !== null);
     expect(granted).toHaveLength(3);
-    expect([...granted].sort()).toEqual([1, 2, 3]);
+    expect(granted.map((r) => r?.held).sort()).toEqual([1, 2, 3]);
+    expect(granted.every((r) => r?.alreadyHeld === false)).toBe(true);
   });
 
   it("a retry of the same call under concurrency takes one slot", async () => {
@@ -74,13 +75,17 @@ describe.skipIf(!URL_)("voice call slots on a real Redis server", () => {
     const results = await Promise.all(
       Array.from({ length: 50 }, () => acquireCallSlot(c, ORG_A, "same-call", 1, NOW)),
     );
-    expect(results.every((r) => r === 1)).toBe(true);
+    expect(results.every((r) => r?.held === 1)).toBe(true);
+    expect(results.filter((r) => r?.alreadyHeld === false)).toHaveLength(1);
   });
 
   it("a call already holding a slot is still admitted at the limit", async () => {
     const c = client();
     await acquireCallSlot(c, ORG_A, "first", 1, NOW);
-    expect(await acquireCallSlot(c, ORG_A, "first", 1, NOW)).toBe(1);
+    expect(await acquireCallSlot(c, ORG_A, "first", 1, NOW)).toEqual({
+      held: 1,
+      alreadyHeld: true,
+    });
     expect(await acquireCallSlot(c, ORG_A, "second", 1, NOW)).toBeNull();
   });
 
@@ -100,8 +105,8 @@ describe.skipIf(!URL_)("voice call slots on a real Redis server", () => {
 
   it("the same call id in another organization is a separate slot", async () => {
     const c = client();
-    expect(await acquireCallSlot(c, ORG_A, "shared-id", 1, NOW)).toBe(1);
-    expect(await acquireCallSlot(c, ORG_B, "shared-id", 1, NOW)).toBe(1);
+    expect((await acquireCallSlot(c, ORG_A, "shared-id", 1, NOW))?.held).toBe(1);
+    expect((await acquireCallSlot(c, ORG_B, "shared-id", 1, NOW))?.alreadyHeld).toBe(false);
     await releaseCallSlot(c, ORG_A, "shared-id");
     expect(await acquireCallSlot(c, ORG_B, "other", 1, NOW)).toBeNull();
   });
@@ -116,7 +121,7 @@ describe.skipIf(!URL_)("voice call slots on a real Redis server", () => {
     await releaseCallSlot(c, ORG_A, "first");
     await releaseCallSlot(c, ORG_A, "first");
     await releaseCallSlot(c, ORG_A, "never-held");
-    expect(await acquireCallSlot(c, ORG_A, "second", 1, NOW)).toBe(1);
+    expect((await acquireCallSlot(c, ORG_A, "second", 1, NOW))?.held).toBe(1);
   });
 
   it("a slot lost to a crash expires by itself", async () => {
@@ -125,7 +130,7 @@ describe.skipIf(!URL_)("voice call slots on a real Redis server", () => {
     const justBefore = new Date(NOW.getTime() + CALL_SLOT_TTL_MS - 1);
     expect(await acquireCallSlot(c, ORG_A, "too-soon", 1, justBefore)).toBeNull();
     const after = new Date(NOW.getTime() + CALL_SLOT_TTL_MS);
-    expect(await acquireCallSlot(c, ORG_A, "later", 1, after)).toBe(1);
+    expect((await acquireCallSlot(c, ORG_A, "later", 1, after))?.held).toBe(1);
   });
 
   it("the key itself expires, so idle organizations leave nothing behind", async () => {

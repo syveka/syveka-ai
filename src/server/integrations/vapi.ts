@@ -168,6 +168,8 @@ export function toVapiPayload(cfg: VapiAssistantConfig) {
       credentialId: cfg.serverCredentialId,
       backoffPlan: WEBHOOK_BACKOFF_PLAN,
     },
+    // Refusing a call relies on Live Call Control, so a sync restores it if it was changed.
+    monitorPlan: { controlEnabled: true, controlAuthenticationEnabled: false },
     maxDurationSeconds: cfg.maxDurationSeconds,
     recordingEnabled: true,
   };

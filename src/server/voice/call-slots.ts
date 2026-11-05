@@ -17,17 +17,18 @@ export const CALL_SLOT_TTL_MS = 20 * 60 * 1000;
 const DEFAULT_PREFIX = "voice:slots";
 
 /**
- * KEYS: the organization's slots. ARGV: nowMs, callId, limit, expiresAtMs, ttlMs. Returns how
- * many slots are held, including this one, or -1 at the limit. Asking again for a call that
- * already holds a slot succeeds and changes nothing, so a webhook retry can't take a second.
+ * KEYS: the organization's slots. ARGV: nowMs, callId, limit, expiresAtMs, ttlMs. Returns
+ * [slots held, including this one, 1 if this call already held one], or [-1, 0] at the limit.
+ * Asking again for a call that already holds a slot changes nothing, so a webhook retry can't
+ * take a second, and says so, so the retry can't be refused for what came after it.
  */
 export const ACQUIRE_CALL_SLOT_SCRIPT = `
 redis.call("ZREMRANGEBYSCORE", KEYS[1], "-inf", ARGV[1])
-if redis.call("ZSCORE", KEYS[1], ARGV[2]) then return redis.call("ZCARD", KEYS[1]) end
-if redis.call("ZCARD", KEYS[1]) >= tonumber(ARGV[3]) then return -1 end
+if redis.call("ZSCORE", KEYS[1], ARGV[2]) then return {redis.call("ZCARD", KEYS[1]), 1} end
+if redis.call("ZCARD", KEYS[1]) >= tonumber(ARGV[3]) then return {-1, 0} end
 redis.call("ZADD", KEYS[1], ARGV[4], ARGV[2])
 redis.call("PEXPIRE", KEYS[1], ARGV[5])
-return redis.call("ZCARD", KEYS[1])
+return {redis.call("ZCARD", KEYS[1]), 0}
 `;
 
 /** KEYS: the organization's slots. ARGV: callId. Releasing twice is harmless. */
@@ -37,6 +38,8 @@ function slotKey(client: SlotClient, orgId: string): string {
   return `${client.keyPrefix ?? DEFAULT_PREFIX}:${orgId}`;
 }
 
+export type SlotHeld = { held: number; alreadyHeld: boolean };
+
 /** Slots now held, including this call's, or null when the organization is at its limit. */
 export async function acquireCallSlot(
   client: SlotClient,
@@ -44,22 +47,21 @@ export async function acquireCallSlot(
   callId: string,
   limit: number,
   now: Date = new Date(),
-): Promise<number | null> {
-  const held = Number(
-    await client.eval(
-      ACQUIRE_CALL_SLOT_SCRIPT,
-      [slotKey(client, orgId)],
-      [
-        String(now.getTime()),
-        callId,
-        String(limit),
-        String(now.getTime() + CALL_SLOT_TTL_MS),
-        String(CALL_SLOT_TTL_MS),
-      ],
-    ),
+): Promise<SlotHeld | null> {
+  const reply = await client.eval(
+    ACQUIRE_CALL_SLOT_SCRIPT,
+    [slotKey(client, orgId)],
+    [
+      String(now.getTime()),
+      callId,
+      String(limit),
+      String(now.getTime() + CALL_SLOT_TTL_MS),
+      String(CALL_SLOT_TTL_MS),
+    ],
   );
+  const [held, alreadyHeld] = Array.isArray(reply) ? reply.map(Number) : [];
   if (!Number.isInteger(held)) throw new Error("Unexpected call slot reply");
-  return held < 0 ? null : held;
+  return (held as number) < 0 ? null : { held: held as number, alreadyHeld: alreadyHeld === 1 };
 }
 
 export async function releaseCallSlot(
