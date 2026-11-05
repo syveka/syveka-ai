@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { replyText } from "@/server/ai/reply-text";
 import { routeModel } from "@/server/ai/router";
@@ -29,6 +31,34 @@ describe("reading a model's reply", () => {
   it("is empty, not undefined, with no text: a refusal or a thinking-only reply", () => {
     expect(replyText([])).toBe("");
     expect(replyText([thinking])).toBe("");
+  });
+
+  it("takes text only from text blocks", () => {
+    expect(
+      replyText([
+        { type: "thinking", text: "private" },
+        { type: "text", text: "Hei" },
+      ]),
+    ).toBe("Hei");
+  });
+
+  it("no route reads a reply by position any more", () => {
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const full = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          if (entry.name !== "generated") walk(full);
+        } else if (
+          /\.tsx?$/.test(entry.name) &&
+          /\.content\[0\]/.test(fs.readFileSync(full, "utf8"))
+        ) {
+          offenders.push(full);
+        }
+      }
+    };
+    walk("src");
+    expect(offenders).toEqual([]);
   });
 
   it("ignores a malformed text block", () => {
