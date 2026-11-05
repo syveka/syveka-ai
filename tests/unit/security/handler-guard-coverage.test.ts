@@ -108,7 +108,7 @@ function walk(dir: string, match: (file: string) => boolean): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) return walk(full, match);
-    // Forward slashes on every platform: the declarations below are written that way.
+    // Forward slashes on every platform: the declarations above are written that way.
     return match(entry.name) ? [path.relative(root, full).split(path.sep).join("/")] : [];
   });
 }

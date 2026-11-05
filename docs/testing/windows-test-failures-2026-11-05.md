@@ -37,13 +37,13 @@ The chain:
 2. A timed-out test keeps running in the background. Vitest doesn't cancel it.
 3. It then corrupts later tests through state they share, including `inFlight`.
 
-| Evidence                                                                                                                                                           | What it shows                                     |
-| ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------- |
-| Under CPU load, only the first tests of the file time out, at 5.0–5.5 s                                                                                            | Slow first load, not a fault in a particular test |
-| Later tests fail with `expected 9 to be 8` and `expected 7 to be 6` on `maxInFlight`, in 120–310 ms. Over-counts of 1 or 2 match the number of tests still running | Timed-out tests do pollute later ones             |
-| The file's own comment warns that simultaneous imports of a mocked module can resolve to the real one                                                              | A known hazard here                               |
-| 12 of 14 unfixed runs failed at 30 CPU burners. After the fix, 7 of 7 completed runs passed at the same load, with an eighth cut off by my time limit              | Removing the timeout removes all the failures     |
-| One unfixed run showed `expected 200 to be 409` on the replay test, after 4,913 ms                                                                                 | Same pattern as the others                        |
+| Evidence                                                                                                                                                           | What it shows                                                                                                                         |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------- |
+| Under CPU load, only the first tests of the file time out, at 5.0–5.5 s                                                                                            | Slow first load, not a fault in a particular test                                                                                     |
+| Later tests fail with `expected 9 to be 8` and `expected 7 to be 6` on `maxInFlight`, in 120–310 ms. Over-counts of 1 or 2 match the number of tests still running | Timed-out tests do pollute later ones                                                                                                 |
+| The file's own comment warns that simultaneous imports of a mocked module can resolve to the real one                                                              | A known hazard here                                                                                                                   |
+| 12 of 14 unfixed runs failed at 30 CPU burners. After the fix, 7 of 7 completed runs passed at the same load, with an eighth cut off by my time limit              | Removing the timeout removes all the failures                                                                                         |
+| One unfixed run showed `expected 200 to be 409` on the replay test, after 4,913 ms, right after the first test timed out                                           | It follows a timeout, but neither its duration nor its message matches the other cases exactly. Explained only by the inference below |
 
 **What wasn't directly observed:** I instrumented that test to capture the first call's status, and the
 exact `200 vs 409` failure didn't recur in the 28 instrumented runs. So the explanation for that one line
