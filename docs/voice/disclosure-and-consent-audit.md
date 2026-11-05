@@ -62,7 +62,7 @@ It merges cleanly with current `origin/main`. Its source change is correct as fa
 | --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ----------------------- |
 | 1   | **Recording may start before the notice.** Vapi's docs don't say when recording starts relative to `firstMessage`. Finland's guidance says inform before recording, and #335 leaves recording on from the start              | High     | Counsel; test call      |
 | 2   | **The notice names no business and no purpose.** It doesn't say on whose behalf the AI acts, or why the call is recorded. The owner's greeting may name the business, but nothing requires it, and it comes after the notice | High     | Counsel                 |
-| 3   | **No path for a caller who objects.** Vapi's live control has "no pause action", so recording can't be stopped mid-call                                                                                                      | High     | Counsel, product        |
+| 3   | **No path for a caller who objects.** Vapi's live control has "no pause action", so a call in progress can't pause recording through it. Only a squad hand-off to an assistant with recording off is documented to pause it  | High     | Counsel, product        |
 | 4   | **Arabic wording is unreviewed and addresses one gender.** "أنت تتحدث" is masculine singular                                                                                                                                 | Medium   | Native speaker, counsel |
 | 5   | **Language mismatch.** A Finnish assistant answering an Arabic speaker gives only a Finnish notice, and the reverse                                                                                                          | Medium   | Counsel, product        |
 | 6   | **No reminder.** Calls run up to 15 minutes, and the guidelines mention reminders in longer interactions                                                                                                                     | Low      | Counsel                 |
@@ -102,14 +102,14 @@ information", and with what text, must be written too. That is the second layer 
 
 ## Proposed fixes, in order
 
-| #   | Fix                                                                                                               | Size     | Needs first                   |
-| --- | ----------------------------------------------------------------------------------------------------------------- | -------- | ----------------------------- |
-| 1   | Counsel answers the questions below                                                                               | External | Owner sends                   |
-| 2   | Update #335: approved wording, the business name, and the recording decision                                      | 1 day    | 1, and native Arabic review   |
-| 3   | Add the second-layer answer and an objection path to the system prompt: offer a human transfer or another channel | 1 day    | 1                             |
-| 4   | Arabic summaries in Arabic (`post-call/route.ts:215-217` falls back to English)                                   | 0.5 day  | None; separate PR             |
-| 5   | Deploy to staging, re-sync, and verify on real calls (`phone-call-test-plan.md`, on the economics PR)             | 1 day    | 2, owner approval             |
-| 6   | Re-sync existing assistants in production                                                                         | 0.5 day  | 5, and separate authorization |
+| #   | Fix                                                                                                                                                                | Size     | Needs first                          |
+| --- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- | ------------------------------------ |
+| 1   | Counsel answers the questions below                                                                                                                                | External | Owner sends                          |
+| 2   | Update #335: approved wording, the business name, and the recording decision                                                                                       | 1 day    | 1, and native Arabic review          |
+| 3   | Add the second-layer answer and an objection path to the system prompt: offer a human transfer or another channel                                                  | 1 day    | 1                                    |
+| 4   | Arabic summaries in Arabic (`post-call/route.ts:215-217` falls back to English)                                                                                    | 0.5 day  | None; separate PR                    |
+| 5   | Deploy to staging, re-sync, and verify on real calls (`phone-call-test-plan.md`, on the economics PR). Its Phase 0 can run first, to give counsel the timing facts | 1 day    | Phase 0: owner approval. The rest: 2 |
+| 6   | Re-sync existing assistants in production                                                                                                                          | 0.5 day  | 5, and separate authorization        |
 
 I haven't changed any code here. The fix depends on the wording and recording decisions, and #335
 already holds the right mechanism, so a competing branch would only add confusion.
