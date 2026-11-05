@@ -194,13 +194,20 @@ export async function getVapiCall(id: string, signal?: AbortSignal): Promise<unk
 }
 
 /** An assistant's recent calls, newest first. Read-only; the caller validates the shape. */
-export async function listVapiCalls(assistantId: string, createdAtGe: Date): Promise<unknown[]> {
+export async function listVapiCalls(
+  assistantId: string,
+  createdAtGe: Date,
+  signal?: AbortSignal,
+): Promise<unknown[]> {
   const query = new URLSearchParams({
     assistantId,
     createdAtGe: createdAtGe.toISOString(),
     limit: "100",
   });
-  const calls = await vapiFetch<unknown>(`/call?${query.toString()}`);
+  const calls = await vapiFetch<unknown>(
+    `/call?${query.toString()}`,
+    signal ? { signal } : undefined,
+  );
   // An unexpected shape is an outage to report, not "this assistant had no calls".
   if (!Array.isArray(calls)) throw new Error("Unexpected Vapi call list");
   return calls;
