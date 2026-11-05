@@ -192,7 +192,9 @@ export function AssistantForm({
             <CardDescription>{t("recording.description")}</CardDescription>
           </CardHeader>
           <CardContent>
-            <Label htmlFor="recording" className="sr-only">{t("recording.title")}</Label>
+            <Label htmlFor="recording" className="sr-only">
+              {t("recording.title")}
+            </Label>
             <select
               id="recording"
               name="recording"

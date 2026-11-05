@@ -44,9 +44,6 @@ vi.mock("@/server/integrations/vapi", () => ({
   buyPhoneNumber: mocks.buyPhoneNumber,
 }));
 vi.mock("@/server/ai/tools", () => ({ TOOL_REGISTRY: [], zodToJsonSchema: vi.fn(() => ({})) }));
-vi.mock("@/server/business-dna/context", () => ({
-  getBusinessDnaContext: vi.fn(async () => null),
-}));
 vi.mock("@/server/services/audit", () => ({ audit: mocks.audit }));
 vi.mock("@/env", () => ({
   getVapiEnv: () => ({
@@ -99,7 +96,12 @@ const row = (overrides: Record<string, unknown> = {}) => ({
 });
 
 type Mock = ReturnType<typeof vi.fn>;
-let db: { voiceAssistant: { count: Mock; create: Mock; update: Mock; findFirstOrThrow: Mock } };
+let db: {
+  voiceAssistant: { count: Mock; create: Mock; update: Mock; findFirstOrThrow: Mock };
+  // Read by the sync's Business DNA context, which has none here.
+  businessDNA: { findFirst: Mock };
+  businessDnaService: { findMany: Mock };
+};
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -110,6 +112,8 @@ beforeEach(() => {
       update: vi.fn(async ({ data }) => ({ ...row(), ...data })),
       findFirstOrThrow: vi.fn(async () => row()),
     },
+    businessDNA: { findFirst: vi.fn(async () => null) },
+    businessDnaService: { findMany: vi.fn(async () => []) },
   };
   mocks.tenantDb.mockReturnValue(db);
 });

@@ -152,8 +152,9 @@ describe("staging release migration contract", () => {
     // contract.mjs) -- a legacy-missing table's FKs are still part of this static contract
     // (the runtime check's own `expected.source_table = ANY(legacy_missing_tables)` guard,
     // asserted below, is what actually tolerates them not existing yet, not an omission from
-    // the contract itself).
-    expect(columnRows).toHaveLength(704);
+    // the contract itself). Then to 705 with voice_assistants.recording_enabled, a nullable
+    // column registered in LEGACY_MISSING_COLUMN_ENTRIES.
+    expect(columnRows).toHaveLength(705);
     expect(foreignKeyRows).toHaveLength(85);
     expect(contract).toContain("expected.table_name = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.source_table = ANY(legacy_missing_tables)");
