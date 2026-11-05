@@ -211,7 +211,7 @@ describe("Vapi voice webhook — unrelated message types are unchanged", () => {
     await expect(response.json()).resolves.toEqual({ ok: true });
     expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(1);
     expect(mocks.enqueue).not.toHaveBeenCalled();
-    expect(mocks.redisGet).not.toHaveBeenCalled();
+    expect(mocks.redisGet).not.toHaveBeenCalledWith(expect.stringContaining("vapi:eocr"));
     expect(mocks.redisSet).not.toHaveBeenCalled();
   });
 
@@ -1773,7 +1773,7 @@ describe("the spoken notice at the webhook", () => {
     vi.stubGlobal("fetch", fetchMock);
     vi.spyOn(console, "warn").mockImplementation(() => undefined);
     mocks.verifyCallDisclosure.mockResolvedValue("ok");
-    mocks.callDisclosureState.mockResolvedValue("verified");
+    mocks.callDisclosureState.mockResolvedValue("unverified");
   });
   afterEach(() => {
     vi.unstubAllGlobals();

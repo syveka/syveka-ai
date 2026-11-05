@@ -22,6 +22,7 @@ const m = vi.hoisted(() => ({
   enqueue: vi.fn(async (..._args: unknown[]) => undefined),
   executeTool: vi.fn(async (..._args: unknown[]) => '{"booked":true}'),
   controlCalls: 0,
+  existingRow: null as Record<string, unknown> | null,
 }));
 
 vi.mock("@/server/integrations/vapi", async (importOriginal) => ({
@@ -41,7 +42,7 @@ vi.mock("@/server/db/tenant", () => ({
       })),
     },
     voiceCall: {
-      findFirst: vi.fn(async () => null),
+      findFirst: vi.fn(async () => m.existingRow),
       upsert: m.upsert,
       findMany: vi.fn(async () => []),
     },
@@ -126,6 +127,7 @@ beforeEach(() => {
   m.liveAssistant = syncedAssistant("AR");
   m.fetchFails = false;
   m.controlCalls = 0;
+  m.existingRow = null;
   vi.clearAllMocks();
   vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI,EN,AR");
   vi.stubEnv("VAPI_API_KEY", "test-key");
@@ -262,6 +264,80 @@ describe("a report for a call whose start was missed", () => {
     expect(res.status).toBe(200);
     expect(m.upsert).toHaveBeenCalledTimes(1);
     expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("retries and replays", () => {
+  it("a retried start for a confirmed call survives Vapi being unreachable", async () => {
+    await POST(start());
+    m.upsert.mockClear();
+    m.fetchFails = true;
+    await POST(start());
+    expect(m.controlCalls).toBe(0);
+    expect(m.store.has("voice:refused:org-a:call-1")).toBe(false);
+  });
+
+  it("replaying a refused call's start changes nothing, even with the config since fixed", async () => {
+    m.liveAssistant = { firstMessage: "no notice" };
+    await POST(start());
+    expect(m.store.get("voice:refused:org-a:call-1")).toBe("notice");
+    m.controlCalls = 0;
+    m.liveAssistant = syncedAssistant("AR");
+    await POST(start());
+    expect(m.controlCalls).toBe(0);
+    expect(m.upsert).not.toHaveBeenCalled();
+    expect(m.store.get("voice:refused:org-a:call-1")).toBe("notice");
+  });
+
+  it("a notice refusal stays: fixing the config doesn't bring back its tools or report", async () => {
+    m.liveAssistant = { firstMessage: "no notice" };
+    await POST(start());
+    m.liveAssistant = syncedAssistant("AR");
+    await POST(toolCall());
+    expect(m.executeTool).not.toHaveBeenCalled();
+    await POST(report());
+    expect(m.upsert).not.toHaveBeenCalled();
+    expect(m.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("keeps nothing for a notice refusal whose hang-up failed", async () => {
+    m.liveAssistant = { firstMessage: "no notice" };
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (url: string) =>
+        url === CONTROL
+          ? new Response("{}", { status: 500 })
+          : new Response(JSON.stringify(m.liveAssistant)),
+      ),
+    );
+    await POST(start());
+    expect(m.store.get("voice:refused:org-a:call-1")).toBe("notice");
+    await POST(report());
+    expect(m.upsert).not.toHaveBeenCalled();
+    expect(m.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("keeps the report of a call that has a row, without asking Vapi", async () => {
+    m.existingRow = { id: "row-1", endedAt: null, durationSeconds: null };
+    m.fetchFails = true;
+    await POST(report());
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("retries a report rather than drop it when Vapi can't answer", async () => {
+    m.fetchFails = true;
+    const res = await POST(report());
+    expect(res.status).toBe(503);
+    expect(m.store.has("voice:refused:org-a:call-1")).toBe(false);
+  });
+
+  it("a Redis blip refuses tools without ending a confirmed call", async () => {
+    await POST(start());
+    m.redisGetDown = true;
+    const res = await POST(toolCall());
+    await expect(res.json()).resolves.toEqual({
+      results: [{ toolCallId: "t1", result: JSON.stringify({ error: "limits_unavailable" }) }],
+    });
   });
 });
 

@@ -5,7 +5,7 @@ import { unscopedPrisma } from "@/server/db/tenant";
 import { getVapiCall, listVapiCalls, VapiHttpError } from "@/server/integrations/vapi";
 import { enqueue } from "@/server/jobs/queue";
 import { STALE_CALL_MS } from "@/server/services/billing/voice-usage";
-import { callRefusal } from "@/server/voice/call-admission";
+import { callRefusal, markCallRefused } from "@/server/voice/call-admission";
 import { callOutcomeFields, resolveCallDurationSeconds } from "@/server/voice/call-outcome";
 import { callDisclosureState, verifyCallDisclosure } from "@/server/voice/disclosure-gate";
 import { upsertOwnCall } from "@/server/voice/call-rows";
@@ -26,6 +26,7 @@ const WORK_BUDGET_MS = 90_000;
 const vapiCallSchema = z.object({
   id: z.string().min(1),
   assistantId: z.string().nullish(),
+  assistantOverrides: z.record(z.string(), z.unknown()).nullish(),
   status: z.string().nullish(),
   startedAt: z.string().nullish(),
   endedAt: z.string().nullish(),
@@ -261,26 +262,30 @@ async function discoverMissingCalls(
       // Syveka ended this call itself and kept no row for it: it isn't the customer's usage.
       // If that can't be read, leave it for the next run, rather than bill a refused call.
       const refusal = await callRefusal(assistant.organizationId, call.id);
-      if (refusal === "ended" || refusal === "unknown") continue;
+      if (refusal === "ended" || refusal === "notice" || refusal === "unknown") continue;
       // Syveka never heard of this call, so nothing confirmed its notice: keep nothing unless
       // the live config confirms it now. Unreadable state waits for the next run.
       if (refusal !== "running") {
         const notice = await callDisclosureState(assistant.organizationId, call.id);
         if (notice === "unknown") continue;
-        if (
-          notice === "unverified" &&
-          (await verifyCallDisclosure({
+        if (notice === "unverified") {
+          const late = await verifyCallDisclosure({
             orgId: assistant.organizationId,
             vapiCallId: call.id,
             language: assistant.language,
             vapiAssistantId: assistant.vapiAssistantId as string,
-          })) !== "ok"
-        ) {
-          log("voice_reconcile_without_notice", {
-            orgId: assistant.organizationId,
-            vapiCallId: call.id,
+            overrides: call.assistantOverrides,
           });
-          continue;
+          if (late === "unverifiable") continue;
+          if (late !== "ok") {
+            // Recorded, so a configuration fixed later can't bring this call back.
+            await markCallRefused(assistant.organizationId, call.id, "notice");
+            log("voice_reconcile_without_notice", {
+              orgId: assistant.organizationId,
+              vapiCallId: call.id,
+            });
+            continue;
+          }
         }
       }
       const outcome = outcomeFromProvider(call, now);

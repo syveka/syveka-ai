@@ -36,6 +36,8 @@ const m = vi.hoisted(() => ({
   listVapiCalls: vi.fn(async () => [] as unknown[]),
   enqueue: vi.fn(async () => undefined),
   updateMany: vi.fn(),
+  markCallRefused: vi.fn(async () => undefined),
+  verifyCallDisclosure: vi.fn(async (..._args: unknown[]) => "live_config_mismatch"),
 }));
 
 function matchesKnownCallQuery(row: Row, where: Record<string, never>): boolean {
@@ -108,9 +110,10 @@ vi.mock("@/server/jobs/queue", () => ({ enqueue: m.enqueue }));
 vi.mock("@/server/voice/disclosure-gate", () => ({
   callDisclosureState: async (_org: string, id: string) =>
     id === "unconfirmed-call" ? "unverified" : id === "unreadable-notice" ? "unknown" : "verified",
-  verifyCallDisclosure: async () => "live_config_mismatch",
+  verifyCallDisclosure: m.verifyCallDisclosure,
 }));
 vi.mock("@/server/voice/call-admission", () => ({
+  markCallRefused: m.markCallRefused,
   callRefusal: async (_org: string, id: string) =>
     id === "refused-call"
       ? "ended"
@@ -118,7 +121,9 @@ vi.mock("@/server/voice/call-admission", () => ({
         ? "running"
         : id === "unreadable-refusal"
           ? "unknown"
-          : null,
+          : id === "notice-refused-call"
+            ? "notice"
+            : null,
 }));
 vi.mock("@/server/services/billing/entitlements", () => ({ getMonthUsage: m.getMonthUsage }));
 
@@ -532,6 +537,36 @@ describe("recovering lost webhooks", () => {
     m.listVapiCalls.mockResolvedValue([{ ...ENDED, id: "running-refused-call" }]);
     const result = await reconcileVoiceCalls({ now: NOW });
     expect(result.discovered).toBe(1);
+  });
+
+  it("keeps nothing for a notice-refused call, even when the hang-up failed", async () => {
+    m.assistants = [
+      { id: "assistant-a", organizationId: ORG_A, vapiAssistantId: "vapi-assistant-a" },
+    ];
+    m.listVapiCalls.mockResolvedValue([{ ...ENDED, id: "notice-refused-call" }]);
+    const result = await reconcileVoiceCalls({ now: NOW });
+    expect(result.discovered).toBe(0);
+    expect(m.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("records a definite notice failure, passes overrides, and leaves a blip for later", async () => {
+    m.assistants = [
+      { id: "assistant-a", organizationId: ORG_A, vapiAssistantId: "vapi-assistant-a" },
+    ];
+    const overrides = { firstMessage: "no notice" };
+    m.listVapiCalls.mockResolvedValue([
+      { ...ENDED, id: "unconfirmed-call", assistantOverrides: overrides },
+    ]);
+    m.verifyCallDisclosure.mockResolvedValueOnce("live_config_mismatch");
+    await reconcileVoiceCalls({ now: NOW });
+    expect(m.verifyCallDisclosure).toHaveBeenCalledWith(expect.objectContaining({ overrides }));
+    expect(m.markCallRefused).toHaveBeenCalledWith(ORG_A, "unconfirmed-call", "notice");
+
+    m.markCallRefused.mockClear();
+    m.verifyCallDisclosure.mockResolvedValueOnce("unverifiable");
+    await reconcileVoiceCalls({ now: NOW });
+    expect(m.markCallRefused).not.toHaveBeenCalled();
+    expect(m.enqueue).not.toHaveBeenCalled();
   });
 
   it.each(["unconfirmed-call", "unreadable-notice"])(

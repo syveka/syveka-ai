@@ -83,9 +83,10 @@ export async function endCallSlot(orgId: string, vapiCallId: string): Promise<vo
 /**
  * Remembers a refusal, best effort. "ended" means the hang-up worked, so it isn't the
  * customer's usage. "running" means the hang-up failed: the call really ran, so it's billed,
- * but it still gets no tools.
+ * but it still gets no tools. "notice" means its spoken notice wasn't confirmed: nothing is
+ * kept, however the hang-up went, and fixing the configuration later doesn't change that.
  */
-export type CallRefusal = "ended" | "running";
+export type CallRefusal = "ended" | "running" | "notice";
 
 export async function markCallRefused(
   orgId: string,
@@ -104,7 +105,7 @@ export async function callRefusal(
 ): Promise<CallRefusal | "unknown" | null> {
   try {
     const value = await redis.get<string>(refusedKey(orgId, vapiCallId));
-    return value === "ended" || value === "running" ? value : null;
+    return value === "ended" || value === "running" || value === "notice" ? value : null;
   } catch {
     return "unknown";
   }
