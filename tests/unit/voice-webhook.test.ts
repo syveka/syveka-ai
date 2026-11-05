@@ -62,6 +62,7 @@ vi.mock("@/server/integrations/vapi", () => ({
 vi.mock("@/server/voice/disclosure-gate", () => ({
   verifyCallDisclosure: mocks.verifyCallDisclosure,
   callDisclosureState: mocks.callDisclosureState,
+  callLiveness: async () => "live",
   confirmNoticeFromMessages: mocks.confirmNotice,
   confirmNoticeFromCallRecord: mocks.confirmNotice,
 }));

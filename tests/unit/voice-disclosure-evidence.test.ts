@@ -11,12 +11,15 @@ const ORG = "11111111-1111-4111-8111-111111111111";
 const OTHER_ORG = "22222222-2222-4222-8222-222222222222";
 const VAPI_ASSISTANT = "vapi-assistant-a";
 const CONTROL = "https://aws-us-west-2-production1-phone-call-websocket.vapi.ai/x/control";
-const NOW = new Date("2026-11-20T12:00:00Z");
+const NOW = new Date();
+const minutesAgo = (n: number) => new Date(NOW.getTime() - n * 60_000).toISOString();
 
 const m = vi.hoisted(() => ({
   store: new Map<string, string>(),
   failedKeys: [] as string[],
   failWrites: false,
+  failedWrites: [] as string[],
+  minutes: 1000,
   liveAssistant: {} as Record<string, unknown>,
   callRecord: null as Record<string, unknown> | null,
   callRecordStatus: 200,
@@ -63,7 +66,7 @@ vi.mock("@/server/db/tenant", () => ({
       ]),
     },
     voiceCall: {
-      findFirst: vi.fn(async () => m.existingRow),
+      findFirst: vi.fn(async () => m.existingRow ?? m.rows[0] ?? null),
       findMany: vi.fn(async () => []),
       upsert: m.upsert,
       updateMany: vi.fn(async () => ({ count: 0 })),
@@ -77,7 +80,9 @@ vi.mock("@/server/integrations/redis", () => ({
       return m.store.get(key) ?? null;
     }),
     set: vi.fn(async (key: string, value: string) => {
-      if (m.failWrites) throw new Error("redis down");
+      if (m.failWrites || m.failedWrites.some((k) => key.startsWith(k))) {
+        throw new Error("redis down");
+      }
       if (m.store.has(key) && key.startsWith("vapi:tool:")) return null;
       m.store.set(key, value);
       return "OK";
@@ -95,7 +100,7 @@ vi.mock("@/server/ai/tools", () => ({ executeTool: m.executeTool }));
 vi.mock("@/server/jobs/queue", () => ({ enqueue: m.enqueue }));
 vi.mock("@/server/services/billing/entitlements", () => ({
   getMonthUsage: async () => 0,
-  getEntitlements: async () => ({ voiceMinutesMonth: 1000, readOnly: false }),
+  getEntitlements: async () => ({ voiceMinutesMonth: m.minutes, readOnly: false }),
 }));
 
 import { POST } from "@/app/api/v1/voice/webhook/route";
@@ -132,28 +137,31 @@ const signed = (message: Record<string, unknown>) =>
     headers: { "x-vapi-signature": "sig" },
     body: JSON.stringify({ message }),
   });
-const start = () => signed({ type: "status-update", status: "in-progress", call: CALL });
-const report = (messages?: unknown[]) =>
+const start = (extra: Record<string, unknown> = {}) =>
+  signed({ type: "status-update", status: "in-progress", call: CALL, ...extra });
+const report = (messages?: unknown[], startedAt: string | null = minutesAgo(5)) =>
   signed({
     type: "end-of-call-report",
     call: CALL,
     endedReason: "customer-ended-call",
     durationSeconds: 60,
+    ...(startedAt ? { startedAt } : {}),
     ...(messages ? { artifact: { messages, recordingUrl: "https://r/1" } } : {}),
   });
-const toolCall = (messages?: unknown[]) =>
+const toolCall = (messages?: unknown[], startedAt: string | null = minutesAgo(1)) =>
   signed({
     type: "tool-calls",
-    call: CALL,
+    call: { ...CALL, ...(startedAt ? { startedAt } : {}) },
     ...(messages ? { artifact: { messages } } : {}),
     toolCallList: [{ id: "t1", function: { name: "bookMeeting", arguments: "{}" } }],
   });
+const liveCall = { id: "call-1", assistantId: VAPI_ASSISTANT, status: "in-progress" };
 const endedCall = (messages?: unknown[], extra: Record<string, unknown> = {}) => ({
   id: "call-1",
   assistantId: VAPI_ASSISTANT,
   status: "ended",
-  startedAt: "2026-11-20T10:00:00Z",
-  endedAt: "2026-11-20T10:03:00Z",
+  startedAt: minutesAgo(120),
+  endedAt: minutesAgo(117),
   cost: 0.2,
   ...(messages ? { artifact: { messages } } : {}),
   ...extra,
@@ -165,8 +173,10 @@ beforeEach(() => {
   m.store.clear();
   m.failedKeys = [];
   m.failWrites = false;
+  m.failedWrites = [];
+  m.minutes = 1000;
   m.liveAssistant = GOOD_CONFIG;
-  m.callRecord = null;
+  m.callRecord = liveCall;
   m.callRecordStatus = 200;
   m.callList = [];
   m.fetchFails = false;
@@ -309,7 +319,248 @@ describe("what counts as evidence", () => {
     vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI");
     await POST(report(SPOKE_NOTICE));
     expect(kept()).toBe(false);
+    expect(m.store.has(NOTICE_KEY)).toBe(false);
+  });
+
+  it("a setting missing for a while, as in a deploy, doesn't lose a good call for good", async () => {
+    vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "");
+    await POST(report(SPOKE_NOTICE));
+    expect(kept()).toBe(false);
+    expect(m.store.has(REFUSED_KEY)).toBe(false);
+    vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "AR");
+    m.callList = [endedCall(SPOKE_NOTICE)];
+    expect((await reconcileVoiceCalls({ now: NOW })).discovered).toBe(1);
+  });
+
+  it("reads a notice Vapi split across entries", async () => {
+    const cut = NOTICE.indexOf(" ", 10);
+    await POST(report([spoken(NOTICE.slice(0, cut), 0.5), spoken(NOTICE.slice(cut + 1), 2)]));
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("doesn't join speech across something the caller said", async () => {
+    const cut = NOTICE.indexOf(" ", 10);
+    await POST(
+      report([
+        spoken(NOTICE.slice(0, cut), 0.5),
+        { role: "user", message: "نعم", time: 1, endTime: 2, secondsFromStart: 1 },
+        spoken(NOTICE.slice(cut + 1), 2),
+      ]),
+    );
+    expect(kept()).toBe(false);
+  });
+
+  it("a caller talking first doesn't change what the assistant opened with", async () => {
+    await POST(
+      report([
+        { role: "user", message: "ألو", time: 1, endTime: 2, secondsFromStart: 0.1 },
+        spoken(`${NOTICE} مرحبا`, 0.5),
+      ]),
+    );
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("ignores tashkeel a transcript adds", async () => {
+    await POST(report([spoken(NOTICE.replace(/([\u0621-\u064A])/u, "$1\u064E"))]));
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("needs the notice to end at a word", async () => {
+    await POST(report([spoken(`${NOTICE.replace(/[.،؟!]+$/u, "")}ات مرحبا`)]));
+    expect(kept()).toBe(false);
+  });
+
+  it.each([
+    ["none", undefined],
+    ["infinite", Number.POSITIVE_INFINITY],
+    ["negative", -1],
+    ["text", "0"],
+  ])("can't say when a message's time is %s", async (_name, secondsFromStart) => {
+    m.callRecordStatus = 404;
+    await POST(report([{ ...spoken(`${NOTICE} مرحبا`), secondsFromStart }]));
+    expect(kept()).toBe(false);
+    expect(m.store.has(REFUSED_KEY)).toBe(false);
+  });
+
+  it("another assistant speaking first can't say either way, and doesn't help", async () => {
+    m.callRecordStatus = 404;
+    await POST(
+      report([
+        { ...spoken("مرحبا", 0.1), assistantId: "vapi-assistant-of-org-b" },
+        spoken(`${NOTICE} مرحبا`, 0.5),
+      ]),
+    );
+    expect(kept()).toBe(false);
+    expect(m.store.has(REFUSED_KEY)).toBe(false);
+  });
+});
+
+describe("a start that arrives after its call ended", () => {
+  const nothingWritten = () => {
+    expect(m.upsert).not.toHaveBeenCalled();
+    expect(m.store.has(NOTICE_KEY)).toBe(false);
+    expect(m.store.has(REFUSED_KEY)).toBe(false);
+  };
+
+  it("doesn't read today's configuration, or write anything", async () => {
+    m.callRecord = endedCall();
+    const res = await POST(start());
+    expect(res.status).toBe(200);
+    expect(m.assistantFetches).toBe(0);
+    expect(m.controlCalls).toBe(0);
+    nothingWritten();
+  });
+
+  it("doesn't vouch through the assistant its own signed body carries, when replayed", async () => {
+    m.callRecord = endedCall();
+    await POST(start({ assistant: GOOD_CONFIG }));
+    nothingWritten();
+  });
+
+  it("can't rescue a call whose report has already shown no evidence", async () => {
+    m.callRecord = endedCall();
+    await POST(report());
+    expect(kept()).toBe(false);
+    await POST(start());
+    await POST(report());
+    await reconcileVoiceCalls({ now: NOW });
+    expect(kept()).toBe(false);
+    nothingWritten();
+  });
+
+  it("recognizes an ended call by its end time alone", async () => {
+    m.callRecord = { ...liveCall, endedAt: minutesAgo(1) };
+    await POST(start());
+    nothingWritten();
+  });
+
+  it.each([
+    ["Vapi can't answer", () => (m.fetchFails = true)],
+    ["Vapi has no such call", () => (m.callRecordStatus = 404)],
+    ["the record is about another call", () => (m.callRecord = { ...liveCall, id: "other" })],
+    [
+      "the record names another assistant",
+      () => (m.callRecord = { ...liveCall, assistantId: "vapi-assistant-of-org-b" }),
+    ],
+    [
+      "the record has no status",
+      () => (m.callRecord = { id: "call-1", assistantId: VAPI_ASSISTANT }),
+    ],
+  ])("hangs up and asks for a retry, recording nothing, when %s", async (_name, arrange) => {
+    arrange();
+    const res = await POST(start());
+    expect(res.status).toBe(503);
+    expect(m.controlCalls).toBe(1);
+    expect(m.assistantFetches).toBe(0);
+    nothingWritten();
+  });
+
+  it("the retry after such a hang-up records nothing, and the call's own record decides", async () => {
+    m.fetchFails = true;
+    await POST(start());
+    m.fetchFails = false;
+    m.callRecord = endedCall();
+    await POST(start());
+    nothingWritten();
+    await POST(report(SPOKE_NOTICE));
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("a retry of a call that already passed isn't asked about again", async () => {
+    await POST(start());
+    expect(m.store.has(NOTICE_KEY)).toBe(true);
+    m.fetchFails = true;
+    m.rows = [];
+    const res = await POST(start());
+    expect(res.status).toBe(200);
+  });
+
+  it("a report that shows no notice is still refused after a live start was missed", async () => {
+    m.callRecord = endedCall();
+    await POST(start());
+    await POST(report(SPOKE_NO_NOTICE));
+    expect(kept()).toBe(false);
     expect(m.store.get(REFUSED_KEY)).toBe("notice");
+  });
+});
+
+describe("older than a refusal is remembered", () => {
+  const OLD = new Date(NOW.getTime() - 72 * 60 * 60_000).toISOString();
+
+  it("a replayed report showing the notice keeps nothing", async () => {
+    m.callRecordStatus = 404;
+    const res = await POST(report(SPOKE_NOTICE, OLD));
+    expect(res.status).toBe(200);
+    expect(kept()).toBe(false);
+    expect(m.store.has(NOTICE_KEY)).toBe(false);
+  });
+
+  it("Vapi's record of that old call doesn't help", async () => {
+    m.callRecord = endedCall(SPOKE_NOTICE, { startedAt: OLD });
+    await POST(report(SPOKE_NOTICE, OLD));
+    expect(kept()).toBe(false);
+  });
+
+  it("a replayed tool call showing the notice runs nothing", async () => {
+    await POST(toolCall(SPOKE_NOTICE, OLD));
+    expect(m.executeTool).not.toHaveBeenCalled();
+  });
+
+  it("a report with no time at all relies on Vapi's record for one", async () => {
+    m.callRecordStatus = 404;
+    await POST(report(SPOKE_NOTICE, null));
+    expect(kept()).toBe(false);
+    m.callRecordStatus = 200;
+    m.callRecord = endedCall(SPOKE_NOTICE);
+    await POST(report(SPOKE_NOTICE, null));
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("a report in the window is evaluated, and one just past it isn't", async () => {
+    const hours = (n: number) => new Date(NOW.getTime() - n * 60 * 60_000).toISOString();
+    m.callRecordStatus = 404;
+    await POST(report(SPOKE_NOTICE, hours(37)));
+    expect(kept()).toBe(false);
+    await POST(report(SPOKE_NOTICE, hours(35)));
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a refusal that can't be remembered", () => {
+  it("a call without its notice is still hung up, and the webhook retried", async () => {
+    m.liveAssistant = BAD_CONFIG;
+    m.failedWrites = ["voice:refused"];
+    const res = await POST(start());
+    expect(res.status).toBe(503);
+    expect(m.controlCalls).toBe(1);
+    expect(m.upsert).not.toHaveBeenCalled();
+  });
+
+  it("a call over its limits isn't hung up with no record of why", async () => {
+    m.minutes = 0;
+    m.failedWrites = ["voice:refused"];
+    const res = await POST(start());
+    expect(res.status).toBe(503);
+    expect(m.controlCalls).toBe(0);
+    expect(m.upsert).not.toHaveBeenCalled();
+  });
+
+  it("the same call over its limits is hung up once the record can be written", async () => {
+    m.minutes = 0;
+    m.failedWrites = ["voice:refused"];
+    await POST(start());
+    m.failedWrites = [];
+    const res = await POST(start());
+    expect(res.status).toBe(200);
+    expect(m.controlCalls).toBe(1);
+    expect(m.store.get(REFUSED_KEY)).toBe("ended");
+  });
+
+  it("a report showing something else is retried until its refusal is stored", async () => {
+    m.failedWrites = ["voice:refused"];
+    const res = await POST(report(SPOKE_NO_NOTICE));
+    expect(res.status).toBe(503);
+    expect(kept()).toBe(false);
   });
 });
 
@@ -421,6 +672,24 @@ describe("reconciliation", () => {
     const result = await reconcileVoiceCalls({ now: NOW });
     expect(result.discovered).toBe(0);
     expect(m.store.get(REFUSED_KEY)).toBe("notice");
+  });
+
+  it("stops reading records when time runs out", async () => {
+    m.callList = [endedCall()];
+    m.callRecord = endedCall(SPOKE_NOTICE);
+    const fetches = () => vi.mocked(fetch).mock.calls.length;
+    const result = await reconcileVoiceCalls({ now: NOW, deadlineMs: Date.now() - 1 });
+    expect(result.discovered).toBe(0);
+    expect(result.unresolved).toBe(1);
+    // Only the list itself: no read of the call's own record.
+    expect(fetches()).toBe(1);
+  });
+
+  it("uses the run's own clock to judge a call's age", async () => {
+    m.callList = [endedCall(SPOKE_NOTICE)];
+    const later = new Date(NOW.getTime() + 37 * 60 * 60_000);
+    expect((await reconcileVoiceCalls({ now: later })).discovered).toBe(0);
+    expect(m.store.has(REFUSED_KEY)).toBe(false);
   });
 
   it("leaves a call for the next run when the provider can't answer", async () => {

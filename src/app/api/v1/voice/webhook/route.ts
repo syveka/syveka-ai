@@ -67,6 +67,7 @@ const messageSchema = z.object({
       .object({
         id: z.string(),
         assistantId: z.string().optional(),
+        createdAt: z.string().nullish(),
         startedAt: z.string().nullish(),
         endedAt: z.string().nullish(),
         assistantOverrides: z.record(z.string(), z.unknown()).nullish(),
@@ -430,6 +431,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                   language: assistant.language,
                   vapiAssistantId: message.call?.assistantId as string,
                   messages: message.artifact?.messages,
+                  calledAt: message.call?.startedAt ?? message.call?.createdAt,
                 })
               : "absent";
         if (confirmation === "unverifiable") {
@@ -439,7 +441,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           }));
           return NextResponse.json({ results });
         }
-        if (confirmation === "refused" && vapiCallId) {
+        if (confirmation === "contradicted" && vapiCallId) {
           await markCallRefused(orgId, vapiCallId, "notice");
         }
         if (confirmation !== "ok") {
@@ -603,11 +605,26 @@ export async function POST(request: Request): Promise<NextResponse> {
         // is recorded, so reconciliation doesn't later re-create the call.
         // A retry of a call that already passed isn't checked again: a Vapi blip now mustn't
         // end a call whose notice was confirmed.
-        const { callDisclosureState, verifyCallDisclosure } =
+        const { callDisclosureState, callLiveness, verifyCallDisclosure } =
           await import("@/server/voice/disclosure-gate");
         const noticeState = await callDisclosureState(orgId, message.call.id);
         if (noticeState === "unknown") {
           return NextResponse.json({ error: "try again" }, { status: 503 });
+        }
+        // A start that arrives after its call ended can't vouch for it, or take a slot for it:
+        // nothing is written, and the call's report or its record decides instead.
+        if (noticeState !== "verified") {
+          const liveness = await callLiveness(message.call.id, message.call.assistantId as string);
+          // A call that can't be shown to have its notice doesn't continue, but this says
+          // nothing about the call itself, so no refusal is recorded. The retry decides.
+          if (liveness === "unknown") {
+            await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
+            return NextResponse.json({ error: "try again" }, { status: 503 });
+          }
+          if (liveness === "ended") {
+            console.warn(JSON.stringify({ event: "voice_start_after_end", ...ids }));
+            return NextResponse.json({ ok: true, duplicate: true });
+          }
         }
         const disclosure =
           noticeState === "verified"
@@ -622,9 +639,12 @@ export async function POST(request: Request): Promise<NextResponse> {
               });
         if (disclosure !== "ok") {
           console.warn(JSON.stringify({ event: "voice_call_refused", reason: disclosure, ...ids }));
-          await markCallRefused(orgId, message.call.id, "notice");
+          const remembered = await markCallRefused(orgId, message.call.id, "notice");
+          // Hung up even so: a call without its notice mustn't continue for any reason.
           await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
-          return NextResponse.json({ ok: true });
+          return remembered
+            ? NextResponse.json({ ok: true })
+            : NextResponse.json({ error: "try again" }, { status: 503 });
         }
 
         const admission = assistant.isActive
@@ -637,7 +657,12 @@ export async function POST(request: Request): Promise<NextResponse> {
             JSON.stringify({ event: "voice_call_refused", reason: admission.reason, ...ids }),
           );
           // Marked before hanging up, so nothing can slip through while that's in progress.
-          await markCallRefused(orgId, message.call.id, "ended");
+          // If that fails, it doesn't hang up either: an ended call with no record of why could
+          // later pass as a good one. The retry decides again, and if it never does, the call
+          // ran and is billed as one that ran.
+          if (!(await markCallRefused(orgId, message.call.id, "ended"))) {
+            return NextResponse.json({ error: "try again" }, { status: 503 });
+          }
           const hungUp = await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
           if (!hungUp) await markCallRefused(orgId, message.call.id, "running");
           return NextResponse.json({ ok: true });
@@ -702,6 +727,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                 language: assistant.language,
                 vapiAssistantId: message.call.assistantId as string,
                 messages: message.artifact?.messages,
+                calledAt: message.startedAt ?? message.call.startedAt ?? message.call.createdAt,
               })
             : "ok";
         if (confirmation === "unverifiable") {
@@ -718,8 +744,11 @@ export async function POST(request: Request): Promise<NextResponse> {
           );
           // Recorded only when the record contradicts the notice. With no evidence either way,
           // reconciliation may still find the transcript, and until then nothing is kept.
-          if (confirmation === "refused") {
-            await markCallRefused(orgId, message.call.id, "notice");
+          if (
+            confirmation === "contradicted" &&
+            !(await markCallRefused(orgId, message.call.id, "notice"))
+          ) {
+            return NextResponse.json({ error: "try again" }, { status: 503 });
           }
           return NextResponse.json({ ok: true, refused: true });
         }

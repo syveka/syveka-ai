@@ -105,7 +105,12 @@ const signed = (message: Record<string, unknown>) =>
     headers: { "x-vapi-signature": "sig" },
     body: JSON.stringify({ message }),
   });
-const CALL = { id: "call-1", assistantId: "vapi-1", monitor: { controlUrl: CONTROL } };
+const CALL = {
+  id: "call-1",
+  assistantId: "vapi-1",
+  createdAt: new Date().toISOString(),
+  monitor: { controlUrl: CONTROL },
+};
 const start = (extra: Record<string, unknown> = {}) =>
   signed({ type: "status-update", status: "in-progress", call: CALL, ...extra });
 const toolCall = (name = "bookMeeting", messages?: unknown[]) =>
@@ -123,6 +128,15 @@ const report = () =>
     durationSeconds: 60,
     artifact: { messages: [{ role: "user", message: "secret" }], recordingUrl: "https://r/1" },
   });
+
+const vapiAnswer = (url: string) =>
+  new Response(
+    JSON.stringify(
+      url.includes("/call/")
+        ? { id: CALL.id, assistantId: CALL.assistantId, status: "in-progress" }
+        : m.liveAssistant,
+    ),
+  );
 
 beforeEach(() => {
   m.store.clear();
@@ -148,7 +162,7 @@ beforeEach(() => {
         return new Response("{}");
       }
       if (m.fetchFails) throw new Error("network");
-      return new Response(JSON.stringify(m.liveAssistant));
+      return vapiAnswer(url);
     }),
   );
   vi.spyOn(console, "warn").mockImplementation(() => undefined);
@@ -253,7 +267,8 @@ describe("a call that fails the check", () => {
     arrange();
     await POST(start());
     const res = await POST(report());
-    expect(res.status).toBe(200);
+    // With Vapi unreachable nothing was refused, so the report's own record is asked for again.
+    expect(res.status).toBe(m.fetchFails ? 503 : 200);
     expect(m.upsert).not.toHaveBeenCalled();
     expect(m.enqueue).not.toHaveBeenCalled();
   });
@@ -322,9 +337,7 @@ describe("retries and replays", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (url: string) =>
-        url === CONTROL
-          ? new Response("{}", { status: 500 })
-          : new Response(JSON.stringify(m.liveAssistant)),
+        url === CONTROL ? new Response("{}", { status: 500 }) : vapiAnswer(url),
       ),
     );
     await POST(start());

@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import {
   saveAssistantAction,
@@ -22,7 +22,14 @@ type Initial = VoiceAssistantInput & {
   phoneNumber?: string | null;
 };
 
-export function AssistantForm({ initial }: { initial?: Initial }) {
+export function AssistantForm({
+  initial,
+  statusPanel,
+}: {
+  initial?: Initial;
+  /** Shown under the page heading, above the settings. */
+  statusPanel?: ReactNode;
+}) {
   const t = useTranslations("voice");
   const tc = useTranslations("common");
   const [state, action, pending] = useActionState<VoiceActionState, FormData>(
@@ -87,6 +94,8 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
           </p>
         ) : null}
       </div>
+
+      {statusPanel}
 
       {initial?.id && !initial.phoneNumber ? (
         <AttachPhoneNumberForm assistantId={initial.id} />

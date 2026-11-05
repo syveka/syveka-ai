@@ -27,6 +27,7 @@ const vapiCallSchema = z.object({
   id: z.string().min(1),
   assistantId: z.string().nullish(),
   status: z.string().nullish(),
+  createdAt: z.string().nullish(),
   startedAt: z.string().nullish(),
   endedAt: z.string().nullish(),
   endedReason: z.string().nullish(),
@@ -258,6 +259,16 @@ async function discoverMissingCalls(
 
     for (const call of calls) {
       if (knownIds.has(call.id) || call.status !== "ended") continue;
+      // Each call below can read from Vapi. What's left waits for the next scheduled run.
+      if (Date.now() > deadlineMs) {
+        log("voice_reconcile_unresolved", {
+          orgId: assistant.organizationId,
+          assistantId: assistant.id,
+          reason: "out_of_time",
+        });
+        result.unresolved++;
+        break;
+      }
       // Syveka ended this call itself and kept no row for it: it isn't the customer's usage.
       // If that can't be read, leave it for the next run, rather than bill a refused call.
       const refusal = await callRefusal(assistant.organizationId, call.id);
@@ -275,23 +286,25 @@ async function discoverMissingCalls(
             language: assistant.language,
             vapiAssistantId: assistant.vapiAssistantId as string,
             messages: call.artifact?.messages,
+            calledAt: call.startedAt ?? call.createdAt,
+            now,
           });
-          if (confirmation === "unverifiable" || confirmation === "absent") {
-            log("voice_reconcile_unresolved", {
-              orgId: assistant.organizationId,
-              vapiCallId: call.id,
-              reason: "no_notice_evidence",
-            });
-            result.unresolved++;
-            continue;
-          }
-          if (confirmation === "refused") {
+          if (confirmation === "contradicted") {
             // Recorded, so nothing later can bring this call back.
             await markCallRefused(assistant.organizationId, call.id, "notice");
             log("voice_reconcile_without_notice", {
               orgId: assistant.organizationId,
               vapiCallId: call.id,
             });
+            continue;
+          }
+          if (confirmation !== "ok") {
+            log("voice_reconcile_unresolved", {
+              orgId: assistant.organizationId,
+              vapiCallId: call.id,
+              reason: "no_notice_evidence",
+            });
+            result.unresolved++;
             continue;
           }
         }

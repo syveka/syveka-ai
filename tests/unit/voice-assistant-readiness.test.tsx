@@ -1,4 +1,4 @@
-import React from "react";
+import type React from "react";
 import fs from "node:fs";
 import path from "node:path";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -22,6 +22,7 @@ const state = vi.hoisted(() => ({
   liveFails: false,
   liveUrls: [] as string[],
   billable: 0,
+  usageFails: false,
   requirePermission: vi.fn(async () => ({ orgId: "org-1", userId: "u1", role: "OWNER" })),
   notFound: vi.fn(() => {
     throw new Error("NEXT_NOT_FOUND");
@@ -45,7 +46,10 @@ vi.mock("next/navigation", () => ({ notFound: state.notFound }));
 vi.mock("@/server/auth/guard", () => ({ requirePermission: state.requirePermission }));
 vi.mock("@/server/services/billing/entitlements", () => ({
   getEntitlements: vi.fn(async () => state.ent),
-  getMonthUsage: vi.fn(async () => state.billable),
+  getMonthUsage: vi.fn(async () => {
+    if (state.usageFails) throw new Error("db down");
+    return state.billable;
+  }),
 }));
 vi.mock("@/server/db/tenant", () => {
   const voiceAssistant = {
@@ -58,7 +62,9 @@ vi.mock("@/server/db/tenant", () => {
   };
 });
 vi.mock("@/server/integrations/redis", () => ({ redis: {} }));
-vi.mock("@/components/voice/assistant-form", () => ({ AssistantForm: () => null }));
+vi.mock("@/components/voice/assistant-form", () => ({
+  AssistantForm: ({ statusPanel }: { statusPanel?: React.ReactNode }) => statusPanel,
+}));
 vi.mock("@/components/billing/plan-display", () => ({
   PLAN_NAMES: { FREE: "Free", PRO: "Pro" },
   formatCount: (_l: string, n: number) => String(n),
@@ -95,7 +101,11 @@ async function render(): Promise<string> {
   return renderToStaticMarkup(element as React.ReactElement);
 }
 const text = (locale: "en" | "fi" | "ar") => MESSAGES[locale].voice.readiness;
-const decode = (html: string) => html.replace(/&#x27;/g, "'");
+const decode = (html: string) =>
+  html
+    .replace(/&#x27;/g, "'")
+    .replace(/&quot;/g, '"')
+    .replace(/&amp;/g, "&");
 
 beforeEach(() => {
   state.locale = "en";
@@ -105,6 +115,7 @@ beforeEach(() => {
   state.liveFails = false;
   state.liveUrls = [];
   state.billable = 0;
+  state.usageFails = false;
   state.requirePermission.mockClear();
   state.notFound.mockClear();
   vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI,EN,AR");
@@ -150,7 +161,6 @@ describe("what the panel reports", () => {
       () => (state.assistant = { ...readyAssistant(), vapiAssistantId: null }),
     ],
     ["the live settings are old", "syncOutdated", () => (state.live = { firstMessage: "Hello" })],
-    ["the live settings can't be read", "syncUnverifiable", () => (state.liveFails = true)],
     [
       "there's no number",
       "noPhoneNumber",
@@ -179,6 +189,52 @@ describe("what the panel reports", () => {
     expect(html).toContain(text("en").summaryBlocked);
     expect(html).toContain(text("en")[key].title);
     expect(html).toContain(text("en")[key].action);
+  });
+
+  it.each([
+    ["the live settings can't be read", "syncUnverifiable", () => (state.liveFails = true)],
+    ["usage can't be read", "usageUnverifiable", () => (state.usageFails = true)],
+  ])("doesn't claim calls are blocked when only %s", async (_name, key, arrange) => {
+    arrange();
+    const html = decode(await render());
+    expect(html).toContain(text("en").summaryUnverified);
+    expect(html).not.toContain(text("en").summaryBlocked);
+    expect(html).not.toContain(text("en").summaryReady);
+    expect(html).toContain(text("en")[key].action);
+  });
+
+  it("a check that couldn't run doesn't soften a real blocker", async () => {
+    state.liveFails = true;
+    state.ent.readOnly = true;
+    const html = decode(await render());
+    expect(html).toContain(text("en").summaryBlocked);
+  });
+
+  it.each(["en", "fi", "ar"] as const)(
+    "%s names the activate button by the label it really has",
+    (locale) => {
+      const label = MESSAGES[locale].voice.activate;
+      expect(text(locale).notSynced.action).toContain(label);
+      expect(text(locale).inactive.action).toContain(label);
+    },
+  );
+
+  it.each(["en", "fi", "ar"] as const)(
+    "%s points billing actions at the owner, since other roles can't do them",
+    (locale) => {
+      const owner = { en: "owner", fi: "omistaja", ar: "مالك" }[locale];
+      for (const key of ["noMinutes", "minutesUsed", "readOnly"]) {
+        expect(text(locale)[key].action).toContain(owner);
+      }
+    },
+  );
+
+  it("is a labelled region with a real heading, and the notice declares its language", async () => {
+    const html = await render();
+    expect(html).toContain('role="region"');
+    expect(html).toContain('aria-labelledby="voice-readiness-title"');
+    expect(html).toMatch(/id="voice-readiness-title"[^>]*role="heading"[^>]*aria-level="2"/);
+    expect(html).toContain('lang="en"');
   });
 
   it("marks an unapproved notice as awaiting approval, and still shows it", async () => {
@@ -250,6 +306,7 @@ describe("languages and layout", () => {
       "notSynced",
       "syncOutdated",
       "syncUnverifiable",
+      "usageUnverifiable",
       "noPhoneNumber",
       "inactive",
       "noMinutes",

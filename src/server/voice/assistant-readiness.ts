@@ -12,6 +12,7 @@ export type ReadinessBlocker =
   | "notSynced"
   | "syncOutdated"
   | "syncUnverifiable"
+  | "usageUnverifiable"
   | "noPhoneNumber"
   | "inactive"
   | "noMinutes"
@@ -20,6 +21,8 @@ export type ReadinessBlocker =
 
 export type AssistantReadiness = {
   blockers: ReadinessBlocker[];
+  /** "unverified": the only problems found are checks that couldn't be completed. */
+  status: "clear" | "blocked" | "unverified";
   /** What callers hear first, for the assistant's language. */
   notice: string | null;
   noticeApproved: boolean;
@@ -79,12 +82,19 @@ export async function getAssistantReadiness(
   if (ent.voiceMinutesMonth <= 0) {
     blockers.push("noMinutes");
   } else {
-    // Unreadable usage isn't a finding: the webhook still checks it at each call.
     const usage = await getVoiceUsageState(orgId).catch(() => null);
-    if (usage && remainingVoiceMinutes(usage, ent.voiceMinutesMonth) === 0) {
+    if (!usage) blockers.push("usageUnverifiable");
+    else if (remainingVoiceMinutes(usage, ent.voiceMinutesMonth) === 0)
       blockers.push("minutesUsed");
-    }
   }
 
-  return { blockers, notice: spokenDisclosure(assistant.language), noticeApproved };
+  const status =
+    blockers.length === 0
+      ? "clear"
+      : blockers.every(
+            (blocker) => blocker === "syncUnverifiable" || blocker === "usageUnverifiable",
+          )
+        ? "unverified"
+        : "blocked";
+  return { blockers, status, notice: spokenDisclosure(assistant.language), noticeApproved };
 }

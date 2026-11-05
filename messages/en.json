@@ -702,6 +702,7 @@
       "title": "Call readiness",
       "summaryReady": "No setup problems found. This can't confirm how a real call sounds.",
       "summaryBlocked": "This assistant can't take calls yet. Here is what's needed.",
+      "summaryUnverified": "Some checks couldn't be completed, so it's unclear whether this assistant can take calls.",
       "noticeLabel": "Callers hear this first",
       "noticeApproved": "Approved",
       "noticeAwaiting": "Draft, awaiting approval",
@@ -715,35 +716,39 @@
       },
       "notSynced": {
         "title": "This assistant isn't connected yet",
-        "action": "Select Activate to connect it."
+        "action": "Select \"Activate & get number\" to connect it."
       },
       "syncOutdated": {
-        "title": "The connected settings are out of date",
+        "title": "The settings sent to the phone service are out of date",
         "action": "Save this assistant to send its current settings and notice."
       },
       "syncUnverifiable": {
         "title": "The connection couldn't be checked",
         "action": "Reload this page in a moment. If this continues, contact Syveka support."
       },
+      "usageUnverifiable": {
+        "title": "Voice minutes couldn't be checked",
+        "action": "Reload this page in a moment. If this continues, contact Syveka support."
+      },
       "noPhoneNumber": {
         "title": "No phone number is attached",
-        "action": "Attach a phone number on this page."
+        "action": "Once this assistant is connected, attach a phone number on this page."
       },
       "inactive": {
         "title": "This assistant is switched off",
-        "action": "Select Activate to switch it on."
+        "action": "Select \"Activate & get number\" to switch it on."
       },
       "noMinutes": {
         "title": "Your plan has no voice minutes",
-        "action": "Check your plan in billing settings."
+        "action": "The workspace owner can check the plan in billing settings."
       },
       "minutesUsed": {
         "title": "This month's voice minutes are used",
-        "action": "Check your usage and plan in billing settings."
+        "action": "The workspace owner can check usage and the plan in billing settings."
       },
       "readOnly": {
         "title": "This workspace is read-only",
-        "action": "Resolve the payment issue in billing settings."
+        "action": "The workspace owner can resolve the payment issue in billing settings."
       }
     }
   },

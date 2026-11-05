@@ -557,12 +557,12 @@ describe("recovering lost webhooks", () => {
     m.listVapiCalls.mockResolvedValue([
       { ...ENDED, id: "unconfirmed-call", artifact: { messages } },
     ]);
-    m.confirmNotice.mockResolvedValueOnce("refused");
+    m.confirmNotice.mockResolvedValueOnce("contradicted");
     await reconcileVoiceCalls({ now: NOW });
     expect(m.confirmNotice).toHaveBeenCalledWith(expect.objectContaining({ messages }));
     expect(m.markCallRefused).toHaveBeenCalledWith(ORG_A, "unconfirmed-call", "notice");
 
-    for (const outcome of ["unverifiable", "absent"]) {
+    for (const outcome of ["unverifiable", "absent", "not_approved"]) {
       m.markCallRefused.mockClear();
       m.confirmNotice.mockResolvedValueOnce(outcome);
       const result = await reconcileVoiceCalls({ now: NOW });

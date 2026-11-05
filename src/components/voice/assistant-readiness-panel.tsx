@@ -1,4 +1,4 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 
 export type ReadinessPanelText = {
   title: string;
@@ -6,6 +6,7 @@ export type ReadinessPanelText = {
   items: Array<{ key: string; title: string; action: string }>;
   noticeLabel: string;
   notice: string | null;
+  noticeLanguage: string;
   noticeStatus: string;
   noticeApproved: boolean;
 };
@@ -13,10 +14,12 @@ export type ReadinessPanelText = {
 /** Plain text from the server: nothing here needs the browser, and no configuration reaches it. */
 export function AssistantReadinessPanel({ text }: { text: ReadinessPanelText }) {
   return (
-    <Card className="mx-auto max-w-2xl" aria-labelledby="voice-readiness-title">
+    <Card role="region" aria-labelledby="voice-readiness-title">
       <CardHeader>
-        <CardTitle id="voice-readiness-title">{text.title}</CardTitle>
-        <p className="text-sm text-muted-foreground">{text.summary}</p>
+        <CardTitle id="voice-readiness-title" role="heading" aria-level={2} className="text-base">
+          {text.title}
+        </CardTitle>
+        <CardDescription>{text.summary}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         {text.items.length > 0 ? (
@@ -37,14 +40,14 @@ export function AssistantReadinessPanel({ text }: { text: ReadinessPanelText }) 
                 className={
                   text.noticeApproved
                     ? "rounded-full border px-2 py-0.5 text-xs"
-                    : "rounded-full border border-amber-500 px-2 py-0.5 text-xs"
+                    : "rounded-full border border-warning px-2 py-0.5 text-xs"
                 }
               >
                 {text.noticeStatus}
               </span>
             </div>
             {/* The assistant's language can differ from the page's, so it sets its own direction. */}
-            <p dir="auto" className="mt-2 break-words text-sm">
+            <p dir="auto" lang={text.noticeLanguage} className="mt-2 break-words text-sm">
               {text.notice}
             </p>
           </div>

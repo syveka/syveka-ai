@@ -93,24 +93,33 @@ export default async function AssistantPage({
   ]);
   const readiness = await getAssistantReadiness(ctx.orgId, assistant, ent);
 
+  const summaries = {
+    clear: t("summaryReady"),
+    blocked: t("summaryBlocked"),
+    unverified: t("summaryUnverified"),
+  };
+
   return (
-    <div className="space-y-6">
-      <AssistantReadinessPanel
-        text={{
-          title: t("title"),
-          summary: readiness.blockers.length > 0 ? t("summaryBlocked") : t("summaryReady"),
-          items: readiness.blockers.map((blocker) => ({
-            key: blocker,
-            title: t(`${blocker}.title`),
-            action: t(`${blocker}.action`),
-          })),
-          noticeLabel: t("noticeLabel"),
-          notice: readiness.notice,
-          noticeStatus: readiness.noticeApproved ? t("noticeApproved") : t("noticeAwaiting"),
-          noticeApproved: readiness.noticeApproved,
-        }}
-      />
-      <AssistantForm initial={initial} />
-    </div>
+    <AssistantForm
+      initial={initial}
+      statusPanel={
+        <AssistantReadinessPanel
+          text={{
+            title: t("title"),
+            summary: summaries[readiness.status],
+            items: readiness.blockers.map((blocker) => ({
+              key: blocker,
+              title: t(`${blocker}.title`),
+              action: t(`${blocker}.action`),
+            })),
+            noticeLabel: t("noticeLabel"),
+            notice: readiness.notice,
+            noticeLanguage: assistant.language.toLowerCase(),
+            noticeStatus: readiness.noticeApproved ? t("noticeApproved") : t("noticeAwaiting"),
+            noticeApproved: readiness.noticeApproved,
+          }}
+        />
+      }
+    />
   );
 }

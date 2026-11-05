@@ -40,6 +40,7 @@ vi.mock("@/server/integrations/vapi", () => ({ verifyVapiSignature: () => true }
 vi.mock("@/server/voice/disclosure-gate", () => ({
   verifyCallDisclosure: async () => "ok",
   callDisclosureState: async () => "verified",
+  callLiveness: async () => "live",
   confirmNoticeFromMessages: async () => "ok",
   confirmNoticeFromCallRecord: async () => "ok",
 }));
