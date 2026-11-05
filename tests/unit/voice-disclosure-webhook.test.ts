@@ -24,6 +24,7 @@ const m = vi.hoisted(() => ({
   controlCalls: 0,
   existingRow: null as Record<string, unknown> | null,
   noticeKeyDown: false,
+  refusalKeyDown: false,
 }));
 
 vi.mock("@/server/integrations/vapi", async (importOriginal) => ({
@@ -54,6 +55,7 @@ vi.mock("@/server/integrations/redis", () => ({
     get: vi.fn(async (key: string) => {
       if (m.redisDown || m.redisGetDown) throw new Error("redis down");
       if (m.noticeKeyDown && key.startsWith("voice:disclosure-ok")) throw new Error("redis down");
+      if (m.refusalKeyDown && key.startsWith("voice:refused")) throw new Error("redis down");
       return m.store.get(key) ?? null;
     }),
     set: vi.fn(async (key: string, value: string) => {
@@ -131,6 +133,7 @@ beforeEach(() => {
   m.controlCalls = 0;
   m.existingRow = null;
   m.noticeKeyDown = false;
+  m.refusalKeyDown = false;
   vi.clearAllMocks();
   vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI,EN,AR");
   vi.stubEnv("VAPI_API_KEY", "test-key");
@@ -365,6 +368,16 @@ describe("retries and replays", () => {
     expect((await POST(start())).status).toBe(503);
     expect(m.controlCalls).toBe(0);
     expect(m.store.has("voice:refused:org-a:call-1")).toBe(false);
+  });
+
+  it("an unreadable refusal alone is enough to wait, at the start and the report", async () => {
+    m.refusalKeyDown = true;
+    expect((await POST(start())).status).toBe(503);
+    await POST(toolCall());
+    expect(m.executeTool).not.toHaveBeenCalled();
+    expect((await POST(report())).status).toBe(503);
+    expect(m.upsert).not.toHaveBeenCalled();
+    expect(m.enqueue).not.toHaveBeenCalled();
   });
 
   it("a report is retried when its refusal can't be read, so a refused call isn't kept", async () => {
