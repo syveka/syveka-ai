@@ -143,6 +143,14 @@ async function reconcileKnownCalls(
     result.checked++;
     const ids = { orgId: row.organizationId, callId: row.id };
 
+    // A row doesn't outrank a refusal recorded for the same call, if the two ever raced.
+    const refusal = await callRefusal(row.organizationId, row.vapiCallId);
+    if (refusal === "ended" || refusal === "notice" || refusal === "unknown") {
+      log("voice_reconcile_unresolved", { ...ids, reason: "refused" });
+      result.unresolved++;
+      continue;
+    }
+
     // The report arrived and only its job went missing: no need to ask the provider.
     if (row.durationSeconds !== null) {
       await requeuePostCall(row.vapiCallId, row.organizationId, now);

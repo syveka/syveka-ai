@@ -320,7 +320,7 @@ describe("Vapi voice webhook — tool-calls replay protection", () => {
     ]);
     expect(mocks.redisSet).toHaveBeenCalledWith("vapi:tool:org-a:tc-1", "1", {
       nx: true,
-      ex: 60 * 60 * 24,
+      ex: 96 * 60 * 60,
     });
     expect(mocks.executeTool).toHaveBeenCalledTimes(1);
   });

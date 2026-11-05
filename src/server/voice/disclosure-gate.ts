@@ -11,11 +11,20 @@ import { getVapiAssistant, getVapiCall, VapiHttpError } from "@/server/integrati
  * recorded, are legal decisions that this code doesn't make.
  */
 export type DisclosureCheck =
-  "ok" | "language_not_approved" | "live_config_mismatch" | "unverifiable";
+  "ok" | "language_not_approved" | "live_config_mismatch" | "unverifiable" | "too_late";
 
 /** Outlives a call and any late report, including reconciliation's 24-hour look back. */
 const VERIFIED_TTL_SECONDS = 48 * 60 * 60;
 const VERIFY_TIMEOUT_MS = 3_000;
+/** How long after a call begins a read of its assistant can still stand for that moment. */
+const START_CHECK_WINDOW_MS = 30_000;
+/** Vapi's statuses for a call not yet over. Anything else isn't treated as running. */
+const RUNNING_STATUSES: ReadonlySet<unknown> = new Set([
+  "queued",
+  "ringing",
+  "in-progress",
+  "forwarding",
+]);
 /** Shorter than the 48 hours a refusal is remembered (call-admission.ts). */
 const EVIDENCE_WINDOW_MS = 36 * 60 * 60 * 1000;
 
@@ -69,6 +78,8 @@ export async function verifyCallDisclosure(params: {
   reported?: LiveAssistantConfig | null;
   /** This call's own overrides, which a fetch of the assistant wouldn't show. */
   overrides?: Record<string, unknown> | null;
+  /** This start came late, so a fetch of the assistant would only show it as it is now. */
+  startIsLate?: boolean;
 }): Promise<DisclosureCheck> {
   if (!disclosureApprovedLanguages().has(params.language)) return "language_not_approved";
 
@@ -89,6 +100,8 @@ export async function verifyCallDisclosure(params: {
     typeof reported.firstMessageInterruptionsEnabled === "boolean"
   ) {
     live = reported;
+  } else if (params.startIsLate) {
+    return "too_late";
   } else {
     try {
       live = await getVapiAssistant(params.vapiAssistantId, AbortSignal.timeout(VERIFY_TIMEOUT_MS));
@@ -159,8 +172,16 @@ export function noticeEvidenceInMessages(
   }
   if (opening.length === 0) return "absent";
   const said = normalizeSpeech(opening.join(" "));
-  const expected = normalizeSpeech(notice);
-  return said === expected || said.startsWith(`${expected} `) ? "spoken" : "contradicted";
+  const opensWith = (text: string) => said === text || said.startsWith(`${text} `);
+  if (opensWith(normalizeSpeech(notice))) return "spoken";
+  // Part of the notice, cut short by the caller, or another language's notice after the
+  // assistant's language changed, doesn't show that the notice was skipped.
+  const otherNotices = (["FI", "EN", "AR"] as const)
+    .filter((other) => other !== language)
+    .map((other) => normalizeSpeech(spokenDisclosure(other) as string));
+  return normalizeSpeech(notice).startsWith(said) || otherNotices.some(opensWith)
+    ? "absent"
+    : "contradicted";
 }
 
 /**
@@ -192,7 +213,8 @@ type ConfirmParams = {
 
 /**
  * Judges a call whose start wasn't checked, from messages belonging to that call. "ok" is
- * stored so later steps agree. "contradicted" is final, for the caller to record.
+ * stored so later steps agree. "contradicted" is for the caller to record once the call's
+ * whole record has been seen. A running call's record may still be incomplete.
  */
 export async function confirmNoticeFromMessages(
   params: ConfirmParams,
@@ -253,18 +275,21 @@ async function readCallRecord(
 }
 
 /**
- * Whether a start message is about a call still running. A start arriving late, or replayed,
- * can't be checked against the configuration "at that moment": that moment has passed. Asked
- * of Vapi because a signed body stays the same however old it is. "unknown" means ask again.
+ * Whether a start message can be checked against the configuration "at that moment". Asked of
+ * Vapi because a signed body stays the same however old it is. "ended" means it can't, and
+ * nothing should be written. "late" means the call runs on, but began too long ago for a read
+ * of its assistant to stand for its start, or at an unreadable time. "unknown" means ask again.
  */
 export async function callLiveness(
   vapiCallId: string,
   vapiAssistantId: string,
-): Promise<"live" | "ended" | "unknown"> {
+): Promise<"live" | "late" | "ended" | "unknown"> {
   const record = await readCallRecord(vapiCallId, vapiAssistantId);
   if (record === "none" || record === "unavailable") return "unknown";
   if (record.status === "ended" || record.endedAt) return "ended";
-  return typeof record.status === "string" ? "live" : "unknown";
+  if (!RUNNING_STATUSES.has(record.status)) return "unknown";
+  const began = record.calledAt ? Date.parse(record.calledAt) : Number.NaN;
+  return Date.now() - began <= START_CHECK_WINDOW_MS ? "live" : "late";
 }
 
 /**

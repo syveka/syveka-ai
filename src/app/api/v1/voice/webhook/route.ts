@@ -408,7 +408,6 @@ export async function POST(request: Request): Promise<NextResponse> {
       {
         const { callDisclosureState, confirmNoticeFromMessages } =
           await import("@/server/voice/disclosure-gate");
-        const { markCallRefused } = await import("@/server/voice/call-admission");
         const vapiCallId = message.call?.id;
         const state = vapiCallId ? await callDisclosureState(orgId, vapiCallId) : "unverified";
         // A Redis blip isn't a failed check: refuse the tools, and leave a good call running.
@@ -440,9 +439,6 @@ export async function POST(request: Request): Promise<NextResponse> {
             result: JSON.stringify({ error: "limits_unavailable" }),
           }));
           return NextResponse.json({ results });
-        }
-        if (confirmation === "contradicted" && vapiCallId) {
-          await markCallRefused(orgId, vapiCallId, "notice");
         }
         if (confirmation !== "ok") {
           console.warn(JSON.stringify({ event: "voice_tools_refused", orgId, vapiCallId, state }));
@@ -501,7 +497,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       // if execution throws so a legitimate retry can still run it.
       //
       // Writes are additionally bounded per call (VOICE_CALL_WRITE_CAPS) and refused
-      // once the call has ended -- the Redis claim expires after 24h, so the durable
+      // once the call has ended -- the Redis claim expires after 96h, so the durable
       // VoiceCall row is what stops a later replay. Both are keyed by the signed
       // call id within the signed assistant's org.
       const callId = message.call?.id;
@@ -533,7 +529,9 @@ export async function POST(request: Request): Promise<NextResponse> {
               return { toolCallId: tc.id, result: JSON.stringify({ error }) };
             }
             const claimKey = `vapi:tool:${orgId}:${tc.id}`;
-            const claimed = await redis.set(claimKey, "1", { nx: true, ex: 60 * 60 * 24 });
+            // Outlives a confirmation, the latest that can be stored being 36 hours after the call,
+            // and lasting 48. After that the notice check refuses a replay anyway.
+            const claimed = await redis.set(claimKey, "1", { nx: true, ex: 96 * 60 * 60 });
             if (claimed === null) {
               return {
                 toolCallId: tc.id,
@@ -605,46 +603,85 @@ export async function POST(request: Request): Promise<NextResponse> {
         // is recorded, so reconciliation doesn't later re-create the call.
         // A retry of a call that already passed isn't checked again: a Vapi blip now mustn't
         // end a call whose notice was confirmed.
-        const { callDisclosureState, callLiveness, verifyCallDisclosure } =
-          await import("@/server/voice/disclosure-gate");
+        const {
+          callDisclosureState,
+          callLiveness,
+          confirmNoticeFromCallRecord,
+          verifyCallDisclosure,
+        } = await import("@/server/voice/disclosure-gate");
         const noticeState = await callDisclosureState(orgId, message.call.id);
         if (noticeState === "unknown") {
           return NextResponse.json({ error: "try again" }, { status: 503 });
         }
+        const callId = message.call.id;
+        const vapiAssistantId = message.call.assistantId as string;
         // A start that arrives after its call ended can't vouch for it, or take a slot for it:
         // nothing is written, and the call's report or its record decides instead.
-        if (noticeState !== "verified") {
-          const liveness = await callLiveness(message.call.id, message.call.assistantId as string);
-          // A call that can't be shown to have its notice doesn't continue, but this says
-          // nothing about the call itself, so no refusal is recorded. The retry decides.
-          if (liveness === "unknown") {
-            await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
-            return NextResponse.json({ error: "try again" }, { status: 503 });
-          }
-          if (liveness === "ended") {
-            console.warn(JSON.stringify({ event: "voice_start_after_end", ...ids }));
-            return NextResponse.json({ ok: true, duplicate: true });
-          }
+        const liveness = await callLiveness(callId, vapiAssistantId);
+        if (liveness === "ended") {
+          console.warn(JSON.stringify({ event: "voice_start_after_end", ...ids }));
+          return NextResponse.json({ ok: true, duplicate: true });
         }
-        const disclosure =
+        // A call that couldn't be checked doesn't continue. That isn't a finding about the call,
+        // so it's recorded only as what it is: Syveka ended it, so it isn't the customer's usage.
+        // If the hang-up failed, nothing is recorded, the retry decides, and if it never does,
+        // the call's own record does.
+        const endUnchecked = async () => {
+          const hungUp = await endCallViaControlUrl(message.call?.monitor?.controlUrl, ids);
+          return hungUp && (await markCallRefused(orgId, callId, "ended"))
+            ? NextResponse.json({ ok: true })
+            : NextResponse.json({ error: "try again" }, { status: 503 });
+        };
+        if (noticeState !== "verified" && liveness === "unknown") {
+          console.warn(JSON.stringify({ event: "voice_call_refused", reason: "liveness", ...ids }));
+          return endUnchecked();
+        }
+        let disclosure =
           noticeState === "verified"
             ? "ok"
             : await verifyCallDisclosure({
                 orgId,
-                vapiCallId: message.call.id,
+                vapiCallId: callId,
                 language: assistant.language,
-                vapiAssistantId: message.call.assistantId as string,
+                vapiAssistantId,
                 reported: message.assistant,
                 overrides: message.call.assistantOverrides,
+                startIsLate: liveness === "late",
               });
-        if (disclosure !== "ok") {
+        // Too late for a read of the assistant to show what this caller heard, so what the call
+        // has said so far decides. If it can't say yet, nothing is written: the tool calls and
+        // report judge the call the same way.
+        if (disclosure === "too_late") {
+          const confirmation = await confirmNoticeFromCallRecord({
+            orgId,
+            vapiCallId: callId,
+            language: assistant.language,
+            vapiAssistantId,
+            messages: undefined,
+            calledAt: undefined,
+          });
+          if (confirmation === "unverifiable") {
+            return NextResponse.json({ error: "try again" }, { status: 503 });
+          }
+          if (confirmation === "absent" || confirmation === "not_approved") {
+            console.warn(JSON.stringify({ event: "voice_start_too_late", ...ids }));
+            return NextResponse.json({ ok: true, duplicate: true });
+          }
+          disclosure = confirmation === "ok" ? "ok" : "live_config_mismatch";
+        }
+        if (disclosure === "live_config_mismatch") {
           console.warn(JSON.stringify({ event: "voice_call_refused", reason: disclosure, ...ids }));
-          const remembered = await markCallRefused(orgId, message.call.id, "notice");
-          // Hung up even so: a call without its notice mustn't continue for any reason.
+          const remembered = await markCallRefused(orgId, callId, "notice");
+          // Hung up even so: a call without its notice mustn't continue for any reason. If that
+          // wasn't remembered, the retry finds the call ended, and its own record decides.
           await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
           return remembered
             ? NextResponse.json({ ok: true })
             : NextResponse.json({ error: "try again" }, { status: 503 });
+        }
+        if (disclosure !== "ok") {
+          console.warn(JSON.stringify({ event: "voice_call_refused", reason: disclosure, ...ids }));
+          return endUnchecked();
         }
 
         const admission = assistant.isActive

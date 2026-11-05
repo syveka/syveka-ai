@@ -133,7 +133,12 @@ const vapiAnswer = (url: string) =>
   new Response(
     JSON.stringify(
       url.includes("/call/")
-        ? { id: CALL.id, assistantId: CALL.assistantId, status: "in-progress" }
+        ? {
+            id: CALL.id,
+            assistantId: CALL.assistantId,
+            status: "in-progress",
+            startedAt: new Date().toISOString(),
+          }
         : m.liveAssistant,
     ),
   );
@@ -267,8 +272,7 @@ describe("a call that fails the check", () => {
     arrange();
     await POST(start());
     const res = await POST(report());
-    // With Vapi unreachable nothing was refused, so the report's own record is asked for again.
-    expect(res.status).toBe(m.fetchFails ? 503 : 200);
+    expect(res.status).toBe(200);
     expect(m.upsert).not.toHaveBeenCalled();
     expect(m.enqueue).not.toHaveBeenCalled();
   });
