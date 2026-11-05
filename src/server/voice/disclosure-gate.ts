@@ -34,18 +34,73 @@ const EVIDENCE_WINDOW_MS = 36 * 60 * 60 * 1000;
 const verifiedKey = (orgId: string, vapiCallId: string) =>
   `voice:disclosure-ok:${orgId}:${vapiCallId}`;
 
+/** A date, or a time with its zone, so an entry can't be read in a server's local time. */
+const APPROVAL_TIME = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2}))?$/;
+const reportedInvalidEntries = new Set<string>();
+
 /**
- * Languages whose wording counsel and a native speaker have approved. Empty by default, so
- * no call can proceed in any language until someone decides, deliberately, per environment.
+ * When each language's wording took effect, from entries like "FI@2026-11-12T08:00:00Z": a
+ * call is judged by the approval in force when it began, so approving a language later can't
+ * vouch for a call made before. An entry without a valid time approves nothing, which fails
+ * closed. If a language is listed twice, the later time counts.
+ */
+function disclosureApprovals(env: NodeJS.ProcessEnv): ReadonlyMap<string, number> {
+  const approvals = new Map<string, number>();
+  for (const entry of (env.VOICE_DISCLOSURE_APPROVED_LANGUAGES ?? "").split(",")) {
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    const parts = trimmed.split("@").map((part) => part.trim());
+    const [language = "", since = ""] = parts;
+    const sinceMs =
+      parts.length === 2 && APPROVAL_TIME.test(since) ? Date.parse(since) : Number.NaN;
+    if (!language || Number.isNaN(sinceMs)) {
+      // Only the language part is logged: the setting holds no secret, but stays short.
+      const key = language.slice(0, 8).toUpperCase();
+      if (!reportedInvalidEntries.has(key)) {
+        reportedInvalidEntries.add(key);
+        console.error(
+          JSON.stringify({ event: "voice_disclosure_approval_invalid_entry", language: key }),
+        );
+      }
+      continue;
+    }
+    const code = language.toUpperCase();
+    approvals.set(code, Math.max(approvals.get(code) ?? sinceMs, sinceMs));
+  }
+  return approvals;
+}
+
+/**
+ * Languages whose wording counsel and a native speaker have approved, and whose approval is in
+ * force now. Empty by default, so no call can proceed in any language until someone decides,
+ * deliberately, per environment.
  */
 export function disclosureApprovedLanguages(
   env: NodeJS.ProcessEnv = process.env,
+  now: Date = new Date(),
 ): ReadonlySet<string> {
   return new Set(
-    (env.VOICE_DISCLOSURE_APPROVED_LANGUAGES ?? "")
-      .split(",")
-      .map((language) => language.trim().toUpperCase())
-      .filter(Boolean),
+    [...disclosureApprovals(env)]
+      .filter(([, sinceMs]) => sinceMs <= now.getTime())
+      .map(([language]) => language),
+  );
+}
+
+/**
+ * Whether a language's notice was approved when a call began, and still is. A call with no
+ * readable start isn't shown to have begun after the approval.
+ */
+export function languageApprovedForCall(
+  language: string,
+  calledAtMs: number,
+  now: Date = new Date(),
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const sinceMs = disclosureApprovals(env).get(language);
+  return (
+    sinceMs !== undefined &&
+    Number.isFinite(calledAtMs) &&
+    sinceMs <= Math.min(calledAtMs, now.getTime())
   );
 }
 
@@ -83,8 +138,15 @@ export async function verifyCallDisclosure(params: {
   overrides?: Record<string, unknown> | null;
   /** This start came late, so a fetch of the assistant would only show it as it is now. */
   startIsLate?: boolean;
+  /** When the call began, as the signed message states it. */
+  calledAt?: string | null;
 }): Promise<DisclosureCheck> {
-  if (!disclosureApprovedLanguages().has(params.language)) return "language_not_approved";
+  // The approval must have been in force when the call began. A start on time began at most
+  // the check window ago, so without a readable time that's assumed. A late one needs its time.
+  const statedMs = params.calledAt ? Date.parse(params.calledAt) : Number.NaN;
+  const calledAtMs =
+    Number.isNaN(statedMs) && !params.startIsLate ? Date.now() - START_CHECK_WINDOW_MS : statedMs;
+  if (!languageApprovedForCall(params.language, calledAtMs)) return "language_not_approved";
 
   if (
     params.overrides &&
@@ -198,8 +260,10 @@ function withinRefusalMemory(calledAt: string | null | undefined, now: Date): bo
 }
 
 /**
- * "not_approved" isn't recorded as a refusal: approval is today's setting, not a fact about
- * this call, and a setting missing during a deploy mustn't lose a good call for good.
+ * "not_approved" isn't recorded as a refusal: it's about the setting, not about what was said,
+ * and a setting missing during a deploy mustn't lose a good call for good. It still keeps
+ * nothing. A call that began before its language was approved stays that way whatever the
+ * setting says later, so it's never kept.
  */
 type NoticeConfirmation = "ok" | "contradicted" | "not_approved" | "absent" | "unverifiable";
 
@@ -222,8 +286,13 @@ type ConfirmParams = {
 export async function confirmNoticeFromMessages(
   params: ConfirmParams,
 ): Promise<NoticeConfirmation> {
-  if (!disclosureApprovedLanguages().has(params.language)) return "not_approved";
-  if (!withinRefusalMemory(params.calledAt, params.now ?? new Date())) return "absent";
+  const now = params.now ?? new Date();
+  if (!disclosureApprovedLanguages(process.env, now).has(params.language)) return "not_approved";
+  if (!withinRefusalMemory(params.calledAt, now)) return "absent";
+  // Approved only after this call began: its caller heard wording that wasn't yet approved.
+  if (!languageApprovedForCall(params.language, Date.parse(params.calledAt as string), now)) {
+    return "not_approved";
+  }
   const evidence = noticeEvidenceInMessages(
     params.language,
     params.messages,

@@ -197,7 +197,7 @@ beforeEach(() => {
   m.assistantFetches = 0;
   m.controlCalls = 0;
   vi.clearAllMocks();
-  vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI,EN,AR");
+  vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI@2000-01-01,EN@2000-01-01,AR@2000-01-01");
   vi.stubEnv("VAPI_API_KEY", "test-key");
   vi.stubEnv("VAPI_WEBHOOK_SECRET", "test-secret-of-sixteen-chars");
   vi.stubEnv("VAPI_WEBHOOK_CREDENTIAL_ID", "cred-1");
@@ -366,7 +366,7 @@ describe("what counts as evidence", () => {
   });
 
   it("an unapproved language isn't kept, whatever was said", async () => {
-    vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI");
+    vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI@2000-01-01");
     await POST(report(SPOKE_NOTICE));
     expect(kept()).toBe(false);
     expect(m.store.has(NOTICE_KEY)).toBe(false);
@@ -377,9 +377,34 @@ describe("what counts as evidence", () => {
     await POST(report(SPOKE_NOTICE));
     expect(kept()).toBe(false);
     expect(m.store.has(REFUSED_KEY)).toBe(false);
-    vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "AR");
+    vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "AR@2000-01-01");
     m.callList = [endedCall(SPOKE_NOTICE)];
     expect((await reconcileVoiceCalls({ now: NOW })).discovered).toBe(1);
+  });
+
+  it("approving a language after a call began doesn't vouch for that call", async () => {
+    // The report's call began 5 minutes ago and the reconciled one 2 hours ago.
+    vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", `AR@${minutesAgo(4)}`);
+    await POST(report(SPOKE_NOTICE));
+    expect(kept()).toBe(false);
+    expect(m.store.has(NOTICE_KEY)).toBe(false);
+    expect(m.store.has(REFUSED_KEY)).toBe(false);
+    m.callList = [endedCall(SPOKE_NOTICE)];
+    expect((await reconcileVoiceCalls({ now: NOW })).discovered).toBe(0);
+    expect(kept()).toBe(false);
+  });
+
+  it("a call begun after its language's approval is kept as before", async () => {
+    vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", `AR@${minutesAgo(6)}`);
+    await POST(report(SPOKE_NOTICE));
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("a tool call from a call begun before the approval runs no tool", async () => {
+    vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", `AR@${minutesAgo(0.5)}`);
+    const res = await POST(toolCall(SPOKE_NOTICE));
+    expect(JSON.stringify(await res.json())).toContain("disclosure_not_verified");
+    expect(m.executeTool).not.toHaveBeenCalled();
   });
 
   it("reads a notice Vapi split across entries", async () => {
@@ -704,7 +729,7 @@ describe("checks that couldn't complete at the start aren't findings", () => {
   it.each([
     [
       "the language isn't approved today",
-      () => vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI"),
+      () => vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI@2000-01-01"),
     ],
     ["the setting is missing", () => vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "")],
   ])("hangs up without a notice refusal when %s", async (_name, arrange) => {

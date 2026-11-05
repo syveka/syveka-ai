@@ -655,6 +655,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                 reported: message.assistant,
                 overrides: message.call.assistantOverrides,
                 startIsLate: liveness === "late",
+                calledAt: message.call.startedAt ?? message.call.createdAt,
               });
         // Too late for a read of the assistant to show what this caller heard, so what the call
         // has said so far decides. A running call's record may be incomplete, so it writes no

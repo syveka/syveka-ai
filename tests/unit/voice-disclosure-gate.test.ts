@@ -30,6 +30,7 @@ vi.mock("@/server/integrations/vapi", () => ({ getVapiAssistant: m.getVapiAssist
 const {
   callDisclosureState,
   disclosureApprovedLanguages,
+  languageApprovedForCall,
   liveConfigDisclosesFirst,
   verifyCallDisclosure,
 } = await import("@/server/voice/disclosure-gate");
@@ -42,15 +43,60 @@ beforeEach(() => {
   m.redisSetFails = false;
   m.redisGetFails = false;
   m.getVapiAssistant.mockReset();
-  vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI,EN,AR");
+  vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI@2000-01-01,EN@2000-01-01,AR@2000-01-01");
 });
 afterEach(() => vi.unstubAllEnvs());
 
 describe("the approved-languages setting", () => {
+  const approvedFrom = (setting: string, now = new Date("2026-11-12T12:00:00Z")) => [
+    ...disclosureApprovedLanguages({ VOICE_DISCLOSURE_APPROVED_LANGUAGES: setting } as never, now),
+  ];
+
   it("doesn't depend on case or spacing", () => {
-    expect([
-      ...disclosureApprovedLanguages({ VOICE_DISCLOSURE_APPROVED_LANGUAGES: " fi, En " } as never),
-    ]).toEqual(["FI", "EN"]);
+    expect(approvedFrom(" fi @ 2026-11-01 , En@2026-11-01T08:00:00Z ")).toEqual(["FI", "EN"]);
+  });
+
+  it("approves nothing for an entry without a time, so the old format fails closed", () => {
+    expect(approvedFrom("FI,EN,AR")).toEqual([]);
+    expect(approvedFrom("FI@,EN@soon,AR@2026-11-01@2026-11-02")).toEqual([]);
+  });
+
+  it("needs the time's zone, so it can't be read in a server's local time", () => {
+    expect(approvedFrom("FI@2026-11-01T08:00:00")).toEqual([]);
+    expect(approvedFrom("FI@2026-11-01T08:00:00+02:00")).toEqual(["FI"]);
+  });
+
+  it("doesn't approve a language before its time", () => {
+    expect(approvedFrom("FI@2026-11-12T12:00:01Z,EN@2026-11-12T12:00:00Z")).toEqual(["EN"]);
+  });
+
+  it("takes the later time when a language is listed twice", () => {
+    expect(approvedFrom("FI@2026-11-01,FI@2026-12-01")).toEqual([]);
+  });
+});
+
+describe("approval when a call began", () => {
+  const env = { VOICE_DISCLOSURE_APPROVED_LANGUAGES: "AR@2026-11-12T08:00:00Z" } as never;
+  const now = new Date("2026-11-12T12:00:00Z");
+  const at = (time: string) => Date.parse(time);
+
+  it("holds for a call begun at or after the approval", () => {
+    expect(languageApprovedForCall("AR", at("2026-11-12T08:00:00Z"), now, env)).toBe(true);
+    expect(languageApprovedForCall("AR", at("2026-11-12T11:59:00Z"), now, env)).toBe(true);
+  });
+
+  it("doesn't hold for a call begun before it, however soon before", () => {
+    expect(languageApprovedForCall("AR", at("2026-11-12T07:59:59Z"), now, env)).toBe(false);
+  });
+
+  it("doesn't hold without a readable start, or for another language", () => {
+    expect(languageApprovedForCall("AR", Number.NaN, now, env)).toBe(false);
+    expect(languageApprovedForCall("FI", at("2026-11-12T09:00:00Z"), now, env)).toBe(false);
+  });
+
+  it("doesn't hold for a start stated after now while the approval is still ahead", () => {
+    const early = new Date("2026-11-12T07:00:00Z");
+    expect(languageApprovedForCall("AR", at("2026-11-12T09:00:00Z"), early, env)).toBe(false);
   });
 });
 
@@ -89,7 +135,7 @@ describe("approved languages", () => {
 
   it("only those listed, without surrounding spaces", () => {
     const approved = disclosureApprovedLanguages({
-      VOICE_DISCLOSURE_APPROVED_LANGUAGES: " FI , EN",
+      VOICE_DISCLOSURE_APPROVED_LANGUAGES: " FI@2026-01-01 , EN@2026-01-01",
     } as unknown as NodeJS.ProcessEnv);
     expect([...approved]).toEqual(["FI", "EN"]);
   });
@@ -153,10 +199,36 @@ describe("checking a call", () => {
   });
 
   it("refuses an unapproved language before anything else", async () => {
-    vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI");
+    vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI@2000-01-01");
     const result = await verifyCallDisclosure({ ...ids, language: "AR", reported });
     expect(result).toBe("language_not_approved");
     expect(await callDisclosureState("org-a", "call-1")).toBe("unverified");
+  });
+
+  it("refuses a call that began before its language was approved", async () => {
+    const approvedAt = new Date(Date.now() - 10_000).toISOString();
+    vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", `FI@${approvedAt}`);
+    const check = (calledAt: string) =>
+      verifyCallDisclosure({ ...ids, language: "FI", reported, calledAt });
+    expect(await check(new Date(Date.now() - 20_000).toISOString())).toBe("language_not_approved");
+    expect(await check(new Date(Date.now() - 5_000).toISOString())).toBe("ok");
+  });
+
+  it("without a stated start, takes an on-time call to have begun a full window ago", async () => {
+    vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", `FI@${new Date().toISOString()}`);
+    const result = await verifyCallDisclosure({ ...ids, language: "FI", reported });
+    expect(result).toBe("language_not_approved");
+  });
+
+  it("refuses a late start with no readable time, since its approval can't be shown", async () => {
+    const result = await verifyCallDisclosure({
+      ...ids,
+      language: "FI",
+      reported,
+      startIsLate: true,
+      calledAt: "not a time",
+    });
+    expect(result).toBe("language_not_approved");
   });
 
   it("refuses every language when none is approved", async () => {

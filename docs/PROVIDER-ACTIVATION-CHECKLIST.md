@@ -346,9 +346,12 @@ Webhook endpoint: `{NEXT_PUBLIC_APP_URL}/api/v1/webhooks/inbox-email/resend`.
 - Phone number provisioning (+358 numbers) happens through the app's voice settings once the
   assistant is active.
 - **Spoken AI notice.** `VOICE_DISCLOSURE_APPROVED_LANGUAGES` (comma-separated, for example
-  `FI,EN`) lists the languages whose wording counsel and a native speaker have approved. It is
+  `FI@2026-11-12T08:00:00Z,EN@2026-11-12T08:00:00Z`) lists the languages whose wording counsel
+  and a native speaker have approved, each with the UTC time its approval takes effect. It is
   empty by default, and every call in an unlisted language is hung up. Set it per environment,
-  only after that approval.
+  only after that approval. A call is kept only if it began at or after its language's time, so a
+  later approval never covers an earlier call: set the time no earlier than the deploy that
+  applies it. An entry without a time, such as `FI`, approves nothing.
 - **Re-sync every assistant after deploying.** Saving an assistant in its settings page sends the
   current notice, live-call control and webhook retries. An assistant without the current notice
   is refused at each call, and its settings page shows that. The page doesn't check the other two,

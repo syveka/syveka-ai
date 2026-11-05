@@ -157,7 +157,7 @@ beforeEach(() => {
   m.noticeKeyDown = false;
   m.refusalKeyDown = false;
   vi.clearAllMocks();
-  vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI,EN,AR");
+  vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI@2000-01-01,EN@2000-01-01,AR@2000-01-01");
   vi.stubEnv("VAPI_API_KEY", "test-key");
   vi.stubEnv("VAPI_WEBHOOK_SECRET", "test-secret-of-sixteen-chars");
   vi.stubEnv("VAPI_WEBHOOK_CREDENTIAL_ID", "cred-1");
@@ -235,7 +235,10 @@ describe("a correctly synced call", () => {
 
 describe("a call that fails the check", () => {
   const scenarios: Array<[string, () => void]> = [
-    ["its language isn't approved", () => vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI")],
+    [
+      "its language isn't approved",
+      () => vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI@2000-01-01"),
+    ],
     ["no language is approved", () => vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "")],
     ["the assistant was never re-synced", () => (m.liveAssistant = { firstMessage: "مرحبا" })],
     ["Vapi can't confirm", () => (m.fetchFails = true)],
@@ -252,6 +255,15 @@ describe("a call that fails the check", () => {
   it.each(scenarios)("is hung up when %s", async (_name, arrange) => {
     arrange();
     await POST(start());
+    expect(m.controlCalls).toBe(1);
+    expect(m.upsert).not.toHaveBeenCalled();
+  });
+
+  it("is hung up when its language was approved only after it began", async () => {
+    const began = new Date(Date.now() - 20_000).toISOString();
+    const approved = new Date(Date.now() - 10_000).toISOString();
+    vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", `AR@${approved}`);
+    await POST(start({ call: { ...CALL, startedAt: began } }));
     expect(m.controlCalls).toBe(1);
     expect(m.upsert).not.toHaveBeenCalled();
   });

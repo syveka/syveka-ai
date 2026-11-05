@@ -123,7 +123,7 @@ beforeEach(() => {
   state.entFails = false;
   state.requirePermission.mockClear();
   state.notFound.mockClear();
-  vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI,EN,AR");
+  vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI@2000-01-01,EN@2000-01-01,AR@2000-01-01");
   vi.stubEnv("VAPI_API_KEY", "test-private-key");
   vi.stubEnv("VAPI_WEBHOOK_SECRET", "test-secret-of-sixteen-chars");
   vi.stubEnv("VAPI_WEBHOOK_CREDENTIAL_ID", "cred-1");
@@ -153,7 +153,7 @@ describe("what the panel reports", () => {
     [
       "the notice isn't approved",
       "noticeAwaitingApproval",
-      () => vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI"),
+      () => vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI@2000-01-01"),
     ],
     [
       "no language is approved",
