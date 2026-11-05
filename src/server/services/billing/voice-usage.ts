@@ -8,6 +8,12 @@ import { getMonthUsage } from "./entitlements";
 export const MAX_CALL_MINUTES = 15;
 /** Past the longest possible call plus a margin, a call that hasn't ended is lost news. */
 export const STALE_CALL_MS = 20 * 60 * 1000;
+/**
+ * How long an unresolved call counts against limits. Reconciliation can settle nearly every call
+ * well within this, and one it can't, such as a call Vapi no longer has, must not keep refusing a
+ * customer's calls for the rest of the month over minutes nobody can prove.
+ */
+export const UNCERTAIN_COUNTS_FOR_MS = 48 * 60 * 60 * 1000;
 
 export type VoiceUsageState = {
   /** Recorded usage: the only figure that may ever reach a customer's bill. */
@@ -16,6 +22,8 @@ export type VoiceUsageState = {
   uncertainCalls: number;
   /** A cautious estimate of those calls, used only to enforce limits. */
   uncertainMinutes: number;
+  /** Unresolved past UNCERTAIN_COUNTS_FOR_MS: no longer counted against limits, and never billed. */
+  expiredUncertainCalls: number;
   /** Calls still running, by elapsed time. Also never billed as they stand. */
   inFlightCalls: number;
   inFlightMinutes: number;
@@ -31,8 +39,8 @@ function monthStartUtc(now: Date): Date {
  * not bill a customer for minutes nobody can prove.
  *
  * A call in progress counts for its elapsed time. A call with no news counts as its longest
- * possible length, since it can't be known to be shorter. `excludeVapiCallId` leaves out a
- * call that is asking about itself.
+ * possible length, since it can't be known to be shorter, until UNCERTAIN_COUNTS_FOR_MS passes.
+ * `excludeVapiCallId` leaves out a call that is asking about itself.
  */
 export async function getVoiceUsageState(
   orgId: string,
@@ -54,6 +62,7 @@ export async function getVoiceUsageState(
 
   let uncertainCalls = 0;
   let uncertainMinutes = 0;
+  let expiredUncertainCalls = 0;
   let inFlightCalls = 0;
   let inFlightMinutes = 0;
   for (const call of unsettled) {
@@ -61,6 +70,11 @@ export async function getVoiceUsageState(
     if (call.durationSeconds === null && call.endedAt === null && elapsedMs < STALE_CALL_MS) {
       inFlightCalls++;
       inFlightMinutes += Math.min(MAX_CALL_MINUTES, Math.max(1, Math.ceil(elapsedMs / 60_000)));
+      continue;
+    }
+    // Known minutes keep counting: only a length nobody can establish stops counting.
+    if (call.durationSeconds === null && elapsedMs >= UNCERTAIN_COUNTS_FOR_MS) {
+      expiredUncertainCalls++;
       continue;
     }
     uncertainCalls++;
@@ -72,6 +86,7 @@ export async function getVoiceUsageState(
     billableMinutes: recorded,
     uncertainCalls,
     uncertainMinutes,
+    expiredUncertainCalls,
     inFlightCalls,
     inFlightMinutes,
   };

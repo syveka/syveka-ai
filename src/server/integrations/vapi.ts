@@ -203,6 +203,9 @@ export async function getVapiCall(id: string, signal?: AbortSignal): Promise<unk
   return vapiFetch(`/call/${encodeURIComponent(id)}`, signal ? { signal } : undefined);
 }
 
+/** The largest page Syveka asks for, so a caller can tell when a list may be cut short. */
+export const VAPI_CALL_LIST_LIMIT = 100;
+
 /** An assistant's recent calls, newest first. Read-only; the caller validates the shape. */
 export async function listVapiCalls(
   assistantId: string,
@@ -212,7 +215,7 @@ export async function listVapiCalls(
   const query = new URLSearchParams({
     assistantId,
     createdAtGe: createdAtGe.toISOString(),
-    limit: "100",
+    limit: String(VAPI_CALL_LIST_LIMIT),
   });
   const calls = await vapiFetch<unknown>(
     `/call?${query.toString()}`,

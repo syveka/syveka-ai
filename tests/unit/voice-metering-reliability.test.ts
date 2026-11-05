@@ -26,6 +26,9 @@ type Row = {
   postCallProcessedAt: Date | null;
   status?: string;
   assistant?: { vapiAssistantId: string | null };
+  transcript?: unknown;
+  recordingUrl?: string | null;
+  costCents?: number | null;
 };
 
 const m = vi.hoisted(() => ({
@@ -104,7 +107,12 @@ vi.mock("@/server/integrations/vapi", () => {
       super(message);
     }
   }
-  return { VapiHttpError, getVapiCall: m.getVapiCall, listVapiCalls: m.listVapiCalls };
+  return {
+    VapiHttpError,
+    getVapiCall: m.getVapiCall,
+    listVapiCalls: m.listVapiCalls,
+    VAPI_CALL_LIST_LIMIT: 100,
+  };
 });
 vi.mock("@/server/jobs/queue", () => ({ enqueue: m.enqueue }));
 vi.mock("@/server/voice/disclosure-gate", () => ({
@@ -236,6 +244,262 @@ describe("how long a call was", () => {
   });
 });
 
+describe("an unresolved call can't block calling forever", () => {
+  const HOURS_AGO = (h: number) => new Date(NOW.getTime() - h * 60 * 60_000);
+
+  it("keeps counting known minutes, however old, while post-call keeps failing", async () => {
+    m.rows = [row({ startedAt: HOURS_AGO(72), endedAt: HOURS_AGO(71), durationSeconds: 300 })];
+    const state = await getVoiceUsageState(ORG_A, { now: NOW });
+    expect(state).toMatchObject({ uncertainMinutes: 5, expiredUncertainCalls: 0 });
+  });
+
+  it("counts against limits within 48 hours, and no longer after that", async () => {
+    m.rows = [
+      row({ id: "recent", vapiCallId: "recent", startedAt: HOURS_AGO(47), endedAt: null }),
+      row({ id: "old", vapiCallId: "old", startedAt: HOURS_AGO(49), endedAt: null }),
+    ];
+    const state = await getVoiceUsageState(ORG_A, { now: NOW });
+    expect(state).toMatchObject({
+      uncertainCalls: 1,
+      uncertainMinutes: 15,
+      expiredUncertainCalls: 1,
+      billableMinutes: 0,
+    });
+    expect(minutesCountedForLimits(state)).toBe(15);
+  });
+
+  it("a stuck call that never resolves can't exhaust a small plan's minutes", async () => {
+    m.rows = Array.from({ length: 7 }, (_, i) =>
+      row({ id: `stuck-${i}`, vapiCallId: `stuck-${i}`, startedAt: HOURS_AGO(72), endedAt: null }),
+    );
+    const state = await getVoiceUsageState(ORG_A, { now: NOW });
+    expect(remainingVoiceMinutes(state, 100)).toBe(100);
+  });
+
+  it("doesn't log a resolved call as long unresolved", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    m.rows = [row({ startedAt: HOURS_AGO(72), endedAt: null })];
+    m.getVapiCall.mockResolvedValue(ENDED);
+    await reconcileVoiceCalls({ now: NOW });
+    expect(warn.mock.calls.map((call) => String(call[0])).join()).not.toContain("long_unresolved");
+    warn.mockRestore();
+  });
+
+  it("logs a call that stays unresolved past that, and keeps trying", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    m.rows = [row({ startedAt: HOURS_AGO(72), endedAt: null })];
+    m.getVapiCall.mockRejectedValue(new VapiHttpError("gone", 404));
+    const result = await reconcileVoiceCalls({ now: NOW });
+    expect(result.unresolved).toBe(1);
+    const logged = warn.mock.calls.map((call) => String(call[0]));
+    expect(logged.some((line) => line.includes("voice_reconcile_long_unresolved"))).toBe(true);
+    warn.mockRestore();
+  });
+});
+
+describe("a call with no usable start", () => {
+  const NOT_ANSWERED = { startedAt: undefined, cost: 0, endedReason: "customer-did-not-answer" };
+  const assistant = { id: "a1", organizationId: ORG_A, vapiAssistantId: "vapi-a" };
+
+  it.each([
+    ["a cost", { startedAt: undefined, cost: 0.27, endedReason: "customer-did-not-answer" }],
+    ["no stated cost", { ...NOT_ANSWERED, cost: undefined }],
+    ["a null cost", { ...NOT_ANSWERED, cost: null }],
+    ["a transcript", { ...NOT_ANSWERED, artifact: { messages: [{ role: "user" }] } }],
+    ["a recording", { ...NOT_ANSWERED, artifact: { recordingUrl: "https://example.test/r" } }],
+    [
+      "a reason that means someone was on the line",
+      { ...NOT_ANSWERED, endedReason: "customer-ended-call" },
+    ],
+    [
+      "a reason that isn't known to mean nobody answered",
+      { ...NOT_ANSWERED, endedReason: "voicemail" },
+    ],
+    ["no reason at all", { ...NOT_ANSWERED, endedReason: undefined }],
+    ["no end time", { ...NOT_ANSWERED, endedAt: undefined }],
+    ["an unreadable end time", { ...NOT_ANSWERED, endedAt: "soon" }],
+  ])("is unknown, not free, with %s", async (_label, call) => {
+    // Created from a report, so its start is when the report arrived: after Vapi's end.
+    m.rows = [row({ startedAt: MINUTES_AGO(40), endedAt: MINUTES_AGO(40) })];
+    m.getVapiCall.mockResolvedValue({ ...ENDED, ...call });
+    const result = await reconcileVoiceCalls({ now: NOW });
+    expect(result.settled).toBe(0);
+    expect(m.rows[0]?.durationSeconds).toBeNull();
+    expect(m.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("settles at zero only with positive evidence that it never connected", async () => {
+    m.rows = [row({ startedAt: MINUTES_AGO(40), endedAt: MINUTES_AGO(40) })];
+    m.getVapiCall.mockResolvedValue({ ...ENDED, ...NOT_ANSWERED });
+    const result = await reconcileVoiceCalls({ now: NOW });
+    expect(result.settled).toBe(1);
+    expect(m.rows[0]?.durationSeconds).toBe(0);
+  });
+
+  it.each([
+    ["transcript", { transcript: [{ role: "user" }] }],
+    ["recording", { recordingUrl: "https://example.test/r" }],
+    ["cost", { costCents: 27 }],
+  ])("stays unknown when the row itself holds a %s", async (_label, evidence) => {
+    m.rows = [{ ...row({ startedAt: MINUTES_AGO(40), endedAt: MINUTES_AGO(40) }), ...evidence }];
+    m.getVapiCall.mockResolvedValue({ ...ENDED, ...NOT_ANSWERED });
+    const result = await reconcileVoiceCalls({ now: NOW });
+    expect(result.settled).toBe(0);
+    expect(m.rows[0]?.durationSeconds).toBeNull();
+  });
+
+  it("stays unknown on the second pass, when the row's start equals the call's end", async () => {
+    // Discovery stores a start-less call with startedAt = endedAt. Read back, that's a length of 0.
+    m.assistants = [assistant];
+    m.listVapiCalls.mockResolvedValue([
+      { ...ENDED, id: "discovered", assistantId: "vapi-a", startedAt: undefined, cost: 0.27 },
+    ]);
+    await reconcileVoiceCalls({ now: NOW });
+    expect(m.rows[0]?.durationSeconds).toBeNull();
+    expect(m.rows[0]?.startedAt.getTime()).toBe(m.rows[0]?.endedAt?.getTime());
+
+    m.listVapiCalls.mockResolvedValue([]);
+    m.getVapiCall.mockResolvedValue({
+      ...ENDED,
+      id: "discovered",
+      assistantId: "vapi-a",
+      startedAt: undefined,
+      cost: 0.27,
+    });
+    const second = await reconcileVoiceCalls({ now: NOW });
+    expect(second.checked).toBe(1);
+    expect(second.settled).toBe(0);
+    expect(m.rows[0]?.durationSeconds).toBeNull();
+  });
+
+  it("still uses a row's real start when it gives a real length", async () => {
+    m.rows = [row({ startedAt: MINUTES_AGO(60), endedAt: null })];
+    m.getVapiCall.mockResolvedValue({ ...ENDED, startedAt: undefined, cost: 0.27 });
+    const result = await reconcileVoiceCalls({ now: NOW });
+    expect(result.settled).toBe(1);
+    expect(m.rows[0]?.durationSeconds).toBe(180);
+  });
+});
+
+describe("one bad row or a slow provider", () => {
+  it("a known row that can't be written doesn't stop the rows after it", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    m.rows = [
+      row({ id: "a-bad", vapiCallId: "a-bad" }),
+      row({ id: "b-good", vapiCallId: "b-good" }),
+    ];
+    m.getVapiCall.mockImplementation(async (id: string) => ({ ...ENDED, id }));
+    m.updateMany.mockImplementationOnce(async () => {
+      throw new Error("invalid jsonb, with SECRET transcript text");
+    });
+    const result = await reconcileVoiceCalls({ now: NOW });
+    expect(result).toMatchObject({ checked: 2, settled: 1, unresolved: 1 });
+    const logged = warn.mock.calls.map((call) => String(call[0])).join();
+    expect(logged).toContain("voice_reconcile_row_failed");
+    expect(logged).not.toContain("SECRET");
+    warn.mockRestore();
+  });
+
+  it("a discovered call that fails doesn't stop the next one", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    m.assistants = [{ id: "a1", organizationId: ORG_A, vapiAssistantId: "vapi-a" }];
+    m.listVapiCalls.mockResolvedValue([
+      { ...ENDED, id: "new-1", assistantId: "vapi-a" },
+      { ...ENDED, id: "new-2", assistantId: "vapi-a" },
+    ]);
+    m.enqueue.mockRejectedValueOnce(new Error("queue down"));
+    const result = await reconcileVoiceCalls({ now: NOW });
+    expect(result.unresolved).toBe(1);
+    expect(result.discovered).toBe(1);
+    warn.mockRestore();
+  });
+
+  describe("at the time budget, inside an assistant's call list", () => {
+    const LIST = [
+      { ...ENDED, id: "new-1", assistantId: "vapi-a" },
+      { ...ENDED, id: "new-2", assistantId: "vapi-a" },
+    ];
+    const assistant = { id: "a1", organizationId: ORG_A, vapiAssistantId: "vapi-a" };
+
+    it("resumes the assistant, from before the first one, when it kept a call", async () => {
+      m.assistants = [assistant];
+      m.listVapiCalls.mockResolvedValue(LIST);
+      let now = Date.now();
+      const clock = vi.spyOn(Date, "now").mockImplementation(() => (now += 1000));
+      const result = await reconcileVoiceCalls({ now: NOW, deadlineMs: now + 1500 });
+      clock.mockRestore();
+      expect(result.discovered).toBe(1);
+      // A real cursor, not null, which would end the chain and drop the remaining assistants.
+      expect(result.nextAssistantCursor).toBe("00000000-0000-0000-0000-000000000000");
+    });
+
+    it("moves past an assistant when it tried calls and kept none", async () => {
+      m.assistants = [assistant];
+      m.listVapiCalls.mockResolvedValue([
+        { ...ENDED, id: "unreadable-refusal", assistantId: "vapi-a" },
+        { ...ENDED, id: "unreadable-refusal-2", assistantId: "vapi-a" },
+      ]);
+      let now = Date.now();
+      const clock = vi.spyOn(Date, "now").mockImplementation(() => (now += 1000));
+      const result = await reconcileVoiceCalls({ now: NOW, deadlineMs: now + 1500 });
+      clock.mockRestore();
+      expect(result.nextAssistantCursor).toBe("a1");
+    });
+
+    it("doesn't skip an assistant that never got a turn, however tight the budget", async () => {
+      m.assistants = [assistant];
+      m.listVapiCalls.mockResolvedValue(LIST);
+      const result = await reconcileVoiceCalls({ now: NOW, deadlineMs: Date.now() - 1 });
+      expect(result.discovered).toBe(0);
+      expect(result.nextAssistantCursor).toBe("00000000-0000-0000-0000-000000000000");
+    });
+
+    it("isn't stopped by calls it would have skipped anyway", async () => {
+      m.assistants = [assistant];
+      m.listVapiCalls.mockResolvedValue([
+        { ...ENDED, id: "live", assistantId: "vapi-a", status: "in-progress" },
+        {
+          ...ENDED,
+          id: "just-ended",
+          assistantId: "vapi-a",
+          startedAt: MINUTES_AGO(10).toISOString(),
+          endedAt: MINUTES_AGO(5).toISOString(),
+        },
+      ]);
+      const result = await reconcileVoiceCalls({ now: NOW, deadlineMs: Date.now() - 1 });
+      expect(result.nextAssistantCursor).toBeNull();
+    });
+  });
+
+  it("leaves a just-ended call for its report, which carries the transcript", async () => {
+    m.assistants = [{ id: "a1", organizationId: ORG_A, vapiAssistantId: "vapi-a" }];
+    m.listVapiCalls.mockResolvedValue([
+      {
+        ...ENDED,
+        id: "just-ended",
+        assistantId: "vapi-a",
+        startedAt: MINUTES_AGO(10).toISOString(),
+        endedAt: MINUTES_AGO(5).toISOString(),
+      },
+    ]);
+    const result = await reconcileVoiceCalls({ now: NOW });
+    expect(result.discovered).toBe(0);
+    expect(m.rows).toEqual([]);
+  });
+
+  it("logs when a list comes back full, since older calls may be missed", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    m.assistants = [{ id: "a1", organizationId: ORG_A, vapiAssistantId: "vapi-a" }];
+    m.listVapiCalls.mockResolvedValue(
+      Array.from({ length: 100 }, (_, i) => ({ id: `c${i}`, assistantId: "other" })),
+    );
+    await reconcileVoiceCalls({ now: NOW });
+    const logged = warn.mock.calls.map((call) => String(call[0])).join();
+    expect(logged).toContain("voice_reconcile_list_full");
+    warn.mockRestore();
+  });
+});
+
 describe("billable and uncertain usage stay separate", () => {
   it("counts recorded usage as billable and unsettled calls only as uncertain", async () => {
     m.getMonthUsage.mockResolvedValue(10);
@@ -245,6 +509,7 @@ describe("billable and uncertain usage stay separate", () => {
       billableMinutes: 10,
       uncertainCalls: 1,
       uncertainMinutes: 3,
+      expiredUncertainCalls: 0,
       inFlightCalls: 0,
       inFlightMinutes: 0,
     });
@@ -281,6 +546,7 @@ describe("billable and uncertain usage stay separate", () => {
       billableMinutes: 90,
       uncertainCalls: 2,
       uncertainMinutes: 30,
+      expiredUncertainCalls: 0,
       inFlightCalls: 1,
       inFlightMinutes: 5,
     };
@@ -329,7 +595,9 @@ describe("recovering lost webhooks", () => {
     m.assistants = [
       { id: "assistant-a", organizationId: ORG_A, vapiAssistantId: "vapi-assistant-a" },
     ];
-    m.listVapiCalls.mockResolvedValue([{ ...ENDED, startedAt: null }]);
+    m.listVapiCalls.mockResolvedValue([
+      { ...ENDED, startedAt: null, cost: 0, endedReason: "customer-did-not-answer" },
+    ]);
     await reconcileVoiceCalls({ now: NOW });
     expect(m.rows[0]!.durationSeconds).toBe(0);
   });

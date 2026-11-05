@@ -11,16 +11,21 @@ const payloadSchema = z
     assistantCursor: z.string().guid().optional(),
     callsDone: z.boolean().optional(),
     assistantsDone: z.boolean().optional(),
+    hop: z.number().int().nonnegative().optional(),
   })
   .strict();
 
 /**
  * Recovers voice calls whose webhooks were lost or late. Recurring maintenance job: like
  * reconcile-creator-generations, the code doesn't create its own trigger, so a QStash
- * schedule has to be registered (docs/voice/implementation-plan.md, a manual rollout step).
+ * schedule has to be registered (docs/release-runbook.md, a manual rollout step).
  *
  * One bounded page per delivery, continued with a cursor. It only reads from Vapi, and any
  * charge goes through the post-call job's own idempotency.
+ *
+ * A follow-up can resume from the cursor it was given, and QStash silently drops a repeated
+ * deduplication id for 10 minutes, which would end the chain. The hop keeps each step's id new,
+ * while a retry of one delivery that reaches the same result still publishes the same id.
  */
 export async function POST(request: Request): Promise<NextResponse> {
   const [{ verifyJobRequest }, { jobPayloadJson }, { reconcileVoiceCalls }, { enqueue }, env] =
@@ -45,8 +50,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ skipped: "vapi_not_configured" });
   }
 
-  const result = await reconcileVoiceCalls(parsed.data);
-  console.info(JSON.stringify({ event: "voice_reconcile_finished", ...result }));
+  const { hop = 0, ...page } = parsed.data;
+  const result = await reconcileVoiceCalls(page);
+  console.info(JSON.stringify({ event: "voice_reconcile_finished", hop, ...result }));
 
   if (result.nextCallCursor || result.nextAssistantCursor) {
     try {
@@ -57,9 +63,10 @@ export async function POST(request: Request): Promise<NextResponse> {
           ...(result.nextAssistantCursor
             ? { assistantCursor: result.nextAssistantCursor }
             : { assistantsDone: true }),
+          hop: hop + 1,
         },
         {
-          deduplicationId: `reconcile-voice-calls-${result.nextCallCursor ?? "x"}-${result.nextAssistantCursor ?? "x"}`,
+          deduplicationId: `reconcile-voice-calls-${hop + 1}-${result.nextCallCursor ?? "x"}-${result.nextAssistantCursor ?? "x"}`,
         },
       );
     } catch {
