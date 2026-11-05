@@ -146,6 +146,8 @@ export function toVapiPayload(cfg: VapiAssistantConfig) {
     // Custom Credential reference, not the legacy inline `server.secret` — Vapi
     // resolves the actual HMAC key server-side from the credential (§13.2).
     server: { url: cfg.serverUrl, credentialId: cfg.serverCredentialId },
+    // Refusing a call relies on Live Call Control, so a sync restores it if it was changed.
+    monitorPlan: { controlEnabled: true, controlAuthenticationEnabled: false },
     maxDurationSeconds: cfg.maxDurationSeconds,
     // Vapi's assistant schema has recording under artifactPlan only; a top-level
     // recordingEnabled is not a documented field (CreateAssistantDTO/UpdateAssistantDTO).

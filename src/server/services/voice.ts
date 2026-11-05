@@ -326,8 +326,8 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
   // (buildVoiceFirstMessage); the prompt keeps the model honest about it for the rest of the call.
   const disclosure =
     assistant.language === "FI"
-      ? "Puhelun alussa on jo kerrottu, että olet tekoälyavustaja ja puhelu voidaan tallentaa. Älä toista sitä, mutta vahvista kysyttäessä, että olet tekoälyavustaja."
-      : "The call has already opened with a notice that you are an AI assistant and the call may be recorded. Don't repeat it, but if asked, confirm that you are an AI assistant.";
+      ? "Puhelun alussa on jo kerrottu, että olet tekoälyavustaja ja puhelu voidaan tallentaa. Älä toista sitä turhaan, mutta kerro se heti, jos et ole varma, että soittaja kuuli sen, tai jos sinulta kysytään."
+      : "The call has already opened with a notice that you are an AI assistant and the call may be recorded. Don't repeat it needlessly, but say it at once if you're unsure the caller heard it, or if asked.";
 
   // Business DNA is optional — the assistant degrades gracefully (falls back
   // to just the human-authored prompt) when the org hasn't filled it in yet.

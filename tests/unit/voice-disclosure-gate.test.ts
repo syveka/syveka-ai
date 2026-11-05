@@ -28,7 +28,7 @@ vi.mock("@/server/integrations/redis", () => ({
 vi.mock("@/server/integrations/vapi", () => ({ getVapiAssistant: m.getVapiAssistant }));
 
 const {
-  callDisclosureVerified,
+  callDisclosureState,
   disclosureApprovedLanguages,
   liveConfigDisclosesFirst,
   verifyCallDisclosure,
@@ -124,13 +124,17 @@ describe("live configuration", () => {
 });
 
 describe("checking a call", () => {
-  const reported = { firstMessage: buildVoiceFirstMessage("FI", "Hei!") };
+  const reported = {
+    firstMessage: buildVoiceFirstMessage("FI", "Hei!"),
+    firstMessageMode: "assistant-speaks-first",
+    firstMessageInterruptionsEnabled: false,
+  };
 
   it("passes on the signed webhook's config, without asking Vapi", async () => {
     const result = await verifyCallDisclosure({ ...ids, language: "FI", reported });
     expect(result).toBe("ok");
     expect(m.getVapiAssistant).not.toHaveBeenCalled();
-    expect(await callDisclosureVerified("org-a", "call-1")).toBe(true);
+    expect(await callDisclosureState("org-a", "call-1")).toBe("verified");
   });
 
   it("asks Vapi, with a short timeout, when the webhook doesn't say", async () => {
@@ -144,7 +148,7 @@ describe("checking a call", () => {
     vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI");
     const result = await verifyCallDisclosure({ ...ids, language: "AR", reported });
     expect(result).toBe("language_not_approved");
-    expect(await callDisclosureVerified("org-a", "call-1")).toBe(false);
+    expect(await callDisclosureState("org-a", "call-1")).toBe("unverified");
   });
 
   it("refuses every language when none is approved", async () => {
@@ -157,10 +161,30 @@ describe("checking a call", () => {
     const result = await verifyCallDisclosure({
       ...ids,
       language: "FI",
-      reported: { firstMessage: "Hei!" },
+      reported: { ...reported, firstMessage: "Hei!" },
     });
     expect(result).toBe("live_config_mismatch");
-    expect(await callDisclosureVerified("org-a", "call-1")).toBe(false);
+    expect(await callDisclosureState("org-a", "call-1")).toBe("unverified");
+  });
+
+  it("refuses a call overriding its own first message, even with a good assistant", async () => {
+    const result = await verifyCallDisclosure({
+      ...ids,
+      language: "FI",
+      reported,
+      overrides: { firstMessageMode: "assistant-waits-for-user" },
+    });
+    expect(result).toBe("live_config_mismatch");
+  });
+
+  it("asks Vapi when the signed message describes the assistant only partly", async () => {
+    m.getVapiAssistant.mockResolvedValue(reported);
+    await verifyCallDisclosure({
+      ...ids,
+      language: "FI",
+      reported: { firstMessage: reported.firstMessage },
+    });
+    expect(m.getVapiAssistant).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed when Vapi can't confirm", async () => {
@@ -173,15 +197,15 @@ describe("checking a call", () => {
     expect(await verifyCallDisclosure({ ...ids, language: "FI", reported })).toBe("unverifiable");
   });
 
-  it("a call never checked isn't verified, nor is one when Redis is down", async () => {
-    expect(await callDisclosureVerified("org-a", "never")).toBe(false);
+  it("tells a call never checked apart from Redis being down", async () => {
+    expect(await callDisclosureState("org-a", "never")).toBe("unverified");
     await verifyCallDisclosure({ ...ids, language: "FI", reported });
     m.redisGetFails = true;
-    expect(await callDisclosureVerified("org-a", "call-1")).toBe(false);
+    expect(await callDisclosureState("org-a", "call-1")).toBe("unknown");
   });
 
   it("a check in one organization doesn't verify the same call id in another", async () => {
     await verifyCallDisclosure({ ...ids, language: "FI", reported });
-    expect(await callDisclosureVerified("org-b", "call-1")).toBe(false);
+    expect(await callDisclosureState("org-b", "call-1")).toBe("unverified");
   });
 });

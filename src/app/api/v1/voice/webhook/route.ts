@@ -67,6 +67,7 @@ const messageSchema = z.object({
       .object({
         id: z.string(),
         assistantId: z.string().optional(),
+        assistantOverrides: z.record(z.string(), z.unknown()).nullish(),
         customer: z.object({ number: z.string().optional() }).optional(),
         // Live Call Control URL. Unauthenticated unless the assistant enables
         // monitorPlan.controlAuthenticationEnabled, so it is treated as a secret.
@@ -355,6 +356,41 @@ export async function POST(request: Request): Promise<NextResponse> {
         return NextResponse.json({ results });
       }
 
+      // No tool of any kind on a call whose notice isn't confirmed. Checked here too, because
+      // the status update can be missed and a hang-up can fail, and this reply is one Vapi acts
+      // on: it speaks the line and ends the call. A missed start is recovered by checking now.
+      {
+        const { callDisclosureState, verifyCallDisclosure } =
+          await import("@/server/voice/disclosure-gate");
+        const toolCallId = message.call?.id;
+        const state = toolCallId ? await callDisclosureState(orgId, toolCallId) : "unknown";
+        const confirmed =
+          state === "verified" ||
+          (state === "unverified" &&
+            toolCallId !== undefined &&
+            (await verifyCallDisclosure({
+              orgId,
+              vapiCallId: toolCallId,
+              language: assistant.language,
+              vapiAssistantId: message.call?.assistantId as string,
+              reported: message.assistant,
+              overrides: message.call?.assistantOverrides,
+            })) === "ok");
+        if (!confirmed) {
+          console.warn(
+            JSON.stringify({ event: "voice_tools_refused", orgId, vapiCallId: toolCallId, state }),
+          );
+          const content = QUOTA_EXCEEDED_GOODBYE[assistant.language] ?? QUOTA_EXCEEDED_GOODBYE.EN;
+          const results = (message.toolCallList ?? []).map((tc) => ({
+            toolCallId: tc.id,
+            name: tc.name,
+            error: "disclosure_not_verified",
+            message: { type: "request-failed", content, endCallAfterSpokenEnabled: true },
+          }));
+          return NextResponse.json({ results });
+        }
+      }
+
       // Over quota: run no tool, say goodbye and end the call. Vapi acts on this
       // reply and ends the call once the line is spoken (endCallAfterSpokenEnabled).
       // Live Call Control is not used here: it would hang up before the goodbye.
@@ -403,10 +439,6 @@ export async function POST(request: Request): Promise<NextResponse> {
             })
           : null;
       const callEnded = Boolean(callRow && (callRow.endedAt || callRow.status !== "IN_PROGRESS"));
-      // A call whose spoken notice wasn't confirmed can't change anything. This also covers a
-      // call that couldn't be hung up, and one whose start was never heard about.
-      const { callDisclosureVerified } = await import("@/server/voice/disclosure-gate");
-      const disclosed = hasWrite && callId ? await callDisclosureVerified(orgId, callId) : false;
 
       const results = await Promise.all(
         (message.toolCallList ?? []).map((tc) =>
@@ -421,12 +453,6 @@ export async function POST(request: Request): Promise<NextResponse> {
             if (cap !== undefined && (!callId || callEnded)) {
               const error = callId ? "call_ended" : "call_required";
               return { toolCallId: tc.id, result: JSON.stringify({ error }) };
-            }
-            if (cap !== undefined && !disclosed) {
-              return {
-                toolCallId: tc.id,
-                result: JSON.stringify({ error: "disclosure_not_verified" }),
-              };
             }
             const claimKey = `vapi:tool:${orgId}:${tc.id}`;
             const claimed = await redis.set(claimKey, "1", { nx: true, ex: 60 * 60 * 24 });
@@ -481,6 +507,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           language: assistant.language,
           vapiAssistantId: message.call.assistantId as string,
           reported: message.assistant,
+          overrides: message.call.assistantOverrides,
         });
         if (disclosure !== "ok") {
           console.warn(
@@ -526,6 +553,27 @@ export async function POST(request: Request): Promise<NextResponse> {
     // ── Call ended: persist + hand off to post-call pipeline (§16.4) ──
     case "end-of-call-report": {
       if (!message.call) return NextResponse.json({ ok: true });
+      // A call whose notice was never confirmed: keep nothing, charge nothing, and start no
+      // pipeline, so its transcript doesn't reach the CRM or an AI provider. What happens to
+      // the copy Vapi holds is a legal decision. If that can't be read, retry: the call may
+      // have been fine, and its record shouldn't be lost to a Redis outage.
+      {
+        const { callDisclosureState } = await import("@/server/voice/disclosure-gate");
+        const state = await callDisclosureState(orgId, message.call.id);
+        if (state === "unknown") {
+          return NextResponse.json({ error: "try again" }, { status: 503 });
+        }
+        if (state === "unverified") {
+          console.warn(
+            JSON.stringify({
+              event: "voice_report_without_notice",
+              orgId,
+              vapiCallId: message.call.id,
+            }),
+          );
+          return NextResponse.json({ ok: true, refused: true });
+        }
+      }
       const durationSeconds = Math.round(message.durationSeconds ?? 0);
       // The same call details whether or not the in-progress status update was received:
       // post-call bills from durationSeconds and summarizes the transcript.

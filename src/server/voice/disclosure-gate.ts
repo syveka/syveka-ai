@@ -58,14 +58,30 @@ export async function verifyCallDisclosure(params: {
   vapiCallId: string;
   language: string;
   vapiAssistantId: string;
-  /** The assistant as sent in the signed webhook, when it says what the notice is. */
+  /** The assistant as sent in the signed webhook, used only when it answers fully. */
   reported?: LiveAssistantConfig | null;
+  /** This call's own overrides, which a fetch of the assistant wouldn't show. */
+  overrides?: Record<string, unknown> | null;
 }): Promise<DisclosureCheck> {
   if (!disclosureApprovedLanguages().has(params.language)) return "language_not_approved";
 
+  if (
+    params.overrides &&
+    ["firstMessage", "firstMessageMode", "firstMessageInterruptionsEnabled"].some(
+      (field) => field in (params.overrides as object),
+    )
+  ) {
+    return "live_config_mismatch";
+  }
+
   let live: LiveAssistantConfig | null = null;
-  if (typeof params.reported?.firstMessage === "string") {
-    live = params.reported;
+  const reported = params.reported;
+  if (
+    typeof reported?.firstMessage === "string" &&
+    typeof reported.firstMessageMode === "string" &&
+    typeof reported.firstMessageInterruptionsEnabled === "boolean"
+  ) {
+    live = reported;
   } else {
     try {
       live = await getVapiAssistant(params.vapiAssistantId, AbortSignal.timeout(VERIFY_TIMEOUT_MS));
@@ -85,11 +101,14 @@ export async function verifyCallDisclosure(params: {
   return "ok";
 }
 
-/** Whether this call passed the check. False when that can't be read: writes then stop. */
-export async function callDisclosureVerified(orgId: string, vapiCallId: string): Promise<boolean> {
+/** Whether this call passed the check, or "unknown" when that can't be read. */
+export async function callDisclosureState(
+  orgId: string,
+  vapiCallId: string,
+): Promise<"verified" | "unverified" | "unknown"> {
   try {
-    return Boolean(await redis.get(verifiedKey(orgId, vapiCallId)));
+    return (await redis.get(verifiedKey(orgId, vapiCallId))) ? "verified" : "unverified";
   } catch {
-    return false;
+    return "unknown";
   }
 }
