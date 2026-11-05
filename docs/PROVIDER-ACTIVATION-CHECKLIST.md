@@ -345,6 +345,18 @@ Webhook endpoint: `{NEXT_PUBLIC_APP_URL}/api/v1/webhooks/inbox-email/resend`.
   in production.**
 - Phone number provisioning (+358 numbers) happens through the app's voice settings once the
   assistant is active.
+- **Spoken AI notice.** `VOICE_DISCLOSURE_APPROVED_LANGUAGES` (comma-separated, for example
+  `FI,EN`) lists the languages whose wording counsel and a native speaker have approved. It is
+  empty by default, and every call in an unlisted language is hung up. Set it per environment,
+  only after that approval.
+- **Re-sync every assistant after deploying.** Saving an assistant in its settings page sends the
+  current notice and live-call control. An assistant not re-synced is refused at each call, and
+  its settings page shows that.
+- **Recording.** Syveka sends no recording setting, so Vapi's own setting applies. Its schema
+  shows `artifactPlan.recordingEnabled` defaulting to on for a new assistant. Check that setting
+  in the Vapi dashboard, and Vapi's retention, against the owner's recording decision.
+- **Reconciliation schedule.** Create a QStash schedule for `reconcile-voice-calls`. Until it
+  exists, a call whose webhooks were lost stays uncertain and nothing recovers it.
 - [ ] **Manual verification required**: place one real call through the provisioned number and
       confirm a `VoiceCall` row reaches `COMPLETED` status — this is exactly what
       `getOrgSetupReadiness` requires before reporting the voice channel `ready` rather than
