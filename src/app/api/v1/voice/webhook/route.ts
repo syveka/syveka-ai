@@ -558,12 +558,29 @@ export async function POST(request: Request): Promise<NextResponse> {
       // the copy Vapi holds is a legal decision. If that can't be read, retry: the call may
       // have been fine, and its record shouldn't be lost to a Redis outage.
       {
-        const { callDisclosureState } = await import("@/server/voice/disclosure-gate");
+        const { callDisclosureState, verifyCallDisclosure } =
+          await import("@/server/voice/disclosure-gate");
         const state = await callDisclosureState(orgId, message.call.id);
         if (state === "unknown") {
           return NextResponse.json({ error: "try again" }, { status: 503 });
         }
-        if (state === "unverified") {
+        // A missed start isn't a failed check. A row is only created after the check passed,
+        // and otherwise the live config can still confirm it now.
+        const confirmedLate =
+          state === "unverified" &&
+          ((await unscopedPrisma.voiceCall.findFirst({
+            where: { organizationId: orgId, vapiCallId: message.call.id },
+            select: { id: true },
+          })) !== null ||
+            (await verifyCallDisclosure({
+              orgId,
+              vapiCallId: message.call.id,
+              language: assistant.language,
+              vapiAssistantId: message.call.assistantId as string,
+              reported: message.assistant,
+              overrides: message.call.assistantOverrides,
+            })) === "ok");
+        if (state === "unverified" && !confirmedLate) {
           console.warn(
             JSON.stringify({
               event: "voice_report_without_notice",

@@ -13,8 +13,8 @@ import { getVapiAssistant } from "@/server/integrations/vapi";
 export type DisclosureCheck =
   "ok" | "language_not_approved" | "live_config_mismatch" | "unverifiable";
 
-/** Long enough for one real call to outlive its check, and no longer. */
-const VERIFIED_TTL_SECONDS = 2 * 60 * 60;
+/** Outlives a call and any late report, including reconciliation's 24-hour look back. */
+const VERIFIED_TTL_SECONDS = 48 * 60 * 60;
 const VERIFY_TIMEOUT_MS = 3_000;
 
 const verifiedKey = (orgId: string, vapiCallId: string) =>

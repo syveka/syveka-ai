@@ -14,6 +14,7 @@ const CONTROL = "https://aws-us-west-2-production1-phone-call-websocket.vapi.ai/
 const m = vi.hoisted(() => ({
   store: new Map<string, string>(),
   redisDown: false,
+  redisGetDown: false,
   language: "AR",
   liveAssistant: {} as Record<string, unknown>,
   fetchFails: false,
@@ -48,7 +49,7 @@ vi.mock("@/server/db/tenant", () => ({
 vi.mock("@/server/integrations/redis", () => ({
   redis: {
     get: vi.fn(async (key: string) => {
-      if (m.redisDown) throw new Error("redis down");
+      if (m.redisDown || m.redisGetDown) throw new Error("redis down");
       return m.store.get(key) ?? null;
     }),
     set: vi.fn(async (key: string, value: string) => {
@@ -116,6 +117,7 @@ const report = () =>
 beforeEach(() => {
   m.store.clear();
   m.redisDown = false;
+  m.redisGetDown = false;
   m.language = "AR";
   m.liveAssistant = syncedAssistant("AR");
   m.fetchFails = false;
@@ -250,17 +252,27 @@ describe("a call that fails the check", () => {
   });
 });
 
+describe("a report for a call whose start was missed", () => {
+  it("is kept when the live config confirms the notice", async () => {
+    const res = await POST(report());
+    expect(res.status).toBe(200);
+    expect(m.upsert).toHaveBeenCalledTimes(1);
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+});
+
 describe("when Redis is down", () => {
   it("a report is retried rather than dropped: the call may have been fine", async () => {
     await POST(start());
-    m.redisDown = true;
+    m.redisGetDown = true;
     const res = await POST(report());
     expect(res.status).toBe(503);
     expect(m.enqueue).not.toHaveBeenCalled();
   });
 
-  it("no tool runs", async () => {
-    m.redisDown = true;
+  it("no tool runs, even for a call that had passed", async () => {
+    await POST(start());
+    m.redisGetDown = true;
     await POST(toolCall());
     expect(m.executeTool).not.toHaveBeenCalled();
   });
