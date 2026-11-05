@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { jobPayloadJson } from "@/server/jobs/payload";
 import type { Prisma } from "@/generated/prisma/client/client";
+import { billableMinutes } from "@/server/voice/call-outcome";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -82,6 +83,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ ok: true, alreadyProcessed: true });
   }
 
+  // No trustworthy length: charge nothing and leave the call unsettled, so it stays counted
+  // as uncertain until reconcile-voice-calls learns the answer. Not an error, because
+  // retrying now can't help. Rounding it up to a minute would silently under-bill the call.
+  if (call.durationSeconds === null) {
+    console.warn(JSON.stringify({ event: "post_call_duration_unknown", orgId, callId: call.id }));
+    return NextResponse.json({ deferred: "duration_unknown" });
+  }
+
   // Two runs of this job for the same call can overlap: a duplicate end-of-call report
   // that QStash's dedupe window misses, or a retry while a slow first attempt is still
   // running. Under READ COMMITTED both would pass each "already recorded?" check below
@@ -110,8 +119,9 @@ export async function POST(request: Request): Promise<NextResponse> {
   // create already falls back to a phone lookup that finds step 2's own
   // prior result, and emitWorkflowEvent has its own sourceEventKey-based
   // idempotency (see workflow-events.ts).
-  const minutes = Math.max(1, Math.ceil((call.durationSeconds ?? 0) / 60));
+  const minutes = billableMinutes(call.durationSeconds);
   await lockedStep(async (tx) => {
+    if (minutes === 0) return; // A call that never connected uses nothing.
     const usageAlreadyRecorded = await tx.usageRecord.findFirst({
       where: {
         organizationId: orgId,
@@ -121,7 +131,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       select: { id: true },
     });
     if (!usageAlreadyRecorded) {
-      await recordUsage(orgId, "VOICE_MINUTES", minutes, { callId: call.id }, tx);
+      // Dated by the call, so a late report can't move minutes into the next month.
+      await recordUsage(orgId, "VOICE_MINUTES", minutes, { callId: call.id }, tx, call.startedAt);
     }
   });
 

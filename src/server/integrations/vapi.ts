@@ -23,6 +23,28 @@ const VAPI_BASE = "https://api.vapi.ai";
  */
 export const VAPI_FETCH_TIMEOUT_MS = 20_000;
 
+/** A Vapi API error with its status, so a caller can tell "no such call" from an outage. */
+export class VapiHttpError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "VapiHttpError";
+  }
+}
+
+/**
+ * Vapi doesn't retry a failed webhook unless told to. Client errors won't improve on a
+ * retry. Anything lost after these attempts is recovered by the reconcile-voice-calls job.
+ */
+const WEBHOOK_BACKOFF_PLAN = {
+  type: "exponential",
+  maxRetries: 3,
+  baseDelaySeconds: 2,
+  excludedStatusCodes: [400, 401, 403, 404, 409],
+} as const;
+
 async function vapiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const { VAPI_API_KEY } = getVapiEnv();
   let res: Response;
@@ -46,7 +68,10 @@ async function vapiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Vapi ${init?.method ?? "GET"} ${path} → ${res.status}: ${body.slice(0, 500)}`);
+    throw new VapiHttpError(
+      `Vapi ${init?.method ?? "GET"} ${path} → ${res.status}: ${body.slice(0, 500)}`,
+      res.status,
+    );
   }
   return (await res.json()) as T;
 }
@@ -138,7 +163,11 @@ export function toVapiPayload(cfg: VapiAssistantConfig) {
     },
     // Custom Credential reference, not the legacy inline `server.secret` — Vapi
     // resolves the actual HMAC key server-side from the credential (§13.2).
-    server: { url: cfg.serverUrl, credentialId: cfg.serverCredentialId },
+    server: {
+      url: cfg.serverUrl,
+      credentialId: cfg.serverCredentialId,
+      backoffPlan: WEBHOOK_BACKOFF_PLAN,
+    },
     maxDurationSeconds: cfg.maxDurationSeconds,
     recordingEnabled: true,
   };
@@ -155,6 +184,22 @@ export async function upsertVapiAssistant(
     });
   }
   return vapiFetch("/assistant", { method: "POST", body: JSON.stringify(toVapiPayload(cfg)) });
+}
+
+/** One call as Vapi has it. Read-only; the caller validates the untrusted shape. */
+export async function getVapiCall(id: string): Promise<unknown> {
+  return vapiFetch(`/call/${encodeURIComponent(id)}`);
+}
+
+/** An assistant's recent calls, newest first. Read-only; the caller validates the shape. */
+export async function listVapiCalls(assistantId: string, createdAtGe: Date): Promise<unknown[]> {
+  const query = new URLSearchParams({
+    assistantId,
+    createdAtGe: createdAtGe.toISOString(),
+    limit: "100",
+  });
+  const calls = await vapiFetch<unknown>(`/call?${query.toString()}`);
+  return Array.isArray(calls) ? calls : [];
 }
 
 export async function deleteVapiAssistant(id: string): Promise<void> {
