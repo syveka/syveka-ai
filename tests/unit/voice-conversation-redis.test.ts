@@ -1,4 +1,4 @@
-import { RespClient, type Reply } from "./helpers/resp-client";
+import { RespClient } from "./helpers/resp-client";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   DAY_TTL_SECONDS,
