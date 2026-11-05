@@ -17,7 +17,7 @@ Vendor prices read 2026-11-05. Per-minute cost is the estimate in `pricing-and-p
 | ------------------------------------------------------------------------------- | --------------------------------------------- | ----------------------------------------------------------- |
 | Baseline calls: FI 16, AR 12, EN 4, limits 6, at 3 min                          | 114 min                                       | $10.07                                                      |
 | Retries, 30%                                                                    | 34 min                                        | $3.02                                                       |
-| Haiku 5.5 phase, optional: 20 calls at 3 min                                    | 60 min                                        | $5.30                                                       |
+| Haiku 5.5 phase, optional: 20 calls at 3 min                                    | 60 min                                        | $4.62 at $0.0770                                            |
 | Twilio Finnish mobile number                                                    | $6.60/month, 2 months for provisioning delays | $13.20                                                      |
 | Vapi Core, if the account isn't already on a plan. Needed for more than 4 lines | 1 month                                       | $0–29                                                       |
 | Testers' own phone charges to a Finnish mobile number                           | About 200 min                                 | Depends on their plan. Usually covered, otherwise about €10 |
@@ -33,7 +33,7 @@ report, rather than continuing.**
 | #   | Requirement                                                                                                                                                                                        | Owner          |
 | --- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
 | 1   | Written approval of this plan, its budget and tester list                                                                                                                                          | Owner          |
-| 2   | #335's notice on staging, with counsel-reviewed wording. Otherwise we'd test a known gap                                                                                                           | Owner, counsel |
+| 2   | Phase 1 only: #335's notice on staging, with counsel-reviewed wording. Phase 0 doesn't need it (see below)                                                                                         | Owner, counsel |
 | 3   | A Twilio Finnish number. Twilio asks for a Trade Register extract, proof of address, Y-tunnus, a website and a representative; the address must be in Finland. A search summary reported 2–4 weeks | Owner          |
 | 4   | **Use the Twilio import path, not BYO SIP.** The BYO path looks broken: it sends a SIP URI as `credentialId` (`vapi.ts:204-209`), and Vapi's schema wants a credential id                          | Engineering    |
 | 5   | Vapi account's concurrency and plan confirmed. The free package allows 4 lines                                                                                                                     | Owner          |
@@ -46,6 +46,15 @@ Importing a number hands Twilio credentials to Vapi for that single request. The
 Syveka (`services/voice.ts:232-235`). Use a dedicated Twilio sub-account, so it can be closed afterwards.
 Don't enable any production assistant or point a real customer at this number. Twilio's Finland
 guidelines also say that automated outbound calling isn't allowed, and this plan is inbound only.
+
+## Phases
+
+**Phase 0, a few calls before counsel's final answer.** Counsel's answers depend on facts only a call can
+show: whether recording starts before the notice, and whether it continues after a transfer. So run about
+5 calls first, on staging with #335's mechanism, using internal testers who've been told everything in
+writing, and invented details only. It proves timing, not wording. No outside caller hears this notice.
+
+**Phase 1, the matrix below,** after counsel has reviewed the wording.
 
 ## Test matrix
 

@@ -57,7 +57,7 @@ and CRM activity, logged only as `invalid_response`. The same review would apply
 model. The change itself is one line plus a test update, on its own branch.
 
 **Paid, staging only, as a phase of `phone-call-test-plan.md`:** use one test assistant in Finnish and
-one in Arabic. About 20 calls of 3 minutes is about $4–5.
+one in Arabic. About 20 calls of 3 minutes is about $4.62.
 
 | Measure                                       | Pass                                                        |
 | --------------------------------------------- | ----------------------------------------------------------- |

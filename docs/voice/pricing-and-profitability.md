@@ -6,28 +6,30 @@ first real calls. EUR 1 = USD 1.10 is an assumption.
 
 ## Summary
 
-- **Starter and one-seat Pro can lose money at full use.** With AI messages counted, Starter is about
-  break-even and one-seat Pro is about -50%.
+- **One-seat Pro can lose money at full use, and Starter's margin is thin.** With tenants paying for
+  their own telephony, as the code works today and with AI messages counted, Starter is about 26%
+  (11% annual) and one-seat Pro about -37%. If Syveka provided numbers, they'd be about 1% (-18% annual)
+  and -50%. Several costs are excluded, so real margins are lower.
 - **There's a shared-capacity risk that no plan limit addresses.** Vapi's concurrency limit is
   account-wide (10 calls on Core), so one tenant, or someone repeatedly dialling it, can block calls
   for every other tenant.
 - **Usage can silently go unbilled.** Vapi doesn't retry webhooks unless configured to, and the code
   doesn't configure it. A lost end-of-call report means uncounted minutes, and nothing reconciles them.
 - **Enterprise is uncapped.** The catalog sets its minutes to `MAX_SAFE_INTEGER`, with no overage.
-- **Recommended:** fix metering and per-tenant concurrency first (about a week of work), then sell
+- **Recommended:** fix metering and per-tenant concurrency first (about 8 working days), then sell
   voice as an add-on with a hard cap by default, and metered overage only on opt-in.
 
 ## Cost per minute
 
-| Component                        | Rate        | Source and note                                                                                                     |
-| -------------------------------- | ----------- | ------------------------------------------------------------------------------------------------------------------- |
-| Vapi hosting                     | $0.0500     | Vapi pricing. Still charged with your own provider keys (forum report)                                              |
-| Deepgram                         | $0.0092     | Nova-3 multilingual list price, conservative. Nova-2 FI/EN is about $0.0058; Vapi's calculator shows $0.0095-0.0099 |
-| Azure TTS                        | $0.0054     | $15 per million characters, at an assumed 360 characters a minute                                                   |
-| Haiku 4.5                        | $0.0130     | $1/$5, at an assumed 12,000 uncached input and 200 output tokens a minute                                           |
-| **Subtotal: Syveka's cost**      | **$0.0776** | When the tenant's own Twilio account carries the call, which is how the code works today                            |
-| Twilio Finland inbound           | $0.0107     | Mobile number, "current as of October 2026". The local-number rate isn't published on that page                     |
-| **Total with managed telephony** | **$0.0883** | If Syveka ever provides the number                                                                                  |
+| Component                        | Rate        | Source and note                                                                                                                                                                          |
+| -------------------------------- | ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Vapi hosting                     | $0.0500     | Vapi pricing. Still charged with your own provider keys (forum report)                                                                                                                   |
+| Deepgram                         | $0.0092     | Nova-3 multilingual list price, conservative. Nova-2 FI/EN is about $0.0058; Vapi's calculator shows $0.0095-0.0099                                                                      |
+| Azure TTS                        | $0.0054     | $15 per million characters, at an assumed 360 characters a minute                                                                                                                        |
+| Haiku 4.5                        | $0.0130     | $1/$5, at an assumed 12,000 uncached input and 200 output tokens a minute                                                                                                                |
+| **Subtotal: Syveka's cost**      | **$0.0776** | When the tenant's own Twilio account carries the call, which is the only working route to a Finnish number in the code today: Vapi's own pool is US and Canada, and BYO SIP looks broken |
+| Twilio Finland inbound           | $0.0107     | Mobile number, "current as of October 2026". The local-number rate isn't published on that page                                                                                          |
+| **Total with managed telephony** | **$0.0883** | If Syveka ever provides the number                                                                                                                                                       |
 
 Fixed: Vapi Core $29/month, or $0 with a 4-line limit, 1 number and 14-day retention. Extra line
 $10/month. Vapi Pro is 10% of hosting with a $999 minimum, with 30 lines. Twilio mobile number
@@ -40,7 +42,8 @@ Fish report, which assumed $29 was enough at every volume.
 AI messages are costed at $0.016 each, the typical Sonnet turn in `docs/live-voice-cost-report.md:106`,
 which was estimated for a bounded voice turn, so it's only a rough guide. Creator credits, Stripe fees
 and the shared Vapi fee are excluded, so real margins are lower. Most customers won't use everything,
-so this is the worst case, not the average.
+so these figures are full use with partial costs, not an average. The managed columns include one
+$6.60 number.
 
 | Plan                     | Revenue | Voice cost, tenant's telephony | Margin | With AI messages | Margin   | Voice cost, managed telephony | With AI messages, margin |
 | ------------------------ | ------- | ------------------------------ | ------ | ---------------- | -------- | ----------------------------- | ------------------------ |
@@ -83,7 +86,7 @@ Each item is its own PR with tests. Efforts are estimates.
 | 6   | **Pre-call check**, with Vapi's `assistant-request`: refuse with a spoken `error`, or set `maxDurationSeconds` from the minutes left. This removes the overshoot, and answers in the caller's language                 | 1–2 weeks | Medium. Calls then depend on Syveka's webhook within 7.5 s, so it needs `fallbackDestination`. Whether refused calls are billed wasn't found |
 | 7   | **Overage billing.** See below                                                                                                                                                                                         | 1–2 weeks | Medium. Needs pricing, terms, FI/EN/AR UI, and an approved Stripe change                                                                     |
 
-Items 1–5 take about a week and need no pricing decision. Item 1 is the most valuable and the smallest.
+Items 1–5 take about 8 working days and need no pricing decision. Item 1 is the most valuable and the smallest.
 
 ### Overage: the choice to make
 
@@ -108,8 +111,7 @@ the more cautious case.
 | B. Reduce included minutes: Starter 50, Pro 300                                                                                | Better, but AI-message exposure is unchanged | Simple. Looks like a reduction, and the seat mismatch stays |
 | C. Minimum seats for voice, such as Pro with 3 seats                                                                           | About 50% at full use                        | Keeps the current minutes. Awkward for small businesses     |
 
-**Overage price:** €0.25 per minute gives about 66–68%. €0.20 gives about 58–60%, and €0.30 about
-72–73%. Finnish and Arabic TTS have the same list price on Azure, so no language surcharge is needed.
+**Overage price,** at $0.0883 a minute: €0.20 gives about 60%, €0.25 about 68%, and €0.30 about 73%. Finnish and Arabic TTS have the same list price on Azure, so no language surcharge is needed.
 
 ## Cheaper stack: Haiku 5.5
 
