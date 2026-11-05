@@ -22,10 +22,10 @@ was touched.
 - **What I did.** I deleted only the dumps that came from my image, moved my own scratch files to D:,
   and restarted Docker Desktop. All other containers, images and named volumes were intact in the
   listing afterward. I fixed the cause with `--ulimit=core=1`, and there were no dumps after that.
-- **Still open.** **C: has about 0.3 GB free,** lower than when I started (3.3 GB). About 2 GB of that
-  was Docker's disk growing during my first image build, which doesn't shrink without compaction. A
-  further drop of about 2 GB during the final hours has no cause I could find: it wasn't Docker's disk
-  file, crash dumps or the caches I checked. **C: needs space freed by you.**
+- **Still open.** **C: fell as low as 0.3 GB and had about 1.5 GB free at the end,** less than the
+  3.3 GB when I started. About 2 GB is Docker's disk growing during my first image build, which doesn't
+  shrink without compaction. A further temporary drop of about 2 GB has no cause I could find: it wasn't
+  Docker's disk file, crash dumps or the caches I checked. **C: needs space freed by you.**
 
 The lesson is in [the architecture document](../architecture/creator-studio-render-worker.md), on the
 render-worker branch: a limit on a container doesn't bound what the host writes on its behalf.
@@ -37,13 +37,15 @@ rebuild or overwrite it. I re-checked its facts independently and added the gaps
 `docs/research/video-skills-evaluation.md` was untracked; it is preserved unchanged here (SHA-256
 `6b02fe74…`).
 
-## Branches
+## Branches and pull requests
 
-| Branch                                 | Base                                | Contents                                                                                |
-| -------------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------- |
-| `experiment/hyperframes-render-worker` | `origin/main` at `40f71ae7`         | The worker, templates, tests, architecture doc, pilot results                           |
-| `experiment/fish-voice-pilot-gaps`     | `experiment/fish-audio-voice-pilot` | Usage tracking, typed caller turns, latency aggregates, evaluation addendum, comparison |
-| `docs/video-voice-research`            | `origin/main` at `40f71ae7`         | The preserved evaluation, cost analysis, this report                                    |
+All three are drafts. `main` is unchanged at `40f71ae7`.
+
+| Pull request | Branch                                 | Base                                | Contents                                                                                |
+| ------------ | -------------------------------------- | ----------------------------------- | --------------------------------------------------------------------------------------- |
+| #400         | `experiment/hyperframes-render-worker` | `main`                              | The worker, templates, tests, architecture doc, pilot results                           |
+| #401         | `experiment/fish-voice-pilot-gaps`     | `experiment/fish-audio-voice-pilot` | Usage tracking, typed caller turns, latency aggregates, evaluation addendum, comparison |
+| #402         | `docs/video-voice-research`            | `main`                              | The preserved evaluation, cost analysis, this report                                    |
 
 Local worktrees are on `D:\syveka-overnight`, because C: was too full. Git needed
 `-c safe.directory=…` per command there, since exFAT records no file ownership. No global configuration
@@ -69,15 +71,20 @@ with honest pricing, and latency percentiles that keep mock and real timings apa
 
 ## Test results
 
-See each pull request for validation at its exact head commit, including failures. Full-suite runs on
-this Windows machine fail in files that the earlier PR also reported, so CI on Linux is the check to
-read. Results that hold regardless:
+**CI on Linux passed every check on #400,** including the full unit suite, production build and RLS
+tests. Local full-suite runs on this Windows machine and exFAT drive failed in many files, and the
+green CI shows that those were environmental for that branch.
+
+**#401 gets no CI,** because `ci.yml` targets `main` and #401 targets #395's branch. Its full-suite
+result is local only (25 failures in 10 files, none in the pilot's test file), and its production build
+could not run on this drive. #395 itself is green. Retarget #401 after #395, or merge it into #395's
+branch, to get CI on the combined code.
 
 | Check                                                       | Result                                       |
 | ----------------------------------------------------------- | -------------------------------------------- |
 | Render matrix (27), maximum job (12), stress (8), video (3) | All pass                                     |
 | Container security probes                                   | 55 of 55 pass; run by hand                   |
-| Focused worker unit tests                                   | 107 of 107 pass                                |
+| Focused worker unit tests                                   | 107 of 107 pass                              |
 | `test:e2e`                                                  | Not run: needs credentials and a running app |
 | Opt-in Postgres and Redis suites                            | Not run: needs disposable instances          |
 | RLS tests                                                   | Not applicable: no schema or policy changes  |
