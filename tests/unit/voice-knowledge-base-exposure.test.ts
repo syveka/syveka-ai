@@ -28,6 +28,8 @@ vi.mock("@/server/integrations/vapi", () => ({ verifyVapiSignature: () => true }
 vi.mock("@/server/voice/disclosure-gate", () => ({
   verifyCallDisclosure: async () => "ok",
   callDisclosureState: async () => "verified",
+  confirmNoticeFromMessages: async () => "ok",
+  confirmNoticeFromCallRecord: async () => "ok",
 }));
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {

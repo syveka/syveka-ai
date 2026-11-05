@@ -405,8 +405,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       // the status update can be missed and a hang-up can fail, and this reply is one Vapi acts
       // on: it speaks the line and ends the call. A missed start is recovered by checking now.
       {
-        const { callDisclosureState, verifyCallDisclosure } =
+        const { callDisclosureState, confirmNoticeFromMessages } =
           await import("@/server/voice/disclosure-gate");
+        const { markCallRefused } = await import("@/server/voice/call-admission");
         const vapiCallId = message.call?.id;
         const state = vapiCallId ? await callDisclosureState(orgId, vapiCallId) : "unverified";
         // A Redis blip isn't a failed check: refuse the tools, and leave a good call running.
@@ -417,19 +418,31 @@ export async function POST(request: Request): Promise<NextResponse> {
           }));
           return NextResponse.json({ results });
         }
-        const confirmed =
-          state === "verified" ||
-          (state === "unverified" &&
-            Boolean(vapiCallId) &&
-            (await verifyCallDisclosure({
-              orgId,
-              vapiCallId: vapiCallId as string,
-              language: assistant.language,
-              vapiAssistantId: message.call?.assistantId as string,
-              reported: message.assistant,
-              overrides: message.call?.assistantOverrides,
-            })) === "ok");
-        if (!confirmed) {
+        // The start was missed, so what this call has already said decides. A config read now
+        // can't show what this caller heard.
+        const confirmation =
+          state === "verified"
+            ? "ok"
+            : vapiCallId
+              ? await confirmNoticeFromMessages({
+                  orgId,
+                  vapiCallId,
+                  language: assistant.language,
+                  vapiAssistantId: message.call?.assistantId as string,
+                  messages: message.artifact?.messages,
+                })
+              : "absent";
+        if (confirmation === "unverifiable") {
+          const results = (message.toolCallList ?? []).map((tc) => ({
+            toolCallId: tc.id,
+            result: JSON.stringify({ error: "limits_unavailable" }),
+          }));
+          return NextResponse.json({ results });
+        }
+        if (confirmation === "refused" && vapiCallId) {
+          await markCallRefused(orgId, vapiCallId, "notice");
+        }
+        if (confirmation !== "ok") {
           console.warn(JSON.stringify({ event: "voice_tools_refused", orgId, vapiCallId, state }));
           const content = QUOTA_EXCEEDED_GOODBYE[assistant.language] ?? QUOTA_EXCEEDED_GOODBYE.EN;
           const results = (message.toolCallList ?? []).map((tc) => ({
@@ -666,45 +679,48 @@ export async function POST(request: Request): Promise<NextResponse> {
       // the copy Vapi holds is a legal decision. If that can't be read, retry: the call may
       // have been fine, and its record shouldn't be lost to a Redis outage.
       {
-        const { callDisclosureState, verifyCallDisclosure } =
+        const { callDisclosureState, confirmNoticeFromCallRecord } =
           await import("@/server/voice/disclosure-gate");
         const state = await callDisclosureState(orgId, message.call.id);
         if (state === "unknown") {
           return NextResponse.json({ error: "try again" }, { status: 503 });
         }
-        // A missed start isn't a failed check. A row is only created after the check passed,
-        // and otherwise the live config can still confirm it now. Being unable to ask Vapi
-        // isn't an answer, so the report is retried rather than dropped for good.
+        // A row is only created after this call passed its check. Without one or a stored
+        // confirmation, the start was missed, and only this call's own record can decide: a
+        // config read now can't show what this caller heard.
         const hasRow =
           state === "unverified" &&
           (await unscopedPrisma.voiceCall.findFirst({
             where: { organizationId: orgId, vapiCallId: message.call.id },
             select: { id: true },
           })) !== null;
-        const late =
+        const confirmation =
           state === "unverified" && !hasRow
-            ? await verifyCallDisclosure({
+            ? await confirmNoticeFromCallRecord({
                 orgId,
                 vapiCallId: message.call.id,
                 language: assistant.language,
                 vapiAssistantId: message.call.assistantId as string,
-                reported: message.assistant,
-                overrides: message.call.assistantOverrides,
+                messages: message.artifact?.messages,
               })
             : "ok";
-        if (late === "unverifiable") {
+        if (confirmation === "unverifiable") {
           return NextResponse.json({ error: "try again" }, { status: 503 });
         }
-        if (late !== "ok") {
+        if (confirmation !== "ok") {
           console.warn(
             JSON.stringify({
               event: "voice_report_without_notice",
+              outcome: confirmation,
               orgId,
               vapiCallId: message.call.id,
             }),
           );
-          // Recorded, so reconciliation doesn't re-create it from Vapi's list.
-          await markCallRefused(orgId, message.call.id, "notice");
+          // Recorded only when the record contradicts the notice. With no evidence either way,
+          // reconciliation may still find the transcript, and until then nothing is kept.
+          if (confirmation === "refused") {
+            await markCallRefused(orgId, message.call.id, "notice");
+          }
           return NextResponse.json({ ok: true, refused: true });
         }
       }

@@ -7,7 +7,7 @@ import { enqueue } from "@/server/jobs/queue";
 import { STALE_CALL_MS } from "@/server/services/billing/voice-usage";
 import { callRefusal, markCallRefused } from "@/server/voice/call-admission";
 import { callOutcomeFields, resolveCallDurationSeconds } from "@/server/voice/call-outcome";
-import { callDisclosureState, verifyCallDisclosure } from "@/server/voice/disclosure-gate";
+import { callDisclosureState, confirmNoticeFromCallRecord } from "@/server/voice/disclosure-gate";
 import { upsertOwnCall } from "@/server/voice/call-rows";
 
 export const RECONCILE_CALL_BATCH = 50;
@@ -26,7 +26,6 @@ const WORK_BUDGET_MS = 90_000;
 const vapiCallSchema = z.object({
   id: z.string().min(1),
   assistantId: z.string().nullish(),
-  assistantOverrides: z.record(z.string(), z.unknown()).nullish(),
   status: z.string().nullish(),
   startedAt: z.string().nullish(),
   endedAt: z.string().nullish(),
@@ -263,22 +262,31 @@ async function discoverMissingCalls(
       // If that can't be read, leave it for the next run, rather than bill a refused call.
       const refusal = await callRefusal(assistant.organizationId, call.id);
       if (refusal === "ended" || refusal === "notice" || refusal === "unknown") continue;
-      // Syveka never heard of this call, so nothing confirmed its notice: keep nothing unless
-      // the live config confirms it now. Unreadable state waits for the next run.
+      // Syveka never heard of this call, so nothing confirmed its notice. Only this call's own
+      // record can: a config read now can't show what its caller heard. Unreadable state, or a
+      // record that can't say yet, waits for the next run.
       if (refusal !== "running") {
         const notice = await callDisclosureState(assistant.organizationId, call.id);
         if (notice === "unknown") continue;
         if (notice === "unverified") {
-          const late = await verifyCallDisclosure({
+          const confirmation = await confirmNoticeFromCallRecord({
             orgId: assistant.organizationId,
             vapiCallId: call.id,
             language: assistant.language,
             vapiAssistantId: assistant.vapiAssistantId as string,
-            overrides: call.assistantOverrides,
+            messages: call.artifact?.messages,
           });
-          if (late === "unverifiable") continue;
-          if (late !== "ok") {
-            // Recorded, so a configuration fixed later can't bring this call back.
+          if (confirmation === "unverifiable" || confirmation === "absent") {
+            log("voice_reconcile_unresolved", {
+              orgId: assistant.organizationId,
+              vapiCallId: call.id,
+              reason: "no_notice_evidence",
+            });
+            result.unresolved++;
+            continue;
+          }
+          if (confirmation === "refused") {
+            // Recorded, so nothing later can bring this call back.
             await markCallRefused(assistant.organizationId, call.id, "notice");
             log("voice_reconcile_without_notice", {
               orgId: assistant.organizationId,

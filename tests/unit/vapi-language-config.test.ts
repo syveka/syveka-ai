@@ -116,12 +116,11 @@ describe("toVapiPayload — per-language transcriber/voice selection", () => {
 });
 
 describe("toVapiPayload — call recording", () => {
-  // Vapi's published schema (https://api.vapi.ai/api-json) defines recordingEnabled only
-  // on ArtifactPlan; CreateAssistantDTO and UpdateAssistantDTO have no top-level field.
-  it("asks for recording in the documented artifactPlan field, not a top-level one", () => {
+  // Syveka has no recording setting, so it must not override a choice made in Vapi.
+  it("doesn't set recording, in the documented field or the old top-level one", () => {
     const payload = toVapiPayload(baseConfig()) as Record<string, unknown>;
 
-    expect(payload.artifactPlan).toEqual({ recordingEnabled: true });
+    expect(payload).not.toHaveProperty("artifactPlan");
     expect(payload).not.toHaveProperty("recordingEnabled");
   });
 });

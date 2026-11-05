@@ -178,9 +178,10 @@ export function toVapiPayload(cfg: VapiAssistantConfig) {
     // Refusing a call relies on Live Call Control, so a sync restores it if it was changed.
     monitorPlan: { controlEnabled: true, controlAuthenticationEnabled: false },
     maxDurationSeconds: cfg.maxDurationSeconds,
-    // Vapi's assistant schema has recording under artifactPlan only; a top-level
-    // recordingEnabled is not a documented field (CreateAssistantDTO/UpdateAssistantDTO).
-    artifactPlan: { recordingEnabled: true },
+    // Recording isn't set here. Syveka has no recording setting of its own, so a sync must not
+    // override a choice made in Vapi's dashboard. Left unset on a new assistant, Vapi's default
+    // applies. Whether calls are recorded is a pending legal decision, and the spoken notice
+    // doesn't depend on it.
   };
 }
 
@@ -189,20 +190,9 @@ export async function upsertVapiAssistant(
   existingId?: string | null,
 ): Promise<{ id: string }> {
   if (existingId) {
-    // Vapi doesn't document whether PATCH merges or replaces a nested object. The
-    // assistant's current artifactPlan is sent back with only recordingEnabled set, so
-    // options set in the Vapi dashboard (recording format, storage, transcript...) survive
-    // either way.
-    const current = await vapiFetch<{ artifactPlan?: Record<string, unknown> | null }>(
-      `/assistant/${existingId}`,
-    );
-    const payload = toVapiPayload(cfg);
     return vapiFetch(`/assistant/${existingId}`, {
       method: "PATCH",
-      body: JSON.stringify({
-        ...payload,
-        artifactPlan: { ...(current.artifactPlan ?? {}), ...payload.artifactPlan },
-      }),
+      body: JSON.stringify(toVapiPayload(cfg)),
     });
   }
   return vapiFetch("/assistant", { method: "POST", body: JSON.stringify(toVapiPayload(cfg)) });

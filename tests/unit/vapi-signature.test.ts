@@ -139,8 +139,7 @@ describe("upsertVapiAssistant — outbound server config uses credentialId, neve
     const { upsertVapiAssistant } = await import("@/server/integrations/vapi");
     await upsertVapiAssistant(baseConfig, "assistant-1");
 
-    // A read of the current assistant (its artifactPlan is kept), then exactly one PATCH.
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
     const patches = fetchMock.mock.calls.filter(([, i]) => i?.method === "PATCH");
     expect(patches).toHaveLength(1);
     const [, init] = patches[0]!;

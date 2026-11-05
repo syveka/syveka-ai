@@ -2,7 +2,7 @@ import "server-only";
 
 import { spokenDisclosure } from "@/server/ai/prompts/voice";
 import { redis } from "@/server/integrations/redis";
-import { getVapiAssistant } from "@/server/integrations/vapi";
+import { getVapiAssistant, getVapiCall, VapiHttpError } from "@/server/integrations/vapi";
 
 /**
  * The spoken AI notice is a launch blocker, so it is enforced at each call rather than
@@ -52,7 +52,12 @@ export function liveConfigDisclosesFirst(language: string, live: LiveAssistantCo
   );
 }
 
-/** Checks a connecting call against the live config. Anything unconfirmed fails closed. */
+/**
+ * Checks a call as it connects against the config at that moment. Only for that moment: a
+ * config read later says nothing about what an earlier call's caller heard, so a call whose
+ * start was missed is judged by its own record instead (confirmNoticeFromMessages).
+ * Anything unconfirmed fails closed.
+ */
 export async function verifyCallDisclosure(params: {
   orgId: string;
   vapiCallId: string;
@@ -99,6 +104,121 @@ export async function verifyCallDisclosure(params: {
     return "unverifiable";
   }
   return "ok";
+}
+
+/** Compares speech loosely: a provider's transcript may differ in spacing and punctuation. */
+function normalizeSpeech(text: string): string {
+  return text
+    .normalize("NFKC")
+    .toLowerCase()
+    .replace(/[\p{P}\p{S}\p{M}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+export type SpokenEvidence = "spoken" | "contradicted" | "absent";
+
+/**
+ * What a call's own record says it opened with. Vapi documents artifact.messages as "the
+ * messages that were spoken during the call", so unlike its current configuration this
+ * belongs to this call. "contradicted" means the assistant spoke, and something else came
+ * first. "absent" means the record can't say, which isn't a refusal.
+ */
+export function noticeEvidenceInMessages(
+  language: string,
+  messages: unknown,
+  vapiAssistantId: string,
+): SpokenEvidence {
+  const notice = spokenDisclosure(language);
+  if (notice === null || !Array.isArray(messages)) return "absent";
+  const spoken = messages.flatMap((entry: unknown, index: number) => {
+    if (typeof entry !== "object" || entry === null) return [];
+    const { role, message, secondsFromStart, assistantId } = entry as Record<string, unknown>;
+    if (role !== "bot" || typeof message !== "string" || !message.trim()) return [];
+    // A message credited to another assistant isn't this assistant's evidence.
+    if (typeof assistantId === "string" && assistantId !== vapiAssistantId) return [];
+    return [{ message, at: typeof secondsFromStart === "number" ? secondsFromStart : index }];
+  });
+  if (spoken.length === 0) return "absent";
+  const first = spoken.reduce((earliest, next) => (next.at < earliest.at ? next : earliest));
+  return normalizeSpeech(first.message).startsWith(normalizeSpeech(notice))
+    ? "spoken"
+    : "contradicted";
+}
+
+export type NoticeConfirmation = "ok" | "refused" | "absent" | "unverifiable";
+
+/**
+ * Judges a call whose start wasn't checked, from messages belonging to that call. "ok" is
+ * stored so later steps agree. "refused" is final, for the caller to record. An unapproved
+ * language is refused because it couldn't have been allowed to run at all.
+ */
+export async function confirmNoticeFromMessages(params: {
+  orgId: string;
+  vapiCallId: string;
+  language: string;
+  vapiAssistantId: string;
+  messages: unknown;
+}): Promise<NoticeConfirmation> {
+  if (!disclosureApprovedLanguages().has(params.language)) return "refused";
+  const evidence = noticeEvidenceInMessages(
+    params.language,
+    params.messages,
+    params.vapiAssistantId,
+  );
+  if (evidence === "contradicted") return "refused";
+  if (evidence === "absent") return "absent";
+  try {
+    await redis.set(verifiedKey(params.orgId, params.vapiCallId), "1", {
+      ex: VERIFIED_TTL_SECONDS,
+    });
+    return "ok";
+  } catch {
+    return "unverifiable";
+  }
+}
+
+/**
+ * The messages on Vapi's record of this call, if that record is about this call and this
+ * assistant. Another call's or another assistant's record is treated as no record at all.
+ */
+async function callRecordMessages(
+  vapiCallId: string,
+  vapiAssistantId: string,
+): Promise<{ messages: unknown } | "none" | "unavailable"> {
+  let record: unknown;
+  try {
+    record = await getVapiCall(vapiCallId, AbortSignal.timeout(VERIFY_TIMEOUT_MS));
+  } catch (error) {
+    return error instanceof VapiHttpError && error.status === 404 ? "none" : "unavailable";
+  }
+  if (typeof record !== "object" || record === null) return "none";
+  const { id, assistantId, artifact } = record as {
+    id?: unknown;
+    assistantId?: unknown;
+    artifact?: { messages?: unknown } | null;
+  };
+  if (id !== vapiCallId || assistantId !== vapiAssistantId) return "none";
+  return { messages: artifact?.messages };
+}
+
+/**
+ * As confirmNoticeFromMessages, falling back to Vapi's record of the call when the messages
+ * at hand can't say. "unverifiable" means ask again, because the record couldn't be read.
+ */
+export async function confirmNoticeFromCallRecord(params: {
+  orgId: string;
+  vapiCallId: string;
+  language: string;
+  vapiAssistantId: string;
+  messages: unknown;
+}): Promise<NoticeConfirmation> {
+  const fromMessages = await confirmNoticeFromMessages(params);
+  if (fromMessages !== "absent") return fromMessages;
+  const record = await callRecordMessages(params.vapiCallId, params.vapiAssistantId);
+  if (record === "unavailable") return "unverifiable";
+  if (record === "none") return "absent";
+  return confirmNoticeFromMessages({ ...params, messages: record.messages });
 }
 
 /** Whether this call passed the check, or "unknown" when that can't be read. */

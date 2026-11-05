@@ -108,10 +108,11 @@ const signed = (message: Record<string, unknown>) =>
 const CALL = { id: "call-1", assistantId: "vapi-1", monitor: { controlUrl: CONTROL } };
 const start = (extra: Record<string, unknown> = {}) =>
   signed({ type: "status-update", status: "in-progress", call: CALL, ...extra });
-const toolCall = (name = "bookMeeting") =>
+const toolCall = (name = "bookMeeting", messages?: unknown[]) =>
   signed({
     type: "tool-calls",
     call: CALL,
+    ...(messages ? { artifact: { messages } } : {}),
     toolCallList: [{ id: "t1", function: { name, arguments: "{}" } }],
   });
 const report = () =>
@@ -194,8 +195,18 @@ describe("a correctly synced call", () => {
     expect(m.enqueue).toHaveBeenCalledTimes(1);
   });
 
-  it("recovers a missed start at its first tool call", async () => {
-    const res = await POST(toolCall());
+  it("recovers a missed start from what the call has already said", async () => {
+    const res = await POST(
+      toolCall("bookMeeting", [
+        {
+          role: "bot",
+          message: String(syncedAssistant("AR").firstMessage),
+          time: 1,
+          endTime: 2,
+          secondsFromStart: 0.5,
+        },
+      ]),
+    );
     expect(res.status).toBe(200);
     expect(m.executeTool).toHaveBeenCalledTimes(1);
   });
@@ -231,9 +242,9 @@ describe("a call that fails the check", () => {
       const body = (await res.json()) as { results: Array<Record<string, unknown>> };
       // Spoken and then hung up, even if the status update never arrived.
       expect(body.results[0]).toMatchObject({
-        error: "disclosure_not_verified",
         message: { type: "request-failed", endCallAfterSpokenEnabled: true },
       });
+      expect(["disclosure_not_verified", "call_refused"]).toContain(body.results[0]!.error);
     }
     expect(m.executeTool).not.toHaveBeenCalled();
   });
@@ -265,11 +276,11 @@ describe("a call that fails the check", () => {
 });
 
 describe("a report for a call whose start was missed", () => {
-  it("is kept when the live config confirms the notice", async () => {
+  it("isn't kept just because the live config looks right now", async () => {
     const res = await POST(report());
     expect(res.status).toBe(200);
-    expect(m.upsert).toHaveBeenCalledTimes(1);
-    expect(m.enqueue).toHaveBeenCalledTimes(1);
+    expect(m.upsert).not.toHaveBeenCalled();
+    expect(m.enqueue).not.toHaveBeenCalled();
   });
 });
 

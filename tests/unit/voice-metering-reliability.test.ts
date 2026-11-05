@@ -37,7 +37,7 @@ const m = vi.hoisted(() => ({
   enqueue: vi.fn(async () => undefined),
   updateMany: vi.fn(),
   markCallRefused: vi.fn(async () => undefined),
-  verifyCallDisclosure: vi.fn(async (..._args: unknown[]) => "live_config_mismatch"),
+  confirmNotice: vi.fn(async (..._args: unknown[]) => "absent"),
 }));
 
 function matchesKnownCallQuery(row: Row, where: Record<string, never>): boolean {
@@ -110,7 +110,7 @@ vi.mock("@/server/jobs/queue", () => ({ enqueue: m.enqueue }));
 vi.mock("@/server/voice/disclosure-gate", () => ({
   callDisclosureState: async (_org: string, id: string) =>
     id === "unconfirmed-call" ? "unverified" : id === "unreadable-notice" ? "unknown" : "verified",
-  verifyCallDisclosure: m.verifyCallDisclosure,
+  confirmNoticeFromCallRecord: m.confirmNotice,
 }));
 vi.mock("@/server/voice/call-admission", () => ({
   markCallRefused: m.markCallRefused,
@@ -549,24 +549,27 @@ describe("recovering lost webhooks", () => {
     expect(m.enqueue).not.toHaveBeenCalled();
   });
 
-  it("records a definite notice failure, passes overrides, and leaves a blip for later", async () => {
+  it("records a call its own record refuses, and leaves anything unsure for later", async () => {
     m.assistants = [
       { id: "assistant-a", organizationId: ORG_A, vapiAssistantId: "vapi-assistant-a" },
     ];
-    const overrides = { firstMessage: "no notice" };
+    const messages = [{ role: "bot", message: "hello" }];
     m.listVapiCalls.mockResolvedValue([
-      { ...ENDED, id: "unconfirmed-call", assistantOverrides: overrides },
+      { ...ENDED, id: "unconfirmed-call", artifact: { messages } },
     ]);
-    m.verifyCallDisclosure.mockResolvedValueOnce("live_config_mismatch");
+    m.confirmNotice.mockResolvedValueOnce("refused");
     await reconcileVoiceCalls({ now: NOW });
-    expect(m.verifyCallDisclosure).toHaveBeenCalledWith(expect.objectContaining({ overrides }));
+    expect(m.confirmNotice).toHaveBeenCalledWith(expect.objectContaining({ messages }));
     expect(m.markCallRefused).toHaveBeenCalledWith(ORG_A, "unconfirmed-call", "notice");
 
-    m.markCallRefused.mockClear();
-    m.verifyCallDisclosure.mockResolvedValueOnce("unverifiable");
-    await reconcileVoiceCalls({ now: NOW });
-    expect(m.markCallRefused).not.toHaveBeenCalled();
-    expect(m.enqueue).not.toHaveBeenCalled();
+    for (const outcome of ["unverifiable", "absent"]) {
+      m.markCallRefused.mockClear();
+      m.confirmNotice.mockResolvedValueOnce(outcome);
+      const result = await reconcileVoiceCalls({ now: NOW });
+      expect(result.unresolved).toBe(1);
+      expect(m.markCallRefused).not.toHaveBeenCalled();
+      expect(m.enqueue).not.toHaveBeenCalled();
+    }
   });
 
   it.each(["unconfirmed-call", "unreadable-notice"])(

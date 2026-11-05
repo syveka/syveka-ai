@@ -46,6 +46,7 @@ const mocks = vi.hoisted(() => {
     redisExpire: vi.fn(async (..._args: unknown[]) => 1),
     verifyCallDisclosure: vi.fn(async (..._args: unknown[]) => "ok" as string),
     callDisclosureState: vi.fn(async (..._args: unknown[]) => "verified" as string),
+    confirmNotice: vi.fn(async (..._args: unknown[]) => "ok" as string),
     // Call slots: every call gets the only slot, unless a test says otherwise.
     // The script's own arithmetic is proven on real Redis. A first ask has no slot to report.
     redisEval: vi.fn(async (_script: unknown, _keys: unknown, args: unknown) =>
@@ -61,6 +62,8 @@ vi.mock("@/server/integrations/vapi", () => ({
 vi.mock("@/server/voice/disclosure-gate", () => ({
   verifyCallDisclosure: mocks.verifyCallDisclosure,
   callDisclosureState: mocks.callDisclosureState,
+  confirmNoticeFromMessages: mocks.confirmNotice,
+  confirmNoticeFromCallRecord: mocks.confirmNotice,
 }));
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {
@@ -717,6 +720,7 @@ describe("Vapi voice webhook — per-call write caps", () => {
   });
 
   it("runs nothing without a call id: its notice can't be confirmed", async () => {
+    mocks.confirmNotice.mockResolvedValueOnce("absent");
     await runTools("", [
       { id: "b1", name: "bookMeeting" },
       { id: "r1", name: "getCalendarAvailability" },
@@ -1776,6 +1780,7 @@ describe("the spoken notice at the webhook", () => {
     mocks.callDisclosureState.mockResolvedValue("unverified");
   });
   afterEach(() => {
+    mocks.callDisclosureState.mockResolvedValue("verified");
     vi.unstubAllGlobals();
     vi.restoreAllMocks();
   });
