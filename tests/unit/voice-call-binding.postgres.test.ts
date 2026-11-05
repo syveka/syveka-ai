@@ -40,8 +40,9 @@ vi.mock("@/server/integrations/vapi", () => ({ verifyVapiSignature: () => true }
 vi.mock("@/server/voice/disclosure-gate", () => ({
   verifyCallDisclosure: async () => "ok",
   callDisclosureState: async () => "verified",
-  callLiveness: async () => "live",
+  callLiveness: async () => ({ liveness: "live", calledAt: new Date().toISOString() }),
   startedJustNow: () => true,
+  earliestCallTime: () => undefined,
   confirmNoticeFromMessages: async () => "ok",
   confirmNoticeFromCallRecord: async () => ({ outcome: "ok" }),
 }));

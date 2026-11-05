@@ -609,6 +609,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           callDisclosureState,
           callLiveness,
           confirmNoticeFromCallRecord,
+          earliestCallTime,
           startedJustNow,
           verifyCallDisclosure,
         } = await import("@/server/voice/disclosure-gate");
@@ -620,7 +621,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         const vapiAssistantId = message.call.assistantId as string;
         // A start that arrives after its call ended can't vouch for it, or take a slot for it:
         // nothing is written, and the call's report or its record decides instead.
-        const liveness = await callLiveness(callId, vapiAssistantId);
+        const { liveness, calledAt: recordCalledAt } = await callLiveness(callId, vapiAssistantId);
         if (liveness === "ended") {
           console.warn(JSON.stringify({ event: "voice_start_after_end", ...ids }));
           return NextResponse.json({ ok: true });
@@ -655,7 +656,11 @@ export async function POST(request: Request): Promise<NextResponse> {
                 reported: message.assistant,
                 overrides: message.call.assistantOverrides,
                 startIsLate: liveness === "late",
-                calledAt: message.call.startedAt ?? message.call.createdAt,
+                calledAt: earliestCallTime(
+                  recordCalledAt,
+                  message.call.startedAt,
+                  message.call.createdAt,
+                ),
               });
         // Too late for a read of the assistant to show what this caller heard, so what the call
         // has said so far decides. A running call's record may be incomplete, so it writes no

@@ -62,8 +62,9 @@ vi.mock("@/server/integrations/vapi", () => ({
 vi.mock("@/server/voice/disclosure-gate", () => ({
   verifyCallDisclosure: mocks.verifyCallDisclosure,
   callDisclosureState: mocks.callDisclosureState,
-  callLiveness: async () => "live",
+  callLiveness: async () => ({ liveness: "live", calledAt: new Date().toISOString() }),
   startedJustNow: () => true,
+  earliestCallTime: () => undefined,
   confirmNoticeFromMessages: mocks.confirmNotice,
   confirmNoticeFromCallRecord: async (...args: unknown[]) => ({
     outcome: await mocks.confirmNotice(...args),

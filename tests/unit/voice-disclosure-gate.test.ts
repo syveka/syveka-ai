@@ -30,6 +30,7 @@ vi.mock("@/server/integrations/vapi", () => ({ getVapiAssistant: m.getVapiAssist
 const {
   callDisclosureState,
   disclosureApprovedLanguages,
+  earliestCallTime,
   languageApprovedForCall,
   liveConfigDisclosesFirst,
   verifyCallDisclosure,
@@ -72,6 +73,14 @@ describe("the approved-languages setting", () => {
 
   it("takes the later time when a language is listed twice", () => {
     expect(approvedFrom("FI@2026-11-01,FI@2026-12-01")).toEqual([]);
+  });
+});
+
+describe("a call's start, from what's stated about it", () => {
+  it("is the earliest readable time, so approval is tested strictly", () => {
+    const times = ["2026-11-12T08:00:05Z", null, "not a time", "2026-11-12T08:00:00Z", undefined];
+    expect(earliestCallTime(...times)).toBe("2026-11-12T08:00:00Z");
+    expect(earliestCallTime(undefined, "not a time")).toBeUndefined();
   });
 });
 

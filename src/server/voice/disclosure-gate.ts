@@ -346,6 +346,17 @@ async function readCallRecord(
   return { status, endedAt, calledAt, messages: artifact?.messages };
 }
 
+/**
+ * The earliest readable time among those stated for a call's start. The earliest is the
+ * strictest test of whether its language was approved when it began.
+ */
+export function earliestCallTime(...times: Array<string | null | undefined>): string | undefined {
+  const readable = times.filter(
+    (time): time is string => !!time && !Number.isNaN(Date.parse(time)),
+  );
+  return readable.sort((a, b) => Date.parse(a) - Date.parse(b))[0];
+}
+
 /** Whether a call began recently enough to still be at its start. An unreadable time isn't. */
 export function startedJustNow(calledAt: string | null | undefined): boolean {
   const began = calledAt ? Date.parse(calledAt) : Number.NaN;
@@ -361,12 +372,14 @@ export function startedJustNow(calledAt: string | null | undefined): boolean {
 export async function callLiveness(
   vapiCallId: string,
   vapiAssistantId: string,
-): Promise<"live" | "late" | "ended" | "unknown"> {
+): Promise<{ liveness: "live" | "late" | "ended" | "unknown"; calledAt?: string }> {
   const record = await readCallRecord(vapiCallId, vapiAssistantId);
-  if (record === "none" || record === "unavailable") return "unknown";
-  if (record.status === "ended" || record.endedAt) return "ended";
-  if (!RUNNING_STATUSES.has(record.status)) return "unknown";
-  return startedJustNow(record.calledAt) ? "live" : "late";
+  if (record === "none" || record === "unavailable") return { liveness: "unknown" };
+  // When Vapi says the call began, which a start message may not: its approval is judged by it.
+  const { calledAt } = record;
+  if (record.status === "ended" || record.endedAt) return { liveness: "ended", calledAt };
+  if (!RUNNING_STATUSES.has(record.status)) return { liveness: "unknown", calledAt };
+  return { liveness: startedJustNow(calledAt) ? "live" : "late", calledAt };
 }
 
 /**
