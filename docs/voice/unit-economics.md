@@ -5,7 +5,7 @@ Written for the owner, 2026-11-05. **The price of €39 for 100 minutes and €0
 ## Result
 
 - **On call costs alone, the hypothesis looks healthy:** about 78% at full use with tenant-owned numbers.
-- **Support time decides it.** The same customer falls to about 46% at 15 minutes of support a month, and about 17% at 30 minutes. No support data exists.
+- **Support time decides it.** With 20 customers sharing the Vapi plan, that falls to about 46% at 15 minutes of support a month, and about 17% at 30 minutes. No support data exists.
 - **Below about 20 customers, the shared Vapi plan matters too.**
 - **Recommendation:** don't validate or reject the price yet. Measure real cost per minute and real support time in the pilot, then decide against the thresholds below.
 
@@ -46,13 +46,13 @@ Tenant-owned number, 100 minutes used.
 | 20        | 7             | $1.45            | 75%        | 46%            | 17%            |
 | 100       | 34            | $2.69            | 72%        | 43%            | 14%            |
 
-At 100 customers the table assumes Vapi Core plus 24 extra lines, at $269 a month. Vapi's Pro plan starts at $999 a month and may be needed for other reasons, such as its limit of 5 numbers on Core, whose treatment of imported numbers isn't known. At $999 a month, the shared cost is about $10 per customer, which takes about 20 percentage points off this row.
+At 100 customers the table assumes Vapi Core plus 24 extra lines, at $269 a month. Vapi's Pro plan starts at $999 a month and may be needed for other reasons, such as its limit of 5 numbers on Core, whose treatment of imported numbers isn't known. At $999 a month, the shared cost is about $10 per customer, which takes about 17 percentage points off this row.
 
 **Price needed at full use, with 20 customers and 15 minutes of support:** about €43 for a 50% margin, €54 for 60%, and €74 for 70%.
 
 ## Extra minutes at €0.25
 
-Revenue is $0.275 a minute, with about $0.007 in fees.
+Revenue is $0.275 a minute, with about $0.008 in fees. Summaries add about $0.001, which takes the stress case to about 53%.
 
 | Call cost per minute  | Margin |
 | --------------------- | ------ |
@@ -64,21 +64,18 @@ Revenue is $0.275 a minute, with about $0.007 in fees.
 
 - **Fixed compliance cost:** counsel, DPAs, a possible Vapi EU plan. If EU hosting requires Vapi's Premier package, its custom price could change this review on its own.
 - **Base plan interaction:** whether the add-on stacks with AI messages, which can lose money for one-seat Pro at full use (#399).
-- **Failed payments and refunds:** a lost month costs about $9 in direct cost, at full use.
+- **Failed payments and refunds:** at full use, a refunded month costs about $9 in direct cost, and a failed payment about $8, since no card fee applies.
 - **Who pays Twilio:** tenant-owned means the tenant pays about $0.0107 a minute plus a number. That's a real cost to them, and may affect what they'll pay.
 - **Annual discounts**, and the Stripe premium-card mix.
 - **Competitor pricing and willingness to pay.** Nothing here tests demand.
 
 ## Before activating any price
 
-| Gate                                                                    | Threshold, proposed for the owner to confirm               |
-| ----------------------------------------------------------------------- | ---------------------------------------------------------- |
-| Real cost per minute, from `costCents`, over at least 100 pilot minutes | At or below $0.12                                          |
-| Real support time per customer, over at least 2 pilot months            | At or below 15 minutes a month, or the price changes       |
-| Margin at full use, including support and shared costs                  | At or above the owner's target. 50–60% is the likely range |
-| Metering verified against Vapi's own records                            | No unexplained differences over the pilot                  |
-| Legal: terms, overage consent, VAT treatment                            | Approved                                                   |
-| Vapi plan, number and line limits                                       | Confirmed in writing                                       |
+| Gate | Threshold, proposed for the owner to confirm |
+| ----------------------------------------------------------------------- | ---------------------------------------------------------- || Real cost per minute, from `costCents`, over at least 100 pilot minutes | Measured. $0.12 is a stress case, not a target: with 15 minutes of support, it gives about 36% || Real support time per customer, over at least 2 pilot months | Measured. At €39, 15 minutes gives about 46% at full use, below the likely target, so it will likely need less support or a higher price || Margin at full use, including support and shared costs | At or above the owner's target. 50–60% is the likely range |
+| Metering verified against Vapi's own records | No unexplained differences over the pilot |
+| Legal: terms, overage consent, VAT treatment | Approved |
+| Vapi plan, number and line limits | Confirmed in writing |
 
 ## Decision needed
 
