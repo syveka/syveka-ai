@@ -110,6 +110,7 @@ vi.mock("@/server/jobs/queue", () => ({ enqueue: m.enqueue }));
 vi.mock("@/server/voice/disclosure-gate", () => ({
   callDisclosureState: async (_org: string, id: string) =>
     id === "unconfirmed-call" ? "unverified" : id === "unreadable-notice" ? "unknown" : "verified",
+  earliestCallTime: (...times: unknown[]) => times.find((time) => typeof time === "string"),
   confirmNoticeFromCallRecord: async (...args: unknown[]) => ({
     outcome: await m.confirmNotice(...args),
   }),

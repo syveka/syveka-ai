@@ -394,6 +394,23 @@ describe("what counts as evidence", () => {
     expect(kept()).toBe(false);
   });
 
+  it("judges a report by the earliest time Vapi states for its call", async () => {
+    // Created before the approval and started after it: the earlier time decides.
+    vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", `AR@${minutesAgo(5.5)}`);
+    const res = await POST(
+      signed({
+        type: "end-of-call-report",
+        call: { ...CALL, createdAt: minutesAgo(6) },
+        endedReason: "customer-ended-call",
+        durationSeconds: 60,
+        startedAt: minutesAgo(5),
+        artifact: { messages: SPOKE_NOTICE, recordingUrl: null },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(kept()).toBe(false);
+  });
+
   it("a call begun after its language's approval is kept as before", async () => {
     vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", `AR@${minutesAgo(6)}`);
     await POST(report(SPOKE_NOTICE));

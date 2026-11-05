@@ -7,7 +7,11 @@ import { enqueue } from "@/server/jobs/queue";
 import { STALE_CALL_MS } from "@/server/services/billing/voice-usage";
 import { callRefusal, markCallRefused } from "@/server/voice/call-admission";
 import { callOutcomeFields, resolveCallDurationSeconds } from "@/server/voice/call-outcome";
-import { callDisclosureState, confirmNoticeFromCallRecord } from "@/server/voice/disclosure-gate";
+import {
+  callDisclosureState,
+  confirmNoticeFromCallRecord,
+  earliestCallTime,
+} from "@/server/voice/disclosure-gate";
 import { upsertOwnCall } from "@/server/voice/call-rows";
 
 export const RECONCILE_CALL_BATCH = 50;
@@ -304,7 +308,7 @@ async function discoverMissingCalls(
           language: assistant.language,
           vapiAssistantId: assistant.vapiAssistantId as string,
           messages: call.artifact?.messages,
-          calledAt: call.startedAt ?? call.createdAt,
+          calledAt: earliestCallTime(call.startedAt, call.createdAt),
           now,
         });
         const confirmation = judged.outcome;

@@ -407,7 +407,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       // on: it speaks the line and ends the call. A missed start is recovered from what the call
       // has already said.
       {
-        const { callDisclosureState, confirmNoticeFromMessages } =
+        const { callDisclosureState, confirmNoticeFromMessages, earliestCallTime } =
           await import("@/server/voice/disclosure-gate");
         const vapiCallId = message.call?.id;
         const state = vapiCallId ? await callDisclosureState(orgId, vapiCallId) : "unverified";
@@ -431,7 +431,7 @@ export async function POST(request: Request): Promise<NextResponse> {
                   language: assistant.language,
                   vapiAssistantId: message.call?.assistantId as string,
                   messages: message.artifact?.messages,
-                  calledAt: message.call?.startedAt ?? message.call?.createdAt,
+                  calledAt: earliestCallTime(message.call?.startedAt, message.call?.createdAt),
                 })
               : "absent";
         if (confirmation === "unverifiable") {
@@ -765,7 +765,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       // have been fine, and its record shouldn't be lost to a Redis outage.
       let transcriptMessages: unknown[] | null | undefined = message.artifact?.messages;
       {
-        const { callDisclosureState, confirmNoticeFromCallRecord } =
+        const { callDisclosureState, confirmNoticeFromCallRecord, earliestCallTime } =
           await import("@/server/voice/disclosure-gate");
         const state = await callDisclosureState(orgId, message.call.id);
         if (state === "unknown") {
@@ -788,7 +788,11 @@ export async function POST(request: Request): Promise<NextResponse> {
                 language: assistant.language,
                 vapiAssistantId: message.call.assistantId as string,
                 messages: message.artifact?.messages,
-                calledAt: message.startedAt ?? message.call.startedAt ?? message.call.createdAt,
+                calledAt: earliestCallTime(
+                  message.startedAt,
+                  message.call.startedAt,
+                  message.call.createdAt,
+                ),
               })
             : null;
         const confirmation = judged?.outcome ?? "ok";

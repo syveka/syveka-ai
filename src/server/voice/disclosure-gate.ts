@@ -35,7 +35,28 @@ const verifiedKey = (orgId: string, vapiCallId: string) =>
   `voice:disclosure-ok:${orgId}:${vapiCallId}`;
 
 /** A date, or a time with its zone, so an entry can't be read in a server's local time. */
-const APPROVAL_TIME = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?(Z|[+-]\d{2}:\d{2}))?$/;
+const DATE_PART = String.raw`(\d{4})-(\d{2})-(\d{2})`;
+const TIME_PART = String.raw`T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,3})?)?(?:Z|[+-]\d{2}:\d{2})`;
+const APPROVAL_TIME = new RegExp(`^${DATE_PART}(?:${TIME_PART})?$`);
+
+/** The time an approval takes effect, or NaN for one that isn't a real date and time. */
+function approvalTimeMs(since: string): number {
+  const match = APPROVAL_TIME.exec(since);
+  if (!match) return Number.NaN;
+  const fields = match.slice(1, 7).map((part) => (part === undefined ? 0 : Number(part)));
+  const [year = 0, month = 0, day = 0, hour = 0, minute = 0, second = 0] = fields;
+  // Date.parse rolls 2026-02-30 over into March, so the parts are checked as written.
+  const asWritten = new Date(Date.UTC(year, month - 1, day, hour, minute, second));
+  const real =
+    asWritten.getUTCFullYear() === year &&
+    asWritten.getUTCMonth() === month - 1 &&
+    asWritten.getUTCDate() === day &&
+    asWritten.getUTCHours() === hour &&
+    asWritten.getUTCMinutes() === minute &&
+    asWritten.getUTCSeconds() === second;
+  return real ? Date.parse(since) : Number.NaN;
+}
+
 const reportedInvalidEntries = new Set<string>();
 
 /**
@@ -51,8 +72,7 @@ function disclosureApprovals(env: NodeJS.ProcessEnv): ReadonlyMap<string, number
     if (!trimmed) continue;
     const parts = trimmed.split("@").map((part) => part.trim());
     const [language = "", since = ""] = parts;
-    const sinceMs =
-      parts.length === 2 && APPROVAL_TIME.test(since) ? Date.parse(since) : Number.NaN;
+    const sinceMs = parts.length === 2 ? approvalTimeMs(since) : Number.NaN;
     if (!language || Number.isNaN(sinceMs)) {
       // Only the language part is logged: the setting holds no secret, but stays short.
       const key = language.slice(0, 8).toUpperCase();
@@ -313,6 +333,8 @@ type CallRecord = {
   status: unknown;
   endedAt: unknown;
   calledAt: string | undefined;
+  /** The earliest time Vapi states for the call, against which its approval is tested. */
+  firstAt: string | undefined;
   messages: unknown;
 };
 
@@ -341,9 +363,14 @@ async function readCallRecord(
     artifact?: { messages?: unknown } | null;
   };
   if (id !== vapiCallId || assistantId !== vapiAssistantId) return "none";
-  const calledAt = [startedAt, createdAt].find((time) => typeof time === "string") as
-    string | undefined;
-  return { status, endedAt, calledAt, messages: artifact?.messages };
+  const times = [startedAt, createdAt].filter((time): time is string => typeof time === "string");
+  return {
+    status,
+    endedAt,
+    calledAt: times[0],
+    firstAt: earliestCallTime(...times),
+    messages: artifact?.messages,
+  };
 }
 
 /**
@@ -376,10 +403,10 @@ export async function callLiveness(
   const record = await readCallRecord(vapiCallId, vapiAssistantId);
   if (record === "none" || record === "unavailable") return { liveness: "unknown" };
   // When Vapi says the call began, which a start message may not: its approval is judged by it.
-  const { calledAt } = record;
+  const calledAt = record.firstAt;
   if (record.status === "ended" || record.endedAt) return { liveness: "ended", calledAt };
   if (!RUNNING_STATUSES.has(record.status)) return { liveness: "unknown", calledAt };
-  return { liveness: startedJustNow(calledAt) ? "live" : "late", calledAt };
+  return { liveness: startedJustNow(record.calledAt) ? "live" : "late", calledAt };
 }
 
 /**
@@ -398,7 +425,7 @@ export async function confirmNoticeFromCallRecord(
   const outcome = await confirmNoticeFromMessages({
     ...params,
     messages: record.messages,
-    calledAt: record.calledAt,
+    calledAt: record.firstAt,
   });
   return { outcome, messages: record.messages };
 }

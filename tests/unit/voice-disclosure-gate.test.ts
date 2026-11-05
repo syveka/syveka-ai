@@ -67,6 +67,12 @@ describe("the approved-languages setting", () => {
     expect(approvedFrom("FI@2026-11-01T08:00:00+02:00")).toEqual(["FI"]);
   });
 
+  it("approves nothing for a date or time that doesn't exist, rather than rolling it over", () => {
+    expect(approvedFrom("FI@2026-02-30,EN@2026-11-01T24:00:00Z,AR@2026-13-01")).toEqual([]);
+    expect(approvedFrom("FI@2026-11-01T08:60:00Z,EN@2026-11-01T08:00:60Z")).toEqual([]);
+    expect(approvedFrom("FI@2024-02-29")).toEqual(["FI"]);
+  });
+
   it("doesn't approve a language before its time", () => {
     expect(approvedFrom("FI@2026-11-12T12:00:01Z,EN@2026-11-12T12:00:00Z")).toEqual(["EN"]);
   });
