@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import type { Prisma } from "@/generated/prisma/client/client";
 import type { unscopedPrisma as prismaClient } from "@/server/db/tenant";
 import type { ToolIdentity } from "@/server/ai/tools";
 import type { redis as redisClient } from "@/server/integrations/redis";
 import { allowedVoiceTools } from "@/lib/validators/voice";
+import { callOutcomeFields, resolveCallDurationSeconds } from "@/server/voice/call-outcome";
 import { upsertOwnCall } from "@/server/voice/call-rows";
 
 export const runtime = "nodejs";
@@ -67,6 +67,8 @@ const messageSchema = z.object({
       .object({
         id: z.string(),
         assistantId: z.string().optional(),
+        startedAt: z.string().nullish(),
+        endedAt: z.string().nullish(),
         customer: z.object({ number: z.string().optional() }).optional(),
         // Live Call Control URL. Unauthenticated unless the assistant enables
         // monitorPlan.controlAuthenticationEnabled, so it is treated as a secret.
@@ -77,6 +79,8 @@ const messageSchema = z.object({
     status: z.string().optional(),
     endedReason: z.string().optional(),
     durationSeconds: z.number().optional(),
+    startedAt: z.string().nullish(),
+    endedAt: z.string().nullish(),
     cost: z.number().optional(),
     artifact: z
       .object({
@@ -127,13 +131,15 @@ async function resolveAssistant(
  * pass this check until the first of them is billed. A read-only workspace
  * (past due beyond the grace period) may not use anything, as in assertWithinLimit.
  */
-async function voiceQuotaExceeded(orgId: string): Promise<boolean> {
-  const { getMonthUsage, getEntitlements } = await import("@/server/services/billing/entitlements");
-  const [used, ent] = await Promise.all([
-    getMonthUsage(orgId, "VOICE_MINUTES"),
+async function voiceQuotaExceeded(orgId: string, currentVapiCallId?: string): Promise<boolean> {
+  const { getEntitlements } = await import("@/server/services/billing/entitlements");
+  const { getVoiceUsageState, minutesCountedForLimits } =
+    await import("@/server/services/billing/voice-usage");
+  const [usage, ent] = await Promise.all([
+    getVoiceUsageState(orgId, { excludeVapiCallId: currentVapiCallId }),
     getEntitlements(orgId),
   ]);
-  return ent.readOnly || used >= ent.voiceMinutesMonth;
+  return ent.readOnly || minutesCountedForLimits(usage) >= ent.voiceMinutesMonth;
 }
 
 /** Spoken before an over-quota call ends, in the assistant's language. */
@@ -170,7 +176,7 @@ function isVapiControlUrl(raw: string): boolean {
 async function endCallViaControlUrl(
   controlUrl: string | null | undefined,
   ids: { orgId: string; vapiCallId: string },
-): Promise<void> {
+): Promise<boolean> {
   if (!controlUrl || !isVapiControlUrl(controlUrl)) {
     console.warn(
       JSON.stringify({
@@ -179,30 +185,39 @@ async function endCallViaControlUrl(
         ...ids,
       }),
     );
-    return;
+    return false;
   }
-  try {
-    const res = await fetch(controlUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({ type: "end-call" }),
-      redirect: "error",
-      signal: AbortSignal.timeout(END_CALL_TIMEOUT_MS),
-    });
-    if (!res.ok) {
+  // One retry: a refused call left running is the case limits exist to prevent.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const res = await fetch(controlUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ type: "end-call" }),
+        redirect: "error",
+        signal: AbortSignal.timeout(END_CALL_TIMEOUT_MS),
+      });
+      if (res.ok) return true;
       console.warn(
-        JSON.stringify({ event: "voice_quota_end_call_failed", status: res.status, ...ids }),
+        JSON.stringify({
+          event: "voice_quota_end_call_failed",
+          status: res.status,
+          attempt,
+          ...ids,
+        }),
+      );
+    } catch (err) {
+      console.warn(
+        JSON.stringify({
+          event: "voice_quota_end_call_failed",
+          name: err instanceof Error ? err.name : "unknown",
+          attempt,
+          ...ids,
+        }),
       );
     }
-  } catch (err) {
-    console.warn(
-      JSON.stringify({
-        event: "voice_quota_end_call_failed",
-        name: err instanceof Error ? err.name : "unknown",
-        ...ids,
-      }),
-    );
   }
+  return false;
 }
 
 /**
@@ -326,7 +341,16 @@ export async function POST(request: Request): Promise<NextResponse> {
   const { message } = parsed.data;
 
   const assistant = await resolveAssistant(unscopedPrisma, message.call?.assistantId);
-  if (!assistant) return NextResponse.json({ error: "unknown assistant" }, { status: 404 });
+  if (!assistant) {
+    // A soft-deleted organization's number, or a stale one, must not keep talking to callers.
+    if (message.type === "status-update" && message.status === "in-progress" && message.call) {
+      await endCallViaControlUrl(message.call.monitor?.controlUrl, {
+        orgId: "unknown",
+        vapiCallId: message.call.id,
+      });
+    }
+    return NextResponse.json({ error: "unknown assistant" }, { status: 404 });
+  }
   const orgId = assistant.organizationId;
   const ownerUserId = assistant.organization.members[0]?.userId ?? "";
 
@@ -350,7 +374,34 @@ export async function POST(request: Request): Promise<NextResponse> {
       // Over quota: run no tool, say goodbye and end the call. Vapi acts on this
       // reply and ends the call once the line is spoken (endCallAfterSpokenEnabled).
       // Live Call Control is not used here: it would hang up before the goodbye.
-      if (await voiceQuotaExceeded(orgId)) {
+      // A refused call that couldn't be hung up: no tools, and this reply can end it.
+      {
+        const { callRefusal } = await import("@/server/voice/call-admission");
+        if (message.call && (await callRefusal(orgId, message.call.id))) {
+          const content = QUOTA_EXCEEDED_GOODBYE[assistant.language] ?? QUOTA_EXCEEDED_GOODBYE.EN;
+          const results = (message.toolCallList ?? []).map((tc) => ({
+            toolCallId: tc.id,
+            name: tc.name,
+            error: "call_refused",
+            message: { type: "request-failed", content, endCallAfterSpokenEnabled: true },
+          }));
+          return NextResponse.json({ results });
+        }
+      }
+
+      // Fails closed: when limits can't be checked, nothing runs, and writes can't slip through.
+      let overQuota: boolean;
+      try {
+        overQuota = await voiceQuotaExceeded(orgId, message.call?.id);
+      } catch {
+        console.error(JSON.stringify({ event: "voice_limits_unavailable", orgId }));
+        const results = (message.toolCallList ?? []).map((tc) => ({
+          toolCallId: tc.id,
+          result: JSON.stringify({ error: "limits_unavailable" }),
+        }));
+        return NextResponse.json({ results });
+      }
+      if (overQuota) {
         const content = QUOTA_EXCEEDED_GOODBYE[assistant.language] ?? QUOTA_EXCEEDED_GOODBYE.EN;
         const results = (message.toolCallList ?? []).map((tc) => ({
           toolCallId: tc.id,
@@ -454,14 +505,37 @@ export async function POST(request: Request): Promise<NextResponse> {
 
     // ── Call started: entitlement gate + record (§14.2) ──
     case "status-update": {
+      const { admitCall, endCallSlot, markCallRefused } =
+        await import("@/server/voice/call-admission");
+      if (message.status === "ended" && message.call) {
+        await endCallSlot(orgId, message.call.id);
+      }
       if (message.status === "in-progress" && message.call) {
-        if (await voiceQuotaExceeded(orgId)) {
-          // Over quota: no call row, and end the call through Live Call Control
+        const ids = { orgId, vapiCallId: message.call.id };
+        // A signed start never expires. Replayed after the call, it must not take a slot.
+        const known = await unscopedPrisma.voiceCall
+          .findFirst({
+            where: { organizationId: orgId, vapiCallId: message.call.id },
+            select: { endedAt: true },
+          })
+          .catch(() => null);
+        if (known?.endedAt) return NextResponse.json({ ok: true, duplicate: true });
+        // A retry for a call already recorded as running: already admitted, nothing to do.
+        if (known) return NextResponse.json({ ok: true, duplicate: true });
+
+        const admission = assistant.isActive
+          ? await admitCall(orgId, message.call.id)
+          : ({ admitted: false, reason: "assistant_inactive" } as const);
+        if (!admission.admitted) {
+          // No call row, and end the call through Live Call Control
           // (Vapi does not act on a reply to status-update).
-          await endCallViaControlUrl(message.call.monitor?.controlUrl, {
-            orgId,
-            vapiCallId: message.call.id,
-          });
+          console.warn(
+            JSON.stringify({ event: "voice_call_refused", reason: admission.reason, ...ids }),
+          );
+          // Marked before hanging up, so nothing can slip through while that's in progress.
+          await markCallRefused(orgId, message.call.id, "ended");
+          const hungUp = await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
+          if (!hungUp) await markCallRefused(orgId, message.call.id, "running");
           return NextResponse.json({ ok: true });
         }
         // Another organization's call id: nothing is recorded (logged in upsertOwnCall).
@@ -484,24 +558,44 @@ export async function POST(request: Request): Promise<NextResponse> {
     // ── Call ended: persist + hand off to post-call pipeline (§16.4) ──
     case "end-of-call-report": {
       if (!message.call) return NextResponse.json({ ok: true });
-      const durationSeconds = Math.round(message.durationSeconds ?? 0);
+      const { callRefusal, endCallSlot } = await import("@/server/voice/call-admission");
+      await endCallSlot(orgId, message.call.id);
+      // Syveka ended this call itself: it isn't the customer's usage. One that couldn't be hung
+      // up really ran, so it continues below and is billed.
+      if ((await callRefusal(orgId, message.call.id)) === "ended") {
+        return NextResponse.json({ ok: true, refused: true });
+      }
+      // Vapi documents these times on the report and on its call. Null means nothing
+      // trustworthy said how long the call was: it stays unsettled, never "one minute".
+      const startedAtText = message.startedAt ?? message.call.startedAt;
+      const endedAtText = message.endedAt ?? message.call.endedAt;
+      const durationSeconds = resolveCallDurationSeconds({
+        startedAt: startedAtText,
+        endedAt: endedAtText,
+        durationSeconds: message.durationSeconds,
+      });
+      const endedMs = endedAtText ? Date.parse(endedAtText) : Number.NaN;
+      const endedAt = Number.isNaN(endedMs) ? new Date() : new Date(endedMs);
+      const startedMs = startedAtText ? Date.parse(startedAtText) : Number.NaN;
+      const startedAt = !Number.isNaN(startedMs)
+        ? new Date(startedMs)
+        : new Date(endedAt.getTime() - (durationSeconds ?? 0) * 1000);
       // The same call details whether or not the in-progress status update was received:
       // post-call bills from durationSeconds and summarizes the transcript.
-      const callResult = {
-        status: message.endedReason === "assistant-forwarded-call" ? "TRANSFERRED" : "COMPLETED",
-        endedAt: new Date(),
-        durationSeconds,
-        costCents: Math.round((message.cost ?? 0) * 100),
+      const callResult = callOutcomeFields({
         endedReason: message.endedReason,
-        transcript: message.artifact?.messages as Prisma.InputJsonValue | undefined,
+        cost: message.cost,
+        durationSeconds,
+        endedAt,
+        messages: message.artifact?.messages,
         recordingUrl: message.artifact?.recordingUrl,
-      } as const;
+      });
 
       // A validly-signed report never expires, so a replay must not rewrite the
       // details of a call that has already ended (endedAt, transcript, cost...).
       const existing = await unscopedPrisma.voiceCall.findFirst({
         where: { organizationId: orgId, vapiCallId: message.call.id },
-        select: { endedAt: true, postCallProcessedAt: true },
+        select: { endedAt: true, durationSeconds: true, postCallProcessedAt: true },
       });
       if (existing?.postCallProcessedAt) {
         // Fully processed already: nothing to persist and nothing to re-enqueue.
@@ -509,7 +603,10 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
       // Ended but not yet processed (e.g. the first delivery's enqueue failed): keep the
       // recorded details and fall through so a legitimate retry can still enqueue.
-      if (!existing?.endedAt) {
+      // The exception: a retry that finally knows the length of a call that had none.
+      const learnsDuration =
+        existing?.endedAt && existing.durationSeconds === null && durationSeconds !== null;
+      if (!existing?.endedAt || learnsDuration) {
         const written = await upsertOwnCall(unscopedPrisma, orgId, {
           vapiCallId: message.call.id,
           create: {
@@ -517,7 +614,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             assistantId: assistant.id,
             vapiCallId: message.call.id,
             callerNumber: message.call.customer?.number,
-            startedAt: new Date(Date.now() - durationSeconds * 1000),
+            startedAt,
             ...callResult,
           },
           update: callResult,
