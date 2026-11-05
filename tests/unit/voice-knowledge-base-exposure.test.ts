@@ -29,6 +29,7 @@ vi.mock("@/server/voice/disclosure-gate", () => ({
   verifyCallDisclosure: async () => "ok",
   callDisclosureState: async () => "verified",
   callLiveness: async () => "live",
+  startedJustNow: () => true,
   confirmNoticeFromMessages: async () => "ok",
   confirmNoticeFromCallRecord: async () => "ok",
 }));

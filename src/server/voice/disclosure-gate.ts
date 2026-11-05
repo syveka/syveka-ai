@@ -274,6 +274,12 @@ async function readCallRecord(
   return { status, endedAt, calledAt, messages: artifact?.messages };
 }
 
+/** Whether a call began recently enough to still be at its start. An unreadable time isn't. */
+export function startedJustNow(calledAt: string | null | undefined): boolean {
+  const began = calledAt ? Date.parse(calledAt) : Number.NaN;
+  return Date.now() - began <= START_CHECK_WINDOW_MS;
+}
+
 /**
  * Whether a start message can be checked against the configuration "at that moment". Asked of
  * Vapi because a signed body stays the same however old it is. "ended" means it can't, and
@@ -288,8 +294,7 @@ export async function callLiveness(
   if (record === "none" || record === "unavailable") return "unknown";
   if (record.status === "ended" || record.endedAt) return "ended";
   if (!RUNNING_STATUSES.has(record.status)) return "unknown";
-  const began = record.calledAt ? Date.parse(record.calledAt) : Number.NaN;
-  return Date.now() - began <= START_CHECK_WINDOW_MS ? "live" : "late";
+  return startedJustNow(record.calledAt) ? "live" : "late";
 }
 
 /**

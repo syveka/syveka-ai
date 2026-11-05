@@ -107,6 +107,8 @@ vi.mock("@/server/services/billing/entitlements", () => ({
 }));
 
 import { POST } from "@/app/api/v1/voice/webhook/route";
+import { unscopedPrisma } from "@/server/db/tenant";
+import { redis } from "@/server/integrations/redis";
 import { reconcileVoiceCalls } from "@/server/voice/reconcile-calls";
 
 const NOTICE = spokenDisclosure("AR") as string;
@@ -415,6 +417,9 @@ describe("what counts as evidence", () => {
   });
 });
 
+/** A start whose own signed message says the call began just now. */
+const startNow = () => start({ call: { ...CALL, startedAt: new Date().toISOString() } });
+
 describe("a start that arrives after its call ended", () => {
   const nothingWritten = () => {
     expect(m.upsert).not.toHaveBeenCalled();
@@ -472,7 +477,7 @@ describe("a start that arrives after its call ended", () => {
     ],
   ])("hangs up, as Syveka's own ending and no finding, when %s", async (_name, arrange) => {
     arrange();
-    const res = await POST(start());
+    const res = await POST(startNow());
     expect(res.status).toBe(200);
     expect(m.controlCalls).toBe(1);
     expect(m.assistantFetches).toBe(0);
@@ -483,10 +488,23 @@ describe("a start that arrives after its call ended", () => {
 
   it("a call Syveka ended this way isn't kept or billed, even with the notice on record", async () => {
     m.fetchFails = true;
-    await POST(start());
+    await POST(startNow());
     m.fetchFails = false;
     await POST(report(SPOKE_NOTICE));
     expect(kept()).toBe(false);
+  });
+
+  it.each([
+    ["says it began long ago", () => start({ call: { ...CALL, startedAt: minutesAgo(30) } })],
+    ["doesn't say when it began", () => start()],
+  ])("can't claim to have ended a call whose start %s", async (_name, delivery) => {
+    m.fetchFails = true;
+    const res = await POST(delivery());
+    expect(res.status).toBe(503);
+    expect(m.store.has(REFUSED_KEY)).toBe(false);
+    m.fetchFails = false;
+    await POST(report(SPOKE_NOTICE));
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
   });
 
   it("if that hang-up failed, nothing is recorded and the call's own record decides", async () => {
@@ -516,6 +534,7 @@ describe("a start that arrives after its call ended", () => {
     m.callRecord = endedCall();
     await POST(start());
     expect(m.upsert).not.toHaveBeenCalled();
+    expect(redis.eval).not.toHaveBeenCalled();
   });
 
   it("a report that shows no notice is still refused after a live start was missed", async () => {
@@ -559,12 +578,60 @@ describe("a start that arrives late, while its call still runs", () => {
     expect(m.upsert).toHaveBeenCalledTimes(1);
   });
 
-  it("is refused and hung up when what the call has said is something else", async () => {
+  it("is hung up when what the call has said is something else, and its report decides", async () => {
     m.callRecord = runningLate(SPOKE_NO_NOTICE);
     await POST(start());
-    expect(m.store.get(REFUSED_KEY)).toBe("notice");
     expect(m.controlCalls).toBe(1);
     expect(m.upsert).not.toHaveBeenCalled();
+    // A running call's record may be missing its opening, so that isn't a lasting finding.
+    expect(m.store.has(REFUSED_KEY)).toBe(false);
+    m.callRecord = endedCall();
+    await POST(report(SPOKE_NOTICE));
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("is still held to the limits when nothing can say yet", async () => {
+    m.callRecord = runningLate();
+    m.minutes = 0;
+    await POST(start());
+    expect(m.controlCalls).toBe(1);
+    expect(m.store.get(REFUSED_KEY)).toBe("ended");
+    expect(m.upsert).not.toHaveBeenCalled();
+  });
+
+  it("takes a slot, but writes no row, when nothing can say yet", async () => {
+    m.callRecord = runningLate();
+    await POST(start());
+    expect(redis.eval).toHaveBeenCalled();
+    expect(m.upsert).not.toHaveBeenCalled();
+  });
+
+  it("asks again, writing nothing, when its confirmation can't be stored", async () => {
+    m.callRecord = runningLate(SPOKE_NOTICE);
+    m.failedWrites = ["voice:disclosure-ok"];
+    const res = await POST(start());
+    expect(res.status).toBe(503);
+    expect(m.upsert).not.toHaveBeenCalled();
+    expect(m.store.has(REFUSED_KEY)).toBe(false);
+  });
+
+  it("is a notice refusal when its own signed message shows a bad configuration", async () => {
+    m.callRecord = runningLate();
+    await POST(start({ assistant: BAD_CONFIG }));
+    expect(m.store.get(REFUSED_KEY)).toBe("notice");
+    expect(m.controlCalls).toBe(1);
+  });
+
+  it.each([
+    [25, 1],
+    [35, 0],
+  ])("%i seconds in, reads the assistant %i times", async (seconds, reads) => {
+    m.callRecord = {
+      ...liveCall,
+      startedAt: new Date(Date.now() - seconds * 1000).toISOString(),
+    };
+    await POST(start());
+    expect(m.assistantFetches).toBe(reads);
   });
 
   it("a call with an unreadable start time counts as late", async () => {
@@ -808,19 +875,26 @@ describe("reconciliation", () => {
       expect(m.enqueue).toHaveBeenCalledTimes(1);
     });
 
-    it.each(["notice", "ended"])("leaves one recorded as refused (%s)", async (value) => {
-      m.unsettled = [row];
-      m.store.set(REFUSED_KEY, value);
-      const result = await reconcileVoiceCalls({ now: NOW });
-      expect(m.enqueue).not.toHaveBeenCalled();
-      expect(result.unresolved).toBe(1);
-    });
+    it.each(["notice", "ended"])(
+      "closes one recorded as refused (%s), so it can't be processed once that lapses",
+      async (value) => {
+        m.unsettled = [row];
+        m.store.set(REFUSED_KEY, value);
+        await reconcileVoiceCalls({ now: NOW });
+        expect(m.enqueue).not.toHaveBeenCalled();
+        expect(unscopedPrisma.voiceCall.updateMany).toHaveBeenCalledWith({
+          where: { id: "row-1", organizationId: ORG, postCallProcessedAt: null },
+          data: { postCallProcessedAt: NOW },
+        });
+      },
+    );
 
     it("leaves one whose refusal can't be read", async () => {
       m.unsettled = [row];
       m.failedKeys = ["voice:refused"];
       await reconcileVoiceCalls({ now: NOW });
       expect(m.enqueue).not.toHaveBeenCalled();
+      expect(unscopedPrisma.voiceCall.updateMany).not.toHaveBeenCalled();
     });
 
     it("still settles one that was refused but really ran", async () => {

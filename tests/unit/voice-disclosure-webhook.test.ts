@@ -108,7 +108,9 @@ const signed = (message: Record<string, unknown>) =>
 const CALL = {
   id: "call-1",
   assistantId: "vapi-1",
-  createdAt: new Date().toISOString(),
+  get createdAt() {
+    return new Date().toISOString();
+  },
   monitor: { controlUrl: CONTROL },
 };
 const start = (extra: Record<string, unknown> = {}) =>

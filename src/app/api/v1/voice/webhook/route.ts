@@ -607,6 +607,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           callDisclosureState,
           callLiveness,
           confirmNoticeFromCallRecord,
+          startedJustNow,
           verifyCallDisclosure,
         } = await import("@/server/voice/disclosure-gate");
         const noticeState = await callDisclosureState(orgId, message.call.id);
@@ -634,7 +635,12 @@ export async function POST(request: Request): Promise<NextResponse> {
         };
         if (noticeState !== "verified" && liveness === "unknown") {
           console.warn(JSON.stringify({ event: "voice_call_refused", reason: "liveness", ...ids }));
-          return endUnchecked();
+          // An older start may be for a call already over, which a hang-up wouldn't have ended.
+          if (startedJustNow(message.call.startedAt ?? message.call.createdAt)) {
+            return endUnchecked();
+          }
+          await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
+          return NextResponse.json({ error: "try again" }, { status: 503 });
         }
         let disclosure =
           noticeState === "verified"
@@ -649,8 +655,10 @@ export async function POST(request: Request): Promise<NextResponse> {
                 startIsLate: liveness === "late",
               });
         // Too late for a read of the assistant to show what this caller heard, so what the call
-        // has said so far decides. If it can't say yet, nothing is written: the tool calls and
-        // report judge the call the same way.
+        // has said so far decides. A running call's record may be incomplete, so it writes no
+        // finding: the tool calls and report judge the call the same way. It's still held to
+        // the limits, but without a row, since nothing has confirmed its notice.
+        let confirmedNotice = true;
         if (disclosure === "too_late") {
           const confirmation = await confirmNoticeFromCallRecord({
             orgId,
@@ -663,11 +671,14 @@ export async function POST(request: Request): Promise<NextResponse> {
           if (confirmation === "unverifiable") {
             return NextResponse.json({ error: "try again" }, { status: 503 });
           }
-          if (confirmation === "absent" || confirmation === "not_approved") {
-            console.warn(JSON.stringify({ event: "voice_start_too_late", ...ids }));
-            return NextResponse.json({ ok: true, duplicate: true });
+          console.warn(JSON.stringify({ event: "voice_start_too_late", confirmation, ...ids }));
+          // What it has said so far isn't the notice: it doesn't continue, and its report decides.
+          if (confirmation === "contradicted") {
+            await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
+            return NextResponse.json({ ok: true });
           }
-          disclosure = confirmation === "ok" ? "ok" : "live_config_mismatch";
+          confirmedNotice = confirmation === "ok";
+          disclosure = "ok";
         }
         if (disclosure === "live_config_mismatch") {
           console.warn(JSON.stringify({ event: "voice_call_refused", reason: disclosure, ...ids }));
@@ -704,6 +715,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           if (!hungUp) await markCallRefused(orgId, message.call.id, "running");
           return NextResponse.json({ ok: true });
         }
+        if (!confirmedNotice) return NextResponse.json({ ok: true, duplicate: true });
         // Another organization's call id: nothing is recorded (logged in upsertOwnCall).
         await upsertOwnCall(unscopedPrisma, orgId, {
           vapiCallId: message.call.id,

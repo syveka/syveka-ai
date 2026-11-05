@@ -143,11 +143,21 @@ async function reconcileKnownCalls(
     result.checked++;
     const ids = { orgId: row.organizationId, callId: row.id };
 
-    // A row doesn't outrank a refusal recorded for the same call, if the two ever raced.
+    // A row doesn't outrank a refusal recorded for the same call, if the two ever raced. The
+    // refusal is remembered for 48 hours and this row is looked at for longer, so it's closed
+    // now, with no job and so no usage, rather than left to be processed once that lapses.
     const refusal = await callRefusal(row.organizationId, row.vapiCallId);
-    if (refusal === "ended" || refusal === "notice" || refusal === "unknown") {
-      log("voice_reconcile_unresolved", { ...ids, reason: "refused" });
+    if (refusal === "unknown") {
+      log("voice_reconcile_unresolved", { ...ids, reason: "refusal_unreadable" });
       result.unresolved++;
+      continue;
+    }
+    if (refusal === "ended" || refusal === "notice") {
+      await unscopedPrisma.voiceCall.updateMany({
+        where: { id: row.id, organizationId: row.organizationId, postCallProcessedAt: null },
+        data: { postCallProcessedAt: now },
+      });
+      log("voice_reconcile_refused_row_closed", ids);
       continue;
     }
 
