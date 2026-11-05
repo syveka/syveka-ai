@@ -47,7 +47,7 @@ export type ReconcileResult = {
   settled: number;
   requeued: number;
   discovered: number;
-  /** Still unresolved: Vapi was unreachable, has no such call, or the call hasn't ended. */
+  /** Still unresolved, for any of the reasons logged with each. */
   unresolved: number;
   nextCallCursor: string | null;
   nextAssistantCursor: string | null;
@@ -291,14 +291,15 @@ async function discoverMissingCalls(
       // If that can't be read, leave it for the next run, rather than bill a refused call.
       const refusal = await callRefusal(assistant.organizationId, call.id);
       if (refusal === "ended" || refusal === "notice" || refusal === "unknown") continue;
-      // Syveka never heard of this call, so nothing confirmed its notice. Only this call's own
-      // record can: a config read now can't show what its caller heard. Unreadable state, or a
-      // record that can't say yet, waits for the next run.
-      if (refusal !== "running") {
+      // Without a stored confirmation, only this call's own record can confirm its notice: a
+      // config read now can't show what its caller heard. That includes a call refused by limits
+      // that really ran. Unreadable state, or a record that can't say yet, waits for the next run.
+      let messages: unknown = call.artifact?.messages;
+      {
         const notice = await callDisclosureState(assistant.organizationId, call.id);
         if (notice === "unknown") continue;
         if (notice === "unverified") {
-          const confirmation = await confirmNoticeFromCallRecord({
+          const judged = await confirmNoticeFromCallRecord({
             orgId: assistant.organizationId,
             vapiCallId: call.id,
             language: assistant.language,
@@ -307,8 +308,11 @@ async function discoverMissingCalls(
             calledAt: call.startedAt ?? call.createdAt,
             now,
           });
+          const confirmation = judged.outcome;
+          if (Array.isArray(judged.messages)) messages = judged.messages;
           if (confirmation === "contradicted") {
-            // Recorded, so nothing later can bring this call back.
+            // Recorded, so nothing later can bring this call back. If that fails, the next run
+            // reaches the same answer from the same record.
             await markCallRefused(assistant.organizationId, call.id, "notice");
             log("voice_reconcile_without_notice", {
               orgId: assistant.organizationId,
@@ -327,7 +331,10 @@ async function discoverMissingCalls(
           }
         }
       }
-      const outcome = outcomeFromProvider(call, now);
+      const outcome = outcomeFromProvider(
+        { ...call, artifact: { ...call.artifact, messages: messages as unknown[] | undefined } },
+        now,
+      );
       const startedMs = call.startedAt ? Date.parse(call.startedAt) : Number.NaN;
       const written = await upsertOwnCall(unscopedPrisma, assistant.organizationId, {
         vapiCallId: call.id,
@@ -352,8 +359,9 @@ async function discoverMissingCalls(
 
 /**
  * Recovers calls whose webhooks were lost or late: finds what is unsettled, asks Vapi, and
- * feeds the answer through the same idempotent post-call job. It only reads from Vapi. A
- * call it can't resolve stays uncertain: counted against limits, never billed.
+ * feeds the answer through the same idempotent post-call job. It only reads from Vapi. A row
+ * it can't resolve stays uncertain: counted against limits, never billed. A call with no row
+ * and no evidence isn't kept, counted or billed.
  */
 export async function reconcileVoiceCalls(
   options: {

@@ -36,7 +36,7 @@ const m = vi.hoisted(() => ({
   listVapiCalls: vi.fn(async () => [] as unknown[]),
   enqueue: vi.fn(async () => undefined),
   updateMany: vi.fn(),
-  markCallRefused: vi.fn(async () => undefined),
+  markCallRefused: vi.fn(async () => true),
   confirmNotice: vi.fn(async (..._args: unknown[]) => "absent"),
 }));
 
@@ -110,7 +110,9 @@ vi.mock("@/server/jobs/queue", () => ({ enqueue: m.enqueue }));
 vi.mock("@/server/voice/disclosure-gate", () => ({
   callDisclosureState: async (_org: string, id: string) =>
     id === "unconfirmed-call" ? "unverified" : id === "unreadable-notice" ? "unknown" : "verified",
-  confirmNoticeFromCallRecord: m.confirmNotice,
+  confirmNoticeFromCallRecord: async (...args: unknown[]) => ({
+    outcome: await m.confirmNotice(...args),
+  }),
 }));
 vi.mock("@/server/voice/call-admission", () => ({
   markCallRefused: m.markCallRefused,

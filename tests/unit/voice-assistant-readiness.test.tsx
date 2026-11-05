@@ -23,6 +23,7 @@ const state = vi.hoisted(() => ({
   liveUrls: [] as string[],
   billable: 0,
   usageFails: false,
+  entFails: false,
   requirePermission: vi.fn(async () => ({ orgId: "org-1", userId: "u1", role: "OWNER" })),
   notFound: vi.fn(() => {
     throw new Error("NEXT_NOT_FOUND");
@@ -45,7 +46,10 @@ vi.mock("next-intl/server", async () => {
 vi.mock("next/navigation", () => ({ notFound: state.notFound }));
 vi.mock("@/server/auth/guard", () => ({ requirePermission: state.requirePermission }));
 vi.mock("@/server/services/billing/entitlements", () => ({
-  getEntitlements: vi.fn(async () => state.ent),
+  getEntitlements: vi.fn(async () => {
+    if (state.entFails) throw new Error("db down");
+    return state.ent;
+  }),
   getMonthUsage: vi.fn(async () => {
     if (state.usageFails) throw new Error("db down");
     return state.billable;
@@ -116,6 +120,7 @@ beforeEach(() => {
   state.liveUrls = [];
   state.billable = 0;
   state.usageFails = false;
+  state.entFails = false;
   state.requirePermission.mockClear();
   state.notFound.mockClear();
   vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI,EN,AR");
@@ -194,6 +199,7 @@ describe("what the panel reports", () => {
   it.each([
     ["the live settings can't be read", "syncUnverifiable", () => (state.liveFails = true)],
     ["usage can't be read", "usageUnverifiable", () => (state.usageFails = true)],
+    ["the plan can't be read", "usageUnverifiable", () => (state.entFails = true)],
   ])("doesn't claim calls are blocked when only %s", async (_name, key, arrange) => {
     arrange();
     const html = decode(await render());

@@ -95,8 +95,8 @@ const messageSchema = z.object({
     artifact: z
       .object({
         transcript: z.string().optional(),
-        messages: z.array(z.unknown()).optional(),
-        recordingUrl: z.string().optional(),
+        messages: z.array(z.unknown()).nullish(),
+        recordingUrl: z.string().nullish(),
       })
       .optional(),
   }),
@@ -404,7 +404,8 @@ export async function POST(request: Request): Promise<NextResponse> {
 
       // No tool of any kind on a call whose notice isn't confirmed. Checked here too, because
       // the status update can be missed and a hang-up can fail, and this reply is one Vapi acts
-      // on: it speaks the line and ends the call. A missed start is recovered by checking now.
+      // on: it speaks the line and ends the call. A missed start is recovered from what the call
+      // has already said.
       {
         const { callDisclosureState, confirmNoticeFromMessages } =
           await import("@/server/voice/disclosure-gate");
@@ -599,8 +600,9 @@ export async function POST(request: Request): Promise<NextResponse> {
         if (known) return NextResponse.json({ ok: true, duplicate: true });
 
         // After the retry checks, so a retry can't end a call already admitted, and before
-        // the limits: a call without its notice mustn't continue for any reason. The refusal
-        // is recorded, so reconciliation doesn't later re-create the call.
+        // the limits: a call shown to lack its notice doesn't continue, and that's recorded, so
+        // reconciliation doesn't later re-create the call. One that can't be judged yet is held
+        // to the limits with no row.
         // A retry of a call that already passed isn't checked again: a Vapi blip now mustn't
         // end a call whose notice was confirmed.
         const {
@@ -621,7 +623,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         const liveness = await callLiveness(callId, vapiAssistantId);
         if (liveness === "ended") {
           console.warn(JSON.stringify({ event: "voice_start_after_end", ...ids }));
-          return NextResponse.json({ ok: true, duplicate: true });
+          return NextResponse.json({ ok: true });
         }
         // A call that couldn't be checked doesn't continue. That isn't a finding about the call,
         // so it's recorded only as what it is: Syveka ended it, so it isn't the customer's usage.
@@ -660,7 +662,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         // the limits, but without a row, since nothing has confirmed its notice.
         let confirmedNotice = true;
         if (disclosure === "too_late") {
-          const confirmation = await confirmNoticeFromCallRecord({
+          const { outcome: confirmation } = await confirmNoticeFromCallRecord({
             orgId,
             vapiCallId: callId,
             language: assistant.language,
@@ -674,8 +676,10 @@ export async function POST(request: Request): Promise<NextResponse> {
           console.warn(JSON.stringify({ event: "voice_start_too_late", confirmation, ...ids }));
           // What it has said so far isn't the notice: it doesn't continue, and its report decides.
           if (confirmation === "contradicted") {
-            await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
-            return NextResponse.json({ ok: true });
+            const hungUp = await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
+            return hungUp
+              ? NextResponse.json({ ok: true })
+              : NextResponse.json({ error: "try again" }, { status: 503 });
           }
           confirmedNotice = confirmation === "ok";
           disclosure = "ok";
@@ -707,7 +711,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           // Marked before hanging up, so nothing can slip through while that's in progress.
           // If that fails, it doesn't hang up either: an ended call with no record of why could
           // later pass as a good one. The retry decides again, and if it never does, the call
-          // ran and is billed as one that ran.
+          // ran and is billed as one that ran, if its notice is confirmed.
           if (!(await markCallRefused(orgId, message.call.id, "ended"))) {
             return NextResponse.json({ error: "try again" }, { status: 503 });
           }
@@ -715,7 +719,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           if (!hungUp) await markCallRefused(orgId, message.call.id, "running");
           return NextResponse.json({ ok: true });
         }
-        if (!confirmedNotice) return NextResponse.json({ ok: true, duplicate: true });
+        if (!confirmedNotice) return NextResponse.json({ ok: true });
         // Another organization's call id: nothing is recorded (logged in upsertOwnCall).
         await upsertOwnCall(unscopedPrisma, orgId, {
           vapiCallId: message.call.id,
@@ -739,8 +743,9 @@ export async function POST(request: Request): Promise<NextResponse> {
       const { callRefusal, endCallSlot, markCallRefused } =
         await import("@/server/voice/call-admission");
       await endCallSlot(orgId, message.call.id);
-      // Syveka ended this call itself, or its notice wasn't confirmed: it isn't the customer's
-      // usage. One refused by limits that couldn't be hung up really ran, so it's billed below.
+      // Syveka ended this call itself, or its notice was shown missing: it isn't the customer's
+      // usage. One refused by limits that couldn't be hung up really ran, so it's billed below
+      // if its notice is confirmed.
       const refusal = await callRefusal(orgId, message.call.id);
       if (refusal === "unknown") {
         return NextResponse.json({ error: "try again" }, { status: 503 });
@@ -752,6 +757,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       // pipeline, so its transcript doesn't reach the CRM or an AI provider. What happens to
       // the copy Vapi holds is a legal decision. If that can't be read, retry: the call may
       // have been fine, and its record shouldn't be lost to a Redis outage.
+      let transcriptMessages: unknown[] | null | undefined = message.artifact?.messages;
       {
         const { callDisclosureState, confirmNoticeFromCallRecord } =
           await import("@/server/voice/disclosure-gate");
@@ -759,7 +765,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         if (state === "unknown") {
           return NextResponse.json({ error: "try again" }, { status: 503 });
         }
-        // A row is only created after this call passed its check. Without one or a stored
+        // A row is only created after this call's notice was confirmed. Without one or a stored
         // confirmation, the start was missed, and only this call's own record can decide: a
         // config read now can't show what this caller heard.
         const hasRow =
@@ -768,7 +774,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             where: { organizationId: orgId, vapiCallId: message.call.id },
             select: { id: true },
           })) !== null;
-        const confirmation =
+        const judged =
           state === "unverified" && !hasRow
             ? await confirmNoticeFromCallRecord({
                 orgId,
@@ -778,7 +784,9 @@ export async function POST(request: Request): Promise<NextResponse> {
                 messages: message.artifact?.messages,
                 calledAt: message.startedAt ?? message.call.startedAt ?? message.call.createdAt,
               })
-            : "ok";
+            : null;
+        const confirmation = judged?.outcome ?? "ok";
+        if (Array.isArray(judged?.messages)) transcriptMessages = judged.messages;
         if (confirmation === "unverifiable") {
           return NextResponse.json({ error: "try again" }, { status: 503 });
         }
@@ -824,7 +832,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         cost: message.cost,
         durationSeconds,
         endedAt,
-        messages: message.artifact?.messages,
+        messages: transcriptMessages,
         recordingUrl: message.artifact?.recordingUrl,
       });
 

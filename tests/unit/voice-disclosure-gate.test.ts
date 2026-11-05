@@ -46,6 +46,15 @@ beforeEach(() => {
 });
 afterEach(() => vi.unstubAllEnvs());
 
+describe("the approved-languages setting", () => {
+  it("doesn't depend on case or spacing", () => {
+    expect([...disclosureApprovedLanguages({ VOICE_DISCLOSURE_APPROVED_LANGUAGES: " fi, En " } as never)]).toEqual([
+      "FI",
+      "EN",
+    ]);
+  });
+});
+
 describe("the notice", () => {
   it.each(["FI", "EN", "AR"])("exists for %s and comes before the greeting", (language) => {
     const notice = spokenDisclosure(language) as string;

@@ -31,7 +31,7 @@ vi.mock("@/server/voice/disclosure-gate", () => ({
   callLiveness: async () => "live",
   startedJustNow: () => true,
   confirmNoticeFromMessages: async () => "ok",
-  confirmNoticeFromCallRecord: async () => "ok",
+  confirmNoticeFromCallRecord: async () => ({ outcome: "ok" }),
 }));
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {

@@ -256,7 +256,8 @@ describe("a call that fails the check", () => {
     expect(m.upsert).not.toHaveBeenCalled();
   });
 
-  it.each(scenarios)("runs no tool, read or write, when %s", async (_name, arrange) => {
+  // The tool path reads no configuration, so only these two scenarios can differ there.
+  it.each(scenarios.slice(0, 2))("runs no tool, read or write, when %s", async (_name, arrange) => {
     arrange();
     for (const name of ["bookMeeting", "getCalendarAvailability"]) {
       const res = await POST(toolCall(name));
@@ -265,7 +266,7 @@ describe("a call that fails the check", () => {
       expect(body.results[0]).toMatchObject({
         message: { type: "request-failed", endCallAfterSpokenEnabled: true },
       });
-      expect(["disclosure_not_verified", "call_refused"]).toContain(body.results[0]!.error);
+      expect(body.results[0]!.error).toBe("disclosure_not_verified");
     }
     expect(m.executeTool).not.toHaveBeenCalled();
   });

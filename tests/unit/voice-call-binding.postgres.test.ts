@@ -43,7 +43,7 @@ vi.mock("@/server/voice/disclosure-gate", () => ({
   callLiveness: async () => "live",
   startedJustNow: () => true,
   confirmNoticeFromMessages: async () => "ok",
-  confirmNoticeFromCallRecord: async () => "ok",
+  confirmNoticeFromCallRecord: async () => ({ outcome: "ok" }),
 }));
 vi.mock("@/server/services/billing/entitlements", () => ({
   getMonthUsage: vi.fn(async () => 0),

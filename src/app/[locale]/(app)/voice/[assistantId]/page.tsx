@@ -87,8 +87,9 @@ export default async function AssistantPage({
     transferNumber: assistant.transferNumber ?? "",
   };
 
+  // The panel mustn't take the form down with it: saving is the remedy it often suggests.
   const [ent, t] = await Promise.all([
-    getEntitlements(ctx.orgId),
+    getEntitlements(ctx.orgId).catch(() => null),
     getTranslations("voice.readiness"),
   ]);
   const readiness = await getAssistantReadiness(ctx.orgId, assistant, ent);

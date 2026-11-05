@@ -81,12 +81,15 @@ export async function endCallSlot(orgId: string, vapiCallId: string): Promise<vo
 }
 
 /**
- * Remembers a refusal, and says whether that worked. "ended" means the hang-up worked, so it isn't the
- * customer's usage. "running" means the hang-up failed: the call really ran, so it's billed,
- * but it still gets no tools. "notice" means its spoken notice wasn't confirmed: nothing is
- * kept, however the hang-up went, and fixing the configuration later doesn't change that.
+ * "ended" means Syveka ended the call, or is about to, so it isn't the customer's usage.
+ * "running" means the hang-up failed: it gets no tools, and it's billed only if its notice is
+ * confirmed, because it really ran. "notice" means its configuration or its own record showed
+ * the notice missing: nothing is kept, however the hang-up went, and fixing the configuration
+ * later doesn't change that.
  */
 export type CallRefusal = "ended" | "running" | "notice";
+
+/** Remembers a refusal, and says whether that worked. */
 
 export async function markCallRefused(
   orgId: string,

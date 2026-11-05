@@ -26,6 +26,8 @@ const m = vi.hoisted(() => ({
   callList: [] as unknown[],
   unsettled: [] as unknown[],
   fetchFails: false,
+  assistantFails: false,
+  controlFails: false,
   upsert: vi.fn(async (args: { create: Record<string, unknown> }) => {
     m.rows.push(args.create);
     return { id: "row-1" };
@@ -188,6 +190,8 @@ beforeEach(() => {
   m.callRecordStatus = 200;
   m.callList = [];
   m.fetchFails = false;
+  m.assistantFails = false;
+  m.controlFails = false;
   m.rows = [];
   m.existingRow = null;
   m.assistantFetches = 0;
@@ -202,11 +206,12 @@ beforeEach(() => {
     vi.fn(async (url: string) => {
       if (url === CONTROL) {
         m.controlCalls++;
-        return new Response("{}");
+        return new Response("{}", { status: m.controlFails ? 500 : 200 });
       }
       if (m.fetchFails) throw new Error("network");
       if (url.includes("/assistant/")) {
         m.assistantFetches++;
+        if (m.assistantFails) throw new Error("network");
         return new Response(JSON.stringify(m.liveAssistant));
       }
       if (url.includes("/call/")) {
@@ -327,14 +332,37 @@ describe("what counts as evidence", () => {
     expect(kept()).toBe(false);
   });
 
-  it.each([
-    ["a malformed list", "not a list"],
-    ["malformed entries", [null, 7, { role: "bot" }, { role: "bot", message: 5 }]],
-  ])("treats %s as no evidence, not as a refusal", async (_name, messages) => {
+  it("treats malformed entries as no evidence, not as a refusal", async () => {
     m.callRecord = endedCall();
-    await POST(report(messages as unknown[]));
+    const res = await POST(
+      report([null, 7, { role: "bot" }, { role: "bot", message: 5 }] as unknown[]),
+    );
+    expect(res.status).toBe(200);
     expect(kept()).toBe(false);
     expect(m.store.has(REFUSED_KEY)).toBe(false);
+  });
+
+  it("treats a provider record with a malformed list as no evidence, not as a refusal", async () => {
+    m.callRecord = endedCall(undefined, { artifact: { messages: "not a list" } });
+    const res = await POST(report());
+    expect(res.status).toBe(200);
+    expect(kept()).toBe(false);
+    expect(m.store.has(REFUSED_KEY)).toBe(false);
+  });
+
+  it("a report with recording off, whose recording URL is null, is still read", async () => {
+    const res = await POST(
+      signed({
+        type: "end-of-call-report",
+        call: CALL,
+        endedReason: "customer-ended-call",
+        durationSeconds: 60,
+        startedAt: minutesAgo(5),
+        artifact: { messages: SPOKE_NOTICE, recordingUrl: null },
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
   });
 
   it("an unapproved language isn't kept, whatever was said", async () => {
@@ -537,7 +565,7 @@ describe("a start that arrives after its call ended", () => {
     expect(redis.eval).not.toHaveBeenCalled();
   });
 
-  it("a report that shows no notice is still refused after a live start was missed", async () => {
+  it("a report that shows no notice is still refused after such a start", async () => {
     m.callRecord = endedCall();
     await POST(start());
     await POST(report(SPOKE_NO_NOTICE));
@@ -588,6 +616,14 @@ describe("a start that arrives late, while its call still runs", () => {
     m.callRecord = endedCall();
     await POST(report(SPOKE_NOTICE));
     expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("asks again when that hang-up fails", async () => {
+    m.callRecord = runningLate(SPOKE_NO_NOTICE);
+    m.controlFails = true;
+    const res = await POST(start());
+    expect(res.status).toBe(503);
+    expect(m.store.has(REFUSED_KEY)).toBe(false);
   });
 
   it("is still held to the limits when nothing can say yet", async () => {
@@ -650,6 +686,21 @@ describe("a start that arrives late, while its call still runs", () => {
 });
 
 describe("checks that couldn't complete at the start aren't findings", () => {
+  it("a failed read of the assistant hangs up as Syveka's own ending", async () => {
+    m.assistantFails = true;
+    await POST(start());
+    expect(m.controlCalls).toBe(1);
+    expect(m.store.get(REFUSED_KEY)).toBe("ended");
+  });
+
+  it("if that hang-up fails too, nothing is recorded and the retry decides", async () => {
+    m.assistantFails = true;
+    m.controlFails = true;
+    const res = await POST(start());
+    expect(res.status).toBe(503);
+    expect(m.store.has(REFUSED_KEY)).toBe(false);
+  });
+
   it.each([
     [
       "the language isn't approved today",
@@ -755,6 +806,8 @@ describe("unknown historical configuration, and delayed reports", () => {
     m.callRecord = endedCall(SPOKE_NOTICE);
     await POST(report());
     expect(m.enqueue).toHaveBeenCalledTimes(1);
+    // That record is the only transcript of the call, and the summary is written from it.
+    expect(m.rows[0]!.transcript).toEqual(SPOKE_NOTICE);
   });
 
   it("keeps nothing, and doesn't refuse for good, when no record shows anything", async () => {
@@ -851,6 +904,43 @@ describe("reconciliation", () => {
     m.callRecord = endedCall(SPOKE_NOTICE);
     const result = await reconcileVoiceCalls({ now: NOW });
     expect(result.discovered).toBe(1);
+    expect(m.rows[0]!.transcript).toEqual(SPOKE_NOTICE);
+  });
+
+  describe("a call refused by limits that couldn't be hung up", () => {
+    const refuseByLimits = async () => {
+      m.minutes = 0;
+      m.controlFails = true;
+      await POST(start());
+      expect(m.store.get(REFUSED_KEY)).toBe("running");
+      m.minutes = 1000;
+    };
+
+    it("isn't kept without evidence when its start came too late to be checked", async () => {
+      m.callRecord = { ...liveCall, startedAt: minutesAgo(5) };
+      await refuseByLimits();
+      expect(m.store.has(NOTICE_KEY)).toBe(false);
+      m.callList = [endedCall()];
+      m.callRecord = endedCall();
+      const result = await reconcileVoiceCalls({ now: NOW });
+      expect(result.discovered).toBe(0);
+      expect(kept()).toBe(false);
+    });
+
+    it("isn't kept when its own record shows something else", async () => {
+      m.callRecord = { ...liveCall, startedAt: minutesAgo(5) };
+      await refuseByLimits();
+      m.callList = [endedCall(SPOKE_NO_NOTICE)];
+      expect((await reconcileVoiceCalls({ now: NOW })).discovered).toBe(0);
+      expect(kept()).toBe(false);
+    });
+
+    it("is kept and billed when its notice passed at the start, because it really ran", async () => {
+      await refuseByLimits();
+      expect(m.store.has(NOTICE_KEY)).toBe(true);
+      m.callList = [endedCall()];
+      expect((await reconcileVoiceCalls({ now: NOW })).discovered).toBe(1);
+    });
   });
 
   it("records a call that spoke something else as refused, for good", async () => {

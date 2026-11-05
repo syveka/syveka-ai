@@ -350,13 +350,15 @@ Webhook endpoint: `{NEXT_PUBLIC_APP_URL}/api/v1/webhooks/inbox-email/resend`.
   empty by default, and every call in an unlisted language is hung up. Set it per environment,
   only after that approval.
 - **Re-sync every assistant after deploying.** Saving an assistant in its settings page sends the
-  current notice and live-call control. An assistant not re-synced is refused at each call, and
-  its settings page shows that.
+  current notice, live-call control and webhook retries. An assistant without the current notice
+  is refused at each call, and its settings page shows that. The page doesn't check the other two,
+  so re-sync every assistant even if its page shows no problem.
 - **Recording.** Syveka sends no recording setting, so Vapi's own setting applies. Its schema
   shows `artifactPlan.recordingEnabled` defaulting to on for a new assistant. Check that setting
   in the Vapi dashboard, and Vapi's retention, against the owner's recording decision.
 - **Reconciliation schedule.** Create a QStash schedule for `reconcile-voice-calls`. Until it
-  exists, a call whose webhooks were lost stays uncertain and nothing recovers it.
+  exists, nothing recovers a lost webhook. A known call stays uncertain. A call with no row,
+  including one whose report showed no evidence of the notice, isn't kept, counted or billed.
 - [ ] **Manual verification required**: place one real call through the provisioned number and
       confirm a `VoiceCall` row reaches `COMPLETED` status — this is exactly what
       `getOrgSetupReadiness` requires before reporting the voice channel `ready` rather than

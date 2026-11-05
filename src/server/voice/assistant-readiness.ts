@@ -52,7 +52,8 @@ export async function getAssistantReadiness(
     phoneNumber: string | null;
     isActive: boolean;
   },
-  ent: { voiceMinutesMonth: number; readOnly: boolean },
+  /** Null when the plan couldn't be read, which isn't a finding. */
+  ent: { voiceMinutesMonth: number; readOnly: boolean } | null,
 ): Promise<AssistantReadiness> {
   const blockers: ReadinessBlocker[] = [];
   const noticeApproved = disclosureApprovedLanguages().has(assistant.language);
@@ -78,8 +79,10 @@ export async function getAssistantReadiness(
   if (!assistant.phoneNumber) blockers.push("noPhoneNumber");
   else if (!assistant.isActive) blockers.push("inactive");
 
-  if (ent.readOnly) blockers.push("readOnly");
-  if (ent.voiceMinutesMonth <= 0) {
+  if (ent?.readOnly) blockers.push("readOnly");
+  if (!ent) {
+    blockers.push("usageUnverifiable");
+  } else if (ent.voiceMinutesMonth <= 0) {
     blockers.push("noMinutes");
   } else {
     const usage = await getVoiceUsageState(orgId).catch(() => null);

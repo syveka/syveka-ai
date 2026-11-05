@@ -5,11 +5,14 @@ import { redis } from "@/server/integrations/redis";
 import { getVapiAssistant, getVapiCall, VapiHttpError } from "@/server/integrations/vapi";
 
 /**
- * The spoken AI notice is a launch blocker, so it is enforced at each call rather than
- * trusted from configuration: a dashboard edit, or an assistant not re-synced since the
- * notice changed, would otherwise go unnoticed. What the notice says, and whether calls are
- * recorded, are legal decisions that this code doesn't make.
+ * The spoken AI notice is a launch blocker, so each call is judged on its own: a dashboard
+ * edit, or an assistant not re-synced since the notice changed, would otherwise go unnoticed.
+ * As a call starts, the configuration at that moment decides. After that, only the call's own
+ * record can. What the notice says, and whether calls are recorded, are legal decisions that
+ * this code doesn't make.
  */
+
+/** "too_late": too long after the start for a read of the assistant to stand for it. */
 export type DisclosureCheck =
   "ok" | "language_not_approved" | "live_config_mismatch" | "unverifiable" | "too_late";
 
@@ -41,7 +44,7 @@ export function disclosureApprovedLanguages(
   return new Set(
     (env.VOICE_DISCLOSURE_APPROVED_LANGUAGES ?? "")
       .split(",")
-      .map((language) => language.trim())
+      .map((language) => language.trim().toUpperCase())
       .filter(Boolean),
   );
 }
@@ -92,7 +95,7 @@ export async function verifyCallDisclosure(params: {
     return "live_config_mismatch";
   }
 
-  let live: LiveAssistantConfig | null = null;
+  let live: LiveAssistantConfig;
   const reported = params.reported;
   if (
     typeof reported?.firstMessage === "string" &&
@@ -132,7 +135,7 @@ function normalizeSpeech(text: string): string {
     .trim();
 }
 
-export type SpokenEvidence = "spoken" | "contradicted" | "absent";
+type SpokenEvidence = "spoken" | "contradicted" | "absent";
 
 /**
  * What a call's own record says it opened with. Vapi documents artifact.messages as "the
@@ -198,7 +201,7 @@ function withinRefusalMemory(calledAt: string | null | undefined, now: Date): bo
  * "not_approved" isn't recorded as a refusal: approval is today's setting, not a fact about
  * this call, and a setting missing during a deploy mustn't lose a good call for good.
  */
-export type NoticeConfirmation = "ok" | "contradicted" | "not_approved" | "absent" | "unverifiable";
+type NoticeConfirmation = "ok" | "contradicted" | "not_approved" | "absent" | "unverifiable";
 
 type ConfirmParams = {
   orgId: string;
@@ -277,7 +280,7 @@ async function readCallRecord(
 /** Whether a call began recently enough to still be at its start. An unreadable time isn't. */
 export function startedJustNow(calledAt: string | null | undefined): boolean {
   const began = calledAt ? Date.parse(calledAt) : Number.NaN;
-  return Date.now() - began <= START_CHECK_WINDOW_MS;
+  return Math.abs(Date.now() - began) <= START_CHECK_WINDOW_MS;
 }
 
 /**
@@ -299,24 +302,26 @@ export async function callLiveness(
 
 /**
  * As confirmNoticeFromMessages, falling back to Vapi's record of the call when the messages
- * at hand can't say. "unverifiable" means ask again, because the record couldn't be read.
+ * at hand can't say. "unverifiable" means ask again, because the record couldn't be read. The
+ * messages that decided it come back too, since they're the only transcript of that call.
  */
 export async function confirmNoticeFromCallRecord(
   params: ConfirmParams,
-): Promise<NoticeConfirmation> {
+): Promise<{ outcome: NoticeConfirmation; messages: unknown }> {
   const fromMessages = await confirmNoticeFromMessages(params);
-  if (fromMessages !== "absent") return fromMessages;
+  if (fromMessages !== "absent") return { outcome: fromMessages, messages: params.messages };
   const record = await readCallRecord(params.vapiCallId, params.vapiAssistantId);
-  if (record === "unavailable") return "unverifiable";
-  if (record === "none") return "absent";
-  return confirmNoticeFromMessages({
+  if (record === "unavailable") return { outcome: "unverifiable", messages: params.messages };
+  if (record === "none") return { outcome: "absent", messages: params.messages };
+  const outcome = await confirmNoticeFromMessages({
     ...params,
     messages: record.messages,
     calledAt: record.calledAt,
   });
+  return { outcome, messages: record.messages };
 }
 
-/** Whether this call passed the check, or "unknown" when that can't be read. */
+/** Whether this call passed the check or was confirmed, or "unknown" when that can't be read. */
 export async function callDisclosureState(
   orgId: string,
   vapiCallId: string,
