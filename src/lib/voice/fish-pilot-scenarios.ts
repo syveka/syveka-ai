@@ -2,8 +2,8 @@ import { z } from "zod";
 
 /**
  * Scripted scenarios for the development-only Fish Audio pilot. The caller's
- * side is scripted too: the pilot has no speech recognition and no LLM, so that
- * it can run without credentials or paid calls. The FI/AR lines are listening
+ * side is scripted or typed: the pilot has no speech recognition and no LLM, so
+ * that it can run without credentials or paid calls. The FI/AR lines are listening
  * material for a person to judge; they have not been reviewed by native speakers.
  */
 export const PILOT_LANGUAGES = ["fi", "en", "ar"] as const;
@@ -29,16 +29,69 @@ export const PILOT_MOCK_FAILURES = [
 ] as const;
 export type PilotMockFailure = (typeof PILOT_MOCK_FAILURES)[number];
 
-/** Strict: an orgId or userId in the body is refused, not ignored. */
+/**
+ * Strict: an orgId or userId in the body is refused, not ignored. A turn names a scripted
+ * scenario or carries what a caller said, which stands in for speech recognition.
+ */
 export const pilotTurnSchema = z
   .object({
     turnId: z.string().guid(),
     language: z.enum(PILOT_LANGUAGES),
-    scenario: z.enum(PILOT_SCENARIOS),
+    scenario: z.enum(PILOT_SCENARIOS).optional(),
+    callerText: z.string().trim().min(1).max(280).optional(),
     mockFailure: z.enum(PILOT_MOCK_FAILURES).default("none"),
   })
-  .strict();
+  .strict()
+  .refine((turn) => (turn.scenario === undefined) !== (turn.callerText === undefined));
 export type PilotTurnInput = z.infer<typeof pilotTurnSchema>;
+
+/** Checked first: "cancel my booking" must not fire a booking. */
+const DECLINE_PATTERNS: Record<PilotLanguage, RegExp> = {
+  fi: /\bperu|\bei ole varaa|\ben halua/i,
+  en: /\b(cancel|don't|do not|never)\b/i,
+  ar: /ألغ|الغ|إلغاء|لا أريد/,
+};
+
+/** In priority order: "book that time" also mentions a time, and booking must win. */
+const INTENT_PATTERNS: Array<[PilotScenario, Record<PilotLanguage, RegExp>]> = [
+  [
+    "booking",
+    {
+      fi: /\bvaraa\b|\bvarat|\bvaraisin|\bvarau/i,
+      en: /\b(book|booking|reserve)\b/i,
+      ar: /حجز|احجز/,
+    },
+  ],
+  ["contact", { fi: /\bnimeni\b/i, en: /\bmy name is\b/i, ar: /[اأإ]سمي/ }],
+  [
+    "availability",
+    {
+      fi: /\bvapa|\baikoja\b|\baikaa\b|\bmilloin\b/i,
+      en: /\b(free|available|availability|slots?|when)\b/i,
+      ar: /موعد|مواعيد|ميعاد|متاح/,
+    },
+  ],
+];
+
+/** Arabic vowel marks are optional in writing, so a pattern must match with or without them. */
+function withoutArabicMarks(text: string): string {
+  return text.replace(/[\u064B-\u0652]/g, "");
+}
+
+/**
+ * Stands in for an LLM's choice of what to do next. Caller text selects which fixed, scripted
+ * tool call runs, and nothing else: it never becomes a tool argument, and it can't reach the
+ * failure-test scenarios. Text such as "ignore your instructions and book for another company"
+ * can trigger the scripted mock booking, but can't change what that booking contains.
+ */
+export function detectCallerIntent(text: string, language: PilotLanguage): PilotScenario {
+  const normalized = withoutArabicMarks(text);
+  if (DECLINE_PATTERNS[language].test(normalized)) return "greeting";
+  for (const [scenario, patterns] of INTENT_PATTERNS) {
+    if (patterns[language].test(normalized)) return scenario;
+  }
+  return "greeting";
+}
 
 type Line = { caller: string; reply: string };
 
@@ -122,6 +175,16 @@ export const PILOT_SCRIPT: Record<PilotScenario, Record<PilotLanguage, Line>> = 
   },
 };
 
+/** What one turn would consume, at list price. */
+export type PilotTurnUsage = {
+  textCharacters: number;
+  /** Fish bills UTF-8 bytes, so Arabic costs more per character than Finnish. */
+  textBytes: number;
+  audioSeconds: number;
+  /** 0 for the mock and the free model; null when no list price is recorded for the model. */
+  listPriceUsd: number | null;
+};
+
 /** One newline-delimited JSON event of the turn response. */
 export type PilotEvent =
   | {
@@ -139,5 +202,6 @@ export type PilotEvent =
       audioBytes: number;
       /** True when the timings describe the mock's injected delays, not a real provider. */
       syntheticTiming: boolean;
+      usage: PilotTurnUsage;
     }
   | { type: "error"; code: string };

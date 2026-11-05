@@ -28,6 +28,7 @@ export function FishPilotDemo() {
   const [language, setLanguage] = useState<PilotLanguage>("fi");
   const [scenario, setScenario] = useState<PilotScenario>("greeting");
   const [mockFailure, setMockFailure] = useState<PilotMockFailure>("none");
+  const [callerText, setCallerText] = useState("");
   const [busy, setBusy] = useState(false);
   const [log, setLog] = useState<string[]>([]);
   const abort = useRef<AbortController | null>(null);
@@ -76,7 +77,7 @@ export function FishPilotDemo() {
       } else if (event.type === "done") {
         const label = event.syntheticTiming ? " (SYNTHETIC: mock delays, not a provider)" : "";
         append(
-          `${event.provider}: first audio ${event.firstAudioMs} ms, total ${event.totalMs} ms, ${event.audioBytes} bytes${label}`,
+          `${event.provider}: first audio ${event.firstAudioMs} ms, total ${event.totalMs} ms, ${event.audioBytes} bytes, ${event.usage.textBytes} text bytes, ${event.usage.listPriceUsd === null ? "unknown price" : `$${event.usage.listPriceUsd} at list price`}${label}`,
         );
       } else {
         append(`error: ${event.code}`);
@@ -90,7 +91,7 @@ export function FishPilotDemo() {
         body: JSON.stringify({
           turnId: crypto.randomUUID(),
           language,
-          scenario,
+          ...(callerText.trim() ? { callerText: callerText.trim() } : { scenario }),
           mockFailure,
         }),
         signal: controller.signal,
@@ -118,12 +119,17 @@ export function FishPilotDemo() {
     }
   }
 
+  async function showUsage() {
+    const response = await fetch("/api/v1/dev/fish-voice-pilot/turn");
+    append(response.ok ? `usage: ${await response.text()}` : `refused: HTTP ${response.status}`);
+  }
+
   return (
     <div className="space-y-4">
       <h1 className="text-2xl font-semibold">Fish Audio voice pilot (development only)</h1>
       <p className="text-sm text-muted-foreground">
-        Scripted caller, no LLM, mock CRM and calendar. Plays a test tone unless real calls were
-        explicitly allowed on the server.
+        Typed or scripted caller, no speech recognition, no LLM, mock CRM and calendar. Plays a test
+        tone unless real calls were explicitly allowed on the server.
       </p>
       <div className="flex flex-wrap items-center gap-2">
         <select
@@ -156,11 +162,23 @@ export function FishPilotDemo() {
             <option key={value}>{value}</option>
           ))}
         </select>
+        <input
+          aria-label="What the caller says (replaces the scenario; synthetic text only)"
+          className={SELECT_CLASS}
+          dir="auto"
+          maxLength={280}
+          placeholder="Caller text (optional, synthetic only)"
+          value={callerText}
+          onChange={(e) => setCallerText(e.target.value)}
+        />
         <Button onClick={() => void runTurn()} disabled={busy}>
           Run turn
         </Button>
         <Button variant="outline" onClick={interrupt} disabled={!busy}>
           Interrupt
+        </Button>
+        <Button variant="outline" onClick={() => void showUsage()}>
+          Show usage
         </Button>
       </div>
       <ul className="space-y-1 rounded-md border p-3 font-mono text-xs" aria-live="polite">

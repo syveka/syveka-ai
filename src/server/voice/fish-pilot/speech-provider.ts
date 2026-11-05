@@ -10,6 +10,8 @@ export type SpeechProvider = {
   sampleRate: number;
   /** True when timings come from injected delays, so they say nothing about a real provider. */
   syntheticTiming: boolean;
+  /** List price per million UTF-8 bytes: 0 when free, null when none is recorded. */
+  usdPerMillionBytes?: number | null;
   stream(request: SpeechRequest): AsyncIterable<Uint8Array>;
 };
 
@@ -64,6 +66,7 @@ export function createMockSpeechProvider(options: MockSpeechOptions = {}): Speec
     name: "mock",
     sampleRate,
     syntheticTiming: true,
+    usdPerMillionBytes: 0,
     async *stream({ text, signal }) {
       await sleep(firstChunkDelayMs, signal);
       if (failure === "provider_error") throw new SpeechError("provider_failed");

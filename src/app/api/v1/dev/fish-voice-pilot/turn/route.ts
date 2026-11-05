@@ -28,6 +28,7 @@ export async function POST(request: Request): Promise<Response> {
     { rateLimitRefusal },
     { runPilotTurn },
     { guardSpeechStream, SpeechError },
+    { recordPilotTurnUsage, turnUsage },
   ] = await Promise.all([
     import("@/server/voice/fish-pilot/config"),
     import("@/server/auth/guard"),
@@ -35,6 +36,7 @@ export async function POST(request: Request): Promise<Response> {
     import("@/server/security/rate-limit"),
     import("@/server/voice/fish-pilot/conversation"),
     import("@/server/voice/fish-pilot/speech-provider"),
+    import("@/server/voice/fish-pilot/usage"),
   ]);
 
   if (isCrossOrigin(request)) {
@@ -102,6 +104,14 @@ export async function POST(request: Request): Promise<Response> {
       let firstAudioMs: number | null = null;
       let audioBytes = 0;
       let seq = 0;
+      let completed = false;
+      const usageSoFar = () =>
+        turnUsage({
+          text: turn.reply,
+          audioBytes,
+          sampleRate: provider.sampleRate,
+          usdPerMillionBytes: provider.usdPerMillionBytes,
+        });
       send({ type: "reply", caller: turn.caller, text: turn.reply, toolResults: turn.toolResults });
       try {
         for await (const chunk of guardSpeechStream(
@@ -118,6 +128,7 @@ export async function POST(request: Request): Promise<Response> {
             sampleRate: provider.sampleRate,
           });
         }
+        completed = true;
         send({
           type: "done",
           provider: provider.name,
@@ -125,6 +136,7 @@ export async function POST(request: Request): Promise<Response> {
           totalMs: Math.round(performance.now() - startedAt),
           audioBytes,
           syntheticTiming: provider.syntheticTiming,
+          usage: usageSoFar(),
         });
       } catch (error) {
         const code = error instanceof SpeechError ? error.code : "provider_failed";
@@ -132,6 +144,14 @@ export async function POST(request: Request): Promise<Response> {
         console.warn(JSON.stringify({ event: "fish_pilot_speech_failed", orgId: ctx.orgId, code }));
         send({ type: "error", code });
       } finally {
+        // In finally: a failed or interrupted real turn may still have been billed.
+        recordPilotTurnUsage(ctx.orgId, {
+          usage: usageSoFar(),
+          completed,
+          syntheticTiming: provider.syntheticTiming,
+          firstAudioMs,
+          totalMs: Math.round(performance.now() - startedAt),
+        });
         if (!cancelled) stream.close();
       }
     },
@@ -144,4 +164,34 @@ export async function POST(request: Request): Promise<Response> {
   return new Response(body, {
     headers: { "Content-Type": "application/x-ndjson", "Cache-Control": "no-store" },
   });
+}
+
+/** The caller's organization's pilot usage: the organization comes only from the session. */
+export async function GET(request: Request): Promise<Response> {
+  if (!isFishVoicePilotEnabled()) return new NextResponse(null, { status: 404 });
+
+  const [{ requirePermission }, { AuthError }, { rateLimitRefusal }, { getPilotUsage }] =
+    await Promise.all([
+      import("@/server/auth/guard"),
+      import("@/server/auth/session"),
+      import("@/server/security/rate-limit"),
+      import("@/server/voice/fish-pilot/usage"),
+    ]);
+
+  if (isCrossOrigin(request)) {
+    return NextResponse.json({ error: { code: "cross_origin_request" } }, { status: 403 });
+  }
+
+  let ctx;
+  try {
+    ctx = await requirePermission("voice:configure");
+  } catch (error) {
+    if (error instanceof AuthError) {
+      return NextResponse.json({ error: { code: "forbidden" } }, { status: error.status });
+    }
+    throw error;
+  }
+  const refused = await rateLimitRefusal("aiVoiceTurnUser", `${ctx.orgId}:${ctx.userId}`);
+  if (refused) return refused;
+  return NextResponse.json(getPilotUsage(ctx.orgId), { headers: { "Cache-Control": "no-store" } });
 }
