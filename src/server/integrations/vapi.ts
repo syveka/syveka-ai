@@ -34,7 +34,7 @@ async function vapiFetch<T>(path: string, init?: RequestInit): Promise<T> {
         "Content-Type": "application/json",
         ...init?.headers,
       },
-      signal: AbortSignal.timeout(VAPI_FETCH_TIMEOUT_MS),
+      signal: init?.signal ?? AbortSignal.timeout(VAPI_FETCH_TIMEOUT_MS),
     });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
@@ -175,6 +175,18 @@ export async function upsertVapiAssistant(
     });
   }
   return vapiFetch("/assistant", { method: "POST", body: JSON.stringify(toVapiPayload(cfg)) });
+}
+
+/** The assistant as Vapi holds it now, including anything changed in its dashboard. */
+export async function getVapiAssistant(
+  id: string,
+  signal?: AbortSignal,
+): Promise<{
+  firstMessage?: string | null;
+  firstMessageMode?: string | null;
+  firstMessageInterruptionsEnabled?: boolean | null;
+}> {
+  return vapiFetch(`/assistant/${encodeURIComponent(id)}`, signal ? { signal } : undefined);
 }
 
 export async function deleteVapiAssistant(id: string): Promise<void> {

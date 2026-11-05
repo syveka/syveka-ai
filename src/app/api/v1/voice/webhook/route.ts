@@ -73,6 +73,14 @@ const messageSchema = z.object({
         monitor: z.object({ controlUrl: z.string().nullish() }).nullish(),
       })
       .optional(),
+    // The assistant as Vapi sent it in this signed message, when it does.
+    assistant: z
+      .object({
+        firstMessage: z.string().nullish(),
+        firstMessageMode: z.string().nullish(),
+        firstMessageInterruptionsEnabled: z.boolean().nullish(),
+      })
+      .nullish(),
     toolCallList: z.array(toolCallSchema).max(MAX_TOOL_CALLS_PER_REQUEST).optional(),
     status: z.string().optional(),
     endedReason: z.string().optional(),
@@ -395,6 +403,10 @@ export async function POST(request: Request): Promise<NextResponse> {
             })
           : null;
       const callEnded = Boolean(callRow && (callRow.endedAt || callRow.status !== "IN_PROGRESS"));
+      // A call whose spoken notice wasn't confirmed can't change anything. This also covers a
+      // call that couldn't be hung up, and one whose start was never heard about.
+      const { callDisclosureVerified } = await import("@/server/voice/disclosure-gate");
+      const disclosed = hasWrite && callId ? await callDisclosureVerified(orgId, callId) : false;
 
       const results = await Promise.all(
         (message.toolCallList ?? []).map((tc) =>
@@ -409,6 +421,12 @@ export async function POST(request: Request): Promise<NextResponse> {
             if (cap !== undefined && (!callId || callEnded)) {
               const error = callId ? "call_ended" : "call_required";
               return { toolCallId: tc.id, result: JSON.stringify({ error }) };
+            }
+            if (cap !== undefined && !disclosed) {
+              return {
+                toolCallId: tc.id,
+                result: JSON.stringify({ error: "disclosure_not_verified" }),
+              };
             }
             const claimKey = `vapi:tool:${orgId}:${tc.id}`;
             const claimed = await redis.set(claimKey, "1", { nx: true, ex: 60 * 60 * 24 });
@@ -455,6 +473,30 @@ export async function POST(request: Request): Promise<NextResponse> {
     // ── Call started: entitlement gate + record (§14.2) ──
     case "status-update": {
       if (message.status === "in-progress" && message.call) {
+        // Before anything else: a call without its notice mustn't continue for any reason.
+        const { verifyCallDisclosure } = await import("@/server/voice/disclosure-gate");
+        const disclosure = await verifyCallDisclosure({
+          orgId,
+          vapiCallId: message.call.id,
+          language: assistant.language,
+          vapiAssistantId: message.call.assistantId as string,
+          reported: message.assistant,
+        });
+        if (disclosure !== "ok") {
+          console.warn(
+            JSON.stringify({
+              event: "voice_call_refused",
+              reason: disclosure,
+              orgId,
+              vapiCallId: message.call.id,
+            }),
+          );
+          await endCallViaControlUrl(message.call.monitor?.controlUrl, {
+            orgId,
+            vapiCallId: message.call.id,
+          });
+          return NextResponse.json({ ok: true });
+        }
         if (await voiceQuotaExceeded(orgId)) {
           // Over quota: no call row, and end the call through Live Call Control
           // (Vapi does not act on a reply to status-update).

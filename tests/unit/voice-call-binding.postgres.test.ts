@@ -36,6 +36,11 @@ vi.mock("@/server/db/tenant", () => ({
   },
 }));
 vi.mock("@/server/integrations/vapi", () => ({ verifyVapiSignature: () => true }));
+// Call binding is what's tested here: the notice gate has its own suite.
+vi.mock("@/server/voice/disclosure-gate", () => ({
+  verifyCallDisclosure: async () => "ok",
+  callDisclosureVerified: async () => true,
+}));
 vi.mock("@/server/services/billing/entitlements", () => ({
   getMonthUsage: vi.fn(async () => 0),
   getEntitlements: vi.fn(async () => ({ voiceMinutesMonth: 1000, readOnly: false })),

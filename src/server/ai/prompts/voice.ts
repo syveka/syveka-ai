@@ -37,8 +37,16 @@ export function buildVoiceSystemPrompt(params: {
 const SPOKEN_AI_DISCLOSURE: Record<"FI" | "EN" | "AR", string> = {
   FI: "Puhut tekoälyavustajan kanssa, ja puhelu voidaan tallentaa.",
   EN: "You are speaking with an AI assistant, and this call may be recorded.",
-  AR: "أنت تتحدث مع مساعد يعمل بالذكاء الاصطناعي، وقد يتم تسجيل هذه المكالمة.",
+  // Avoids gendered address. Not approved yet: see VOICE_DISCLOSURE_APPROVED_LANGUAGES.
+  AR: "تتم هذه المكالمة مع مساعد يعمل بالذكاء الاصطناعي، وقد يتم تسجيلها.",
 };
+
+/** The notice for a language, or null for one that has none. */
+export function spokenDisclosure(language: string): string | null {
+  return Object.hasOwn(SPOKEN_AI_DISCLOSURE, language)
+    ? SPOKEN_AI_DISCLOSURE[language as keyof typeof SPOKEN_AI_DISCLOSURE]
+    : null;
+}
 
 /** The assistant's first spoken message: the fixed AI and recording notice, then the greeting. */
 export function buildVoiceFirstMessage(language: string, greeting: string): string {

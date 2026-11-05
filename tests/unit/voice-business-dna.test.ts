@@ -179,11 +179,7 @@ describe("voice assistant sync — Business DNA context", () => {
 
   it.each([
     ["FI", "Hei!", "Puhut tekoälyavustajan kanssa, ja puhelu voidaan tallentaa. Hei!"],
-    [
-      "AR",
-      "مرحباً",
-      "أنت تتحدث مع مساعد يعمل بالذكاء الاصطناعي، وقد يتم تسجيل هذه المكالمة. مرحباً",
-    ],
+    ["AR", "مرحباً", "تتم هذه المكالمة مع مساعد يعمل بالذكاء الاصطناعي، وقد يتم تسجيلها. مرحباً"],
   ])(
     "the %s assistant speaks the notice in its own language before the greeting",
     async (language, greeting, expected) => {

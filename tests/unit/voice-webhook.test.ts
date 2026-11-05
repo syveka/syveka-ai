@@ -44,11 +44,18 @@ const mocks = vi.hoisted(() => {
       return counters.get(key)!;
     }),
     redisExpire: vi.fn(async (..._args: unknown[]) => 1),
+    verifyCallDisclosure: vi.fn(async (..._args: unknown[]) => "ok" as string),
+    callDisclosureVerified: vi.fn(async (..._args: unknown[]) => true),
   };
 });
 
 vi.mock("@/server/integrations/vapi", () => ({
   verifyVapiSignature: mocks.verifyVapiSignature,
+}));
+// The gate is covered in voice-disclosure-gate and below. Elsewhere here, calls have passed it.
+vi.mock("@/server/voice/disclosure-gate", () => ({
+  verifyCallDisclosure: mocks.verifyCallDisclosure,
+  callDisclosureVerified: mocks.callDisclosureVerified,
 }));
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {
@@ -1438,5 +1445,104 @@ describe("Vapi voice webhook — a phone caller can't search the organization's 
 
     expect(body.results[0].result).toBe(JSON.stringify({ error: "tool_not_enabled" }));
     expect(mocks.executeTool).not.toHaveBeenCalled();
+  });
+});
+
+describe("the spoken notice at the webhook", () => {
+  const CONTROL = "https://aws-us-west-2-production1-phone-call-websocket.vapi.ai/x/control";
+  const signed = (message: Record<string, unknown>) =>
+    new Request("http://localhost/api/v1/voice/webhook", {
+      method: "POST",
+      headers: { "x-vapi-signature": "sig" },
+      body: JSON.stringify({ message }),
+    });
+  const start = (extra: Record<string, unknown> = {}) =>
+    signed({
+      type: "status-update",
+      status: "in-progress",
+      call: { id: "call-1", assistantId: "assistant-1", monitor: { controlUrl: CONTROL } },
+      ...extra,
+    });
+
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocks.verifyCallDisclosure.mockResolvedValue("ok");
+    mocks.callDisclosureVerified.mockResolvedValue(true);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each(["language_not_approved", "live_config_mismatch", "unverifiable"])(
+    "ends the call and records nothing when the check says %s",
+    async (reason) => {
+      mocks.verifyCallDisclosure.mockResolvedValueOnce(reason);
+      const res = await POST(start());
+      expect(res.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    },
+  );
+
+  it("checks the notice before limits, with the assistant's language and the signed config", async () => {
+    await POST(start({ assistant: { firstMessage: "Puhut" } }));
+    expect(mocks.verifyCallDisclosure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: "org-a",
+        vapiCallId: "call-1",
+        vapiAssistantId: "assistant-1",
+        reported: { firstMessage: "Puhut" },
+      }),
+    );
+  });
+
+  it("lets a verified call continue", async () => {
+    await POST(start());
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(1);
+  });
+
+  const toolCall = (name: string) =>
+    signed({
+      type: "tool-calls",
+      call: { id: "call-1", assistantId: "assistant-1" },
+      toolCallList: [{ id: "t1", function: { name, arguments: "{}" } }],
+    });
+
+  it("refuses a write on an unverified call, without claiming or running it", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce({
+      id: "assistant-1",
+      organizationId: "org-a",
+      enabledTools: ["bookMeeting"],
+      useKnowledgeBase: false,
+      isActive: true,
+      organization: { members: [{ userId: "owner-1" }] },
+    } as never);
+    mocks.callDisclosureVerified.mockResolvedValueOnce(false);
+    const res = await POST(toolCall("bookMeeting"));
+    await expect(res.json()).resolves.toEqual({
+      results: [{ toolCallId: "t1", result: JSON.stringify({ error: "disclosure_not_verified" }) }],
+    });
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+    expect(mocks.redisSet).not.toHaveBeenCalled();
+  });
+
+  it("still allows a read on an unverified call", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce({
+      id: "assistant-1",
+      organizationId: "org-a",
+      enabledTools: ["getCalendarAvailability"],
+      useKnowledgeBase: false,
+      isActive: true,
+      organization: { members: [{ userId: "owner-1" }] },
+    } as never);
+    mocks.callDisclosureVerified.mockResolvedValue(false);
+    mocks.executeTool.mockResolvedValueOnce("{}");
+    await POST(toolCall("getCalendarAvailability"));
+    expect(mocks.executeTool).toHaveBeenCalledTimes(1);
   });
 });
