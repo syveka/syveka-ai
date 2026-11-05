@@ -5,10 +5,10 @@ CPUs, 16 GB RAM, Node 22).
 
 ## Result
 
-| Run                        | Before                      | After this branch                   |
-| -------------------------- | --------------------------- | ----------------------------------- |
-| Full unit suite on Windows | 12–14 failures in every run | **0 failures of 4,956, 54 skipped** |
-| CI on Linux (#395)         | All checks passed           | Pending on this PR                  |
+| Run                        | Before                      | After this branch                                   |
+| -------------------------- | --------------------------- | --------------------------------------------------- |
+| Full unit suite on Windows | 12–14 failures in every run | **0 failures of 4,956, 54 skipped, in 2 of 2 runs** |
+| CI on Linux (#395)         | All checks passed           | Pending on this PR                                  |
 
 No assertion was removed or relaxed, and one was added. Production code isn't touched.
 
@@ -51,10 +51,11 @@ exact `200 vs 409` failure didn't recur in the 28 instrumented runs. So the expl
 inferred. That test now asserts the first call returned 200, so if it happens again, the failure says so
 directly.
 
-**What protects replay in production:** a single-use grant consumed by an atomic Redis script. These
-tests use an in-memory emulator, and `tests/integration/voice-conversation-redis.test.ts` runs the real
-script. It's opt-in and wasn't run here (`VOICE_REDIS_TEST_URL`). **Whoever reviews this should check that
-CI runs it**, or run it against a disposable Redis.
+**What protects replay in production:** a single-use grant consumed by an atomic Redis script. The flow
+tests use an in-memory emulator, so I also ran the real script: `tests/unit/voice-conversation-redis.test.ts`
+passed 19 of 19 against a disposable local `redis:7-alpine` container, including the grant
+consumption tests. **No CI workflow runs that suite.** It's opt-in through `VOICE_REDIS_TEST_URL`, so
+nothing in CI proves the real script. Adding it is a CI policy change that needs the owner's approval.
 
 ## What changed
 
@@ -106,5 +107,5 @@ the crash's own message, so the link to memory or disk is likely but unproven.
 
 ## Open
 
-- Run the opt-in real-Redis suite against a disposable instance.
+- Decide whether to add the real-Redis suite to CI.
 - This session's own worktrees are kept until the owner confirms that preserved work is safe.
