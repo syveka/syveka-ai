@@ -105,6 +105,11 @@ vi.mock("@/server/integrations/vapi", () => {
   return { VapiHttpError, getVapiCall: m.getVapiCall, listVapiCalls: m.listVapiCalls };
 });
 vi.mock("@/server/jobs/queue", () => ({ enqueue: m.enqueue }));
+vi.mock("@/server/voice/disclosure-gate", () => ({
+  callDisclosureState: async (_org: string, id: string) =>
+    id === "unconfirmed-call" ? "unverified" : id === "unreadable-notice" ? "unknown" : "verified",
+  verifyCallDisclosure: async () => "live_config_mismatch",
+}));
 vi.mock("@/server/voice/call-admission", () => ({
   callRefusal: async (_org: string, id: string) =>
     id === "refused-call"
@@ -528,6 +533,20 @@ describe("recovering lost webhooks", () => {
     const result = await reconcileVoiceCalls({ now: NOW });
     expect(result.discovered).toBe(1);
   });
+
+  it.each(["unconfirmed-call", "unreadable-notice"])(
+    "doesn't re-create a call the notice gate couldn't confirm: %s",
+    async (id) => {
+      m.assistants = [
+        { id: "assistant-a", organizationId: ORG_A, vapiAssistantId: "vapi-assistant-a" },
+      ];
+      m.listVapiCalls.mockResolvedValue([{ ...ENDED, id }]);
+      const result = await reconcileVoiceCalls({ now: NOW });
+      expect(result.discovered).toBe(0);
+      expect(m.rows).toEqual([]);
+      expect(m.enqueue).not.toHaveBeenCalled();
+    },
+  );
 
   it("survives a failed listing", async () => {
     m.assistants = [

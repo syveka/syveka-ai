@@ -1,0 +1,283 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { buildVoiceFirstMessage } from "@/server/ai/prompts/voice";
+import type * as VapiModule from "@/server/integrations/vapi";
+import { toVapiPayload, type VapiAssistantConfig } from "@/server/integrations/vapi";
+import { liveConfigDisclosesFirst } from "@/server/voice/disclosure-gate";
+
+/**
+ * The real notice gate through the real webhook. Only the signature, the database, Redis and
+ * network calls are faked, so a mismatch between what syncing sends and what the gate expects
+ * (which would end every call) fails here. No call or paid request is made.
+ */
+const CONTROL = "https://aws-us-west-2-production1-phone-call-websocket.vapi.ai/x/control";
+
+const m = vi.hoisted(() => ({
+  store: new Map<string, string>(),
+  redisDown: false,
+  redisGetDown: false,
+  language: "AR",
+  liveAssistant: {} as Record<string, unknown>,
+  fetchFails: false,
+  upsert: vi.fn(async (..._args: unknown[]) => ({ id: "row-1" })),
+  enqueue: vi.fn(async (..._args: unknown[]) => undefined),
+  executeTool: vi.fn(async (..._args: unknown[]) => '{"booked":true}'),
+  controlCalls: 0,
+}));
+
+vi.mock("@/server/integrations/vapi", async (importOriginal) => ({
+  ...(await importOriginal<typeof VapiModule>()),
+  verifyVapiSignature: () => true,
+}));
+vi.mock("@/server/db/tenant", () => ({
+  unscopedPrisma: {
+    voiceAssistant: {
+      findFirst: vi.fn(async () => ({
+        id: "assistant-1",
+        organizationId: "org-a",
+        enabledTools: ["bookMeeting", "getCalendarAvailability"],
+        isActive: true,
+        language: m.language,
+        organization: { members: [{ userId: "owner-1" }] },
+      })),
+    },
+    voiceCall: {
+      findFirst: vi.fn(async () => null),
+      upsert: m.upsert,
+      findMany: vi.fn(async () => []),
+    },
+  },
+}));
+vi.mock("@/server/integrations/redis", () => ({
+  redis: {
+    get: vi.fn(async (key: string) => {
+      if (m.redisDown || m.redisGetDown) throw new Error("redis down");
+      return m.store.get(key) ?? null;
+    }),
+    set: vi.fn(async (key: string, value: string) => {
+      if (m.redisDown) throw new Error("redis down");
+      if (m.store.has(key) && key.startsWith("vapi:tool:")) return null;
+      m.store.set(key, value);
+      return "OK";
+    }),
+    del: vi.fn(async () => 1),
+    incr: vi.fn(async () => 1),
+    decr: vi.fn(async () => 0),
+    expire: vi.fn(async () => 1),
+    eval: vi.fn(async (_script: string, _keys: string[], args: string[]) =>
+      args[2] === "0" ? [-1, 0] : [1, 0],
+    ),
+  },
+}));
+vi.mock("@/server/ai/tools", () => ({ executeTool: m.executeTool }));
+vi.mock("@/server/jobs/queue", () => ({ enqueue: m.enqueue }));
+vi.mock("@/server/services/billing/entitlements", () => ({
+  getMonthUsage: async () => 0,
+  getEntitlements: async () => ({ voiceMinutesMonth: 1000, readOnly: false }),
+}));
+
+import { POST } from "@/app/api/v1/voice/webhook/route";
+
+function syncedAssistant(language: string): Record<string, unknown> {
+  const config: VapiAssistantConfig = {
+    name: "Test",
+    firstMessage: buildVoiceFirstMessage(language, "Hei!"),
+    systemPrompt: "Test",
+    language: language.toLowerCase() as VapiAssistantConfig["language"],
+    voiceProvider: "azure",
+    voiceId: null,
+    serverUrl: "https://staging.invalid/webhook",
+    serverCredentialId: "cred-1",
+    tools: [],
+    transferNumber: null,
+    maxDurationSeconds: 900,
+  };
+  return toVapiPayload(config) as unknown as Record<string, unknown>;
+}
+
+const signed = (message: Record<string, unknown>) =>
+  new Request("http://localhost/api/v1/voice/webhook", {
+    method: "POST",
+    headers: { "x-vapi-signature": "sig" },
+    body: JSON.stringify({ message }),
+  });
+const CALL = { id: "call-1", assistantId: "vapi-1", monitor: { controlUrl: CONTROL } };
+const start = (extra: Record<string, unknown> = {}) =>
+  signed({ type: "status-update", status: "in-progress", call: CALL, ...extra });
+const toolCall = (name = "bookMeeting") =>
+  signed({
+    type: "tool-calls",
+    call: CALL,
+    toolCallList: [{ id: "t1", function: { name, arguments: "{}" } }],
+  });
+const report = () =>
+  signed({
+    type: "end-of-call-report",
+    call: CALL,
+    endedReason: "customer-ended-call",
+    durationSeconds: 60,
+    artifact: { messages: [{ role: "user", message: "secret" }], recordingUrl: "https://r/1" },
+  });
+
+beforeEach(() => {
+  m.store.clear();
+  m.redisDown = false;
+  m.redisGetDown = false;
+  m.language = "AR";
+  m.liveAssistant = syncedAssistant("AR");
+  m.fetchFails = false;
+  m.controlCalls = 0;
+  vi.clearAllMocks();
+  vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI,EN,AR");
+  vi.stubEnv("VAPI_API_KEY", "test-key");
+  vi.stubEnv("VAPI_WEBHOOK_SECRET", "test-secret-of-sixteen-chars");
+  vi.stubEnv("VAPI_WEBHOOK_CREDENTIAL_ID", "cred-1");
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (url: string) => {
+      if (url === CONTROL) {
+        m.controlCalls++;
+        return new Response("{}");
+      }
+      if (m.fetchFails) throw new Error("network");
+      return new Response(JSON.stringify(m.liveAssistant));
+    }),
+  );
+  vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  vi.spyOn(console, "error").mockImplementation(() => undefined);
+});
+afterEach(() => {
+  vi.unstubAllEnvs();
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+});
+
+describe("what syncing sends is what the gate accepts", () => {
+  it.each(["FI", "EN", "AR"])("%s", (language) => {
+    expect(
+      liveConfigDisclosesFirst(language, syncedAssistant(language) as Record<string, never>),
+    ).toBe(true);
+  });
+
+  it("another language's notice isn't accepted", () => {
+    expect(liveConfigDisclosesFirst("AR", syncedAssistant("EN") as Record<string, never>)).toBe(
+      false,
+    );
+  });
+
+  it("asks Vapi to keep live control on, since refusing a call relies on it", () => {
+    expect(syncedAssistant("FI").monitorPlan).toEqual({
+      controlEnabled: true,
+      controlAuthenticationEnabled: false,
+    });
+  });
+});
+
+describe("a correctly synced call", () => {
+  it("connects, runs its tools and keeps its report", async () => {
+    await POST(start());
+    expect(m.controlCalls).toBe(0);
+    expect(m.upsert).toHaveBeenCalledTimes(1);
+
+    const res = await POST(toolCall());
+    await expect(res.json()).resolves.toMatchObject({ results: [{ toolCallId: "t1" }] });
+    expect(m.executeTool).toHaveBeenCalledTimes(1);
+
+    await POST(report());
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("recovers a missed start at its first tool call", async () => {
+    const res = await POST(toolCall());
+    expect(res.status).toBe(200);
+    expect(m.executeTool).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a call that fails the check", () => {
+  const scenarios: Array<[string, () => void]> = [
+    ["its language isn't approved", () => vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "FI")],
+    ["no language is approved", () => vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", "")],
+    ["the assistant was never re-synced", () => (m.liveAssistant = { firstMessage: "مرحبا" })],
+    ["Vapi can't confirm", () => (m.fetchFails = true)],
+    [
+      "the dashboard lets the model write the opening",
+      () =>
+        (m.liveAssistant = {
+          ...syncedAssistant("AR"),
+          firstMessageMode: "assistant-speaks-first-with-model-generated-message",
+        }),
+    ],
+  ];
+
+  it.each(scenarios)("is hung up when %s", async (_name, arrange) => {
+    arrange();
+    await POST(start());
+    expect(m.controlCalls).toBe(1);
+    expect(m.upsert).not.toHaveBeenCalled();
+  });
+
+  it.each(scenarios)("runs no tool, read or write, when %s", async (_name, arrange) => {
+    arrange();
+    for (const name of ["bookMeeting", "getCalendarAvailability"]) {
+      const res = await POST(toolCall(name));
+      const body = (await res.json()) as { results: Array<Record<string, unknown>> };
+      // Spoken and then hung up, even if the status update never arrived.
+      expect(body.results[0]).toMatchObject({
+        error: "disclosure_not_verified",
+        message: { type: "request-failed", endCallAfterSpokenEnabled: true },
+      });
+    }
+    expect(m.executeTool).not.toHaveBeenCalled();
+  });
+
+  it.each(scenarios)("keeps no transcript and starts no pipeline when %s", async (_n, arrange) => {
+    arrange();
+    await POST(start());
+    const res = await POST(report());
+    expect(res.status).toBe(200);
+    expect(m.upsert).not.toHaveBeenCalled();
+    expect(m.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("is refused when this call overrides the first message", async () => {
+    await POST(
+      start({
+        call: { ...CALL, assistantOverrides: { firstMessage: "Hello, no notice here" } },
+      }),
+    );
+    expect(m.controlCalls).toBe(1);
+    expect(m.upsert).not.toHaveBeenCalled();
+  });
+
+  it("asks Vapi when the signed message only partly describes the assistant", async () => {
+    m.liveAssistant = { firstMessage: "مرحبا" };
+    await POST(start({ assistant: { firstMessage: syncedAssistant("AR").firstMessage } }));
+    expect(m.controlCalls).toBe(1);
+  });
+});
+
+describe("a report for a call whose start was missed", () => {
+  it("is kept when the live config confirms the notice", async () => {
+    const res = await POST(report());
+    expect(res.status).toBe(200);
+    expect(m.upsert).toHaveBeenCalledTimes(1);
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("when Redis is down", () => {
+  it("a report is retried rather than dropped: the call may have been fine", async () => {
+    await POST(start());
+    m.redisGetDown = true;
+    const res = await POST(report());
+    expect(res.status).toBe(503);
+    expect(m.enqueue).not.toHaveBeenCalled();
+  });
+
+  it("no tool runs, even for a call that had passed", async () => {
+    await POST(start());
+    m.redisGetDown = true;
+    await POST(toolCall());
+    expect(m.executeTool).not.toHaveBeenCalled();
+  });
+});

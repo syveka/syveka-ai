@@ -69,12 +69,21 @@ const messageSchema = z.object({
         assistantId: z.string().optional(),
         startedAt: z.string().nullish(),
         endedAt: z.string().nullish(),
+        assistantOverrides: z.record(z.string(), z.unknown()).nullish(),
         customer: z.object({ number: z.string().optional() }).optional(),
         // Live Call Control URL. Unauthenticated unless the assistant enables
         // monitorPlan.controlAuthenticationEnabled, so it is treated as a secret.
         monitor: z.object({ controlUrl: z.string().nullish() }).nullish(),
       })
       .optional(),
+    // The assistant as Vapi sent it in this signed message, when it does.
+    assistant: z
+      .object({
+        firstMessage: z.string().nullish(),
+        firstMessageMode: z.string().nullish(),
+        firstMessageInterruptionsEnabled: z.boolean().nullish(),
+      })
+      .nullish(),
     toolCallList: z.array(toolCallSchema).max(MAX_TOOL_CALLS_PER_REQUEST).optional(),
     status: z.string().optional(),
     endedReason: z.string().optional(),
@@ -371,6 +380,41 @@ export async function POST(request: Request): Promise<NextResponse> {
         return NextResponse.json({ results });
       }
 
+      // No tool of any kind on a call whose notice isn't confirmed. Checked here too, because
+      // the status update can be missed and a hang-up can fail, and this reply is one Vapi acts
+      // on: it speaks the line and ends the call. A missed start is recovered by checking now.
+      {
+        const { callDisclosureState, verifyCallDisclosure } =
+          await import("@/server/voice/disclosure-gate");
+        const toolCallId = message.call?.id;
+        const state = toolCallId ? await callDisclosureState(orgId, toolCallId) : "unknown";
+        const confirmed =
+          state === "verified" ||
+          (state === "unverified" &&
+            toolCallId !== undefined &&
+            (await verifyCallDisclosure({
+              orgId,
+              vapiCallId: toolCallId,
+              language: assistant.language,
+              vapiAssistantId: message.call?.assistantId as string,
+              reported: message.assistant,
+              overrides: message.call?.assistantOverrides,
+            })) === "ok");
+        if (!confirmed) {
+          console.warn(
+            JSON.stringify({ event: "voice_tools_refused", orgId, vapiCallId: toolCallId, state }),
+          );
+          const content = QUOTA_EXCEEDED_GOODBYE[assistant.language] ?? QUOTA_EXCEEDED_GOODBYE.EN;
+          const results = (message.toolCallList ?? []).map((tc) => ({
+            toolCallId: tc.id,
+            name: tc.name,
+            error: "disclosure_not_verified",
+            message: { type: "request-failed", content, endCallAfterSpokenEnabled: true },
+          }));
+          return NextResponse.json({ results });
+        }
+      }
+
       // Over quota: run no tool, say goodbye and end the call. Vapi acts on this
       // reply and ends the call once the line is spoken (endCallAfterSpokenEnabled).
       // Live Call Control is not used here: it would hang up before the goodbye.
@@ -523,6 +567,26 @@ export async function POST(request: Request): Promise<NextResponse> {
         // A retry for a call already recorded as running: already admitted, nothing to do.
         if (known) return NextResponse.json({ ok: true, duplicate: true });
 
+        // After the retry checks, so a retry can't end a call already admitted, and before
+        // the limits: a call without its notice mustn't continue for any reason. The refusal
+        // is recorded, so reconciliation doesn't later re-create the call.
+        const { verifyCallDisclosure } = await import("@/server/voice/disclosure-gate");
+        const disclosure = await verifyCallDisclosure({
+          orgId,
+          vapiCallId: message.call.id,
+          language: assistant.language,
+          vapiAssistantId: message.call.assistantId as string,
+          reported: message.assistant,
+          overrides: message.call.assistantOverrides,
+        });
+        if (disclosure !== "ok") {
+          console.warn(JSON.stringify({ event: "voice_call_refused", reason: disclosure, ...ids }));
+          await markCallRefused(orgId, message.call.id, "ended");
+          const hungUp = await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
+          if (!hungUp) await markCallRefused(orgId, message.call.id, "running");
+          return NextResponse.json({ ok: true });
+        }
+
         const admission = assistant.isActive
           ? await admitCall(orgId, message.call.id)
           : ({ admitted: false, reason: "assistant_inactive" } as const);
@@ -558,12 +622,53 @@ export async function POST(request: Request): Promise<NextResponse> {
     // ── Call ended: persist + hand off to post-call pipeline (§16.4) ──
     case "end-of-call-report": {
       if (!message.call) return NextResponse.json({ ok: true });
-      const { callRefusal, endCallSlot } = await import("@/server/voice/call-admission");
+      const callAdmission = await import("@/server/voice/call-admission");
+      const { callRefusal, endCallSlot } = callAdmission;
       await endCallSlot(orgId, message.call.id);
       // Syveka ended this call itself: it isn't the customer's usage. One that couldn't be hung
       // up really ran, so it continues below and is billed.
       if ((await callRefusal(orgId, message.call.id)) === "ended") {
         return NextResponse.json({ ok: true, refused: true });
+      }
+      // A call whose notice was never confirmed: keep nothing, charge nothing, and start no
+      // pipeline, so its transcript doesn't reach the CRM or an AI provider. What happens to
+      // the copy Vapi holds is a legal decision. If that can't be read, retry: the call may
+      // have been fine, and its record shouldn't be lost to a Redis outage.
+      {
+        const { callDisclosureState, verifyCallDisclosure } =
+          await import("@/server/voice/disclosure-gate");
+        const state = await callDisclosureState(orgId, message.call.id);
+        if (state === "unknown") {
+          return NextResponse.json({ error: "try again" }, { status: 503 });
+        }
+        // A missed start isn't a failed check. A row is only created after the check passed,
+        // and otherwise the live config can still confirm it now.
+        const confirmedLate =
+          state === "unverified" &&
+          ((await unscopedPrisma.voiceCall.findFirst({
+            where: { organizationId: orgId, vapiCallId: message.call.id },
+            select: { id: true },
+          })) !== null ||
+            (await verifyCallDisclosure({
+              orgId,
+              vapiCallId: message.call.id,
+              language: assistant.language,
+              vapiAssistantId: message.call.assistantId as string,
+              reported: message.assistant,
+              overrides: message.call.assistantOverrides,
+            })) === "ok");
+        if (state === "unverified" && !confirmedLate) {
+          console.warn(
+            JSON.stringify({
+              event: "voice_report_without_notice",
+              orgId,
+              vapiCallId: message.call.id,
+            }),
+          );
+          // Recorded, so reconciliation doesn't re-create it from Vapi's list.
+          await callAdmission.markCallRefused(orgId, message.call.id, "ended");
+          return NextResponse.json({ ok: true, refused: true });
+        }
       }
       // Vapi documents these times on the report and on its call. Null means nothing
       // trustworthy said how long the call was: it stays unsettled, never "one minute".
