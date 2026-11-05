@@ -17,14 +17,14 @@ and it isn't connected to Creator Studio.
 | Longest allowed copy, and a 5 s clip? | **8 of 8.** Copy fits, apart from the extreme word noted below, and the clip holds its last frame to fill 10 s |
 | How long for a 10-second 1080p video? | **Median 23 s on a quiet machine,** 27–32 s when it was busy, plus about 4–5 s of quality check                |
 | Is it deterministic?                  | **Yes.** Three repeat renders were byte-identical (same SHA-256)                                               |
-| Does isolation hold?                  | **55 of 55 probes pass** under the real flags                                                                  |
+| Do the isolation self-tests pass?     | **55 of 55 probes pass** under the real flags                                                                  |
 | Is GSAP needed?                       | **No.** Templates use the browser's Web Animations API. A content scan finds no GSAP in the image              |
 
 ## Environment
 
 Windows 11 laptop, Docker Desktop on WSL 2, Docker VM with 12 CPUs and 7.9 GB. The container was
 limited to 4 CPUs, 3 GB with no swap, and 512 processes. Timings will differ on cloud hardware.
-Final image: `sha256:083c7ee5dca8…`, about 1.4 GB on disk.
+Final image: `sha256:ee1ad916f125…`, about 1.4 GB on disk.
 
 **Two timing runs, both real.** The quiet run had nothing competing. The final matrix run, on nearly finished
 code, ran while the machine was busier for reasons outside this work, which is why its numbers are
@@ -90,7 +90,9 @@ looking at frames, which doesn't replace a Finnish or Arabic reader.
 
 ### Security probes
 
-`scripts/container-probes.mjs` runs inside the image under the real flags. **55 of 55 passed.**
+`scripts/container-probes.mjs` runs inside the image under the real flags. **55 of 55 passed.** These
+are self-tests of the configuration, not a penetration test: nothing here tries `memfd_create`, `ptrace`
+or lowering the core limit.
 
 | Area             | What was tried                                                                                                                                                        | Outcome                                                                   |
 | ---------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
@@ -112,9 +114,9 @@ Separately, on the host:
 | Memory       | The same render with a 400 MB limit | `render_failed`, no crash dump, and the container exited |
 | Job deadline | A job given an 8-second deadline    | `job_deadline_exceeded` at 8.3 s; no container left      |
 
-Root unit tests (`tests/unit/hyperframes-render-worker.test.ts`, 107 tests) run without Docker, so CI
-enforces the schema, the isolation flags, the pinned versions, the output reader's limits and the
-separation from `src/`. **CI does not run the container probes above;** they were run by hand.
+Root unit tests (`tests/unit/hyperframes-render-worker.test.ts`, 130 tests) run without Docker, so CI
+enforces the schema, the isolation flags, the pinned versions, the output reader's limits, the job
+deadline with Docker faked, and the separation from `src/`. **CI does not run the container probes above;** they were run by hand.
 
 ## Defects this pilot found and fixed
 
@@ -202,8 +204,11 @@ evidence:
 - Audio. Voice-over and music aren't implemented.
 - An actual exploit from inside Chrome or a decoder. The containment is designed for it, and it wasn't
   attempted.
-- A forged output stream end to end, or filling the host through a real container. The reader's rules
-  are unit-tested with forged input.
+- A forged output stream from a real container, or filling the host through one. The reader's rules
+  are unit-tested with forged input, and `runWorker` with Docker faked.
+- Whether lowering the core limit really restores crash dumps. It comes from a code review, and testing
+  it means crashing on purpose on a disposable host.
+- `killLeftoverProcesses` and `copyInput` have probes but no unit tests, so CI doesn't cover them.
 
 ## Remaining work before any production decision
 

@@ -28,7 +28,8 @@ const FFPROBE_TIMEOUT_MS = 15_000;
 const QUIET = ["-hide_banner", "-loglevel", "error"];
 /**
  * Input options. No demuxer may follow a reference out of the file, and only the formats and
- * codecs we accept can be parsed at all, so a crafted file can't reach a rarely used decoder.
+ * codecs we accept can be opened. Format probing runs before the allowlist is applied, so this
+ * narrows the decoders a crafted file can reach; it doesn't remove all parsing of that file.
  */
 const LOCKED_INPUT = [
   "-protocol_whitelist",

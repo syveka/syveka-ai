@@ -17,7 +17,8 @@ cd experiments/hyperframes-render-worker
 docker build -t syveka-hyperframes-render-worker:dev .
 node scripts/sample-job.mjs demo product-ad > /tmp/job.json
 # <inputDir> holds logo.png and photo.jpg. <outputDir> must not already hold these MP4 files.
-node scripts/run-worker.mjs /tmp/job.json <inputDir> <outputDir>
+# <inputDir> must be inside RENDER_JOBS_ROOT, a directory that holds only job inputs.
+RENDER_JOBS_ROOT=<dir> node scripts/run-worker.mjs /tmp/job.json <inputDir> <outputDir>
 ```
 
 Always start it through `scripts/run-worker.mjs`, which applies the isolation flags and enforces the

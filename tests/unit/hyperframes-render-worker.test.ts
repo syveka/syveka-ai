@@ -1,6 +1,16 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
-import { writeFileSync } from "node:fs";
+import { EventEmitter } from "node:events";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -20,11 +30,13 @@ import {
   parseJob,
 } from "../../experiments/hyperframes-render-worker/src/schema.mjs";
 import {
-  assertSafeMountPath,
   buildDockerArgs,
-  JOB_DEADLINE_MS,
+  CONTAINER_LABEL,
+  resolveMountPath,
+  runWorker,
 } from "../../experiments/hyperframes-render-worker/scripts/run-worker.mjs";
 import {
+  expectedOutputNames,
   MAX_FILE_BYTES,
   WorkerOutputReader,
 } from "../../experiments/hyperframes-render-worker/scripts/read-output.mjs";
@@ -344,7 +356,7 @@ describe("templates", () => {
 });
 
 describe("container isolation flags", () => {
-  const args = buildDockerArgs({ inputDir: "/host/in" });
+  const args = buildDockerArgs({ inputDir: "/host/in", jobsRoot: "/host" });
 
   it.each([
     "--init",
@@ -375,6 +387,7 @@ describe("container isolation flags", () => {
   it("mounts only the input, read-only, so nothing inside can write to the host", () => {
     const mounts = args.filter((arg) => arg.startsWith("--mount=") || arg === "-v");
     expect(mounts).toEqual(["--mount=type=bind,source=/host/in,target=/input,readonly"]);
+    expect(args).not.toContain("/output");
   });
 
   it("is never privileged, and passes no environment or host namespace", () => {
@@ -385,47 +398,92 @@ describe("container isolation flags", () => {
 });
 
 describe("host-side mount and deadline rules", () => {
+  const safe = (path: string, jobsRoot: string | undefined = "/jobs") =>
+    resolveMountPath(path, { jobsRoot, home: "/home/someone" });
+
   it.each([
     ["the home directory", "/home/someone"],
     ["a parent of the home directory", "/home"],
     ["a relative path", "inputs"],
-    ["a comma that could add mount options", "/tmp/a,target=/etc"],
-    ["a credentials directory", "/tmp/x/.claude"],
-    ["a credentials directory in another case", "/tmp/x/.SSH"],
-    ["a Windows profile folder", "/tmp/AppData/Local"],
+    ["a comma that could add mount options", "/jobs/a,target=/etc"],
+    ["a credentials directory", "/jobs/x/.claude"],
+    ["a credentials directory in another case", "/jobs/x/.SSH"],
+    ["a Windows profile folder", "/jobs/AppData/Local"],
+    ["a network path", "//server/share/jobs"],
     ["a long-form Windows path", "\\\\?\\C:\\Users\\someone"],
-    ["an ssh directory", "/tmp/.ssh/keys"],
+    ["a directory outside the jobs root", "/etc"],
+    ["a sibling sharing the root's prefix", "/jobs-other/1"],
   ])("refuses %s as the input mount", (_label, path) => {
-    expect(() => assertSafeMountPath(path, "/home/someone")).toThrow("unsafe_mount_path");
+    expect(() => safe(path)).toThrow("unsafe_mount_path");
   });
 
-  it("accepts a specific job directory, even inside the home directory", () => {
-    expect(() => assertSafeMountPath("/home/someone/jobs/1", "/home/someone")).not.toThrow();
+  it("fails closed when no jobs root is configured", () => {
+    expect(() => resolveMountPath("/jobs/1", { home: "/home/someone" })).toThrow(
+      "unsafe_mount_path",
+    );
+  });
+
+  it("accepts a directory inside the jobs root", () => {
+    expect(() => safe("/jobs/1")).not.toThrow();
   });
 
   it("buildDockerArgs refuses an unsafe mount rather than starting", () => {
-    expect(() => buildDockerArgs({ inputDir: "/tmp/a,target=/etc" })).toThrow();
+    expect(() => buildDockerArgs({ inputDir: "/jobs/a,target=/etc", jobsRoot: "/jobs" })).toThrow();
   });
 
-  it("has an outer job deadline", () => {
-    expect(JOB_DEADLINE_MS).toBeGreaterThan(0);
-    expect(JOB_DEADLINE_MS).toBeLessThanOrEqual(60 * 60 * 1000);
+  it("mounts the resolved path, so a link can't be swapped in after the check", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "hf-root-"));
+    try {
+      const real = path.join(root, "real");
+      mkdirSync(real);
+      const link = path.join(root, "link");
+      symlinkSync(real, link, "junction");
+      const args = buildDockerArgs({ inputDir: link, jobsRoot: root });
+      const mount = args.find((arg) => arg.startsWith("--mount="));
+      expect(mount).toContain(realpathSync(real));
+      expect(mount).not.toContain("link");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a link that leaves the jobs root", () => {
+    const root = mkdtempSync(path.join(tmpdir(), "hf-root-"));
+    const outside = mkdtempSync(path.join(tmpdir(), "hf-outside-"));
+    try {
+      const link = path.join(root, "link");
+      symlinkSync(outside, link, "junction");
+      expect(() => buildDockerArgs({ inputDir: link, jobsRoot: root })).toThrow(
+        "unsafe_mount_path",
+      );
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+      rmSync(outside, { recursive: true, force: true });
+    }
   });
 });
 
 describe("reading the worker's output on the host", () => {
   const dirs: string[] = [];
   const NAME = "job-0-product-ad-ar-9x16.mp4";
+  const NAME_2 = "job-1-product-ad-fi-9x16.mp4";
 
-  function reader() {
+  function reader(expected: string[] | null = [NAME]) {
     const dir = mkdtempSync(path.join(tmpdir(), "hf-output-"));
     dirs.push(dir);
-    return { dir, output: new WorkerOutputReader(dir) };
+    return { dir, output: new WorkerOutputReader(dir, expected) };
   }
 
   const sha = (content: string) => createHash("sha256").update(content).digest("hex");
-  const resultLine = (file: string, hash: string) =>
-    `RESULT ${JSON.stringify({ ok: true, jobId: "job", results: [{ index: 0, ok: true, file, sha256: hash }] })}\n`;
+  const item = (index: number, file: string, content: string) => ({
+    index,
+    ok: true,
+    file,
+    sha256: sha(content),
+    sizeBytes: Buffer.byteLength(content),
+  });
+  const resultLine = (...results: unknown[]) =>
+    `RESULT ${JSON.stringify({ ok: true, jobId: "job", results })}\n`;
 
   afterEach(() => {
     for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
@@ -433,25 +491,132 @@ describe("reading the worker's output on the host", () => {
 
   it("writes a file and confirms its hash, however the stream is split", () => {
     const { dir, output } = reader();
-    const stream = Buffer.from(`FILE ${NAME} 5\nhello${resultLine(NAME, sha("hello"))}`);
+    const stream = Buffer.from(`FILE ${NAME} 5\nhello${resultLine(item(0, NAME, "hello"))}`);
     for (let i = 0; i < stream.length; i += 3) output.push(stream.subarray(i, i + 3));
     const result = output.finish();
     expect(result.ok).toBe(true);
-    expect(result.results?.[0]?.hostVerified).toBe(true);
+    expect(result.results?.[0]).toMatchObject({ hostVerified: true, sizeBytes: 5 });
+    expect(readdirSync(dir)).toEqual([NAME]);
     expect(readFileSync(path.join(dir, NAME), "utf8")).toBe("hello");
   });
 
-  it("marks a file whose hash doesn't match what the worker claimed", () => {
-    const { output } = reader();
-    output.push(Buffer.from(`FILE ${NAME} 5\nhello${resultLine(NAME, sha("other"))}`));
+  it("marks a file whose hash doesn't match what the worker claimed, and deletes it", () => {
+    const { dir, output } = reader();
+    output.push(Buffer.from(`FILE ${NAME} 5\nhello${resultLine(item(0, NAME, "other"))}`));
     const result = output.finish();
     expect(result.ok).toBe(false);
     expect(result.results?.[0]).toMatchObject({ ok: false, error: { code: "output_unverified" } });
+    expect(readdirSync(dir)).toEqual([]);
   });
 
   it("doesn't let a forged result claim a file that never arrived", () => {
     const { output } = reader();
-    output.push(Buffer.from(resultLine(NAME, sha("hello"))));
+    output.push(Buffer.from(resultLine(item(0, NAME, "hello"))));
+    expect(output.finish().ok).toBe(false);
+  });
+
+  it("doesn't let one real file answer for two renders", () => {
+    const { dir, output } = reader([NAME, NAME_2]);
+    const claim = item(0, NAME, "hello");
+    output.push(Buffer.from(`FILE ${NAME} 5\nhello${resultLine(claim, { ...claim, index: 1 })}`));
+    const result = output.finish();
+    expect(result.ok).toBe(false);
+    expect(result.results?.[0]?.ok).toBe(true);
+    expect(result.results?.[1]?.ok).toBe(false);
+    expect(readdirSync(dir)).toEqual([NAME]);
+  });
+
+  it("doesn't accept renders reported out of order", () => {
+    const { output } = reader([NAME, NAME_2]);
+    output.push(
+      Buffer.from(
+        `FILE ${NAME} 1\naFILE ${NAME_2} 1\nb${resultLine(item(1, NAME_2, "b"), item(0, NAME, "a"))}`,
+      ),
+    );
+    expect(output.finish().ok).toBe(false);
+  });
+
+  it("refuses a valid-looking file the job didn't ask for", () => {
+    const { dir, output } = reader();
+    output.push(Buffer.from(`FILE ${NAME_2} 5\nhello`));
+    expect(output.finish()).toEqual({ ok: false, error: { code: "output_name_refused" } });
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("refuses the same file twice", () => {
+    const { dir, output } = reader();
+    output.push(Buffer.from(`FILE ${NAME} 1\naFILE ${NAME} 1\nb`));
+    expect(output.finish()).toEqual({ ok: false, error: { code: "output_name_refused" } });
+    expect(readdirSync(dir)).toEqual([]);
+  });
+
+  it("deletes a delivered file that no render claims", () => {
+    const { dir, output } = reader([NAME, NAME_2]);
+    output.push(
+      Buffer.from(
+        `FILE ${NAME} 1\naFILE ${NAME_2} 1\nb${resultLine(item(0, NAME, "a"), { index: 1, ok: false, error: { code: "render_failed" } })}`,
+      ),
+    );
+    const result = output.finish();
+    expect(result.ok).toBe(false);
+    expect(result.results?.[1]).toMatchObject({ error: { code: "render_failed" } });
+    expect(readdirSync(dir)).toEqual([NAME]);
+  });
+
+  it("accepts exactly one result, at the very end", () => {
+    const late = reader();
+    late.output.push(Buffer.from(`${resultLine(item(0, NAME, "a"))}FILE ${NAME} 1\na`));
+    expect(late.output.finish()).toEqual({ ok: false, error: { code: "output_malformed" } });
+    const twice = reader();
+    const line = resultLine(item(0, NAME, "a"));
+    twice.output.push(Buffer.from(`FILE ${NAME} 1\na${line}${line}`));
+    expect(twice.output.finish()).toEqual({ ok: false, error: { code: "output_malformed" } });
+    expect(readdirSync(twice.dir)).toEqual([]);
+  });
+
+  it("limits everything that isn't file content, across lines", () => {
+    const { output } = reader();
+    const padding = "x".repeat(700_000);
+    output.push(Buffer.from(`RESULT {"a":"${padding}"}\n`));
+    expect(output.failure).toBeNull();
+    const second = reader();
+    second.output.push(Buffer.from(`RESULT {"a":"${"x".repeat(1_100_000)}"}\n`));
+    expect(second.output.failure).toBe("output_header_too_long");
+    const unterminated = reader();
+    unterminated.output.push(Buffer.alloc(1_100_000, 0x61));
+    expect(unterminated.output.failure).toBe("output_header_too_long");
+  });
+
+  it("passes on the worker's numbers as claims only, with nothing nested or oversized", () => {
+    const { output } = reader();
+    const claim = {
+      ...item(0, NAME, "hello"),
+      video: { codec: "h264", frames: 300, width: "../../x" },
+      timings: { renderMs: 1, attacker: "x".repeat(1000) },
+    };
+    const nested = `${"[".repeat(500)}"deep"${"]".repeat(500)}`;
+    const line = resultLine(claim).replace('"codec":"h264"', `"codec":"h264","extra":${nested}`);
+    output.push(Buffer.from(`FILE ${NAME} 5\nhello${line}`));
+    const result = output.finish() as unknown as {
+      results: Array<{ sizeBytes: number; workerClaims: unknown }>;
+    };
+    expect(result.results[0]?.sizeBytes).toBe(5);
+    expect(result.results[0]?.workerClaims).toMatchObject({
+      video: { codec: "h264", frames: 300 },
+      timings: { renderMs: 1 },
+    });
+    expect(JSON.stringify(result)).not.toContain("../../x");
+    expect(JSON.stringify(result)).not.toContain("attacker");
+    expect(JSON.stringify(result)).not.toContain("deep");
+  });
+
+  it("doesn't let a claimed size differ from the bytes received", () => {
+    const { output } = reader();
+    output.push(
+      Buffer.from(
+        `FILE ${NAME} 5\nhello${resultLine({ ...item(0, NAME, "hello"), sizeBytes: 1 })}`,
+      ),
+    );
     expect(output.finish().ok).toBe(false);
   });
 
@@ -473,20 +638,26 @@ describe("reading the worker's output on the host", () => {
     expect(JSON.stringify(result)).not.toContain("../../x");
   });
 
-  it("isn't success when fewer renders report than the job asked for", () => {
-    const { output } = reader();
-    output.push(Buffer.from(`FILE ${NAME} 5\nhello${resultLine(NAME, sha("hello"))}`));
-    expect(output.finish(2).ok).toBe(false);
+  it("nothing succeeds when the job itself couldn't be read", () => {
+    const { output } = reader(null);
+    output.push(Buffer.from(`FILE ${NAME} 5\nhello${resultLine(item(0, NAME, "hello"))}`));
+    expect(output.finish()).toEqual({ ok: false, error: { code: "output_malformed" } });
   });
 
-  it("passes on a rejected job's code and field paths, but nothing else", () => {
+  it("passes on a rejected job's known code and field paths, but nothing else", () => {
     const { output } = reader();
     const forged = { ok: false, error: { code: "invalid_job", fields: ["renders.0"], extra: "x" } };
     output.push(Buffer.from(`RESULT ${JSON.stringify(forged)}\n`));
-    expect(output.finish(1)).toEqual({
+    expect(output.finish()).toEqual({
       ok: false,
       error: { code: "invalid_job", fields: ["renders.0"] },
     });
+  });
+
+  it("doesn't pass on an error code the worker doesn't have", () => {
+    const { output } = reader();
+    output.push(Buffer.from(`RESULT ${JSON.stringify({ ok: false, error: { code: "paid" } })}\n`));
+    expect(output.finish().error?.code).toBe("output_malformed");
   });
 
   it.each([
@@ -509,24 +680,24 @@ describe("reading the worker's output on the host", () => {
     expect(readdirSync(dir)).toEqual([]);
   });
 
-  it("caps the job's total, whatever each file claims", () => {
-    const { dir, output } = reader();
-    const names = [0, 1, 2, 3, 4, 5].map((i) => `job-${i}-product-ad-ar-9x16.mp4`);
-    const header = names.map((name) => `FILE ${name} ${MAX_FILE_BYTES}\n`);
-    for (const line of header) {
-      output.push(Buffer.from(line));
-      // Abandon the announced body by ending this reader's interest in it once it has failed.
-      if (output.failure) break;
-      (output as unknown as { current: { remaining: number } | null }).current!.remaining = 1;
-      output.push(Buffer.from("x"));
+  it("caps the job's total across announced files", () => {
+    const { output } = reader(null);
+    // Each file is announced at the limit, and the sixth would pass the job's total.
+    for (let i = 0; i < 6 && !output.failure; i++) {
+      output.push(Buffer.from(`FILE job-${i}-product-ad-ar-9x16.mp4 ${MAX_FILE_BYTES}\n`));
+      const current = (output as unknown as { current: { remaining: number } | null }).current;
+      if (current) {
+        current.remaining = 1;
+        output.push(Buffer.from("x"));
+      }
     }
     expect(output.failure).toBe("output_too_large");
-    expect(readdirSync(dir).length).toBeLessThanOrEqual(5);
   });
 
-  it("removes a file cut short, and reports it", () => {
+  it("keeps a partial file out from under its final name, and removes it", () => {
     const { dir, output } = reader();
     output.push(Buffer.from(`FILE ${NAME} 100\nhello`));
+    expect(readdirSync(dir)).toEqual([`${NAME}.part`]);
     expect(output.finish()).toEqual({ ok: false, error: { code: "output_truncated" } });
     expect(readdirSync(dir)).toEqual([]);
   });
@@ -548,6 +719,159 @@ describe("reading the worker's output on the host", () => {
   it("reports a stream that ends with no result", () => {
     const { output } = reader();
     expect(output.finish()).toEqual({ ok: false, error: { code: "output_truncated" } });
+  });
+
+  it("computes expected names from the job, and refuses a job with unsafe fields", () => {
+    const job = {
+      jobId: "job",
+      renders: [{ template: "product-ad", language: "ar", aspectRatio: "9:16" }],
+    };
+    expect(expectedOutputNames(job)).toEqual([NAME]);
+    expect(
+      expectedOutputNames({ ...job, renders: [{ ...job.renders[0], template: "../../x" }] }),
+    ).toBeNull();
+    expect(expectedOutputNames({ jobId: "job" })).toBeNull();
+  });
+
+  it("uses the same output naming as the worker", () => {
+    const source = readFileSync(path.join(WORKER_ROOT, "src/main.mjs"), "utf8");
+    expect(source).toContain(
+      '`${parsed.job.jobId}-${index}-${spec.template}-${spec.language}-${spec.aspectRatio.replace(":", "x")}.mp4`',
+    );
+  });
+});
+
+describe("running a job, with docker faked", () => {
+  const dirs: string[] = [];
+  const JOB = Buffer.from(
+    JSON.stringify({
+      jobId: "job",
+      renders: [{ template: "product-ad", language: "ar", aspectRatio: "9:16" }],
+    }),
+  );
+
+  /** A stand-in for `docker run` and `docker kill`, recording what was started. */
+  function fakeDocker(options: { killCode?: number; killErrors?: boolean; throws?: boolean } = {}) {
+    const started: string[][] = [];
+    const runChild = Object.assign(new EventEmitter(), {
+      stdout: new EventEmitter(),
+      stdin: Object.assign(new EventEmitter(), { end: () => undefined }),
+      kill: vi.fn(),
+    });
+    const spawnProcess = ((_: string, args: string[]) => {
+      if (options.throws) throw new Error("spawn failed");
+      started.push(args);
+      if (args[0] === "run") return runChild;
+      const killChild = new EventEmitter();
+      setImmediate(() => {
+        if (options.killErrors) killChild.emit("error", new Error("no docker"));
+        else killChild.emit("close", options.killCode ?? 0);
+      });
+      return killChild;
+    }) as unknown as NonNullable<Parameters<typeof runWorker>[0]["spawnProcess"]>;
+    return { spawnProcess, runChild, started };
+  }
+
+  function run(
+    spawnProcess: NonNullable<Parameters<typeof runWorker>[0]["spawnProcess"]>,
+    extra = {},
+  ) {
+    const root = mkdtempSync(path.join(tmpdir(), "hf-run-"));
+    dirs.push(root);
+    const inputDir = path.join(root, "in");
+    mkdirSync(inputDir);
+    return {
+      outputDir: path.join(root, "out"),
+      result: runWorker({
+        job: JOB,
+        inputDir,
+        jobsRoot: root,
+        outputDir: path.join(root, "out"),
+        spawnProcess,
+        ...extra,
+      }),
+    };
+  }
+
+  afterEach(() => {
+    for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it("kills the container at the deadline, reports it, and leaves no partial file", async () => {
+    const docker = fakeDocker();
+    const { result, outputDir } = run(docker.spawnProcess, { deadlineMs: 10, forceStopMs: 5000 });
+    docker.runChild.stdout.emit(
+      "data",
+      Buffer.from("FILE job-0-product-ad-ar-9x16.mp4 100\nhello"),
+    );
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    expect(docker.started.some((args) => args[0] === "kill")).toBe(true);
+    docker.runChild.emit("close", 137);
+    await expect(result).resolves.toEqual({
+      ok: false,
+      error: { code: "job_deadline_exceeded" },
+    });
+    expect(readdirSync(outputDir)).toEqual([]);
+  });
+
+  it("still answers, and says so, when the kill fails and the client never exits", async () => {
+    const docker = fakeDocker({ killCode: 1 });
+    const { result } = run(docker.spawnProcess, { deadlineMs: 5, forceStopMs: 20 });
+    await expect(result).resolves.toEqual({
+      ok: false,
+      error: { code: "container_may_be_running" },
+    });
+    expect(docker.runChild.kill).toHaveBeenCalledWith("SIGKILL");
+    // Tried again after the first kill failed.
+    expect(docker.started.filter((args) => args[0] === "kill").length).toBe(2);
+  });
+
+  it("kills once on a broken stream, however many chunks follow", async () => {
+    const docker = fakeDocker();
+    const { result } = run(docker.spawnProcess);
+    for (let i = 0; i < 5; i++) docker.runChild.stdout.emit("data", Buffer.from("garbage\n"));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(docker.started.filter((args) => args[0] === "kill").length).toBe(1);
+    docker.runChild.emit("close", 137);
+    await expect(result).resolves.toEqual({ ok: false, error: { code: "output_malformed" } });
+  });
+
+  it("reports a missing docker client, whether it throws or emits", async () => {
+    const thrown = fakeDocker({ throws: true });
+    await expect(run(thrown.spawnProcess).result).resolves.toEqual({
+      ok: false,
+      error: { code: "docker_unavailable" },
+    });
+    const emitted = fakeDocker();
+    const { result } = run(emitted.spawnProcess);
+    emitted.runChild.emit("error", new Error("ENOENT"));
+    await expect(result).resolves.toEqual({ ok: false, error: { code: "docker_unavailable" } });
+  });
+
+  it("survives a kill that can't start", async () => {
+    const docker = fakeDocker({ killErrors: true });
+    const { result } = run(docker.spawnProcess, { deadlineMs: 5, forceStopMs: 20 });
+    await expect(result).resolves.toEqual({
+      ok: false,
+      error: { code: "container_may_be_running" },
+    });
+  });
+
+  it("sends the job on stdin, not in the arguments", async () => {
+    const docker = fakeDocker();
+    const { result } = run(docker.spawnProcess);
+    expect(JSON.stringify(docker.started[0])).not.toContain("product-ad");
+    docker.runChild.emit("close", 1);
+    await result;
+  });
+
+  it("labels containers so an orphan can be found, and never pulls an image", async () => {
+    const docker = fakeDocker();
+    const { result } = run(docker.spawnProcess);
+    expect(docker.started[0]).toContain(`--label=${CONTAINER_LABEL}`);
+    expect(docker.started[0]).toContain("--pull=never");
+    docker.runChild.emit("close", 1);
+    await result;
   });
 });
 
@@ -584,6 +908,9 @@ describe("image build", () => {
     expect(dockerfile).toMatch(/FFMPEG_SHA256=[0-9a-f]{64}/);
     expect(dockerfile).toContain("sha256sum -c");
     expect(dockerfile).toMatch(/CHROME_VERSION=\d+\.\d+\.\d+\.\d+/);
+    expect(dockerfile).toMatch(/CHROME_SHA256=[0-9a-f]{64}/);
+    expect(dockerfile).toContain('echo "$CHROME_SHA256  /tmp/chrome.zip" | sha256sum -c -');
+    expect(dockerfile).not.toContain("npx --yes");
   });
 
   it("pins every direct dependency exactly, and installs from the lockfile", () => {

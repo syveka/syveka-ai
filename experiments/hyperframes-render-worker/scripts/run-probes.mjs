@@ -1,6 +1,6 @@
 /**
  * Runs container-probes.mjs inside the image, under the same flags as a real render.
- * Usage: node scripts/run-probes.mjs <emptyInputDir>
+ * Usage: RENDER_JOBS_ROOT=<dir> node scripts/run-probes.mjs <emptyInputDir>
  */
 import { spawnSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
@@ -23,5 +23,6 @@ args.splice(
   IMAGE,
   "/probes/container-probes.mjs",
 );
-const run = spawnSync("docker", args, { stdio: "inherit" });
+// A stuck probe run must not hold a CI runner, or a terminal, forever.
+const run = spawnSync("docker", args, { stdio: "inherit", timeout: 10 * 60 * 1000 });
 process.exit(run.status ?? 1);
