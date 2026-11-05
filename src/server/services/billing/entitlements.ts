@@ -180,8 +180,10 @@ export async function recordUsage(
   quantity: number,
   metadata: Record<string, unknown> = {},
   db: Prisma.TransactionClient = unscopedPrisma,
+  /** When the usage happened, if not now: late news still counts in its own month. */
+  occurredAt: Date = new Date(),
 ): Promise<void> {
-  const periodStart = new Date();
+  const periodStart = new Date(occurredAt);
   periodStart.setUTCHours(0, 0, 0, 0);
   await db.usageRecord.create({
     data: {
