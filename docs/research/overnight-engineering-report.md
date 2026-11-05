@@ -1,5 +1,9 @@
 # Overnight engineering report: render worker and Fish Audio
 
+> **Superseded in part.** The owner's decisions of 2026-11-05 came after this report. See
+> [creator-studio-merge-readiness.md](creator-studio-merge-readiness.md) for current state, and for how the
+> later security review changed the render worker's status.
+
 For the owner and engineers reviewing this work. Covers the session of 2026-11-05. Everything is on
 draft branches: nothing was merged or deployed, and no production system, paid API or customer data
 was touched.
@@ -24,8 +28,9 @@ was touched.
   listing afterward. I fixed the cause with `--ulimit=core=1`, and there were no dumps after that.
 - **Still open.** **C: fell as low as 0.3 GB and had about 1.5 GB free at the end,** less than the
   3.3 GB when I started. About 2 GB is Docker's disk growing during my first image build, which doesn't
-  shrink without compaction. A further temporary drop of about 2 GB has no cause I could find: it wasn't
-  Docker's disk file, crash dumps or the caches I checked. **C: needs space freed by you.**
+  shrink without compaction. A further temporary swing of
+  about 2 GB is probably the Windows pagefile, which #398 measured growing from 23,432 to 25,497 MB in
+  the same period, though that link is unproven. **C: needs space freed by you.**
 
 The lesson is in [the architecture document](../architecture/creator-studio-render-worker.md), on the
 render-worker branch: a limit on a container doesn't bound what the host writes on its behalf.
@@ -77,8 +82,8 @@ green CI shows that those were environmental for that branch.
 
 **#401 gets no CI,** because `ci.yml` targets `main` and #401 targets #395's branch. Its full-suite
 result is local only (25 failures in 10 files, none in the pilot's test file), and its production build
-could not run on this drive. #395 itself is green. Retarget #401 after #395, or merge it into #395's
-branch, to get CI on the combined code.
+could not run on this drive. #398 finds and fixes test-side causes of such Windows failures on `main`, so
+that result should be read alongside it. By owner decision #401 stays a draft, and #395 isn't merged.
 
 | Check                                                       | Result                                       |
 | ----------------------------------------------------------- | -------------------------------------------- |
@@ -111,19 +116,21 @@ template render costs about $0.002–$0.004 in compute against $0.42–$0.84 for
 
 ## Blockers
 
-| Blocked                                                              | Needs                                           |
-| -------------------------------------------------------------------- | ----------------------------------------------- |
-| Real Fish audio, latency and quality                                 | Your approval for a key, on synthetic text only |
-| Real speech recognition in the pilot                                 | A paid or approved provider                     |
-| Real Kling footage in a template                                     | Approval for paid calls                         |
-| GDPR clearance of Fish                                               | Written answers from Fish                       |
-| Legal questions (GSAP, FFmpeg GPL, fal terms, HyperFrames packaging) | Counsel                                         |
-| Native-speaker quality review                                        | FI and AR reviewers                             |
+| Blocked                                                              | Needs                                                                          |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
+| Real Fish audio, latency and quality                                 | **Parked by owner decision: no paid evaluation**                               |
+| Real speech recognition in the pilot                                 | A paid or approved provider                                                    |
+| Real Kling footage in a template                                     | **Parked by owner decision: no paid calls for now**                            |
+| GDPR clearance of Fish                                               | Written answers from Fish, if the owner sends `fish-audio-vendor-questions.md` |
+| Legal questions (GSAP, FFmpeg GPL, fal terms, HyperFrames packaging) | Counsel                                                                        |
+| Native-speaker quality review                                        | FI and AR reviewers                                                            |
 
 ## Remaining work
 
-Each document lists its own. The largest: running on real Linux infrastructure, real footage, a real
-+358 baseline call, and deciding whether templates deserve a product surface at all.
+Each document lists its own. The largest: running on real Linux infrastructure, real footage, and deciding
+whether templates deserve a product surface at all. A real +358 baseline call needs more than approval:
+#399 lists owner signature, an internal Phase 0, counsel before Phase 1, and Twilio documents, and #397 covers
+the AI notice obligations.
 
 ## Cleanup you can do
 
