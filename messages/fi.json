@@ -638,6 +638,13 @@
     "persona": "Persoona",
     "tools": "Kyvyt",
     "toolsDescription": "Mitä avustaja saa tehdä puhelun aikana. Tietoja muokkaavat toimet vaativat aina soittajan vahvistuksen.",
+    "recording": {
+      "title": "Puheluiden tallennus",
+      "description": "Asetus lähetetään puhepalvelulle aina, kun avustaja tallennetaan. Uusilla avustajilla tallennus on aluksi pois päältä.",
+      "off": "Pois päältä: puhelun ääntä ei tallenneta",
+      "on": "Päällä: puhepalvelu tallentaa puhelun äänen",
+      "keep": "Ei asetettu täällä: puhepalvelun oma asetus on voimassa"
+    },
     "useKb": "Vastaa tietopankin pohjalta",
     "firstMessagePlaceholder": "Hei! Tavoitit [yrityksen]. Kuinka voin auttaa?",
     "systemPromptPlaceholder": "Vastaat yrityksen [yritys] puheluihin. Ole ystävällinen ja ytimekäs…",

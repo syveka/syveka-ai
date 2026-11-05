@@ -19,6 +19,7 @@ import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
 import {
   allowedVoiceTools,
+  recordingEnabledFor,
   type VoiceAssistantInput,
   type AttachPhoneNumberInput,
 } from "@/lib/validators/voice";
@@ -70,6 +71,7 @@ export async function upsertAssistant(
     enabledTools: input.enabledTools,
     useKnowledgeBase: input.useKnowledgeBase,
     transferNumber: input.transferNumber || null,
+    ...withRecording(recordingEnabledFor(input.recording, !assistantId)),
   };
 
   const assistant = assistantId
@@ -85,9 +87,18 @@ export async function upsertAssistant(
     action: assistantId ? "voice_assistant.update" : "voice_assistant.create",
     resourceType: "voice_assistant",
     resourceId: assistant.id,
-    after: { name: input.name, language: input.language },
+    after: {
+      name: input.name,
+      language: input.language,
+      recordingEnabled: assistant.recordingEnabled,
+    },
   });
   return assistant;
+}
+
+/** Leaves the stored choice alone when there's nothing to change. */
+function withRecording(recordingEnabled: boolean | undefined) {
+  return recordingEnabled === undefined ? {} : { recordingEnabled };
 }
 
 export type ActivateAssistantResult = {
@@ -321,6 +332,9 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
   });
 
   const toolNames = allowedVoiceTools(assistant.enabledTools);
+  // Never chosen here: an assistant already in Vapi keeps its dashboard choice, but a new one
+  // (including one re-created after deactivation) has none to keep, and Vapi's default records.
+  const recordingEnabled = assistant.recordingEnabled ?? (assistant.vapiAssistantId ? null : false);
 
   // Mandatory AI disclosure (§13.3, §16.5): the fixed notice is spoken in the first message
   // (buildVoiceFirstMessage); the prompt keeps the model honest about it for the rest of the call.
@@ -351,13 +365,17 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
     tools: vapiToolsFor(toolNames),
     transferNumber: assistant.transferNumber,
     maxDurationSeconds: 15 * 60, // §16.5
+    recordingEnabled,
   };
 
   const { id } = await upsertVapiAssistant(config, assistant.vapiAssistantId);
-  if (id !== assistant.vapiAssistantId) {
+  if (
+    id !== assistant.vapiAssistantId ||
+    recordingEnabled !== (assistant.recordingEnabled ?? null)
+  ) {
     await unscopedPrisma.voiceAssistant.update({
       where: { id: assistantId },
-      data: { vapiAssistantId: id },
+      data: { vapiAssistantId: id, recordingEnabled },
     });
   }
   return id;

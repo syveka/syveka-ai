@@ -74,11 +74,12 @@ describe("vapiFetch — request timeout", () => {
 });
 
 /**
- * Syveka has no recording setting, so a sync must leave Vapi's recording choice alone. The
- * fake below applies each PATCH the way Vapi documents an update of the fields it names, and
- * can't show how real Vapi treats an omitted field: that needs a read-only check on staging.
+ * Without a choice made in Syveka, a sync must leave Vapi's recording setting alone, and with
+ * one, it must send it every time. The fake below applies each PATCH the way Vapi documents an
+ * update of the fields it names, and can't show how real Vapi treats an omitted field, or
+ * whether it replaces the rest of artifactPlan: that needs a check on staging.
  */
-describe("upsertVapiAssistant — a sync leaves the recording choice alone", () => {
+describe("upsertVapiAssistant — recording follows the choice made in Syveka", () => {
   const cfg = {
     name: "Reception",
     firstMessage: "Notice. Hei!",
@@ -141,7 +142,35 @@ describe("upsertVapiAssistant — a sync leaves the recording choice alone", () 
     expect(body).not.toHaveProperty("recordingEnabled");
   });
 
-  it("a new assistant sends no recording field either, so Vapi's default applies", async () => {
+  it("keeps an explicit choice through repeated syncs, over a dashboard edit", async () => {
+    const { upsertVapiAssistant } = await import("@/server/integrations/vapi");
+    let held: Record<string, unknown> = { id: "va-3", artifactPlan: { recordingEnabled: true } };
+    const fetchMock = vi.mocked(global.fetch);
+    fetchMock.mockImplementation(async (_url, init) => {
+      held = { ...held, ...(JSON.parse(String(init?.body)) as Record<string, unknown>) };
+      return json(held);
+    });
+
+    await upsertVapiAssistant({ ...cfg, recordingEnabled: false }, "va-3");
+    held = { ...held, artifactPlan: { recordingEnabled: true } };
+    await upsertVapiAssistant({ ...cfg, recordingEnabled: false }, "va-3");
+
+    expect(held.artifactPlan).toEqual({ recordingEnabled: false });
+  });
+
+  it("a new assistant with recording off says so, since Vapi's default records", async () => {
+    const { upsertVapiAssistant } = await import("@/server/integrations/vapi");
+    const fetchMock = vi.mocked(global.fetch);
+    fetchMock.mockResolvedValueOnce(json({ id: "va-new" }));
+
+    await upsertVapiAssistant({ ...cfg, recordingEnabled: false });
+
+    expect(fetchMock.mock.calls[0]![1]?.method).toBe("POST");
+    const body = JSON.parse(String(fetchMock.mock.calls[0]![1]?.body));
+    expect(body.artifactPlan).toEqual({ recordingEnabled: false });
+  });
+
+  it("a payload without a choice sends no recording field", async () => {
     const { upsertVapiAssistant } = await import("@/server/integrations/vapi");
     const fetchMock = vi.mocked(global.fetch);
     fetchMock.mockResolvedValueOnce(json({ id: "va-new" }));

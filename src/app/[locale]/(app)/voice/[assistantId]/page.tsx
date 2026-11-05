@@ -12,7 +12,7 @@ import { formatCount, PLAN_NAMES } from "@/components/billing/plan-display";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Link } from "@/i18n/routing";
-import type { VoiceAssistantInput } from "@/lib/validators/voice";
+import { recordingChoice, type VoiceAssistantInput } from "@/lib/validators/voice";
 
 export default async function AssistantPage({
   params,
@@ -85,6 +85,7 @@ export default async function AssistantPage({
     enabledTools: (assistant.enabledTools as VoiceAssistantInput["enabledTools"]) ?? [],
     useKnowledgeBase: assistant.useKnowledgeBase,
     transferNumber: assistant.transferNumber ?? "",
+    recording: recordingChoice(assistant.recordingEnabled),
   };
 
   // The panel mustn't take the form down with it: saving is the remedy it often suggests.

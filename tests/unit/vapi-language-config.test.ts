@@ -117,10 +117,19 @@ describe("toVapiPayload — per-language transcriber/voice selection", () => {
 
 describe("toVapiPayload — call recording", () => {
   // Syveka has no recording setting, so it must not override a choice made in Vapi.
-  it("doesn't set recording, in the documented field or the old top-level one", () => {
-    const payload = toVapiPayload(baseConfig()) as Record<string, unknown>;
+  it.each([undefined, null])("doesn't set recording when none was chosen (%s)", (choice) => {
+    const config = baseConfig({ recordingEnabled: choice });
+    const payload: Record<string, unknown> = toVapiPayload(config);
 
     expect(payload).not.toHaveProperty("artifactPlan");
+    expect(payload).not.toHaveProperty("recordingEnabled");
+  });
+
+  it.each([false, true])("sends a choice in the documented field (%s)", (choice) => {
+    const config = baseConfig({ recordingEnabled: choice });
+    const payload: Record<string, unknown> = toVapiPayload(config);
+
+    expect(payload.artifactPlan).toEqual({ recordingEnabled: choice });
     expect(payload).not.toHaveProperty("recordingEnabled");
   });
 });

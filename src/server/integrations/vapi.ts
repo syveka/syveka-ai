@@ -91,6 +91,11 @@ export type VapiAssistantConfig = {
   /** Human-provided E.164 destination for Vapi's built-in transferCall tool. */
   transferNumber: string | null;
   maxDurationSeconds: number;
+  /**
+   * The owner's recording choice. Null means none was made in Syveka, which is how assistants
+   * created before this setting stay: their recording is left as set in Vapi.
+   */
+  recordingEnabled?: boolean | null;
 };
 
 /**
@@ -178,10 +183,13 @@ export function toVapiPayload(cfg: VapiAssistantConfig) {
     // Refusing a call relies on Live Call Control, so a sync restores it if it was changed.
     monitorPlan: { controlEnabled: true, controlAuthenticationEnabled: false },
     maxDurationSeconds: cfg.maxDurationSeconds,
-    // Recording isn't set here. Syveka has no recording setting of its own, so a sync must not
-    // override a choice made in Vapi's dashboard. Left unset on a new assistant, Vapi's default
-    // applies. Whether calls are recorded is a pending legal decision, and the spoken notice
-    // doesn't depend on it.
+    // Sent only once the owner has chosen, so a sync doesn't override a choice made in Vapi's
+    // dashboard for an assistant that predates this setting. Vapi's own default for a new
+    // assistant records, so Syveka creates assistants with an explicit choice, off by default
+    // (services/voice.ts). The spoken notice doesn't depend on it.
+    ...(typeof cfg.recordingEnabled === "boolean"
+      ? { artifactPlan: { recordingEnabled: cfg.recordingEnabled } }
+      : {}),
   };
 }
 

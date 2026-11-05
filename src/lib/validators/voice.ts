@@ -13,6 +13,9 @@ export const VOICE_TOOL_NAMES = [
   "bookMeeting",
 ] as const;
 
+export const VOICE_RECORDING_CHOICES = ["off", "on", "keep"] as const;
+export type VoiceRecordingChoice = (typeof VOICE_RECORDING_CHOICES)[number];
+
 /** Strict E.164: + then 1-15 digits, first digit 1-9 (ITU-T E.164 §6.1). */
 const e164 = z.string().regex(/^\+[1-9]\d{1,14}$/, "invalid_e164");
 const optionalFormattedE164 = z
@@ -34,9 +37,28 @@ export const voiceAssistantSchema = z.object({
   // Accept the human-friendly format the UI historically suggested, but
   // persist and send only canonical E.164 to Vapi's transferCall tool.
   transferNumber: optionalFormattedE164.optional(),
+  // "keep" leaves an assistant's recording as it is: for one made before this setting, that
+  // means as set in Vapi. A new assistant has no such setting, so "keep" or nothing means off.
+  recording: z.enum(VOICE_RECORDING_CHOICES).optional(),
 });
 
 export type VoiceAssistantInput = z.infer<typeof voiceAssistantSchema>;
+
+/** What the stored value means in the settings form. Null: never chosen in Syveka. */
+export function recordingChoice(recordingEnabled: boolean | null): VoiceRecordingChoice {
+  if (recordingEnabled === null) return "keep";
+  return recordingEnabled ? "on" : "off";
+}
+
+/** What to store for a choice. Undefined: leave the stored value alone. */
+export function recordingEnabledFor(
+  choice: VoiceRecordingChoice | undefined,
+  isNew: boolean,
+): boolean | undefined {
+  if (choice === "on") return true;
+  if (choice === "off") return false;
+  return isNew ? false : undefined;
+}
 
 /**
  * The tools a stored assistant may actually run: what is offered to Vapi and what the
