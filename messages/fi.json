@@ -697,6 +697,54 @@
         "invalidInput": "Tarkista puhelinnumeron muoto (E.164, esim. +358401234567) ja pakolliset kentät.",
         "generic": "Jokin meni pieleen. Yritä uudelleen."
       }
+    },
+    "readiness": {
+      "title": "Puheluvalmius",
+      "summaryReady": "Asetuksissa ei löytynyt ongelmia. Tämä ei kerro, miltä oikea puhelu kuulostaa.",
+      "summaryBlocked": "Tämä avustaja ei voi vielä vastata puheluihin. Tarvitaan seuraavaa.",
+      "noticeLabel": "Soittaja kuulee tämän ensin",
+      "noticeApproved": "Hyväksytty",
+      "noticeAwaiting": "Luonnos, odottaa hyväksyntää",
+      "voiceNotSetUp": {
+        "title": "Puheluita ei ole vielä otettu käyttöön",
+        "action": "Ota yhteyttä Syvekan tukeen käyttöönoton viimeistelemiseksi."
+      },
+      "noticeAwaitingApproval": {
+        "title": "Puhuttu tekoälyilmoitus odottaa hyväksyntää",
+        "action": "Puhelut pysyvät estettyinä, kunnes Syveka hyväksyy ilmoituksen tällä kielellä. Sinun ei tarvitse tehdä mitään."
+      },
+      "notSynced": {
+        "title": "Tätä avustajaa ei ole vielä yhdistetty",
+        "action": "Yhdistä se valitsemalla Aktivoi."
+      },
+      "syncOutdated": {
+        "title": "Yhdistetyt asetukset ovat vanhentuneet",
+        "action": "Tallenna tämä avustaja, niin sen nykyiset asetukset ja ilmoitus lähetetään."
+      },
+      "syncUnverifiable": {
+        "title": "Yhteyttä ei voitu tarkistaa",
+        "action": "Lataa sivu hetken kuluttua uudelleen. Jos ongelma jatkuu, ota yhteyttä Syvekan tukeen."
+      },
+      "noPhoneNumber": {
+        "title": "Puhelinnumeroa ei ole liitetty",
+        "action": "Liitä puhelinnumero tällä sivulla."
+      },
+      "inactive": {
+        "title": "Tämä avustaja on pois päältä",
+        "action": "Kytke se päälle valitsemalla Aktivoi."
+      },
+      "noMinutes": {
+        "title": "Tilaukseesi ei sisälly puheminuutteja",
+        "action": "Tarkista tilauksesi laskutusasetuksista."
+      },
+      "minutesUsed": {
+        "title": "Tämän kuun puheminuutit on käytetty",
+        "action": "Tarkista käyttö ja tilaus laskutusasetuksista."
+      },
+      "readOnly": {
+        "title": "Tämä työtila on vain luku -tilassa",
+        "action": "Selvitä maksuasia laskutusasetuksissa."
+      }
     }
   },
   "calendar": {

@@ -5,7 +5,9 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { tenantDb } from "@/server/db/tenant";
 import { getEntitlements } from "@/server/services/billing/entitlements";
+import { getAssistantReadiness } from "@/server/voice/assistant-readiness";
 import { AssistantForm } from "@/components/voice/assistant-form";
+import { AssistantReadinessPanel } from "@/components/voice/assistant-readiness-panel";
 import { formatCount, PLAN_NAMES } from "@/components/billing/plan-display";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -85,5 +87,30 @@ export default async function AssistantPage({
     transferNumber: assistant.transferNumber ?? "",
   };
 
-  return <AssistantForm initial={initial} />;
+  const [ent, t] = await Promise.all([
+    getEntitlements(ctx.orgId),
+    getTranslations("voice.readiness"),
+  ]);
+  const readiness = await getAssistantReadiness(ctx.orgId, assistant, ent);
+
+  return (
+    <div className="space-y-6">
+      <AssistantReadinessPanel
+        text={{
+          title: t("title"),
+          summary: readiness.blockers.length > 0 ? t("summaryBlocked") : t("summaryReady"),
+          items: readiness.blockers.map((blocker) => ({
+            key: blocker,
+            title: t(`${blocker}.title`),
+            action: t(`${blocker}.action`),
+          })),
+          noticeLabel: t("noticeLabel"),
+          notice: readiness.notice,
+          noticeStatus: readiness.noticeApproved ? t("noticeApproved") : t("noticeAwaiting"),
+          noticeApproved: readiness.noticeApproved,
+        }}
+      />
+      <AssistantForm initial={initial} />
+    </div>
+  );
 }

@@ -164,7 +164,15 @@ describe("what the panel reports", () => {
     ["the plan has no minutes", "noMinutes", () => (state.ent.voiceMinutesMonth = 0)],
     ["the minutes are used", "minutesUsed", () => (state.billable = 500)],
     ["the workspace is read-only", "readOnly", () => (state.ent.readOnly = true)],
-    ["voice isn't set up", "voiceNotSetUp", () => vi.stubEnv("VAPI_API_KEY", "")],
+    [
+      "voice isn't set up",
+      "voiceNotSetUp",
+      () => {
+        // The test setup skips environment validation, which would hide a missing key.
+        vi.stubEnv("SKIP_ENV_VALIDATION", "");
+        vi.stubEnv("VAPI_API_KEY", "");
+      },
+    ],
   ])("names the problem and the action when %s", async (_name, key, arrange) => {
     arrange();
     const html = decode(await render());

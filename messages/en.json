@@ -697,6 +697,54 @@
         "invalidInput": "Check the phone number format (E.164, e.g. +358401234567) and required fields.",
         "generic": "Something went wrong. Please try again."
       }
+    },
+    "readiness": {
+      "title": "Call readiness",
+      "summaryReady": "No setup problems found. This can't confirm how a real call sounds.",
+      "summaryBlocked": "This assistant can't take calls yet. Here is what's needed.",
+      "noticeLabel": "Callers hear this first",
+      "noticeApproved": "Approved",
+      "noticeAwaiting": "Draft, awaiting approval",
+      "voiceNotSetUp": {
+        "title": "Phone calls aren't set up yet",
+        "action": "Contact Syveka support to finish the setup."
+      },
+      "noticeAwaitingApproval": {
+        "title": "The spoken AI notice is awaiting approval",
+        "action": "Calls stay blocked until Syveka approves the notice in this language. You don't need to do anything."
+      },
+      "notSynced": {
+        "title": "This assistant isn't connected yet",
+        "action": "Select Activate to connect it."
+      },
+      "syncOutdated": {
+        "title": "The connected settings are out of date",
+        "action": "Save this assistant to send its current settings and notice."
+      },
+      "syncUnverifiable": {
+        "title": "The connection couldn't be checked",
+        "action": "Reload this page in a moment. If this continues, contact Syveka support."
+      },
+      "noPhoneNumber": {
+        "title": "No phone number is attached",
+        "action": "Attach a phone number on this page."
+      },
+      "inactive": {
+        "title": "This assistant is switched off",
+        "action": "Select Activate to switch it on."
+      },
+      "noMinutes": {
+        "title": "Your plan has no voice minutes",
+        "action": "Check your plan in billing settings."
+      },
+      "minutesUsed": {
+        "title": "This month's voice minutes are used",
+        "action": "Check your usage and plan in billing settings."
+      },
+      "readOnly": {
+        "title": "This workspace is read-only",
+        "action": "Resolve the payment issue in billing settings."
+      }
     }
   },
   "calendar": {
