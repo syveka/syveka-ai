@@ -18,6 +18,11 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * Redis server in tests/integration/voice-conversation-redis.test.ts. This
  * file is not a real Redis.
  */
+// The routes import their modules on the first request, which can take over the default
+// 5 s on a busy machine. A timed-out test keeps running and corrupts the next ones through
+// the shared mocks and inFlight, so one slow import used to look like a replay failure.
+vi.setConfig({ testTimeout: 60_000 });
+
 const ORG = "11111111-1111-4111-8111-111111111111";
 const USER = "22222222-2222-4222-8222-222222222222";
 const OTHER_ORG = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -421,7 +426,8 @@ describe("live voice: one accepted turn → at most one paid generation", () => 
   it("a replayed grant cannot create another generation", async () => {
     const s = await start(CONV);
     const t = await turn(s.body.data.sessionId);
-    await chat({ message: t.body.data.text, voiceGrant: t.body.data.grant });
+    const first = await chat({ message: t.body.data.text, voiceGrant: t.body.data.grant });
+    expect(first.status).toBe(200);
     const replay = await chat({ message: t.body.data.text, voiceGrant: t.body.data.grant });
     expect(replay.status).toBe(409);
     expect(replay.text).toContain("voice_turn_invalid");
