@@ -36,6 +36,7 @@ const expectedOrder = [
   "20260910233000_creator_generation_idempotency_key",
   "20260914000000_entitlement_grants",
   "20261014000000_secure_prisma_migrations_table",
+  "20261106000000_voice_assistant_recording_enabled",
 ];
 
 // These eight migrations were published before the staging-release branch.
