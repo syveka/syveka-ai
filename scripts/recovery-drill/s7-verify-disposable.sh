@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Recovery drill §7 (docs/recovery-drill-checklist.md): on the disposable
-# project that s6-restore-disposable.sh restored, apply the one pending
-# migration with the real `prisma migrate deploy`, then verify the migration
+# project that s6-restore-disposable.sh restored, apply the pending
+# migrations with the real `prisma migrate deploy`, then verify the migration
 # history, tests/staging/release-invariants.sql, the three RLS suites (through
 # the unchanged scripts/ci/run-rls-check.sh, exactly as staging-release.yml runs
 # them) and tests/integration/tenant-relationship-integrity.sql.
@@ -25,8 +25,8 @@
 #   * every captured output is masked (user, host, password) before it is kept.
 #
 # What it changes on the destination (all separately authorized at run time):
-#   * `prisma migrate deploy`: applies 20261014000000_secure_prisma_migrations_table
-#     and records it in _prisma_migrations, as Prisma does. Never applied by hand.
+#   * `prisma migrate deploy`: applies the migrations in expected-pending-migrations.txt
+#     and records them in _prisma_migrations, as Prisma does. Never applied by hand.
 #   * the RLS suites create an ephemeral role and fixtures and remove them.
 # The destination already holds the §6 restore, so ANY failure after the
 # destination guard leaves data behind: the script prints
@@ -34,7 +34,7 @@
 # nothing. A failed migration stays recorded as failed; it is not resolved,
 # rolled back or retried here (that needs its own authorization).
 #
-# Repeat runs: if the migration is already recorded as finished, migrate
+# Repeat runs: if the migrations are already recorded as finished, migrate
 # deploy is not run again and only the verification stages run. A recorded
 # but failed or rolled-back attempt stops the script.
 set -uo pipefail
@@ -49,7 +49,7 @@ REPO=$(cd "$HERE/../.." && pwd)
 CLIENT_IMG=postgres:17
 EXPECT_DB=postgres
 EXPECT_TARGET_VERSION_PREFIX=17.11          # syveka-recovery-drill-2026-10-17 (production is 17.6)
-EXPECT_PENDING=20261014000000_secure_prisma_migrations_table
+EXPECT_PENDING=$(expected_pending_migrations "$HERE/expected-pending-migrations.txt" | tr '\n' ' ' | sed 's/ $//')
 ROWCOUNTS_SQL="$HERE/rowcounts.sql"
 INVARIANTS_SQL=tests/staging/release-invariants.sql
 INTEGRITY_SQL=tests/integration/tenant-relationship-integrity.sql
@@ -210,8 +210,8 @@ history_state() {  # prints: <applied names file> state, one of PENDING | APPLIE
   UNFINISHED=$(psql_dest -At -c "select count(*) from public._prisma_migrations where finished_at is null or rolled_back_at is not null" 2> >(mask >> "$OUT/verify-stderr.txt")) || return 1
   PENDING=$(pending_migrations "$MIGRATIONS_DIR" "$OUT/migrations-applied-$1.txt" | tr '\n' ' ' | sed 's/ $//')
   if [ "$UNFINISHED" != 0 ]; then STATE=FAILED
+  elif [ -z "$PENDING" ] && [ -z "$(expected_pending_migrations "$HERE/expected-pending-migrations.txt" | comm -23 - <(sort "$OUT/migrations-applied-$1.txt"))" ]; then STATE=APPLIED
   elif [ "$PENDING" = "$EXPECT_PENDING" ]; then STATE=PENDING
-  elif [ -z "$PENDING" ] && grep -qx "$EXPECT_PENDING" "$OUT/migrations-applied-$1.txt"; then STATE=APPLIED
   else STATE=OTHER; fi
 }
 history_state before || stop "cannot read the migration history"
@@ -227,7 +227,7 @@ case "$STATE" in
     note "migrate_deploy_rc=$MIGRATE_RC finished=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
     [ "$MIGRATE_RC" -eq 0 ] || { tail -15 "$OUT/migrate-deploy.txt"; stop "prisma migrate deploy failed; the attempt stays recorded as Prisma left it (not resolved or retried here)"; }
     ;;
-  APPLIED) note "migrate_deploy=SKIPPED (repeat run: $EXPECT_PENDING is already recorded as finished)" ;;
+  APPLIED) note "migrate_deploy=SKIPPED (repeat run: ${EXPECT_PENDING:-nothing expected} already recorded as finished)" ;;
   FAILED) stop "the history has a failed or rolled-back migration; resolving it needs its own authorization" ;;
   *) stop "pending migrations '${PENDING:-none}' are not exactly '$EXPECT_PENDING'" ;;
 esac
@@ -271,7 +271,7 @@ INT_RC=${PIPESTATUS[0]}
 [ "$INT_RC" -eq 0 ] || { tail -15 "$OUT/tenant-integrity.txt"; stop "tenant relationship integrity failed (rc=$INT_RC)"; }
 note "tenant_integrity=PASS"
 
-# ---------------------------------------------------------------- 8. row counts unchanged (fixtures gone; only the migration row added)
+# ---------------------------------------------------------------- 8. row counts unchanged (fixtures gone; only the migration rows added)
 STAGE=verify-rowcounts
 psql_dest -At -F '|' -f "$ROWCOUNTS_SQL" > "$OUT/rowcounts-after.txt" 2> >(mask >> "$OUT/verify-stderr.txt") || stop "row counts failed after verification"
 diff <(grep '^rows|' "$OUT/rowcounts-before.txt" | grep -v '^rows|public\._prisma_migrations|' | sort) \

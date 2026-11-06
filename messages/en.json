@@ -638,6 +638,13 @@
     "persona": "Persona",
     "tools": "Capabilities",
     "toolsDescription": "What the assistant is allowed to do during calls. Actions that modify data always require caller confirmation.",
+    "recording": {
+      "title": "Call recording",
+      "description": "Your choice is sent to the voice provider whenever this assistant's settings are saved. New assistants start with recording off.",
+      "off": "Off: call audio isn't recorded",
+      "on": "On: the voice provider records call audio",
+      "keep": "Not set here: the voice provider's own setting applies"
+    },
     "useKb": "Answer from the knowledge base",
     "firstMessagePlaceholder": "Hello! You've reached [company]. How can I help?",
     "systemPromptPlaceholder": "You answer calls for [company]. Be friendly and concise…",

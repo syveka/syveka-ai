@@ -186,6 +186,31 @@ export function AssistantForm({
           </CardContent>
         </Card>
 
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{t("recording.title")}</CardTitle>
+            <CardDescription>{t("recording.description")}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Label htmlFor="recording" className="sr-only">
+              {t("recording.title")}
+            </Label>
+            <select
+              id="recording"
+              name="recording"
+              defaultValue={initial?.recording ?? "off"}
+              className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            >
+              <option value="off">{t("recording.off")}</option>
+              <option value="on">{t("recording.on")}</option>
+              {/* Only for an assistant whose recording was never chosen here. */}
+              {initial?.recording === "keep" ? (
+                <option value="keep">{t("recording.keep")}</option>
+              ) : null}
+            </select>
+          </CardContent>
+        </Card>
+
         {state.error ? (
           <div role="alert" className="space-y-2">
             <p className="text-sm text-destructive">

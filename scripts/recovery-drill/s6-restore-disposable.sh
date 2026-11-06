@@ -45,7 +45,7 @@ REPO=$(cd "$HERE/../.." && pwd)
 CLIENT_IMG=postgres:17
 EXPECT_DB=postgres
 EXPECT_TARGET_VERSION_PREFIX=17.11          # syveka-recovery-drill-2026-10-17 (production is 17.6)
-EXPECT_PENDING=20261014000000_secure_prisma_migrations_table
+EXPECT_PENDING=$(expected_pending_migrations "$HERE/expected-pending-migrations.txt" | tr '\n' ' ' | sed 's/ $//')
 CHECKS_SQL="$HERE/sanitize-checks.sql"
 SCRUB_SQL="$HERE/scrub-functions.sql"
 EXPECTED_CHECKS="$HERE/expected-checks.txt"
@@ -266,5 +266,5 @@ PENDING=$(pending_migrations "$MIGRATIONS_DIR" "$OUT/migrations-applied.txt" | t
 note "migration_history applied=$(grep -c '' "$OUT/migrations-applied.txt") unfinished=$UNFINISHED pending_at_this_commit=${PENDING:-none}"
 [ "$UNFINISHED" = 0 ] || stop "the restored history has unfinished or rolled-back migrations"
 [ "$PENDING" = "$EXPECT_PENDING" ] || stop "pending migrations '${PENDING:-none}' are not exactly '$EXPECT_PENDING'"
-note "S6_RESULT=PASS out=$OUT (migration $EXPECT_PENDING is pending; applying it is a separate, separately authorized step)"
+note "S6_RESULT=PASS out=$OUT (pending: ${EXPECT_PENDING:-none}; applying them is a separate, separately authorized step)"
 exit 0

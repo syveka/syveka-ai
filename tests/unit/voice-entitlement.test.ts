@@ -16,6 +16,7 @@ vi.mock("@/server/db/tenant", () => ({
       count: mocks.voiceAssistantCount,
       create: mocks.voiceAssistantCreate,
       update: mocks.voiceAssistantUpdate,
+      findFirstOrThrow: vi.fn(async () => ({ recordingEnabled: null })),
     },
   }),
   unscopedPrisma: {},
