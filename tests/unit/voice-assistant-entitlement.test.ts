@@ -60,6 +60,7 @@ describe("upsertAssistant — entitlement gate on creation", () => {
       count: ReturnType<typeof vi.fn>;
       create: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
+      findFirstOrThrow: ReturnType<typeof vi.fn>;
     };
   };
 
@@ -74,6 +75,7 @@ describe("upsertAssistant — entitlement gate on creation", () => {
           ...data,
         })),
         update: vi.fn(async ({ data }) => ({ id: "assistant-1", vapiAssistantId: null, ...data })),
+        findFirstOrThrow: vi.fn(async () => ({ recordingEnabled: null })),
       },
     };
     mocks.tenantDb.mockReturnValue(db);

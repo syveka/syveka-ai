@@ -75,25 +75,52 @@ export async function upsertAssistant(
     ...withRecording(recordingEnabledFor(input.recording, !assistantId)),
   };
 
+  const previous = assistantId
+    ? await db.voiceAssistant.findFirstOrThrow({ where: { id: assistantId } })
+    : null;
+
   const assistant = assistantId
     ? await db.voiceAssistant.update({ where: { id: assistantId }, data })
     : await db.voiceAssistant.create({ data });
 
-  // If already linked to Vapi, re-sync config on every save (§16.2)
-  if (assistant.vapiAssistantId) {
-    await syncToVapi(assistant.id, ctx.orgId);
-  }
-
+  // Before the sync: the save above is already committed, whether or not Vapi can be reached.
   await audit(ctx, {
     action: assistantId ? "voice_assistant.update" : "voice_assistant.create",
     resourceType: "voice_assistant",
     resourceId: assistant.id,
+    ...(previous ? { before: { recordingEnabled: previous.recordingEnabled } } : {}),
     after: {
       name: input.name,
       language: input.language,
       recordingEnabled: assistant.recordingEnabled,
     },
   });
+
+  // If already linked to Vapi, re-sync config on every save (§16.2)
+  if (assistant.vapiAssistantId) {
+    try {
+      await syncToVapi(assistant.id, ctx.orgId);
+    } catch (error) {
+      // The saved setting and Vapi can now disagree, for example on whether calls are recorded.
+      // Provider errors can hold credentials or customer data, so none of it is stored.
+      await audit(ctx, {
+        action: "voice_assistant.sync_failed",
+        resourceType: "voice_assistant",
+        resourceId: assistant.id,
+        after: { recordingEnabled: assistant.recordingEnabled },
+      }).catch((auditError: unknown) => {
+        console.error(
+          JSON.stringify({
+            event: "voice_assistant_sync_failed_not_audited",
+            assistantId: assistant.id,
+            error: auditError instanceof Error ? auditError.name : "unknown",
+          }),
+        );
+      });
+      throw error;
+    }
+  }
+
   return assistant;
 }
 
