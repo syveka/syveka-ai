@@ -43,6 +43,15 @@ describe("deactivateAssistantAction — controlled results, never a crash", () =
     expect(state).toEqual({ message: "deactivated" });
   });
 
+  it("says so when Vapi still holds the assistant, and refreshes the page that shows it", async () => {
+    mocks.deactivateAssistant.mockResolvedValue({ vapiAssistantId: "vapi-1", isActive: false });
+
+    const state = await deactivateAssistantAction("assistant-1", {});
+
+    expect(state).toEqual({ error: "vapi_delete_failed" });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/voice/assistant-1");
+  });
+
   it("returns a controlled, generic error instead of throwing or leaking a raw message on failure", async () => {
     mocks.deactivateAssistant.mockRejectedValue(
       new Error("some internal DB detail that must not reach the client"),

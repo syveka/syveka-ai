@@ -8,6 +8,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => ({
   requirePermission: vi.fn(),
   upsertAssistant: vi.fn(),
+  retryAssistantSync: vi.fn(),
   revalidatePath: vi.fn(),
   actionWriteLimitError: vi.fn(async () => null as string | null),
   redirect: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock("@/server/security/rate-limit", () => ({
 }));
 vi.mock("@/server/services/voice", () => ({
   upsertAssistant: mocks.upsertAssistant,
+  retryAssistantSync: mocks.retryAssistantSync,
   get VoiceSyncFailedError() {
     return FakeSyncFailed;
   },
@@ -28,7 +30,57 @@ vi.mock("@/server/services/voice", () => ({
 vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
 
-const { saveAssistantAction } = await import("@/actions/voice");
+const { retryAssistantSyncAction, saveAssistantAction } = await import("@/actions/voice");
+
+describe("sending a recording setting again", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.requirePermission.mockResolvedValue({ orgId: "org-a", userId: "user-1", role: "OWNER" });
+    mocks.actionWriteLimitError.mockResolvedValue(null);
+    mocks.retryAssistantSync.mockResolvedValue(undefined);
+  });
+
+  it("needs the same permission as configuring an assistant, before anything else", async () => {
+    mocks.requirePermission.mockRejectedValue(new Error("forbidden"));
+    await expect(retryAssistantSyncAction("assistant-1", {})).rejects.toThrow("forbidden");
+    expect(mocks.requirePermission).toHaveBeenCalledWith("voice:configure");
+    expect(mocks.retryAssistantSync).not.toHaveBeenCalled();
+  });
+
+  it("is limited like other writes that call the paid provider", async () => {
+    mocks.actionWriteLimitError.mockResolvedValue("rate_limited");
+    await expect(retryAssistantSyncAction("assistant-1", {})).resolves.toEqual({
+      error: "rate_limited",
+    });
+    expect(mocks.retryAssistantSync).not.toHaveBeenCalled();
+  });
+
+  it("acts as the session's organization, whatever the page sent", async () => {
+    await expect(retryAssistantSyncAction("assistant-1", {})).resolves.toEqual({
+      message: "sync_sent",
+    });
+    expect(mocks.retryAssistantSync).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: "org-a" }),
+      "assistant-1",
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/voice/assistant-1");
+  });
+
+  it("reports a failed attempt and refreshes the page, which reads the result", async () => {
+    mocks.retryAssistantSync.mockRejectedValue(new FakeSyncFailed("provider detail"));
+    await expect(retryAssistantSyncAction("assistant-1", {})).resolves.toEqual({
+      error: "sync_failed",
+    });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/voice/assistant-1");
+  });
+
+  it("doesn't show another organization's assistant, or a raw error", async () => {
+    mocks.retryAssistantSync.mockRejectedValue(new Error("No VoiceAssistant found: internal"));
+    await expect(retryAssistantSyncAction("someone-elses", {})).resolves.toEqual({
+      error: "generic",
+    });
+  });
+});
 
 function form(overrides: Record<string, string> = {}) {
   const data = new FormData();

@@ -24,4 +24,43 @@ describe("the assistant form", () => {
     expect(panel).toBeGreaterThan(html.indexOf("</h1>"));
     expect(panel).toBeLessThan(html.indexOf('type="submit"'));
   });
+
+  const assistant = {
+    id: "a1",
+    isActive: false,
+    phoneNumber: "+358401234567",
+    name: "Reception",
+    language: "FI" as const,
+    voiceProvider: "azure" as const,
+    voiceId: "",
+    firstMessage: "Hei",
+    systemPrompt: "Olet avulias.",
+    enabledTools: [],
+    useKnowledgeBase: false,
+    transferNumber: "",
+    recording: "off" as const,
+  };
+
+  it("keeps the recording status outside the settings form, which can't hold a form", () => {
+    const html = renderToStaticMarkup(
+      <AssistantForm initial={assistant} recordingStatus={<p>recording-status</p>} />,
+    );
+    const status = html.indexOf("recording-status");
+    expect(status).toBeGreaterThan(-1);
+    expect(status).toBeLessThan(html.indexOf('name="name"'));
+    const settingsForm = html.lastIndexOf("<form", html.indexOf('name="name"'));
+    expect(status).toBeLessThan(settingsForm);
+  });
+
+  it("says Vapi still holds an assistant it failed to delete, and offers deactivating again", () => {
+    const html = renderToStaticMarkup(<AssistantForm initial={assistant} deactivationIncomplete />);
+    expect(html).toContain("deactivateIncomplete");
+    expect(html).toContain(">deactivate<");
+  });
+
+  it("offers no deactivation for an assistant that's simply off", () => {
+    const html = renderToStaticMarkup(<AssistantForm initial={assistant} />);
+    expect(html).not.toContain("deactivateIncomplete");
+    expect(html).not.toContain(">deactivate<");
+  });
 });

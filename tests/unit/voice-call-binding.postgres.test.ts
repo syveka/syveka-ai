@@ -25,17 +25,35 @@ const holder = vi.hoisted(() => ({
   failEnqueueOnce: false,
   onAssistantLookup: null as null | (() => void),
   upsertGate: null as null | (() => Promise<void>),
+  sendToVapi: null as null | (() => Promise<{ id: string }>),
 }));
 
 vi.mock("@/server/db/tenant", () => ({
   get unscopedPrisma() {
     return holder.client;
   },
-  tenantDb: () => {
-    throw new Error("tenantDb is not used by the webhook");
+  // A pass-through, so these prove the read's own organization filter on real rows.
+  tenantDb: () => holder.client,
+}));
+vi.mock("@/server/integrations/vapi", () => ({
+  verifyVapiSignature: () => true,
+  upsertVapiAssistant: async () => {
+    if (!holder.sendToVapi) throw new Error("No Vapi answer arranged");
+    return holder.sendToVapi();
   },
 }));
-vi.mock("@/server/integrations/vapi", () => ({ verifyVapiSignature: () => true }));
+vi.mock("@/server/business-dna/context", () => ({
+  getBusinessDnaContext: async () => null,
+  buildBusinessDnaPromptBlock: () => null,
+}));
+vi.mock("@/env", () => ({
+  getVapiEnv: () => ({
+    VAPI_API_KEY: "test",
+    VAPI_WEBHOOK_SECRET: "a".repeat(32),
+    VAPI_WEBHOOK_CREDENTIAL_ID: "cred_test",
+    NEXT_PUBLIC_APP_URL: "https://app.example.test",
+  }),
+}));
 // Call binding is what's tested here: the notice gate has its own suite.
 vi.mock("@/server/voice/disclosure-gate", () => ({
   verifyCallDisclosure: async () => "ok",
@@ -74,7 +92,11 @@ vi.mock("@/server/integrations/redis", () => ({
       args[2] === "0" ? [-1, 0] : [1, 0],
   },
 }));
-vi.mock("@/server/ai/tools", () => ({ executeTool: vi.fn() }));
+vi.mock("@/server/ai/tools", () => ({
+  executeTool: vi.fn(),
+  TOOL_REGISTRY: [],
+  zodToJsonSchema: () => ({}),
+}));
 
 type Row = Record<string, unknown>;
 type Db = {
@@ -82,6 +104,7 @@ type Db = {
   voiceAssistant: {
     create: (a: object) => Promise<{ id: string }>;
     findUnique: (a: object) => Promise<Row | null>;
+    update: (a: object) => Promise<Row>;
   };
   voiceCall: {
     create: (a: object) => Promise<{ id: string }>;
@@ -452,6 +475,117 @@ describe.skipIf(!PG_URL)("Vapi webhook call rows on real Postgres", () => {
 
       expect(await stored(a.assistantId)).toMatchObject({ name: "Before", recordingEnabled: true });
       expect(await auditRows(b.ctx.orgId)).toEqual([]);
+    });
+
+    describe("what the record says Vapi accepted", () => {
+      const seedLinked = async (label: string) => {
+        const seeded = await seedUnsynced(label);
+        await db.voiceAssistant.update({
+          where: { id: seeded.assistantId },
+          data: { vapiAssistantId: `vapi-${randomUUID()}` },
+        });
+        return seeded;
+      };
+      const state = async (orgId: string, assistantId: string) => {
+        const { readRecordingSyncState } = await import("@/server/voice/recording-sync");
+        const row = await stored(assistantId);
+        return readRecordingSyncState(orgId, assistantId, row!.recordingEnabled as boolean);
+      };
+      const accepts = (id = "vapi-x") => {
+        holder.sendToVapi = async () => ({ id });
+      };
+      const refuses = () => {
+        holder.sendToVapi = async () => {
+          throw new Error("synthetic Vapi outage");
+        };
+      };
+
+      beforeEach(() => {
+        vi.spyOn(console, "error").mockImplementation(() => undefined);
+      });
+
+      it("keeps a failed sync after the save, in a fresh read, then clears on a retry", async () => {
+        const { retryAssistantSync, upsertAssistant, VoiceSyncFailedError } =
+          await import("@/server/services/voice");
+        const { ctx, assistantId } = await seedLinked("failed-sync");
+
+        refuses();
+        await expect(upsertAssistant(ctx, form, assistantId)).rejects.toThrow(VoiceSyncFailedError);
+        // The save itself stands: the row says off, and the record says that isn't applied.
+        expect(await stored(assistantId)).toMatchObject({ recordingEnabled: false });
+        expect(await state(ctx.orgId, assistantId)).toMatchObject({ status: "failed" });
+
+        await expect(retryAssistantSync(ctx, assistantId)).rejects.toThrow(VoiceSyncFailedError);
+        expect(await state(ctx.orgId, assistantId)).toMatchObject({ status: "failed" });
+
+        const id = ((await stored(assistantId)) as { vapiAssistantId: string }).vapiAssistantId;
+        accepts(id);
+        await retryAssistantSync(ctx, assistantId);
+        expect(await state(ctx.orgId, assistantId)).toMatchObject({
+          status: "applied",
+          lastAccepted: { enabled: false },
+        });
+      });
+
+      it("won't let an older sync finishing late confirm a newer setting", async () => {
+        const { upsertAssistant } = await import("@/server/services/voice");
+        const { ctx, assistantId } = await seedLinked("race");
+        const id = ((await stored(assistantId)) as { vapiAssistantId: string }).vapiAssistantId;
+
+        // The first save's send is held open while the second save runs to the end.
+        let releaseOlder = () => undefined as void;
+        let olderSending = () => undefined as void;
+        const sending = new Promise<void>((resolve) => (olderSending = resolve));
+        holder.sendToVapi = () =>
+          new Promise((resolve) => {
+            olderSending();
+            releaseOlder = () => resolve({ id });
+          });
+        const older = upsertAssistant(ctx, { ...form, recording: "on" }, assistantId);
+        await sending;
+
+        accepts(id);
+        await upsertAssistant(ctx, { ...form, recording: "off" }, assistantId);
+        // While the older send can still land, the newer one isn't confirmed.
+        expect(await state(ctx.orgId, assistantId)).toMatchObject({ status: "uncertain" });
+
+        releaseOlder();
+        await older;
+        expect(await stored(assistantId)).toMatchObject({ recordingEnabled: false });
+        expect(await state(ctx.orgId, assistantId)).toMatchObject({ status: "uncertain" });
+
+        // A later send, with nothing else running, settles it.
+        const { retryAssistantSync } = await import("@/server/services/voice");
+        await new Promise((resolve) => setTimeout(resolve, 2_100));
+        await retryAssistantSync(ctx, assistantId);
+        expect(await state(ctx.orgId, assistantId)).toMatchObject({ status: "applied" });
+      });
+
+      it("can't read another organization's attempts", async () => {
+        const { upsertAssistant } = await import("@/server/services/voice");
+        const a = await seedLinked("reader-a");
+        const b = await seedLinked("reader-b");
+        accepts(((await stored(a.assistantId)) as { vapiAssistantId: string }).vapiAssistantId);
+        await upsertAssistant(a.ctx, form, a.assistantId);
+        expect(await state(a.ctx.orgId, a.assistantId)).toMatchObject({ status: "applied" });
+
+        // B asks about A's assistant: B has no rows for it, so nothing is confirmed.
+        const { readRecordingSyncState } = await import("@/server/voice/recording-sync");
+        await expect(readRecordingSyncState(b.ctx.orgId, a.assistantId, false)).resolves.toEqual({
+          status: "uncertain",
+          lastAccepted: null,
+        });
+      });
+
+      it("can't retry another organization's assistant", async () => {
+        const { retryAssistantSync } = await import("@/server/services/voice");
+        const a = await seedLinked("retry-owner");
+        const b = await seedLinked("retry-other");
+        accepts();
+        await expect(retryAssistantSync(b.ctx, a.assistantId)).rejects.toThrow();
+        expect(await auditRows(a.ctx.orgId)).toEqual([]);
+        expect(await auditRows(b.ctx.orgId)).toEqual([]);
+      });
     });
   });
 });

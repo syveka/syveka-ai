@@ -16,9 +16,29 @@ vi.mock("@/env", () => ({
   }),
 }));
 
-import { buyPhoneNumber, VAPI_FETCH_TIMEOUT_MS } from "@/server/integrations/vapi";
+import {
+  buyPhoneNumber,
+  deleteVapiAssistant,
+  VAPI_FETCH_TIMEOUT_MS,
+} from "@/server/integrations/vapi";
 
 const originalFetch = global.fetch;
+
+describe("deleting a Vapi assistant", () => {
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("counts one already gone as deleted, so a failed delete can be tried again", async () => {
+    global.fetch = vi.fn(async () => new Response("{}", { status: 404 }));
+    await expect(deleteVapiAssistant("gone")).resolves.toBeUndefined();
+  });
+
+  it("still fails on any other answer", async () => {
+    global.fetch = vi.fn(async () => new Response("{}", { status: 500 }));
+    await expect(deleteVapiAssistant("held")).rejects.toThrow();
+  });
+});
 
 describe("vapiFetch — request timeout", () => {
   beforeEach(() => {

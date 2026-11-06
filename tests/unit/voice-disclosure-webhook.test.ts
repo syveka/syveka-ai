@@ -398,6 +398,26 @@ describe("retries and replays", () => {
     });
   });
 
+  // A statement of what the code does in a full outage, not an endorsement: whether to hang up
+  // instead is an owner decision. See "Redis read failure" in docs/voice/implementation-plan.md.
+  it("in a full Redis outage a call runs on with no slot, no row and no tools", async () => {
+    m.redisDown = true;
+    const res = await POST(start());
+    expect(res.status).toBe(503);
+    expect(m.controlCalls).toBe(0);
+    expect(m.upsert).not.toHaveBeenCalled();
+
+    const tools = await POST(toolCall());
+    await expect(tools.json()).resolves.toEqual({
+      results: [{ toolCallId: "t1", result: JSON.stringify({ error: "limits_unavailable" }) }],
+    });
+    expect(m.executeTool).not.toHaveBeenCalled();
+
+    expect((await POST(report())).status).toBe(503);
+    expect(m.upsert).not.toHaveBeenCalled();
+    expect(m.enqueue).not.toHaveBeenCalled();
+  });
+
   it("decides nothing on unreadable state: a start is retried, and nothing is refused", async () => {
     await POST(start());
     m.controlCalls = 0;

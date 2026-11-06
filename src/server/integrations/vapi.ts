@@ -242,12 +242,19 @@ export async function getVapiAssistant(
   firstMessage?: string | null;
   firstMessageMode?: string | null;
   firstMessageInterruptionsEnabled?: boolean | null;
+  maxDurationSeconds?: number | null;
+  artifactPlan?: { recordingEnabled?: boolean | null } | null;
 }> {
   return vapiFetch(`/assistant/${encodeURIComponent(id)}`, signal ? { signal } : undefined);
 }
 
+/** Already gone counts as deleted, so a delete that failed can safely be tried again. */
 export async function deleteVapiAssistant(id: string): Promise<void> {
-  await vapiFetch(`/assistant/${id}`, { method: "DELETE" });
+  try {
+    await vapiFetch(`/assistant/${id}`, { method: "DELETE" });
+  } catch (error) {
+    if (!(error instanceof VapiHttpError && error.status === 404)) throw error;
+  }
 }
 
 export async function buyPhoneNumber(assistantId: string): Promise<{ id: string; number: string }> {

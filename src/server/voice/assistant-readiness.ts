@@ -3,7 +3,11 @@ import "server-only";
 import { getVapiEnv } from "@/env";
 import { spokenDisclosure } from "@/server/ai/prompts/voice";
 import { getVapiAssistant } from "@/server/integrations/vapi";
-import { getVoiceUsageState, remainingVoiceMinutes } from "@/server/services/billing/voice-usage";
+import {
+  getVoiceUsageState,
+  MAX_CALL_MINUTES,
+  remainingVoiceMinutes,
+} from "@/server/services/billing/voice-usage";
 import { disclosureApprovedLanguages, liveConfigDisclosesFirst } from "./disclosure-gate";
 
 export type ReadinessBlocker =
@@ -26,6 +30,8 @@ export type AssistantReadiness = {
   /** What callers hear first, for the assistant's language. */
   notice: string | null;
   noticeApproved: boolean;
+  /** What Vapi itself reports, when it states a value. Null says nothing either way. */
+  recordingReportedByVapi: boolean | null;
 };
 
 const LIVE_CHECK_TIMEOUT_MS = 3_000;
@@ -58,6 +64,7 @@ export async function getAssistantReadiness(
   const blockers: ReadinessBlocker[] = [];
   const noticeApproved = disclosureApprovedLanguages().has(assistant.language);
   const configured = vapiConfigured();
+  let recordingReportedByVapi: boolean | null = null;
 
   if (!configured) blockers.push("voiceNotSetUp");
   if (!noticeApproved) blockers.push("noticeAwaitingApproval");
@@ -70,7 +77,15 @@ export async function getAssistantReadiness(
         assistant.vapiAssistantId,
         AbortSignal.timeout(LIVE_CHECK_TIMEOUT_MS),
       );
-      if (!liveConfigDisclosesFirst(assistant.language, live)) blockers.push("syncOutdated");
+      const reported = live.artifactPlan?.recordingEnabled;
+      if (typeof reported === "boolean") recordingReportedByVapi = reported;
+      // A dashboard edit can lengthen calls past what the limits and call slots allow for.
+      const runsTooLong =
+        typeof live.maxDurationSeconds === "number" &&
+        live.maxDurationSeconds > MAX_CALL_MINUTES * 60;
+      if (!liveConfigDisclosesFirst(assistant.language, live) || runsTooLong) {
+        blockers.push("syncOutdated");
+      }
     } catch {
       blockers.push("syncUnverifiable");
     }
@@ -99,5 +114,11 @@ export async function getAssistantReadiness(
           )
         ? "unverified"
         : "blocked";
-  return { blockers, status, notice: spokenDisclosure(assistant.language), noticeApproved };
+  return {
+    blockers,
+    status,
+    notice: spokenDisclosure(assistant.language),
+    noticeApproved,
+    recordingReportedByVapi,
+  };
 }

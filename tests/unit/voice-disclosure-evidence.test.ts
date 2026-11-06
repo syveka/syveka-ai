@@ -275,6 +275,75 @@ describe("a missed start, followed by a configuration change", () => {
     expect(m.assistantFetches).toBe(0);
   });
 
+  describe("a tool call that brings no record of what was said", () => {
+    const isLeftRunning = async (res: Response) => {
+      expect(m.executeTool).not.toHaveBeenCalled();
+      const body = (await res.json()) as { results: Array<Record<string, unknown>> };
+      expect(body.results).toEqual([
+        { toolCallId: "t1", result: JSON.stringify({ error: "limits_unavailable" }) },
+      ]);
+      expect(m.controlCalls).toBe(0);
+      expect(m.store.has(REFUSED_KEY)).toBe(false);
+    };
+
+    it("runs when Vapi's record of the call shows the notice", async () => {
+      m.callRecord = { ...justStarted(), artifact: { messages: SPOKE_NOTICE } };
+      await POST(toolCall());
+      expect(m.executeTool).toHaveBeenCalledTimes(1);
+      expect(m.store.has(NOTICE_KEY)).toBe(true);
+    });
+
+    it("takes the call's time from that record when the message has none", async () => {
+      m.callRecord = { ...justStarted(), artifact: { messages: SPOKE_NOTICE } };
+      await POST(toolCall(undefined, null));
+      expect(m.executeTool).toHaveBeenCalledTimes(1);
+    });
+
+    it("ends the call when that record shows something else was said", async () => {
+      m.callRecord = { ...justStarted(), artifact: { messages: SPOKE_NO_NOTICE } };
+      const res = await POST(toolCall());
+      expect(m.executeTool).not.toHaveBeenCalled();
+      await expect(res.json()).resolves.toMatchObject({
+        results: [{ message: { endCallAfterSpokenEnabled: true } }],
+      });
+    });
+
+    it("gets no tools but isn't ended when that record says nothing", async () => {
+      m.callRecord = justStarted();
+      await isLeftRunning(await POST(toolCall()));
+    });
+
+    it("gets no tools but isn't ended when that record can't be read", async () => {
+      m.callRecordStatus = 500;
+      await isLeftRunning(await POST(toolCall()));
+    });
+
+    it("gets no tools but isn't ended when Vapi has no such record", async () => {
+      m.callRecordStatus = 404;
+      await isLeftRunning(await POST(toolCall()));
+    });
+
+    it("is still judged by its report afterwards, and nothing is kept without evidence", async () => {
+      m.callRecord = justStarted();
+      await POST(toolCall());
+      m.callRecord = endedCall();
+      await POST(report());
+      expect(kept()).toBe(false);
+    });
+
+    it("isn't let through a language approved only after the call began", async () => {
+      vi.stubEnv("VOICE_DISCLOSURE_APPROVED_LANGUAGES", `AR@${minutesAgo(0.5)}`);
+      m.callRecord = {
+        ...justStarted(),
+        startedAt: minutesAgo(5),
+        artifact: { messages: SPOKE_NOTICE },
+      };
+      const res = await POST(toolCall(undefined, null));
+      expect(m.executeTool).not.toHaveBeenCalled();
+      expect(JSON.stringify(await res.json())).toContain("disclosure_not_verified");
+    });
+  });
+
   it("a tool call on a call that spoke something else is refused, then ends the call", async () => {
     const res = await POST(toolCall(SPOKE_NO_NOTICE));
     expect(m.executeTool).not.toHaveBeenCalled();
@@ -822,6 +891,40 @@ describe("a refusal that can't be remembered", () => {
     expect(res.status).toBe(503);
     expect(m.controlCalls).toBe(0);
     expect(m.upsert).not.toHaveBeenCalled();
+  });
+
+  // These two state what rare double failures do, so the plan's figures for them can be checked.
+  it("a call Syveka hung up is kept and billed if the record of that couldn't be written", async () => {
+    m.callRecord = justStarted();
+    m.assistantFails = true;
+    m.failedWrites = ["voice:refused"];
+    expect((await POST(start())).status).toBe(503);
+    expect(m.controlCalls).toBe(1);
+    expect(m.store.has(REFUSED_KEY)).toBe(false);
+
+    // Its report shows the notice, so nothing tells it apart from a short call that was fine.
+    await POST(report(SPOKE_NOTICE));
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("a call that ran on is neither billed nor given tools if its hang-up and record both fail", async () => {
+    m.minutes = 0;
+    m.controlFails = true;
+    const answered = vi.mocked(fetch).getMockImplementation()!;
+    vi.mocked(fetch).mockImplementation(async (...args) => {
+      // The first write, "ended", has landed. The next one, "running", can't.
+      if (args[0] === CONTROL) m.failedWrites = ["voice:refused"];
+      return answered(...args);
+    });
+    await POST(start());
+    expect(m.store.get(REFUSED_KEY)).toBe("ended");
+
+    const tools = await POST(toolCall(SPOKE_NOTICE));
+    expect(JSON.stringify(await tools.json())).toContain("call_refused");
+    expect(m.executeTool).not.toHaveBeenCalled();
+
+    await POST(report(SPOKE_NOTICE));
+    expect(kept()).toBe(false);
   });
 
   it("the same call over its limits is hung up once the record can be written", async () => {

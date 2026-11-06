@@ -25,10 +25,16 @@ type Initial = VoiceAssistantInput & {
 export function AssistantForm({
   initial,
   statusPanel,
+  recordingStatus,
+  deactivationIncomplete = false,
 }: {
   initial?: Initial;
   /** Shown under the page heading, above the settings. */
   statusPanel?: ReactNode;
+  /** Outside the settings form, because it holds a form of its own. */
+  recordingStatus?: ReactNode;
+  /** Off in Syveka, while the phone service still holds the assistant. */
+  deactivationIncomplete?: boolean;
 }) {
   const t = useTranslations("voice");
   const tc = useTranslations("common");
@@ -62,7 +68,7 @@ export function AssistantForm({
               </Button>
             </form>
           ) : null}
-          {initial?.id && initial.isActive ? (
+          {initial?.id && (initial.isActive || deactivationIncomplete) ? (
             <form action={deactivateAction}>
               <Button type="submit" variant="outline" disabled={deactivatePending}>
                 {deactivatePending ? tc("loading") : t("deactivate")}
@@ -85,12 +91,17 @@ export function AssistantForm({
             {t("activateFailed")}
           </p>
         ) : null}
+        {deactivationIncomplete ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t("deactivateIncomplete")}
+          </p>
+        ) : null}
         {deactivateState.message === "deactivated" ? (
           <p role="status" className="text-sm text-muted-foreground">
             {t("deactivateSuccess")}
           </p>
         ) : null}
-        {deactivateState.error ? (
+        {deactivateState.error && deactivateState.error !== "vapi_delete_failed" ? (
           <p role="alert" className="text-sm text-destructive">
             {t("deactivateFailed")}
           </p>
@@ -98,6 +109,8 @@ export function AssistantForm({
       </div>
 
       {statusPanel}
+
+      {recordingStatus}
 
       {initial?.id && !initial.phoneNumber ? (
         <AttachPhoneNumberForm assistantId={initial.id} />

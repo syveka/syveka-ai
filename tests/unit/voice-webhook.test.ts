@@ -787,6 +787,32 @@ describe("Vapi voice webhook — writes refused after the call has ended", () =>
   });
 });
 
+describe("Vapi voice webhook — a call longer than the maximum Vapi was asked to enforce", () => {
+  const warned = () => JSON.stringify(warn.mock.calls);
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    warn.mockRestore();
+  });
+
+  it("is logged, with no call content, and billed for what it really ran", async () => {
+    const res = await POST(eocrRequest({ durationSeconds: 1200 }));
+    expect(res.status).toBe(200);
+    expect(warned()).toContain("voice_call_over_max_duration");
+    expect(warned()).toContain("1200");
+    expect(mocks.voiceCallUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ durationSeconds: 1200 }) }),
+    );
+  });
+
+  it("isn't logged for a call that stopped at the maximum", async () => {
+    await POST(eocrRequest({ durationSeconds: 905 }));
+    expect(warned()).not.toContain("voice_call_over_max_duration");
+  });
+});
+
 describe("Vapi voice webhook — end-of-call-report replay does not overwrite call details", () => {
   it("a replay for an already-ended call leaves the recorded details untouched", async () => {
     mocks.voiceCallFindFirst.mockResolvedValueOnce({

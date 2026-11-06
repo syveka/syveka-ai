@@ -360,6 +360,11 @@ Webhook endpoint: `{NEXT_PUBLIC_APP_URL}/api/v1/webhooks/inbox-email/resend`.
   `artifactPlan.recordingEnabled` on every sync, and a new assistant starts with it off. An assistant
   never set in Syveka keeps Vapi's setting, whose schema defaults to on for a new assistant. Check
   it in the Vapi dashboard, and Vapi's retention, against the owner's recording decision.
+  The settings page separates the setting from what Vapi accepted, on every visit. It reads the
+  `voice_assistant.recording_sync_started`, `voice_assistant.recording_sync_applied` and
+  `voice_assistant.sync_failed` audit rows, and what Vapi itself reports. Before relying on
+  recording being off, its panel should say Vapi accepted the setting, and an assistant marked
+  unknown needs someone to choose.
 - **Reconciliation schedule.** Create a QStash schedule for `reconcile-voice-calls`. Until it
   exists, nothing recovers a lost webhook. A known call stays uncertain. A call with no row,
   including one whose report showed no evidence of the notice, isn't kept, counted or billed.

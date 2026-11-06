@@ -643,7 +643,44 @@
       "description": "Your choice is sent to the voice provider whenever this assistant's settings are saved. New assistants start with recording off.",
       "off": "Off: call audio isn't recorded",
       "on": "On: the voice provider records call audio",
-      "keep": "Not set here: the voice provider's own setting applies"
+      "keep": "Unknown: never set here. The voice provider's own setting applies until you choose",
+      "status": {
+        "requestedLabel": "Your setting:",
+        "lastAcceptedLabel": "Last accepted by the voice provider:",
+        "reportedLabel": "The voice provider reports now:",
+        "valueOn": "recording on",
+        "valueOff": "recording off",
+        "sendAgain": "Send to the voice provider again",
+        "sendAgainFailed": "That attempt failed, so the voice provider may hold either setting. Try again.",
+        "needsReview": {
+          "title": "Recording is unknown and needs your review",
+          "body": "This assistant was made before Syveka stored a recording choice, so the voice provider's own setting still applies. Syveka hasn't changed it. Choose on or off below and save."
+        },
+        "unreadable": {
+          "title": "Recording state can't be shown right now",
+          "body": "Syveka couldn't read its record of what was sent, so it can't say which setting the voice provider holds."
+        },
+        "mismatch": {
+          "title": "The voice provider reports a different setting",
+          "body": "What the voice provider reports doesn't match your setting. Calls may not follow your choice until it's sent again."
+        },
+        "failed": {
+          "title": "Your setting wasn't applied",
+          "body": "The last attempt to send it failed. The voice provider may still use an earlier setting, and may be recording calls."
+        },
+        "uncertain": {
+          "title": "Your setting isn't confirmed",
+          "body": "Syveka can't tell which setting the voice provider holds, because updates overlapped or one didn't finish. It may be recording calls."
+        },
+        "pending": {
+          "title": "Your setting is being sent",
+          "body": "Reload this page in a minute to see the result."
+        },
+        "applied": {
+          "title": "The voice provider accepted your setting",
+          "body": "It accepted this setting when it was sent. That doesn't prove what happens on a call."
+        }
+      }
     },
     "useKb": "Answer from the knowledge base",
     "firstMessagePlaceholder": "Hello! You've reached [company]. How can I help?",
@@ -760,7 +797,8 @@
         "title": "This workspace is read-only",
         "action": "The workspace owner can resolve the payment issue in billing settings."
       }
-    }
+    },
+    "deactivateIncomplete": "This assistant is off in Syveka and can't take any action, but the phone service still holds it and may answer its number. Syveka hangs up those calls. Deactivate again to remove it."
   },
   "calendar": {
     "title": "Calendar",

@@ -24,6 +24,9 @@ const state = vi.hoisted(() => ({
   billable: 0,
   usageFails: false,
   entFails: false,
+  auditRows: [] as Array<Record<string, unknown>>,
+  auditFails: false,
+  auditWhere: null as Record<string, unknown> | null,
   requirePermission: vi.fn(async () => ({ orgId: "org-1", userId: "u1", role: "OWNER" })),
   notFound: vi.fn(() => {
     throw new Error("NEXT_NOT_FOUND");
@@ -34,6 +37,7 @@ vi.mock("next-intl/server", async () => {
   const { createTranslator } = await import("next-intl");
   return {
     getLocale: vi.fn(async () => state.locale),
+    getFormatter: vi.fn(async () => ({ dateTime: (at: Date) => at.toISOString() })),
     getTranslations: vi.fn(async (namespace?: string) =>
       createTranslator({
         locale: state.locale,
@@ -61,13 +65,39 @@ vi.mock("@/server/db/tenant", () => {
     count: vi.fn(async () => 0),
   };
   return {
-    tenantDb: vi.fn(() => ({ voiceAssistant })),
+    tenantDb: vi.fn(() => ({
+      voiceAssistant,
+      auditLog: {
+        findMany: vi.fn(async ({ where }: { where: Record<string, unknown> }) => {
+          if (state.auditFails) throw new Error("db down");
+          state.auditWhere = where;
+          return state.auditRows;
+        }),
+      },
+    })),
     unscopedPrisma: { voiceCall: { findMany: vi.fn(async () => []) } },
   };
 });
 vi.mock("@/server/integrations/redis", () => ({ redis: {} }));
 vi.mock("@/components/voice/assistant-form", () => ({
-  AssistantForm: ({ statusPanel }: { statusPanel?: React.ReactNode }) => statusPanel,
+  AssistantForm: ({
+    statusPanel,
+    recordingStatus,
+  }: {
+    statusPanel?: React.ReactNode;
+    recordingStatus?: React.ReactNode;
+  }) => (
+    <>
+      {statusPanel}
+      {recordingStatus}
+    </>
+  ),
+}));
+// Its own suite renders it. Here: what the real page hands it, on each visit.
+vi.mock("@/components/voice/recording-status-panel", () => ({
+  RecordingStatusPanel: (props: Record<string, unknown>) => (
+    <pre data-testid="recording">{JSON.stringify(props)}</pre>
+  ),
 }));
 vi.mock("@/components/billing/plan-display", () => ({
   PLAN_NAMES: { FREE: "Free", PRO: "Pro" },
@@ -93,6 +123,7 @@ const readyAssistant = (language = "EN") => ({
   vapiAssistantId: SECRET,
   phoneNumber: "+358401234567",
   isActive: true,
+  recordingEnabled: null as boolean | null,
 });
 const goodLive = (language = "EN") => ({
   firstMessage: buildVoiceFirstMessage(language, "Hello"),
@@ -358,5 +389,105 @@ describe("languages and layout", () => {
     expect(source).toContain("flex-wrap");
     expect(source).toContain("break-words");
     expect(source).toContain("text-start");
+  });
+});
+
+describe("recording, each time the page is opened", () => {
+  const event = (action: string, seconds: number, after: Record<string, unknown>) => ({
+    action,
+    createdAt: new Date(Date.now() - 600_000 + seconds * 1000),
+    after,
+  });
+  const STARTED = "voice_assistant.recording_sync_started";
+  const APPLIED = "voice_assistant.recording_sync_applied";
+  const FAILED = "voice_assistant.sync_failed";
+  const shown = async () => {
+    const html = (await render()).replace(/&quot;/g, '"');
+    const json = /<pre data-testid="recording">(.*?)<\/pre>/.exec(html)![1]!;
+    return JSON.parse(json) as Record<string, unknown>;
+  };
+
+  beforeEach(() => {
+    state.auditRows = [];
+    state.auditFails = false;
+    state.auditWhere = null;
+    state.live = goodLive();
+    state.liveFails = false;
+    state.assistant = { ...readyAssistant(), recordingEnabled: false };
+  });
+
+  it("still shows a failed sync on a later visit, though the setting reads off", async () => {
+    state.auditRows = [
+      event(STARTED, 0, { attempt: "a", recordingEnabled: true }),
+      event(APPLIED, 1, { attempt: "a" }),
+      event(STARTED, 100, { attempt: "b", recordingEnabled: false }),
+      event(FAILED, 101, { attempt: "b" }),
+    ];
+    const props = await shown();
+    expect(props).toMatchObject({
+      kind: "failed",
+      requested: false,
+      lastAccepted: { enabled: true },
+    });
+  });
+
+  it("shows acceptance only after a retry succeeds", async () => {
+    state.auditRows = [
+      event(STARTED, 0, { attempt: "a", recordingEnabled: false }),
+      event(FAILED, 1, { attempt: "a" }),
+      event(STARTED, 100, { attempt: "b", recordingEnabled: false }),
+      event(APPLIED, 101, { attempt: "b" }),
+    ];
+    expect(await shown()).toMatchObject({ kind: "applied", lastAccepted: { enabled: false } });
+  });
+
+  it("doesn't take the saved setting as proof when nothing records a send", async () => {
+    expect(await shown()).toMatchObject({ kind: "uncertain", requested: false });
+  });
+
+  it("says it can't tell when the record can't be read, not that all is well", async () => {
+    state.auditFails = true;
+    expect(await shown()).toMatchObject({ kind: "unreadable" });
+  });
+
+  it("shows what Vapi itself reports when that differs", async () => {
+    state.auditRows = [
+      event(STARTED, 0, { attempt: "a", recordingEnabled: false }),
+      event(APPLIED, 1, { attempt: "a" }),
+    ];
+    state.live = { ...goodLive(), artifactPlan: { recordingEnabled: true } };
+    expect(await shown()).toMatchObject({ kind: "mismatch", reportedByVapi: true });
+  });
+
+  it("shows an assistant never set here as unknown, with what Vapi reports", async () => {
+    state.assistant = readyAssistant();
+    state.live = { ...goodLive(), artifactPlan: { recordingEnabled: true } };
+    expect(await shown()).toMatchObject({
+      kind: "needsReview",
+      requested: null,
+      reportedByVapi: true,
+    });
+    expect(state.auditWhere).toBeNull();
+  });
+
+  it("reads only this organization's rows, for this assistant", async () => {
+    await shown();
+    expect(state.auditWhere).toMatchObject({
+      organizationId: "org-1",
+      resourceType: "voice_assistant",
+      resourceId: "a1",
+    });
+  });
+
+  it("reports an out-of-date sync when a dashboard edit let calls run longer", async () => {
+    state.live = { ...goodLive(), maxDurationSeconds: 3600 };
+    const html = decode(await render());
+    expect(html).toContain(text("en").syncOutdated.title);
+  });
+
+  it("isn't troubled by the 15 minutes each sync asks for", async () => {
+    state.live = { ...goodLive(), maxDurationSeconds: 900 };
+    const html = decode(await render());
+    expect(html).not.toContain(text("en").syncOutdated.title);
   });
 });

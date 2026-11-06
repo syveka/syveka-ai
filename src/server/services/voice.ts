@@ -1,5 +1,6 @@
 import "server-only";
 
+import { randomUUID } from "node:crypto";
 import type { VoiceAssistant } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import {
@@ -16,6 +17,11 @@ import { getBusinessDnaContext } from "@/server/business-dna/context";
 import { lockPhoneNumber } from "@/server/calendar/locks";
 import { getEntitlements, EntitlementError } from "./billing/entitlements";
 import { audit, auditLogData } from "./audit";
+import {
+  RECORDING_SYNC_APPLIED,
+  RECORDING_SYNC_FAILED,
+  RECORDING_SYNC_STARTED,
+} from "@/server/voice/recording-sync";
 import type { TenantContext } from "@/server/auth/session";
 import {
   allowedVoiceTools,
@@ -102,32 +108,8 @@ export async function upsertAssistant(
   // If already linked to Vapi, re-sync config on every save (§16.2)
   if (assistant.vapiAssistantId) {
     try {
-      await syncToVapi(assistant.id, ctx.orgId);
-    } catch (error) {
-      // The saved setting and Vapi can now disagree, for example on whether calls are recorded.
-      // Provider errors can hold credentials or customer data, so only the error's type is logged.
-      console.error(
-        JSON.stringify({
-          event: "voice_assistant_sync_failed",
-          organizationId: ctx.orgId,
-          assistantId: assistant.id,
-          errorType: error instanceof Error ? error.name : "UnknownError",
-        }),
-      );
-      await audit(ctx, {
-        action: "voice_assistant.sync_failed",
-        resourceType: "voice_assistant",
-        resourceId: assistant.id,
-        after: { recordingEnabled: assistant.recordingEnabled },
-      }).catch((auditError: unknown) => {
-        console.error(
-          JSON.stringify({
-            event: "voice_assistant_sync_failed_not_audited",
-            assistantId: assistant.id,
-            error: auditError instanceof Error ? auditError.name : "unknown",
-          }),
-        );
-      });
+      await syncToVapi(assistant.id, ctx.orgId, ctx);
+    } catch {
       throw new VoiceSyncFailedError();
     }
   }
@@ -174,7 +156,7 @@ export async function activateAssistant(
   const db = tenantDb(ctx.orgId);
   const assistant = await db.voiceAssistant.findFirstOrThrow({ where: { id: assistantId } });
 
-  const vapiId = await syncToVapi(assistantId, ctx.orgId);
+  const vapiId = await syncToVapi(assistantId, ctx.orgId, ctx);
 
   let phoneNumber = assistant.phoneNumber;
   let phoneNumberError: string | null = null;
@@ -227,10 +209,12 @@ export async function activateAssistant(
  *    Syveka's DB flag) controls whether it picks up the call in the first
  *    place. A failure here must never block the guaranteed step 1 above.
  *
- * `vapiAssistantId` and `phoneNumber` are cleared rather than left pointing
- * at now-deleted/orphaned Vapi resources -- re-activating a previously
- * deactivated assistant is a clean restart (re-sync, then re-attach a
- * number), not a resume from stale state.
+ * `vapiAssistantId` and `phoneNumber` are cleared once Vapi has deleted the
+ * assistant -- re-activating is then a clean restart (re-sync, then re-attach a
+ * number). If the delete failed they're kept, because Vapi still holds the
+ * assistant and answers its number: that's the only way to find it again, the
+ * settings page says so and offers the delete again, and the webhook keeps
+ * hanging up its calls as an inactive assistant's.
  */
 export async function deactivateAssistant(
   ctx: TenantContext,
@@ -239,9 +223,9 @@ export async function deactivateAssistant(
   const db = tenantDb(ctx.orgId);
   const assistant = await db.voiceAssistant.findFirstOrThrow({ where: { id: assistantId } });
 
-  const updated = await db.voiceAssistant.update({
+  const closed = await db.voiceAssistant.update({
     where: { id: assistantId },
-    data: { isActive: false, vapiAssistantId: null, phoneNumber: null },
+    data: { isActive: false },
   });
 
   let vapiDeleteFailed = false;
@@ -260,6 +244,13 @@ export async function deactivateAssistant(
       );
     }
   }
+
+  const updated = vapiDeleteFailed
+    ? closed
+    : await db.voiceAssistant.update({
+        where: { id: assistantId },
+        data: { vapiAssistantId: null, phoneNumber: null },
+      });
 
   await audit(ctx, {
     action: "voice_assistant.deactivate",
@@ -373,16 +364,104 @@ export async function attachPhoneNumber(
   return updated;
 }
 
-async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
+/**
+ * Sends the assistant's settings to Vapi again, for when the settings page shows that its
+ * recording setting may not have reached Vapi. Tenant-scoped: another organization's id isn't found.
+ */
+export async function retryAssistantSync(ctx: TenantContext, assistantId: string): Promise<void> {
+  const assistant = await tenantDb(ctx.orgId).voiceAssistant.findFirstOrThrow({
+    where: { id: assistantId },
+  });
+  if (!assistant.vapiAssistantId) {
+    throw new AssistantNotSyncedError("This assistant isn't connected to the phone service.");
+  }
+  try {
+    await syncToVapi(assistantId, ctx.orgId, ctx);
+  } catch {
+    throw new VoiceSyncFailedError();
+  }
+}
+
+/** Who a sync's audit rows are attributed to. Null: a background resync, with no person behind it. */
+type SyncActor = Pick<TenantContext, "orgId" | "userId"> | null;
+
+/**
+ * Every sync that sends a recording setting records the attempt first and its result after, so
+ * the settings page can tell what was asked for from what Vapi accepted (voice/recording-sync.ts).
+ * With no record of the attempt, nothing is sent.
+ */
+async function syncToVapi(assistantId: string, orgId: string, actor: SyncActor): Promise<string> {
+  const auditSync = (action: string, after: Record<string, unknown>) =>
+    audit(actor ?? { orgId, userId: "" }, {
+      action,
+      resourceType: "voice_assistant",
+      resourceId: assistantId,
+      after,
+      ...(actor ? {} : { actorType: "system" as const }),
+    });
   const assistant = await unscopedPrisma.voiceAssistant.findFirstOrThrow({
     where: { id: assistantId, organizationId: orgId },
   });
 
-  const toolNames = allowedVoiceTools(assistant.enabledTools);
   const recordingEnabled = recordingToApply(
     assistant.recordingEnabled,
     Boolean(assistant.vapiAssistantId),
   );
+  // Without a recording setting in the request, it can't change what Vapi records.
+  const attempt = typeof recordingEnabled === "boolean" ? randomUUID() : null;
+
+  try {
+    if (attempt) await auditSync(RECORDING_SYNC_STARTED, { attempt, recordingEnabled });
+    const id = await sendToVapi(assistant, orgId, recordingEnabled);
+    if (attempt) {
+      // Vapi has it. Failing to note that only leaves the page less sure, so it isn't a failure.
+      await auditSync(RECORDING_SYNC_APPLIED, { attempt, recordingEnabled }).catch(
+        (auditError: unknown) => {
+          console.error(
+            JSON.stringify({
+              event: "voice_assistant_sync_result_not_audited",
+              assistantId,
+              error: auditError instanceof Error ? auditError.name : "unknown",
+            }),
+          );
+        },
+      );
+    }
+    return id;
+  } catch (error) {
+    // The saved setting and Vapi can now disagree, for example on whether calls are recorded.
+    // Provider errors can hold credentials or customer data, so only the error's type is logged.
+    console.error(
+      JSON.stringify({
+        event: "voice_assistant_sync_failed",
+        organizationId: orgId,
+        assistantId,
+        errorType: error instanceof Error ? error.name : "UnknownError",
+      }),
+    );
+    await auditSync(RECORDING_SYNC_FAILED, {
+      recordingEnabled: assistant.recordingEnabled,
+      ...(attempt ? { attempt } : {}),
+    }).catch((auditError: unknown) => {
+      console.error(
+        JSON.stringify({
+          event: "voice_assistant_sync_failed_not_audited",
+          assistantId,
+          error: auditError instanceof Error ? auditError.name : "unknown",
+        }),
+      );
+    });
+    throw error;
+  }
+}
+
+async function sendToVapi(
+  assistant: VoiceAssistant,
+  orgId: string,
+  recordingEnabled: boolean | null,
+): Promise<string> {
+  const assistantId = assistant.id;
+  const toolNames = allowedVoiceTools(assistant.enabledTools);
 
   // Mandatory AI disclosure (§13.3, §16.5): the fixed notice is spoken in the first message
   // (buildVoiceFirstMessage); the prompt keeps the model honest about it for the rest of the call.
@@ -464,7 +543,7 @@ export async function resyncActiveAssistants(orgId: string): Promise<void> {
     await Promise.all(
       assistants.map(async ({ id }) => {
         try {
-          await syncToVapi(id, orgId);
+          await syncToVapi(id, orgId, null);
         } catch (error) {
           console.error(
             JSON.stringify({

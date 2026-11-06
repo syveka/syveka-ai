@@ -22,7 +22,7 @@ const mocks = vi.hoisted(() => ({
     id: "vapi-1",
   })),
   buyPhoneNumber: vi.fn(async () => ({ id: "num-1", number: "+358401234567" })),
-  audit: vi.fn(async () => undefined),
+  audit: vi.fn(async (_ctx: unknown, _input: unknown): Promise<void> => undefined),
   auditCreate: vi.fn(async (_args: unknown) => ({})),
   transactionFailed: vi.fn(),
 }));
@@ -70,8 +70,14 @@ vi.mock("@/env", () => ({
   }),
 }));
 
-const { activateAssistant, upsertAssistant, VoiceSyncFailedError } =
-  await import("@/server/services/voice");
+const {
+  activateAssistant,
+  AssistantNotSyncedError,
+  retryAssistantSync,
+  resyncActiveAssistants,
+  upsertAssistant,
+  VoiceSyncFailedError,
+} = await import("@/server/services/voice");
 
 const ctx: TenantContext = {
   userId: "user-1",
@@ -205,6 +211,8 @@ describe("syncing to Vapi", () => {
     mocks.findFirstOrThrow.mockResolvedValue(row({ vapiAssistantId: "vapi-1" }));
     await activateAssistant(ctx, "assistant-1");
     expect(sentToVapi()).toBeNull();
+    // Nothing about recording was attempted, so nothing about it can be recorded as applied.
+    expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain("recording_sync");
     expect(mocks.unscopedUpdate).not.toHaveBeenCalled();
     expect(mocks.unscopedUpdateMany).not.toHaveBeenCalled();
   });
@@ -289,7 +297,7 @@ describe("the audit trail when Vapi can't be reached", () => {
       expect.objectContaining({
         action: "voice_assistant.sync_failed",
         resourceId: "assistant-1",
-        after: { recordingEnabled: false },
+        after: { recordingEnabled: false, attempt: expect.any(String) },
       }),
     );
     expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain("secret-provider-detail");
@@ -299,7 +307,11 @@ describe("the audit trail when Vapi can't be reached", () => {
   it("still reports the sync failure when that second audit row can't be written", async () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
     mocks.upsertVapiAssistant.mockRejectedValueOnce(new Error(providerError));
-    mocks.audit.mockRejectedValueOnce(new TypeError("audit database detail"));
+    mocks.audit.mockImplementation(async (_ctx: unknown, input: unknown) => {
+      if ((input as { action?: string }).action === "voice_assistant.sync_failed") {
+        throw new TypeError("audit database detail");
+      }
+    });
 
     await expect(upsertAssistant(ctx, input({ recording: "off" }), "assistant-1")).rejects.toThrow(
       VoiceSyncFailedError,
@@ -312,6 +324,8 @@ describe("the audit trail when Vapi can't be reached", () => {
     expect(lines[1]).toContain("TypeError");
     expect(lines.join(" ")).not.toContain("audit database detail");
     expect(lines.join(" ")).not.toContain("secret-provider-detail");
+    mocks.audit.mockReset();
+    mocks.audit.mockResolvedValue(undefined);
     logged.mockRestore();
   });
 
@@ -322,10 +336,47 @@ describe("the audit trail when Vapi can't be reached", () => {
     );
   });
 
-  it("writes one row when the sync succeeds", async () => {
+  it("writes the save's row, then the attempt and its result, when the sync succeeds", async () => {
     await upsertAssistant(ctx, input({ recording: "off" }), "assistant-1");
     expect(mocks.auditCreate).toHaveBeenCalledTimes(1);
-    expect(mocks.audit).not.toHaveBeenCalled();
+    const actions = mocks.audit.mock.calls.map(([, row]) => (row as { action: string }).action);
+    expect(actions).toEqual([
+      "voice_assistant.recording_sync_started",
+      "voice_assistant.recording_sync_applied",
+    ]);
+  });
+
+  it("records the attempt before contacting Vapi, and sends nothing if it can't", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    await upsertAssistant(ctx, input({ recording: "off" }), "assistant-1");
+    const [startedOrder] = mocks.audit.mock.invocationCallOrder;
+    expect(startedOrder!).toBeLessThan(mocks.upsertVapiAssistant.mock.invocationCallOrder[0]!);
+
+    mocks.upsertVapiAssistant.mockClear();
+    mocks.audit.mockRejectedValueOnce(new Error("audit write failed"));
+    await expect(upsertAssistant(ctx, input({ recording: "off" }), "assistant-1")).rejects.toThrow(
+      VoiceSyncFailedError,
+    );
+    expect(mocks.upsertVapiAssistant).not.toHaveBeenCalled();
+  });
+
+  it("keeps a sync that Vapi accepted, even if its result can't be noted", async () => {
+    const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.audit.mockResolvedValueOnce(undefined);
+    mocks.audit.mockRejectedValueOnce(new Error("audit write failed"));
+    await expect(
+      upsertAssistant(ctx, input({ recording: "off" }), "assistant-1"),
+    ).resolves.toBeTruthy();
+    expect(JSON.stringify(logged.mock.calls)).toContain("voice_assistant_sync_result_not_audited");
+  });
+
+  it("uses one attempt id for an attempt and its result", async () => {
+    await upsertAssistant(ctx, input({ recording: "off" }), "assistant-1");
+    const ids = mocks.audit.mock.calls.map(
+      ([, row]) => (row as { after: { attempt: string } }).after.attempt,
+    );
+    expect(ids[0]).toEqual(expect.any(String));
+    expect(ids[1]).toBe(ids[0]);
   });
 
   it("has no earlier value to record for a new assistant", async () => {
@@ -355,6 +406,75 @@ describe("the audit trail when Vapi can't be reached", () => {
       id: "assistant-1",
       organizationId: "org-a",
     });
+  });
+});
+
+describe("sending the setting again", () => {
+  const linked = row({ vapiAssistantId: "vapi-1", recordingEnabled: false });
+
+  beforeEach(() => {
+    db.voiceAssistant.findFirstOrThrow.mockResolvedValue(linked);
+    mocks.findFirstOrThrow.mockResolvedValue(linked);
+  });
+
+  it("sends the stored setting as a new attempt, and records it as applied", async () => {
+    await retryAssistantSync(ctx, "assistant-1");
+    expect(sentToVapi()).toBe(false);
+    expect(mocks.audit.mock.calls.map(([, r]) => (r as { action: string }).action)).toEqual([
+      "voice_assistant.recording_sync_started",
+      "voice_assistant.recording_sync_applied",
+    ]);
+  });
+
+  it("records a failed retry, and reports it without the provider's text", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.upsertVapiAssistant.mockRejectedValueOnce(new Error("secret-provider-detail"));
+    const failure = await retryAssistantSync(ctx, "assistant-1").catch((e: Error) => e);
+    expect(failure).toBeInstanceOf(VoiceSyncFailedError);
+    expect((failure as Error).message).not.toContain("secret-provider-detail");
+    expect(mocks.audit.mock.calls.map(([, r]) => (r as { action: string }).action)).toEqual([
+      "voice_assistant.recording_sync_started",
+      "voice_assistant.sync_failed",
+    ]);
+  });
+
+  it("has nothing to send for an assistant not at Vapi", async () => {
+    db.voiceAssistant.findFirstOrThrow.mockResolvedValue(row());
+    await expect(retryAssistantSync(ctx, "assistant-1")).rejects.toThrow(AssistantNotSyncedError);
+    expect(mocks.upsertVapiAssistant).not.toHaveBeenCalled();
+  });
+
+  it("reads the assistant in the caller's organization only", async () => {
+    await retryAssistantSync(ctx, "assistant-1");
+    expect(mocks.tenantDb).toHaveBeenCalledWith("org-a");
+    expect(mocks.findFirstOrThrow).toHaveBeenCalledWith({
+      where: { id: "assistant-1", organizationId: "org-a" },
+    });
+  });
+
+  it("can't find another organization's assistant, and sends nothing", async () => {
+    db.voiceAssistant.findFirstOrThrow.mockRejectedValue(new Error("not found"));
+    await expect(retryAssistantSync(ctx, "someone-elses")).rejects.toThrow("not found");
+    expect(mocks.upsertVapiAssistant).not.toHaveBeenCalled();
+  });
+});
+
+describe("a background resync", () => {
+  it("records its attempts as the system's, not a person's", async () => {
+    const linked = row({ vapiAssistantId: "vapi-1", recordingEnabled: true });
+    (db.voiceAssistant as unknown as { findMany: Mock }).findMany = vi.fn(async () => [
+      { id: "assistant-1" },
+    ]);
+    mocks.findFirstOrThrow.mockResolvedValue(linked);
+    await resyncActiveAssistants("org-a");
+    expect(mocks.audit).toHaveBeenCalledWith(
+      { orgId: "org-a", userId: "" },
+      expect.objectContaining({
+        action: "voice_assistant.recording_sync_started",
+        actorType: "system",
+        after: expect.objectContaining({ recordingEnabled: true }),
+      }),
+    );
   });
 });
 

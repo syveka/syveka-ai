@@ -643,7 +643,44 @@
       "description": "Valintasi lähetetään puhepalvelulle aina, kun avustajan asetukset tallennetaan. Uusilla avustajilla tallennus on aluksi pois päältä.",
       "off": "Pois päältä: puhelun ääntä ei tallenneta",
       "on": "Päällä: puhepalvelu tallentaa puhelun äänen",
-      "keep": "Ei asetettu täällä: puhepalvelun oma asetus on voimassa"
+      "keep": "Ei tiedossa: ei koskaan asetettu täällä. Puhepalvelun oma asetus on voimassa, kunnes valitset",
+      "status": {
+        "requestedLabel": "Asetuksesi:",
+        "lastAcceptedLabel": "Puhepalvelu hyväksyi viimeksi:",
+        "reportedLabel": "Puhepalvelu ilmoittaa nyt:",
+        "valueOn": "tallennus päällä",
+        "valueOff": "tallennus pois päältä",
+        "sendAgain": "Lähetä puhepalvelulle uudelleen",
+        "sendAgainFailed": "Yritys epäonnistui, joten puhepalvelulla voi olla kumpi tahansa asetus. Yritä uudelleen.",
+        "needsReview": {
+          "title": "Tallennuksen tila ei ole tiedossa ja vaatii tarkistuksesi",
+          "body": "Tämä avustaja on luotu ennen kuin Syveka tallensi tallennusvalinnan, joten puhepalvelun oma asetus on yhä voimassa. Syveka ei ole muuttanut sitä. Valitse päällä tai pois päältä alta ja tallenna."
+        },
+        "unreadable": {
+          "title": "Tallennuksen tilaa ei voida näyttää juuri nyt",
+          "body": "Syveka ei voinut lukea tietoja siitä, mitä lähetettiin, joten se ei voi sanoa, mikä asetus puhepalvelulla on."
+        },
+        "mismatch": {
+          "title": "Puhepalvelu ilmoittaa eri asetuksen",
+          "body": "Puhepalvelun ilmoittama asetus ei vastaa asetustasi. Puhelut eivät ehkä noudata valintaasi, ennen kuin se lähetetään uudelleen."
+        },
+        "failed": {
+          "title": "Asetustasi ei otettu käyttöön",
+          "body": "Viimeisin lähetysyritys epäonnistui. Puhepalvelu voi yhä käyttää aiempaa asetusta ja tallentaa puheluita."
+        },
+        "uncertain": {
+          "title": "Asetustasi ei ole vahvistettu",
+          "body": "Syveka ei voi tietää, mikä asetus puhepalvelulla on, koska päivitykset menivät päällekkäin tai jokin ei valmistunut. Se voi tallentaa puheluita."
+        },
+        "pending": {
+          "title": "Asetustasi lähetetään",
+          "body": "Lataa tämä sivu uudelleen minuutin kuluttua nähdäksesi tuloksen."
+        },
+        "applied": {
+          "title": "Puhepalvelu hyväksyi asetuksesi",
+          "body": "Se hyväksyi tämän asetuksen, kun se lähetettiin. Se ei todista, mitä puhelussa tapahtuu."
+        }
+      }
     },
     "useKb": "Vastaa tietopankin pohjalta",
     "firstMessagePlaceholder": "Hei! Tavoitit [yrityksen]. Kuinka voin auttaa?",
@@ -760,7 +797,8 @@
         "title": "Tämä työtila on vain luku -tilassa",
         "action": "Työtilan omistaja voi selvittää maksuasian laskutusasetuksissa."
       }
-    }
+    },
+    "deactivateIncomplete": "Tämä avustaja on pois käytöstä Syvekassa eikä voi suorittaa toimintoja, mutta puhelinpalvelu säilyttää sen yhä ja voi vastata sen numeroon. Syveka katkaisee nämä puhelut. Poista se käytöstä uudelleen, niin se poistetaan."
   },
   "calendar": {
     "title": "Kalenteri",

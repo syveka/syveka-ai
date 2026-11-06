@@ -30,7 +30,7 @@ const fx = vi.hoisted(() => ({
   ensureWebhookSubscription: vi.fn(async () => undefined),
   checkConnectionHealth: vi.fn(async () => ({ status: "ok" })),
   activateAssistant: vi.fn(async () => ({ phoneNumberError: null })),
-  deactivateAssistant: vi.fn(async () => undefined),
+  deactivateAssistant: vi.fn(async () => ({ vapiAssistantId: null })),
 }));
 
 vi.mock("@upstash/redis", () => ({ Redis: class Redis {} }));

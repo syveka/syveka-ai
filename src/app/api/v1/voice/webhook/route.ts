@@ -161,6 +161,9 @@ const QUOTA_EXCEEDED_GOODBYE: Record<"FI" | "EN" | "AR", string> = {
 
 const END_CALL_TIMEOUT_MS = 3_000;
 
+/** The 900 seconds each sync asks of Vapi, and a margin for how it measures a call. */
+const MAX_EXPECTED_CALL_SECONDS = 930;
+
 /** Vapi's own hosts over https only: the body is signed, but it never picks an arbitrary fetch target. */
 function isVapiControlUrl(raw: string): boolean {
   let url: URL;
@@ -407,7 +410,7 @@ export async function POST(request: Request): Promise<NextResponse> {
       // on: it speaks the line and ends the call. A missed start is recovered from what the call
       // has already said.
       {
-        const { callDisclosureState, confirmNoticeFromMessages, earliestCallTime } =
+        const { callDisclosureState, confirmNoticeFromCallRecord, earliestCallTime } =
           await import("@/server/voice/disclosure-gate");
         const vapiCallId = message.call?.id;
         const state = vapiCallId ? await callDisclosureState(orgId, vapiCallId) : "unverified";
@@ -419,22 +422,26 @@ export async function POST(request: Request): Promise<NextResponse> {
           }));
           return NextResponse.json({ results });
         }
-        // The start was missed, so what this call has already said decides. A config read now
-        // can't show what this caller heard.
+        // The start was missed, so what this call has already said decides, from this message or
+        // else from Vapi's record of the call. A config read now can't show what this caller heard.
         const confirmation =
           state === "verified"
             ? "ok"
             : vapiCallId
-              ? await confirmNoticeFromMessages({
-                  orgId,
-                  vapiCallId,
-                  language: assistant.language,
-                  vapiAssistantId: message.call?.assistantId as string,
-                  messages: message.artifact?.messages,
-                  calledAt: earliestCallTime(message.call?.startedAt, message.call?.createdAt),
-                })
+              ? (
+                  await confirmNoticeFromCallRecord({
+                    orgId,
+                    vapiCallId,
+                    language: assistant.language,
+                    vapiAssistantId: message.call?.assistantId as string,
+                    messages: message.artifact?.messages,
+                    calledAt: earliestCallTime(message.call?.startedAt, message.call?.createdAt),
+                  })
+                ).outcome
               : "absent";
-        if (confirmation === "unverifiable") {
+        // No evidence either way isn't evidence against the call: no tools, and it keeps running.
+        // Its report decides what's kept, as for a late start that can't be judged.
+        if (confirmation === "unverifiable" || (confirmation === "absent" && vapiCallId)) {
           const results = (message.toolCallList ?? []).map((tc) => ({
             toolCallId: tc.id,
             result: JSON.stringify({ error: "limits_unavailable" }),
@@ -829,6 +836,17 @@ export async function POST(request: Request): Promise<NextResponse> {
         endedAt: endedAtText,
         durationSeconds: message.durationSeconds,
       });
+      // Limits and call slots assume this maximum holds, and only Vapi can enforce it.
+      if (durationSeconds !== null && durationSeconds > MAX_EXPECTED_CALL_SECONDS) {
+        console.warn(
+          JSON.stringify({
+            event: "voice_call_over_max_duration",
+            orgId,
+            vapiCallId: message.call.id,
+            durationSeconds,
+          }),
+        );
+      }
       const endedMs = endedAtText ? Date.parse(endedAtText) : Number.NaN;
       const endedAt = Number.isNaN(endedMs) ? new Date() : new Date(endedMs);
       const startedMs = startedAtText ? Date.parse(startedAtText) : Number.NaN;

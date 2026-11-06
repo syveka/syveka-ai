@@ -73,6 +73,34 @@ beforeEach(() => {
   m.getVoiceUsageState.mockReset().mockResolvedValue(usage());
 });
 
+// A statement of the limit's reach, not an endorsement: see "Redis read failure" in the plan.
+describe("a call that ran through a Redis outage", () => {
+  it("holds no slot, so a later call is admitted beside it, past the limit", async () => {
+    m.getEntitlements.mockResolvedValue({
+      voiceMinutesMonth: 100,
+      voiceConcurrentCalls: 1,
+      readOnly: false,
+    });
+    m.failEval = true;
+    await expect(admitCall(ORG_A, "during-outage")).resolves.toEqual({
+      admitted: false,
+      reason: "limits_unavailable",
+    });
+    expect(held(ORG_A)).toBe(0);
+
+    // That refusal couldn't be carried out with Redis down, so the first call is still running.
+    m.failEval = false;
+    await expect(admitCall(ORG_A, "after-outage")).resolves.toEqual({ admitted: true });
+    expect(held(ORG_A)).toBe(1);
+
+    // Limits work again from here: a third call is refused.
+    await expect(admitCall(ORG_A, "third")).resolves.toEqual({
+      admitted: false,
+      reason: "concurrency_limit",
+    });
+  });
+});
+
 describe("plan limits", () => {
   it("has no unlimited voice on any plan", () => {
     for (const limits of Object.values(PLAN_LIMITS)) {
