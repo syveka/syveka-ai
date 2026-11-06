@@ -429,19 +429,35 @@ export async function POST(request: Request): Promise<NextResponse> {
             ? "ok"
             : vapiCallId
               ? (
-                  await confirmNoticeFromCallRecord({
-                    orgId,
-                    vapiCallId,
-                    language: assistant.language,
-                    vapiAssistantId: message.call?.assistantId as string,
-                    messages: message.artifact?.messages,
-                    calledAt: earliestCallTime(message.call?.startedAt, message.call?.createdAt),
-                  })
+                  await confirmNoticeFromCallRecord(
+                    {
+                      orgId,
+                      vapiCallId,
+                      language: assistant.language,
+                      vapiAssistantId: message.call?.assistantId as string,
+                      messages: message.artifact?.messages,
+                      calledAt: earliestCallTime(message.call?.startedAt, message.call?.createdAt),
+                    },
+                    // A signed tool call never expires, so a replay can't lean on a finished call.
+                    { whileRunning: true },
+                  )
                 ).outcome
               : "absent";
         // No evidence either way isn't evidence against the call: no tools, and it keeps running.
-        // Its report decides what's kept, as for a late start that can't be judged.
+        // Its report decides what's kept, as for a late start that can't be judged. A missed start
+        // never reached the limits either, so those still apply here. If they can't be read, the
+        // tools are refused anyway.
         if (confirmation === "unverifiable" || (confirmation === "absent" && vapiCallId)) {
+          if (await voiceQuotaExceeded(orgId, vapiCallId).catch(() => false)) {
+            const content = QUOTA_EXCEEDED_GOODBYE[assistant.language] ?? QUOTA_EXCEEDED_GOODBYE.EN;
+            const results = (message.toolCallList ?? []).map((tc) => ({
+              toolCallId: tc.id,
+              name: tc.name,
+              error: "quota_exceeded",
+              message: { type: "request-failed", content, endCallAfterSpokenEnabled: true },
+            }));
+            return NextResponse.json({ results });
+          }
           const results = (message.toolCallList ?? []).map((tc) => ({
             toolCallId: tc.id,
             result: JSON.stringify({ error: "limits_unavailable" }),
@@ -765,6 +781,24 @@ export async function POST(request: Request): Promise<NextResponse> {
       }
       if (refusal === "ended" || refusal === "notice") {
         return NextResponse.json({ ok: true, refused: true });
+      }
+      // A deactivated assistant that Vapi couldn't delete still answers its number. A call admitted
+      // before deactivation has a row. One without isn't the customer's: nothing is kept or billed.
+      if (!assistant.isActive) {
+        const admitted = await unscopedPrisma.voiceCall.findFirst({
+          where: { organizationId: orgId, vapiCallId: message.call.id },
+          select: { id: true },
+        });
+        if (!admitted) {
+          console.warn(
+            JSON.stringify({
+              event: "voice_report_for_inactive_assistant",
+              orgId,
+              vapiCallId: message.call.id,
+            }),
+          );
+          return NextResponse.json({ ok: true, refused: true });
+        }
       }
       // A call whose notice was never confirmed: keep nothing, charge nothing, and start no
       // pipeline, so its transcript doesn't reach the CRM or an AI provider. What happens to

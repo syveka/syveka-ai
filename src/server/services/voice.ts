@@ -249,7 +249,8 @@ export async function deactivateAssistant(
     ? closed
     : await db.voiceAssistant.update({
         where: { id: assistantId },
-        data: { vapiAssistantId: null, phoneNumber: null },
+        // isActive again: an activation that landed during the delete has nothing left to run on.
+        data: { isActive: false, vapiAssistantId: null, phoneNumber: null },
       });
 
   await audit(ctx, {

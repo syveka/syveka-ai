@@ -20,6 +20,7 @@ const m = vi.hoisted(() => ({
   failWrites: false,
   failedWrites: [] as string[],
   minutes: 1000,
+  assistantActive: true,
   liveAssistant: {} as Record<string, unknown>,
   callRecord: null as Record<string, unknown> | null,
   callRecordStatus: 200,
@@ -53,7 +54,7 @@ vi.mock("@/server/db/tenant", () => ({
               id: "assistant-1",
               organizationId: ORG,
               enabledTools: ["bookMeeting", "getCalendarAvailability"],
-              isActive: true,
+              isActive: m.assistantActive,
               language: "AR",
               organization: { members: [{ userId: "owner-1" }] },
             }
@@ -184,6 +185,7 @@ beforeEach(() => {
   m.failWrites = false;
   m.failedWrites = [];
   m.minutes = 1000;
+  m.assistantActive = true;
   m.liveAssistant = GOOD_CONFIG;
   m.callRecord = justStarted();
   m.unsettled = [];
@@ -230,6 +232,46 @@ afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
+});
+
+describe("an assistant deactivated in Syveka that Vapi couldn't delete", () => {
+  beforeEach(() => {
+    m.assistantActive = false;
+  });
+
+  it("keeps and bills nothing from a report of a call it never admitted", async () => {
+    const res = await POST(report(SPOKE_NOTICE));
+    expect(res.status).toBe(200);
+    expect(kept()).toBe(false);
+  });
+
+  it("keeps nothing from a call whose hang-up failed, though it really ran", async () => {
+    m.controlFails = true;
+    await POST(start());
+    expect(m.store.get(REFUSED_KEY)).toBe("running");
+    await POST(report(SPOKE_NOTICE));
+    expect(kept()).toBe(false);
+  });
+
+  it("settles a call admitted before the deactivation", async () => {
+    m.existingRow = {
+      id: "row-1",
+      endedAt: null,
+      durationSeconds: null,
+      postCallProcessedAt: null,
+    };
+    await POST(report(SPOKE_NOTICE));
+    expect(m.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("looks for unknown calls only on assistants still active", async () => {
+    await reconcileVoiceCalls({ now: NOW });
+    const assistantQuery = vi
+      .mocked(unscopedPrisma.voiceAssistant.findMany)
+      .mock.calls.map(([args]) => args?.where);
+    expect(assistantQuery.length).toBeGreaterThan(0);
+    for (const where of assistantQuery) expect(where).toMatchObject({ isActive: true });
+  });
 });
 
 describe("a missed start, followed by a configuration change", () => {
@@ -329,6 +371,22 @@ describe("a missed start, followed by a configuration change", () => {
       m.callRecord = endedCall();
       await POST(report());
       expect(kept()).toBe(false);
+    });
+
+    it("gets no tools from the record of a call already over, so a replay can't", async () => {
+      m.callRecord = endedCall(SPOKE_NOTICE, { startedAt: minutesAgo(5), endedAt: minutesAgo(1) });
+      await isLeftRunning(await POST(toolCall()));
+      expect(m.store.has(NOTICE_KEY)).toBe(false);
+    });
+
+    it("is ended when its organization has no minutes left, since the start never checked", async () => {
+      m.callRecord = justStarted();
+      m.minutes = 0;
+      const res = await POST(toolCall());
+      expect(m.executeTool).not.toHaveBeenCalled();
+      const body = JSON.stringify(await res.json());
+      expect(body).toContain("quota_exceeded");
+      expect(body).toContain("endCallAfterSpokenEnabled");
     });
 
     it("isn't let through a language approved only after the call began", async () => {

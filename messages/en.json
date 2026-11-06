@@ -665,12 +665,12 @@
           "body": "What the voice provider reports doesn't match your setting. Calls may not follow your choice until it's sent again."
         },
         "failed": {
-          "title": "Your setting wasn't applied",
-          "body": "The last attempt to send it failed. The voice provider may still use an earlier setting, and may be recording calls."
+          "title": "Your setting may not be applied",
+          "body": "The last attempt to send it failed. The voice provider may hold either setting, so calls may or may not be recorded."
         },
         "uncertain": {
           "title": "Your setting isn't confirmed",
-          "body": "Syveka can't tell which setting the voice provider holds, because updates overlapped or one didn't finish. It may be recording calls."
+          "body": "Syveka has no confirmed result for your latest setting, so it can't tell which one the voice provider holds. Calls may or may not be recorded."
         },
         "pending": {
           "title": "Your setting is being sent",
@@ -679,7 +679,8 @@
         "applied": {
           "title": "The voice provider accepted your setting",
           "body": "It accepted this setting when it was sent. That doesn't prove what happens on a call."
-        }
+        },
+        "sendAgainSent": "Sent. The status above shows what the voice provider accepted."
       }
     },
     "useKb": "Answer from the knowledge base",
@@ -798,7 +799,7 @@
         "action": "The workspace owner can resolve the payment issue in billing settings."
       }
     },
-    "deactivateIncomplete": "This assistant is off in Syveka and can't take any action, but the phone service still holds it and may answer its number. Syveka hangs up those calls. Deactivate again to remove it."
+    "deactivateIncomplete": "This assistant is off in Syveka and can't take any action, but the voice provider still holds it and may answer its number. Syveka tries to hang up those calls. Deactivate again to remove it."
   },
   "calendar": {
     "title": "Calendar",

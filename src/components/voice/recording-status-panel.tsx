@@ -1,9 +1,11 @@
 "use client";
 
 import { useActionState } from "react";
+import { AlertTriangle } from "lucide-react";
 import { useTranslations } from "next-intl";
 import { retryAssistantSyncAction, type VoiceActionState } from "@/actions/voice";
 import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import type { RecordingStatusKind } from "@/server/voice/recording-sync";
 
 const ATTENTION: ReadonlySet<RecordingStatusKind> = new Set([
@@ -22,8 +24,9 @@ const CAN_SEND_AGAIN: ReadonlySet<RecordingStatusKind> = new Set([
 ]);
 
 /**
- * What was asked for and what the phone service accepted are shown apart, on every visit: a saved
- * setting isn't proof of what the service does. Everything here is read on the server.
+ * What was asked for and what the voice provider accepted are shown apart, on every visit: a saved
+ * setting isn't proof of what the provider does. Everything here is read on the server. A region,
+ * like the readiness panel beside it: its state is there on load, and only a send's result is news.
  */
 export function RecordingStatusPanel({
   assistantId,
@@ -52,53 +55,60 @@ export function RecordingStatusPanel({
   const attention = ATTENTION.has(kind);
 
   return (
-    <section
+    <Card
+      role="region"
       aria-labelledby="voice-recording-status-title"
-      role={attention ? "alert" : "status"}
-      className={
-        attention
-          ? "space-y-2 rounded-md border border-warning p-4 text-start"
-          : "space-y-2 rounded-md border p-4 text-start"
-      }
+      className={attention ? "border-warning" : undefined}
     >
-      <h2 id="voice-recording-status-title" className="text-sm font-medium">
-        {t(`${kind}.title`)}
-      </h2>
-      <p className="text-sm text-muted-foreground">{t(`${kind}.body`)}</p>
-      <dl className="space-y-1 text-sm">
-        {requested !== null ? (
-          <div className="flex flex-wrap gap-x-2">
-            <dt className="text-muted-foreground">{t("requestedLabel")}</dt>
-            <dd>{value(requested)}</dd>
-          </div>
+      <CardHeader>
+        <CardTitle
+          id="voice-recording-status-title"
+          role="heading"
+          aria-level={2}
+          className="flex items-start gap-2 text-base"
+        >
+          {attention ? (
+            <AlertTriangle aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-warning" />
+          ) : null}
+          {t(`${kind}.title`)}
+        </CardTitle>
+        <CardDescription>{t(`${kind}.body`)}</CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <dl className="space-y-1 text-start text-sm">
+          {requested !== null ? (
+            <div className="flex flex-wrap gap-x-2">
+              <dt className="text-muted-foreground">{t("requestedLabel")}</dt>
+              <dd>{value(requested)}</dd>
+            </div>
+          ) : null}
+          {lastAccepted ? (
+            <div className="flex flex-wrap gap-x-2">
+              <dt className="text-muted-foreground">{t("lastAcceptedLabel")}</dt>
+              <dd>
+                {value(lastAccepted.enabled)} ({lastAccepted.at})
+              </dd>
+            </div>
+          ) : null}
+          {reportedByVapi !== null ? (
+            <div className="flex flex-wrap gap-x-2">
+              <dt className="text-muted-foreground">{t("reportedLabel")}</dt>
+              <dd>{value(reportedByVapi)}</dd>
+            </div>
+          ) : null}
+        </dl>
+        {CAN_SEND_AGAIN.has(kind) ? (
+          <form action={action}>
+            <Button type="submit" variant="outline" size="sm" disabled={pending}>
+              {pending ? tc("loading") : t("sendAgain")}
+            </Button>
+          </form>
         ) : null}
-        {lastAccepted ? (
-          <div className="flex flex-wrap gap-x-2">
-            <dt className="text-muted-foreground">{t("lastAcceptedLabel")}</dt>
-            <dd>
-              {value(lastAccepted.enabled)} ({lastAccepted.at})
-            </dd>
-          </div>
-        ) : null}
-        {reportedByVapi !== null ? (
-          <div className="flex flex-wrap gap-x-2">
-            <dt className="text-muted-foreground">{t("reportedLabel")}</dt>
-            <dd>{value(reportedByVapi)}</dd>
-          </div>
-        ) : null}
-      </dl>
-      {CAN_SEND_AGAIN.has(kind) ? (
-        <form action={action}>
-          <Button type="submit" variant="outline" size="sm" disabled={pending}>
-            {pending ? tc("loading") : t("sendAgain")}
-          </Button>
-        </form>
-      ) : null}
-      {state.error ? (
-        <p role="alert" className="text-sm text-destructive">
-          {t("sendAgainFailed")}
+        {/* Always mounted, so a screen reader announces a result when it arrives. */}
+        <p role="status" className="text-sm text-muted-foreground empty:hidden">
+          {state.error ? t("sendAgainFailed") : state.message ? t("sendAgainSent") : null}
         </p>
-      ) : null}
-    </section>
+      </CardContent>
+    </Card>
   );
 }

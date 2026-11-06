@@ -321,6 +321,8 @@ async function discoverMissingCalls(
   const assistants = await unscopedPrisma.voiceAssistant.findMany({
     where: {
       vapiAssistantId: { not: null },
+      // One still at Vapi only because its delete failed. Its unknown calls aren't kept or billed.
+      isActive: true,
       organization: { deletedAt: null },
       ...(cursor ? { id: { gt: cursor } } : {}),
     },

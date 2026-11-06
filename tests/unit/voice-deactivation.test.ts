@@ -114,7 +114,10 @@ describe("deactivateAssistant", () => {
     await deactivateAssistant(ctx(), "assistant-1");
 
     const updates = db.voiceAssistant.update.mock.calls.map(([call]) => call.data);
-    expect(updates).toEqual([{ isActive: false }, { vapiAssistantId: null, phoneNumber: null }]);
+    expect(updates).toEqual([
+      { isActive: false },
+      { isActive: false, vapiAssistantId: null, phoneNumber: null },
+    ]);
     const [closed, cleared] = db.voiceAssistant.update.mock.invocationCallOrder;
     const [deleted] = mocks.deleteVapiAssistant.mock.invocationCallOrder;
     expect(closed!).toBeLessThan(deleted!);

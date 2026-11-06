@@ -420,12 +420,16 @@ export async function callLiveness(
  */
 export async function confirmNoticeFromCallRecord(
   params: ConfirmParams,
+  options: { whileRunning?: boolean } = {},
 ): Promise<{ outcome: NoticeConfirmation; messages: unknown }> {
   const fromMessages = await confirmNoticeFromMessages(params);
   if (fromMessages !== "absent") return { outcome: fromMessages, messages: params.messages };
   const record = await readCallRecord(params.vapiCallId, params.vapiAssistantId);
   if (record === "unavailable") return { outcome: "unverifiable", messages: params.messages };
   if (record === "none") return { outcome: "absent", messages: params.messages };
+  if (options.whileRunning && (record.status === "ended" || record.endedAt)) {
+    return { outcome: "absent", messages: params.messages };
+  }
   const outcome = await confirmNoticeFromMessages({
     ...params,
     messages: record.messages,

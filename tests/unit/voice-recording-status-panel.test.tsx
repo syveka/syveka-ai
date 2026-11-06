@@ -8,6 +8,7 @@ vi.mock("next-intl", () => ({
   useTranslations: () => (key: string) => key,
 }));
 vi.mock("@/actions/voice", () => ({ retryAssistantSyncAction: async () => ({}) }));
+vi.mock("lucide-react", () => ({ AlertTriangle: () => <svg data-icon="warning" /> }));
 
 import { RecordingStatusPanel } from "@/components/voice/recording-status-panel";
 
@@ -24,9 +25,10 @@ const panel = (over: Partial<Parameters<typeof RecordingStatusPanel>[0]> = {}) =
   );
 
 describe("the recording status panel", () => {
-  it("shows a failed setting as an alert, apart from what was asked for, with a way to retry", () => {
+  it("marks a failed setting, apart from what was asked for, with a way to retry", () => {
     const html = panel({ lastAccepted: { enabled: true, at: "6 Nov 2026, 12:00" } });
-    expect(html).toContain('role="alert"');
+    expect(html).toContain('data-icon="warning"');
+    expect(html).toContain('role="region"');
     expect(html).toContain("failed.title");
     expect(html).toContain("requestedLabel");
     expect(html).toContain("valueOff");
@@ -37,13 +39,13 @@ describe("the recording status panel", () => {
 
   it.each(["uncertain", "mismatch", "unreadable"] as const)("offers a retry when %s", (kind) => {
     const html = panel({ kind });
-    expect(html).toContain('role="alert"');
+    expect(html).toContain('data-icon="warning"');
     expect(html).toContain("sendAgain");
   });
 
   it("asks for a review of an assistant never set here, and has nothing to resend", () => {
     const html = panel({ kind: "needsReview", requested: null });
-    expect(html).toContain('role="alert"');
+    expect(html).toContain('data-icon="warning"');
     expect(html).toContain("needsReview.title");
     expect(html).not.toContain("requestedLabel");
     expect(html).not.toContain("sendAgain");
@@ -55,11 +57,15 @@ describe("the recording status panel", () => {
     expect(html).toContain("valueOn");
   });
 
-  it("doesn't raise an alert or offer a retry once accepted", () => {
+  it("raises no warning and offers no retry once accepted", () => {
     const html = panel({ kind: "applied" });
-    expect(html).toContain('role="status"');
-    expect(html).not.toContain('role="alert"');
+    expect(html).not.toContain('data-icon="warning"');
     expect(html).not.toContain("sendAgain");
+  });
+
+  it("keeps a live region mounted for a send's result", () => {
+    expect(panel({ kind: "failed" })).toContain('role="status"');
+    expect(panel({ kind: "applied" })).toContain('role="status"');
   });
 
   it("shows nothing for an assistant not connected yet", () => {
