@@ -29,6 +29,21 @@ function parseAnalysis(reply: string): z.infer<typeof analysisSchema> | null {
   }
 }
 
+/**
+ * Arabic asks for its follow-ups in Arabic too, whatever language the caller used, and pins the
+ * JSON's English parts, because a translated sentiment would fail validation and lose the whole
+ * summary. FI and EN keep their original prompts, and an unrecognised value gets the English one.
+ */
+function buildCallAnalysisPrompt(language: string, transcriptText: string): string {
+  const arabic = language === "AR";
+  const summaryLanguage = arabic ? "Arabic" : language === "FI" ? "Finnish" : "English";
+  const followUp = arabic ? "<action item in Arabic>" : "<action item>";
+  const instruction = arabic
+    ? " Write the summary and follow-ups in Arabic, whatever the transcript's language. Keep the JSON keys and the sentiment value exactly as shown."
+    : "";
+  return `Analyze this phone call transcript. Respond with ONLY valid JSON: {"summary": "<3-5 sentence summary in ${summaryLanguage}>", "sentiment": "positive"|"neutral"|"negative", "followUps": ["${followUp}", ...max 5]}${instruction}\n\nTranscript:\n${transcriptText}`;
+}
+
 function logSummaryFailure(
   orgId: string,
   callId: string,
@@ -230,9 +245,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         messages: [
           {
             role: "user",
-            content: `Analyze this phone call transcript. Respond with ONLY valid JSON: {"summary": "<3-5 sentence summary in ${
-              call.assistant.language === "FI" ? "Finnish" : "English"
-            }>", "sentiment": "positive"|"neutral"|"negative", "followUps": ["<action item>", ...max 5]}\n\nTranscript:\n${transcriptText}`,
+            content: buildCallAnalysisPrompt(call.assistant.language, transcriptText),
           },
         ],
       });
