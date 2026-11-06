@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import {
   saveAssistantAction,
@@ -22,7 +22,14 @@ type Initial = VoiceAssistantInput & {
   phoneNumber?: string | null;
 };
 
-export function AssistantForm({ initial }: { initial?: Initial }) {
+export function AssistantForm({
+  initial,
+  statusPanel,
+}: {
+  initial?: Initial;
+  /** Shown under the page heading, above the settings. */
+  statusPanel?: ReactNode;
+}) {
   const t = useTranslations("voice");
   const tc = useTranslations("common");
   const [state, action, pending] = useActionState<VoiceActionState, FormData>(
@@ -44,8 +51,10 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
         <Link href="/voice" className="text-sm text-muted-foreground hover:underline">
           ← {t("title")}
         </Link>
-        <div className="mt-1 flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">{initial?.name ?? t("newAssistant")}</h1>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+          <h1 className="min-w-0 break-words text-2xl font-semibold">
+            {initial?.name ?? t("newAssistant")}
+          </h1>
           {initial?.id && !initial.isActive ? (
             <form action={activateAction}>
               <Button type="submit" variant="default" disabled={activatePending}>
@@ -63,7 +72,7 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
         </div>
         {initial?.phoneNumber ? (
           <p className="text-sm text-muted-foreground">
-            {t("phoneNumber")}: <strong>{initial.phoneNumber}</strong>
+            {t("phoneNumber")}: <strong dir="ltr">{initial.phoneNumber}</strong>
           </p>
         ) : null}
         {activateState.phoneNumberPending ? (
@@ -87,6 +96,8 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
           </p>
         ) : null}
       </div>
+
+      {statusPanel}
 
       {initial?.id && !initial.phoneNumber ? (
         <AttachPhoneNumberForm assistantId={initial.id} />
