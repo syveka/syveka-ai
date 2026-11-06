@@ -1,21 +1,38 @@
 # Voice metering, limits and disclosure: release plan
 
-Written for the owner and reviewers. It describes draft PR #408 at `3cf63d2b` and draft PR #410 at `ff6f93b8`, against `origin/main` at `40f71ae7`. Updated 2026-11-06 with the owner's decisions of 2026-11-05: CI patch and required check approved, no retroactive approval, an explicit recording setting, and limits of 1 and 3. **Nothing here has been merged, deployed, or tried on a real call.** Merging, deploying, paid calls, live Vapi writes, approved-language activation, schedules and production settings each need separate authorization. Prices and commercial allowances stay pending owner decisions.
+Written for the owner and reviewers. It describes draft PRs #408 at `3cf63d2b`, #411 at `a9f7eab0` and #410 at `a9d3e299`, against `origin/main` at `40f71ae7`. Updated 2026-11-06. [Decisions](#decisions) separates what the owner authorized directly from what still needs confirming. **Nothing here has been merged, deployed, or tried on a real call.** Merging, deploying, paid calls, live Vapi writes, approved-language activation, schedules and production settings each need separate authorization. Prices and commercial allowances stay pending owner decisions.
+
+## Status
+
+| Work                                               | Done                                                                                                        | Still needed                                                            |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| #408                                               | CI 21 of 21 at `3cf63d2b`. Real Redis 29 of 29 and PostgreSQL 11 of 11 ran locally on disposable containers | CI patch, then its real jobs in GitHub Actions                          |
+| #411                                               | CI 21 of 21 at `a9f7eab0`. Independent review of its last commit found no blocker                           | Merge the patched #408                                                  |
+| #410                                               | Audit, recovery drill and release path fixed, at `a9d3e299`                                                 | Guard patch. CI's `migrations:check` and generator test fail until then |
+| `CI required` as a required check                  | Prepared                                                                                                    | Apply once the real jobs pass                                           |
+| Real calls, Vapi behaviour, production usage query | None run                                                                                                    | Each needs its own authorization                                        |
+
+Three levels of evidence, which shouldn't be mixed:
+
+- **Mocks and fake executables:** the unit tests, including the Vapi calls and the fake `docker` and `npx` in the `s7` tests.
+- **Real databases, synthetic data:** the local Redis and PostgreSQL suites, and the recovery rehearsal on local containers with no network.
+- **Real calls and production:** none yet.
 
 ## What releases
 
 **#408 is the release candidate.** It holds the metering, limits and notice work together, because reconciliation has to honour both limits and the notice, and those changes conflict when kept apart.
 
-| PR               | Role for release                                                      | Why                                                                                                                                                                   |
-| ---------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| #408             | **Release this**                                                      | Contains every commit below                                                                                                                                           |
-| #410             | **Release with or after #408,** once its guard patch is applied       | The recording setting. Stacked on #408, so it contains #408's commits. Adds a migration                                                                               |
-| #407             | **Separate dependency.** Release before or after #408                 | Reads AI replies by block type. Not in #408. Both change `tests/unit/post-call-idempotency.test.ts`, so whichever merges second has to resolve that one test conflict |
-| #409             | Independent                                                           | Arabic call summaries, from separate work. Merges cleanly with #408                                                                                                   |
-| #404, #405, #406 | **Superseded for release. Don't merge.** Keep open for review history | All their commits are inside #408, and #408 goes further                                                                                                              |
-| #335             | **Superseded for release.** Keep for review history                   | Its notice commit is in #408. Its forced recording is removed there. It also supersedes #265 and #304                                                                 |
-| #398             | Optional                                                              | Fixes Windows and load-related unit test failures, so it doesn't change the product                                                                                   |
-| #403             | This plan, with no code                                               | Holds the CI patch for the owner                                                                                                                                      |
+| PR               | Role for release                                                                                | Why                                                                                                                                                                   |
+| ---------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #408             | **Release this**                                                                                | Contains every commit below                                                                                                                                           |
+| #411             | **Release with #408,** after it                                                                 | Reconciliation and limit fixes from review. One commit on #408. Doesn't change the database                                                                           |
+| #410             | **Release after #408,** once its guard patch is applied and the recording decision is confirmed | The recording setting. Stacked on #408, without #411. A trial merge with #411 had no conflict, and typecheck and 154 focused tests passed. Adds a migration           |
+| #407             | **Separate dependency.** Release before or after #408                                           | Reads AI replies by block type. Not in #408. Both change `tests/unit/post-call-idempotency.test.ts`, so whichever merges second has to resolve that one test conflict |
+| #409             | Independent                                                                                     | Arabic call summaries, from separate work. Merges cleanly with #408                                                                                                   |
+| #404, #405, #406 | **Superseded for release. Don't merge.** Keep open for review history                           | All their commits are inside #408, and #408 goes further                                                                                                              |
+| #335             | **Superseded for release.** Keep for review history                                             | Its notice commit is in #408. Its forced recording is removed there. It also supersedes #265 and #304                                                                 |
+| #398             | Optional                                                                                        | Fixes Windows and load-related unit test failures, so it doesn't change the product                                                                                   |
+| #403             | This plan, with no code                                                                         | Holds the CI patch for the owner                                                                                                                                      |
 
 ### Commits in #408
 
@@ -123,11 +140,11 @@ Billable usage (`UsageRecord`) and uncertain usage (unsettled calls) stay separa
 
 ### Recording
 
-**#410 adds an explicit setting** (decision 2). It isn't in #408.
+**#410 adds an explicit setting,** which needs [confirming](#decisions). It isn't in #408.
 
 - **New assistants:** recording is off. So is a Vapi assistant re-created after deactivation, because Vapi's own default records and there's no dashboard setting left to keep.
 - **Assistants made before #410:** the migration gives them `NULL`. Their page shows "not set here", a sync sends no recording field, and their Vapi dashboard choice stands until the owner picks on or off.
-- **Once chosen:** it's sent as `artifactPlan.recordingEnabled` on every sync, so a dashboard edit doesn't last. The audit log records it.
+- **Once chosen:** it's sent as `artifactPlan.recordingEnabled` on every sync, so a dashboard edit doesn't last. The audit log records the change before the sync. If the sync fails, a `voice_assistant.sync_failed` row says Vapi may hold the old setting, and the person saving sees an error.
 - **The notice is unchanged.** It says calls "may be recorded" either way. Wording for recording off needs legal approval in each language.
 
 **Established with mocks only.** Still to check with Vapi itself:
@@ -137,7 +154,14 @@ Billable usage (`UsageRecord`) and uncertain usage (unsettled calls) stay separa
 - Whether a PATCH leaves an omitted `artifactPlan` unchanged, for `NULL` assistants.
 - How long Vapi keeps recordings and transcripts, and what happens to the copy of a call Syveka refused.
 
-**#410 can't pass CI until the owner applies one patch.** Adding the column needs one line in each of two protected guard scripts, prepared as [`recording-guard.patch`](recording-guard.patch). Until then `migrations:check` and the legacy contract test fail, by design. With the patch applied to a scratch copy, `check-migration-history.mjs` passes. The contract generator couldn't be run. The preflight contract `prisma/sql/006_legacy_baseline_preflight.sql` was edited by hand, because the generator couldn't run, and the generator test checks it once the patch lands. **The recovery-drill scripts expect exactly one pending production migration.** After #410 there would be two, so they need updating before the next drill.
+**#410 can't pass CI until the owner applies one patch.** Adding the column needs one line in each of two protected guard scripts, prepared as [`recording-guard.patch`](recording-guard.patch). Until then `migrations:check` and the legacy contract test fail, by design. Renamed, patched copies of both scripts were run against #410: the history check passes, and the real generator test passes 40 of 40. The preflight contract `prisma/sql/006_legacy_baseline_preflight.sql` was edited by hand, and that test checks it.
+
+**Release and recovery for #410:**
+
+- **Backup path: Option A (PITR) only.** Options B and B-M in the [release runbook](../release-runbook.md) exclude a column addition. PITR being enabled is unconfirmed, and it's for the owner to check.
+- **Restore test: required by Option A,** because the schema changes. The drill stopped on #410's second pending migration while its unit tests passed. It now reads `scripts/recovery-drill/expected-pending-migrations.txt`, and a test fails if a migration lands without being listed. The list claims what production's history holds, which hasn't been checked against production.
+- **Evidence:** the synthetic rehearsal failed at step A1 on `ff6f93b8`, and passed all 43 steps at `a9d3e299`. It uses local containers. A drill against a real Supabase project hasn't been run, and neither has `s7`'s real `prisma migrate deploy`.
+- **Next maintenance:** once production has applied the listed migrations and the list is emptied, the `s7` deploy tests need a synthetic list. They fail loudly until then.
 
 ## Prerequisites
 
@@ -173,6 +197,7 @@ Staging proves the mechanics on one environment. It doesn't make production read
 All of these are needed, and staging results alone don't satisfy them:
 
 - Staging passed on the same commit.
+- If #410 is included: PITR confirmed under Option A, and a restore test at the release commit.
 - Counsel and a native speaker approved the wording for each language to be enabled, and the owner decided on recording and objections.
 - Production Enterprise organizations are identified and their grants ready.
 - The owner confirmed the concurrency safeguards.
@@ -193,7 +218,7 @@ In this order:
 
 1. **To stop calls at once:** empty `VOICE_DISCLOSURE_APPROVED_LANGUAGES`. Every call is then hung up.
 2. Remove the QStash schedule, because its job goes away with the code.
-3. Revert and deploy. #408 has no migration. If #410 was released, its column stays: it's nullable and old code ignores it.
+3. Revert and deploy. #408 has no migration. If #410 was released, use `vercel rollback <recorded deployment>`. Its column stays: it's nullable and old code ignores it. The runbook lists what to check in Vapi, because code before #408 sends an undocumented `recordingEnabled: true`, whose effect is unverified.
 4. Save assistants again on the reverted code, so Vapi holds what that code expects. The notice in `firstMessage` is harmless until then.
 5. Leave Enterprise grants, or revoke them if they're no longer wanted.
 
@@ -210,7 +235,7 @@ Slots expire within 20 minutes, and markers and refusals within 48 hours. Old co
 
 **The patch:** [`ci-real-db-gate.patch`](ci-real-db-gate.patch) adds an `opt-in-redis` job and the binding suite to `opt-in-postgres`, puts both in `CI required`, and fails on a wrong file count, so a missing file or skipped test can't pass. The configuration guard blocks agents from editing `.github/`, so it isn't applied. It has been checked with `git apply --check` and parsed as YAML, but has **never run in GitHub Actions**. It must land with or after #408, because it names test files #408 adds.
 
-**Approved by the owner on 2026-11-05,** together with making `CI required` a required check. Agents still can't apply either, so the exact steps are under [Owner steps](#owner-steps). `CI required` and its jobs passed on `3cf63d2b`, without the patch.
+**Authorized directly by the owner on 2026-11-05,** together with making `CI required` a required check. Agents can't edit `.github/`, so the owner applies the patch, as in [Owner steps](#owner-steps). `CI required` and its jobs passed on `3cf63d2b`, without the patch.
 
 **Requiring the check blocks every PR to `main`** whose `CI required` fails, not just #408. Nothing else in the ruleset changes: [`ruleset-ci-required.json`](ruleset-ci-required.json) is the current ruleset plus one `required_status_checks` rule, and [`ruleset-before.json`](ruleset-before.json) restores it.
 
@@ -265,7 +290,9 @@ Check 5 (Vapi retrying a 503) needs Redis or the webhook broken on staging, so i
 
 ## Owner steps
 
-In this order. Each runs in the owner's own terminal, where agent hooks don't apply. The commands work in Git Bash and PowerShell.
+A reviewed script, handed over in the main session, does steps 1 and 4 and merges the patched #408 into #411. It stops if any head has moved. Claude then does steps 2 and 3, under the owner's authorization of 2026-11-05. **None of these has been run yet.**
+
+The manual steps stay here as the fallback. Each runs in the owner's own terminal, where agent hooks don't apply. The commands work in Git Bash and PowerShell.
 
 **1. Apply the CI patch to #408.**
 
@@ -322,12 +349,15 @@ Its CI must then pass, including `migrations:check` and the migration jobs.
 
 ## Decisions
 
-Made on 2026-11-05:
+Authorized directly by the owner:
 
-1. **CI:** apply the patch, and make `CI required` a required check. Steps above.
-2. **Recording:** an explicit setting, off for new assistants, keeping existing assistants' choice. In #410.
-3. **Late approval:** refused. A language must be approved when the call begins. In #408.
-4. **Limits:** 1 concurrent call on Starter and 3 on Pro, for testing.
+1. **CI:** apply the patch, and make `CI required` a required check, keeping the other rules. Message of 2026-11-05.
+
+Written as decisions by another session, and **not confirmed in the main session.** They're built, but they're proposals until the owner confirms them:
+
+1. **Recording:** an explicit setting, off for new assistants, keeping existing assistants' choice. In #410.
+2. **Late approval:** refused. A language must be approved when the call begins. In #408.
+3. **Limits:** 1 concurrent call on Starter and 3 on Pro, for testing.
 
 Still open:
 
@@ -336,3 +366,5 @@ Still open:
 3. **Migrations:** the guard for #410 is covered by its patch. A contract concurrency metric or a unique usage index would each need the same.
 4. **Pricing:** after reviewing [`unit-economics.md`](unit-economics.md).
 5. **Merging, deploying, Vapi sync, paid calls and price changes:** each separately.
+6. **Backups for #410:** whether PITR is enabled, and whether `authenticated` holds an UPDATE grant on `voice_assistants`.
+7. **Long outages (#411):** a refuse threshold, since exposure is about one cap per 48 hours.
