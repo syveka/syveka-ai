@@ -437,7 +437,7 @@ jobs:
     needs: [prisma-generate]
     services:
       redis:
-        image: redis:7-alpine
+        image: redis:0-does-not-exist
         ports: ["6379:6379"]
         options: >-
           --health-cmd "redis-cli ping" --health-interval 5s
