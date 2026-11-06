@@ -1,6 +1,6 @@
 # Syveka AI
 
-Multi-tenant AI business assistant for Finnish SMBs.
+Multi-tenant AI business assistant for small and growing businesses, in Finnish, English and Arabic.
 Architecture source of truth: `docs/ARCHITECTURE.md`.
 
 ## Stack
