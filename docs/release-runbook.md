@@ -675,6 +675,22 @@ environment until this schedule has actually been registered against it** — un
 whose process crashes mid-flight stays stuck `GENERATING` with credits `RESERVED` indefinitely, exactly
 as before that work, because nothing will be calling this route on a recurring basis.
 
+## Voice call reconciliation schedule (QStash)
+
+`src/app/api/v1/jobs/reconcile-voice-calls/route.ts` recovers voice calls whose webhooks were lost or late,
+and requeues their post-call jobs. Like the jobs above, **the code alone doesn't create its own trigger**. A
+QStash recurring schedule must be registered manually, once per environment, **before voice is enabled there**:
+
+- POST destination: `/api/v1/jobs/reconcile-voice-calls`
+- Cron: `*/15 * * * *` (every 15 minutes; a call is looked at once it's 20 minutes old with no end, or 30 minutes
+  past its end with its job unprocessed)
+- Initial JSON body: `{}`
+- The request must be delivered and signed by QStash (verified via `verifyJobRequest`).
+
+Until it's registered, a call whose report is lost or has no length is never billed, and counts as 15 minutes
+against the organization's limits for 48 hours. Log events to watch: `voice_reconcile_long_unresolved` (a call
+no longer counted against limits and still unresolved), `voice_reconcile_list_full` (older calls may be missed, since the list isn't paged) and `voice_reconcile_row_failed`.
+
 ## Nightly usage rollup and retention purge schedule (QStash)
 
 `src/app/api/v1/jobs/usage-rollup/route.ts` is the nightly job that **permanently deletes
