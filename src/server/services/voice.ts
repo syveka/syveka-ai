@@ -103,9 +103,17 @@ export async function upsertAssistant(
   if (assistant.vapiAssistantId) {
     try {
       await syncToVapi(assistant.id, ctx.orgId);
-    } catch {
+    } catch (error) {
       // The saved setting and Vapi can now disagree, for example on whether calls are recorded.
-      // Provider errors can hold credentials or customer data, so none of it is stored.
+      // Provider errors can hold credentials or customer data, so only the error's type is logged.
+      console.error(
+        JSON.stringify({
+          event: "voice_assistant_sync_failed",
+          organizationId: ctx.orgId,
+          assistantId: assistant.id,
+          errorType: error instanceof Error ? error.name : "UnknownError",
+        }),
+      );
       await audit(ctx, {
         action: "voice_assistant.sync_failed",
         resourceType: "voice_assistant",

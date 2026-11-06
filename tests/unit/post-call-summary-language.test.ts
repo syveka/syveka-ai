@@ -227,6 +227,16 @@ describe("what reaches the summary prompt", () => {
     expect(promptSent()).toContain("Hello there");
   });
 
+  it("leaves out tool results, which can hold CRM or knowledge-base data", async () => {
+    withTranscript([
+      { role: "tool_call_result", result: "CRM-RECORD-DETAIL" },
+      { role: "bot", message: "Hello there" },
+    ]);
+    await runJob();
+    expect(promptSent()).not.toContain("CRM-RECORD-DETAIL");
+    expect(promptSent()).toContain("Hello there");
+  });
+
   it("doesn't call the model for a call with only a system turn", async () => {
     withTranscript([{ role: "system", message: "SECRET-BUSINESS-PROMPT with plenty of text" }]);
     await runJob();
@@ -322,6 +332,25 @@ describe("a provider failure while QStash can still retry", () => {
     const response = await retryRequest("0");
     expect(response.status).toBe(503);
     expect(processed()).toBe(false);
+  });
+
+  it("repeats no CRM activity when a retry succeeds", async () => {
+    expect((await retryRequest("0")).status).toBe(503);
+    expect(mocks.activityCreate).not.toHaveBeenCalled();
+
+    mocks.anthropicCreate.mockReset();
+    mocks.anthropicCreate.mockResolvedValue({
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify({ summary: "A summary.", sentiment: "neutral", followUps: [] }),
+        },
+      ],
+    });
+    expect((await retryRequest("1")).status).toBe(200);
+
+    expect(mocks.activityCreate).toHaveBeenCalledTimes(1);
+    expect(processed()).toBe(true);
   });
 
   it("finishes without a summary on the last attempt, so a job can't retry forever", async () => {

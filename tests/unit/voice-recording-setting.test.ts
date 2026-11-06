@@ -258,6 +258,7 @@ describe("the audit trail when Vapi can't be reached", () => {
   });
 
   it("records a saved change even though the sync fails, and reports that kind of failure", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
     mocks.upsertVapiAssistant.mockRejectedValueOnce(new Error(providerError));
 
     await expect(upsertAssistant(ctx, input({ recording: "off" }), "assistant-1")).rejects.toThrow(
@@ -276,6 +277,7 @@ describe("the audit trail when Vapi can't be reached", () => {
   });
 
   it("records that Vapi may still hold the old setting, without the provider's error", async () => {
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
     mocks.upsertVapiAssistant.mockRejectedValueOnce(new Error(providerError));
 
     const failure = await upsertAssistant(ctx, input({ recording: "off" }), "assistant-1").catch(
@@ -303,10 +305,13 @@ describe("the audit trail when Vapi can't be reached", () => {
       VoiceSyncFailedError,
     );
 
-    expect(logged).toHaveBeenCalledTimes(1);
-    expect(logged.mock.calls[0]![0]).toContain("voice_assistant_sync_failed_not_audited");
-    expect(logged.mock.calls[0]![0]).toContain("TypeError");
-    expect(logged.mock.calls[0]![0]).not.toContain("audit database detail");
+    const lines = logged.mock.calls.map(([line]) => String(line));
+    expect(lines[0]).toContain('"event":"voice_assistant_sync_failed"');
+    expect(lines[0]).toContain('"errorType":"Error"');
+    expect(lines[1]).toContain("voice_assistant_sync_failed_not_audited");
+    expect(lines[1]).toContain("TypeError");
+    expect(lines.join(" ")).not.toContain("audit database detail");
+    expect(lines.join(" ")).not.toContain("secret-provider-detail");
     logged.mockRestore();
   });
 
@@ -350,5 +355,18 @@ describe("the audit trail when Vapi can't be reached", () => {
       id: "assistant-1",
       organizationId: "org-a",
     });
+  });
+});
+
+describe("what the assistant is told about the notice", () => {
+  it.each([
+    ["AR", "بدأت المكالمة بالفعل بإشعار"],
+    ["FI", "Puhelun alussa on jo kerrottu"],
+    ["EN", "The call has already opened with a notice"],
+  ])("speaks %s to an assistant in that language", async (language, opening) => {
+    mocks.findFirstOrThrow.mockResolvedValue(row({ language }));
+    await activateAssistant(ctx, "assistant-1");
+    const config = mocks.upsertVapiAssistant.mock.calls[0]![0] as { systemPrompt?: string };
+    expect(config.systemPrompt).toContain(opening);
   });
 });
