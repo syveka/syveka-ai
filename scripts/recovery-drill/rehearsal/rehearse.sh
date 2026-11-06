@@ -23,7 +23,7 @@
 #      scrub, an omitted text scrub, an omitted workflow-recipient rule, and
 #      the text scrub plus its database check both disabled (the archive scan).
 #   D. s6 localtest into a fresh empty destination, then wrong-version and
-#      non-empty-target rejections, then the pending migration applied locally
+#      non-empty-target rejections, then the pending migrations applied locally
 #      and tests/staging/release-invariants.sql before and after.
 #   E. on a second empty destination: the Auth, Storage and migration-history
 #      guards one by one (refused before any write), a restore failing mid-load
@@ -39,7 +39,11 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 DRILL=$(cd "$HERE/.." && pwd)
 REPO=$(cd "$DRILL/../.." && pwd)
 SUPA_IMG=public.ecr.aws/supabase/postgres:17.6.1.167
-PENDING=20261014000000_secure_prisma_migrations_table
+# shellcheck source=../lib.sh
+. "$DRILL/lib.sh"
+PENDING_LIST=$(expected_pending_migrations "$DRILL/expected-pending-migrations.txt")
+# Run by hand on production on 2026-10-21 (#355), so its statements are there without a history row.
+HAND_APPLIED=20261014000000_secure_prisma_migrations_table
 MARKER_ERE='SYNTHETIC-?SECRET'
 
 WORK=${1:-}
@@ -103,7 +107,7 @@ create table public."_prisma_migrations" (
 SQL
 for dir in "$REPO"/prisma/migrations/*/; do
   name=$(basename "$dir")
-  [ "$name" = "$PENDING" ] && continue
+  printf '%s\n' "$PENDING_LIST" | grep -qx "$name" && continue
   sum=$(sha256sum "$dir/migration.sql" | cut -c1-64)
   { cat "$dir/migration.sql"
     printf "\ninsert into public._prisma_migrations (id, checksum, finished_at, migration_name, applied_steps_count) values (gen_random_uuid()::text, '%s', now(), '%s', 1);\n" "$sum" "$name"
@@ -112,9 +116,9 @@ done
 APPLIED=$(sql "$SRC" "$SRC_PW" postgres -At -c "select count(*) from public._prisma_migrations where finished_at is not null")
 [ "$mig_ok" = 1 ] && [ "$APPLIED" = 31 ] && result PASS "A1 31 production migrations applied with Prisma history ($APPLIED rows)" \
   || { result FAIL "A1 migrations (applied=$APPLIED)"; exit 1; }
-# Production state since 2026-10-21 (#355): the pending migration's statements
+# Production state since 2026-10-21 (#355): the hand-applied migration's statements
 # were run by hand, without a history row.
-sql "$SRC" "$SRC_PW" postgres --single-transaction < "$REPO/prisma/migrations/$PENDING/migration.sql" >/dev/null \
+sql "$SRC" "$SRC_PW" postgres --single-transaction < "$REPO/prisma/migrations/$HAND_APPLIED/migration.sql" >/dev/null \
   && result PASS "A2 manual 2026-10-21 remediation reproduced (no history row)" || result FAIL "A2 manual remediation"
 sql "$SRC" "$SRC_PW" postgres --single-transaction < "$HERE/seed-data.sql" > "$WORK/seed-data.log" 2>&1 \
   && result PASS "A4 synthetic sensitive data seeded" || { result FAIL "A4 seed"; cat "$WORK/seed-data.log"; exit 1; }
@@ -204,7 +208,7 @@ s6 "$DST" "17.11" "$DST_PW" "$WORK/s6-wrong-version.log"; RC=$?
   && result PASS "D2 wrong-target rejection before any write (version $DST_PREFIX is not 17.11)" || result FAIL "D2 wrong-target rejection (rc=$RC)"
 
 s6 "$DST" "$DST_PREFIX" "$DST_PW" "$WORK/s6-positive.log"; RC=$?
-[ "$RC" = 0 ] && result PASS "D3 s6 positive run: $(grep -o 'time_to_restore_seconds=[0-9]*' "$WORK/s6-positive.log"), checks 0, row counts match, pending = $PENDING" \
+[ "$RC" = 0 ] && result PASS "D3 s6 positive run: $(grep -o 'time_to_restore_seconds=[0-9]*' "$WORK/s6-positive.log"), checks 0, row counts match, pending = $(printf '%s' "$PENDING_LIST" | tr '\n' ' ')" \
   || { result FAIL "D3 s6 positive run (rc=$RC)"; tail -15 "$WORK/s6-positive.log"; }
 
 TABLES_BEFORE=$(sql "$DST" "$DST_PW" postgres -At -c "select count(*) from pg_tables where schemaname = 'public'")
@@ -215,19 +219,22 @@ TABLES_AFTER=$(sql "$DST" "$DST_PW" postgres -At -c "select count(*) from pg_tab
 
 if [ "$RC" != 0 ] && [ -s "$S5OUT/sanitized-public.dump" ]; then
   sql "$DST" "$DST_PW" postgres < "$REPO/tests/staging/release-invariants.sql" > "$WORK/invariants-before.log" 2>&1; RC=$?
-  [ "$RC" != 0 ] && grep -q "$PENDING is not successfully applied\|migration .* is not successfully applied" "$WORK/invariants-before.log" \
-    && result PASS "D5 release invariants fail while $PENDING is pending" || result FAIL "D5 invariants before the migration (rc=$RC): $(grep -m1 -o 'STAGING RELEASE FAIL.*' "$WORK/invariants-before.log")"
-  SUM=$(sha256sum "$REPO/prisma/migrations/$PENDING/migration.sql" | cut -c1-64)
-  { cat "$REPO/prisma/migrations/$PENDING/migration.sql"
-    printf "\ninsert into public._prisma_migrations (id, checksum, finished_at, migration_name, applied_steps_count) values (gen_random_uuid()::text, '%s', now(), '%s', 1);\n" "$SUM" "$PENDING"
-  } | sql "$DST" "$DST_PW" postgres --single-transaction > "$WORK/apply-pending.log" 2>&1 \
-    && result PASS "D6 pending migration applied locally on the synthetic destination (as Prisma records it)" || result FAIL "D6 apply pending migration"
+  # With nothing pending there's no failure to see, and D7 still checks the invariants pass.
+  [ -z "$PENDING_LIST" ] || {
+    [ "$RC" != 0 ] && grep -q "migration .* is not successfully applied" "$WORK/invariants-before.log" \
+      && result PASS "D5 release invariants fail while migrations are pending" || result FAIL "D5 invariants before the migration (rc=$RC): $(grep -m1 -o 'STAGING RELEASE FAIL.*' "$WORK/invariants-before.log")"
+  }
+  for name in $PENDING_LIST; do
+    SUM=$(sha256sum "$REPO/prisma/migrations/$name/migration.sql" | cut -c1-64)
+    { cat "$REPO/prisma/migrations/$name/migration.sql"
+      printf "\ninsert into public._prisma_migrations (id, checksum, finished_at, migration_name, applied_steps_count) values (gen_random_uuid()::text, '%s', now(), '%s', 1);\n" "$SUM" "$name"
+    } | sql "$DST" "$DST_PW" postgres --single-transaction >> "$WORK/apply-pending.log" 2>&1 \
+      && result PASS "D6 $name applied locally on the synthetic destination (as Prisma records it)" || result FAIL "D6 apply $name"
+  done
   sql "$DST" "$DST_PW" postgres < "$REPO/tests/staging/release-invariants.sql" > "$WORK/invariants-after.log" 2>&1; RC=$?
   [ "$RC" = 0 ] && grep -q 'ALL STAGING RELEASE INVARIANTS PASSED' "$WORK/invariants-after.log" \
     && result PASS "D7 release invariants pass after the migration" || result FAIL "D7 invariants after the migration (rc=$RC): $(grep -m1 -o 'STAGING RELEASE FAIL.*\|ERROR.*' "$WORK/invariants-after.log")"
   sql "$DST" "$DST_PW" postgres -At -c "select migration_name from public._prisma_migrations where finished_at is not null and rolled_back_at is null" > "$WORK/applied-after.txt"
-  # shellcheck source=../lib.sh
-  . "$DRILL/lib.sh"
   [ -z "$(pending_migrations "$REPO/prisma/migrations" "$WORK/applied-after.txt")" ] \
     && result PASS "D8 migration history up to date at this commit ($(grep -c '' "$WORK/applied-after.txt") rows)" || result FAIL "D8 still pending"
 fi

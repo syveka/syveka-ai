@@ -25,17 +25,45 @@ const holder = vi.hoisted(() => ({
   failEnqueueOnce: false,
   onAssistantLookup: null as null | (() => void),
   upsertGate: null as null | (() => Promise<void>),
+  sendToVapi: null as null | (() => Promise<{ id: string }>),
 }));
 
 vi.mock("@/server/db/tenant", () => ({
   get unscopedPrisma() {
     return holder.client;
   },
-  tenantDb: () => {
-    throw new Error("tenantDb is not used by the webhook");
+  // A pass-through, so these prove the read's own organization filter on real rows.
+  tenantDb: () => holder.client,
+}));
+vi.mock("@/server/integrations/vapi", () => ({
+  verifyVapiSignature: () => true,
+  upsertVapiAssistant: async () => {
+    if (!holder.sendToVapi) throw new Error("No Vapi answer arranged");
+    return holder.sendToVapi();
   },
 }));
-vi.mock("@/server/integrations/vapi", () => ({ verifyVapiSignature: () => true }));
+vi.mock("@/server/business-dna/context", () => ({
+  getBusinessDnaContext: async () => null,
+  buildBusinessDnaPromptBlock: () => null,
+}));
+vi.mock("@/env", () => ({
+  getVapiEnv: () => ({
+    VAPI_API_KEY: "test",
+    VAPI_WEBHOOK_SECRET: "a".repeat(32),
+    VAPI_WEBHOOK_CREDENTIAL_ID: "cred_test",
+    NEXT_PUBLIC_APP_URL: "https://app.example.test",
+  }),
+}));
+// Call binding is what's tested here: the notice gate has its own suite.
+vi.mock("@/server/voice/disclosure-gate", () => ({
+  verifyCallDisclosure: async () => "ok",
+  callDisclosureState: async () => "verified",
+  callLiveness: async () => ({ liveness: "live", calledAt: new Date().toISOString() }),
+  startedJustNow: () => true,
+  earliestCallTime: (...times: unknown[]) => times.find((time) => typeof time === "string"),
+  confirmNoticeFromMessages: async () => "ok",
+  confirmNoticeFromCallRecord: async () => ({ outcome: "ok" }),
+}));
 vi.mock("@/server/services/billing/entitlements", () => ({
   getMonthUsage: vi.fn(async () => 0),
   getEntitlements: vi.fn(async () => ({ voiceMinutesMonth: 1000, readOnly: false })),
@@ -60,18 +88,32 @@ vi.mock("@/server/integrations/redis", () => ({
     incr: async () => 1,
     decr: async () => 0,
     expire: async () => 1,
+    eval: async (_script: string, _keys: string[], args: string[]) =>
+      args[2] === "0" ? [-1, 0] : [1, 0],
   },
 }));
-vi.mock("@/server/ai/tools", () => ({ executeTool: vi.fn() }));
+vi.mock("@/server/ai/tools", () => ({
+  executeTool: vi.fn(),
+  TOOL_REGISTRY: [],
+  zodToJsonSchema: () => ({}),
+}));
 
 type Row = Record<string, unknown>;
 type Db = {
   organization: { create: (a: object) => Promise<{ id: string }> };
-  voiceAssistant: { create: (a: object) => Promise<{ id: string }> };
+  voiceAssistant: {
+    create: (a: object) => Promise<{ id: string }>;
+    findUnique: (a: object) => Promise<Row | null>;
+    update: (a: object) => Promise<Row>;
+  };
   voiceCall: {
+    create: (a: object) => Promise<{ id: string }>;
     findUnique: (a: object) => Promise<Row | null>;
     findMany: (a: object) => Promise<Row[]>;
   };
+  usageRecord: { create: (a: object) => Promise<{ id: string }> };
+  user: { create: (a: object) => Promise<{ id: string }> };
+  auditLog: { findMany: (a: object) => Promise<Row[]> };
   $executeRawUnsafe: (sql: string) => Promise<number>;
   $disconnect: () => Promise<void>;
 };
@@ -305,5 +347,245 @@ describe.skipIf(!PG_URL)("Vapi webhook call rows on real Postgres", () => {
     expect(holder.enqueued).toEqual([]);
     expect(await callRow(callId)).toBeNull();
     expect(conflictLogged()).toBe(false);
+  });
+
+  it("doesn't count a call's minutes twice once post-call has recorded its usage", async () => {
+    const { getVoiceUsageState } = await import("@/server/services/billing/voice-usage");
+    const a = await seedOrg("usage");
+    const assistant = (await db.voiceAssistant.findUnique({
+      where: { vapiAssistantId: a.vapiAssistantId },
+    })) as { id: string };
+    const now = new Date();
+    const call = (minutes: number) =>
+      db.voiceCall.create({
+        data: {
+          organizationId: a.orgId,
+          assistantId: assistant.id,
+          vapiCallId: `usage-${randomUUID()}`,
+          startedAt: now,
+          endedAt: now,
+          durationSeconds: minutes * 60,
+        },
+      });
+    const recorded = await call(15);
+    await call(5);
+    await db.usageRecord.create({
+      data: {
+        organizationId: a.orgId,
+        metric: "VOICE_MINUTES",
+        quantity: 15,
+        periodStart: now,
+        metadata: { callId: recorded.id },
+      },
+    });
+
+    const state = await getVoiceUsageState(a.orgId, { now: new Date(now.getTime() + 1000) });
+
+    expect(state).toMatchObject({ uncertainCalls: 1, uncertainMinutes: 5 });
+  });
+
+  describe("saving an assistant", () => {
+    const form = {
+      name: "Saved",
+      language: "FI" as const,
+      voiceProvider: "azure" as const,
+      voiceId: "",
+      firstMessage: "Hei!",
+      systemPrompt: "Synthetic prompt for a saved assistant.",
+      enabledTools: [],
+      useKnowledgeBase: false,
+      transferNumber: "",
+      recording: "off" as const,
+    };
+
+    async function seedUnsynced(label: string) {
+      const org = await db.organization.create({
+        data: { name: `Synthetic save ${label}`, slug: `save-${label}-${randomUUID()}` },
+      });
+      const user = await db.user.create({
+        data: { id: randomUUID(), email: `${randomUUID()}@example.test` },
+      });
+      const assistant = await db.voiceAssistant.create({
+        data: {
+          organizationId: org.id,
+          name: "Before",
+          firstMessage: "Hello",
+          systemPrompt: "Synthetic",
+          recordingEnabled: true,
+        },
+      });
+      const ctx = {
+        orgId: org.id,
+        userId: user.id,
+        email: "u@example.test",
+        role: "OWNER" as const,
+        locale: "en",
+      };
+      return { ctx, assistantId: assistant.id };
+    }
+    const stored = (id: string) => db.voiceAssistant.findUnique({ where: { id } });
+    const auditRows = (orgId: string) =>
+      db.auditLog.findMany({ where: { organizationId: orgId, resourceType: "voice_assistant" } });
+
+    it("commits the change with an audit row of the earlier and new value", async () => {
+      const { upsertAssistant } = await import("@/server/services/voice");
+      const { ctx, assistantId } = await seedUnsynced("audit");
+
+      await upsertAssistant(ctx, form, assistantId);
+
+      expect(await stored(assistantId)).toMatchObject({ name: "Saved", recordingEnabled: false });
+      const rows = await auditRows(ctx.orgId);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        action: "voice_assistant.update",
+        before: { recordingEnabled: true },
+        after: { recordingEnabled: false },
+      });
+    });
+
+    it("rolls the change back when its audit row can't be written", async () => {
+      const { upsertAssistant } = await import("@/server/services/voice");
+      const { ctx, assistantId } = await seedUnsynced("rollback");
+      await db.$executeRawUnsafe(`
+        create or replace function voice_test_reject_audit() returns trigger language plpgsql as $$
+        begin
+          if new.resource_type = 'voice_assistant' then raise exception 'synthetic audit failure'; end if;
+          return new;
+        end $$`);
+      await db.$executeRawUnsafe(`
+        create trigger voice_test_reject_audit before insert on audit_logs
+        for each row execute function voice_test_reject_audit()`);
+      try {
+        await expect(upsertAssistant(ctx, form, assistantId)).rejects.toThrow();
+      } finally {
+        await db.$executeRawUnsafe("drop trigger voice_test_reject_audit on audit_logs");
+        await db.$executeRawUnsafe("drop function voice_test_reject_audit()");
+      }
+
+      expect(await stored(assistantId)).toMatchObject({ name: "Before", recordingEnabled: true });
+      expect(await auditRows(ctx.orgId)).toEqual([]);
+    });
+
+    it("can't change another organization's assistant", async () => {
+      const { upsertAssistant } = await import("@/server/services/voice");
+      const a = await seedUnsynced("owner");
+      const b = await seedUnsynced("other");
+
+      await expect(upsertAssistant(b.ctx, form, a.assistantId)).rejects.toThrow();
+
+      expect(await stored(a.assistantId)).toMatchObject({ name: "Before", recordingEnabled: true });
+      expect(await auditRows(b.ctx.orgId)).toEqual([]);
+    });
+
+    describe("what the record says Vapi accepted", () => {
+      const seedLinked = async (label: string) => {
+        const seeded = await seedUnsynced(label);
+        await db.voiceAssistant.update({
+          where: { id: seeded.assistantId },
+          data: { vapiAssistantId: `vapi-${randomUUID()}` },
+        });
+        return seeded;
+      };
+      const state = async (orgId: string, assistantId: string) => {
+        const { readRecordingSyncState } = await import("@/server/voice/recording-sync");
+        const row = await stored(assistantId);
+        return readRecordingSyncState(orgId, assistantId, row!.recordingEnabled as boolean);
+      };
+      const accepts = (id = "vapi-x") => {
+        holder.sendToVapi = async () => ({ id });
+      };
+      const refuses = () => {
+        holder.sendToVapi = async () => {
+          throw new Error("synthetic Vapi outage");
+        };
+      };
+
+      beforeEach(() => {
+        vi.spyOn(console, "error").mockImplementation(() => undefined);
+      });
+
+      it("keeps a failed sync after the save, in a fresh read, then clears on a retry", async () => {
+        const { retryAssistantSync, upsertAssistant, VoiceSyncFailedError } =
+          await import("@/server/services/voice");
+        const { ctx, assistantId } = await seedLinked("failed-sync");
+
+        refuses();
+        await expect(upsertAssistant(ctx, form, assistantId)).rejects.toThrow(VoiceSyncFailedError);
+        // The save itself stands: the row says off, and the record says that isn't applied.
+        expect(await stored(assistantId)).toMatchObject({ recordingEnabled: false });
+        expect(await state(ctx.orgId, assistantId)).toMatchObject({ status: "failed" });
+
+        await expect(retryAssistantSync(ctx, assistantId)).rejects.toThrow(VoiceSyncFailedError);
+        expect(await state(ctx.orgId, assistantId)).toMatchObject({ status: "failed" });
+
+        const id = ((await stored(assistantId)) as { vapiAssistantId: string }).vapiAssistantId;
+        accepts(id);
+        await retryAssistantSync(ctx, assistantId);
+        expect(await state(ctx.orgId, assistantId)).toMatchObject({
+          status: "applied",
+          lastAccepted: { enabled: false },
+        });
+      });
+
+      it("won't let an older sync finishing late confirm a newer setting", async () => {
+        const { upsertAssistant } = await import("@/server/services/voice");
+        const { ctx, assistantId } = await seedLinked("race");
+        const id = ((await stored(assistantId)) as { vapiAssistantId: string }).vapiAssistantId;
+
+        // The first save's send is held open while the second save runs to the end.
+        let releaseOlder = () => undefined as void;
+        let olderSending = () => undefined as void;
+        const sending = new Promise<void>((resolve) => (olderSending = resolve));
+        holder.sendToVapi = () =>
+          new Promise((resolve) => {
+            olderSending();
+            releaseOlder = () => resolve({ id });
+          });
+        const older = upsertAssistant(ctx, { ...form, recording: "on" }, assistantId);
+        await sending;
+
+        accepts(id);
+        await upsertAssistant(ctx, { ...form, recording: "off" }, assistantId);
+        // While the older send can still land, the newer one isn't confirmed.
+        expect(await state(ctx.orgId, assistantId)).toMatchObject({ status: "uncertain" });
+
+        releaseOlder();
+        await older;
+        expect(await stored(assistantId)).toMatchObject({ recordingEnabled: false });
+        expect(await state(ctx.orgId, assistantId)).toMatchObject({ status: "uncertain" });
+
+        // A later send, with nothing else running, settles it.
+        const { retryAssistantSync } = await import("@/server/services/voice");
+        await new Promise((resolve) => setTimeout(resolve, 2_100));
+        await retryAssistantSync(ctx, assistantId);
+        expect(await state(ctx.orgId, assistantId)).toMatchObject({ status: "applied" });
+      });
+
+      it("can't read another organization's attempts", async () => {
+        const { upsertAssistant } = await import("@/server/services/voice");
+        const a = await seedLinked("reader-a");
+        const b = await seedLinked("reader-b");
+        accepts(((await stored(a.assistantId)) as { vapiAssistantId: string }).vapiAssistantId);
+        await upsertAssistant(a.ctx, form, a.assistantId);
+        expect(await state(a.ctx.orgId, a.assistantId)).toMatchObject({ status: "applied" });
+
+        // B asks about A's assistant: B has no rows for it, so nothing is confirmed.
+        const { readRecordingSyncState } = await import("@/server/voice/recording-sync");
+        await expect(readRecordingSyncState(b.ctx.orgId, a.assistantId, false)).resolves.toEqual({
+          status: "uncertain",
+          lastAccepted: null,
+        });
+      });
+
+      it("can't retry another organization's assistant", async () => {
+        const { retryAssistantSync } = await import("@/server/services/voice");
+        const a = await seedLinked("retry-owner");
+        const b = await seedLinked("retry-other");
+        accepts();
+        await expect(retryAssistantSync(b.ctx, a.assistantId)).rejects.toThrow();
+        expect(await auditRows(a.ctx.orgId)).toEqual([]);
+        expect(await auditRows(b.ctx.orgId)).toEqual([]);
+      });
+    });
   });
 });

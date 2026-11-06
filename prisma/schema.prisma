@@ -1258,6 +1258,8 @@ model VoiceAssistant {
   transferNumber   String?  @map("transfer_number")
   businessHours    Json?    @map("business_hours")
   isActive         Boolean  @default(false) @map("is_active")
+  /// Null: never chosen in Syveka, so recording stays as set in Vapi. New assistants get false.
+  recordingEnabled Boolean? @map("recording_enabled")
   createdAt        DateTime @default(now()) @map("created_at")
   updatedAt        DateTime @updatedAt @map("updated_at")
 

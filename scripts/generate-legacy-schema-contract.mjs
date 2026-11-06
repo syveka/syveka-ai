@@ -357,6 +357,8 @@ scalarFields.push({
 //     20260818000000_workflow_run_source_event_key.
 //   - voice_calls.post_call_processed_at: same situation, added by
 //     20260830000000_voice_call_post_call_processed_at.
+//   - voice_assistants.recording_enabled: same situation, added by
+//     20261106000000_voice_assistant_recording_enabled.
 const LEGACY_MISSING_COLUMN_ENTRIES = [
   [
     "calendar_sync_states.webhook_verification_secret_hash",
@@ -364,6 +366,7 @@ const LEGACY_MISSING_COLUMN_ENTRIES = [
   ],
   ["workflow_runs.source_event_key", "20260818000000_workflow_run_source_event_key"],
   ["voice_calls.post_call_processed_at", "20260830000000_voice_call_post_call_processed_at"],
+  ["voice_assistants.recording_enabled", "20261106000000_voice_assistant_recording_enabled"],
 ];
 
 const seenMissingColumnKeys = new Set();
