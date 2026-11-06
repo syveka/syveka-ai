@@ -24,10 +24,20 @@ const m = vi.hoisted(() => ({
 }));
 
 vi.mock("@/server/integrations/vapi", () => ({ verifyVapiSignature: () => true }));
+// Knowledge-base exposure is what's tested here: the notice gate has its own suite.
+vi.mock("@/server/voice/disclosure-gate", () => ({
+  verifyCallDisclosure: async () => "ok",
+  callDisclosureState: async () => "verified",
+  callLiveness: async () => ({ liveness: "live", calledAt: new Date().toISOString() }),
+  startedJustNow: () => true,
+  earliestCallTime: (...times: unknown[]) => times.find((time) => typeof time === "string"),
+  confirmNoticeFromMessages: async () => "ok",
+  confirmNoticeFromCallRecord: async () => ({ outcome: "ok" }),
+}));
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {
     voiceAssistant: { findFirst: vi.fn(async () => m.assistant) },
-    voiceCall: { findFirst: vi.fn(async () => null) },
+    voiceCall: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
   },
   tenantDb: vi.fn(),
 }));

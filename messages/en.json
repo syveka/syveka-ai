@@ -638,6 +638,13 @@
     "persona": "Persona",
     "tools": "Capabilities",
     "toolsDescription": "What the assistant is allowed to do during calls. Actions that modify data always require caller confirmation.",
+    "recording": {
+      "title": "Call recording",
+      "description": "Your choice is sent to the voice provider whenever this assistant's settings are saved. New assistants start with recording off.",
+      "off": "Off: call audio isn't recorded",
+      "on": "On: the voice provider records call audio",
+      "keep": "Not set here: the voice provider's own setting applies"
+    },
     "useKb": "Answer from the knowledge base",
     "firstMessagePlaceholder": "Hello! You've reached [company]. How can I help?",
     "systemPromptPlaceholder": "You answer calls for [company]. Be friendly and concise…",
@@ -696,6 +703,60 @@
         "assistantNotSynced": "Save and activate the assistant before attaching a phone number.",
         "invalidInput": "Check the phone number format (E.164, e.g. +358401234567) and required fields.",
         "generic": "Something went wrong. Please try again."
+      }
+    },
+    "readiness": {
+      "title": "Call readiness",
+      "summaryReady": "No setup problems found. This can't confirm how a real call sounds.",
+      "summaryBlocked": "This assistant can't take calls yet. Here is what's needed.",
+      "summaryUnverified": "Some checks couldn't be completed, so it's unclear whether this assistant can take calls.",
+      "noticeLabel": "Callers hear this first",
+      "noticeApproved": "Approved",
+      "noticeAwaiting": "Draft, awaiting approval",
+      "voiceNotSetUp": {
+        "title": "Phone calls aren't set up yet",
+        "action": "Contact Syveka support to finish the setup."
+      },
+      "noticeAwaitingApproval": {
+        "title": "The spoken AI notice is awaiting approval",
+        "action": "Calls stay blocked until Syveka approves the notice in this language. You don't need to do anything."
+      },
+      "notSynced": {
+        "title": "This assistant isn't connected yet",
+        "action": "Select \"Activate & get number\" to connect it."
+      },
+      "syncOutdated": {
+        "title": "The settings sent to the phone service are out of date",
+        "action": "Save this assistant to send its current settings and notice."
+      },
+      "syncUnverifiable": {
+        "title": "The connection couldn't be checked",
+        "action": "Reload this page in a moment. If this continues, contact Syveka support."
+      },
+      "usageUnverifiable": {
+        "title": "Voice minutes couldn't be checked",
+        "action": "Reload this page in a moment. If this continues, contact Syveka support."
+      },
+      "noPhoneNumber": {
+        "title": "No phone number is attached",
+        "action": "Attach a phone number on this page.",
+        "actionOnceConnected": "Once this assistant is connected, attach a phone number on this page."
+      },
+      "inactive": {
+        "title": "This assistant is switched off",
+        "action": "Select \"Activate & get number\" to switch it on."
+      },
+      "noMinutes": {
+        "title": "Your plan has no voice minutes",
+        "action": "The workspace owner can check the plan in billing settings."
+      },
+      "minutesUsed": {
+        "title": "This month's voice minutes are used up",
+        "action": "The workspace owner can check usage and the plan in billing settings."
+      },
+      "readOnly": {
+        "title": "This workspace is read-only",
+        "action": "The workspace owner can resolve the payment issue in billing settings."
       }
     }
   },
