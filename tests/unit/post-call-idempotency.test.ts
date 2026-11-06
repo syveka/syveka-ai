@@ -573,3 +573,22 @@ describe("post-call job — what a call's length means for usage", () => {
     expect(occurredAt).toEqual(startedAt);
   });
 });
+
+describe("post-call job — a reply that opens with a thinking block", () => {
+  it("still saves the summary and its activity", async () => {
+    mocks.anthropicCreate.mockResolvedValueOnce({
+      content: [
+        { type: "thinking", thinking: "...", signature: "sig" },
+        {
+          type: "text",
+          text: JSON.stringify({ summary: "Short call.", sentiment: "neutral", followUps: [] }),
+        },
+      ],
+    } as never);
+
+    const response = await POST(jobRequest());
+
+    expect(response.status).toBe(200);
+    expect(mocks.activityCreate).toHaveBeenCalledTimes(1);
+  });
+});

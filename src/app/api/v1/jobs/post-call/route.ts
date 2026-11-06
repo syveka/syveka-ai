@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { replyText } from "@/server/ai/reply-text";
 import { jobPayloadJson } from "@/server/jobs/payload";
 import type { Prisma } from "@/generated/prisma/client/client";
 import { billableMinutes } from "@/server/voice/call-outcome";
@@ -249,7 +250,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           },
         ],
       });
-      reply = res.content[0]?.type === "text" ? res.content[0].text : "";
+      reply = replyText(res.content);
     } catch {
       logSummaryFailure(orgId, call.id, "provider_error");
     }
