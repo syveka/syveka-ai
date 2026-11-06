@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
+  proposeToolAction: vi.fn(),
   moderation: vi.fn(async () => false),
   streamClaude: vi.fn(),
   limitAiChat: vi.fn(async () => ({
@@ -24,7 +25,8 @@ vi.mock("@/server/auth/session", () => ({
   })),
 }));
 vi.mock("@/server/auth/permissions", () => ({ can: vi.fn(() => true) }));
-vi.mock("@/server/integrations/redis", () => ({ limitAiChat: mocks.limitAiChat }));
+vi.mock("@/server/integrations/redis", () => ({ limitAiChat: mocks.limitAiChat, redis: {} }));
+vi.mock("@/server/ai/tool-actions", () => ({ proposeToolAction: mocks.proposeToolAction }));
 vi.mock("@/server/integrations/openai", () => ({ isFlaggedByModeration: mocks.moderation }));
 vi.mock("@/server/integrations/anthropic", () => ({ streamClaude: mocks.streamClaude }));
 vi.mock("@/server/db/tenant", () => ({
@@ -211,5 +213,109 @@ describe("AI chat stream failure logging", () => {
     expect(logged).not.toContain("db.example");
     expect(logged).not.toContain("user:pw");
     consoleError.mockRestore();
+  });
+});
+
+describe("AI chat tool execution after client disconnect", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.moderation.mockResolvedValue(false);
+    mocks.limitAiChat.mockResolvedValue({
+      success: true,
+      reset: Date.now() + 60_000,
+      limit: 30,
+      remaining: 29,
+    });
+  });
+
+  function toolRequest(signal: AbortSignal) {
+    return new Request("http://localhost/api/v1/ai/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        conversationId: "33333333-3333-4333-8333-333333333333",
+        message: "Book a meeting with Acme",
+      }),
+      signal,
+    });
+  }
+
+  it("never starts a (possibly writing) tool once the client has disconnected", async () => {
+    const { executeTool } = await import("@/server/ai/tools");
+    const controller = new AbortController();
+    mocks.streamClaude.mockImplementation(async ({ callbacks }) => {
+      // The user leaves (closes the page / ends the voice call) while the
+      // model is still deciding; it then requests a data-changing tool.
+      controller.abort();
+      await callbacks.onToolUse("createBooking", { contactId: "c-1" }, "tool-1");
+      return { tokensIn: 10, tokensOut: 5, stopReason: "end_turn" };
+    });
+
+    const response = await POST(toolRequest(controller.signal));
+    const body = await response.text();
+
+    expect(executeTool).not.toHaveBeenCalled();
+    expect(body).not.toContain('"type":"tool"');
+    expect(mocks.messageCreate).not.toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ role: "ASSISTANT" }) }),
+    );
+  });
+
+  it("never creates a pending write proposal once the client has disconnected", async () => {
+    const tools = await import("@/server/ai/tools");
+    const writeTools = tools.WRITE_TOOL_NAMES as string[];
+    writeTools.push("createBooking");
+    try {
+      const controller = new AbortController();
+      mocks.streamClaude.mockImplementation(async ({ callbacks }) => {
+        controller.abort();
+        await callbacks.onToolUse("createBooking", { contactId: "c-1" }, "tool-1");
+        return { tokensIn: 10, tokensOut: 5, stopReason: "end_turn" };
+      });
+
+      const body = await (await POST(toolRequest(controller.signal))).text();
+
+      expect(mocks.proposeToolAction).not.toHaveBeenCalled();
+      expect(tools.executeTool).not.toHaveBeenCalled();
+      expect(body).not.toContain('"type":"action"');
+    } finally {
+      writeTools.splice(writeTools.indexOf("createBooking"), 1);
+    }
+  });
+
+  it("a connected client's write tool becomes a pending proposal, not an execution", async () => {
+    const tools = await import("@/server/ai/tools");
+    const writeTools = tools.WRITE_TOOL_NAMES as string[];
+    writeTools.push("createBooking");
+    mocks.proposeToolAction.mockResolvedValue({ action: null, modelResult: '{"ok":true}' });
+    try {
+      mocks.streamClaude.mockImplementation(async ({ callbacks }) => {
+        await callbacks.onToolUse("createBooking", { contactId: "c-1" }, "tool-1");
+        return { tokensIn: 10, tokensOut: 5, stopReason: "end_turn" };
+      });
+
+      await (await POST(toolRequest(new AbortController().signal))).text();
+
+      expect(mocks.proposeToolAction).toHaveBeenCalledTimes(1);
+      expect(tools.executeTool).not.toHaveBeenCalled();
+    } finally {
+      writeTools.splice(writeTools.indexOf("createBooking"), 1);
+    }
+  });
+
+  it("still executes tools normally for a connected client", async () => {
+    const { executeTool } = await import("@/server/ai/tools");
+    vi.mocked(executeTool).mockResolvedValue('{"ok":true}');
+    mocks.streamClaude.mockImplementation(async ({ callbacks }) => {
+      await callbacks.onToolUse("createBooking", { contactId: "c-1" }, "tool-1");
+      callbacks.onText("Booked.");
+      return { tokensIn: 10, tokensOut: 5, stopReason: "end_turn" };
+    });
+
+    const response = await POST(toolRequest(new AbortController().signal));
+    const body = await response.text();
+
+    expect(executeTool).toHaveBeenCalledTimes(1);
+    expect(body).toContain('"type":"tool","name":"createBooking","status":"start"');
   });
 });
