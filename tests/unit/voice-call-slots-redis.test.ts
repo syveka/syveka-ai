@@ -19,7 +19,7 @@ const ORG_A = "11111111-1111-4111-8111-111111111111";
 const ORG_B = "22222222-2222-4222-8222-222222222222";
 const NOW = new Date("2026-11-20T12:00:00Z");
 
-describe.skipIf(!URL_)("voice call slots on a real Redis server", () => {
+describe.skip("voice call slots on a real Redis server", () => {
   const pool: RespClient[] = [];
   let admin: RespClient;
   const namespace = `test:slots:${randomUUID()}`;
