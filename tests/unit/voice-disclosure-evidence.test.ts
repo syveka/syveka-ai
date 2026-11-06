@@ -248,8 +248,23 @@ describe("an assistant deactivated in Syveka that Vapi couldn't delete", () => {
   it("keeps nothing from a call whose hang-up failed, though it really ran", async () => {
     m.controlFails = true;
     await POST(start());
-    expect(m.store.get(REFUSED_KEY)).toBe("running");
+    expect(m.store.get(REFUSED_KEY)).toBe("ended");
     await POST(report(SPOKE_NOTICE));
+    expect(kept()).toBe(false);
+  });
+
+  it("can't get a dropped call back by reactivating the assistant", async () => {
+    await POST(report(SPOKE_NOTICE));
+    expect(m.store.get(REFUSED_KEY)).toBe("ended");
+
+    m.assistantActive = true;
+    await POST(report(SPOKE_NOTICE));
+    expect(kept()).toBe(false);
+  });
+
+  it("asks again when that can't be remembered", async () => {
+    m.failedWrites = ["voice:refused"];
+    expect((await POST(report(SPOKE_NOTICE))).status).toBe(503);
     expect(kept()).toBe(false);
   });
 

@@ -105,7 +105,7 @@ export function RecordingStatusPanel({
           </form>
         ) : null}
         {/* Always mounted, so a screen reader announces a result when it arrives. */}
-        <p role="status" className="text-sm text-muted-foreground empty:hidden">
+        <p role="status" className="text-sm text-muted-foreground">
           {state.error ? t("sendAgainFailed") : state.message ? t("sendAgainSent") : null}
         </p>
       </CardContent>

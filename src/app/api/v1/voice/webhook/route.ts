@@ -745,7 +745,11 @@ export async function POST(request: Request): Promise<NextResponse> {
             return NextResponse.json({ error: "try again" }, { status: 503 });
           }
           const hungUp = await endCallViaControlUrl(message.call.monitor?.controlUrl, ids);
-          if (!hungUp) await markCallRefused(orgId, message.call.id, "running");
+          // A deactivated assistant's call stays "ended": it isn't the customer's, even if it ran,
+          // and it must stay that way if the assistant is reactivated.
+          if (!hungUp && assistant.isActive) {
+            await markCallRefused(orgId, message.call.id, "running");
+          }
           return NextResponse.json({ ok: true });
         }
         if (!confirmedNotice) return NextResponse.json({ ok: true });
@@ -797,7 +801,10 @@ export async function POST(request: Request): Promise<NextResponse> {
               vapiCallId: message.call.id,
             }),
           );
-          return NextResponse.json({ ok: true, refused: true });
+          // Remembered, so reactivating the assistant can't bring this call back.
+          return (await markCallRefused(orgId, message.call.id, "ended"))
+            ? NextResponse.json({ ok: true, refused: true })
+            : NextResponse.json({ error: "try again" }, { status: 503 });
         }
       }
       // A call whose notice was never confirmed: keep nothing, charge nothing, and start no

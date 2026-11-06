@@ -101,7 +101,7 @@ export function AssistantForm({
             {t("deactivateSuccess")}
           </p>
         ) : null}
-        {deactivateState.error ? (
+        {deactivateState.error && deactivateState.error !== "vapi_delete_failed" ? (
           <p role="alert" className="text-sm text-destructive">
             {t("deactivateFailed")}
           </p>
