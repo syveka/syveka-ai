@@ -93,6 +93,12 @@ describe("deactivateAssistant", () => {
     expect(db.voiceAssistant.update).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(consoleSpy.mock.calls)).not.toContain(providerSecret);
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('"errorType":"Error"'));
+    // Vapi may keep the assistant, so the audit trail says so, without the provider's text.
+    expect(mocks.auditMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ after: { vapiDeleteFailed: true } }),
+    );
+    expect(JSON.stringify(mocks.auditMock.mock.calls)).not.toContain(providerSecret);
     consoleSpy.mockRestore();
   });
 

@@ -56,9 +56,10 @@ export async function getVoiceUsageState(
         postCallProcessedAt: null,
         ...(options.excludeVapiCallId ? { vapiCallId: { not: options.excludeVapiCallId } } : {}),
       },
-      select: { startedAt: true, endedAt: true, durationSeconds: true },
+      select: { id: true, startedAt: true, endedAt: true, durationSeconds: true },
     }),
   ]);
+  const recordedCallIds = await callsWithRecordedUsage(orgId, unsettled, monthStartUtc(now));
 
   let uncertainCalls = 0;
   let uncertainMinutes = 0;
@@ -72,6 +73,9 @@ export async function getVoiceUsageState(
       inFlightMinutes += Math.min(MAX_CALL_MINUTES, Math.max(1, Math.ceil(elapsedMs / 60_000)));
       continue;
     }
+    // Post-call records usage first and marks the call last, so a failure in between leaves a
+    // call whose minutes are already in `recorded`.
+    if (recordedCallIds.has(call.id)) continue;
     // Known minutes keep counting: only a length nobody can establish stops counting.
     if (call.durationSeconds === null && elapsedMs >= UNCERTAIN_COUNTS_FOR_MS) {
       expiredUncertainCalls++;
@@ -90,6 +94,27 @@ export async function getVoiceUsageState(
     inFlightCalls,
     inFlightMinutes,
   };
+}
+
+async function callsWithRecordedUsage(
+  orgId: string,
+  calls: { id: string; durationSeconds: number | null }[],
+  monthStart: Date,
+): Promise<Set<string>> {
+  const candidates = calls.filter((call) => call.durationSeconds !== null);
+  if (candidates.length === 0) return new Set();
+  const records = await unscopedPrisma.usageRecord.findMany({
+    where: {
+      organizationId: orgId,
+      metric: "VOICE_MINUTES",
+      periodStart: { gte: monthStart },
+      OR: candidates.map((call) => ({ metadata: { path: ["callId"], equals: call.id } })),
+    },
+    select: { metadata: true },
+  });
+  return new Set(
+    records.map((record) => (record.metadata as { callId?: string } | null)?.callId ?? ""),
+  );
 }
 
 /** What limits compare against. Billable and uncertain stay separate everywhere else. */

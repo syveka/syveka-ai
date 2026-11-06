@@ -684,7 +684,9 @@
       "entitlement_exceeded": "Puhe-AI vaatii Starter-tason tai korkeamman — päivitä tasoa jatkaaksesi.",
       "generic": "Jokin meni pieleen. Yritä uudelleen.",
       "rate_limited": "Liian monta muutosta lyhyessä ajassa. Yritä uudelleen minuutin kuluttua.",
-      "service_unavailable": "Muutosta ei voitu vahvistaa juuri nyt. Yritä hetken kuluttua uudelleen."
+      "service_unavailable": "Muutosta ei voitu vahvistaa juuri nyt. Yritä hetken kuluttua uudelleen.",
+      "invalid_input": "Tarkista kentät ja yritä uudelleen.",
+      "sync_failed": "Muutokset tallennettiin, mutta niitä ei voitu lähettää puhelinpalveluun. Se voi yhä käyttää aiempia asetuksia, myös puhelujen tallennuksessa. Yritä uudelleen tallentamalla."
     },
     "attachPhoneNumber": {
       "title": "Liitä olemassa oleva numero",

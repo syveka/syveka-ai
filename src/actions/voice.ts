@@ -11,6 +11,7 @@ import {
   attachPhoneNumber,
   DuplicatePhoneNumberError,
   AssistantNotSyncedError,
+  VoiceSyncFailedError,
 } from "@/server/services/voice";
 import { EntitlementError } from "@/server/services/billing/entitlements";
 import { voiceAssistantSchema, attachPhoneNumberSchema } from "@/lib/validators/voice";
@@ -52,6 +53,11 @@ export async function saveAssistantAction(
     // chat action's convention -- never surface a raw Error.message here,
     // that path exists only as a fallback for a truly unexpected failure.
     if (e instanceof EntitlementError) return { error: e.code };
+    // Saved, so "try again" alone would mislead: the page refreshes to the saved value.
+    if (e instanceof VoiceSyncFailedError) {
+      revalidatePath("/voice");
+      return { error: "sync_failed" };
+    }
     return { error: "generic" };
   }
 

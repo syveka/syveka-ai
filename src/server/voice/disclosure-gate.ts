@@ -63,10 +63,12 @@ const reportedInvalidEntries = new Set<string>();
  * When each language's wording took effect, from entries like "FI@2026-11-12T08:00:00Z": a
  * call is judged by the approval in force when it began, so approving a language later can't
  * vouch for a call made before. An entry without a valid time approves nothing, which fails
- * closed. If a language is listed twice, the later time counts.
+ * closed, and any invalid entry for a language withdraws it, so a mistyped correction can't leave
+ * an older approval standing. If a language is listed twice, the later time counts.
  */
 function disclosureApprovals(env: NodeJS.ProcessEnv): ReadonlyMap<string, number> {
   const approvals = new Map<string, number>();
+  const invalidLanguages = new Set<string>();
   for (const entry of (env.VOICE_DISCLOSURE_APPROVED_LANGUAGES ?? "").split(",")) {
     const trimmed = entry.trim();
     if (!trimmed) continue;
@@ -76,6 +78,7 @@ function disclosureApprovals(env: NodeJS.ProcessEnv): ReadonlyMap<string, number
     if (!language || Number.isNaN(sinceMs)) {
       // Only the language part is logged: the setting holds no secret, but stays short.
       const key = language.slice(0, 8).toUpperCase();
+      invalidLanguages.add(language.toUpperCase());
       if (!reportedInvalidEntries.has(key)) {
         reportedInvalidEntries.add(key);
         console.error(
@@ -87,6 +90,7 @@ function disclosureApprovals(env: NodeJS.ProcessEnv): ReadonlyMap<string, number
     const code = language.toUpperCase();
     approvals.set(code, Math.max(approvals.get(code) ?? sinceMs, sinceMs));
   }
+  for (const language of invalidLanguages) approvals.delete(language);
   return approvals;
 }
 

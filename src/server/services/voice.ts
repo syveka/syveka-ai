@@ -15,7 +15,7 @@ import { buildVoiceFirstMessage, buildVoiceSystemPrompt } from "@/server/ai/prom
 import { getBusinessDnaContext } from "@/server/business-dna/context";
 import { lockPhoneNumber } from "@/server/calendar/locks";
 import { getEntitlements, EntitlementError } from "./billing/entitlements";
-import { audit } from "./audit";
+import { audit, auditLogData } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
 import {
   allowedVoiceTools,
@@ -28,6 +28,8 @@ import { getVapiEnv } from "@/env";
 
 export class DuplicatePhoneNumberError extends Error {}
 export class AssistantNotSyncedError extends Error {}
+/** The save committed, but Vapi may still hold the previous settings. Holds no provider text. */
+export class VoiceSyncFailedError extends Error {}
 
 /** Zod tool schemas → OpenAI-function JSON for Vapi (§16.2). */
 function vapiToolsFor(enabledNames: string[]) {
@@ -51,11 +53,9 @@ export async function upsertAssistant(
   input: VoiceAssistantInput,
   assistantId?: string,
 ) {
-  const db = tenantDb(ctx.orgId);
-
   if (!assistantId) {
     const ent = await getEntitlements(ctx.orgId);
-    const count = await db.voiceAssistant.count();
+    const count = await tenantDb(ctx.orgId).voiceAssistant.count();
     if (count >= ent.voiceAssistants) {
       throw new EntitlementError("voiceAssistants", "Voice assistant limit reached for your plan");
     }
@@ -75,32 +75,35 @@ export async function upsertAssistant(
     ...withRecording(recordingEnabledFor(input.recording, !assistantId)),
   };
 
-  const previous = assistantId
-    ? await db.voiceAssistant.findFirstOrThrow({ where: { id: assistantId } })
-    : null;
-
-  const assistant = assistantId
-    ? await db.voiceAssistant.update({ where: { id: assistantId }, data })
-    : await db.voiceAssistant.create({ data });
-
-  // Before the sync: the save above is already committed, whether or not Vapi can be reached.
-  await audit(ctx, {
-    action: assistantId ? "voice_assistant.update" : "voice_assistant.create",
-    resourceType: "voice_assistant",
-    resourceId: assistant.id,
-    ...(previous ? { before: { recordingEnabled: previous.recordingEnabled } } : {}),
-    after: {
-      name: input.name,
-      language: input.language,
-      recordingEnabled: assistant.recordingEnabled,
-    },
+  // The save and its audit row commit together, before Vapi is contacted, so a change can't be
+  // left without its record whether or not Vapi can be reached.
+  const assistant = await unscopedPrisma.$transaction(async (tx) => {
+    const where = { id: assistantId ?? "", organizationId: ctx.orgId };
+    const previous = assistantId ? await tx.voiceAssistant.findFirstOrThrow({ where }) : null;
+    const saved = assistantId
+      ? await tx.voiceAssistant.update({ where, data })
+      : await tx.voiceAssistant.create({ data });
+    await tx.auditLog.create({
+      data: await auditLogData(ctx, {
+        action: assistantId ? "voice_assistant.update" : "voice_assistant.create",
+        resourceType: "voice_assistant",
+        resourceId: saved.id,
+        ...(previous ? { before: { recordingEnabled: previous.recordingEnabled } } : {}),
+        after: {
+          name: input.name,
+          language: input.language,
+          recordingEnabled: saved.recordingEnabled,
+        },
+      }),
+    });
+    return saved;
   });
 
   // If already linked to Vapi, re-sync config on every save (§16.2)
   if (assistant.vapiAssistantId) {
     try {
       await syncToVapi(assistant.id, ctx.orgId);
-    } catch (error) {
+    } catch {
       // The saved setting and Vapi can now disagree, for example on whether calls are recorded.
       // Provider errors can hold credentials or customer data, so none of it is stored.
       await audit(ctx, {
@@ -117,7 +120,7 @@ export async function upsertAssistant(
           }),
         );
       });
-      throw error;
+      throw new VoiceSyncFailedError();
     }
   }
 
@@ -233,10 +236,12 @@ export async function deactivateAssistant(
     data: { isActive: false, vapiAssistantId: null, phoneNumber: null },
   });
 
+  let vapiDeleteFailed = false;
   if (assistant.vapiAssistantId) {
     try {
       await deleteVapiAssistant(assistant.vapiAssistantId);
     } catch (error) {
+      vapiDeleteFailed = true;
       console.error(
         JSON.stringify({
           event: "voice_assistant_deactivate_vapi_delete_failed",
@@ -253,6 +258,8 @@ export async function deactivateAssistant(
     resourceType: "voice_assistant",
     resourceId: assistantId,
     before: { phoneNumber: assistant.phoneNumber, vapiAssistantId: assistant.vapiAssistantId },
+    // Vapi may keep the assistant, with its recording setting, and nothing here can reach it now.
+    ...(vapiDeleteFailed ? { after: { vapiDeleteFailed: true } } : {}),
   });
   return updated;
 }
@@ -374,7 +381,9 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
   const disclosure =
     assistant.language === "FI"
       ? "Puhelun alussa on jo kerrottu, että olet tekoälyavustaja ja puhelu voidaan tallentaa. Älä toista sitä turhaan, mutta kerro se heti, jos et ole varma, että soittaja kuuli sen, tai jos sinulta kysytään."
-      : "The call has already opened with a notice that you are an AI assistant and the call may be recorded. Don't repeat it needlessly, but say it at once if you're unsure the caller heard it, or if asked.";
+      : assistant.language === "AR"
+        ? "بدأت المكالمة بالفعل بإشعار يفيد بأنك مساعد يعمل بالذكاء الاصطناعي وأن المكالمة قد يتم تسجيلها. لا تكرره بلا داعٍ، لكن قله فورًا إذا لم تكن متأكدًا من أن المتصل سمعه، أو إذا سُئلت."
+        : "The call has already opened with a notice that you are an AI assistant and the call may be recorded. Don't repeat it needlessly, but say it at once if you're unsure the caller heard it, or if asked.";
 
   // Business DNA is optional — the assistant degrades gracefully (falls back
   // to just the human-authored prompt) when the org hasn't filled it in yet.

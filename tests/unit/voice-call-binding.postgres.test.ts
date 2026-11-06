@@ -79,11 +79,18 @@ vi.mock("@/server/ai/tools", () => ({ executeTool: vi.fn() }));
 type Row = Record<string, unknown>;
 type Db = {
   organization: { create: (a: object) => Promise<{ id: string }> };
-  voiceAssistant: { create: (a: object) => Promise<{ id: string }> };
+  voiceAssistant: {
+    create: (a: object) => Promise<{ id: string }>;
+    findUnique: (a: object) => Promise<Row | null>;
+  };
   voiceCall: {
+    create: (a: object) => Promise<{ id: string }>;
     findUnique: (a: object) => Promise<Row | null>;
     findMany: (a: object) => Promise<Row[]>;
   };
+  usageRecord: { create: (a: object) => Promise<{ id: string }> };
+  user: { create: (a: object) => Promise<{ id: string }> };
+  auditLog: { findMany: (a: object) => Promise<Row[]> };
   $executeRawUnsafe: (sql: string) => Promise<number>;
   $disconnect: () => Promise<void>;
 };
@@ -317,5 +324,134 @@ describe.skipIf(!PG_URL)("Vapi webhook call rows on real Postgres", () => {
     expect(holder.enqueued).toEqual([]);
     expect(await callRow(callId)).toBeNull();
     expect(conflictLogged()).toBe(false);
+  });
+
+  it("doesn't count a call's minutes twice once post-call has recorded its usage", async () => {
+    const { getVoiceUsageState } = await import("@/server/services/billing/voice-usage");
+    const a = await seedOrg("usage");
+    const assistant = (await db.voiceAssistant.findUnique({
+      where: { vapiAssistantId: a.vapiAssistantId },
+    })) as { id: string };
+    const now = new Date();
+    const call = (minutes: number) =>
+      db.voiceCall.create({
+        data: {
+          organizationId: a.orgId,
+          assistantId: assistant.id,
+          vapiCallId: `usage-${randomUUID()}`,
+          startedAt: now,
+          endedAt: now,
+          durationSeconds: minutes * 60,
+        },
+      });
+    const recorded = await call(15);
+    await call(5);
+    await db.usageRecord.create({
+      data: {
+        organizationId: a.orgId,
+        metric: "VOICE_MINUTES",
+        quantity: 15,
+        periodStart: now,
+        metadata: { callId: recorded.id },
+      },
+    });
+
+    const state = await getVoiceUsageState(a.orgId, { now: new Date(now.getTime() + 1000) });
+
+    expect(state).toMatchObject({ uncertainCalls: 1, uncertainMinutes: 5 });
+  });
+
+  describe("saving an assistant", () => {
+    const form = {
+      name: "Saved",
+      language: "FI" as const,
+      voiceProvider: "azure" as const,
+      voiceId: "",
+      firstMessage: "Hei!",
+      systemPrompt: "Synthetic prompt for a saved assistant.",
+      enabledTools: [],
+      useKnowledgeBase: false,
+      transferNumber: "",
+      recording: "off" as const,
+    };
+
+    async function seedUnsynced(label: string) {
+      const org = await db.organization.create({
+        data: { name: `Synthetic save ${label}`, slug: `save-${label}-${randomUUID()}` },
+      });
+      const user = await db.user.create({
+        data: { id: randomUUID(), email: `${randomUUID()}@example.test` },
+      });
+      const assistant = await db.voiceAssistant.create({
+        data: {
+          organizationId: org.id,
+          name: "Before",
+          firstMessage: "Hello",
+          systemPrompt: "Synthetic",
+          recordingEnabled: true,
+        },
+      });
+      const ctx = {
+        orgId: org.id,
+        userId: user.id,
+        email: "u@example.test",
+        role: "OWNER" as const,
+        locale: "en",
+      };
+      return { ctx, assistantId: assistant.id };
+    }
+    const stored = (id: string) => db.voiceAssistant.findUnique({ where: { id } });
+    const auditRows = (orgId: string) =>
+      db.auditLog.findMany({ where: { organizationId: orgId, resourceType: "voice_assistant" } });
+
+    it("commits the change with an audit row of the earlier and new value", async () => {
+      const { upsertAssistant } = await import("@/server/services/voice");
+      const { ctx, assistantId } = await seedUnsynced("audit");
+
+      await upsertAssistant(ctx, form, assistantId);
+
+      expect(await stored(assistantId)).toMatchObject({ name: "Saved", recordingEnabled: false });
+      const rows = await auditRows(ctx.orgId);
+      expect(rows).toHaveLength(1);
+      expect(rows[0]).toMatchObject({
+        action: "voice_assistant.update",
+        before: { recordingEnabled: true },
+        after: { recordingEnabled: false },
+      });
+    });
+
+    it("rolls the change back when its audit row can't be written", async () => {
+      const { upsertAssistant } = await import("@/server/services/voice");
+      const { ctx, assistantId } = await seedUnsynced("rollback");
+      await db.$executeRawUnsafe(`
+        create or replace function voice_test_reject_audit() returns trigger language plpgsql as $$
+        begin
+          if new.resource_type = 'voice_assistant' then raise exception 'synthetic audit failure'; end if;
+          return new;
+        end $$`);
+      await db.$executeRawUnsafe(`
+        create trigger voice_test_reject_audit before insert on audit_logs
+        for each row execute function voice_test_reject_audit()`);
+      try {
+        await expect(upsertAssistant(ctx, form, assistantId)).rejects.toThrow();
+      } finally {
+        await db.$executeRawUnsafe("drop trigger voice_test_reject_audit on audit_logs");
+        await db.$executeRawUnsafe("drop function voice_test_reject_audit()");
+      }
+
+      expect(await stored(assistantId)).toMatchObject({ name: "Before", recordingEnabled: true });
+      expect(await auditRows(ctx.orgId)).toEqual([]);
+    });
+
+    it("can't change another organization's assistant", async () => {
+      const { upsertAssistant } = await import("@/server/services/voice");
+      const a = await seedUnsynced("owner");
+      const b = await seedUnsynced("other");
+
+      await expect(upsertAssistant(b.ctx, form, a.assistantId)).rejects.toThrow();
+
+      expect(await stored(a.assistantId)).toMatchObject({ name: "Before", recordingEnabled: true });
+      expect(await auditRows(b.ctx.orgId)).toEqual([]);
+    });
   });
 });

@@ -32,6 +32,7 @@ type Row = {
 };
 
 const m = vi.hoisted(() => ({
+  usageCallIds: [] as string[],
   rows: [] as Row[],
   assistants: [] as Array<{ id: string; organizationId: string; vapiAssistantId: string }>,
   getMonthUsage: vi.fn(async () => 0),
@@ -64,6 +65,9 @@ function matchesKnownCallQuery(row: Row, where: Record<string, never>): boolean 
 
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {
+    usageRecord: {
+      findMany: vi.fn(async () => m.usageCallIds.map((callId) => ({ metadata: { callId } }))),
+    },
     voiceCall: {
       findMany: vi.fn(async ({ where }: { where: Record<string, never> }) => {
         const w = where as unknown as {
@@ -173,6 +177,7 @@ const ENDED = {
 
 beforeEach(() => {
   m.rows = [];
+  m.usageCallIds = [];
   m.assistants = [];
   vi.clearAllMocks();
   m.getMonthUsage.mockResolvedValue(0);
@@ -251,6 +256,30 @@ describe("an unresolved call can't block calling forever", () => {
     m.rows = [row({ startedAt: HOURS_AGO(72), endedAt: HOURS_AGO(71), durationSeconds: 300 })];
     const state = await getVoiceUsageState(ORG_A, { now: NOW });
     expect(state).toMatchObject({ uncertainMinutes: 5, expiredUncertainCalls: 0 });
+  });
+
+  it("doesn't count a call's minutes twice once its usage is recorded", async () => {
+    m.getMonthUsage.mockResolvedValue(15);
+    m.usageCallIds = ["recorded"];
+    m.rows = [
+      row({
+        id: "recorded",
+        vapiCallId: "recorded",
+        startedAt: HOURS_AGO(3),
+        endedAt: HOURS_AGO(2),
+        durationSeconds: 900,
+      }),
+      row({
+        id: "not-yet",
+        vapiCallId: "not-yet",
+        startedAt: HOURS_AGO(3),
+        endedAt: HOURS_AGO(2),
+        durationSeconds: 300,
+      }),
+    ];
+    const state = await getVoiceUsageState(ORG_A, { now: NOW });
+    expect(state).toMatchObject({ billableMinutes: 15, uncertainMinutes: 5, uncertainCalls: 1 });
+    expect(minutesCountedForLimits(state)).toBe(20);
   });
 
   it("counts against limits within 48 hours, and no longer after that", async () => {

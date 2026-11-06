@@ -77,6 +77,12 @@ describe("the approved-languages setting", () => {
     expect(approvedFrom("FI@2026-11-12T12:00:01Z,EN@2026-11-12T12:00:00Z")).toEqual(["EN"]);
   });
 
+  it("approves nothing for a language with any invalid entry, so a bad correction fails closed", () => {
+    expect(approvedFrom("FI@2000-01-01,FI@bad,EN@2000-01-01")).toEqual(["EN"]);
+    expect(approvedFrom("FI@bad,FI@2000-01-01")).toEqual([]);
+    expect(approvedFrom("FI,FI@2000-01-01")).toEqual([]);
+  });
+
   it("takes the later time when a language is listed twice", () => {
     expect(approvedFrom("FI@2026-11-01,FI@2026-12-01")).toEqual([]);
   });

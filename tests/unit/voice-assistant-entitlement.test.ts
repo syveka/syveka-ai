@@ -21,7 +21,14 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: mocks.tenantDb,
-  unscopedPrisma: { voiceAssistant: { findFirstOrThrow: vi.fn(), update: vi.fn() } },
+  unscopedPrisma: {
+    voiceAssistant: { findFirstOrThrow: vi.fn(), update: vi.fn() },
+    $transaction: async (step: (tx: unknown) => Promise<unknown>) =>
+      step({
+        voiceAssistant: mocks.tenantDb().voiceAssistant,
+        auditLog: { create: vi.fn(async () => ({})) },
+      }),
+  },
 }));
 vi.mock("@/server/services/billing/entitlements", async (importOriginal) => ({
   ...(await importOriginal<typeof EntitlementsModule>()),
@@ -31,7 +38,10 @@ vi.mock("@/server/integrations/vapi", () => ({
   upsertVapiAssistant: mocks.upsertVapiAssistant,
   buyPhoneNumber: mocks.buyPhoneNumber,
 }));
-vi.mock("@/server/services/audit", () => ({ audit: mocks.auditMock }));
+vi.mock("@/server/services/audit", () => ({
+  audit: mocks.auditMock,
+  auditLogData: async (_ctx: unknown, input: unknown) => input,
+}));
 
 import { upsertAssistant } from "@/server/services/voice";
 

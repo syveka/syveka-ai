@@ -684,7 +684,9 @@
       "entitlement_exceeded": "Voice AI requires Starter or higher — upgrade your plan to continue.",
       "generic": "Something went wrong. Please try again.",
       "rate_limited": "Too many changes in a short time. Try again in a minute.",
-      "service_unavailable": "The change could not be verified right now. Try again in a moment."
+      "service_unavailable": "The change could not be verified right now. Try again in a moment.",
+      "invalid_input": "Check the fields and try again.",
+      "sync_failed": "Your changes were saved, but they couldn't be sent to the phone service. It may still use the previous settings, including call recording. Save again to retry."
     },
     "attachPhoneNumber": {
       "title": "Attach an existing number",

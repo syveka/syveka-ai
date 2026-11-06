@@ -23,6 +23,8 @@ const mocks = vi.hoisted(() => ({
   })),
   buyPhoneNumber: vi.fn(async () => ({ id: "num-1", number: "+358401234567" })),
   audit: vi.fn(async () => undefined),
+  auditCreate: vi.fn(async (_args: unknown) => ({})),
+  transactionFailed: vi.fn(),
 }));
 
 vi.mock("@/server/db/tenant", () => ({
@@ -32,6 +34,17 @@ vi.mock("@/server/db/tenant", () => ({
       findFirstOrThrow: mocks.findFirstOrThrow,
       update: mocks.unscopedUpdate,
       updateMany: mocks.unscopedUpdateMany,
+    },
+    $transaction: async (step: (tx: unknown) => Promise<unknown>) => {
+      try {
+        return await step({
+          voiceAssistant: mocks.tenantDb().voiceAssistant,
+          auditLog: { create: mocks.auditCreate },
+        });
+      } catch (error) {
+        mocks.transactionFailed();
+        throw error;
+      }
     },
   },
 }));
@@ -44,7 +57,10 @@ vi.mock("@/server/integrations/vapi", () => ({
   buyPhoneNumber: mocks.buyPhoneNumber,
 }));
 vi.mock("@/server/ai/tools", () => ({ TOOL_REGISTRY: [], zodToJsonSchema: vi.fn(() => ({})) }));
-vi.mock("@/server/services/audit", () => ({ audit: mocks.audit }));
+vi.mock("@/server/services/audit", () => ({
+  audit: mocks.audit,
+  auditLogData: async (_ctx: unknown, input: unknown) => input,
+}));
 vi.mock("@/env", () => ({
   getVapiEnv: () => ({
     VAPI_API_KEY: "test",
@@ -54,7 +70,8 @@ vi.mock("@/env", () => ({
   }),
 }));
 
-const { activateAssistant, upsertAssistant } = await import("@/server/services/voice");
+const { activateAssistant, upsertAssistant, VoiceSyncFailedError } =
+  await import("@/server/services/voice");
 
 const ctx: TenantContext = {
   userId: "user-1",
@@ -177,10 +194,9 @@ describe("saving an assistant", () => {
 
   it("records the choice in the audit log", async () => {
     await upsertAssistant(ctx, input({ recording: "on" }));
-    expect(mocks.audit).toHaveBeenCalledWith(
-      ctx,
-      expect.objectContaining({ after: expect.objectContaining({ recordingEnabled: true }) }),
-    );
+    expect(mocks.auditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({ after: expect.objectContaining({ recordingEnabled: true }) }),
+    });
   });
 });
 
@@ -241,30 +257,29 @@ describe("the audit trail when Vapi can't be reached", () => {
     db.voiceAssistant.update.mockImplementation(async ({ data }) => ({ ...linked, ...data }));
   });
 
-  it("records a saved change even though the sync fails, and still reports the failure", async () => {
+  it("records a saved change even though the sync fails, and reports that kind of failure", async () => {
     mocks.upsertVapiAssistant.mockRejectedValueOnce(new Error(providerError));
 
     await expect(upsertAssistant(ctx, input({ recording: "off" }), "assistant-1")).rejects.toThrow(
-      providerError,
+      VoiceSyncFailedError,
     );
 
     expect(updatedWith().recordingEnabled).toBe(false);
-    expect(mocks.audit).toHaveBeenCalledWith(
-      ctx,
-      expect.objectContaining({
+    expect(mocks.auditCreate).toHaveBeenCalledWith({
+      data: expect.objectContaining({
         action: "voice_assistant.update",
         resourceId: "assistant-1",
         before: { recordingEnabled: true },
         after: expect.objectContaining({ recordingEnabled: false }),
       }),
-    );
+    });
   });
 
   it("records that Vapi may still hold the old setting, without the provider's error", async () => {
     mocks.upsertVapiAssistant.mockRejectedValueOnce(new Error(providerError));
 
-    await expect(upsertAssistant(ctx, input({ recording: "off" }), "assistant-1")).rejects.toThrow(
-      providerError,
+    const failure = await upsertAssistant(ctx, input({ recording: "off" }), "assistant-1").catch(
+      (error: unknown) => error as Error,
     );
 
     expect(mocks.audit).toHaveBeenCalledWith(
@@ -276,16 +291,16 @@ describe("the audit trail when Vapi can't be reached", () => {
       }),
     );
     expect(JSON.stringify(mocks.audit.mock.calls)).not.toContain("secret-provider-detail");
+    expect((failure as Error).message).not.toContain("secret-provider-detail");
   });
 
   it("still reports the sync failure when that second audit row can't be written", async () => {
     const logged = vi.spyOn(console, "error").mockImplementation(() => undefined);
     mocks.upsertVapiAssistant.mockRejectedValueOnce(new Error(providerError));
-    mocks.audit.mockResolvedValueOnce(undefined);
     mocks.audit.mockRejectedValueOnce(new TypeError("audit database detail"));
 
     await expect(upsertAssistant(ctx, input({ recording: "off" }), "assistant-1")).rejects.toThrow(
-      providerError,
+      VoiceSyncFailedError,
     );
 
     expect(logged).toHaveBeenCalledTimes(1);
@@ -297,21 +312,43 @@ describe("the audit trail when Vapi can't be reached", () => {
 
   it("writes the audit row before contacting Vapi", async () => {
     await upsertAssistant(ctx, input({ recording: "off" }), "assistant-1");
-    expect(mocks.audit.mock.invocationCallOrder[0]!).toBeLessThan(
+    expect(mocks.auditCreate.mock.invocationCallOrder[0]!).toBeLessThan(
       mocks.upsertVapiAssistant.mock.invocationCallOrder[0]!,
     );
   });
 
   it("writes one row when the sync succeeds", async () => {
     await upsertAssistant(ctx, input({ recording: "off" }), "assistant-1");
-    expect(mocks.audit).toHaveBeenCalledTimes(1);
+    expect(mocks.auditCreate).toHaveBeenCalledTimes(1);
+    expect(mocks.audit).not.toHaveBeenCalled();
   });
 
   it("has no earlier value to record for a new assistant", async () => {
     await upsertAssistant(ctx, input());
-    expect(mocks.audit).toHaveBeenCalledWith(
-      ctx,
-      expect.not.objectContaining({ before: expect.anything() }),
+    expect(mocks.auditCreate).toHaveBeenCalledWith({
+      data: expect.not.objectContaining({ before: expect.anything() }),
+    });
+  });
+
+  it("changes nothing and doesn't contact Vapi when the audit row can't be written", async () => {
+    mocks.auditCreate.mockRejectedValueOnce(new Error("audit write failed"));
+
+    await expect(upsertAssistant(ctx, input({ recording: "off" }), "assistant-1")).rejects.toThrow(
+      "audit write failed",
     );
+
+    expect(mocks.transactionFailed).toHaveBeenCalledTimes(1);
+    expect(mocks.upsertVapiAssistant).not.toHaveBeenCalled();
+  });
+
+  it("scopes the save to the caller's organization", async () => {
+    await upsertAssistant(ctx, input({ recording: "off" }), "assistant-1");
+    expect(db.voiceAssistant.findFirstOrThrow).toHaveBeenCalledWith({
+      where: { id: "assistant-1", organizationId: "org-a" },
+    });
+    expect(db.voiceAssistant.update.mock.calls[0]![0].where).toEqual({
+      id: "assistant-1",
+      organizationId: "org-a",
+    });
   });
 });

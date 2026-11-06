@@ -19,7 +19,17 @@ vi.mock("@/server/db/tenant", () => ({
       findFirstOrThrow: vi.fn(async () => ({ recordingEnabled: null })),
     },
   }),
-  unscopedPrisma: {},
+  unscopedPrisma: {
+    $transaction: async (step: (tx: unknown) => Promise<unknown>) =>
+      step({
+        voiceAssistant: {
+          create: mocks.voiceAssistantCreate,
+          update: mocks.voiceAssistantUpdate,
+          findFirstOrThrow: vi.fn(async () => ({ recordingEnabled: null })),
+        },
+        auditLog: { create: vi.fn(async () => ({})) },
+      }),
+  },
 }));
 vi.mock("@/server/services/billing/entitlements", async () => {
   const actual = await vi.importActual<typeof EntitlementsModule>(
@@ -32,7 +42,10 @@ vi.mock("@/server/integrations/vapi", () => ({
   buyPhoneNumber: vi.fn(),
 }));
 vi.mock("@/server/ai/tools", () => ({ TOOL_REGISTRY: [], zodToJsonSchema: vi.fn(() => ({})) }));
-vi.mock("@/server/services/audit", () => ({ audit: mocks.auditMock }));
+vi.mock("@/server/services/audit", () => ({
+  audit: mocks.auditMock,
+  auditLogData: async (_ctx: unknown, input: unknown) => input,
+}));
 vi.mock("@/env", () => ({
   getVapiEnv: () => ({
     VAPI_API_KEY: "test",
