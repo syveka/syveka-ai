@@ -1,38 +1,38 @@
 # Voice metering, limits and disclosure: release plan
 
-Written for the owner and reviewers. It describes draft PRs #408 at `3cf63d2b`, #411 at `a9f7eab0` and #410 at `a9d3e299`, against `origin/main` at `40f71ae7`. Updated 2026-11-06. [Decisions](#decisions) separates what the owner authorized directly from what still needs confirming. **Nothing here has been merged, deployed, or tried on a real call.** Merging, deploying, paid calls, live Vapi writes, approved-language activation, schedules and production settings each need separate authorization. Prices and commercial allowances stay pending owner decisions.
+Written for the owner and reviewers. It describes draft PRs #408 at `ce55d110`, #411 at `a35094c2` and #410 at `af1c7f9c`, against `origin/main` at `40f71ae7`. Updated 2026-11-06. [Decisions](#decisions) separates what the owner authorized directly from what still needs confirming. **Nothing here has been merged, deployed, or tried on a real call.** Merging, deploying, paid calls, live Vapi writes, approved-language activation, schedules and production settings each need separate authorization. Prices and commercial allowances stay pending owner decisions.
 
 ## Status
 
-| Work                                               | Done                                                                                                        | Still needed                                                            |
-| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
-| #408                                               | CI 21 of 21 at `3cf63d2b`. Real Redis 29 of 29 and PostgreSQL 11 of 11 ran locally on disposable containers | CI patch, then its real jobs in GitHub Actions                          |
-| #411                                               | CI 21 of 21 at `a9f7eab0`. Independent review of its last commit found no blocker                           | Merge the patched #408                                                  |
-| #410                                               | Audit, recovery drill and release path fixed, at `a9d3e299`                                                 | Guard patch. CI's `migrations:check` and generator test fail until then |
-| `CI required` as a required check                  | Prepared                                                                                                    | Apply once the real jobs pass                                           |
-| Real calls, Vapi behaviour, production usage query | None run                                                                                                    | Each needs its own authorization                                        |
+| Work                                               | Done                                                                                                            | Still needed                                     |
+| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| #408                                               | CI passes at `ce55d110`, including the real suites                                                              | Owner's merge decision                           |
+| #411                                               | CI passes at `a35094c2`, including the real suites. Independent review of its last code commit found no blocker | Owner's merge decision, after #408               |
+| #410                                               | Audit, recovery drill and release path fixed. CI passes at `af1c7f9c`, with the guard patch applied             | Recording decision confirmed, PITR, restore test |
+| `CI required` as a required check                  | **Applied 2026-11-06.** Three control PRs show it fails as it should                                            | Nothing                                          |
+| Real calls, Vapi behaviour, production usage query | None run                                                                                                        | Each needs its own authorization                 |
 
 Three levels of evidence, which shouldn't be mixed:
 
 - **Mocks and fake executables:** the unit tests, including the Vapi calls and the fake `docker` and `npx` in the `s7` tests.
-- **Real databases, synthetic data:** the local Redis and PostgreSQL suites, and the recovery rehearsal on local containers with no network.
+- **Real databases, synthetic data:** the Redis and PostgreSQL suites in GitHub Actions and locally, and the recovery rehearsal on local containers with no network.
 - **Real calls and production:** none yet.
 
 ## What releases
 
 **#408 is the release candidate.** It holds the metering, limits and notice work together, because reconciliation has to honour both limits and the notice, and those changes conflict when kept apart.
 
-| PR               | Role for release                                                                                | Why                                                                                                                                                                   |
-| ---------------- | ----------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| #408             | **Release this**                                                                                | Contains every commit below                                                                                                                                           |
-| #411             | **Release with #408,** after it                                                                 | Reconciliation and limit fixes from review. One commit on #408. Doesn't change the database                                                                           |
-| #410             | **Release after #408,** once its guard patch is applied and the recording decision is confirmed | The recording setting. Stacked on #408, without #411. A trial merge with #411 had no conflict, and typecheck and 154 focused tests passed. Adds a migration           |
-| #407             | **Separate dependency.** Release before or after #408                                           | Reads AI replies by block type. Not in #408. Both change `tests/unit/post-call-idempotency.test.ts`, so whichever merges second has to resolve that one test conflict |
-| #409             | Independent                                                                                     | Arabic call summaries, from separate work. Merges cleanly with #408                                                                                                   |
-| #404, #405, #406 | **Superseded for release. Don't merge.** Keep open for review history                           | All their commits are inside #408, and #408 goes further                                                                                                              |
-| #335             | **Superseded for release.** Keep for review history                                             | Its notice commit is in #408. Its forced recording is removed there. It also supersedes #265 and #304                                                                 |
-| #398             | Optional                                                                                        | Fixes Windows and load-related unit test failures, so it doesn't change the product                                                                                   |
-| #403             | This plan, with no code                                                                         | Holds the CI patch for the owner                                                                                                                                      |
+| PR               | Role for release                                                      | Why                                                                                                                                                                   |
+| ---------------- | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #408             | **Release this**                                                      | Contains every commit below                                                                                                                                           |
+| #411             | **Release with #408,** after it                                       | Reconciliation and limit fixes from review. One commit on #408. Doesn't change the database                                                                           |
+| #410             | **Release after #408,** once the recording decision is confirmed      | The recording setting. Stacked on #408, without #411. A trial merge with #411 had no conflict, and typecheck and 154 focused tests passed. Adds a migration           |
+| #407             | **Separate dependency.** Release before or after #408                 | Reads AI replies by block type. Not in #408. Both change `tests/unit/post-call-idempotency.test.ts`, so whichever merges second has to resolve that one test conflict |
+| #409             | Independent                                                           | Arabic call summaries, from separate work. Merges cleanly with #408                                                                                                   |
+| #404, #405, #406 | **Superseded for release. Don't merge.** Keep open for review history | All their commits are inside #408, and #408 goes further                                                                                                              |
+| #335             | **Superseded for release.** Keep for review history                   | Its notice commit is in #408. Its forced recording is removed there. It also supersedes #265 and #304                                                                 |
+| #398             | Optional                                                              | Fixes Windows and load-related unit test failures, so it doesn't change the product                                                                                   |
+| #403             | This plan, with no code                                               | Holds the CI patch for the owner                                                                                                                                      |
 
 ### Commits in #408
 
@@ -66,6 +66,7 @@ Oldest first. Merge commits are left out.
 - `608237c9` fix(voice): a language counts only if approved when the call began
 - `85670148` fix(voice): judge a late start's approval by when Vapi says the call began
 - `3cf63d2b` fix(voice): test approval against the earliest stated start on every path
+- `ce55d110` ci: run the real Redis and voice binding suites, and require them
 
 `f71829a2` came from #335 and forced recording on. `fae79e05` removes that part and keeps the spoken notice.
 
@@ -154,7 +155,7 @@ Billable usage (`UsageRecord`) and uncertain usage (unsettled calls) stay separa
 - Whether a PATCH leaves an omitted `artifactPlan` unchanged, for `NULL` assistants.
 - How long Vapi keeps recordings and transcripts, and what happens to the copy of a call Syveka refused.
 
-**#410 can't pass CI until the owner applies one patch.** Adding the column needs one line in each of two protected guard scripts, prepared as [`recording-guard.patch`](recording-guard.patch). Until then `migrations:check` and the legacy contract test fail, by design. Renamed, patched copies of both scripts were run against #410: the history check passes, and the real generator test passes 40 of 40. The preflight contract `prisma/sql/006_legacy_baseline_preflight.sql` was edited by hand, and that test checks it.
+**The guard patch is applied.** [`recording-guard.patch`](recording-guard.patch) adds the migration to the two protected guard scripts. The owner applied it on 2026-11-06, and CI's migration and generator checks pass at `af1c7f9c`. The preflight contract `prisma/sql/006_legacy_baseline_preflight.sql` was edited by hand, and the generator test checks it.
 
 **Release and recovery for #410:**
 
@@ -226,18 +227,26 @@ Slots expire within 20 minutes, and markers and refusals within 48 hours. Old co
 
 ## CI
 
-**Workflow gate versus repository rules.** These are separate, and only the first exists for this job:
+**`CI required` is now a required check.** Ruleset `Main Branch Protection` requires it, as well as a pull request, and blocks deletion and force-pushes. It requires no approvals and has no bypass actors. It applies to every PR to `main`.
 
-- `CI required` is a job in `.github/workflows/ci.yml`. It fails unless every job it needs succeeded, so a skipped or cancelled job fails it too. Its failure path has been seen working: on #405, run 42038834522, Lint failed and `CI required` failed with it.
-- Ruleset `Main Branch Protection` requires a pull request and blocks deletion and force-pushes. It lists **no required status checks and no required approvals,** and classic branch protection isn't set. So **GitHub won't block a merge even if `CI required` fails.** Requiring it is a repository setting, and an owner decision.
+- **Applied 2026-11-06,** under the owner's authorization of 2026-11-05, after the real jobs passed. The other rules and settings compare as unchanged.
+- **To undo:** `gh api -X PUT repos/syveka/syveka-ai/rulesets/18750656 --input docs/voice/ruleset-before.json`.
 
-**Coverage today:** the real-Redis suites and `voice-call-binding.postgres` run in no CI job, and `opt-in-postgres` isn't in `CI required`.
+**The real suites run in GitHub Actions,** from [`ci-real-db-gate.patch`](ci-real-db-gate.patch), applied by the owner.
 
-**The patch:** [`ci-real-db-gate.patch`](ci-real-db-gate.patch) adds an `opt-in-redis` job and the binding suite to `opt-in-postgres`, puts both in `CI required`, and fails on a wrong file count, so a missing file or skipped test can't pass. The configuration guard blocks agents from editing `.github/`, so it isn't applied. It has been checked with `git apply --check` and parsed as YAML, but has **never run in GitHub Actions**. It must land with or after #408, because it names test files #408 adds.
+| Head            | Run                                                                         | Real Redis                   | Real PostgreSQL              |
+| --------------- | --------------------------------------------------------------------------- | ---------------------------- | ---------------------------- |
+| #408 `ce55d110` | [42200201406](https://github.com/syveka/syveka-ai/actions/runs/42200201406) | 29 of 29, 2 files, 0 skipped | 11 of 11, 3 files, 0 skipped |
+| #411 `a35094c2` | [42200217342](https://github.com/syveka/syveka-ai/actions/runs/42200217342) | 29 of 29, 2 files, 0 skipped | 11 of 11, 3 files, 0 skipped |
+| #410 `af1c7f9c` | [42200229830](https://github.com/syveka/syveka-ai/actions/runs/42200229830) | 29 of 29, 2 files, 0 skipped | 11 of 11, 3 files, 0 skipped |
 
-**Authorized directly by the owner on 2026-11-05,** together with making `CI required` a required check. Agents can't edit `.github/`, so the owner applies the patch, as in [Owner steps](#owner-steps). `CI required` and its jobs passed on `3cf63d2b`, without the patch.
+**Controls, each failing `CI required`.** These draft PRs are for evidence only and must not be merged:
 
-**Requiring the check blocks every PR to `main`** whose `CI required` fails, not just #408. Nothing else in the ruleset changes: [`ruleset-ci-required.json`](ruleset-ci-required.json) is the current ruleset plus one `required_status_checks` rule, and [`ruleset-before.json`](ruleset-before.json) restores it.
+| PR                                                                        | Change                            | Failure in the log                                             |
+| ------------------------------------------------------------------------- | --------------------------------- | -------------------------------------------------------------- |
+| #412, [run](https://github.com/syveka/syveka-ai/actions/runs/42200744418) | A Redis image that doesn't exist  | Service pull fails: `redis:0-does-not-exist: not found`        |
+| #413, [run](https://github.com/syveka/syveka-ai/actions/runs/42200749771) | `describe.skip` on a Redis suite  | 19 of 29 passed, 10 skipped, 0 failed, and the job still fails |
+| #414, [run](https://github.com/syveka/syveka-ai/actions/runs/42200754198) | `voice-call-binding` file removed | 6 of 6 passed in 2 files, and the job fails on the file count  |
 
 ## Real-call validation
 
@@ -290,68 +299,15 @@ Check 5 (Vapi retrying a 503) needs Redis or the webhook broken on staging, so i
 
 ## Owner steps
 
-A reviewed script, handed over in the main session, does steps 1 and 4 and merges the patched #408 into #411. It stops if any head has moved. Claude then does steps 2 and 3, under the owner's authorization of 2026-11-05. **None of these has been run yet.**
+**Done on 2026-11-06.** The owner ran the reviewed script, which applied the CI patch to #408, merged it into #411 and #410, and applied the guard patch to #410. Claude then opened the control PRs, checked the runs and required the check.
 
-The manual steps stay here as the fallback. Each runs in the owner's own terminal, where agent hooks don't apply. The commands work in Git Bash and PowerShell.
-
-**1. Apply the CI patch to #408.**
-
-```
-git fetch origin
-git switch fix/voice-limits-with-disclosure
-git pull --ff-only
-git checkout origin/docs/voice-implementation-plan -- docs/voice/ci-real-db-gate.patch
-git apply --check docs/voice/ci-real-db-gate.patch
-git apply docs/voice/ci-real-db-gate.patch
-git rm -f docs/voice/ci-real-db-gate.patch
-git add .github/workflows/ci.yml
-git status
-git commit -m "ci: run the real Redis and voice binding suites, and require them"
-git push
-```
-
-`git status` should show only `.github/workflows/ci.yml`. If `git apply` complains about whitespace on Windows, add `--ignore-whitespace` to both apply lines. Alternatively, start a Claude Code session with `SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT=1`.
-
-**2. Check that it ran.** In the newest CI run on the branch, `Opt-in real-Redis suites (voice replay, call slots)`, the PostgreSQL job and `CI required` must all show success:
-
-```
-gh run list --branch fix/voice-limits-with-disclosure --limit 1
-gh run view <run id> --json jobs --jq ".jobs[] | [.name, .conclusion] | @tsv"
-```
-
-**3. Only after step 2 passes, require `CI required`.**
-
-```
-git switch docs/voice-implementation-plan
-git pull --ff-only
-gh api -X PUT repos/syveka/syveka-ai/rulesets/18750656 --input docs/voice/ruleset-ci-required.json
-gh api repos/syveka/syveka-ai/rulesets/18750656 --jq ".rules[].type"
-```
-
-The last command should list `deletion`, `non_fast_forward`, `pull_request` and `required_status_checks`. To undo, run the same `PUT` with `ruleset-before.json`.
-
-**4. If #410 is wanted, apply its guard patch and bring in step 1.**
-
-```
-git switch feat/voice-recording-setting
-git pull --ff-only
-git merge origin/fix/voice-limits-with-disclosure
-git checkout origin/docs/voice-implementation-plan -- docs/voice/recording-guard.patch
-git apply --check docs/voice/recording-guard.patch
-git apply docs/voice/recording-guard.patch
-git rm -f docs/voice/recording-guard.patch
-git add scripts/check-migration-history.mjs scripts/generate-legacy-schema-contract.mjs
-git commit -m "chore(db): register the recording column migration in the migration guards"
-git push
-```
-
-Its CI must then pass, including `migrations:check` and the migration jobs.
+Nothing else here needs an owner command. The next steps are the decisions below.
 
 ## Decisions
 
 Authorized directly by the owner:
 
-1. **CI:** apply the patch, and make `CI required` a required check, keeping the other rules. Message of 2026-11-05.
+1. **CI:** apply the patch, and make `CI required` a required check, keeping the other rules. Message of 2026-11-05. **Done 2026-11-06.**
 
 Written as decisions by another session, and **not confirmed in the main session.** They're built, but they're proposals until the owner confirms them:
 
