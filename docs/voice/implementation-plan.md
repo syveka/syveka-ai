@@ -1,16 +1,17 @@
 # Voice metering, limits and disclosure: release plan
 
-Written for the owner and reviewers. It describes draft PRs #408 at `ce55d110`, #411 at `a35094c2` and #410 at `af1c7f9c`, against `origin/main` at `40f71ae7`. Updated 2026-11-06. [Decisions](#decisions) separates what the owner authorized directly from what still needs confirming. **Nothing here has been merged, deployed, or tried on a real call.** Merging, deploying, paid calls, live Vapi writes, approved-language activation, schedules and production settings each need separate authorization. Prices and commercial allowances stay pending owner decisions.
+Written for the owner and reviewers. It describes integration candidate #415 at `aea51796`, and draft PRs #408 at `ce55d110`, #411 at `a35094c2` and #410 at `af1c7f9c`, against `origin/main` at `40f71ae7`. Updated 2026-11-06. [Decisions](#decisions) separates what the owner authorized directly from what still needs confirming. **Nothing here has been merged, deployed, or tried on a real call, and #415 approves no pending decision.** Merging, deploying, paid calls, live Vapi writes, approved-language activation, schedules and production settings each need separate authorization. Prices and commercial allowances stay pending owner decisions.
 
 ## Status
 
-| Work                                               | Done                                                                                                            | Still needed                                     |
-| -------------------------------------------------- | --------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
-| #408                                               | CI passes at `ce55d110`, including the real suites                                                              | Owner's merge decision                           |
-| #411                                               | CI passes at `a35094c2`, including the real suites. Independent review of its last code commit found no blocker | Owner's merge decision, after #408               |
-| #410                                               | Audit, recovery drill and release path fixed. CI passes at `af1c7f9c`, with the guard patch applied             | Recording decision confirmed, PITR, restore test |
-| `CI required` as a required check                  | **Applied 2026-11-06.** Three control PRs show it fails as it should                                            | Nothing                                          |
-| Real calls, Vapi behaviour, production usage query | None run                                                                                                        | Each needs its own authorization                 |
+| Work                                               | Done                                                                                                                                                              | Still needed                                     |
+| -------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| #408                                               | CI passes at `ce55d110`, including the real suites                                                                                                                | Owner's merge decision                           |
+| #411                                               | CI passes at `a35094c2`, including the real suites. Independent review of its last code commit found no blocker                                                   | Owner's merge decision, after #408               |
+| #410                                               | Audit, recovery drill and release path fixed. CI passes at `af1c7f9c`, with the guard patch applied                                                               | Recording decision confirmed, PITR, restore test |
+| `CI required` as a required check                  | **Applied 2026-11-06.** Three control PRs show it fails as it should                                                                                              | Nothing                                          |
+| #415 integration candidate                         | #408, #411, #410, #409, #407 and fixes from an audit of the combination, at `aea51796`. [CI](https://github.com/syveka/syveka-ai/actions/runs/42207703375) passes | The decisions below, then merging                |
+| Real calls, Vapi behaviour, production usage query | None run                                                                                                                                                          | Each needs its own authorization                 |
 
 Three levels of evidence, which shouldn't be mixed:
 
@@ -70,6 +71,57 @@ Oldest first. Merge commits are left out.
 
 `f71829a2` came from #335 and forced recording on. `fae79e05` removes that part and keeps the spoken notice.
 
+## Integration candidate #415
+
+**Not authorized to merge or deploy.** The branch `integration/voice-staging-2026-11-06` shows that these PRs work together. The original PRs stay open.
+
+| Order | PR   | Note                                                                                                                     |
+| ----- | ---- | ------------------------------------------------------------------------------------------------------------------------ |
+| 1     | #408 | Includes #404, #405 and #406 in full, and #335's notice commit with its forced recording removed. Don't merge those four |
+| 2     | #411 | One commit on #408, plus the merge of the CI patch                                                                       |
+| 3     | #410 | Adds the migration and the guard patch                                                                                   |
+| 4     | #409 | Merges cleanly                                                                                                           |
+| 5     | #407 | Conflicts with #408 only in `post-call-idempotency.test.ts`. #415 keeps both sets of tests                               |
+| 6     | #415 | The conflict resolution and the audit's fixes, in commits `36c729dc` and `aea51796`                                      |
+
+**Suggested way to merge,** once decided: #408, #411, then #415, which brings the rest with its fixes. The fixes change code #410 adds, so **rejecting #410 means rebuilding the candidate without it.** #398 is independent and only changes tests. #402 and #403 are documents.
+
+**Staging can't run from a branch.** `staging-release.yml` refuses anything but `main`, so a trial needs the merge decision first. Merging doesn't deploy production. A Vercel Preview of this branch reaches the staging database without the new column, so its voice pages would fail until the migration is applied. Don't test on such a Preview.
+
+### What the audit of the combination fixed
+
+Each has a regression test, seen failing first.
+
+| Severity | Defect                                                                                                                   | Fix                                                                                                                                     |
+| -------- | ------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------- |
+| High     | A failed Vapi sync said "try again", though the change was saved and Vapi might still record                             | Says it's saved, and that the service may use the old settings, in FI, EN and AR                                                        |
+| High     | One provider error lost a call's summary for good                                                                        | QStash retries it, and only the last attempt finishes without one                                                                       |
+| Medium   | A save and its audit row could separate                                                                                  | One transaction. On real PostgreSQL, a failed audit row rolls the change back                                                           |
+| Medium   | A call could count twice against limits when post-call failed after recording usage, refusing calls wrongly              | A call with recorded usage no longer counts as uncertain                                                                                |
+| Medium   | The summary prompt held the system turn and tool results, and cut off a long call's end                                  | Only spoken turns, and it keeps the end                                                                                                 |
+| Medium   | A caller's words reached the prompt unmarked                                                                             | Wrapped as untrusted data, and they can't close the wrapper. A caller can still try to steer the summary's text. That call has no tools |
+| Low      | `FI@old,FI@bad` left FI approved                                                                                         | Any invalid entry withdraws that language                                                                                               |
+| Low      | A bare code fence or empty summary was mishandled, and a cut-off reply wasn't identified                                 | Parsed, refused and logged as `truncated`                                                                                               |
+| Low      | Arabic assistants got the notice instruction in English                                                                  | Arabic, pending native review                                                                                                           |
+| Low      | A failed Vapi delete wasn't in the audit row, a failed sync logged nothing, and `voice.errors.invalid_input` was missing | Added                                                                                                                                   |
+
+### Open defects, by impact
+
+| Impact | Defect                                                                                                                                                                                                   | Why it's open                                                    |
+| ------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| Medium | After leaving the page, nothing shows a failed recording sync. The page says "off" while Vapi may still record. Only `voice_assistant.sync_failed` in the audit log remains, and a later save repairs it | A live comparison needs Vapi's real response. Check on the trial |
+| Medium | A tool call with no `artifact.messages`, after a missed start, ends a possibly good call                                                                                                                 | Depends on Vapi's real payload. Real-call check 3                |
+| Medium | A failed Vapi delete can leave an assistant at Vapi that Syveka can't reach                                                                                                                              | Now audited, but nothing retries it                              |
+| Low    | A call Syveka hung up can be billed if the "ended" marker write fails, or if Redis loses keys. Refusals have no PostgreSQL copy                                                                          | Needs a durable refusal record, which means a migration          |
+| Low    | If the hang-up and the "running" write both fail, a call can run unbilled                                                                                                                                | Same                                                             |
+| Low    | Two simultaneous starts can leave a refused call with a row, which only reconciliation closes, and it could bill it if the schedule isn't running within 48 hours                                        | Depends on the schedule                                          |
+| Low    | A slower resync can overwrite a newer recording choice at Vapi. A retry and a requeue can both pay for a summary, and the stored text can then differ from the CRM activity                              | Rare                                                             |
+| Low    | Usage has no unique constraint behind its advisory lock. The lock is proven on real PostgreSQL by `post-call-concurrency`                                                                                | A partial unique index needs a migration                         |
+| Low    | The usage query grows with stuck rows, and fails closed at an extreme count                                                                                                                              | Rare                                                             |
+| Low    | If Vapi uses a role other than `user`, `bot` or `assistant` for speech, the summary is silently skipped                                                                                                  | T1 shows the real roles                                          |
+| Low    | The retry test doesn't assert usage or contact across attempts, though the code is idempotent by reading                                                                                                 | Test depth                                                       |
+| Low    | FI and EN follow-ups aren't pinned to a language, and activity and notification text is English                                                                                                          | Copy                                                             |
+
 ## How a call is judged
 
 A configuration read after a call started can't show what its caller heard. So there is one rule: nothing about a call is kept, billed, sent to the CRM or sent to an AI provider without evidence bound to that call. Three kinds of evidence count:
@@ -91,6 +143,24 @@ A configuration read after a call started can't show what its caller heard. So t
 | More than 30 seconds in, and what the call has said shows the notice           | As a passed check                                                                                                                  |
 | More than 30 seconds in, and what it has said is something else                | Hung up. Nothing is recorded, because a running record may lack its opening. The report decides                                    |
 | More than 30 seconds in, and nothing can say                                   | Held to the limits with a slot and no row. Its tool calls and report judge it                                                      |
+
+### What a caller hears, in an example
+
+**Callers are never asked for consent.** "Approval" means the operator approved a language's wording, in `VOICE_DISCLOSURE_APPROVED_LANGUAGES`. Whether to add consent or objection handling is a [decision](#decisions), not a bug.
+
+Suppose it holds `FI@2026-11-12T08:00:00Z`, for a Finnish assistant:
+
+| When                                      | What happens                                                                                                                                                         |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Call at 09:00                             | Vapi speaks "Puhut tekoälyavustajan kanssa, ja puhelu voidaan tallentaa.", then the greeting, and it can't be interrupted. The call is checked, then kept and billed |
+| Call at 07:59, or a report of it later    | Began before approval, so it's refused. It's hung up at the start, and nothing is kept or billed, even if approval comes while it runs                               |
+| Later change to `FI@2026-11-01T08:00:00Z` | A time earlier than the deploy can vouch for earlier calls, which is why the plan requires a time no earlier than the deploy                                         |
+| An English assistant at 09:00             | English isn't listed, so it's hung up. The caller may hear some of the notice first, because the check doesn't hold the audio                                        |
+| Caller objects                            | The prompt has no instruction for this. The model answers as it sees fit                                                                                             |
+| Caller hangs up during the notice         | With a checked start, it's kept and billed, rounded up to a minute if connected. With a missed start, a partial notice counts as absent, so it isn't kept            |
+| Connection lost mid-call                  | Settled from the report, or from Vapi by reconciliation. An unknown length stays unbilled                                                                            |
+
+The spoken wording is the same with recording off, and it follows the assistant's language, not the language the caller speaks.
 
 ### After a missed start
 
@@ -159,7 +229,7 @@ Billable usage (`UsageRecord`) and uncertain usage (unsettled calls) stay separa
 
 **Release and recovery for #410:**
 
-- **Backup path: Option A (PITR) only.** Options B and B-M in the [release runbook](../release-runbook.md) exclude a column addition. PITR being enabled is unconfirmed, and it's for the owner to check.
+- **Backup path: Option A (PITR) only, for production.** Options B and B-M in the [release runbook](../release-runbook.md) exclude a column addition. PITR being enabled is unconfirmed, and it's for the owner to check.
 - **Restore test: required by Option A,** because the schema changes. The drill stopped on #410's second pending migration while its unit tests passed. It now reads `scripts/recovery-drill/expected-pending-migrations.txt`, and a test fails if a migration lands without being listed. The list claims what production's history holds, which hasn't been checked against production.
 - **Evidence:** the synthetic rehearsal failed at step A1 on `ff6f93b8`, and passed all 43 steps at `a9d3e299`. It uses local containers. A drill against a real Supabase project hasn't been run, and neither has `s7`'s real `prisma migrate deploy`.
 - **Next maintenance:** once production has applied the listed migrations and the list is emptied, the `s7` deploy tests need a synthetic list. They fail loudly until then.
@@ -173,7 +243,7 @@ Billable usage (`UsageRecord`) and uncertain usage (unsettled calls) stay separa
 | **Assistant sync**     | Saving an assistant sends the notice, live-call control and webhook retries                                                                                                                                        | Its calls are refused, and its settings page says so              |
 | **QStash schedule**    | `reconcile-voice-calls` runs only from a manually registered schedule, suggested every 15 minutes                                                                                                                  | A call with lost webhooks stays uncertain and nothing recovers it |
 
-The concurrent-call limits of 1 (Starter) and 3 (Pro) are confirmed by the owner for testing (decision 5). They are technical safeguards, not commercial promises. Any organization with minutes gets at least 1, and a contract concurrency grant would need a migration.
+The concurrent-call limits of 1 (Starter) and 3 (Pro) are built, and await [confirmation](#decisions). They are technical safeguards, not commercial promises. Any organization with minutes gets at least 1, and a contract concurrency grant would need a migration.
 
 ## Rollout
 
@@ -183,8 +253,8 @@ Each step needs its own authorization.
 
 Staging proves the mechanics on one environment. It doesn't make production ready.
 
-1. Apply the CI patch, or decide not to (below).
-2. Merge #408 and #407, resolving the test conflict. Deploy to staging with `VOICE_DISCLOSURE_APPROVED_LANGUAGES` empty, so no call can continue yet.
+1. Merge as in [Integration candidate #415](#integration-candidate-415). The migration runs on staging through `staging-release.yml`, against the staging database only.
+2. Deploy to staging with `VOICE_DISCLOSURE_APPROVED_LANGUAGES` empty, so no call can continue yet.
 3. Create Enterprise grants on staging, if any organization needs them.
 4. Register the QStash schedule on staging.
 5. Save each staging assistant. This is a live Vapi write. Its settings page should stop reporting out-of-date settings.
@@ -263,33 +333,40 @@ Nothing about Vapi has been tested on a real call. These need an approved test, 
 
 ## Staging trial
 
-For approval after #408 is merged and deployed to staging, and #410 if wanted. Every call uses the tenant-owned staging number, and nothing runs in production. Results go on #399.
+For approval after merging and deploying to staging. **Nothing here has run.** Every call uses the tenant-owned staging number, and nothing runs in production. Results go on #399.
 
-### Calls
+### Scenarios
 
-| #   | Call                                                                          | Expected                                                                                  | Checks        | Planned minutes |
-| --- | ----------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------- | --------------- |
-| T1  | FI, approved, books a meeting                                                 | Kept: row, usage, transcript, booking                                                     | 1, 2, 3, 4, 8 | 3               |
-| T2  | EN, approved                                                                  | Kept                                                                                      | 1, 2, 4, 8    | 2               |
-| T3  | AR, only if test wording is approved                                          | Kept, notice matched in Arabic                                                            | 2             | 2               |
-| T4  | EN while EN isn't listed                                                      | Hung up within seconds. No row, no usage, no tools                                        | 6, 8          | 1               |
-| T5  | No call: after T4, list EN with a time after T4, redeploy, run reconciliation | T4 still isn't kept (decision 3)                                                          | —             | 0               |
-| T6  | Two calls at once on a Starter test organization                              | The second is hung up                                                                     | limits        | 2               |
-| T7  | #410 only: a new assistant, recording off                                     | No recording in Vapi, `artifact.messages` still present, other `artifactPlan` fields kept | 7             | 2               |
-| T8  | #410 only: an assistant from before #410, never set                           | Its dashboard setting is unchanged after a save                                           | 7             | 2               |
+| #   | Scenario                                                                              | How                  | Expected                                                                                                               | Needs a real call?            |
+| --- | ------------------------------------------------------------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------- | ----------------------------- |
+| T1  | Normal: FI, approved, books a meeting                                                 | Call, 3 minutes      | Kept: row, usage, transcript, booking, Finnish summary                                                                 | Yes                           |
+| T2  | Normal: EN, approved                                                                  | Call, 2 minutes      | Kept                                                                                                                   | Yes                           |
+| T3  | Normal: AR, only if test wording is approved                                          | Call, 2 minutes      | Kept, notice matched in Arabic, Arabic summary. The only way to judge a real Arabic summary                            | Yes                           |
+| T4  | Refused: EN while EN isn't listed                                                     | Call, 1 minute       | Hung up within seconds. No row, usage or tools                                                                         | Yes                           |
+| T5  | Late approval: list EN with a time after T4, redeploy, run reconciliation             | No call              | T4 still isn't kept                                                                                                    | No                            |
+| T6  | Limits: two calls at once on a Starter test organization                              | Two calls, 2 minutes | The second is hung up                                                                                                  | Yes                           |
+| T7  | Recording off, on a new assistant                                                     | Call, 2 minutes      | No recording at Vapi, `artifact.messages` still present, other `artifactPlan` fields kept                              | Yes                           |
+| T8  | Recording never set, on an older assistant                                            | Call, 2 minutes      | Dashboard setting unchanged after a save                                                                               | Yes                           |
+| T9  | Repeats: run reconciliation again, and resend T1's post-call job                      | No call              | One usage row for T1, one activity, one notification                                                                   | No                            |
+| T10 | Provider failure during a save: needs a bad Vapi key on staging, so a settings change | No call              | The form says saved but not sent, and the audit log has both rows                                                      | No, but separately authorized |
+| T11 | Long provider outage                                                                  | Not run on staging   | Proven only by tests with mocks. Vapi's retries, and whether it enforces the maximum length in an outage, stay unknown | Can't be staged               |
 
-Check 5 (Vapi retrying a 503) needs Redis or the webhook broken on staging, so it isn't included. It needs separate approval.
+**Only a real call can show:** whether Vapi's record answers at call start, the shape of `artifact.messages` and the notice match, tool-call payloads, Live Call Control's hang-up, whether recording off really stops audio and what Vapi keeps, real costs and durations, and the quality of an Arabic summary. See [Real-call validation](#real-call-validation).
+
+**Passes when** every run scenario has a recorded result that matches, and billed minutes match Vapi's durations. **Fails when** a refused call leaves a row or usage, a call runs past 5 minutes when it should be hung up, a good call is hung up, usage repeats, or recording stays on after T7. Fix any failure through a reviewed change before continuing.
+
+**To roll back on staging:** empty `VOICE_DISCLOSURE_APPROVED_LANGUAGES`, which hangs up every call. Remove the QStash schedule. Run `vercel rollback` to the recorded staging deployment. Leave the column in place.
 
 ### Maximum cost
 
-- **Planned:** about 14 minutes. At the estimate of $0.0776 a minute in [`unit-economics.md`](unit-economics.md), about **$1.10**. At a cautious $0.30 a minute, **$4.20**.
+- **Planned:** 7 calls and about 14 minutes. **These are estimates, not measurements.** At the estimate of $0.0776 a minute in [`unit-economics.md`](unit-economics.md), about **$1.10**. At a cautious $0.30 a minute, **$4.20**.
 - **Worst case:** each of the nine call legs runs to the 15-minute cap (`maxDurationSeconds` 900): 135 minutes, at $0.30 a minute, **$40.50, about €37**. The Starter test organization's own limit of 100 minutes a month, plus up to 15 minutes of overshoot, also bounds it.
 - **Not included:** Twilio's charges on the tenant-owned number, per minute and per month, which weren't checked here, and the caller's own phone charges.
 - **Stop rule:** end the trial if Vapi's dashboard shows more than **$45** spent that day, or any call runs past 5 minutes when it should have been hung up.
 
 ### What the owner provides
 
-- Approval of #407, #408, and #410 if wanted, each merged separately, and of the staging deploy.
+- Approval of the merges and of the staging deploy, which runs the migration on the staging database.
 - Test wording approved for FI and EN, and for AR if T3 runs.
 - On staging: `VOICE_DISCLOSURE_APPROVED_LANGUAGES` with times, the QStash schedule, and any Enterprise grants.
 - Saving each staging assistant, which is a live Vapi write.
@@ -305,22 +382,37 @@ Nothing else here needs an owner command. The next steps are the decisions below
 
 ## Decisions
 
-Authorized directly by the owner:
+Authorized directly by the owner: the CI patch and making `CI required` a required check, on 2026-11-05. Done 2026-11-06.
 
-1. **CI:** apply the patch, and make `CI required` a required check, keeping the other rules. Message of 2026-11-05. **Done 2026-11-06.**
+Everything below is **pending**. Another session's documents recorded 1, 2 and 3 as decided, but the owner hasn't confirmed them in the main session.
 
-Written as decisions by another session, and **not confirmed in the main session.** They're built, but they're proposals until the owner confirms them:
+| #   | Decision                               | What the code does now                                                                                                                                                                                                                                              | Recommendation, and why                                                                                                       | If yes / if no                                                                                                          | Blocks                                                 |
+| --- | -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| 1   | Recording, new and existing assistants | New: off. Existing: Vapi's setting stands until someone chooses                                                                                                                                                                                                     | Confirm. It records nothing by default and changes nothing silently                                                           | Yes: #410 goes in. No: rebuild the candidate without #410                                                               | Trial as built, and production                         |
+| 2   | Late approval of a language            | Refused: a language must be approved when the call began                                                                                                                                                                                                            | Confirm. A later approval can't show what a caller heard                                                                      | Yes: no change. No: code change and legal review                                                                        | Production. The trial tests it as built                |
+| 3   | Concurrent calls: Starter 1, Pro 3     | Enforced, and any organization with minutes gets at least 1                                                                                                                                                                                                         | Confirm for testing, and review with real use                                                                                 | Yes: no change. No: one constant each                                                                                   | Trial, because T6 tests it                             |
+| 4   | Unconfirmed calls in a long outage     | Count 15 minutes each for 48 hours, then log only. Known minutes keep counting. A failed Redis read lets a call run with no slot and no row, and tools refused. A slot lasts 20 minutes against a 15-minute call, so it can't lapse while Vapi enforces the maximum | Keep for the trial. Before production, choose a refuse threshold, and whether a Redis failure should hang up                  | Risk: about one cap per 48 hours, and up to 15 minutes per call in a Redis outage, limited only by Vapi's account limit | Production                                             |
+| 5   | What Vapi keeps of refused calls       | Syveka keeps nothing for them. Vapi's copy isn't touched, and retention is unknown                                                                                                                                                                                  | Have counsel decide, using what T4 and T7 show. Add deletion only if required                                                 | Deletion would be new work                                                                                              | Production. Trial callers should be testers who agreed |
+| 6   | Enterprise caps and prices             | Enterprise voice is 0 minutes without a contract grant. Prices are unchanged                                                                                                                                                                                        | Change no price before measuring (`docs/research/voice-economics-decision.md` on #402, its option A). Set grants per contract | Yes: no change. Prices can't be judged from estimates                                                                   | Production                                             |
+| 7   | Notice wording for testing             | `VOICE_DISCLOSURE_APPROVED_LANGUAGES` is empty, so every call is refused                                                                                                                                                                                            | Approve FI and EN test wording. AR only after native review, including the new sync message and instruction                   | Without it, only refusals can be tested                                                                                 | Trial                                                  |
 
-1. **Recording:** an explicit setting, off for new assistants, keeping existing assistants' choice. In #410.
-2. **Late approval:** refused. A language must be approved when the call begins. In #408.
-3. **Limits:** 1 concurrent call on Starter and 3 on Pro, for testing.
+**How the usage query informs 6.** `docs/research/usage-aggregate-query.sql` on #402 hasn't been run, and no production figure exists. By measured cost of a chat reply: below about $0.015, keep things as they are. From about $0.015 to $0.035, look at allowance use. Above about $0.035, options F, then B or C on #402. A small or internal sample supports no pricing conclusion. It measures AI usage, not call costs, which T1 to T8 start to measure.
 
-Still open:
+**Unverified, because this environment has no authorized access. An owner can check these:**
 
-1. **Legal:** notice wording in each language, including for recording off, objection handling, and what happens to Vapi's copy of a refused call.
-2. **Enterprise:** which organizations need grants, and their allowances.
-3. **Migrations:** the guard for #410 is covered by its patch. A contract concurrency metric or a unique usage index would each need the same.
-4. **Pricing:** after reviewing [`unit-economics.md`](unit-economics.md).
-5. **Merging, deploying, Vapi sync, paid calls and price changes:** each separately.
-6. **Backups for #410:** whether PITR is enabled, and whether `authenticated` holds an UPDATE grant on `voice_assistants`.
-7. **Long outages (#411):** a refuse threshold, since exposure is about one cap per 48 hours.
+- **PITR:** Supabase dashboard, production project, Database, then Backups. Point in Time must be enabled, with a window covering the release. Required for #410's production release, not for staging.
+- **`authenticated` on `voice_assistants`:** run this read-only query in the SQL Editor. If it returns UPDATE, a Member could change `recording_enabled` without audit through PostgREST, because that policy isn't role-gated, and that must be fixed before production.
+
+```sql
+select grantee, privilege_type from information_schema.role_table_grants
+where table_schema = 'public' and table_name = 'voice_assistants' and grantee in ('anon', 'authenticated');
+```
+
+**Needing later authorization, each separately:** merging, the staging deploy and its migration, staging environment values, the QStash schedule, saving assistants (a live Vapi write), T10's settings change, paid calls, any production step, and legal wording.
+
+## Handoff
+
+- **Where work is:** branch `integration/voice-staging-2026-11-06`, PR #415, at `aea51796`. This plan is the single status document.
+- **Controls:** #412, #413 and #414 stay open as evidence for the CI gate. Don't merge them.
+- **Windows:** `handler-guard-coverage` (11) fails on `main` too, and #398 fixes it. `recovery-drill-scripts` (1) passes alone and fails only under a full run's load, and #398 extends its timeout. #398 isn't in the candidate.
+- **Local only:** nothing built locally, because dependencies are on an exFAT drive. CI's production build is the evidence. E2E needs a running app with credentials, and hasn't run.
