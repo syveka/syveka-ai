@@ -11,6 +11,13 @@ import { audit } from "./audit";
  * Creates an Organization with everything a tenant needs (§11.3):
  * OWNER membership, FREE subscription, default Finnish pipeline.
  * Sets last_active_org in app_metadata so the token hook injects claims.
+ *
+ * An industry given at onboarding goes straight into the org's Business DNA
+ * (the shared business context every assistant and module reads), in the
+ * same transaction: the org and its profile are created together or not at
+ * all, so the owner is never asked for it again. It is not also copied into
+ * `settings`, which nothing lets the owner edit and which would drift from
+ * the profile.
  */
 export async function createOrganization(params: {
   userId: string;
@@ -27,14 +34,16 @@ export async function createOrganization(params: {
     slug = `${base}-${i + 2}`;
   }
 
-  const org = await unscopedPrisma.$transaction(async (tx) => {
+  const industry = params.industry?.trim() || null;
+
+  const { org, businessDnaId } = await unscopedPrisma.$transaction(async (tx) => {
     const org = await tx.organization.create({
       data: {
         name: params.name,
         slug,
         businessId: params.businessId || null,
         defaultLocale: params.defaultLocale,
-        settings: params.industry ? { industry: params.industry } : {},
+        settings: {},
       },
     });
 
@@ -55,7 +64,14 @@ export async function createOrganization(params: {
       },
     });
 
-    return org;
+    const businessDna = industry
+      ? await tx.businessDNA.create({
+          data: { organizationId: org.id, industry },
+          select: { id: true },
+        })
+      : null;
+
+    return { org, businessDnaId: businessDna?.id ?? null };
   });
 
   // Activate org in the JWT via app_metadata (§6.3) — next token refresh
@@ -74,6 +90,12 @@ export async function createOrganization(params: {
     { orgId: org.id, userId: params.userId },
     { action: "org.create", resourceType: "organization", resourceId: org.id },
   );
+  if (businessDnaId) {
+    await audit(
+      { orgId: org.id, userId: params.userId },
+      { action: "business_dna.create", resourceType: "business_dna", resourceId: businessDnaId },
+    );
+  }
 
   return org;
 }

@@ -6,6 +6,7 @@ import { can } from "@/server/auth/permissions";
 import { getBusinessDNA } from "@/server/services/business-dna";
 import { listBusinessDnaServices } from "@/server/services/business-dna-services";
 import { normalizeOpeningHours } from "@/lib/business-dna/opening-hours";
+import { isBusinessDnaSetupPending } from "@/lib/business-dna/completeness";
 import { Link } from "@/i18n/routing";
 import { BusinessDnaForm } from "./business-dna-form";
 
@@ -14,6 +15,7 @@ export default async function BusinessDnaSettingsPage() {
   const t = await getTranslations("businessDna");
   const [record, services] = await Promise.all([getBusinessDNA(ctx), listBusinessDnaServices(ctx)]);
   const isNew = record === null;
+  const setupPending = isBusinessDnaSetupPending(record, services.length);
   const canWrite = can(ctx.role, "business-dna:write");
 
   return (
@@ -23,7 +25,7 @@ export default async function BusinessDnaSettingsPage() {
           <h1 className="text-2xl font-semibold">{t("title")}</h1>
           <p className="text-sm text-muted-foreground">{t("subtitle")}</p>
         </div>
-        {isNew ? (
+        {setupPending ? (
           <Link
             href="/dashboard"
             className="shrink-0 text-sm text-muted-foreground hover:underline"

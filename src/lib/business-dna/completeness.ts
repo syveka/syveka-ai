@@ -55,3 +55,18 @@ export function missingBusinessDnaFields(
     return !isFilled(field, profile?.[field]);
   });
 }
+
+/**
+ * Whether the owner still hasn't set up the profile: there is none yet, or
+ * it holds nothing beyond the industry onboarding fills in (and no services).
+ * Setup can be skipped until then.
+ */
+export function isBusinessDnaSetupPending(
+  profile: ProfileValues | null | undefined,
+  serviceCount: number,
+): boolean {
+  if (!profile) return true;
+  if (serviceCount > 0) return false;
+  const missing = new Set(missingBusinessDnaFields(profile));
+  return BUSINESS_DNA_IMPORTANT_FIELDS.every((field) => field === "industry" || missing.has(field));
+}
