@@ -210,6 +210,13 @@ describe("deep model access follows the verified plan", () => {
     },
   );
 
+  it("the shipped catalog lists no plan: selling the deep model must change this test", async () => {
+    const actual = await vi.importActual<typeof import("@/lib/billing/plan-catalog")>(
+      "@/lib/billing/plan-catalog",
+    );
+    expect([...actual.DEEP_MODEL_PLANS]).toEqual([]);
+  });
+
   it("a plan the catalog lists gets the deep model", async () => {
     m.deepPlans.add("PRO");
     m.plans.set(ORG_A, "PRO");
@@ -341,6 +348,11 @@ describe("organizations stay separate", () => {
     m.deepPlans.add("PRO");
     m.plans.set(ORG_A, "PRO");
     m.plans.set(ORG_B, "FREE");
+    const entitled = await chat({ deepMode: true });
+    await entitled.text();
+    expect(entitled.status).toBe(200);
+    expect(modelUsed()).toBe(DEEP);
+    m.streamClaude.mockClear();
     m.orgId = ORG_B;
     const res = await chat({ deepMode: true });
     expect(res.status).toBe(403);

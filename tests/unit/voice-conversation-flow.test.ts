@@ -396,6 +396,18 @@ afterEach(() => {
 });
 
 describe("live voice: one accepted turn → at most one paid generation", () => {
+  it("deepMode on a voice turn still runs the standard model", async () => {
+    const s = await start(CONV);
+    const t = await turn(s.body.data.sessionId);
+    const c = await chat({
+      message: t.body.data.text,
+      voiceGrant: t.body.data.grant,
+      deepMode: true,
+    });
+    expect(c.status).toBe(200);
+    expect(m.streamClaude.mock.calls[0]![0].model).toBe("claude-sonnet-4-5");
+  });
+
   it("turn grant → exactly one chat generation, in voice mode with its bounds", async () => {
     const s = await start(CONV);
     expect(s.body.data.conversationId).toBe(CONV);
