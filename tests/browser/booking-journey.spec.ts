@@ -14,13 +14,10 @@
  *     concurrency (service and PostgreSQL tests), nor the deployed page
  *     (staging E2E).
  */
-import fs from "node:fs";
-import path from "node:path";
-import { build } from "esbuild";
 import { expect, test, type Page } from "@playwright/test";
 import { installFakeBookingApi, SALON } from "./harness/fake-booking-api";
+import { horizontalOverflow, openHarness, readMessages } from "./harness/harness-page";
 
-const ROOT = path.resolve(__dirname, "../..");
 type BookingMessages = {
   loadingSlots: string;
   confirmButton: string;
@@ -36,26 +33,7 @@ type BookingMessages = {
     canceledTitle: string;
   };
 };
-const messages = (locale: string) =>
-  JSON.parse(fs.readFileSync(path.join(ROOT, `messages/${locale}.json`), "utf8")) as {
-    booking: BookingMessages;
-  };
-
-let bundle = "";
-test.beforeAll(async () => {
-  const result = await build({
-    entryPoints: [path.join(__dirname, "harness/booking-entry.tsx")],
-    bundle: true,
-    write: false,
-    format: "iife",
-    platform: "browser",
-    jsx: "automatic",
-    tsconfig: path.join(ROOT, "tsconfig.json"),
-    define: { "process.env.NODE_ENV": '"production"' },
-    logLevel: "error",
-  });
-  bundle = result.outputFiles[0]!.text;
-});
+const messages = (locale: string) => readMessages(locale) as { booking: BookingMessages };
 
 /** Wednesday 2027-03-24 10:00 Helsinki. The week shown includes the DST change (Sun 28). */
 const NOW = new Date("2027-03-24T08:00:00.000Z");
@@ -66,25 +44,19 @@ async function openPage(
   page: Page,
   options: { locale: string; component: "widget" | "manage"; props: Record<string, unknown> },
 ) {
-  const dir = options.locale === "ar" ? "rtl" : "ltr";
-  const config = {
-    component: options.component,
-    locale: options.locale,
-    messages: messages(options.locale),
-    // The /book page passes the page locale to the widget.
-    props:
-      options.component === "widget" ? { ...options.props, locale: options.locale } : options.props,
-  };
-  await page.clock.install({ time: NOW });
-  await page.route("http://booking.test/", (route) =>
-    route.fulfill({
-      contentType: "text/html",
-      body: `<!doctype html><html lang="${options.locale}" dir="${dir}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"></head><body><div id="root"></div><script>window.__HARNESS__=${JSON.stringify(config).replace(/</g, "\\u003c")}</script><script>${bundle}</script></body></html>`,
-    }),
+  await openHarness(
+    page,
+    {
+      component: options.component,
+      locale: options.locale,
+      // The /book page passes the page locale to the widget.
+      props:
+        options.component === "widget"
+          ? { ...options.props, locale: options.locale }
+          : options.props,
+    },
+    NOW,
   );
-  // Anything else (fonts, analytics, a stray absolute URL) never leaves the machine.
-  await page.route(/^(?!http:\/\/booking\.test\/)/, (route) => route.abort());
-  await page.goto("/");
 }
 
 const widgetProps = {
@@ -134,6 +106,9 @@ test.describe("guest books a Finnish salon (Europe/Helsinki)", () => {
     await page.getByLabel(fi.fields.name).fill("Anna Testi");
     await page.getByLabel(fi.fields.email).fill("anna.testi@example.test");
 
+    // The open form (the widest state) fits the screen.
+    expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
+
     // The consent box is required: the form does not submit without it.
     await page.getByRole("button", { name: fi.confirmButton }).click();
     expect(api.requests.filter((r) => r.method === "POST")).toHaveLength(0);
@@ -141,6 +116,7 @@ test.describe("guest books a Finnish salon (Europe/Helsinki)", () => {
     await page.getByRole("checkbox").check();
     await page.getByRole("button", { name: fi.confirmButton }).click();
     await expect(page.getByRole("heading", { name: fi.confirmedTitle })).toBeVisible();
+    expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
 
     const posted = api.requests.find((r) => r.method === "POST")!.body as Record<string, unknown>;
     expect(posted).toMatchObject({
@@ -219,6 +195,7 @@ test.describe("Arabic booking page", () => {
     await page.getByRole("button", { name: ar.confirmButton }).click();
     await expect(page.getByRole("heading", { name: ar.confirmedTitle })).toBeVisible();
     expect(api.bookings.map((b) => b.guestName)).toContain("ليلى");
+    expect(await horizontalOverflow(page)).toBeLessThanOrEqual(0);
   });
 });
 
