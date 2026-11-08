@@ -30,7 +30,8 @@ const s = vi.hoisted(() => ({
   cache: new Map<string, unknown>(),
   lockTail: Promise.resolve() as Promise<void>,
   order: [] as string[],
-  inTransaction: false,
+  /** Transactions open right now (parallel requests can overlap). */
+  openTransactions: 0,
   removed: [] as string[][],
 }));
 
@@ -83,7 +84,7 @@ const db = vi.hoisted(() => {
  */
 function root<A extends unknown[], R>(fn: (...args: A) => R) {
   return (...args: A): R => {
-    if (s.inTransaction) s.order.push("root-in-tx");
+    if (s.openTransactions > 0) s.order.push("root-in-tx");
     return fn(...args);
   };
 }
@@ -104,11 +105,11 @@ async function transaction(fn: (client: typeof db.tx) => unknown) {
       return 0;
     }),
   };
-  s.inTransaction = true;
+  s.openTransactions += 1;
   try {
     return await fn(client);
   } finally {
-    s.inTransaction = false;
+    s.openTransactions -= 1;
     if (holding) release();
   }
 }
@@ -195,6 +196,7 @@ beforeEach(() => {
   s.nextLink = 0;
   s.lockTail = Promise.resolve();
   s.order = [];
+  s.openTransactions = 0;
   s.removed = [];
   db.intentFindFirst.mockResolvedValue({
     id: INTENT,
