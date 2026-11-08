@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type * as PlanCatalog from "@/lib/billing/plan-catalog";
 
 /**
  * The chat model is decided on the server from the organization's verified
@@ -211,9 +212,7 @@ describe("deep model access follows the verified plan", () => {
   );
 
   it("the shipped catalog lists no plan: selling the deep model must change this test", async () => {
-    const actual = await vi.importActual<typeof import("@/lib/billing/plan-catalog")>(
-      "@/lib/billing/plan-catalog",
-    );
+    const actual = await vi.importActual<typeof PlanCatalog>("@/lib/billing/plan-catalog");
     expect([...actual.DEEP_MODEL_PLANS]).toEqual([]);
   });
 
