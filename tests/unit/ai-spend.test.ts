@@ -144,3 +144,33 @@ describe("AI features outside chat are rate-limited and quota-checked", () => {
     expect(providerCalls()).toBe(0);
   });
 });
+
+/**
+ * A VIEWER has calendar:read but deliberately no chat:use. A meeting summary
+ * is a paid AI call counted against the organization's monthly AI quota, so a
+ * read-only member must not be able to spend that quota for everyone.
+ * The guard is faked with the real role matrix.
+ */
+describe("who may spend AI quota on a meeting summary", () => {
+  async function asRole(role: "VIEWER" | "MEMBER") {
+    const { can } = await import("@/server/auth/permissions");
+    m.requirePermission.mockImplementation(async (permission?: unknown) => {
+      if (!can(role, permission as Parameters<typeof can>[1])) throw new Error("forbidden");
+      return { orgId: "org-a", userId: "user-1" };
+    });
+  }
+
+  it("a VIEWER is refused before any quota check or provider call", async () => {
+    await asRole("VIEWER");
+    await expect(meetingSummaryAction("event-1")).rejects.toThrow("forbidden");
+    expect(m.limitAiChat).not.toHaveBeenCalled();
+    expect(m.generateMeetingSummary).not.toHaveBeenCalled();
+    expect(m.recordUsage).not.toHaveBeenCalled();
+  });
+
+  it("a MEMBER (chat:use and calendar:read) still gets the summary", async () => {
+    await asRole("MEMBER");
+    await expect(meetingSummaryAction("event-1")).resolves.toMatchObject({ summary: "s" });
+    expect(m.generateMeetingSummary).toHaveBeenCalledTimes(1);
+  });
+});

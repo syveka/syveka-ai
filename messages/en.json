@@ -93,6 +93,7 @@
       "rate_limited": "Too many changes in a short time. Try again in a minute.",
       "service_unavailable": "The change could not be verified right now. Try again in a moment."
     },
+    "memberChangeFailed": "The change could not be saved. Please try again.",
     "errors": {
       "invalid_input": "Check the email address and role.",
       "already_member": "This person is already a member of the organization.",

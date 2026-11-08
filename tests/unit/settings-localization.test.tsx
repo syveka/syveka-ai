@@ -132,7 +132,7 @@ vi.mock("@/actions/settings", () => ({
 vi.mock("@/actions/members", () => ({
   inviteMemberAction: vi.fn(),
   changeRoleAction: vi.fn(),
-  removeMemberAction: { bind: () => vi.fn() },
+  removeMemberAction: vi.fn(),
   revokeInvitationAction: vi.fn(),
 }));
 vi.mock("@/actions/billing", () => ({
@@ -281,19 +281,23 @@ describe.each(LOCALES)("Settings pages render real %s translations", (locale) =>
   });
 
   // useActionState is mocked for every form on the page, so a driven error
-  // shows on both the invite form and the withdraw control. The withdraw
-  // control's message is the one its button describes; the invite form's is
-  // the other.
-  function withdrawAlert(): HTMLElement {
-    const button = screen.getAllByRole("button").find((b) => b.getAttribute("aria-describedby"))!;
-    expect(button).toBeDefined();
-    const alert = document.getElementById(button.getAttribute("aria-describedby")!)!;
+  // shows on the invite form, the withdraw control and each member's
+  // controls. Each control's message is the one its own controls describe
+  // (aria-describedby); the invite form's is the remaining alert.
+  function describedAlert(idPrefix: string): HTMLElement {
+    const control = screen
+      .getAllByRole("button")
+      .find((b) => b.getAttribute("aria-describedby")?.startsWith(idPrefix))!;
+    expect(control).toBeDefined();
+    const alert = document.getElementById(control.getAttribute("aria-describedby")!)!;
     expect(alert.getAttribute("role")).toBe("alert");
     return alert;
   }
+  const withdrawAlert = () => describedAlert("withdraw-invitation-error-");
+  const memberAlert = () => describedAlert("member-change-error-");
   function inviteAlert(): HTMLElement {
-    const withdraw = withdrawAlert();
-    const others = screen.getAllByRole("alert").filter((a) => a !== withdraw);
+    const controls = [withdrawAlert(), memberAlert()];
+    const others = screen.getAllByRole("alert").filter((a) => !controls.includes(a));
     expect(others).toHaveLength(1);
     return others[0]!;
   }
@@ -318,12 +322,25 @@ describe.each(LOCALES)("Settings pages render real %s translations", (locale) =>
     },
   );
 
+  it.each(["rate_limited", "service_unavailable"])(
+    "Members: a member change refused with %s is shown next to its controls, localized",
+    async (code) => {
+      state.actionState = { error: code };
+      await renderPage(locale, PAGES.members);
+      const errors = (m.settingsMembers as Record<string, Record<string, string>>).revokeErrors!;
+      expect(memberAlert().textContent).toBe(errors[code]);
+    },
+  );
+
   it("Members: an unknown error string never reaches the UI", async () => {
     state.actionState = { error: "Seat limit reached (3) — internal detail" };
     await renderPage(locale, PAGES.members);
     const messages = m.settingsMembers as Record<string, Record<string, string>>;
     expect(inviteAlert().textContent).toBe(messages.errors!.invite_failed);
     expect(withdrawAlert().textContent).toBe(messages.revokeErrors!.revoke_failed);
+    expect(memberAlert().textContent).toBe(
+      (m.settingsMembers as Record<string, string>).memberChangeFailed,
+    );
     expect(document.body.textContent).not.toContain("internal detail");
   });
 

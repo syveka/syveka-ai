@@ -144,6 +144,10 @@ export async function schedulingAssistantAction(
 export async function meetingSummaryAction(
   eventId: string,
 ): Promise<{ summary: string; followUps: string[] }> {
+  // A paid AI call counted against the organization's monthly AI quota: it
+  // needs the AI permission too, so a read-only VIEWER (calendar:read, no
+  // chat:use) can't spend the quota for everyone.
+  await requirePermission("chat:use");
   const ctx = await requirePermission("calendar:read");
   await assertAiSpendAllowed(ctx);
   const result = await generateMeetingSummary(ctx, eventId);

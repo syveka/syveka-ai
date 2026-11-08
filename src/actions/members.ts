@@ -115,6 +115,8 @@ export async function changeRoleAction(
   formData: FormData,
 ): Promise<MemberActionState> {
   const ctx = await requirePermission("members:role");
+  const limited = await actionWriteLimitError("members", ctx);
+  if (limited) return { error: limited };
 
   const parsed = changeRoleSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
@@ -162,8 +164,21 @@ export async function revokeInvitationAction(invitationId: string): Promise<Memb
   return { message: "revoked" };
 }
 
-export async function removeMemberAction(memberId: string): Promise<void> {
+/**
+ * Removes a member. A refusal (the write limit, a member-management rule) is
+ * returned as a stable code and shown next to the control; exception text
+ * never reaches the client.
+ */
+export async function removeMemberAction(memberId: string): Promise<MemberActionState> {
   const ctx = await requirePermission("members:remove");
-  await removeMember(ctx, memberId);
+  const limited = await actionWriteLimitError("members", ctx);
+  if (limited) return { error: limited };
+  try {
+    await removeMember(ctx, memberId);
+  } catch (e) {
+    if (e instanceof MemberError) return { error: e.code };
+    throw e;
+  }
   revalidatePath("/settings/members");
+  return { message: "removed" };
 }
