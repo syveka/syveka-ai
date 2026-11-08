@@ -589,10 +589,10 @@ describe("a price outside the configured catalog", () => {
  * customer.subscription.updated re-apply Stripe's current state).
  */
 describe("a higher plan is never stored from an unpaid subscription", () => {
-  const PLAN_RANKS = { price_starter_monthly: "STARTER", price_pro_monthly: "PRO" } as const;
+  const PLAN_FOR_PRICE = { price_starter_monthly: "STARTER", price_pro_monthly: "PRO" } as const;
   beforeEach(() => {
     mocks.planForPriceId.mockImplementation(
-      (...args: unknown[]) => PLAN_RANKS[args[0] as keyof typeof PLAN_RANKS] ?? null,
+      (...args: unknown[]) => PLAN_FOR_PRICE[args[0] as keyof typeof PLAN_FOR_PRICE] ?? null,
     );
   });
 
@@ -662,6 +662,25 @@ describe("a higher plan is never stored from an unpaid subscription", () => {
     expect(mocks.txSubscriptionUpsert).toHaveBeenCalledWith(
       expect.objectContaining({
         update: expect.objectContaining({ plan: "PRO", status: "ACTIVE" }),
+      }),
+    );
+  });
+
+  it("a canceled row's old paid plan doesn't count: a past_due subscription is held at FREE", async () => {
+    // e.g. a row left CANCELED (incomplete_expired) with plan PRO, then a new
+    // subscription first seen while past_due.
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent("customer.subscription.updated", fakeSubscription()),
+    );
+    mocks.txSubscriptionFindUnique.mockResolvedValue(storedRow("PRO", "CANCELED"));
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "past_due" }));
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    await POST(webhookRequest("{}"));
+
+    expect(mocks.txSubscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ plan: "FREE", status: "PAST_DUE" }),
       }),
     );
   });

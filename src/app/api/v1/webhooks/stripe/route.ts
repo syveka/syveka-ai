@@ -20,6 +20,9 @@ const SUB_STATUS_MAP: Record<Stripe.Subscription.Status, string> = {
   paused: "PAUSED",
 };
 
+/** Stored statuses whose plan is granted (entitlements.ts PAYING_STATUSES). */
+const STORED_PAYING_STATUSES: ReadonlySet<string> = new Set(["ACTIVE", "TRIALING", "PAST_DUE"]);
+
 /** Plan order for "is this a raise": FREE < STARTER < PRO < ENTERPRISE. */
 const PLAN_RANK: Record<string, number> = { FREE: 0, STARTER: 1, PRO: 2, ENTERPRISE: 3 };
 
@@ -186,9 +189,12 @@ async function applySubscriptionUpsert(
   if (plan && SUB_STATUS_MAP[sub.status] === "PAST_DUE") {
     const stored = await tx.subscription.findUnique({
       where: { organizationId: orgId },
-      select: { plan: true },
+      select: { plan: true, status: true },
     });
-    const currentPlan = stored?.plan ?? "FREE";
+    // The plan the organization is actually granted now (as entitlements.ts
+    // reads it): a row that isn't paying (e.g. CANCELED, keeping an old plan
+    // name) grants FREE, so its old paid plan is no basis for a raise.
+    const currentPlan = stored && STORED_PAYING_STATUSES.has(stored.status) ? stored.plan : "FREE";
     if ((PLAN_RANK[plan] ?? 0) > (PLAN_RANK[currentPlan] ?? 0)) {
       console.warn(
         JSON.stringify({
