@@ -239,12 +239,24 @@ export async function assertWithinLimit(
       }
       break;
     case "storage_mb":
-      // currentMb already includes the file being added: filling the plan
-      // exactly is allowed, going past it is not.
-      if (check.currentMb > ent.kbStorageMb) {
-        throw new EntitlementError("kbStorageMb", "Knowledge base storage limit reached.");
-      }
+      assertStorageWithinPlan(ent, check.currentMb);
       break;
   }
   return ent;
+}
+
+/**
+ * The storage rule on entitlements already read: no I/O, so it can run inside
+ * an interactive transaction (where reading entitlements on a cache miss
+ * could not: see src/server/services/documents.ts). `currentMb` already
+ * includes what is being added: filling the plan exactly is allowed, going
+ * past it is not.
+ */
+export function assertStorageWithinPlan(ent: Entitlements, currentMb: number): void {
+  if (ent.readOnly) {
+    throw new EntitlementError("maxSeats", "Subscription is past due — workspace is read-only.");
+  }
+  if (currentMb > ent.kbStorageMb) {
+    throw new EntitlementError("kbStorageMb", "Knowledge base storage limit reached.");
+  }
 }

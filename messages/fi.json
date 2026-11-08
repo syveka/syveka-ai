@@ -240,6 +240,7 @@
       "generation_failed": "Vastauksen luonti epäonnistui. Yritä uudelleen.",
       "network_error": "Yhteys katkesi. Yritä uudelleen.",
       "upload_failed": "Tiedoston lataaminen epäonnistui.",
+      "storage_quota": "Tallennustila täynnä — päivitä tilaus.",
       "unsupported_file": "Käytä PDF-, DOCX- tai TXT-tiedostoa.",
       "file_too_large": "Tiedoston enimmäiskoko on 25 Mt.",
       "invalid_document": "Yksi liitetyistä tiedostoista ei ole käytettävissä.",

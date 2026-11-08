@@ -3,7 +3,12 @@ import "server-only";
 import type { Prisma } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import { createSupabaseAdmin } from "@/server/supabase/server";
-import { assertWithinLimit } from "./billing/entitlements";
+import {
+  assertStorageWithinPlan,
+  assertWithinLimit,
+  EntitlementError,
+  getEntitlements,
+} from "./billing/entitlements";
 import { enqueue } from "@/server/jobs/queue";
 import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
@@ -41,29 +46,19 @@ async function assertCollectionInTenant(
 type StorageUsageClient = Pick<Prisma.TransactionClient, "document" | "documentUploadIntent">;
 
 /**
- * Refuses when the knowledge base would go past the plan's storage: what is
- * stored, plus what open upload links may still add (a file is uploaded
- * after its link is issued, so a link requested later must not see space an
- * earlier, not-yet-uploaded link will fill), plus `addBytes`.
- * `exceptIntentId` is the link being turned into a document, already counted
- * in `addBytes`.
- *
- * Never call this inside an interactive transaction: on an entitlements cache
- * miss, assertWithinLimit reads through the root client, and with the
- * runtime's single-connection pool (src/server/db/prisma.ts) that read would
- * wait for the connection the transaction holds until it times out.
- *
- * It is a check, not a reservation: requests racing in parallel can each pass
- * it (bounded by the api rate limiter and the 25 MB per-file cap). Creator
- * Studio reference-asset links share the upload-intent table and are counted
- * too while open (at most 10 minutes).
+ * Bytes the knowledge base already uses: what is stored, plus what open
+ * upload links may still add (a file is uploaded after its link is issued,
+ * so a link requested later must not see space an earlier, not-yet-uploaded
+ * link will fill). `exceptIntentId` is a link being turned into a document,
+ * whose file the caller counts itself. Creator Studio reference-asset links
+ * share the upload-intent table and are counted too while open (at most 10
+ * minutes).
  */
-async function assertStorageAvailable(
+async function storageBytesInUse(
   client: StorageUsageClient,
   organizationId: string,
-  addBytes: number,
   exceptIntentId?: string,
-): Promise<void> {
+): Promise<number> {
   const [stored, reserved] = await Promise.all([
     client.document.aggregate({
       where: { organizationId, deletedAt: null },
@@ -79,11 +74,42 @@ async function assertStorageAvailable(
       _sum: { maxSizeBytes: true },
     }),
   ]);
-  const totalBytes = (stored._sum.sizeBytes ?? 0) + (reserved._sum.maxSizeBytes ?? 0) + addBytes;
-  await assertWithinLimit(organizationId, {
-    kind: "storage_mb",
-    currentMb: Math.ceil(totalBytes / 1_048_576),
-  });
+  return (stored._sum.sizeBytes ?? 0) + (reserved._sum.maxSizeBytes ?? 0);
+}
+
+const toMb = (bytes: number) => Math.ceil(bytes / 1_048_576);
+
+/**
+ * Refuses when adding `addBytes` would take the knowledge base past the
+ * plan's storage.
+ *
+ * Not serialized: a note or URL created while an upload link is being issued
+ * can each see the same free space (notes are small; URLs add nothing until
+ * fetched). Only upload-link creation takes lockKnowledgeStorage.
+ *
+ * Never call this inside an interactive transaction: on an entitlements cache
+ * miss, assertWithinLimit reads through the root client, and with the
+ * runtime's single-connection pool (src/server/db/prisma.ts) that read would
+ * wait for the connection the transaction holds until it times out.
+ */
+async function assertStorageAvailable(
+  client: StorageUsageClient,
+  organizationId: string,
+  addBytes: number,
+  exceptIntentId?: string,
+): Promise<void> {
+  const used = await storageBytesInUse(client, organizationId, exceptIntentId);
+  await assertWithinLimit(organizationId, { kind: "storage_mb", currentMb: toMb(used + addBytes) });
+}
+
+/**
+ * Serializes upload-link creation per organization, so links requested in
+ * parallel can't each see the same free space. Namespaced key pair, like
+ * business-dna-patch.ts's, so it can't collide with the (orgId, n) locks in
+ * src/server/calendar/locks.ts or billing/seats.ts.
+ */
+async function lockKnowledgeStorage(tx: Prisma.TransactionClient, orgId: string): Promise<void> {
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('kb_storage'), hashtext(${orgId}))`;
 }
 
 /** Create a tenant/user-bound, expiring upload intent and its signed storage URL. */
@@ -91,23 +117,30 @@ export async function createUploadUrl(
   ctx: TenantContext,
   params: { fileName: string; mimeType: AllowedMimeType; sizeBytes: number },
 ): Promise<{ uploadIntentId: string; signedUrl: string; expiresAt: Date }> {
-  // Scoped by the explicit organizationId filter in assertStorageAvailable.
-  await assertStorageAvailable(unscopedPrisma, ctx.orgId, params.sizeBytes);
+  // Read before the transaction (see assertStorageAvailable); the check and
+  // the link are then one serialized step per organization.
+  const entitlements = await getEntitlements(ctx.orgId);
   const db = tenantDb(ctx.orgId);
 
   const safeName = params.fileName.replace(/[^\p{L}\w.\- ]+/gu, "_").slice(0, 120);
   const storagePath = `${ctx.orgId}/${crypto.randomUUID()}/${safeName}`;
   const expiresAt = new Date(Date.now() + UPLOAD_INTENT_TTL_MS);
-  const intent = await db.documentUploadIntent.create({
-    data: {
-      organizationId: ctx.orgId,
-      userId: ctx.userId,
-      storagePath,
-      expectedMimeType: params.mimeType,
-      maxSizeBytes: params.sizeBytes,
-      expiresAt,
-    },
-    select: { id: true },
+  // Scoped by the explicit organizationId filters.
+  const intent = await unscopedPrisma.$transaction(async (tx) => {
+    await lockKnowledgeStorage(tx, ctx.orgId);
+    const used = await storageBytesInUse(tx, ctx.orgId);
+    assertStorageWithinPlan(entitlements, toMb(used + params.sizeBytes));
+    return tx.documentUploadIntent.create({
+      data: {
+        organizationId: ctx.orgId,
+        userId: ctx.userId,
+        storagePath,
+        expectedMimeType: params.mimeType,
+        maxSizeBytes: params.sizeBytes,
+        expiresAt,
+      },
+      select: { id: true },
+    });
   });
 
   const admin = createSupabaseAdmin();
@@ -147,7 +180,30 @@ export async function createDocument(ctx: TenantContext, input: CreateDocumentIn
     );
 
     // Before the transaction, never inside it: see assertStorageAvailable.
-    await assertStorageAvailable(unscopedPrisma, ctx.orgId, objectBuffer.length, intent.id);
+    try {
+      await assertStorageAvailable(unscopedPrisma, ctx.orgId, objectBuffer.length, intent.id);
+    } catch (error) {
+      if (error instanceof EntitlementError) {
+        // The file will never become a document: spend its link so it stops
+        // reserving space, then delete the file -- only if this request spent
+        // the link. If another request (a double submit) spent it first, that
+        // request's document points at this file. Best-effort; the refusal is
+        // the answer either way.
+        const spent = await unscopedPrisma.documentUploadIntent
+          .updateMany({
+            where: { id: intent.id, organizationId: ctx.orgId, userId: ctx.userId, usedAt: null },
+            data: { usedAt: now },
+          })
+          .catch(() => ({ count: 0 }));
+        if (spent.count === 1) {
+          await admin.storage
+            .from(DOCUMENTS_BUCKET)
+            .remove([intent.storagePath])
+            .catch(() => undefined);
+        }
+      }
+      throw error;
+    }
     document = await unscopedPrisma.$transaction(async (tx) => {
       await assertCollectionInTenant(tx, ctx.orgId, input.collectionId);
       const consumed = await tx.documentUploadIntent.updateMany({

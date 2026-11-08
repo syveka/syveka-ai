@@ -11,6 +11,19 @@ import { MicrophoneButton, VoiceStatusBar } from "./voice-input";
 
 type Attachment = { id: string; title: string };
 
+/**
+ * A 402 for the Knowledge Base storage limit (attachments are KB documents)
+ * says so; any other refusal (e.g. a read-only, past-due workspace) stays
+ * the generic upload failure.
+ */
+async function uploadErrorFor(response: Response): Promise<"storage_quota" | "upload_failed"> {
+  if (response.status !== 402) return "upload_failed";
+  const body = (await response.json().catch(() => null)) as {
+    error?: { limit?: string };
+  } | null;
+  return body?.error?.limit === "kbStorageMb" ? "storage_quota" : "upload_failed";
+}
+
 export function Composer({
   onSend,
   onAbort,
@@ -130,7 +143,7 @@ export function Composer({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fileName: file.name, mimeType, sizeBytes: file.size }),
       });
-      if (!uploadUrlResponse.ok) throw new Error("upload_failed");
+      if (!uploadUrlResponse.ok) throw new Error(await uploadErrorFor(uploadUrlResponse));
       const uploadUrlBody = (await uploadUrlResponse.json()) as {
         data: { uploadIntentId: string; signedUrl: string };
       };
@@ -146,7 +159,7 @@ export function Composer({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, uploadIntentId: uploadUrlBody.data.uploadIntentId }),
       });
-      if (!finalizeResponse.ok) throw new Error("upload_failed");
+      if (!finalizeResponse.ok) throw new Error(await uploadErrorFor(finalizeResponse));
       const finalized = (await finalizeResponse.json()) as {
         data: { id: string; title: string };
       };
@@ -155,8 +168,12 @@ export function Composer({
           ? current
           : [...current, finalized.data],
       );
-    } catch {
-      setUploadError("upload_failed");
+    } catch (error) {
+      setUploadError(
+        error instanceof Error && error.message === "storage_quota"
+          ? "storage_quota"
+          : "upload_failed",
+      );
     } finally {
       setUploading(false);
     }
