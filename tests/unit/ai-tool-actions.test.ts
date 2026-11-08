@@ -511,6 +511,18 @@ describe("deciding (only the user, only once, only that action)", () => {
     nothingWritten();
   });
 
+  it("a calendar lock timeout is a failure to complete, never reported as a taken slot", async () => {
+    m.tx.$executeRaw.mockRejectedValueOnce(
+      Object.assign(new Error("lock timeout"), {
+        code: "P2010",
+        meta: { driverAdapterError: { cause: { originalCode: "55P03" } } },
+      }),
+    );
+    const a = (await propose("bookMeeting", booking())).action!;
+    expect(await decide(a)).toEqual({ ok: false, reason: "action_failed" });
+    nothingWritten();
+  });
+
   it("a taken slot is reported as not done; it isn't retried", async () => {
     m.tx.calendarEvent.findFirst.mockResolvedValueOnce({ id: "busy" });
     const a = (await propose("bookMeeting", booking())).action!;

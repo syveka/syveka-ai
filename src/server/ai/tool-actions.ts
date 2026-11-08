@@ -317,6 +317,9 @@ export async function decideToolAction(
               ? "plan_limit"
               : "action_failed",
     };
+  } else if (result.booked === false && result.reason === "calendar_busy") {
+    // The slot may still be free: only "could not be completed, try again" is true.
+    outcome = { ok: false, reason: "action_failed" };
   } else if (result.booked === false) {
     outcome = { ok: true, tool, status: "not_done", reason: "slot_taken" };
   } else if (result.applied === false) {
