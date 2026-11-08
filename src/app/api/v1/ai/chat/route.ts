@@ -9,6 +9,7 @@ import { estimateAiCost } from "@/server/ai/cost";
 import { isAbortError } from "@/server/ai/retry";
 import { detectReplyLanguage } from "@/lib/voice/reply-language";
 import { missingBusinessDnaFields } from "@/lib/business-dna/completeness";
+import type { AiMessageReservation } from "@/server/services/billing/ai-message-reservation";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,7 +40,23 @@ function sse(event: ChatStreamEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;
 }
 
+/** The turn's quota reservation, and whether the response stream now owns releasing it. */
+type ReservationHolder = { reservation: AiMessageReservation | null; handedToStream: boolean };
+
 export async function POST(request: Request): Promise<Response> {
+  const holder: ReservationHolder = { reservation: null, handedToStream: false };
+  try {
+    return await handleChat(request, holder);
+  } finally {
+    // Refused or failed before the stream started: no model call was made.
+    if (holder.reservation && !holder.handedToStream) {
+      const { releaseAiMessage } = await import("@/server/services/billing/ai-message-reservation");
+      await releaseAiMessage(holder.reservation);
+    }
+  }
+}
+
+async function handleChat(request: Request, holder: ReservationHolder): Promise<Response> {
   const [
     { getTenantContext },
     { can },
@@ -61,6 +78,7 @@ export async function POST(request: Request): Promise<Response> {
     },
     voice,
     budget,
+    { reserveAiMessage, releaseAiMessage },
   ] = await Promise.all([
     import("@/server/auth/session"),
     import("@/server/auth/permissions"),
@@ -77,6 +95,7 @@ export async function POST(request: Request): Promise<Response> {
     import("@/server/services/conversations"),
     import("@/server/ai/voice-conversation"),
     import("@/server/ai/voice-input-budget"),
+    import("@/server/services/billing/ai-message-reservation"),
   ]);
 
   // ── Guardrails: auth → permission → rate limit → entitlement → moderation ──
@@ -144,8 +163,18 @@ export async function POST(request: Request): Promise<Response> {
     }
   }
 
+  // Reserve before reading the recorded count, so turns running concurrently
+  // count against the quota before they record their message (see
+  // ai-message-reservation.ts). Unverifiable: refuse before any paid call.
   try {
-    const orgMonthCount = await getMonthUsage(ctx.orgId, "AI_MESSAGES");
+    holder.reservation = await reserveAiMessage(ctx.orgId);
+  } catch {
+    return NextResponse.json({ error: { code: "service_unavailable" } }, { status: 503 });
+  }
+  const reservation = holder.reservation;
+  try {
+    const orgMonthCount =
+      (await getMonthUsage(ctx.orgId, "AI_MESSAGES")) + reservation.inFlightAhead;
     await assertWithinLimit(ctx.orgId, { kind: "ai_messages", orgMonthCount });
   } catch (e) {
     if (e instanceof EntitlementError) {
@@ -349,6 +378,9 @@ export async function POST(request: Request): Promise<Response> {
   // ── Stream ──
   const encoder = new TextEncoder();
   const startedAt = Date.now();
+  // From here the stream records the turn's usage and then releases the
+  // reservation (the stream's start() begins running during construction).
+  holder.handedToStream = true;
 
   const stream = new ReadableStream<Uint8Array>({
     async start(controller) {
@@ -363,9 +395,23 @@ export async function POST(request: Request): Promise<Response> {
       let fullText = "";
       let usageSoFar = { tokensIn: 0, tokensOut: 0 };
       let estimatedInput = 0;
-      /** Keeps billed tokens of completed calls when a voice turn stops early. */
-      const recordPartialUsage = async (reason: "aborted" | "voice_context_too_large") => {
-        if (usageSoFar.tokensIn + usageSoFar.tokensOut === 0) return;
+      /** Set once the completed turn's usage is being recorded (never recorded twice). */
+      let usageRecorded = false;
+      /**
+       * Keeps billed tokens of completed calls when a turn stops early. An
+       * aborted or failed turn also uses its AI message once the provider has
+       * produced output (text, a tool call or billed tokens): that generation
+       * was paid for, so stopping or failing late can't be repeated for free.
+       */
+      const recordPartialUsage = async (
+        reason: "aborted" | "failed" | "voice_context_too_large",
+      ) => {
+        if (usageRecorded) return;
+        const billed = usageSoFar.tokensIn + usageSoFar.tokensOut > 0;
+        const countsMessage =
+          reason !== "voice_context_too_large" &&
+          (billed || fullText.length > 0 || toolCallLog.length > 0);
+        if (!billed && !countsMessage) return;
         const cost = estimateAiCost(model, usageSoFar);
         const meta = {
           model,
@@ -375,6 +421,7 @@ export async function POST(request: Request): Promise<Response> {
           stoppedBy: reason,
         };
         await Promise.all([
+          ...(countsMessage ? [recordUsage(ctx.orgId, "AI_MESSAGES", 1, meta)] : []),
           recordUsage(ctx.orgId, "AI_TOKENS_IN", usageSoFar.tokensIn, {
             ...meta,
             estimatedCostUsd: cost.promptUsd,
@@ -465,6 +512,7 @@ export async function POST(request: Request): Promise<Response> {
               }
             : {}),
         });
+        usageSoFar = { tokensIn: usage.tokensIn, tokensOut: usage.tokensOut };
         if (voiceTurn && usage.tokensIn > estimatedInput) {
           // The byte-based bound under-counted: surface it (no content logged).
           console.warn(
@@ -479,6 +527,7 @@ export async function POST(request: Request): Promise<Response> {
         // Output is held until moderation completes so unsafe text never reaches the client.
         if (await isFlaggedByModeration(fullText, request.signal)) {
           const cost = estimateAiCost(model, usage);
+          usageRecorded = true;
           await Promise.all([
             recordUsage(ctx.orgId, "AI_TOKENS_IN", usage.tokensIn, {
               model,
@@ -537,6 +586,7 @@ export async function POST(request: Request): Promise<Response> {
         });
 
         const cost = estimateAiCost(model, usage);
+        usageRecorded = true;
         await Promise.all([
           recordUsage(ctx.orgId, "AI_MESSAGES", 1, { userId: ctx.userId }),
           recordUsage(ctx.orgId, "AI_TOKENS_IN", usage.tokensIn, {
@@ -576,13 +626,16 @@ export async function POST(request: Request): Promise<Response> {
           // calls that already completed were billed by the provider, so
           // their tokens stay recorded (the call in flight when the abort
           // arrived may also be billed but reports no usage).
-          if (voiceTurn) await recordPartialUsage("aborted");
+          await recordPartialUsage("aborted");
           return;
         }
         console.error(JSON.stringify(describeAiChatStreamError(err)));
+        await recordPartialUsage("failed");
         send({ type: "error", code: "generation_failed" });
       } finally {
         clearInterval(heartbeat);
+        // Only now: the turn's usage (if any) has been recorded above.
+        await releaseAiMessage(reservation);
         controller.close();
       }
     },

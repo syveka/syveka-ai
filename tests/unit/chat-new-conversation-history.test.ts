@@ -92,6 +92,11 @@ vi.mock("@/server/ai/tools", () => ({
   READ_ONLY_TOOL_NAMES: [],
   WRITE_TOOL_NAMES: [],
 }));
+// The quota reservation (Redis) is covered by ai-chat-quota-reservation.test.ts.
+vi.mock("@/server/services/billing/ai-message-reservation", () => ({
+  reserveAiMessage: vi.fn(async () => ({ key: "reservation", id: "r1", inFlightAhead: 0 })),
+  releaseAiMessage: vi.fn(async () => undefined),
+}));
 vi.mock("@/server/services/billing/entitlements", () => ({
   assertWithinLimit: vi.fn(async () => undefined),
   getMonthUsage: vi.fn(async () => 0),
