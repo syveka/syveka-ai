@@ -35,9 +35,18 @@ export function harnessAssets(): Promise<{ js: string; css: string }> {
   cached ??= (async () => {
     fs.mkdirSync(OUT, { recursive: true });
     const cssFile = path.join(OUT, `app-${process.pid}.css`);
+    // Through Node, not node_modules/.bin: Windows can't execute that shim directly.
     execFileSync(
-      path.join(ROOT, "node_modules/.bin/tailwindcss"),
-      ["-c", "tailwind.config.ts", "-i", "src/app/globals.css", "-o", cssFile],
+      process.execPath,
+      [
+        path.join(ROOT, "node_modules/tailwindcss/lib/cli.js"),
+        "-c",
+        "tailwind.config.ts",
+        "-i",
+        "src/app/globals.css",
+        "-o",
+        cssFile,
+      ],
       { cwd: ROOT, stdio: "ignore" },
     );
     const result = await build({
