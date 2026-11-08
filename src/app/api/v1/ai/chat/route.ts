@@ -10,6 +10,7 @@ import { isAbortError } from "@/server/ai/retry";
 import { detectReplyLanguage } from "@/lib/voice/reply-language";
 import { missingBusinessDnaFields } from "@/lib/business-dna/completeness";
 import type { AiMessageReservation } from "@/server/services/billing/ai-message-reservation";
+import { permittedPinnedModel, planAllowsDeepModel } from "@/server/ai/model-access";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -38,6 +39,12 @@ const clip = (text: string, max: number) =>
 
 function sse(event: ChatStreamEvent): string {
   return `data: ${JSON.stringify(event)}\n\n`;
+}
+
+/** The plan the organization is verified to have (FREE when not in good standing). */
+async function verifiedPlan(orgId: string) {
+  const { getEntitlements } = await import("@/server/services/billing/entitlements");
+  return (await getEntitlements(orgId)).plan;
 }
 
 /** The turn's quota reservation, and whether the response stream now owns releasing it. */
@@ -160,6 +167,20 @@ async function handleChat(request: Request, holder: ReservationHolder): Promise<
       }
     } catch {
       return NextResponse.json({ error: { code: "service_unavailable" } }, { status: 503 });
+    }
+  }
+
+  // deepMode is a client flag: whether it is honored comes from the verified
+  // plan. A voice turn always uses the standard model, so it never asks.
+  if (input.deepMode && !voiceTurn) {
+    let allowed: boolean;
+    try {
+      allowed = planAllowsDeepModel(await verifiedPlan(ctx.orgId));
+    } catch {
+      return NextResponse.json({ error: { code: "service_unavailable" } }, { status: 503 });
+    }
+    if (!allowed) {
+      return NextResponse.json({ error: { code: "model_not_allowed" } }, { status: 403 });
     }
   }
 
@@ -367,9 +388,16 @@ async function handleChat(request: Request, holder: ReservationHolder): Promise<
     }
   }
 
+  // No verified plan means no pin: the turn runs on the normal route.
+  const pinnedModel =
+    voiceTurn || !conversation.model
+      ? null
+      : await verifiedPlan(ctx.orgId)
+          .then((plan) => permittedPinnedModel(conversation.model, plan))
+          .catch(() => null);
   const route = voiceTurn
     ? routeModel("chat")
-    : routeModel(input.deepMode ? "deep" : "chat", conversation.model);
+    : routeModel(input.deepMode ? "deep" : "chat", pinnedModel);
   const model = route.model;
   const maxTokens = voiceTurn
     ? Math.min(route.maxTokens, VOICE_MAX_OUTPUT_TOKENS)
@@ -529,6 +557,11 @@ async function handleChat(request: Request, holder: ReservationHolder): Promise<
           const cost = estimateAiCost(model, usage);
           usageRecorded = true;
           await Promise.all([
+            // The generation was paid for even though its text is withheld.
+            recordUsage(ctx.orgId, "AI_MESSAGES", 1, {
+              userId: ctx.userId,
+              blockedByModeration: true,
+            }),
             recordUsage(ctx.orgId, "AI_TOKENS_IN", usage.tokensIn, {
               model,
               userId: ctx.userId,
