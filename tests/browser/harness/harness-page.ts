@@ -71,9 +71,11 @@ export async function openHarness(page: Page, config: HarnessConfig, now: Date):
     "\\u003c",
   );
   await page.clock.install({ time: now });
-  // Registered first, so the specific handlers registered after it take precedence:
-  // anything else (fonts, analytics, a stray absolute URL) never leaves the machine.
-  await page.route(/^(?!http:\/\/booking\.test\/)/, (route) => route.abort());
+  // Page routes (this page, and each test's API fake) take precedence over
+  // context routes, whatever order they are registered in: anything they
+  // don't answer (a stray same-origin path, fonts, analytics, any other
+  // origin) falls through to this and is aborted. Nothing leaves the machine.
+  await page.context().route("**/*", (route) => route.abort());
   await page.route("http://booking.test/", (route) =>
     route.fulfill({
       contentType: "text/html",

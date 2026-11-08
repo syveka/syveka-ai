@@ -99,6 +99,23 @@ const json = (route: Route, status: number, body: unknown) =>
 const open = (page: Page, locale: string) =>
   openHarness(page, { component: "action", locale, props: { action: proposal } }, NOW);
 
+test("the harness answers only what a test handles; everything else is aborted", async ({
+  page,
+}) => {
+  // Aborted by the harness: net::ERR_FAILED. A request that reached the
+  // network instead would fail differently (e.g. ERR_NAME_NOT_RESOLVED).
+  const failures = new Map<string, string>();
+  page.on("requestfailed", (request) =>
+    failures.set(new URL(request.url()).pathname, request.failure()?.errorText ?? ""),
+  );
+  await open(page, "en");
+  await page.evaluate(() =>
+    Promise.allSettled([fetch("/unhandled-path"), fetch("https://example.com/elsewhere")]),
+  );
+  expect(failures.get("/unhandled-path")).toBe("net::ERR_FAILED");
+  expect(failures.get("/elsewhere")).toBe("net::ERR_FAILED");
+});
+
 test.describe("Arabic, right-to-left", () => {
   test.use({ locale: "ar", timezoneId: "Europe/Helsinki" });
 
