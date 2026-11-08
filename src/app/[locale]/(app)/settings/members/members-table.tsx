@@ -94,7 +94,11 @@ function MemberControls({
       <div className="flex items-center gap-2">
         <form action={action}>
           <input type="hidden" name="intent" value="role" />
+          {/* React resets this form after each action, to the selection set when the
+              select mounted. Remounting on the stored role keeps that reset correct;
+              a controlled value would not, because the reset ignores it. */}
           <select
+            key={member.role}
             name="role"
             aria-label={t("changeRoleLabel", { name: member.name ?? member.email })}
             aria-describedby={error ? alertId : undefined}
