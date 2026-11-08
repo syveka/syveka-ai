@@ -47,7 +47,7 @@ vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 vi.mock("@/server/supabase/server", () => ({ createSupabaseServer: vi.fn() }));
 vi.mock("@/server/auth/session", () => ({ getSessionUser: vi.fn(), AuthError: Error }));
 
-import { changeRoleAction } from "@/actions/members";
+import { changeRoleAction, removeMemberAction } from "@/actions/members";
 import { MemberError } from "@/server/services/members";
 
 const MEMBER_ID = "33333333-3333-4333-8333-333333333333";
@@ -107,5 +107,45 @@ describe("changeRoleAction error codes", () => {
 
     expect(result).toEqual({ message: "updated" });
     expect(changeMemberRole).toHaveBeenCalledWith(expect.anything(), MEMBER_ID, "ADMIN");
+  });
+});
+
+/**
+ * Changing a role and removing a member are state-changing writes: they take
+ * the shared members write limit like revoking an invitation does, and are
+ * refused (no write) when it is exceeded or can't be verified.
+ */
+describe("member management write limit", () => {
+  it.each(["rate_limited", "service_unavailable"] as const)(
+    "changeRoleAction: %s → returned as the error, no role change",
+    async (refusal) => {
+      const { actionWriteLimitError } = await import("@/server/security/rate-limit");
+      vi.mocked(actionWriteLimitError).mockResolvedValueOnce(refusal);
+      changeMemberRole.mockReset();
+
+      const result = await changeRoleAction({}, form({ memberId: MEMBER_ID, role: "ADMIN" }));
+
+      expect(result).toEqual({ error: refusal });
+      expect(changeMemberRole).not.toHaveBeenCalled();
+      expect(actionWriteLimitError).toHaveBeenCalledWith(
+        "members",
+        expect.objectContaining({ orgId: "11111111-1111-4111-8111-111111111111" }),
+      );
+    },
+  );
+
+  it("removeMemberAction: a refusal throws and removes no one", async () => {
+    const { actionWriteLimitError } = await import("@/server/security/rate-limit");
+    const { removeMember } = await import("@/server/services/members");
+    vi.mocked(actionWriteLimitError).mockResolvedValueOnce("rate_limited");
+
+    await expect(removeMemberAction(MEMBER_ID)).rejects.toThrow("rate_limited");
+    expect(removeMember).not.toHaveBeenCalled();
+  });
+
+  it("removeMemberAction: within the limit the member is removed", async () => {
+    const { removeMember } = await import("@/server/services/members");
+    await removeMemberAction(MEMBER_ID);
+    expect(removeMember).toHaveBeenCalledWith(expect.anything(), MEMBER_ID);
   });
 });

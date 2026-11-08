@@ -115,6 +115,8 @@ export async function changeRoleAction(
   formData: FormData,
 ): Promise<MemberActionState> {
   const ctx = await requirePermission("members:role");
+  const limited = await actionWriteLimitError("members", ctx);
+  if (limited) return { error: limited };
 
   const parsed = changeRoleSchema.safeParse(Object.fromEntries(formData));
   if (!parsed.success) return { error: "invalid_input" };
@@ -164,6 +166,10 @@ export async function revokeInvitationAction(invitationId: string): Promise<Memb
 
 export async function removeMemberAction(memberId: string): Promise<void> {
   const ctx = await requirePermission("members:remove");
+  // A form action with no result to return: a refusal throws (the page's
+  // error boundary shows it) rather than silently removing no one.
+  const limited = await actionWriteLimitError("members", ctx);
+  if (limited) throw new Error(limited);
   await removeMember(ctx, memberId);
   revalidatePath("/settings/members");
 }
