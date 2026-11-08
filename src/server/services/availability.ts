@@ -65,62 +65,75 @@ export async function saveSchedule(
   assertRulesDisjoint(input.rules);
   const db = tenantDb(ctx.orgId);
 
-  let id = scheduleId;
-  if (id) {
+  if (scheduleId) {
     const existing = await db.availabilitySchedule.findFirst({
-      where: { id },
-      select: { id: true, userId: true },
+      where: { id: scheduleId },
+      select: { id: true },
     });
     if (!existing) throw new AvailabilityError("Schedule not found", "not_found");
-    await db.availabilitySchedule.update({
-      where: { id },
-      data: { name: input.name, timezone: input.timezone, isDefault: input.isDefault },
-    });
-  } else {
-    const created = await db.availabilitySchedule.create({
-      data: {
-        organizationId: ctx.orgId,
-        userId: ctx.userId,
-        name: input.name,
-        timezone: input.timezone,
-        isDefault: input.isDefault,
-      },
-    });
-    id = created.id;
   }
 
-  if (input.isDefault) {
-    // Single default per user.
-    await db.availabilitySchedule.updateMany({
-      where: { userId: ctx.userId, id: { not: id } },
-      data: { isDefault: false },
-    });
-  }
+  // One transaction for everything the save writes: a failure part-way leaves
+  // the previous schedule, not one with none of its rules (every booking page
+  // using it would offer no slots) or a new timezone over its old rules
+  // (every slot would move). The transaction client is not tenant-scoped, so
+  // every write names the organization; the schedule was verified above.
+  const orgId = ctx.orgId;
+  const id = await unscopedPrisma.$transaction(async (tx) => {
+    let savedId: string;
+    if (scheduleId) {
+      await tx.availabilitySchedule.updateMany({
+        where: { id: scheduleId, organizationId: orgId },
+        data: { name: input.name, timezone: input.timezone, isDefault: input.isDefault },
+      });
+      savedId = scheduleId;
+    } else {
+      const created = await tx.availabilitySchedule.create({
+        data: {
+          organizationId: orgId,
+          userId: ctx.userId,
+          name: input.name,
+          timezone: input.timezone,
+          isDefault: input.isDefault,
+        },
+      });
+      savedId = created.id;
+    }
 
-  // Child rows are parent-scoped; the parent was verified above.
-  await unscopedPrisma.availabilityRule.deleteMany({ where: { scheduleId: id } });
-  if (input.rules.length > 0) {
-    await unscopedPrisma.availabilityRule.createMany({
-      data: input.rules.map((r) => ({
-        scheduleId: id!,
-        weekday: r.weekday,
-        startMinute: r.startMinute,
-        endMinute: r.endMinute,
-      })),
-    });
-  }
-  await unscopedPrisma.availabilityOverride.deleteMany({ where: { scheduleId: id } });
-  if (input.overrides.length > 0) {
-    await unscopedPrisma.availabilityOverride.createMany({
-      data: input.overrides.map((o) => ({
-        scheduleId: id!,
-        date: new Date(`${o.date}T00:00:00.000Z`),
-        startMinute: o.isUnavailable ? null : o.startMinute,
-        endMinute: o.isUnavailable ? null : o.endMinute,
-        isUnavailable: o.isUnavailable,
-      })),
-    });
-  }
+    if (input.isDefault) {
+      // Single default per user.
+      await tx.availabilitySchedule.updateMany({
+        where: { organizationId: orgId, userId: ctx.userId, id: { not: savedId } },
+        data: { isDefault: false },
+      });
+    }
+
+    // Child rows are parent-scoped; the parent is this organization's.
+    await tx.availabilityRule.deleteMany({ where: { scheduleId: savedId } });
+    if (input.rules.length > 0) {
+      await tx.availabilityRule.createMany({
+        data: input.rules.map((r) => ({
+          scheduleId: savedId,
+          weekday: r.weekday,
+          startMinute: r.startMinute,
+          endMinute: r.endMinute,
+        })),
+      });
+    }
+    await tx.availabilityOverride.deleteMany({ where: { scheduleId: savedId } });
+    if (input.overrides.length > 0) {
+      await tx.availabilityOverride.createMany({
+        data: input.overrides.map((o) => ({
+          scheduleId: savedId,
+          date: new Date(`${o.date}T00:00:00.000Z`),
+          startMinute: o.isUnavailable ? null : o.startMinute,
+          endMinute: o.isUnavailable ? null : o.endMinute,
+          isUnavailable: o.isUnavailable,
+        })),
+      });
+    }
+    return savedId;
+  });
 
   await audit(ctx, {
     action: scheduleId ? "availability.update" : "availability.create",

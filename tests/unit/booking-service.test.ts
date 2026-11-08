@@ -157,6 +157,25 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
+/** Which advisory lock (src/server/calendar/locks.ts) a $executeRaw call takes. */
+function lockKind(strings: TemplateStringsArray): string {
+  const sql = strings.join("?");
+  if (sql.includes("':'")) return "contact-email";
+  if (sql.includes("hashtext(?), 0)")) return "org-calendar";
+  if (sql.includes("hashtext(?), hashtext(?))")) return "owner-calendar";
+  return "other";
+}
+
+/** The values of every organization-calendar lock taken, in order. */
+function orgCalendarLockValues(): unknown[][] {
+  const calls = txMock.$executeRaw.mock.calls as unknown as Array<
+    [TemplateStringsArray, ...unknown[]]
+  >;
+  return calls
+    .filter(([strings]) => lockKind(strings) === "org-calendar")
+    .map(([, ...values]) => values);
+}
+
 describe("public slots", () => {
   it("computes slots from the built-in fallback schedule", async () => {
     const { slots, timezone } = await getPublicSlots({
@@ -526,6 +545,30 @@ describe("createPublicBooking", () => {
     expect(txMock.booking.create).not.toHaveBeenCalled();
   });
 
+  it("takes the organization calendar lock that AI bookings take, before the conflict re-check", async () => {
+    // An AI bookMeeting event (owner null, created by the chat user) counts as
+    // the owner's busy time here, and bookMeeting serializes on lockOrgCalendar.
+    // Without the same lock a guest booking and the owner's AI booking for the
+    // same slot can both pass their re-check and both commit.
+    const steps: string[] = [];
+    txMock.$executeRaw.mockImplementation(async (...args: unknown[]) => {
+      steps.push(lockKind(args[0] as TemplateStringsArray));
+      return 0;
+    });
+    txMock.calendarEvent.findFirst.mockImplementationOnce(async () => {
+      steps.push("conflict-check");
+      return null;
+    });
+    try {
+      await createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() });
+    } finally {
+      txMock.$executeRaw.mockImplementation(async () => 0);
+    }
+
+    expect(steps.slice(0, 3)).toEqual(["org-calendar", "owner-calendar", "conflict-check"]);
+    expect(orgCalendarLockValues()).toEqual([["org-a"]]);
+  });
+
   it("serializes concurrent booking attempts: acquires the owner-calendar advisory lock before checking/writing", async () => {
     const callOrder: string[] = [];
     txMock.$executeRaw.mockImplementationOnce(async () => {
@@ -548,14 +591,17 @@ describe("createPublicBooking", () => {
     // blocks here instead of racing assertSlotStillFree's SELECT under READ
     // COMMITTED (src/server/services/booking.ts's lockOwnerCalendarForBooking).
     expect(callOrder).toEqual(["lock", "conflict-check", "create-event"]);
-    // Two advisory locks are now taken per booking: lockOwnerCalendar (asserted
-    // above via callOrder, first call) and lockContactEmail (PR #91 review fix
-    // for the duplicate-Contact race across different booking types/owners -
-    // see src/server/calendar/locks.ts and tests/integration/contact-race-concurrency.sh).
-    // The Contact block runs after the event/booking write in this mock's
-    // control flow, so its $executeRaw call lands on the default (unpushed)
-    // implementation rather than the "Once" one - only the call count changes.
-    expect(txMock.$executeRaw).toHaveBeenCalledTimes(2);
+    // Three advisory locks are taken per booking, in this order: lockOrgCalendar
+    // (the domain AI bookMeeting serializes on), lockOwnerCalendar, and
+    // lockContactEmail (PR #91 review fix for the duplicate-Contact race across
+    // different booking types/owners - see src/server/calendar/locks.ts and
+    // tests/integration/contact-race-concurrency.sh).
+    const calls = txMock.$executeRaw.mock.calls as unknown as Array<[TemplateStringsArray]>;
+    expect(calls.map(([strings]) => lockKind(strings))).toEqual([
+      "org-calendar",
+      "owner-calendar",
+      "contact-email",
+    ]);
   });
 
   it("busy owner calendars remove the slot up front", async () => {
@@ -862,7 +908,10 @@ describe("rescheduleBookingViaToken", () => {
 
     expect(result.booking.id).toBe("bk-1");
     expect(callOrder).toEqual(["lock", "conflict-check", "create-event"]);
-    expect(txMock.$executeRaw).toHaveBeenCalledTimes(1);
+    // The organization calendar lock (shared with AI bookMeeting), then the owner's.
+    const calls = txMock.$executeRaw.mock.calls as unknown as Array<[TemplateStringsArray]>;
+    expect(calls.map(([strings]) => lockKind(strings))).toEqual(["org-calendar", "owner-calendar"]);
+    expect(orgCalendarLockValues()).toEqual([["org-a"]]);
   });
 
   it("rejects when the in-transaction conflict query finds a row", async () => {

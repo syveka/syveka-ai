@@ -116,11 +116,17 @@ validate`/`generate`, migration history check) after the override, all passing. 
   `pg_advisory_xact_lock` — **not** the owner-scoped `lockOwnerCalendar()` used by the guest
   booking flow, because a per-owner lock would not serialize between two different users'
   concurrent `bookMeeting` calls, which is exactly the scope this tool's own conflict check
-  evaluates. **Known, deliberately deferred limitation:** `lockOrgCalendar()` and
-  `lockOwnerCalendar()` intentionally do not serialize against each other, so a concurrent AI-tool
-  booking and guest-flow booking for the same underlying time slot are not currently reconciled —
-  closing that gap requires unifying both paths under one lock domain, a larger change than this
-  fix's scope.
+  evaluates. **Unified (2026-11-08):** guest bookings and reschedules now also take
+  `lockOrgCalendar()`, before their `lockOwnerCalendar()` (`lockBookingCalendars` in
+  `src/server/services/booking.ts`). An AI-booked event (owner `null`, created by the chat user)
+  counts as that user's busy time in the guest flow's re-check, so before this a guest booking and
+  the owner's own AI booking for the same slot could both commit. The cost is that guest bookings
+  within one organization now serialize with each other (each transaction is short). Lock order is
+  always organization lock first, then owner lock. Events the owner creates in the calendar
+  (`calendar.ts` `createEvent`) and events imported by calendar sync (`calendar-sync.ts`) take no
+  booking lock: they make no free-slot check (an owner may overlap their own calendar), so there is
+  no check for a lock to protect. A guest or AI booking that commits after them sees them in its
+  own re-check.
 - **A model-supplied tool argument referencing another record (e.g. `bookMeeting`'s optional
   `contactId`) must be tenancy-checked before use if the referenced column has no DB-level foreign
   key.** Found during the same review: `CalendarEvent.contactId` has no `@relation` in
