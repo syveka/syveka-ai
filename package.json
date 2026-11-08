@@ -22,6 +22,7 @@
     "db:studio": "prisma studio",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "test:browser": "playwright test -c playwright.browser.config.ts",
     "email:dev": "email dev --dir emails",
     "verify-key": "tsx scripts/verify-composio-key.ts"
   },

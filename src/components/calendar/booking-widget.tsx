@@ -63,25 +63,30 @@ export function BookingWidget({
     confirmationEmailSent: boolean;
   } | null>(null);
 
-  const loadSlots = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const from = weekStart.toISOString();
-      const to = new Date(weekStart.getTime() + 7 * 86_400_000).toISOString();
-      const res = await fetch(
-        `/api/v1/booking/${orgSlug}/${typeSlug}/slots?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&duration=${duration}`,
-      );
-      if (!res.ok) throw new Error("slots");
-      const data = (await res.json()) as { slots: string[] };
-      setSlots(data.slots);
-    } catch {
-      setError(t("errors.loadFailed"));
-      setSlots([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [weekStart, duration, orgSlug, typeSlug, t]);
+  // keepError: a reload after a refused booking keeps the message saying why
+  // the guest has to pick another time.
+  const loadSlots = useCallback(
+    async (options?: { keepError?: boolean }) => {
+      setLoading(true);
+      if (!options?.keepError) setError(null);
+      try {
+        const from = weekStart.toISOString();
+        const to = new Date(weekStart.getTime() + 7 * 86_400_000).toISOString();
+        const res = await fetch(
+          `/api/v1/booking/${orgSlug}/${typeSlug}/slots?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}&duration=${duration}`,
+        );
+        if (!res.ok) throw new Error("slots");
+        const data = (await res.json()) as { slots: string[] };
+        setSlots(data.slots);
+      } catch {
+        setError(t("errors.loadFailed"));
+        setSlots([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [weekStart, duration, orgSlug, typeSlug, t],
+  );
 
   useEffect(() => {
     void loadSlots();
@@ -160,7 +165,7 @@ export function BookingWidget({
         );
         if (data.error === "slot_taken" || data.error === "invalid_slot") {
           setSelectedSlot(null);
-          void loadSlots();
+          void loadSlots({ keepError: true });
         }
         return;
       }
