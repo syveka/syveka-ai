@@ -74,6 +74,12 @@ export async function POST(
     });
   } catch (e) {
     if (e instanceof BookingError) {
+      if (e.code === "calendar_busy") {
+        return NextResponse.json(
+          { error: e.code },
+          { status: 503, headers: { "Retry-After": "2" } },
+        );
+      }
       const status = e.code === "not_found" ? 404 : e.code === "slot_taken" ? 409 : 400;
       return NextResponse.json({ error: e.code }, { status });
     }

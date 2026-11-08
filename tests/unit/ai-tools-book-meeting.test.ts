@@ -162,6 +162,20 @@ describe("bookMeeting tool", () => {
     expect(txMock.$executeRaw).toHaveBeenCalledWith(expect.anything(), "org-a");
   });
 
+  it("reports a calendar lock timeout as busy, with nothing written", async () => {
+    txMock.$executeRaw.mockRejectedValueOnce(
+      Object.assign(new Error("lock timeout"), {
+        code: "P2010",
+        meta: { driverAdapterError: { cause: { originalCode: "55P03" } } },
+      }),
+    );
+    await expect(bookMeeting.execute(identity({ orgId: "org-a" }), input())).resolves.toEqual({
+      booked: false,
+      reason: "calendar_busy",
+    });
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
   it("rejects a contactId that does not belong to the caller's organization", async () => {
     txMock.contact.findFirstOrThrow.mockRejectedValue(new Error("No Contact found"));
     await expect(
