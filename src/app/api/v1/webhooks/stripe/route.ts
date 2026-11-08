@@ -141,6 +141,17 @@ async function mayBecomeCurrent(
 }
 
 /**
+ * When a PAST_DUE grace clock starts: the Stripe event's time (a late
+ * delivery doesn't extend the grace), but never before the row's last write.
+ * An event created before that write (a Stripe retry up to days later, a
+ * manual resend) would otherwise start the clock while the row was
+ * demonstrably not past due, shortening the grace.
+ */
+function graceClockStart(eventTime: Date, lastWrite: Date | null | undefined): Date {
+  return lastWrite && lastWrite > eventTime ? lastWrite : eventTime;
+}
+
+/**
  * Runs inside the caller's transaction -- no external (Stripe API) calls here.
  * Returns the org id, and whether the subscription was written (see
  * mayBecomeCurrent); a skipped event is still completed, never retried.
@@ -182,9 +193,10 @@ async function applySubscriptionUpsert(
   const stored = pastDue
     ? await tx.subscription.findUnique({
         where: { organizationId: orgId },
-        select: { pastDueSince: true },
+        select: { pastDueSince: true, updatedAt: true },
       })
     : null;
+  const clockStart = graceClockStart(eventTime, stored?.updatedAt);
 
   await tx.subscription.upsert({
     where: { organizationId: orgId },
@@ -197,7 +209,7 @@ async function applySubscriptionUpsert(
       currentPeriodEnd: new Date(sub.current_period_end * 1000),
       cancelAtPeriodEnd: sub.cancel_at_period_end,
       trialEndsAt: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
-      pastDueSince: pastDue ? eventTime : null,
+      pastDueSince: pastDue ? clockStart : null,
     },
     update: {
       stripeSubscriptionId: sub.id,
@@ -207,7 +219,7 @@ async function applySubscriptionUpsert(
       currentPeriodEnd: new Date(sub.current_period_end * 1000),
       cancelAtPeriodEnd: sub.cancel_at_period_end,
       trialEndsAt: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
-      pastDueSince: pastDue ? (stored?.pastDueSince ?? eventTime) : null,
+      pastDueSince: pastDue ? (stored?.pastDueSince ?? clockStart) : null,
     },
   });
   return { orgId, applied: true };
@@ -486,13 +498,20 @@ export async function POST(request: Request): Promise<NextResponse> {
             // older or second subscription leaves the current one alone.
             // Only on the transition into PAST_DUE: a retry's failure must not
             // touch an already past-due row (its grace clock keeps running).
+            const current = await tx.subscription.findUnique({
+              where: { organizationId: org.id },
+              select: { updatedAt: true },
+            });
             await tx.subscription.updateMany({
               where: {
                 organizationId: org.id,
                 stripeSubscriptionId: failedSubId,
                 status: { not: "PAST_DUE" },
               },
-              data: { status: "PAST_DUE", pastDueSince: eventTime },
+              data: {
+                status: "PAST_DUE",
+                pastDueSince: graceClockStart(eventTime, current?.updatedAt),
+              },
             });
             await tx.stripeWebhookEvent.update({
               where: { stripeEventId: event.id },

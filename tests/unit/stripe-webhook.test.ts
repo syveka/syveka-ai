@@ -689,6 +689,44 @@ describe("pastDueSince: the PAST_DUE grace clock", () => {
     );
   });
 
+  // An event created before the row's last write (a Stripe retry up to ~3 days
+  // later, or a manual resend) must not backdate the clock past that write:
+  // the row was demonstrably not past due then.
+  it("customer.subscription.updated: an old event never starts the clock before the row's last write", async () => {
+    const lastWrite = new Date((EVENT_CREATED + 2 * 24 * 60 * 60) * 1000);
+    mocks.txSubscriptionFindUnique.mockResolvedValue({
+      stripeSubscriptionId: "sub_123",
+      status: "ACTIVE",
+      pastDueSince: null,
+      updatedAt: lastWrite,
+    });
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "past_due" }));
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent("customer.subscription.updated", fakeSubscription({ status: "past_due" })),
+    );
+
+    await POST(webhookRequest("{}"));
+
+    expect(mocks.txSubscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ status: "PAST_DUE", pastDueSince: lastWrite }),
+      }),
+    );
+  });
+
+  it("invoice.payment_failed: an old event never starts the clock before the row's last write", async () => {
+    const lastWrite = new Date((EVENT_CREATED + 2 * 24 * 60 * 60) * 1000);
+    mocks.txSubscriptionFindUnique.mockResolvedValue({
+      stripeSubscriptionId: "sub_123",
+      status: "ACTIVE",
+      updatedAt: lastWrite,
+    });
+    await deliverPaymentFailed();
+    expect(mocks.txSubscriptionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: "PAST_DUE", pastDueSince: lastWrite } }),
+    );
+  });
+
   it("a stale past_due update retried after the clock started does not move it", async () => {
     const since = new Date((EVENT_CREATED - 10 * 24 * 60 * 60) * 1000);
     mocks.txSubscriptionFindUnique.mockResolvedValue({
