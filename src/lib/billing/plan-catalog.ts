@@ -81,6 +81,13 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
   },
 };
 
+/**
+ * Plans whose organizations may run chat on the "deep" model, the most
+ * expensive route. No plan or pricing page offers it, so none is listed. It is
+ * a commercial decision: add a plan here when that plan is sold with it.
+ */
+export const DEEP_MODEL_PLANS: ReadonlySet<Plan> = new Set<Plan>();
+
 /** Plans a customer can buy without sales; each has STRIPE_PRICE_* ids. */
 export const SELF_SERVE_PLANS = ["STARTER", "PRO"] as const;
 export type SelfServePlan = (typeof SELF_SERVE_PLANS)[number];
