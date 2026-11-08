@@ -10,7 +10,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
  * may be current can become current.
  */
 
-type SubRow = { stripeSubscriptionId: string | null; plan: string; status: string; seats: number };
+type SubRow = {
+  stripeSubscriptionId: string | null;
+  plan: string;
+  status: string;
+  seats: number;
+  pastDueSince?: Date | null;
+};
 type StripeSub = {
   id: string;
   customer: string;
@@ -56,14 +62,15 @@ const db = vi.hoisted(() => {
       where: w,
       data,
     }: {
-      where: { organizationId: string; stripeSubscriptionId?: string };
+      where: { organizationId: string; stripeSubscriptionId?: string; status?: { not: string } };
       data: Partial<SubRow>;
     }) => {
       const row = state.subs.get(w.organizationId);
       if (
         !row ||
         (w.stripeSubscriptionId !== undefined &&
-          row.stripeSubscriptionId !== w.stripeSubscriptionId)
+          row.stripeSubscriptionId !== w.stripeSubscriptionId) ||
+        (w.status !== undefined && row.status === w.status.not)
       ) {
         return { count: 0 };
       }
@@ -143,8 +150,13 @@ vi.mock("@/server/integrations/stripe", () => ({
 import { POST } from "@/app/api/v1/webhooks/stripe/route";
 
 let eventSeq = 0;
-async function deliver(type: string, object: Record<string, unknown>, id = `evt_${++eventSeq}`) {
-  state.event = { id, type, data: { object } };
+async function deliver(
+  type: string,
+  object: Record<string, unknown>,
+  id = `evt_${++eventSeq}`,
+  created = Math.floor(Date.now() / 1000),
+) {
+  state.event = { id, type, created, data: { object } };
   const res = await POST(
     new Request("https://example.test/api/v1/webhooks/stripe", {
       method: "POST",
@@ -596,5 +608,45 @@ describe("idempotent retries", () => {
     const again = await deliver("customer.subscription.updated", changed, "evt_same");
     expect(again.status).toBe(200);
     expect(row()!.seats).toBe(99);
+  });
+});
+
+describe("pastDueSince across a dunning sequence", () => {
+  it("starts at the first failure, survives retries and updates, and clears once paid", async () => {
+    const day = 24 * 60 * 60;
+    const t0 = 1_800_000_000;
+    stripeSub("sub_new", { status: "past_due" });
+    const failure = { id: "in_1", customer: "cus_a", subscription: "sub_new" };
+
+    await deliver("invoice.payment_failed", failure, "evt_fail_1", t0);
+    expect(row()).toMatchObject({ status: "PAST_DUE", pastDueSince: new Date(t0 * 1000) });
+
+    // Smart Retries: neither the updates nor the later failures move the clock.
+    const pastDueSub = stripeSub("sub_new", { status: "past_due" });
+    await deliver("customer.subscription.updated", pastDueSub, "evt_upd_1", t0 + 3 * day);
+    await deliver("invoice.payment_failed", failure, "evt_fail_2", t0 + 3 * day);
+    await deliver("invoice.payment_failed", failure, "evt_fail_3", t0 + 7 * day);
+    expect(row()).toMatchObject({ status: "PAST_DUE", pastDueSince: new Date(t0 * 1000) });
+
+    stripeSub("sub_new", { status: "active" });
+    await deliver(
+      "invoice.paid",
+      { id: "in_1", subscription: "sub_new" },
+      "evt_paid",
+      t0 + 8 * day,
+    );
+    expect(row()).toMatchObject({ status: "ACTIVE", pastDueSince: null });
+  });
+
+  it("is cleared when the subscription is deleted", async () => {
+    stripeSub("sub_new", { status: "past_due" });
+    await deliver("invoice.payment_failed", {
+      id: "in_1",
+      customer: "cus_a",
+      subscription: "sub_new",
+    });
+    expect(row()!.pastDueSince).toBeInstanceOf(Date);
+    await deliver("customer.subscription.deleted", stripeSub("sub_new", { status: "canceled" }));
+    expect(row()).toMatchObject({ status: "CANCELED", pastDueSince: null });
   });
 });

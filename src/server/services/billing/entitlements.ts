@@ -14,7 +14,7 @@ export type Entitlements = PlanLimits & {
   plan: Plan;
   seats: number;
   status: string;
-  readOnly: boolean; // PAST_DUE ≥ 14d or CANCELED over-limit lockout (§14.4)
+  readOnly: boolean; // PAST_DUE ≥ 14d (from pastDueSince) or CANCELED over-limit lockout (§14.4)
 };
 
 /**
@@ -134,10 +134,13 @@ export async function getEntitlements(orgId: string): Promise<Entitlements> {
   // its limits (read-only after 14 days, below) per §14.4.
   const plan: Plan = PAYING_STATUSES.has(status) ? (sub?.plan ?? "FREE") : "FREE";
 
+  // Measured from pastDueSince: updatedAt moves on every dunning webhook
+  // write. updatedAt is the fallback for a row the backfill didn't reach.
+  const pastDueStart = sub?.pastDueSince ?? sub?.updatedAt;
   const pastDueTooLong =
     status === "PAST_DUE" &&
-    sub?.updatedAt !== undefined &&
-    Date.now() - sub.updatedAt.getTime() > 14 * 24 * 60 * 60 * 1000;
+    pastDueStart !== undefined &&
+    Date.now() - pastDueStart.getTime() > 14 * 24 * 60 * 60 * 1000;
 
   const limits: PlanLimits = { ...PLAN_LIMITS[plan] };
   for (const grant of activeGrants) {
