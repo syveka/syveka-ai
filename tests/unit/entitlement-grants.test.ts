@@ -289,6 +289,7 @@ describe("getEntitlements: subscription status gates the stored plan", () => {
     plan: "PRO",
     status,
     seats: 3,
+    pastDueSince: null as Date | null,
     updatedAt: new Date(),
   });
 
@@ -336,6 +337,38 @@ describe("getEntitlements: subscription status gates the stored plan", () => {
     });
     const ent = await getEntitlements("org-a");
     expect(ent).toMatchObject({ plan: "PRO", status: "PAST_DUE", readOnly: true });
+  });
+
+  // Every dunning webhook write bumps updatedAt, so the 14 days run from
+  // pastDueSince (set once, on the transition into PAST_DUE).
+  it("goes read-only 14 days after pastDueSince even when the row was just rewritten", async () => {
+    mocks.subscriptionFindUnique.mockResolvedValue({
+      ...proSub("PAST_DUE"),
+      pastDueSince: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000),
+      updatedAt: new Date(),
+    });
+    const ent = await getEntitlements("org-a");
+    expect(ent).toMatchObject({ plan: "PRO", status: "PAST_DUE", readOnly: true });
+  });
+
+  it("falls back to updatedAt for a PAST_DUE row without pastDueSince", async () => {
+    mocks.subscriptionFindUnique.mockResolvedValue({
+      ...proSub("PAST_DUE"),
+      pastDueSince: null,
+      updatedAt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000),
+    });
+    const ent = await getEntitlements("org-a");
+    expect(ent).toMatchObject({ plan: "PRO", status: "PAST_DUE", readOnly: true });
+  });
+
+  it("is not read-only one day after pastDueSince, however old updatedAt is", async () => {
+    mocks.subscriptionFindUnique.mockResolvedValue({
+      ...proSub("PAST_DUE"),
+      pastDueSince: new Date(Date.now() - 1 * 24 * 60 * 60 * 1000),
+      updatedAt: new Date(Date.now() - 15 * 24 * 60 * 60 * 1000),
+    });
+    const ent = await getEntitlements("org-a");
+    expect(ent).toMatchObject({ plan: "PRO", status: "PAST_DUE", readOnly: false });
   });
 
   it("keeps a FREE plan FREE while ACTIVE", async () => {

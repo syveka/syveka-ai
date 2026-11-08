@@ -141,14 +141,28 @@ async function mayBecomeCurrent(
 }
 
 /**
+ * When a PAST_DUE grace clock starts: the Stripe event's time (a late
+ * delivery doesn't extend the grace), but never before the row's last write.
+ * An event created before that write (a Stripe retry up to days later, a
+ * manual resend) would otherwise start the clock while the row was
+ * demonstrably not past due, shortening the grace.
+ */
+function graceClockStart(eventTime: Date, lastWrite: Date | null | undefined): Date {
+  return lastWrite && lastWrite > eventTime ? lastWrite : eventTime;
+}
+
+/**
  * Runs inside the caller's transaction -- no external (Stripe API) calls here.
  * Returns the org id, and whether the subscription was written (see
  * mayBecomeCurrent); a skipped event is still completed, never retried.
+ * `eventTime` is the Stripe event's creation time: it starts the PAST_DUE
+ * grace clock (pastDueSince), so a late delivery doesn't extend the grace.
  */
 async function applySubscriptionUpsert(
   tx: Prisma.TransactionClient,
   sub: Stripe.Subscription,
   deps: RuntimeDeps,
+  eventTime: Date,
 ): Promise<{ orgId: string; applied: boolean }> {
   const orgId = sub.metadata.orgId;
   if (!orgId) throw new Error(`Subscription ${sub.id} missing orgId metadata`);
@@ -173,6 +187,17 @@ async function applySubscriptionUpsert(
     );
   }
 
+  // The grace clock starts on the transition into PAST_DUE and is kept across
+  // dunning retries (each rewrites this row); any other status clears it.
+  const pastDue = SUB_STATUS_MAP[sub.status] === "PAST_DUE";
+  const stored = pastDue
+    ? await tx.subscription.findUnique({
+        where: { organizationId: orgId },
+        select: { pastDueSince: true, updatedAt: true },
+      })
+    : null;
+  const clockStart = graceClockStart(eventTime, stored?.updatedAt);
+
   await tx.subscription.upsert({
     where: { organizationId: orgId },
     create: {
@@ -184,6 +209,7 @@ async function applySubscriptionUpsert(
       currentPeriodEnd: new Date(sub.current_period_end * 1000),
       cancelAtPeriodEnd: sub.cancel_at_period_end,
       trialEndsAt: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
+      pastDueSince: pastDue ? clockStart : null,
     },
     update: {
       stripeSubscriptionId: sub.id,
@@ -193,6 +219,7 @@ async function applySubscriptionUpsert(
       currentPeriodEnd: new Date(sub.current_period_end * 1000),
       cancelAtPeriodEnd: sub.cancel_at_period_end,
       trialEndsAt: sub.trial_end ? new Date(sub.trial_end * 1000) : null,
+      pastDueSince: pastDue ? (stored?.pastDueSince ?? clockStart) : null,
     },
   });
   return { orgId, applied: true };
@@ -308,6 +335,7 @@ export async function POST(request: Request): Promise<NextResponse> {
 
   try {
     let resolvedOrgId: string | null = describedOrgId;
+    const eventTime = new Date(event.created * 1000);
 
     switch (event.type) {
       case "checkout.session.completed": {
@@ -324,7 +352,7 @@ export async function POST(request: Request): Promise<NextResponse> {
             sub.metadata.orgId = session.metadata.orgId;
           }
           await unscopedPrisma.$transaction(async (tx) => {
-            ({ orgId: resolvedOrgId } = await applySubscriptionUpsert(tx, sub, deps));
+            ({ orgId: resolvedOrgId } = await applySubscriptionUpsert(tx, sub, deps, eventTime));
             await tx.stripeWebhookEvent.update({
               where: { stripeEventId: event.id },
               data: {
@@ -356,7 +384,7 @@ export async function POST(request: Request): Promise<NextResponse> {
           break;
         }
         await unscopedPrisma.$transaction(async (tx) => {
-          ({ orgId: resolvedOrgId } = await applySubscriptionUpsert(tx, sub, deps));
+          ({ orgId: resolvedOrgId } = await applySubscriptionUpsert(tx, sub, deps, eventTime));
           await tx.stripeWebhookEvent.update({
             where: { stripeEventId: event.id },
             data: {
@@ -382,7 +410,12 @@ export async function POST(request: Request): Promise<NextResponse> {
             // failure Stripe would retry forever.
             await tx.subscription.updateMany({
               where: { organizationId: orgId, stripeSubscriptionId: sub.id },
-              data: { plan: "FREE", status: "CANCELED", stripeSubscriptionId: null },
+              data: {
+                plan: "FREE",
+                status: "CANCELED",
+                stripeSubscriptionId: null,
+                pastDueSince: null,
+              },
             });
             await tx.stripeWebhookEvent.update({
               where: { stripeEventId: event.id },
@@ -409,7 +442,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         if (subId) {
           const sub = await stripe.subscriptions.retrieve(subId);
           await unscopedPrisma.$transaction(async (tx) => {
-            ({ orgId: resolvedOrgId } = await applySubscriptionUpsert(tx, sub, deps)); // clears PAST_DUE
+            ({ orgId: resolvedOrgId } = await applySubscriptionUpsert(tx, sub, deps, eventTime)); // clears PAST_DUE
             await tx.stripeWebhookEvent.update({
               where: { stripeEventId: event.id },
               data: {
@@ -463,9 +496,22 @@ export async function POST(request: Request): Promise<NextResponse> {
           await unscopedPrisma.$transaction(async (tx) => {
             // Only the subscription this invoice is for: a failure on an
             // older or second subscription leaves the current one alone.
+            // Only on the transition into PAST_DUE: a retry's failure must not
+            // touch an already past-due row (its grace clock keeps running).
+            const current = await tx.subscription.findUnique({
+              where: { organizationId: org.id },
+              select: { updatedAt: true },
+            });
             await tx.subscription.updateMany({
-              where: { organizationId: org.id, stripeSubscriptionId: failedSubId },
-              data: { status: "PAST_DUE" },
+              where: {
+                organizationId: org.id,
+                stripeSubscriptionId: failedSubId,
+                status: { not: "PAST_DUE" },
+              },
+              data: {
+                status: "PAST_DUE",
+                pastDueSince: graceClockStart(eventTime, current?.updatedAt),
+              },
             });
             await tx.stripeWebhookEvent.update({
               where: { stripeEventId: event.id },

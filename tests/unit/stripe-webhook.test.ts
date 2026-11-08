@@ -109,8 +109,16 @@ function fakeSubscription(overrides: Partial<Record<string, unknown>> = {}) {
   };
 }
 
-function fakeEvent(type: string, object: Record<string, unknown>, id = "evt_123") {
-  return { id, type, data: { object } };
+// Stripe's event creation time (seconds), distinct from the test's wall clock.
+const EVENT_CREATED = 1_760_000_000;
+
+function fakeEvent(
+  type: string,
+  object: Record<string, unknown>,
+  id = "evt_123",
+  created = EVENT_CREATED,
+) {
+  return { id, type, created, data: { object } };
 }
 
 // `resetAllMocks` (not `clearAllMocks`) so a return value set by one test can
@@ -388,7 +396,7 @@ describe("existing subscription and entitlement behavior is unchanged", () => {
     expect(res.status).toBe(200);
     expect(mocks.txSubscriptionUpdate).toHaveBeenCalledWith({
       where: { organizationId: "org-a", stripeSubscriptionId: "sub_del" },
-      data: { plan: "FREE", status: "CANCELED", stripeSubscriptionId: null },
+      data: { plan: "FREE", status: "CANCELED", stripeSubscriptionId: null, pastDueSince: null },
     });
     expect(mocks.invalidateEntitlements).toHaveBeenCalledWith("org-a");
   });
@@ -409,8 +417,12 @@ describe("existing subscription and entitlement behavior is unchanged", () => {
     expect(res.status).toBe(200);
     expect(mocks.subscriptionsRetrieve).toHaveBeenCalledWith("sub_123");
     expect(mocks.txSubscriptionUpdate).toHaveBeenCalledWith({
-      where: { organizationId: "org-a", stripeSubscriptionId: "sub_123" },
-      data: { status: "PAST_DUE" },
+      where: {
+        organizationId: "org-a",
+        stripeSubscriptionId: "sub_123",
+        status: { not: "PAST_DUE" },
+      },
+      data: { status: "PAST_DUE", pastDueSince: new Date(EVENT_CREATED * 1000) },
     });
     expect(mocks.invalidateEntitlements).toHaveBeenCalledWith("org-a");
   });
@@ -577,5 +589,216 @@ describe("a price outside the configured catalog", () => {
 
     expect(JSON.stringify(warn.mock.calls)).not.toContain("stripe_unknown_price");
     warn.mockRestore();
+  });
+});
+
+/**
+ * The PAST_DUE read-only grace runs from pastDueSince, not updatedAt (which
+ * every dunning retry bumps). It is set once, on the transition into
+ * PAST_DUE, from Stripe's event time; kept while past due; cleared otherwise.
+ */
+describe("pastDueSince: the PAST_DUE grace clock", () => {
+  const eventTime = new Date(EVENT_CREATED * 1000);
+
+  function deliverPaymentFailed(created = EVENT_CREATED) {
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent(
+        "invoice.payment_failed",
+        { id: "in_123", customer: "cus_123", subscription: "sub_123" },
+        "evt_123",
+        created,
+      ),
+    );
+    mocks.organizationFindUnique.mockResolvedValue({ id: "org-a" });
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "past_due" }));
+    return POST(webhookRequest("{}"));
+  }
+
+  it("the first invoice.payment_failed sets it to the event time, not the delivery time", async () => {
+    const res = await deliverPaymentFailed();
+    expect(res.status).toBe(200);
+    expect(mocks.txSubscriptionUpdate).toHaveBeenCalledWith({
+      where: expect.objectContaining({ status: { not: "PAST_DUE" } }),
+      data: { status: "PAST_DUE", pastDueSince: eventTime },
+    });
+  });
+
+  it("a later invoice.payment_failed only matches a row not yet PAST_DUE, so the clock is kept", async () => {
+    // The row is already PAST_DUE: the guarded updateMany matches nothing.
+    mocks.txSubscriptionUpdate.mockResolvedValue({ count: 0 });
+    const res = await deliverPaymentFailed(EVENT_CREATED + 3 * 24 * 60 * 60);
+    expect(res.status).toBe(200);
+    expect(mocks.txSubscriptionUpdate).toHaveBeenCalledTimes(1);
+    expect(mocks.txSubscriptionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ where: expect.objectContaining({ status: { not: "PAST_DUE" } }) }),
+    );
+    expect(mocks.txStripeWebhookEventUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ status: "COMPLETED" }) }),
+    );
+  });
+
+  it("customer.subscription.updated while past_due preserves the stored pastDueSince", async () => {
+    const since = new Date("2025-10-01T00:00:00Z");
+    mocks.txSubscriptionFindUnique.mockResolvedValue({
+      stripeSubscriptionId: "sub_123",
+      status: "PAST_DUE",
+      pastDueSince: since,
+    });
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "past_due" }));
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent("customer.subscription.updated", fakeSubscription({ status: "past_due" })),
+    );
+
+    const res = await POST(webhookRequest("{}"));
+
+    expect(res.status).toBe(200);
+    expect(mocks.txSubscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ status: "PAST_DUE", pastDueSince: since }),
+      }),
+    );
+  });
+
+  it("customer.subscription.updated into past_due (no stored clock) starts it at the event time", async () => {
+    mocks.txSubscriptionFindUnique.mockResolvedValue({
+      stripeSubscriptionId: "sub_123",
+      status: "ACTIVE",
+      pastDueSince: null,
+    });
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "past_due" }));
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent("customer.subscription.updated", fakeSubscription({ status: "past_due" })),
+    );
+
+    await POST(webhookRequest("{}"));
+
+    expect(mocks.txSubscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ status: "PAST_DUE", pastDueSince: eventTime }),
+      }),
+    );
+  });
+
+  it("a late-delivered old event starts the clock at its own (earlier) time, never extending grace", async () => {
+    const created = EVENT_CREATED - 5 * 24 * 60 * 60;
+    await deliverPaymentFailed(created);
+    expect(mocks.txSubscriptionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: { status: "PAST_DUE", pastDueSince: new Date(created * 1000) },
+      }),
+    );
+  });
+
+  // An event created before the row's last write (a Stripe retry up to ~3 days
+  // later, or a manual resend) must not backdate the clock past that write:
+  // the row was demonstrably not past due then.
+  it("customer.subscription.updated: an old event never starts the clock before the row's last write", async () => {
+    const lastWrite = new Date((EVENT_CREATED + 2 * 24 * 60 * 60) * 1000);
+    mocks.txSubscriptionFindUnique.mockResolvedValue({
+      stripeSubscriptionId: "sub_123",
+      status: "ACTIVE",
+      pastDueSince: null,
+      updatedAt: lastWrite,
+    });
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "past_due" }));
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent("customer.subscription.updated", fakeSubscription({ status: "past_due" })),
+    );
+
+    await POST(webhookRequest("{}"));
+
+    expect(mocks.txSubscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        update: expect.objectContaining({ status: "PAST_DUE", pastDueSince: lastWrite }),
+      }),
+    );
+  });
+
+  it("invoice.payment_failed: an old event never starts the clock before the row's last write", async () => {
+    const lastWrite = new Date((EVENT_CREATED + 2 * 24 * 60 * 60) * 1000);
+    mocks.txSubscriptionFindUnique.mockResolvedValue({
+      stripeSubscriptionId: "sub_123",
+      status: "ACTIVE",
+      updatedAt: lastWrite,
+    });
+    await deliverPaymentFailed();
+    expect(mocks.txSubscriptionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: { status: "PAST_DUE", pastDueSince: lastWrite } }),
+    );
+  });
+
+  it("a stale past_due update retried after the clock started does not move it", async () => {
+    const since = new Date((EVENT_CREATED - 10 * 24 * 60 * 60) * 1000);
+    mocks.txSubscriptionFindUnique.mockResolvedValue({
+      stripeSubscriptionId: "sub_123",
+      status: "PAST_DUE",
+      pastDueSince: since,
+    });
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "past_due" }));
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent(
+        "customer.subscription.updated",
+        fakeSubscription({ status: "past_due" }),
+        "evt_old",
+        EVENT_CREATED - 12 * 24 * 60 * 60,
+      ),
+    );
+
+    await POST(webhookRequest("{}"));
+
+    expect(mocks.txSubscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ update: expect.objectContaining({ pastDueSince: since }) }),
+    );
+  });
+
+  it("invoice.paid (subscription active again) clears it", async () => {
+    mocks.txSubscriptionFindUnique.mockResolvedValue({
+      stripeSubscriptionId: "sub_123",
+      status: "PAST_DUE",
+      pastDueSince: new Date("2025-10-01T00:00:00Z"),
+    });
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent("invoice.paid", { id: "in_456", subscription: "sub_123" }),
+    );
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "active" }));
+
+    await POST(webhookRequest("{}"));
+
+    expect(mocks.txSubscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ status: "ACTIVE", pastDueSince: null }),
+        update: expect.objectContaining({ status: "ACTIVE", pastDueSince: null }),
+      }),
+    );
+  });
+
+  it("customer.subscription.deleted clears it", async () => {
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent("customer.subscription.deleted", fakeSubscription({ status: "canceled" })),
+    );
+    await POST(webhookRequest("{}"));
+    expect(mocks.txSubscriptionUpdate).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ pastDueSince: null }) }),
+    );
+  });
+
+  it("a checkout that creates an already past_due subscription sets it at the event time", async () => {
+    mocks.constructEvent.mockReturnValue(
+      fakeEvent("checkout.session.completed", {
+        id: "cs_1",
+        mode: "subscription",
+        subscription: "sub_123",
+        metadata: { orgId: "org-a" },
+      }),
+    );
+    mocks.subscriptionsRetrieve.mockResolvedValue(fakeSubscription({ status: "past_due" }));
+
+    await POST(webhookRequest("{}"));
+
+    expect(mocks.txSubscriptionUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({
+        create: expect.objectContaining({ status: "PAST_DUE", pastDueSince: eventTime }),
+      }),
+    );
   });
 });
