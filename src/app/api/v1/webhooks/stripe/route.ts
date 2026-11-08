@@ -20,6 +20,12 @@ const SUB_STATUS_MAP: Record<Stripe.Subscription.Status, string> = {
   paused: "PAUSED",
 };
 
+/** Stored statuses whose plan is granted (entitlements.ts PAYING_STATUSES). */
+const STORED_PAYING_STATUSES: ReadonlySet<string> = new Set(["ACTIVE", "TRIALING", "PAST_DUE"]);
+
+/** Plan order for "is this a raise": FREE < STARTER < PRO < ENTERPRISE. */
+const PLAN_RANK: Record<string, number> = { FREE: 0, STARTER: 1, PRO: 2, ENTERPRISE: 3 };
+
 /**
  * A claimed-but-never-completed row older than this is treated as
  * abandoned (crashed serverless execution, killed process) and becomes
@@ -173,12 +179,43 @@ async function applySubscriptionUpsert(
     );
   }
 
+  // PAST_DUE keeps the stored plan's paid limits through its grace period
+  // (entitlements PAYING_STATUSES), so a higher plan is never stored from a
+  // subscription Stripe reports as past_due/unpaid: an upgrade whose payment
+  // failed would grant the higher plan unpaid. Stripe's state is re-applied on
+  // invoice.paid and customer.subscription.updated, which store the raise once
+  // the subscription is active. Downgrades and same-plan dunning apply at once.
+  let storedPlan = plan;
+  if (plan && SUB_STATUS_MAP[sub.status] === "PAST_DUE") {
+    const stored = await tx.subscription.findUnique({
+      where: { organizationId: orgId },
+      select: { plan: true, status: true },
+    });
+    // The plan the organization is actually granted now (as entitlements.ts
+    // reads it): a row that isn't paying (e.g. CANCELED, keeping an old plan
+    // name) grants FREE, so its old paid plan is no basis for a raise.
+    const currentPlan = stored && STORED_PAYING_STATUSES.has(stored.status) ? stored.plan : "FREE";
+    if ((PLAN_RANK[plan] ?? 0) > (PLAN_RANK[currentPlan] ?? 0)) {
+      console.warn(
+        JSON.stringify({
+          alert: "stripe_plan_raise_held_unpaid",
+          organizationId: orgId,
+          subscriptionId: sub.id,
+          subscriptionStatus: sub.status,
+          storedPlan: currentPlan,
+          stripePlan: plan,
+        }),
+      );
+      storedPlan = currentPlan;
+    }
+  }
+
   await tx.subscription.upsert({
     where: { organizationId: orgId },
     create: {
       organizationId: orgId,
       stripeSubscriptionId: sub.id,
-      plan: plan ?? "FREE",
+      plan: storedPlan ?? "FREE",
       status: SUB_STATUS_MAP[sub.status] as never,
       seats: item?.quantity ?? 1,
       currentPeriodEnd: new Date(sub.current_period_end * 1000),
@@ -187,7 +224,7 @@ async function applySubscriptionUpsert(
     },
     update: {
       stripeSubscriptionId: sub.id,
-      ...(plan ? { plan } : {}),
+      ...(storedPlan ? { plan: storedPlan } : {}),
       status: SUB_STATUS_MAP[sub.status] as never,
       seats: item?.quantity ?? 1,
       currentPeriodEnd: new Date(sub.current_period_end * 1000),
