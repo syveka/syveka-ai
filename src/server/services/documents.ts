@@ -38,18 +38,62 @@ async function assertCollectionInTenant(
   }
 }
 
+type StorageUsageClient = Pick<Prisma.TransactionClient, "document" | "documentUploadIntent">;
+
+/**
+ * Refuses when the knowledge base would go past the plan's storage: what is
+ * stored, plus what open upload links may still add (a file is uploaded
+ * after its link is issued, so a link requested later must not see space an
+ * earlier, not-yet-uploaded link will fill), plus `addBytes`.
+ * `exceptIntentId` is the link being turned into a document, already counted
+ * in `addBytes`.
+ *
+ * Never call this inside an interactive transaction: on an entitlements cache
+ * miss, assertWithinLimit reads through the root client, and with the
+ * runtime's single-connection pool (src/server/db/prisma.ts) that read would
+ * wait for the connection the transaction holds until it times out.
+ *
+ * It is a check, not a reservation: requests racing in parallel can each pass
+ * it (bounded by the api rate limiter and the 25 MB per-file cap). Creator
+ * Studio reference-asset links share the upload-intent table and are counted
+ * too while open (at most 10 minutes).
+ */
+async function assertStorageAvailable(
+  client: StorageUsageClient,
+  organizationId: string,
+  addBytes: number,
+  exceptIntentId?: string,
+): Promise<void> {
+  const [stored, reserved] = await Promise.all([
+    client.document.aggregate({
+      where: { organizationId, deletedAt: null },
+      _sum: { sizeBytes: true },
+    }),
+    client.documentUploadIntent.aggregate({
+      where: {
+        organizationId,
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+        ...(exceptIntentId ? { id: { not: exceptIntentId } } : {}),
+      },
+      _sum: { maxSizeBytes: true },
+    }),
+  ]);
+  const totalBytes = (stored._sum.sizeBytes ?? 0) + (reserved._sum.maxSizeBytes ?? 0) + addBytes;
+  await assertWithinLimit(organizationId, {
+    kind: "storage_mb",
+    currentMb: Math.ceil(totalBytes / 1_048_576),
+  });
+}
+
 /** Create a tenant/user-bound, expiring upload intent and its signed storage URL. */
 export async function createUploadUrl(
   ctx: TenantContext,
   params: { fileName: string; mimeType: AllowedMimeType; sizeBytes: number },
 ): Promise<{ uploadIntentId: string; signedUrl: string; expiresAt: Date }> {
+  // Scoped by the explicit organizationId filter in assertStorageAvailable.
+  await assertStorageAvailable(unscopedPrisma, ctx.orgId, params.sizeBytes);
   const db = tenantDb(ctx.orgId);
-  const usedBytes = await db.document.aggregate({
-    where: { deletedAt: null },
-    _sum: { sizeBytes: true },
-  });
-  const currentMb = Math.ceil(((usedBytes._sum.sizeBytes ?? 0) + params.sizeBytes) / 1_048_576);
-  await assertWithinLimit(ctx.orgId, { kind: "storage_mb", currentMb });
 
   const safeName = params.fileName.replace(/[^\p{L}\w.\- ]+/gu, "_").slice(0, 120);
   const storagePath = `${ctx.orgId}/${crypto.randomUUID()}/${safeName}`;
@@ -102,6 +146,8 @@ export async function createDocument(ctx: TenantContext, input: CreateDocumentIn
       intent.maxSizeBytes,
     );
 
+    // Before the transaction, never inside it: see assertStorageAvailable.
+    await assertStorageAvailable(unscopedPrisma, ctx.orgId, objectBuffer.length, intent.id);
     document = await unscopedPrisma.$transaction(async (tx) => {
       await assertCollectionInTenant(tx, ctx.orgId, input.collectionId);
       const consumed = await tx.documentUploadIntent.updateMany({
@@ -136,6 +182,10 @@ export async function createDocument(ctx: TenantContext, input: CreateDocumentIn
     });
   } else {
     if (input.sourceType === "URL") assertSupportedUrl(input.sourceUrl);
+    // A URL's size is unknown until it is fetched, so it adds nothing here; it
+    // is still refused once storage is past the plan, or the org is read-only.
+    const addBytes = input.sourceType === "NOTE" ? Buffer.byteLength(input.content, "utf8") : 0;
+    await assertStorageAvailable(unscopedPrisma, ctx.orgId, addBytes);
     document = await unscopedPrisma.$transaction(async (tx) => {
       await assertCollectionInTenant(tx, ctx.orgId, input.collectionId);
       return tx.document.create({

@@ -378,7 +378,7 @@ describe("superseded links", () => {
 
       expect(error).toMatchObject({ name: "BookingError", code: "already_canceled" });
       expect(tx.booking.updateMany).toHaveBeenCalledWith({
-        where: { id: "bk-old", status: { notIn: ["CANCELED", "RESCHEDULED"] } },
+        where: { id: "bk-old", status: { notIn: ["CANCELED", "RESCHEDULED", "COMPLETED"] } },
         data: { status: "RESCHEDULED" },
       });
       for (const method of [

@@ -28,11 +28,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     { AuthError },
     { createDocument, DocumentIngestionError, UrlIngestionError, toDocumentView },
     { rateLimitRefusal },
+    { EntitlementError },
   ] = await Promise.all([
     import("@/server/auth/guard"),
     import("@/server/auth/session"),
     import("@/server/services/documents"),
     import("@/server/security/rate-limit"),
+    import("@/server/services/billing/entitlements"),
   ]);
 
   try {
@@ -60,6 +62,9 @@ export async function POST(request: Request): Promise<NextResponse> {
     }
     if (e instanceof UrlIngestionError) {
       return NextResponse.json({ error: { code: e.code } }, { status: 400 });
+    }
+    if (e instanceof EntitlementError) {
+      return NextResponse.json({ error: { code: e.code, limit: e.limit } }, { status: 402 });
     }
     throw e;
   }

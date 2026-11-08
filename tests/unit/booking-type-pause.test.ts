@@ -102,6 +102,7 @@ const tx = {
   },
   contact: {
     findFirst: vi.fn(async () => null),
+    findMany: vi.fn(async () => []),
     create: vi.fn(async ({ data }: { data: Row }) => ({ id: nextId("contact"), ...data })),
   },
   eventAttendee: { findFirst: vi.fn(async () => null), create: vi.fn(async () => ({})) },

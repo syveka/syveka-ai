@@ -111,6 +111,7 @@ const tx = {
   },
   contact: {
     findFirst: vi.fn(async () => null),
+    findMany: vi.fn(async () => []),
     create: vi.fn(async ({ data }: { data: Row }) => {
       const row = { id: nextId("contact"), ...data };
       s.contacts.push(row);
