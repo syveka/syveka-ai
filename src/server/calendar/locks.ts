@@ -39,11 +39,11 @@ export async function lockOwnerCalendar(
  * wide, not per-owner (CalendarEvent.ownerId is left null on AI-created
  * events), so the lock must match that scope to actually close the race.
  *
- * This intentionally does NOT serialize against lockOwnerCalendar (distinct
- * fixed second key, `0`, vs. a real owner's hashed id) - an AI-tool booking
- * and a concurrent guest-flow booking for the same underlying time slot use
- * different lock domains and are not currently reconciled. See
- * docs/DECISIONS.md for this known, deliberately deferred limitation.
+ * Guest bookings and reschedules take this lock too, before their
+ * lockOwnerCalendar (lockBookingCalendars in src/server/services/booking.ts):
+ * an AI-booked event counts as its creator's busy time there, so the two
+ * flows must serialize on one domain. Always take this lock before any owner
+ * lock. See docs/DECISIONS.md.
  */
 export async function lockOrgCalendar(tx: Prisma.TransactionClient, orgId: string): Promise<void> {
   await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId}), 0)`;

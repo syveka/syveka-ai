@@ -27,6 +27,7 @@ import {
   lockBookableBookingType,
   lockCalendarMember,
   lockContactEmail,
+  lockOrgCalendar,
   lockOwnerCalendar,
 } from "@/server/calendar/locks";
 import type { TenantContext } from "@/server/auth/session";
@@ -70,6 +71,24 @@ function splitGuestName(fullName: string): { firstName: string; lastName: string
     firstName: trimmed.slice(0, spaceIndex),
     lastName: trimmed.slice(spaceIndex + 1).trim() || null,
   };
+}
+
+/**
+ * The locks a guest booking or reschedule takes before its conflict re-check.
+ * The organization calendar lock first: it is the one AI `bookMeeting`
+ * (src/server/ai/tools/index.ts) serializes on, and an AI-booked event (owner
+ * null, created by the chat user) counts as that user's busy time in
+ * assertSlotStillFree, so without it a guest booking and the owner's own AI
+ * booking for the same slot could both pass their re-check. Every path takes
+ * the organization lock before any owner lock, so they can't deadlock.
+ */
+async function lockBookingCalendars(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+  ownerId: string,
+): Promise<void> {
+  await lockOrgCalendar(tx, orgId);
+  await lockOwnerCalendar(tx, orgId, ownerId);
 }
 
 /**
@@ -496,7 +515,7 @@ export async function createPublicBooking(params: {
 
   const created = await unscopedPrisma.$transaction(async (tx) => {
     await assertStillBookable(tx, bookingType);
-    await lockOwnerCalendar(tx, orgId, bookingType.ownerId);
+    await lockBookingCalendars(tx, orgId, bookingType.ownerId);
     await assertSlotStillFree(
       tx,
       orgId,
@@ -922,7 +941,7 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
     // Moving a booking creates a new one for this type: same eligibility as a
     // new public booking (an existing booking can still be canceled).
     await assertStillBookable(tx, bookingType);
-    await lockOwnerCalendar(tx, orgId, bookingType.ownerId);
+    await lockBookingCalendars(tx, orgId, bookingType.ownerId);
     await assertSlotStillFree(
       tx,
       orgId,
