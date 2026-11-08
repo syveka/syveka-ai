@@ -28,6 +28,38 @@ These documents complement, and do not replace:
 - `docs/pilot-entitlement-grants-runbook.md`
 - `docs/release-runbook.md`
 
+## Update: second engineering round (draft PRs #418–#424)
+
+Every engineering blocker that needed no production access was worked in separate draft PRs.
+None is merged or deployed. All evidence comes from unit tests, real-browser tests against
+faked APIs, and CI. Nothing ran against staging or production, and no paid provider was
+called.
+
+| PR   | What                                                                                                                                 | CI on head                                                                        |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------- |
+| #418 | AI vs guest booking race closed (one lock domain); `saveSchedule` fully atomic; booking browser journeys; 3 booking UI defects fixed | run on `c653940` pending at writing; the earlier head passed locally (4930 tests) |
+| #419 | Upload links serialized per org; refused uploads discarded safely; chat storage message                                              | green (`ccc388b`)                                                                 |
+| #420 | VIEWER can't spend AI quota; member role and removal rate-limited, refusals shown inline                                             | green (`6d9fec7`)                                                                 |
+| #421 | No higher plan stored from a past_due/unpaid subscription (**partial** fix of #394 defect 4)                                         | green (`7c661aa`)                                                                 |
+| #422 | Browser acceptance for chat Business DNA confirm/cancel, Arabic RTL and phone width                                                  | green (`a3608c1`); merge head pending                                             |
+| #423 | Atomic AI message reservation; aborted and failed turns metered                                                                      | green (`8ce285b`)                                                                 |
+| #424 | Past-due grace measured from `pastDueSince` (migration)                                                                              | fails only the two migration-registration checks; owner must edit protected files |
+
+**Effect on the verdict:** unchanged for a paid launch (**NO-GO**). For the controlled free
+pilot (**CONDITIONAL GO AFTER SPECIFIC CHECKS**), the engineering items are now done in code.
+What remains is the owner's work:
+
+- review and merge;
+- a staging release with E2E;
+- backups and a restore drill;
+- monitoring;
+- Stripe key mode;
+- superadmin;
+- the acceptance run;
+- a pilot data-processing agreement.
+
+Details are in `syveka-launch-blockers.md` (round-2 table) and `syveka-test-evidence.md` §7.
+
 ## A. Executive verdict
 
 **Is Syveka ready to sell today?** **No**, not as a paid product.
@@ -277,7 +309,7 @@ These need a human with credentials or authority:
 - No P0 or P1 is open.
 - The defects this review found in booking and KB were fixed and independently re-reviewed.
 
-**Why not GO:** of the 15 pilot gates, 4 PASS, 3 PARTIAL, 4 UNKNOWN and 4 BLOCKED. Except for
+**Why not GO:** of the 15 pilot gates, 4 PASS, 4 PARTIAL, 3 UNKNOWN and 4 BLOCKED (after round 2; see the update at the top). Except for
 the booking E2E, every remaining gate is an owner action:
 
 - deployment and verification of the fixed code;

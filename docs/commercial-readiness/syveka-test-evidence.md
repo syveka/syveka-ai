@@ -177,3 +177,77 @@ Each review ran as a separate, read-only agent that read the code itself.
 | Re-review of `042ebba`                              | The follow-up commit plus a recheck of `03685ac`                      | **No blocking issues remain.** Non-blocking residuals recorded (B20)                                                                                                                                         |
 
 Commits after `042ebba` change documentation only and were not code-reviewed.
+
+## 7. Second engineering round (draft PRs #418–#424)
+
+Local runs used the same container and Node 22.23.4, with each branch in a scratch worktree.
+CI is GitHub Actions `ci.yml`, which runs only on PRs whose base is `main`. The stacked PRs
+were therefore retargeted to `main`, and their diffs include #417's commits until #417 merges.
+
+### Per-PR results
+
+| PR                 | Head      | Local full Vitest                                                                             | Browser tests                               | CI                                                                                                                                                         |
+| ------------------ | --------- | --------------------------------------------------------------------------------------------- | ------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #418 booking       | `c653940` | 346 files passed, 9 skipped; **4930 passed, 55 skipped, 0 failed**                            | 32/32 (`--repeat-each=2`)                   | pending at writing                                                                                                                                         |
+| #419 KB            | `ccc388b` | earlier head `8ec7d48`: 4932 passed, 55 skipped, 0 failed; related suites on `ccc388b`: 88/88 | n/a                                         | **green** (run 42484052838)                                                                                                                                |
+| #420 RBAC          | `6d9fec7` | 345 files passed, 9 skipped; **4919 passed, 55 skipped, 0 failed**                            | n/a                                         | **green** (run 42484782838)                                                                                                                                |
+| #421 billing raise | `7c661aa` | earlier head `02d255d`: 4907 passed, 0 failed; billing suites on `7c661aa`: 161/161           | n/a                                         | **green** (run 42484874659)                                                                                                                                |
+| #422 acceptance    | `7c25cdc` | (test-only)                                                                                   | 30/30; 52/52 earlier with `--repeat-each=2` | `a3608c1` **green** (run 42485615879); merge head pending                                                                                                  |
+| #423 AI quota      | `8ce285b` | author's run on `3a55e13`: 4912 passed, 0 failed; chat suites on `8ce285b`: 225/225           | n/a                                         | **green** (run 42485435660)                                                                                                                                |
+| #424 pastDueSince  | `977d921` | **1 failed** (expected: legacy-schema contract), 4916 passed, 55 skipped                      | n/a                                         | **fails only** "Migration structure validation" and that unit test; the RLS jobs, which apply the full migration history including the new migration, pass |
+
+Typecheck, lint, format (tracked files) and i18n parity passed on every branch head listed.
+`npm run build` was not re-run for round 2; CI's "Production build" job covers it on every
+green run above.
+
+### Fail-first evidence
+
+Every new regression test was run against the code before its fix. In each case the failure
+was observed, or a mutation was used to prove the test can fail. Examples:
+
+- booking-service lock order (3 tests);
+- the `saveSchedule` rollback;
+- browser "slot taken" (the bug it found);
+- the reschedule "slot taken" message and clearing the error on a new choice;
+- the KB parallel-link, discard and root-in-transaction checks (mutation);
+- composer 402 mapping;
+- VIEWER refused; member write limits and inline refusals;
+- held plan raise; canceled-row basis;
+- the `pastDueSince` clock (13 tests, plus 2 for the backdating fix);
+- the quota reservation (10 of 11 fail on `main`) and the slow release;
+- harness isolation (`ERR_NAME_NOT_RESOLVED` before, `ERR_FAILED` after).
+
+### Independent reviews (round 2)
+
+| Scope                              | Result                                                                                                                                                                             |
+| ---------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| #418 booking                       | No blocking issue. Should-fixes (full schedule atomicity, reschedule message, stale error, fake fidelity, DECISIONS note) addressed in `c653940`                                   |
+| #419 KB                            | **1 blocking issue:** the discard could delete a just-created document's file. Fixed in `ccc388b` with a test. Should-fixes (root-in-tx detection, 402 mapping, comment) addressed |
+| #420 RBAC                          | No blocking issue. Should-fixes (inline refusals instead of an error page or silent failure) addressed in `6d9fec7`                                                                |
+| #421 billing                       | No blocking issue. Partial-fix wording and the effective-plan comparison addressed in `7c661aa`                                                                                    |
+| #424 pastDueSince                  | Blocked only on owner registration (3 protected files, verified). Event-time backdating addressed in `977d921`                                                                     |
+| #423 quota                         | No blocking issue. Slow-release stream close addressed in `8ce285b`. Other AI_MESSAGES callers are a recorded follow-up                                                            |
+| #422 acceptance                    | No blocking issue. Harness isolation fixed in `a3608c1`                                                                                                                            |
+| Re-review of all follow-up commits | in progress at writing; see the PR descriptions for the outcome                                                                                                                    |
+
+### PR #394 analysis
+
+This was a read-only analysis of #394's head `ccb7578`; its tests pass (271/271). All four claimed defects are real on `main`:
+
+1. The portal drops the chosen plan.
+2. The scheduled cancellation is never shown.
+3. Monthly↔annual switching is impossible.
+4. A failed upgrade payment can grant PRO unpaid.
+
+Defect 4 is unreachable in a free pilot. For a paid launch it is a medium revenue leak.
+
+**Recommendation: split it.**
+
+- The security part as a small fail-closed PR: #421, which is partial.
+- The portal, cancellation and interval UX as a separate PR.
+
+**Reasons:** `planRaiseHold` is about 250 lines; it depends on Stripe invoice shapes and
+`retrieveUpcoming`; it makes up to about 100 Stripe reads per event; and with
+`create_prorations` an upgrader can stay on Starter until the next renewal.
+
+Owner decision required. Any merge needs explicit authorization.

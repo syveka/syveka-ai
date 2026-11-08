@@ -3,6 +3,24 @@
 This matrix answers how ready each module is to sell. It uses the readiness states defined
 below and the evidence in `syveka-test-evidence.md`.
 
+## Round 2 (draft PRs #418–#424, not merged)
+
+Rows below are the round-1 assessment. These changes apply once the PRs are merged and deployed:
+
+- **Booking and calendar:**
+  - the AI/guest race (B9) and schedule-save atomicity are fixed;
+  - browser-level journeys exist (#418, #422).
+  - Classification stays READY AFTER MINOR FIXES until it is merged and deployed; no engineering remains for the pilot.
+- **Knowledge base:** the B20 residuals are fixed (#419).
+- **AI chat:**
+  - the quota race and unmetered aborted turns are fixed (#423);
+  - VIEWER can no longer spend quota (#420);
+  - Business DNA confirm/cancel is verified in a browser in Arabic RTL and at phone width (#422, mocked server).
+- **Billing:**
+  - #421 closes the past_due/unpaid unpaid-upgrade route (partial);
+  - #424 fixes the dunning clock (blocked on owner registration of the migration).
+  - Still BLOCKED BY EXTERNAL VERIFICATION.
+
 ## Readiness states
 
 - **Code**: the module exists in source.

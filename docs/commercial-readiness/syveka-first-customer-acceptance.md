@@ -17,13 +17,14 @@ evidence (screenshots, the times shown, the `/api/health` body) in the pilot rec
 
 ## A. Automated checks (owner dispatches, or CI)
 
-| #   | Check                                                                                     | Command or workflow                                     | Result |
-| --- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------- | ------ |
-| A1  | Required CI on the release SHA is green                                                   | `ci.yml` on the PR/merge                                |        |
-| A2  | Staging release validation (migrations, invariants, RLS, Playwright smoke + Business DNA) | `staging-release.yml` (owner dispatch)                  |        |
-| A3  | Opt-in auth and invite journeys on the stable staging host                                | `staging-invite-journeys.yml` / `auth-journeys.spec.ts` |        |
-| A4  | `/api/health` → `healthy`, `database: ok`, `redis: ok`, `build` = release SHA             | `curl https://<host>/api/health`                        |        |
-| A5  | Booking journey E2E (**to be written**, B5)                                               | new opt-in spec                                         |        |
+| #   | Check                                                                                     | Command or workflow                                                                           | Result |
+| --- | ----------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------- | ------ |
+| A1  | Required CI on the release SHA is green                                                   | `ci.yml` on the PR/merge                                                                      |        |
+| A2  | Staging release validation (migrations, invariants, RLS, Playwright smoke + Business DNA) | `staging-release.yml` (owner dispatch)                                                        |        |
+| A3  | Opt-in auth and invite journeys on the stable staging host                                | `staging-invite-journeys.yml` / `auth-journeys.spec.ts`                                       |        |
+| A4  | `/api/health` → `healthy`, `database: ok`, `redis: ok`, `build` = release SHA             | `curl https://<host>/api/health`                                                              |        |
+| A5  | Booking and chat-confirm journeys in a real browser against faked APIs (#418, #422)       | `npm run test:browser` (local; set `PW_CHROMIUM_EXECUTABLE_PATH` for a preinstalled Chromium) |        |
+| A6  | The same journeys on the deployed pilot environment                                       | owner-observed, §B journeys 2 and 3                                                           |        |
 
 ## B. Manual journeys
 
