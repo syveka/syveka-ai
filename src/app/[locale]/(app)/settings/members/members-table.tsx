@@ -79,29 +79,27 @@ function MemberControls({
   roleLabel: (role: string) => string;
 }) {
   const t = useTranslations("settingsMembers");
-  const [roleState, roleAction, rolePending] = useActionState<MemberActionState, FormData>(
-    (_prev, fd) => {
-      fd.set("memberId", member.id);
-      return changeRoleAction({}, fd);
-    },
-    {},
-  );
-  const [removeState, removeAction, removePending] = useActionState<MemberActionState, FormData>(
-    () => removeMemberAction(member.id),
-    {},
-  );
-  const error = removeState.error ?? roleState.error;
+  // One state for both controls: what is shown is the outcome of the latest
+  // change, so an earlier refusal never lingers after a later success.
+  const [state, action, pending] = useActionState<MemberActionState, FormData>((_prev, fd) => {
+    if (fd.get("intent") === "remove") return removeMemberAction(member.id);
+    fd.delete("intent");
+    fd.set("memberId", member.id);
+    return changeRoleAction({}, fd);
+  }, {});
+  const error = state.error;
   const alertId = `member-change-error-${member.id}`;
   return (
     <div className="flex flex-col items-end gap-1">
       <div className="flex items-center gap-2">
-        <form action={roleAction}>
+        <form action={action}>
+          <input type="hidden" name="intent" value="role" />
           <select
             name="role"
             aria-label={t("changeRoleLabel", { name: member.name ?? member.email })}
             aria-describedby={error ? alertId : undefined}
             defaultValue={member.role}
-            disabled={rolePending}
+            disabled={pending}
             onChange={(e) => e.currentTarget.form?.requestSubmit()}
             className="h-8 rounded-md border border-input bg-transparent px-2 text-xs"
           >
@@ -112,12 +110,13 @@ function MemberControls({
             ))}
           </select>
         </form>
-        <form action={removeAction}>
+        <form action={action}>
+          <input type="hidden" name="intent" value="remove" />
           <Button
             variant="ghost"
             size="sm"
             type="submit"
-            disabled={removePending}
+            disabled={pending}
             className="text-destructive"
             aria-label={t("removeLabel", { name: member.name ?? member.email })}
             aria-describedby={error ? alertId : undefined}

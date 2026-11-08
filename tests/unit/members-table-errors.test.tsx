@@ -91,6 +91,17 @@ describe("refused member changes are shown next to the controls", () => {
     expect(await screen.findByRole("alert")).toHaveProperty("textContent", t.memberChangeFailed);
   });
 
+  it("an earlier refusal doesn't linger after a later successful change", async () => {
+    actions.removeMemberAction.mockResolvedValue({ error: "rate_limited" });
+    actions.changeRoleAction.mockResolvedValue({ message: "updated" });
+    renderTable();
+    fireEvent.click(screen.getByRole("button", { name: /Mira/ }));
+    expect(await screen.findByRole("alert")).toBeTruthy();
+    fireEvent.change(screen.getByRole("combobox"), { target: { value: "ADMIN" } });
+    await waitFor(() => expect(actions.changeRoleAction).toHaveBeenCalled());
+    await waitFor(() => expect(screen.queryByRole("alert")).toBeNull());
+  });
+
   it("a successful change shows no error", async () => {
     actions.removeMemberAction.mockResolvedValue({ message: "removed" });
     renderTable();
