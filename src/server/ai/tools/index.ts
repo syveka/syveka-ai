@@ -16,7 +16,7 @@ import {
   localIsoDate,
   zonedTimeToUtc,
 } from "@/server/calendar/timezone";
-import { lockOrgCalendar } from "@/server/calendar/locks";
+import { CalendarBusyError, lockOrgCalendar } from "@/server/calendar/locks";
 import {
   BUSY_ROW_ORDER,
   BUSY_ROW_SELECT,
@@ -442,7 +442,8 @@ const getCalendarAvailability = defineTool({
   },
 });
 
-type BookMeetingResult = { ok: true; eventId: string } | { ok: false; reason: "slot_taken" };
+type BookMeetingResult =
+  { ok: true; eventId: string } | { ok: false; reason: "slot_taken" | "calendar_busy" };
 
 /**
  * Whether `startsAt` is one of the bookable slots of the org's availability schedule on that
@@ -524,61 +525,66 @@ const bookMeeting = defineTool({
     // Books into the org's single shared calendar (see getCalendarAvailability's
     // matching org-wide busy check, and lockOrgCalendar's comment) - conflicts
     // are checked and serialized organization-wide, not per calendar owner.
-    const result = await unscopedPrisma.$transaction(async (tx): Promise<BookMeetingResult> => {
-      await lockOrgCalendar(tx, id.orgId);
+    const result = await unscopedPrisma
+      .$transaction(async (tx): Promise<BookMeetingResult> => {
+        await lockOrgCalendar(tx, id.orgId);
 
-      const conflict = await tx.calendarEvent.findFirst({
-        where: {
-          organizationId: id.orgId,
-          deletedAt: null,
-          status: { not: "CANCELED" },
-          startsAt: { lt: endsAt },
-          endsAt: { gt: startsAt },
-        },
-        select: { id: true },
-      });
-      if (conflict) return { ok: false, reason: "slot_taken" };
-      // A recurring series is stored once: check its occurrences too.
-      const { rows: series, complete } = await loadBusyRows((page) =>
-        tx.calendarEvent.findMany({
+        const conflict = await tx.calendarEvent.findFirst({
           where: {
             organizationId: id.orgId,
             deletedAt: null,
             status: { not: "CANCELED" },
-            ...recurringSeriesWhere(endsAt),
+            startsAt: { lt: endsAt },
+            endsAt: { gt: startsAt },
           },
-          select: BUSY_ROW_SELECT,
-          orderBy: BUSY_ROW_ORDER,
-          ...page,
-        }),
-      );
-      if (busyIntervals(series, startsAt, endsAt, { complete }).length > 0) {
-        return { ok: false, reason: "slot_taken" };
-      }
-
-      if (input.contactId) {
-        // Tenancy check (mirrors logActivity): a model-supplied contactId is
-        // untrusted input and CalendarEvent.contactId has no DB-level FK, so
-        // nothing else would catch a cross-tenant or nonexistent id here.
-        await tx.contact.findFirstOrThrow({
-          where: { id: input.contactId, organizationId: id.orgId, deletedAt: null },
+          select: { id: true },
         });
-      }
+        if (conflict) return { ok: false, reason: "slot_taken" };
+        // A recurring series is stored once: check its occurrences too.
+        const { rows: series, complete } = await loadBusyRows((page) =>
+          tx.calendarEvent.findMany({
+            where: {
+              organizationId: id.orgId,
+              deletedAt: null,
+              status: { not: "CANCELED" },
+              ...recurringSeriesWhere(endsAt),
+            },
+            select: BUSY_ROW_SELECT,
+            orderBy: BUSY_ROW_ORDER,
+            ...page,
+          }),
+        );
+        if (busyIntervals(series, startsAt, endsAt, { complete }).length > 0) {
+          return { ok: false, reason: "slot_taken" };
+        }
 
-      const event = await tx.calendarEvent.create({
-        data: {
-          organizationId: id.orgId,
-          title: input.title,
-          description: input.notes,
-          startsAt,
-          endsAt,
-          contactId: input.contactId,
-          createdById: id.userId,
-          source: id.actorType === "voice_ai" ? "VOICE_AI" : "MANUAL",
-        },
+        if (input.contactId) {
+          // Tenancy check (mirrors logActivity): a model-supplied contactId is
+          // untrusted input and CalendarEvent.contactId has no DB-level FK, so
+          // nothing else would catch a cross-tenant or nonexistent id here.
+          await tx.contact.findFirstOrThrow({
+            where: { id: input.contactId, organizationId: id.orgId, deletedAt: null },
+          });
+        }
+
+        const event = await tx.calendarEvent.create({
+          data: {
+            organizationId: id.orgId,
+            title: input.title,
+            description: input.notes,
+            startsAt,
+            endsAt,
+            contactId: input.contactId,
+            createdById: id.userId,
+            source: id.actorType === "voice_ai" ? "VOICE_AI" : "MANUAL",
+          },
+        });
+        return { ok: true, eventId: event.id };
+      })
+      .catch((error: unknown): BookMeetingResult => {
+        if (error instanceof CalendarBusyError) return { ok: false, reason: "calendar_busy" };
+        throw error;
       });
-      return { ok: true, eventId: event.id };
-    });
 
     if (!result.ok) return { booked: false, reason: result.reason };
 

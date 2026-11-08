@@ -604,6 +604,19 @@ describe("createPublicBooking", () => {
     ]);
   });
 
+  it("a calendar lock timeout is a retryable refusal, with nothing written", async () => {
+    txMock.$executeRaw.mockRejectedValueOnce(
+      Object.assign(new Error("lock timeout"), {
+        code: "P2010",
+        meta: { driverAdapterError: { cause: { originalCode: "55P03" } } },
+      }),
+    );
+    await expect(
+      createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
+    ).rejects.toMatchObject({ code: "calendar_busy" });
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
   it("busy owner calendars remove the slot up front", async () => {
     unscopedMock.calendarEvent.findMany.mockResolvedValue([
       { startsAt: new Date("2026-02-02T07:00:00Z"), endsAt: new Date("2026-02-02T08:00:00Z") },

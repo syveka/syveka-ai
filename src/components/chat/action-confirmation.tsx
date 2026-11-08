@@ -36,6 +36,8 @@ const REFUSAL_STATE: Record<string, State> = {
   // The tool ran into an error after the action was consumed: its write may
   // or may not have happened -- never claim it failed.
   action_failed: "unknown",
+  // The calendar stayed locked, so nothing was booked.
+  calendar_busy: "failed",
   // The action store couldn't be reached: the tool only runs after it answers.
   service_unavailable: "failed",
   rate_limited: "rateLimited",

@@ -24,6 +24,7 @@ import {
   recurringSeriesWhere,
 } from "@/server/calendar/busy";
 import {
+  CalendarBusyError,
   lockBookableBookingType,
   lockCalendarMember,
   lockContactEmail,
@@ -48,7 +49,8 @@ export class BookingError extends Error {
       | "invalid_slot"
       | "too_late"
       | "already_canceled"
-      | "owner_not_member",
+      | "owner_not_member"
+      | "calendar_busy",
   ) {
     super(message);
     this.name = "BookingError";
@@ -87,7 +89,14 @@ async function lockBookingCalendars(
   orgId: string,
   ownerId: string,
 ): Promise<void> {
-  await lockOrgCalendar(tx, orgId);
+  try {
+    await lockOrgCalendar(tx, orgId);
+  } catch (error) {
+    if (error instanceof CalendarBusyError) {
+      throw new BookingError("The calendar is busy; try again", "calendar_busy");
+    }
+    throw error;
+  }
   await lockOwnerCalendar(tx, orgId, ownerId);
 }
 

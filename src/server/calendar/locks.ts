@@ -44,9 +44,42 @@ export async function lockOwnerCalendar(
  * an AI-booked event counts as its creator's busy time there, so the two
  * flows must serialize on one domain. Always take this lock before any owner
  * lock. See docs/DECISIONS.md.
+ *
+ * The wait is bounded at 3 s, inside Prisma's 5 s interactive-transaction limit.
+ * An unbounded wait outlives that limit while holding the instance's only
+ * connection (src/server/db/prisma.ts), and ends in a generic failure. The limit
+ * is set in the same statement, by the subquery that runs first, and lasts to
+ * the end of the transaction. The caller decides how to report CalendarBusyError.
  */
 export async function lockOrgCalendar(tx: Prisma.TransactionClient, orgId: string): Promise<void> {
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId}), 0)`;
+  try {
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId}), 0) FROM (SELECT set_config('lock_timeout', '3000ms', true) OFFSET 0) AS bounded_wait`;
+  } catch (error) {
+    if (isLockTimeout(error)) throw new CalendarBusyError();
+    throw error;
+  }
+}
+
+/** The organization calendar stayed locked past the wait limit. Nothing was written. */
+export class CalendarBusyError extends Error {
+  constructor() {
+    super("Timed out waiting for the organization calendar lock");
+    this.name = "CalendarBusyError";
+  }
+}
+
+const LOCK_NOT_AVAILABLE = "55P03";
+
+/** Prisma reports a Postgres lock_timeout as P2010, with the SQLSTATE in its driver cause. */
+function isLockTimeout(error: unknown): boolean {
+  const failure = error as {
+    code?: string;
+    meta?: { driverAdapterError?: { cause?: { originalCode?: string } } };
+  } | null;
+  return (
+    failure?.code === "P2010" &&
+    failure.meta?.driverAdapterError?.cause?.originalCode === LOCK_NOT_AVAILABLE
+  );
 }
 
 /**

@@ -511,6 +511,18 @@ describe("deciding (only the user, only once, only that action)", () => {
     nothingWritten();
   });
 
+  it("a calendar lock timeout is a failure to complete, never reported as a taken slot", async () => {
+    m.tx.$executeRaw.mockRejectedValueOnce(
+      Object.assign(new Error("lock timeout"), {
+        code: "P2010",
+        meta: { driverAdapterError: { cause: { originalCode: "55P03" } } },
+      }),
+    );
+    const a = (await propose("bookMeeting", booking())).action!;
+    expect(await decide(a)).toEqual({ ok: false, reason: "calendar_busy" });
+    nothingWritten();
+  });
+
   it("a taken slot is reported as not done; it isn't retried", async () => {
     m.tx.calendarEvent.findFirst.mockResolvedValueOnce({ id: "busy" });
     const a = (await propose("bookMeeting", booking())).action!;
@@ -621,6 +633,25 @@ describe("POST /api/v1/ai/actions/{id}", () => {
     m.ctx = { orgId: OTHER_ORG, userId: OTHER_USER, role: "OWNER" };
     expect((await post(a.id, bodyFor(a))).status).toBe(404);
     nothingWritten();
+  });
+
+  it("a calendar lock timeout answers 503 and is recorded as failed, not unknown", async () => {
+    m.tx.$executeRaw.mockRejectedValueOnce(
+      Object.assign(new Error("lock timeout"), {
+        code: "P2010",
+        meta: { driverAdapterError: { cause: { originalCode: "55P03" } } },
+      }),
+    );
+    const a = (await propose("bookMeeting", booking())).action!;
+    const res = await post(a.id, bodyFor(a));
+    expect(res.status).toBe(503);
+    expect((await res.json()).error.code).toBe("calendar_busy");
+    expect(m.audit).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ after: expect.objectContaining({ outcome: "failed" }) }),
+    );
+    nothingWritten();
+    expect((await post(a.id, bodyFor(a))).status).toBe(409);
   });
 
   it("a user downgraded to VIEWER after the proposal gets 403; nothing runs", async () => {
