@@ -122,7 +122,11 @@ validate`/`generate`, migration history check) after the override, all passing. 
   counts as that user's busy time in the guest flow's re-check, so before this a guest booking and
   the owner's own AI booking for the same slot could both commit. The cost is that guest bookings
   within one organization now serialize with each other (each transaction is short). Lock order is
-  always organization lock first, then owner lock.
+  always organization lock first, then owner lock. Events the owner creates in the calendar
+  (`calendar.ts` `createEvent`) and events imported by calendar sync (`calendar-sync.ts`) take no
+  booking lock: they make no free-slot check (an owner may overlap their own calendar), so there is
+  no check for a lock to protect. A guest or AI booking that commits after them sees them in its
+  own re-check.
 - **A model-supplied tool argument referencing another record (e.g. `bookMeeting`'s optional
   `contactId`) must be tenancy-checked before use if the referenced column has no DB-level foreign
   key.** Found during the same review: `CalendarEvent.contactId` has no `@relation` in

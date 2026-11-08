@@ -286,7 +286,11 @@ export function BookingWidget({
                       key={s}
                       variant={selectedSlot === s ? "default" : "outline"}
                       size="sm"
-                      onClick={() => setSelectedSlot(s)}
+                      onClick={() => {
+                        // A new choice starts afresh: no stale message in the new form.
+                        setError(null);
+                        setSelectedSlot(s);
+                      }}
                       style={
                         selectedSlot === s && brandColor
                           ? { backgroundColor: brandColor }
