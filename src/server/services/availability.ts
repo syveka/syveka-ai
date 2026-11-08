@@ -97,30 +97,35 @@ export async function saveSchedule(
     });
   }
 
-  // Child rows are parent-scoped; the parent was verified above.
-  await unscopedPrisma.availabilityRule.deleteMany({ where: { scheduleId: id } });
-  if (input.rules.length > 0) {
-    await unscopedPrisma.availabilityRule.createMany({
-      data: input.rules.map((r) => ({
-        scheduleId: id!,
-        weekday: r.weekday,
-        startMinute: r.startMinute,
-        endMinute: r.endMinute,
-      })),
-    });
-  }
-  await unscopedPrisma.availabilityOverride.deleteMany({ where: { scheduleId: id } });
-  if (input.overrides.length > 0) {
-    await unscopedPrisma.availabilityOverride.createMany({
-      data: input.overrides.map((o) => ({
-        scheduleId: id!,
-        date: new Date(`${o.date}T00:00:00.000Z`),
-        startMinute: o.isUnavailable ? null : o.startMinute,
-        endMinute: o.isUnavailable ? null : o.endMinute,
-        isUnavailable: o.isUnavailable,
-      })),
-    });
-  }
+  // Child rows are parent-scoped; the parent was verified above. Replaced in
+  // one transaction: a failure part-way must leave the previous rules, not a
+  // schedule with none (every booking page using it would offer no slots).
+  const scheduleIdForRows = id;
+  await unscopedPrisma.$transaction(async (tx) => {
+    await tx.availabilityRule.deleteMany({ where: { scheduleId: scheduleIdForRows } });
+    if (input.rules.length > 0) {
+      await tx.availabilityRule.createMany({
+        data: input.rules.map((r) => ({
+          scheduleId: scheduleIdForRows,
+          weekday: r.weekday,
+          startMinute: r.startMinute,
+          endMinute: r.endMinute,
+        })),
+      });
+    }
+    await tx.availabilityOverride.deleteMany({ where: { scheduleId: scheduleIdForRows } });
+    if (input.overrides.length > 0) {
+      await tx.availabilityOverride.createMany({
+        data: input.overrides.map((o) => ({
+          scheduleId: scheduleIdForRows,
+          date: new Date(`${o.date}T00:00:00.000Z`),
+          startMinute: o.isUnavailable ? null : o.startMinute,
+          endMinute: o.isUnavailable ? null : o.endMinute,
+          isUnavailable: o.isUnavailable,
+        })),
+      });
+    }
+  });
 
   await audit(ctx, {
     action: scheduleId ? "availability.update" : "availability.create",
