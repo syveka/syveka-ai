@@ -28,6 +28,7 @@ const CONSUMED_FAILURES: Record<string, "failed" | "unknown"> = {
   permission_denied: "failed",
   invalid_action: "failed",
   plan_limit: "failed",
+  calendar_busy: "failed",
   action_failed: "unknown",
 };
 
@@ -38,6 +39,7 @@ const REFUSALS = {
   permission_denied: 403,
   invalid_action: 422,
   plan_limit: 402,
+  calendar_busy: 503,
   action_failed: 500,
 } as const;
 

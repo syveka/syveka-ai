@@ -229,7 +229,8 @@ export type ActionOutcome =
         | "permission_denied"
         | "invalid_action"
         | "plan_limit"
-        | "action_failed";
+        | "action_failed"
+        | "calendar_busy";
     };
 
 const DECIDE_ERRORS = {
@@ -318,8 +319,9 @@ export async function decideToolAction(
               : "action_failed",
     };
   } else if (result.booked === false && result.reason === "calendar_busy") {
-    // The slot may still be free: only "could not be completed, try again" is true.
-    outcome = { ok: false, reason: "action_failed" };
+    // Nothing was written and the slot may still be free: neither "taken" nor
+    // action_failed (which means the tool may have written) would be true.
+    outcome = { ok: false, reason: "calendar_busy" };
   } else if (result.booked === false) {
     outcome = { ok: true, tool, status: "not_done", reason: "slot_taken" };
   } else if (result.applied === false) {
