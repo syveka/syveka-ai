@@ -20,6 +20,8 @@ const m = vi.hoisted(() => ({
   recorded: 0,
   limit: 50,
   events: [] as string[],
+  /** While set, releasing a reservation waits for it (a slow Redis). */
+  releaseHold: null as null | Promise<void>,
   monthUsageGate: null as null | {
     waiting: number;
     parties: number;
@@ -62,6 +64,7 @@ vi.mock("@/server/integrations/redis", () => {
           return set.size;
         }
         if (script.includes("ZREM")) {
+          if (m.releaseHold) await m.releaseHold;
           m.events.push("release");
           return set.delete(args[0]!) ? 1 : 0;
         }
@@ -235,6 +238,27 @@ describe("AI message quota reservation", () => {
     expect(await res.text()).toContain('"type":"done"');
     expect(m.events).toEqual(["reserve", "record:AI_MESSAGES", "release"]);
     expect(inFlight()).toBe(0);
+  });
+
+  it("a slow release doesn't hold the finished stream open", async () => {
+    let unblock: () => void = () => undefined;
+    m.releaseHold = new Promise<void>((resolve) => (unblock = resolve));
+    try {
+      const res = await chat();
+      // The body ends (controller closed) while the release is still waiting.
+      const body = await Promise.race([
+        res.text(),
+        new Promise<string>((_, reject) =>
+          setTimeout(() => reject(new Error("stream still open")), 1_000),
+        ),
+      ]);
+      expect(body).toContain('"type":"done"');
+      expect(m.events).toEqual(["reserve", "record:AI_MESSAGES"]);
+    } finally {
+      unblock();
+      m.releaseHold = null;
+    }
+    await vi.waitFor(() => expect(m.events).toContain("release"));
   });
 
   it("refused before the model call (input moderation): reservation released, nothing recorded", async () => {

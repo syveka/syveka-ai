@@ -634,9 +634,14 @@ async function handleChat(request: Request, holder: ReservationHolder): Promise<
         send({ type: "error", code: "generation_failed" });
       } finally {
         clearInterval(heartbeat);
-        // Only now: the turn's usage (if any) has been recorded above.
-        await releaseAiMessage(reservation);
-        controller.close();
+        // Close first: the client has its answer, and a slow Redis must not
+        // keep the connection open. Release only now that the turn's usage
+        // (if any) has been recorded above; still released if close throws.
+        try {
+          controller.close();
+        } finally {
+          await releaseAiMessage(reservation);
+        }
       }
     },
   });
