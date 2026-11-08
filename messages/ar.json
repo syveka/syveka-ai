@@ -240,6 +240,7 @@
       "generation_failed": "فشل إنشاء الرد. حاول مرة أخرى.",
       "network_error": "انقطع الاتصال. حاول مرة أخرى.",
       "upload_failed": "تعذر رفع الملف.",
+      "storage_quota": "تم بلوغ حد التخزين — قم بترقية خطتك.",
       "unsupported_file": "استخدم ملف PDF أو DOCX أو TXT.",
       "file_too_large": "يجب ألا يتجاوز حجم الملف 25 ميغابايت.",
       "invalid_document": "أحد الملفات المرفقة غير متاح.",

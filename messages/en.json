@@ -240,6 +240,7 @@
       "generation_failed": "Generation failed. Please try again.",
       "network_error": "Connection lost. Please try again.",
       "upload_failed": "The file could not be uploaded.",
+      "storage_quota": "Storage limit reached — upgrade your plan.",
       "unsupported_file": "Use a PDF, DOCX or TXT file.",
       "file_too_large": "The file must be 25 MB or smaller.",
       "invalid_document": "One of the attached files is unavailable.",

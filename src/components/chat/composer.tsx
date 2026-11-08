@@ -11,6 +11,11 @@ import { MicrophoneButton, VoiceStatusBar } from "./voice-input";
 
 type Attachment = { id: string; title: string };
 
+/** 402: the plan's Knowledge Base storage is full (attachments are KB documents). */
+function uploadErrorFor(response: Response): "storage_quota" | "upload_failed" {
+  return response.status === 402 ? "storage_quota" : "upload_failed";
+}
+
 export function Composer({
   onSend,
   onAbort,
@@ -130,7 +135,7 @@ export function Composer({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ fileName: file.name, mimeType, sizeBytes: file.size }),
       });
-      if (!uploadUrlResponse.ok) throw new Error("upload_failed");
+      if (!uploadUrlResponse.ok) throw new Error(uploadErrorFor(uploadUrlResponse));
       const uploadUrlBody = (await uploadUrlResponse.json()) as {
         data: { uploadIntentId: string; signedUrl: string };
       };
@@ -146,7 +151,7 @@ export function Composer({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ title, uploadIntentId: uploadUrlBody.data.uploadIntentId }),
       });
-      if (!finalizeResponse.ok) throw new Error("upload_failed");
+      if (!finalizeResponse.ok) throw new Error(uploadErrorFor(finalizeResponse));
       const finalized = (await finalizeResponse.json()) as {
         data: { id: string; title: string };
       };
@@ -155,8 +160,12 @@ export function Composer({
           ? current
           : [...current, finalized.data],
       );
-    } catch {
-      setUploadError("upload_failed");
+    } catch (error) {
+      setUploadError(
+        error instanceof Error && error.message === "storage_quota"
+          ? "storage_quota"
+          : "upload_failed",
+      );
     } finally {
       setUploading(false);
     }
