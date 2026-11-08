@@ -3,11 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
   const tx = {
     collection: { findFirst: vi.fn() },
-    document: {
-      create: vi.fn(),
-      aggregate: vi.fn(async () => ({ _sum: { sizeBytes: 0 } })),
-    },
-    documentUploadIntent: { aggregate: vi.fn(async () => ({ _sum: { maxSizeBytes: 0 } })) },
+    document: { create: vi.fn() },
   };
   return {
     tx,
@@ -20,7 +16,14 @@ const mocks = vi.hoisted(() => {
 
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: vi.fn(),
-  unscopedPrisma: { $transaction: mocks.transaction, document: { update: mocks.documentUpdate } },
+  unscopedPrisma: {
+    $transaction: mocks.transaction,
+    document: {
+      update: mocks.documentUpdate,
+      aggregate: vi.fn(async () => ({ _sum: { sizeBytes: 0 } })),
+    },
+    documentUploadIntent: { aggregate: vi.fn(async () => ({ _sum: { maxSizeBytes: 0 } })) },
+  },
 }));
 vi.mock("@/server/supabase/server", () => ({ createSupabaseAdmin: vi.fn() }));
 vi.mock("@/server/jobs/queue", () => ({ enqueue: mocks.enqueue }));

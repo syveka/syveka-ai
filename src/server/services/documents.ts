@@ -43,9 +43,20 @@ type StorageUsageClient = Pick<Prisma.TransactionClient, "document" | "documentU
 /**
  * Refuses when the knowledge base would go past the plan's storage: what is
  * stored, plus what open upload links may still add (a file is uploaded
- * after its link is issued, so several links requested together must not
- * each see the same free space), plus `addBytes`. `exceptIntentId` is the
- * link being turned into a document, already counted in `addBytes`.
+ * after its link is issued, so a link requested later must not see space an
+ * earlier, not-yet-uploaded link will fill), plus `addBytes`.
+ * `exceptIntentId` is the link being turned into a document, already counted
+ * in `addBytes`.
+ *
+ * Never call this inside an interactive transaction: on an entitlements cache
+ * miss, assertWithinLimit reads through the root client, and with the
+ * runtime's single-connection pool (src/server/db/prisma.ts) that read would
+ * wait for the connection the transaction holds until it times out.
+ *
+ * It is a check, not a reservation: requests racing in parallel can each pass
+ * it (bounded by the api rate limiter and the 25 MB per-file cap). Creator
+ * Studio reference-asset links share the upload-intent table and are counted
+ * too while open (at most 10 minutes).
  */
 async function assertStorageAvailable(
   client: StorageUsageClient,
@@ -135,9 +146,10 @@ export async function createDocument(ctx: TenantContext, input: CreateDocumentIn
       intent.maxSizeBytes,
     );
 
+    // Before the transaction, never inside it: see assertStorageAvailable.
+    await assertStorageAvailable(unscopedPrisma, ctx.orgId, objectBuffer.length, intent.id);
     document = await unscopedPrisma.$transaction(async (tx) => {
       await assertCollectionInTenant(tx, ctx.orgId, input.collectionId);
-      await assertStorageAvailable(tx, ctx.orgId, objectBuffer.length, intent.id);
       const consumed = await tx.documentUploadIntent.updateMany({
         where: {
           id: intent.id,
@@ -173,9 +185,9 @@ export async function createDocument(ctx: TenantContext, input: CreateDocumentIn
     // A URL's size is unknown until it is fetched, so it adds nothing here; it
     // is still refused once storage is past the plan, or the org is read-only.
     const addBytes = input.sourceType === "NOTE" ? Buffer.byteLength(input.content, "utf8") : 0;
+    await assertStorageAvailable(unscopedPrisma, ctx.orgId, addBytes);
     document = await unscopedPrisma.$transaction(async (tx) => {
       await assertCollectionInTenant(tx, ctx.orgId, input.collectionId);
-      await assertStorageAvailable(tx, ctx.orgId, addBytes);
       return tx.document.create({
         data: {
           organizationId: ctx.orgId,

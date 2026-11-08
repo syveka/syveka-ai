@@ -36,6 +36,7 @@ const db = vi.hoisted(() => {
   };
   return {
     tx,
+    transaction: vi.fn(async (fn: (client: typeof tx) => unknown) => fn(tx)),
     documentAggregate,
     intentAggregate,
     intentCreate: vi.fn(async () => ({ id: INTENT })),
@@ -67,7 +68,7 @@ vi.mock("@/server/db/tenant", () => ({
     entitlementGrant: { findMany: vi.fn(async () => []) },
     document: { aggregate: db.documentAggregate, update: vi.fn() },
     documentUploadIntent: { aggregate: db.intentAggregate, findFirst: db.intentFindFirst },
-    $transaction: vi.fn(async (fn: (tx: typeof db.tx) => unknown) => fn(db.tx)),
+    $transaction: db.transaction,
   },
 }));
 
@@ -191,6 +192,30 @@ describe("creating the document re-checks with the real size", () => {
       }),
     ).rejects.toBeInstanceOf(EntitlementError);
     expect(db.tx.document.create).not.toHaveBeenCalled();
+  });
+
+  // The runtime pool has one connection (src/server/db/prisma.ts): the entitlement
+  // lookup on a cache miss uses the root client, so inside an open transaction it
+  // would wait for the connection that transaction holds until the transaction
+  // times out. Every storage read must finish before the transaction opens.
+  it.each([
+    ["UPLOAD", { sourceType: "UPLOAD", title: "Menu", uploadIntentId: INTENT }],
+    ["NOTE", { sourceType: "NOTE", title: "Hours", content: "Open 9–17" }],
+    ["URL", { sourceType: "URL", title: "Site", sourceUrl: "https://example.com/menu" }],
+  ] as const)("%s: the storage check runs before the transaction opens", async (_kind, input) => {
+    s.objectBytes = 1 * MB;
+    const order: string[] = [];
+    db.transaction.mockImplementationOnce(async (fn: (client: typeof db.tx) => unknown) => {
+      order.push("transaction");
+      return fn(db.tx);
+    });
+    db.documentAggregate.mockImplementation(async () => {
+      order.push("storage");
+      return { _sum: { sizeBytes: s.storedBytes } };
+    });
+    await createDocument(ctx, input);
+    expect(order[0]).toBe("storage");
+    expect(order.filter((step) => step === "storage")).toHaveLength(1);
   });
 
   it("a note within the plan is created and processed", async () => {
