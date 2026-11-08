@@ -72,6 +72,15 @@ describe("chat attachment over the storage limit", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it("a 402 for another reason (a read-only, past-due workspace) is not called a storage limit", async () => {
+    fetchMock.mockResolvedValueOnce(
+      json(402, { error: { code: "entitlement_exceeded", limit: "maxSeats" } }),
+    );
+    attach();
+    await waitFor(() => expect(screen.getByText(messages.chat.errors.upload_failed)).toBeTruthy());
+    expect(screen.queryByText(messages.chat.errors.storage_quota)).toBeNull();
+  });
+
   it("any other failure still says the upload failed", async () => {
     fetchMock.mockResolvedValueOnce(json(500, { error: "failed" }));
     attach();

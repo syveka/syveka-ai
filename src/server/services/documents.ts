@@ -83,6 +83,10 @@ const toMb = (bytes: number) => Math.ceil(bytes / 1_048_576);
  * Refuses when adding `addBytes` would take the knowledge base past the
  * plan's storage.
  *
+ * Not serialized: a note or URL created while an upload link is being issued
+ * can each see the same free space (notes are small; URLs add nothing until
+ * fetched). Only upload-link creation takes lockKnowledgeStorage.
+ *
  * Never call this inside an interactive transaction: on an entitlements cache
  * miss, assertWithinLimit reads through the root client, and with the
  * runtime's single-connection pool (src/server/db/prisma.ts) that read would
@@ -180,15 +184,23 @@ export async function createDocument(ctx: TenantContext, input: CreateDocumentIn
       await assertStorageAvailable(unscopedPrisma, ctx.orgId, objectBuffer.length, intent.id);
     } catch (error) {
       if (error instanceof EntitlementError) {
-        // The file will never become a document: delete it, and spend its link
-        // so it stops reserving space. Best-effort; the refusal is the answer.
-        await Promise.allSettled([
-          unscopedPrisma.documentUploadIntent.updateMany({
+        // The file will never become a document: spend its link so it stops
+        // reserving space, then delete the file -- only if this request spent
+        // the link. If another request (a double submit) spent it first, that
+        // request's document points at this file. Best-effort; the refusal is
+        // the answer either way.
+        const spent = await unscopedPrisma.documentUploadIntent
+          .updateMany({
             where: { id: intent.id, organizationId: ctx.orgId, userId: ctx.userId, usedAt: null },
             data: { usedAt: now },
-          }),
-          admin.storage.from(DOCUMENTS_BUCKET).remove([intent.storagePath]),
-        ]);
+          })
+          .catch(() => ({ count: 0 }));
+        if (spent.count === 1) {
+          await admin.storage
+            .from(DOCUMENTS_BUCKET)
+            .remove([intent.storagePath])
+            .catch(() => undefined);
+        }
       }
       throw error;
     }

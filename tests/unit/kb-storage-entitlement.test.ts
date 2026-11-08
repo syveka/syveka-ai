@@ -30,6 +30,7 @@ const s = vi.hoisted(() => ({
   cache: new Map<string, unknown>(),
   lockTail: Promise.resolve() as Promise<void>,
   order: [] as string[],
+  inTransaction: false,
   removed: [] as string[][],
 }));
 
@@ -75,6 +76,18 @@ const db = vi.hoisted(() => {
   };
 });
 
+/**
+ * A read through the root client while a transaction is open is the
+ * single-connection-pool deadlock (src/server/db/prisma.ts): logged as
+ * "root-in-tx" so a test can catch it.
+ */
+function root<A extends unknown[], R>(fn: (...args: A) => R) {
+  return (...args: A): R => {
+    if (s.inTransaction) s.order.push("root-in-tx");
+    return fn(...args);
+  };
+}
+
 /** Each transaction gets its own view of the lock; the advisory lock is a mutex. */
 async function transaction(fn: (client: typeof db.tx) => unknown) {
   s.order.push("transaction");
@@ -91,9 +104,11 @@ async function transaction(fn: (client: typeof db.tx) => unknown) {
       return 0;
     }),
   };
+  s.inTransaction = true;
   try {
     return await fn(client);
   } finally {
+    s.inTransaction = false;
     if (holding) release();
   }
 }
@@ -116,11 +131,11 @@ vi.mock("@/server/db/tenant", () => ({
     },
   })),
   unscopedPrisma: {
-    subscription: { findUnique: db.subscriptionFindUnique },
-    entitlementGrant: { findMany: vi.fn(async () => []) },
-    document: { aggregate: db.documentAggregate, update: vi.fn() },
+    subscription: { findUnique: root(db.subscriptionFindUnique) },
+    entitlementGrant: { findMany: root(vi.fn(async () => [])) },
+    document: { aggregate: root(db.documentAggregate), update: vi.fn() },
     documentUploadIntent: {
-      aggregate: db.intentAggregate,
+      aggregate: root(db.intentAggregate),
       findFirst: db.intentFindFirst,
       updateMany: db.intentSpend,
     },
@@ -229,6 +244,7 @@ describe("upload links", () => {
     // transaction (src/server/db/prisma.ts).
     await upload(1 * MB);
     expect(s.order).toEqual(["entitlements", "transaction", "lock", "storage"]);
+    expect(s.order).not.toContain("root-in-tx");
   });
 });
 
@@ -255,6 +271,19 @@ describe("creating the document re-checks with the real size", () => {
       where: { id: INTENT, organizationId: ORG, userId: USER, usedAt: null },
       data: { usedAt: expect.any(Date) },
     });
+  });
+
+  it("a refused finalize whose link another request already used deletes nothing", async () => {
+    // A double submit: the first request created the document from this file;
+    // this one is refused (the file now counts in stored bytes) and must not
+    // delete the file that document points to.
+    s.storedBytes = 40 * MB;
+    s.objectBytes = 20 * MB;
+    db.intentSpend.mockResolvedValueOnce({ count: 0 });
+    await expect(
+      createDocument(ctx, { sourceType: "UPLOAD", title: "Menu", uploadIntentId: INTENT }),
+    ).rejects.toBeInstanceOf(EntitlementError);
+    expect(s.removed).toEqual([]);
   });
 
   it("a failure while discarding still answers with the storage refusal", async () => {
@@ -319,6 +348,7 @@ describe("creating the document re-checks with the real size", () => {
     expect(s.order.indexOf("storage")).toBeLessThan(s.order.indexOf("transaction"));
     expect(s.order.indexOf("entitlements")).toBeLessThan(s.order.indexOf("transaction"));
     expect(s.order.filter((step) => step === "storage")).toHaveLength(1);
+    expect(s.order).not.toContain("root-in-tx");
   });
 
   it("a note within the plan is created and processed", async () => {
