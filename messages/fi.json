@@ -93,6 +93,7 @@
       "rate_limited": "Liian monta muutosta lyhyessä ajassa. Yritä hetken kuluttua uudelleen.",
       "service_unavailable": "Muutosta ei voitu vahvistaa juuri nyt. Yritä hetken kuluttua uudelleen."
     },
+    "memberChangeFailed": "Muutosta ei voitu tallentaa. Yritä uudelleen.",
     "errors": {
       "invalid_input": "Tarkista sähköpostiosoite ja rooli.",
       "already_member": "Henkilö on jo organisaation jäsen.",

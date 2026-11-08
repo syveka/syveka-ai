@@ -134,18 +134,30 @@ describe("member management write limit", () => {
     },
   );
 
-  it("removeMemberAction: a refusal throws and removes no one", async () => {
-    const { actionWriteLimitError } = await import("@/server/security/rate-limit");
-    const { removeMember } = await import("@/server/services/members");
-    vi.mocked(actionWriteLimitError).mockResolvedValueOnce("rate_limited");
+  it.each(["rate_limited", "service_unavailable"] as const)(
+    "removeMemberAction: %s → returned as the error, no one removed",
+    async (refusal) => {
+      const { actionWriteLimitError } = await import("@/server/security/rate-limit");
+      const { removeMember } = await import("@/server/services/members");
+      vi.mocked(actionWriteLimitError).mockResolvedValueOnce(refusal);
+      vi.mocked(removeMember).mockClear();
 
-    await expect(removeMemberAction(MEMBER_ID)).rejects.toThrow("rate_limited");
-    expect(removeMember).not.toHaveBeenCalled();
+      await expect(removeMemberAction(MEMBER_ID)).resolves.toEqual({ error: refusal });
+      expect(removeMember).not.toHaveBeenCalled();
+    },
+  );
+
+  it("removeMemberAction: a member-management rule is returned as its code", async () => {
+    const { removeMember } = await import("@/server/services/members");
+    vi.mocked(removeMember).mockRejectedValueOnce(
+      new MemberError("rule text", "owner_role" as never),
+    );
+    await expect(removeMemberAction(MEMBER_ID)).resolves.toEqual({ error: "owner_role" });
   });
 
   it("removeMemberAction: within the limit the member is removed", async () => {
     const { removeMember } = await import("@/server/services/members");
-    await removeMemberAction(MEMBER_ID);
+    await expect(removeMemberAction(MEMBER_ID)).resolves.toEqual({ message: "removed" });
     expect(removeMember).toHaveBeenCalledWith(expect.anything(), MEMBER_ID);
   });
 });
