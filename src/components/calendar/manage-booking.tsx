@@ -108,7 +108,12 @@ export function ManageBooking({
       };
       if (!res.ok) {
         setError(
-          data.error === "slot_taken" ? t("errors.slotTaken") : t("errors.rescheduleFailed"),
+          // invalid_slot: the time is no longer offered (most often taken
+          // meanwhile: the server checks offered slots first); slot_taken: a
+          // booking won the race inside the transaction. Same for the guest.
+          data.error === "slot_taken" || data.error === "invalid_slot"
+            ? t("errors.slotTaken")
+            : t("errors.rescheduleFailed"),
         );
         return;
       }

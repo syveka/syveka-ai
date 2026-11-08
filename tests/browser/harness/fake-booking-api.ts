@@ -4,9 +4,13 @@
  * the transport, not of the rules that matter here:
  *   - slots come from the real computeAvailableSlots (DST, notice, busy time),
  *   - request bodies are parsed with the real public booking schemas,
- *   - status codes and error codes follow the real route handlers
- *     (src/app/api/v1/booking/**): 409 slot_taken, 400 invalid_slot,
- *     400 too_late for a booking that already started, 404 for a bad token.
+ *   - status codes, error codes and response fields follow the real route
+ *     handlers and services (src/app/api/v1/booking/**, booking.ts): a time
+ *     that is not offered, including one taken meanwhile, is 400
+ *     invalid_slot (the service checks offered slots before its in-transaction
+ *     re-check, whose 409 slot_taken only a true race reaches); 400
+ *     consent_required; 400 too_late for a booking that already started;
+ *     400 already_canceled; 404 for an unknown or used token.
  * Persistence, email and CRM writes are covered by the service tests.
  */
 import type { Page, Route } from "@playwright/test";
@@ -29,6 +33,8 @@ export type FakeBookingApi = {
   /** Mark a slot as taken by someone else (e.g. between load and submit). */
   takeSlot(startsAt: Date): void;
   addBooking(booking: Omit<FakeBooking, "endsAt" | "status"> & Partial<FakeBooking>): void;
+  /** Whether a guest would be offered this start time now. */
+  isOffered(startsAt: Date): boolean;
 };
 
 export const SALON = {
@@ -36,6 +42,7 @@ export const SALON = {
   typeSlug: "hiustenleikkaus",
   timezone: "Europe/Helsinki",
   durationMinutes: 60,
+  requiresConsent: true,
   // Mon–Fri 09:00–17:00 local.
   rules: [1, 2, 3, 4, 5].map((weekday) => ({
     weekday,
@@ -56,6 +63,9 @@ export async function installFakeBookingApi(page: Page, now: Date): Promise<Fake
         guestEmail: "other@example.test",
         guestTimezone: SALON.timezone,
       });
+    },
+    isOffered(startsAt) {
+      return offered(startsAt);
     },
     addBooking(booking) {
       api.bookings.push({
@@ -114,11 +124,10 @@ export async function installFakeBookingApi(page: Page, now: Date): Promise<Fake
       const parsed = publicBookingSchema.safeParse(body);
       if (!parsed.success) return json(route, 400, { error: "invalid_input" });
       const startsAt = new Date(parsed.data.startsAt);
-      const taken = busy().some(
-        (b) => b.startsAt < new Date(startsAt.getTime() + 3_600_000) && b.endsAt > startsAt,
-      );
-      if (taken) return json(route, 409, { error: "slot_taken" });
       if (!offered(startsAt)) return json(route, 400, { error: "invalid_slot" });
+      if (SALON.requiresConsent && !parsed.data.consent) {
+        return json(route, 400, { error: "consent_required" });
+      }
       const token = `token-${api.bookings.length + 1}`;
       api.addBooking({
         token,
@@ -127,10 +136,11 @@ export async function installFakeBookingApi(page: Page, now: Date): Promise<Fake
         guestEmail: parsed.data.email,
         guestTimezone: parsed.data.timezone,
       });
-      return json(route, 201, {
+      return json(route, 200, {
         bookingId: `bk-${api.bookings.length}`,
-        startsAt: startsAt.toISOString(),
         manageToken: token,
+        startsAt: startsAt.toISOString(),
+        endsAt: new Date(startsAt.getTime() + SALON.durationMinutes * 60_000).toISOString(),
         confirmationMessage: null,
         confirmationEmailSent: true,
       });
@@ -139,21 +149,30 @@ export async function installFakeBookingApi(page: Page, now: Date): Promise<Fake
     const manage = url.pathname.match(/^\/api\/v1\/booking\/manage\/([^/]+)$/);
     if (manage) {
       const booking = api.bookings.find((b) => b.token === manage[1]);
-      if (!booking || booking.status !== "CONFIRMED") return json(route, 404, { error: "invalid" });
+      // A moved booking's link was consumed by the move.
+      if (!booking || booking.status === "RESCHEDULED") return json(route, 404, { error: "used" });
+      if (booking.status === "CANCELED") return json(route, 400, { error: "already_canceled" });
       if (request.method() === "DELETE") {
         if (booking.startsAt < now) return json(route, 400, { error: "too_late" });
         booking.status = "CANCELED";
-        return json(route, 200, { ok: true });
+        return json(route, 200, { status: "canceled" });
       }
       if (request.method() === "POST") {
         const parsed = publicRescheduleSchema.safeParse(body);
         if (!parsed.success) return json(route, 400, { error: "invalid_input" });
         if (booking.startsAt < now) return json(route, 400, { error: "too_late" });
         const startsAt = new Date(parsed.data.startsAt);
-        if (!offered(startsAt, booking)) return json(route, 409, { error: "slot_taken" });
+        if (!offered(startsAt, booking)) return json(route, 400, { error: "invalid_slot" });
         booking.status = "RESCHEDULED";
         const token = `token-${api.bookings.length + 1}`;
-        api.addBooking({ ...booking, token, startsAt, status: "CONFIRMED" });
+        // A new booking at the new time (its own end, not the old one's).
+        api.addBooking({
+          token,
+          startsAt,
+          guestName: booking.guestName,
+          guestEmail: booking.guestEmail,
+          guestTimezone: booking.guestTimezone,
+        });
         return json(route, 200, {
           bookingId: `bk-${api.bookings.length}`,
           manageToken: token,

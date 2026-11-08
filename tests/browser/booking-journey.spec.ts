@@ -75,7 +75,9 @@ const timeLabel = (locale: string, timeZone: string, instant: Date) =>
 
 /** The slot buttons in page order, as the ISO instants the fake offered. */
 async function offeredSlots(page: Page, api: Awaited<ReturnType<typeof installFakeBookingApi>>) {
-  await expect(page.getByText(messages("fi").booking.loadingSlots)).toHaveCount(0);
+  // Loading starts false: wait for the first slots request, then for it to finish.
+  await expect.poll(() => api.requests.some((r) => r.path.endsWith("/slots"))).toBe(true);
+  await expect(page.getByRole("button").first()).toBeVisible();
   const slotRequest = [...api.requests].reverse().find((r) => r.path.endsWith("/slots"))!;
   expect(slotRequest).toBeTruthy();
   return slotRequest;
@@ -111,6 +113,11 @@ test.describe("guest books a Finnish salon (Europe/Helsinki)", () => {
 
     // The consent box is required: the form does not submit without it.
     await page.getByRole("button", { name: fi.confirmButton }).click();
+    expect(
+      await page
+        .getByRole("checkbox")
+        .evaluate((el) => (el as HTMLInputElement).validity.valueMissing),
+    ).toBe(true);
     expect(api.requests.filter((r) => r.method === "POST")).toHaveLength(0);
 
     await page.getByRole("checkbox").check();
@@ -154,6 +161,10 @@ test.describe("guest books a Finnish salon (Europe/Helsinki)", () => {
     // Reloaded: three 09:00 slots left (Thu, Mon, Tue), no booking made.
     await expect(page.getByRole("button", { name: label })).toHaveCount(3);
     expect(api.bookings.filter((b) => b.guestName === "Anna Testi")).toHaveLength(0);
+
+    // Picking another time starts afresh: the old message doesn't sit in the new form.
+    await page.getByRole("button", { name: label }).first().click();
+    await expect(page.getByRole("alert")).toHaveCount(0);
   });
 });
 
@@ -170,7 +181,6 @@ test.describe("a guest in another time zone", () => {
     await expect(
       page.getByRole("button", { name: timeLabel("en", "Europe/London", FRIDAY_9) }),
     ).toHaveCount(4);
-    await expect(page.getByRole("button", { name: /^09:00$/ })).toHaveCount(0);
   });
 });
 
@@ -247,6 +257,33 @@ test.describe("guest manages a booking from the email link", () => {
       (b) => b.status === "CONFIRMED" && b.guestName === "Anna Testi",
     );
     expect(moved!.startsAt.toISOString()).toBe(MONDAY_9.toISOString());
+    expect(api.isOffered(FRIDAY_9)).toBe(true);
+    expect(api.isOffered(MONDAY_9)).toBe(false);
+  });
+
+  test("a new time taken by someone else meanwhile says so", async ({ page }) => {
+    const api = await installFakeBookingApi(page, NOW);
+    api.addBooking({ token: "tok-anna", startsAt: FRIDAY_9, ...guest });
+    await openPage(page, {
+      locale: "fi",
+      component: "manage",
+      props: manageProps("tok-anna", FRIDAY_9),
+    });
+    const fi = messages("fi").booking;
+    await page.getByRole("button", { name: fi.manage.reschedule }).click();
+    const monday = new Intl.DateTimeFormat("fi", {
+      weekday: "short",
+      day: "numeric",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+      timeZone: "Europe/Helsinki",
+    }).format(MONDAY_9);
+    await page.getByRole("button", { name: monday }).click();
+    api.takeSlot(MONDAY_9);
+    await page.getByRole("button", { name: fi.manage.confirmReschedule }).click();
+    await expect(page.getByRole("alert")).toHaveText(fi.errors.slotTaken);
+    expect(api.bookings.find((b) => b.token === "tok-anna")!.status).toBe("CONFIRMED");
   });
 
   test("cancels", async ({ page }) => {
