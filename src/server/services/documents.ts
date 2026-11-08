@@ -38,18 +38,51 @@ async function assertCollectionInTenant(
   }
 }
 
+type StorageUsageClient = Pick<Prisma.TransactionClient, "document" | "documentUploadIntent">;
+
+/**
+ * Refuses when the knowledge base would go past the plan's storage: what is
+ * stored, plus what open upload links may still add (a file is uploaded
+ * after its link is issued, so several links requested together must not
+ * each see the same free space), plus `addBytes`. `exceptIntentId` is the
+ * link being turned into a document, already counted in `addBytes`.
+ */
+async function assertStorageAvailable(
+  client: StorageUsageClient,
+  organizationId: string,
+  addBytes: number,
+  exceptIntentId?: string,
+): Promise<void> {
+  const [stored, reserved] = await Promise.all([
+    client.document.aggregate({
+      where: { organizationId, deletedAt: null },
+      _sum: { sizeBytes: true },
+    }),
+    client.documentUploadIntent.aggregate({
+      where: {
+        organizationId,
+        usedAt: null,
+        expiresAt: { gt: new Date() },
+        ...(exceptIntentId ? { id: { not: exceptIntentId } } : {}),
+      },
+      _sum: { maxSizeBytes: true },
+    }),
+  ]);
+  const totalBytes = (stored._sum.sizeBytes ?? 0) + (reserved._sum.maxSizeBytes ?? 0) + addBytes;
+  await assertWithinLimit(organizationId, {
+    kind: "storage_mb",
+    currentMb: Math.ceil(totalBytes / 1_048_576),
+  });
+}
+
 /** Create a tenant/user-bound, expiring upload intent and its signed storage URL. */
 export async function createUploadUrl(
   ctx: TenantContext,
   params: { fileName: string; mimeType: AllowedMimeType; sizeBytes: number },
 ): Promise<{ uploadIntentId: string; signedUrl: string; expiresAt: Date }> {
+  // Scoped by the explicit organizationId filter in assertStorageAvailable.
+  await assertStorageAvailable(unscopedPrisma, ctx.orgId, params.sizeBytes);
   const db = tenantDb(ctx.orgId);
-  const usedBytes = await db.document.aggregate({
-    where: { deletedAt: null },
-    _sum: { sizeBytes: true },
-  });
-  const currentMb = Math.ceil(((usedBytes._sum.sizeBytes ?? 0) + params.sizeBytes) / 1_048_576);
-  await assertWithinLimit(ctx.orgId, { kind: "storage_mb", currentMb });
 
   const safeName = params.fileName.replace(/[^\p{L}\w.\- ]+/gu, "_").slice(0, 120);
   const storagePath = `${ctx.orgId}/${crypto.randomUUID()}/${safeName}`;
@@ -104,6 +137,7 @@ export async function createDocument(ctx: TenantContext, input: CreateDocumentIn
 
     document = await unscopedPrisma.$transaction(async (tx) => {
       await assertCollectionInTenant(tx, ctx.orgId, input.collectionId);
+      await assertStorageAvailable(tx, ctx.orgId, objectBuffer.length, intent.id);
       const consumed = await tx.documentUploadIntent.updateMany({
         where: {
           id: intent.id,
@@ -136,8 +170,12 @@ export async function createDocument(ctx: TenantContext, input: CreateDocumentIn
     });
   } else {
     if (input.sourceType === "URL") assertSupportedUrl(input.sourceUrl);
+    // A URL's size is unknown until it is fetched, so it adds nothing here; it
+    // is still refused once storage is past the plan, or the org is read-only.
+    const addBytes = input.sourceType === "NOTE" ? Buffer.byteLength(input.content, "utf8") : 0;
     document = await unscopedPrisma.$transaction(async (tx) => {
       await assertCollectionInTenant(tx, ctx.orgId, input.collectionId);
+      await assertStorageAvailable(tx, ctx.orgId, addBytes);
       return tx.document.create({
         data: {
           organizationId: ctx.orgId,

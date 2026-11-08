@@ -20,7 +20,7 @@ const {
     // removal and ineligible owners are covered in booking-owner-removal.test.ts.
     $queryRaw: vi.fn(async () => [{ role: "OWNER", id: "bt-1" }]),
     calendarEvent: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn(), update: vi.fn() },
-    contact: { findFirst: vi.fn(), create: vi.fn() },
+    contact: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
     eventAttendee: { create: vi.fn(), findFirst: vi.fn() },
     booking: {
       create: vi.fn(),
@@ -140,6 +140,7 @@ beforeEach(() => {
   txMock.calendarEvent.findMany.mockResolvedValue([]); // no recurring series inside tx
   txMock.calendarEvent.create.mockResolvedValue({ id: "evt-1" });
   txMock.contact.findFirst.mockResolvedValue(null);
+  txMock.contact.findMany.mockResolvedValue([]);
   txMock.contact.create.mockResolvedValue({ id: "contact-new" });
   txMock.eventAttendee.create.mockResolvedValue({});
   txMock.eventAttendee.findFirst.mockResolvedValue(null);
@@ -249,6 +250,61 @@ describe("createPublicBooking", () => {
       expect.objectContaining({ data: expect.objectContaining({ contactId: "contact-9" }) }),
     );
     expect(txMock.contact.create).not.toHaveBeenCalled();
+  });
+
+  it("a repeat guest typing their email in another case reuses their CRM contact (no duplicate)", async () => {
+    txMock.contact.findFirst.mockResolvedValue(null); // no exact-case match
+    txMock.contact.findMany.mockResolvedValue([{ id: "contact-9", email: "guest@example.com" }]);
+    await createPublicBooking({
+      orgSlug: "acme",
+      typeSlug: "intro-call",
+      input: input({ email: "Guest@Example.COM" }),
+    });
+    expect(txMock.contact.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ organizationId: "org-a", deletedAt: null }),
+      }),
+    );
+    expect(txMock.contact.create).not.toHaveBeenCalled();
+    expect(txMock.eventAttendee.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ contactId: "contact-9" }) }),
+    );
+  });
+
+  it("a case-insensitive candidate that is a different address is never linked", async () => {
+    // A database pattern match may treat "_" as a wildcard; only the same address counts.
+    txMock.contact.findFirst.mockResolvedValue(null);
+    txMock.contact.findMany.mockResolvedValue([
+      { id: "contact-x", email: "guestXone@example.com" },
+    ]);
+    await createPublicBooking({
+      orgSlug: "acme",
+      typeSlug: "intro-call",
+      input: input({ email: "guest_one@example.com" }),
+    });
+    expect(txMock.contact.create).toHaveBeenCalledTimes(1);
+    expect(txMock.eventAttendee.create).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ contactId: "contact-new" }) }),
+    );
+  });
+
+  it("the same guest email in any case takes the same contact-email lock", async () => {
+    const lockedEmails = async (email: string) => {
+      txMock.$executeRaw.mockClear();
+      await createPublicBooking({
+        orgSlug: "acme",
+        typeSlug: "intro-call",
+        input: input({ email }),
+      });
+      const calls = txMock.$executeRaw.mock.calls as unknown as Array<
+        [TemplateStringsArray, ...unknown[]]
+      >;
+      return calls
+        .filter(([strings]) => strings.join("?").includes("':'"))
+        .map(([, ...values]) => values);
+    };
+    expect(await lockedEmails("Guest@Example.COM")).toEqual([["org-a", "guest@example.com"]]);
+    expect(await lockedEmails("guest@example.com")).toEqual([["org-a", "guest@example.com"]]);
   });
 
   it("passes the guest's contact to booking.created workflows, so their CRM steps have a target", async () => {
@@ -738,6 +794,45 @@ describe("rescheduleBookingViaToken", () => {
     });
     expect(txMock.booking.updateMany).not.toHaveBeenCalled();
     expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects moving a booking that already started (an attended visit stays in history)", async () => {
+    const past = {
+      startsAt: new Date("2026-01-20T08:00:00Z"),
+      endsAt: new Date("2026-01-20T09:00:00Z"),
+    };
+    resolveTokenMock.mockResolvedValue({
+      id: "token-1",
+      purpose: "RESCHEDULE",
+      booking: oldBooking(past),
+    });
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(oldBooking(past));
+    await expect(rescheduleBookingViaToken("raw-token", NEW_START)).rejects.toMatchObject({
+      code: "too_late",
+    });
+    expect(txMock.booking.updateMany).not.toHaveBeenCalled();
+    expect(txMock.calendarEvent.update).not.toHaveBeenCalled();
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("rejects moving a COMPLETED booking", async () => {
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(oldBooking({ status: "COMPLETED" }));
+    await expect(rescheduleBookingViaToken("raw-token", NEW_START)).rejects.toMatchObject({
+      code: "too_late",
+    });
+    expect(txMock.booking.updateMany).not.toHaveBeenCalled();
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
+  it("the guarded claim never moves a booking that became COMPLETED concurrently", async () => {
+    await rescheduleBookingViaToken("raw-token", NEW_START);
+    expect(txMock.booking.updateMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({
+          status: { notIn: expect.arrayContaining(["CANCELED", "RESCHEDULED", "COMPLETED"]) },
+        }),
+      }),
+    );
   });
 
   it("rejects when the freshly re-read booking is already canceled (closes the pre-transaction-only status-check gap)", async () => {

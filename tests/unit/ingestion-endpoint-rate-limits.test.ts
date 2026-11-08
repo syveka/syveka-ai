@@ -213,3 +213,29 @@ describe("cross-endpoint key isolation", () => {
     expect(new Set(keys).size).toBe(keys.length);
   });
 });
+
+/**
+ * Creating the document re-checks the plan's storage with the real size, so it
+ * can refuse like the upload-link step does: a 402 the client shows as the quota
+ * message, never a 500.
+ */
+describe("a plan limit at document creation", () => {
+  it.each([
+    {
+      name: "POST /api/v1/kb/documents",
+      handler: kbDocumentsPost,
+      body: () => jsonRequest({ sourceType: "NOTE", title: "Note", content: "hello" }),
+    },
+    {
+      name: "POST /api/v1/ai/files",
+      handler: aiFilesPost,
+      body: () =>
+        jsonRequest({ title: "Menu", uploadIntentId: "55555555-5555-4555-8555-555555555555" }),
+    },
+  ])("$name answers 402 with the limit", async ({ handler, body }) => {
+    createDocumentMock.mockRejectedValueOnce(new FakeEntitlementError("storage full"));
+    const response = await handler(body());
+    expect(response.status).toBe(402);
+    expect(await response.json()).toEqual({ error: { code: "limit_reached", limit: 10 } });
+  });
+});

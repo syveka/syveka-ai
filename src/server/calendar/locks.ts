@@ -73,7 +73,10 @@ export async function lockContactEmail(
   orgId: string,
   email: string,
 ): Promise<void> {
-  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId} || ':' || ${email}), 1)`;
+  // Case-insensitive, like the contact match it protects: two bookings for
+  // "Anna@Salon.fi" and "anna@salon.fi" must serialize on the same lock.
+  const key = email.trim().toLowerCase();
+  await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext(${orgId} || ':' || ${key}), 1)`;
 }
 
 /**

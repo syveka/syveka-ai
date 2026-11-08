@@ -3,7 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const mocks = vi.hoisted(() => {
   const tx = {
     collection: { findFirst: vi.fn() },
-    document: { create: vi.fn() },
+    document: {
+      create: vi.fn(),
+      aggregate: vi.fn(async () => ({ _sum: { sizeBytes: 0 } })),
+    },
+    documentUploadIntent: { aggregate: vi.fn(async () => ({ _sum: { maxSizeBytes: 0 } })) },
   };
   return {
     tx,

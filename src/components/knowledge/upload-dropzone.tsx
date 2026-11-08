@@ -76,7 +76,8 @@ export function UploadDropzone() {
               uploadIntentId: data.uploadIntentId,
             }),
           });
-          if (!finalizeRes.ok) setError("upload_failed");
+          // 402: the plan's storage filled up after the link was issued.
+          if (!finalizeRes.ok) setError(finalizeRes.status === 402 ? "quota" : "upload_failed");
         }
         router.refresh();
       } finally {

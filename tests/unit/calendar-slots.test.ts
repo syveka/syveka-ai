@@ -147,6 +147,70 @@ describe("availability calculation", () => {
     expect(out).toHaveLength(8);
   });
 
+  // 2026-03-29 in Helsinki: 03:00 local doesn't exist (clocks go 03:00 → 04:00 EEST).
+  const SPRING_FORWARD = {
+    timezone: "Europe/Helsinki",
+    overrides: [],
+    busy: [],
+    from: new Date("2026-03-28T22:00:00Z"), // local midnight (still EET, UTC+2)
+    to: new Date("2026-03-29T21:00:00Z"), // next local midnight (EEST, UTC+3)
+    now: new Date("2026-03-28T00:00:00Z"),
+    durationMinutes: 60,
+  };
+
+  it("DST spring-forward gap: a window across 03:00 offers each real hour once", () => {
+    // Sunday rule 02:00–05:00: 02:00 (00:00Z) and 04:00 (01:00Z). The missing 03:00
+    // resolves to 04:00 and must not appear as a second 01:00Z slot.
+    const out = computeAvailableSlots({
+      ...SPRING_FORWARD,
+      rules: [{ weekday: 0, startMinute: 120, endMinute: 300 }],
+    });
+    expect(out.map((d) => d.toISOString())).toEqual([
+      "2026-03-29T00:00:00.000Z",
+      "2026-03-29T01:00:00.000Z",
+    ]);
+  });
+
+  it("DST spring-forward day: an all-day window has 23 hourly slots, not 24", () => {
+    const out = computeAvailableSlots({
+      ...SPRING_FORWARD,
+      rules: [{ weekday: 0, startMinute: 0, endMinute: 1440 }],
+    });
+    expect(out).toHaveLength(23);
+    expect(new Set(out.map((d) => d.getTime())).size).toBe(out.length);
+  });
+
+  it("overlapping date-override windows give each slot once, sorted", () => {
+    // Windows stored in DB order, not time order: 12–14, then 09–13.
+    const out = slots({
+      overrides: [
+        { date: "2026-01-15", startMinute: 720, endMinute: 840, isUnavailable: false },
+        { date: "2026-01-15", startMinute: 540, endMinute: 780, isUnavailable: false },
+      ],
+    });
+    expect(out.map((d) => d.toISOString())).toEqual([
+      "2026-01-15T07:00:00.000Z", // 09:00 local
+      "2026-01-15T08:00:00.000Z",
+      "2026-01-15T09:00:00.000Z",
+      "2026-01-15T10:00:00.000Z",
+      "2026-01-15T11:00:00.000Z", // 13:00 local
+    ]);
+  });
+
+  it("maxSlots keeps the earliest slots of a day whose windows are out of order", () => {
+    const out = slots({
+      overrides: [
+        { date: "2026-01-15", startMinute: 720, endMinute: 840, isUnavailable: false },
+        { date: "2026-01-15", startMinute: 540, endMinute: 660, isUnavailable: false },
+      ],
+      maxSlots: 2,
+    });
+    expect(out.map((d) => d.toISOString())).toEqual([
+      "2026-01-15T07:00:00.000Z",
+      "2026-01-15T08:00:00.000Z",
+    ]);
+  });
+
   it("zero/negative durations yield no slots", () => {
     expect(slots({ durationMinutes: 0 })).toHaveLength(0);
   });

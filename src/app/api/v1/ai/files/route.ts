@@ -9,11 +9,13 @@ export async function POST(request: Request): Promise<NextResponse> {
     { AuthError },
     { createDocument, DocumentIngestionError },
     { rateLimitRefusal },
+    { EntitlementError },
   ] = await Promise.all([
     import("@/server/auth/guard"),
     import("@/server/auth/session"),
     import("@/server/services/documents"),
     import("@/server/security/rate-limit"),
+    import("@/server/services/billing/entitlements"),
   ]);
   try {
     // A chat attachment is persisted as an ordinary organization document: it
@@ -52,6 +54,12 @@ export async function POST(request: Request): Promise<NextResponse> {
             ? 409
             : 400;
       return NextResponse.json({ error: { code: error.code } }, { status });
+    }
+    if (error instanceof EntitlementError) {
+      return NextResponse.json(
+        { error: { code: error.code, limit: error.limit } },
+        { status: 402 },
+      );
     }
     throw error;
   }

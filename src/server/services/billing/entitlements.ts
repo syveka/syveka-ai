@@ -239,7 +239,9 @@ export async function assertWithinLimit(
       }
       break;
     case "storage_mb":
-      if (check.currentMb >= ent.kbStorageMb) {
+      // currentMb already includes the file being added: filling the plan
+      // exactly is allowed, going past it is not.
+      if (check.currentMb > ent.kbStorageMb) {
         throw new EntitlementError("kbStorageMb", "Knowledge base storage limit reached.");
       }
       break;

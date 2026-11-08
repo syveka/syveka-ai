@@ -95,6 +95,10 @@ export function computeAvailableSlots(params: SlotParams): Date[] {
         .map((r) => ({ startMinute: r.startMinute, endMinute: r.endMinute }));
     }
 
+    // Keyed by instant: overlapping override windows, and a local time in the
+    // spring-forward gap (which resolves to the hour after it), can produce
+    // the same instant twice. Windows can also arrive out of time order.
+    const daySlots = new Map<number, Date>();
     for (const w of windows) {
       if (w.endMinute - w.startMinute < durationMinutes) continue;
       for (let minute = w.startMinute; minute + durationMinutes <= w.endMinute; minute += step) {
@@ -104,9 +108,13 @@ export function computeAvailableSlots(params: SlotParams): Date[] {
         const guardStart = new Date(start.getTime() - bufferBeforeMinutes * 60_000);
         const guardEnd = new Date(end.getTime() + bufferAfterMinutes * 60_000);
         if (hasConflict(busy, guardStart, guardEnd)) continue;
-        slots.push(start);
-        if (slots.length >= maxSlots) return slots;
+        daySlots.set(start.getTime(), start);
       }
+    }
+
+    for (const [, start] of [...daySlots].sort(([a], [b]) => a - b)) {
+      slots.push(start);
+      if (slots.length >= maxSlots) return slots;
     }
   }
 

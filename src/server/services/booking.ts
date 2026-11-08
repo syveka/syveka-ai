@@ -72,6 +72,40 @@ function splitGuestName(fullName: string): { firstName: string; lastName: string
   };
 }
 
+/**
+ * The guest's existing CRM contact in this org: an exact match first (the
+ * stored address as typed), then the same address in any letter case, so a
+ * returning guest who types "Anna@Salon.fi" one time and "anna@salon.fi" the
+ * next keeps one contact. The case-insensitive query is only a candidate
+ * filter; each candidate is compared exactly after lowercasing, so a pattern
+ * character such as "_" in an address can never match a different address.
+ */
+async function findContactByEmail(
+  tx: Prisma.TransactionClient,
+  orgId: string,
+  email: string,
+): Promise<{ id: string } | null> {
+  const exact = await tx.contact.findFirst({
+    where: { organizationId: orgId, email, deletedAt: null },
+    select: { id: true },
+  });
+  if (exact) return exact;
+
+  const normalized = email.trim().toLowerCase();
+  const candidates = await tx.contact.findMany({
+    where: {
+      organizationId: orgId,
+      email: { equals: normalized, mode: "insensitive" },
+      deletedAt: null,
+    },
+    select: { id: true, email: true },
+    orderBy: { createdAt: "asc" },
+    take: 20,
+  });
+  const match = candidates.find((c) => c.email?.trim().toLowerCase() === normalized);
+  return match ? { id: match.id } : null;
+}
+
 // ── Booking type management (tenant side) ────────────────────────────────
 
 export async function listBookingTypes(ctx: TenantContext) {
@@ -500,10 +534,7 @@ export async function createPublicBooking(params: {
     // AI tool's own createContact has a similar-shaped gap, tracked
     // separately since it has no equivalent transaction to hook into here.
     await lockContactEmail(tx, orgId, input.email);
-    let matchedContact = await tx.contact.findFirst({
-      where: { organizationId: orgId, email: input.email, deletedAt: null },
-      select: { id: true },
-    });
+    let matchedContact = await findContactByEmail(tx, orgId, input.email);
     // Set only when this booking creates the contact: its `contact.created` event is
     // emitted after the transaction commits, never for a matched existing contact.
     let newContact: Parameters<typeof emitContactCreated>[1] | null = null;
@@ -881,6 +912,12 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
     if (freshOld.status === "CANCELED") {
       throw new BookingError("Booking was canceled", "already_canceled");
     }
+    // Same rule as cancel (cancelBookingCore): the manage link outlives the
+    // visit, and moving an attended or completed booking would rewrite it as
+    // RESCHEDULED and drop the visit from the calendar's history.
+    if (freshOld.status === "COMPLETED" || freshOld.startsAt < new Date()) {
+      throw new BookingError("Booking already started", "too_late");
+    }
 
     // Moving a booking creates a new one for this type: same eligibility as a
     // new public booking (an existing booking can still be canceled).
@@ -907,7 +944,7 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
     // canceling the old calendar event or creating a successor - instead of
     // resurrecting a booking the other caller just canceled.
     const claimed = await tx.booking.updateMany({
-      where: { id: oldBooking.id, status: { notIn: ["CANCELED", "RESCHEDULED"] } },
+      where: { id: oldBooking.id, status: { notIn: ["CANCELED", "RESCHEDULED", "COMPLETED"] } },
       data: { status: "RESCHEDULED" },
     });
     if (claimed.count === 0) {
