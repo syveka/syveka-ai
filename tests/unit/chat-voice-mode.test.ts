@@ -88,6 +88,11 @@ vi.mock("@/server/ai/rag", () => ({
   retrieveChunks: vi.fn(async () => []),
   extractValidCitations: vi.fn(() => []),
 }));
+// The quota reservation (Redis) is covered by ai-chat-quota-reservation.test.ts.
+vi.mock("@/server/services/billing/ai-message-reservation", () => ({
+  reserveAiMessage: vi.fn(async () => ({ key: "reservation", id: "r1", inFlightAhead: 0 })),
+  releaseAiMessage: vi.fn(async () => undefined),
+}));
 vi.mock("@/server/services/billing/entitlements", () => ({
   assertWithinLimit: vi.fn(async () => undefined),
   getMonthUsage: vi.fn(async () => 0),
@@ -295,7 +300,9 @@ describe("chat route voice mode", () => {
     });
     await (await chat({ message: "x", voiceGrant: GRANT })).text();
     const metrics = vi.mocked(recordUsage).mock.calls.map((c) => [c[1], c[2], c[3]?.aborted]);
+    // The provider produced output, so the turn also uses its AI message.
     expect(metrics).toEqual([
+      ["AI_MESSAGES", 1, true],
       ["AI_TOKENS_IN", 1_200, true],
       ["AI_TOKENS_OUT", 40, true],
     ]);
