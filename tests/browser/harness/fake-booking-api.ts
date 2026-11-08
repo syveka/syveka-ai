@@ -123,11 +123,12 @@ export async function installFakeBookingApi(page: Page, now: Date): Promise<Fake
     if (url.pathname === base && request.method() === "POST") {
       const parsed = publicBookingSchema.safeParse(body);
       if (!parsed.success) return json(route, 400, { error: "invalid_input" });
-      const startsAt = new Date(parsed.data.startsAt);
-      if (!offered(startsAt)) return json(route, 400, { error: "invalid_slot" });
+      // Same order as createPublicBooking: consent, then the offered slot.
       if (SALON.requiresConsent && !parsed.data.consent) {
         return json(route, 400, { error: "consent_required" });
       }
+      const startsAt = new Date(parsed.data.startsAt);
+      if (!offered(startsAt)) return json(route, 400, { error: "invalid_slot" });
       const token = `token-${api.bookings.length + 1}`;
       api.addBooking({
         token,
@@ -160,9 +161,11 @@ export async function installFakeBookingApi(page: Page, now: Date): Promise<Fake
       if (request.method() === "POST") {
         const parsed = publicRescheduleSchema.safeParse(body);
         if (!parsed.success) return json(route, 400, { error: "invalid_input" });
-        if (booking.startsAt < now) return json(route, 400, { error: "too_late" });
+        // Same order as rescheduleBookingViaToken: the offered slot (before
+        // its transaction), then the started-booking check (inside it).
         const startsAt = new Date(parsed.data.startsAt);
         if (!offered(startsAt, booking)) return json(route, 400, { error: "invalid_slot" });
+        if (booking.startsAt < now) return json(route, 400, { error: "too_late" });
         booking.status = "RESCHEDULED";
         const token = `token-${api.bookings.length + 1}`;
         // A new booking at the new time (its own end, not the old one's).
