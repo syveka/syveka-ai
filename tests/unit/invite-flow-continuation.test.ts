@@ -279,7 +279,6 @@ describe("invitation page", () => {
 
   it.each([
     ["unknown", null],
-    ["already accepted", { ...pendingInvitation, status: "ACCEPTED" }],
     ["expired", { ...pendingInvitation, expiresAt: new Date(Date.now() - 1000) }],
   ])("%s invitation: not sent to register, nothing to accept", async (_label, invitation) => {
     mocks.findInvitation.mockResolvedValue(invitation);
@@ -288,6 +287,16 @@ describe("invitation page", () => {
     await expect(page()).resolves.toBeTruthy();
     expect(mocks.redirect).not.toHaveBeenCalled();
     expect(mocks.getSessionUser).not.toHaveBeenCalled();
+  });
+
+  // Reads the session only to recognize the invited member reopening the link.
+  it("already accepted invitation, signed out: not sent to register, nothing to accept", async () => {
+    mocks.findInvitation.mockResolvedValue({ ...pendingInvitation, status: "ACCEPTED" });
+    mocks.getSessionUser.mockResolvedValue(null);
+
+    await expect(page()).resolves.toBeTruthy();
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(mocks.acceptInvitationAction).not.toHaveBeenCalled();
   });
 });
 

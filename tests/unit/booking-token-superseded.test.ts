@@ -346,6 +346,13 @@ describe("telling a cancel retry from a refused link", () => {
 
     await expect(isCanceledBookingReplay(RAW.live)).resolves.toBe(false);
   });
+
+  it("a link spent by the owner's cancel tells the guest it is canceled", async () => {
+    Object.assign(bookingRow("bk-old"), { status: "CANCELED" });
+    storeToken("tok-live", RAW.live, { usedAt: new Date("2026-02-01T00:00:00Z") });
+
+    await expect(isCanceledBookingReplay(RAW.live)).resolves.toBe(true);
+  });
 });
 
 describe("superseded links", () => {
