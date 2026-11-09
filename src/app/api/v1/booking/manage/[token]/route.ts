@@ -133,6 +133,11 @@ export async function DELETE(request: Request, { params }: { params: Promise<{ t
     return NextResponse.json({ status: "canceled" });
   } catch (e) {
     if (e instanceof tokens.BookingTokenError) {
+      // A retry of a cancel that already succeeded gets the same answer and
+      // does nothing further. If that can't be confirmed, it stays refused.
+      const replay =
+        e.code === "used" && (await tokens.isCanceledBookingReplay(token).catch(() => false));
+      if (replay) return NextResponse.json({ status: "canceled" });
       return NextResponse.json({ error: e.code }, { status: 404 });
     }
     if (e instanceof booking.BookingError) {

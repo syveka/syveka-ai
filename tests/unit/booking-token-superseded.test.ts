@@ -191,7 +191,11 @@ vi.mock("@/server/services/workflow-events", () => ({
 }));
 
 import { cancelBookingViaToken, rescheduleBookingViaToken } from "@/server/services/booking";
-import { BookingTokenError, hashToken } from "@/server/services/booking-tokens";
+import {
+  BookingTokenError,
+  hashToken,
+  isCanceledBookingReplay,
+} from "@/server/services/booking-tokens";
 
 // "Now" is Sunday 2026-02-01; the booking is Monday 09:00 Helsinki (07:00Z).
 const START = "2026-02-02T07:00:00.000Z";
@@ -313,6 +317,35 @@ describe("unknown, expired and used links are refused before any transaction", (
       expect(bookingRow("bk-old").status).toBe("CONFIRMED");
     },
   );
+});
+
+describe("telling a cancel retry from a refused link", () => {
+  it("after a real cancel the link is a replay, and checking it writes nothing", async () => {
+    storeToken("tok-live", RAW.live);
+    await cancelBookingViaToken(RAW.live, "synthetic reason");
+    const committedByTheCancel = [...s.committed];
+    vi.clearAllMocks();
+
+    expect(await failure(attempts.cancel(RAW.live))).toMatchObject({ code: "used" });
+    await expect(isCanceledBookingReplay(RAW.live)).resolves.toBe(true);
+
+    for (const method of WRITES) expect(method).not.toHaveBeenCalled();
+    expect(s.committed).toEqual(committedByTheCancel);
+  });
+
+  it("after a real reschedule the link that moved it is not a replay", async () => {
+    storeToken("tok-live", RAW.live);
+    await rescheduleBookingViaToken(RAW.live, NEW_START);
+
+    await expect(isCanceledBookingReplay(RAW.live)).resolves.toBe(false);
+  });
+
+  it("a live link to a booking canceled some other way is not a replay", async () => {
+    Object.assign(bookingRow("bk-old"), { status: "CANCELED" });
+    storeToken("tok-live", RAW.live);
+
+    await expect(isCanceledBookingReplay(RAW.live)).resolves.toBe(false);
+  });
 });
 
 describe("superseded links", () => {

@@ -245,7 +245,15 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
       resourceId: userId,
       after: { bookingTypesDisabled: rejoinDisabled.count, activeSeats },
     },
-  );
+  ).catch((error: unknown) => {
+    // The join has committed: reporting it as failed would be false.
+    console.error(
+      JSON.stringify({
+        event: "member_join_audit_failed",
+        name: error instanceof Error ? error.name : "unknown",
+      }),
+    );
+  });
 
   return invitation.organizationId;
 }

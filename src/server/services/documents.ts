@@ -59,21 +59,21 @@ async function storageBytesInUse(
   organizationId: string,
   exceptIntentId?: string,
 ): Promise<number> {
-  const [stored, reserved] = await Promise.all([
-    client.document.aggregate({
-      where: { organizationId, deletedAt: null },
-      _sum: { sizeBytes: true },
-    }),
-    client.documentUploadIntent.aggregate({
-      where: {
-        organizationId,
-        usedAt: null,
-        expiresAt: { gt: new Date() },
-        ...(exceptIntentId ? { id: { not: exceptIntentId } } : {}),
-      },
-      _sum: { maxSizeBytes: true },
-    }),
-  ]);
+  // Links first, then documents: a finalize landing between the two reads is
+  // counted twice rather than not at all, so the limit can only err strict.
+  const reserved = await client.documentUploadIntent.aggregate({
+    where: {
+      organizationId,
+      usedAt: null,
+      expiresAt: { gt: new Date() },
+      ...(exceptIntentId ? { id: { not: exceptIntentId } } : {}),
+    },
+    _sum: { maxSizeBytes: true },
+  });
+  const stored = await client.document.aggregate({
+    where: { organizationId, deletedAt: null },
+    _sum: { sizeBytes: true },
+  });
   return (stored._sum.sizeBytes ?? 0) + (reserved._sum.maxSizeBytes ?? 0);
 }
 

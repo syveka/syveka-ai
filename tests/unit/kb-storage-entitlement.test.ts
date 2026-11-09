@@ -248,6 +248,23 @@ describe("upload links", () => {
     expect(s.order).toEqual(["entitlements", "transaction", "lock", "storage"]);
     expect(s.order).not.toContain("root-in-tx");
   });
+
+  it("read open links before stored documents, so a finalize between the reads can't vanish", async () => {
+    let finishLinkRead: () => void = () => undefined;
+    const linkRead = new Promise<void>((resolve) => (finishLinkRead = resolve));
+    db.intentAggregate.mockImplementationOnce(async () => {
+      await linkRead;
+      return { _sum: { maxSizeBytes: 0 } };
+    });
+
+    const pending = upload(1 * MB);
+    await vi.waitFor(() => expect(db.intentAggregate).toHaveBeenCalledTimes(1));
+    expect(db.documentAggregate).not.toHaveBeenCalled();
+
+    finishLinkRead();
+    await expect(pending).resolves.toMatchObject({ uploadIntentId: INTENT });
+    expect(db.documentAggregate).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("creating the document re-checks with the real size", () => {

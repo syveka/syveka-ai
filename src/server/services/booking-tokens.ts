@@ -92,6 +92,32 @@ export async function resolveToken(raw: string, purpose: BookingTokenPurpose) {
 }
 
 /**
+ * A cancel refused because its link is already used, where the booking is in
+ * fact canceled: the guest is retrying a cancel that succeeded (a lost
+ * response, a double click) and may be told so. Read-only. A rescheduled
+ * booking isn't canceled, so its spent link stays refused, and an expired link
+ * is refused as it was.
+ */
+export async function isCanceledBookingReplay(raw: string): Promise<boolean> {
+  const record = await unscopedPrisma.bookingToken.findUnique({
+    where: { tokenHash: hashToken(raw) },
+    select: {
+      purpose: true,
+      usedAt: true,
+      expiresAt: true,
+      booking: { select: { status: true } },
+    },
+  });
+  return (
+    record !== null &&
+    record.usedAt !== null &&
+    record.expiresAt >= new Date() &&
+    (record.purpose === "CANCEL" || record.purpose === "MANAGE") &&
+    record.booking.status === "CANCELED"
+  );
+}
+
+/**
  * Atomically, single-use-consume a token INSIDE the same transaction that
  * performs the booking mutation it authorizes. MANAGE tokens (the only
  * purpose actually ever issued - see issueToken() call sites) previously
