@@ -263,6 +263,8 @@ describe("acceptInvitation seat limit", () => {
     expect(log).toHaveBeenCalledTimes(1);
     expect(JSON.parse(String(log.mock.calls[0]![0]))).toEqual({
       event: "member_join_audit_failed",
+      orgId: ORG_A,
+      invitationId: s.invitations[0]!.id,
       name: "AuditWriteError",
     });
     expect(String(log.mock.calls[0]![0])).not.toContain("u1@example.test");

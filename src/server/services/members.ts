@@ -250,6 +250,8 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
     console.error(
       JSON.stringify({
         event: "member_join_audit_failed",
+        orgId: invitation.organizationId,
+        invitationId: invitation.id,
         name: error instanceof Error ? error.name : "unknown",
       }),
     );

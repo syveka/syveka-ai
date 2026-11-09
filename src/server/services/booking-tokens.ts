@@ -93,10 +93,10 @@ export async function resolveToken(raw: string, purpose: BookingTokenPurpose) {
 
 /**
  * A cancel refused because its link is already used, where the booking is in
- * fact canceled: the guest is retrying a cancel that succeeded (a lost
- * response, a double click) and may be told so. Read-only. A rescheduled
- * booking isn't canceled, so its spent link stays refused, and an expired link
- * is refused as it was.
+ * fact canceled, by this link (a lost response, a double click) or by the
+ * owner. Either way the guest may be told it is canceled. Read-only. A
+ * rescheduled booking isn't canceled, so its spent link stays refused, and an
+ * expired link is refused as it was.
  */
 export async function isCanceledBookingReplay(raw: string): Promise<boolean> {
   const record = await unscopedPrisma.bookingToken.findUnique({
