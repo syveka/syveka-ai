@@ -249,6 +249,26 @@ describe("acceptInvitation seat limit", () => {
     );
   });
 
+  it("an audit failure after the commit doesn't fail the completed join, and logs names only", async () => {
+    const auditError = Object.assign(new Error("audit insert failed for u1@example.test"), {
+      name: "AuditWriteError",
+    });
+    auditMock.mockRejectedValueOnce(auditError);
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    await expect(acceptInvitation(invite(ORG_A, "u1"), "u1")).resolves.toBe(ORG_A);
+
+    expect(membersOf(ORG_A).map((m) => m.userId)).toEqual(["u1"]);
+    expect(s.invitations[0]!.status).toBe("ACCEPTED");
+    expect(log).toHaveBeenCalledTimes(1);
+    expect(JSON.parse(String(log.mock.calls[0]![0]))).toEqual({
+      event: "member_join_audit_failed",
+      name: "AuditWriteError",
+    });
+    expect(String(log.mock.calls[0]![0])).not.toContain("u1@example.test");
+    log.mockRestore();
+  });
+
   it("refuses a join that would exceed the plan, and changes nothing", async () => {
     seed(ORG_A, 2);
     const token = invite(ORG_A, "u1");

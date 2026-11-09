@@ -458,7 +458,14 @@ async function handleChat(request: Request, holder: ReservationHolder): Promise<
             ...meta,
             estimatedCostUsd: cost.completionUsd,
           }),
-        ]).catch(() => {});
+        ]).catch((error: unknown) => {
+          console.error(
+            JSON.stringify({
+              event: "ai_chat_partial_usage_record_failed",
+              name: error instanceof Error ? error.name : "unknown",
+            }),
+          );
+        });
       };
       // Saved with the reply. A proposed write keeps its action view, so a
       // reopened conversation can show it with its recorded outcome.

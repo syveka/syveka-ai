@@ -101,6 +101,25 @@ async function lockBookingCalendars(
 }
 
 /**
+ * The transaction of a guest booking or reschedule. P2028 means it couldn't
+ * start, or expired, while waiting for the runtime's single database
+ * connection: nothing was committed, so like a lock timeout the guest can
+ * simply retry.
+ */
+async function guestBookingTransaction<T>(
+  run: (tx: Prisma.TransactionClient) => Promise<T>,
+): Promise<T> {
+  try {
+    return await unscopedPrisma.$transaction(run);
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2028") {
+      throw new BookingError("The calendar is busy; try again", "calendar_busy");
+    }
+    throw error;
+  }
+}
+
+/**
  * The guest's existing CRM contact in this org: an exact match first (the
  * stored address as typed), then the same address in any letter case, so a
  * returning guest who types "Anna@Salon.fi" one time and "anna@salon.fi" the
@@ -522,7 +541,7 @@ export async function createPublicBooking(params: {
           ? "FI"
           : null;
 
-  const created = await unscopedPrisma.$transaction(async (tx) => {
+  const created = await guestBookingTransaction(async (tx) => {
     await assertStillBookable(tx, bookingType);
     await lockBookingCalendars(tx, orgId, bookingType.ownerId);
     await assertSlotStillFree(
@@ -931,7 +950,7 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
   }
 
   const orgId = oldBooking.organizationId;
-  const result = await unscopedPrisma.$transaction(async (tx) => {
+  const result = await guestBookingTransaction(async (tx) => {
     // Atomically claims this token AND re-reads booking status inside the
     // same transaction as the mutation below - see consumeTokenAtomic's doc
     // comment and cancelBookingViaToken's identical treatment above.
