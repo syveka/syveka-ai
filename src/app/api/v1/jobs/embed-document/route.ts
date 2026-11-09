@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { jobPayloadJson } from "@/server/jobs/payload";
+import { jobPayloadJson, jobWillBeRetried } from "@/server/jobs/payload";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -149,7 +149,8 @@ export async function POST(request: Request): Promise<NextResponse> {
       );
       text = await extractText(buffer, mimeType, request.signal);
     } else {
-      throw new Error("No content source");
+      // Permanent: a retry finds the same row. The owner keeps seeing the generic text.
+      throw new DocumentProcessingError(GENERIC_FAILURE);
     }
 
     // 2. Chunk
@@ -221,6 +222,18 @@ export async function POST(request: Request): Promise<NextResponse> {
       where: { id: documentId },
       data: { status: "FAILED", error: message },
     });
+    // No owner-facing cause means storage, a provider or the database failed,
+    // which another delivery may not hit. FAILED is claimable, and that run's
+    // deleteMany replaces any chunks stored here. Usage is recorded only after
+    // READY, so retries never count it twice. The owner hears about it only if
+    // the last delivery fails too.
+    if (
+      message === GENERIC_FAILURE &&
+      !(err instanceof DocumentProcessingError) &&
+      jobWillBeRetried(request)
+    ) {
+      return NextResponse.json({ error: message }, { status: 500 });
+    }
     await unscopedPrisma.notification.create({
       data: {
         organizationId: orgId,
@@ -231,7 +244,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         href: "/knowledge",
       },
     });
-    // 200: extraction failures are terminal, don't burn QStash retries
+    // 200: permanent, or the last delivery; either way nothing more to retry
     return NextResponse.json({ ok: false, error: message });
   }
 
