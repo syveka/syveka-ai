@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Check, RotateCcw, ShieldCheck, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -63,6 +63,9 @@ const RECORDED_STATE: Record<RestoredActionState, State> = {
   unavailable: "unavailable",
 };
 
+const subscribeNever = () => () => {};
+
+/** `timeZone` undefined: the runtime's own zone (the browser's, once hydrated). */
 function formatWhen(iso: string, timeZone: string | undefined, locale: string) {
   return new Intl.DateTimeFormat(locale, {
     timeZone,
@@ -118,6 +121,15 @@ export function ActionConfirmation({
   const t = useTranslations("chat.actions");
   const field = useTranslations("businessDna");
   const locale = useLocale();
+  // A task's due time is formatted in the runtime's zone, so only in the
+  // browser: false on the server and during hydration, so the server render
+  // and the hydration pass match (formatting it on the server, in its zone,
+  // failed hydration, React error #418), and it appears right after hydration.
+  const inBrowser = useSyncExternalStore(
+    subscribeNever,
+    () => true,
+    () => false,
+  );
   // A reopened conversation shows the recorded outcome (never executable);
   // otherwise a pending card, or "expired" once it can't be decided any more.
   const [state, setState] = useState<State>(() =>
@@ -194,7 +206,7 @@ export function ActionConfirmation({
   const extra = [
     d.tool === "createContact" && d.email ? t("email", { value: d.email }) : null,
     d.tool === "createContact" && d.phone ? t("phone", { value: d.phone }) : null,
-    d.tool === "logActivity" && d.dueAt
+    d.tool === "logActivity" && d.dueAt && inBrowser
       ? t("dueAt", { when: formatWhen(d.dueAt, undefined, locale) })
       : null,
     d.tool === "bookMeeting" && d.contactName ? t("withContact", { contact: d.contactName }) : null,
