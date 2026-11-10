@@ -23,8 +23,17 @@ const m = vi.hoisted(() => {
       this.name = "AuthError";
     }
   }
+  const state = { authServiceDown: false };
   return {
     AuthError,
+    state,
+    assertAuthServiceAvailable: vi.fn(async () => {
+      if (state.authServiceDown) {
+        throw Object.assign(new Error("Auth service unavailable"), {
+          name: "AuthServiceUnavailableError",
+        });
+      }
+    }),
     getTenantContextOrNull: vi.fn(),
     requireSuperadmin: vi.fn(),
     audit: vi.fn(),
@@ -39,6 +48,7 @@ const m = vi.hoisted(() => {
 vi.mock("next/navigation", () => ({ redirect: m.redirect }));
 vi.mock("@/server/auth/session", () => ({
   AuthError: m.AuthError,
+  assertAuthServiceAvailable: m.assertAuthServiceAvailable,
   getTenantContextOrNull: m.getTenantContextOrNull,
   getTenantContext: vi.fn(),
 }));
@@ -80,6 +90,44 @@ async function redirectedTo(run: () => Promise<unknown>): Promise<string | undef
 
 beforeEach(() => {
   vi.clearAllMocks();
+  m.state.authServiceDown = false;
+});
+
+describe("an auth-service outage stays observable", () => {
+  it("requirePagePermission: throws AuthServiceUnavailableError instead of redirecting", async () => {
+    m.getTenantContextOrNull.mockResolvedValue(null);
+    m.state.authServiceDown = true;
+    await expect(requirePagePermission("crm:read")).rejects.toMatchObject({
+      name: "AuthServiceUnavailableError",
+    });
+    expect(m.redirect).not.toHaveBeenCalled();
+  });
+
+  it("requireSuperadminPage: throws AuthServiceUnavailableError instead of redirecting", async () => {
+    m.requireSuperadmin.mockRejectedValue(new m.AuthError("Not authenticated", 401));
+    m.state.authServiceDown = true;
+    await expect(requireSuperadminPage()).rejects.toMatchObject({
+      name: "AuthServiceUnavailableError",
+    });
+    expect(m.redirect).not.toHaveBeenCalled();
+  });
+
+  it("the Creator Studio page: throws, never renders or redirects", async () => {
+    m.getTenantContextOrNull.mockResolvedValue(null);
+    m.state.authServiceDown = true;
+    await expect(CreatorStudioOverviewPage()).rejects.toMatchObject({
+      name: "AuthServiceUnavailableError",
+    });
+    expect(m.redirect).not.toHaveBeenCalled();
+    expect(m.listCreatorProfiles).not.toHaveBeenCalled();
+  });
+
+  it("a signed-in user is never checked against the outage path", async () => {
+    m.getTenantContextOrNull.mockResolvedValue(ctx("OWNER"));
+    m.state.authServiceDown = true;
+    await expect(requirePagePermission("crm:read")).resolves.toMatchObject({ orgId: "org-1" });
+    expect(m.assertAuthServiceAvailable).not.toHaveBeenCalled();
+  });
 });
 
 describe("requirePagePermission", () => {
@@ -133,8 +181,8 @@ describe("requireSuperadminPage", () => {
   });
 
   it("an unexpected failure is rethrown", async () => {
-    m.requireSuperadmin.mockRejectedValue(new Error("auth service unavailable"));
-    await expect(requireSuperadminPage()).rejects.toThrow("auth service unavailable");
+    m.requireSuperadmin.mockRejectedValue(new Error("Supabase client setup failed"));
+    await expect(requireSuperadminPage()).rejects.toThrow("Supabase client setup failed");
     expect(m.redirect).not.toHaveBeenCalled();
   });
 });
