@@ -66,10 +66,18 @@ hydration errors; then it checks that both browser-only parts appear.
 
 **Remaining risks:**
 
-- `ActionConfirmation`'s initial state and `supersededActions` read `Date.now()` during render. A
-  pending action whose `expiresAt` falls between the server render and hydration, or a client clock
-  running ahead of the server's, can still mismatch. This is rare, not reproduced from Sentry, and
-  a separate follow-up.
+- `ActionConfirmation`'s initial state and `supersededActions` read `Date.now()` during render.
+  - **When it can mismatch:** the page sends an action as pending only if it was unexpired at the
+    server's `now`, and actions live 600 seconds (`ACTION_TTL_SECONDS`). A mismatch therefore needs
+    the action to expire in the moment between the server render and hydration, or a device clock
+    running ahead of the server by more than the action's remaining lifetime.
+  - **Effect:** React recovers by re-rendering on the client, the user ends up with the correct
+    card, and Sentry gets one #418 event. Nothing is executed or exposed: the server refuses an
+    expired confirmation, and the card then shows "expired".
+  - **Decision (2026-11-10):** not fixed before merge. A fix means changing the confirmation card's
+    initial state machine, which sits in the Preview → Confirm → Execute flow, for one recoverable
+    event. It stays a follow-up, worth taking only if Sentry still reports #418 on this route after
+    deployment.
 - The `bookMeeting` summary is formatted with an explicit zone, but its text comes from the
   runtime's ICU data. A browser with older ICU data than Node could in theory differ. Not observed.
 - 20% of this issue's events are on other routes, which Sentry's tag view didn't list. The issue
@@ -109,6 +117,16 @@ buries real failures.
   does. Any other error is rethrown.
 - The fix is used by the dashboard and both admin organization pages.
 - Sentry reporting itself is unchanged: real failures (database, auth service) still propagate.
+- **Auth-service outages stay visible.** Supabase Auth reports both "no valid session" and "the
+  service failed" as no user. `isAuthServiceFailure` (`src/server/auth/auth-service-failure.ts`)
+  separates them, using auth-js's own error classes:
+  - **Outage:** a network failure or timeout, 5xx, 429, or an unreadable response.
+  - **Expected:** a missing session, or an invalid, expired or revoked token.
+  - **During an outage:** the page guards throw `AuthServiceUnavailableError` instead of
+    redirecting, so the outage is reported.
+  - **Unchanged:** the layouts still redirect during an outage, as they did before. Middleware
+    already sends a signed-out-looking request to `/login`, and logs
+    `middleware_session_check_failed`.
 
 ## SYVEKA-STAGING-4: `Error` (withheld) on `/creator-studio`
 
