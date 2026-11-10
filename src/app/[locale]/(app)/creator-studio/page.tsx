@@ -1,15 +1,20 @@
 export const dynamic = "force-dynamic";
 
 import { getTranslations } from "next-intl/server";
-import { requirePermission } from "@/server/auth/guard";
-import { listCreatorProfiles } from "@/server/services/creator-profiles";
+import { requirePagePermission } from "@/server/auth/page-guard";
+import { isFeatureEnabled } from "@/server/services/feature-flags";
+import { CREATOR_STUDIO_FLAG, listCreatorProfiles } from "@/server/services/creator-profiles";
 import { getCreatorCreditBalance } from "@/server/services/creator-credits";
 import { listCreatorPosts } from "@/server/services/creator-posts";
 import { Card, CardContent } from "@/components/ui/card";
 import { Link } from "@/i18n/routing";
 
 export default async function CreatorStudioOverviewPage() {
-  const ctx = await requirePermission("creator:read");
+  const ctx = await requirePagePermission("creator:read");
+  // While the feature is off, the layout shows that instead of this page, but
+  // still renders it in parallel: reading Creator Studio data here would throw
+  // FeatureDisabledError, reported as an unhandled error.
+  if (!(await isFeatureEnabled(ctx.orgId, CREATOR_STUDIO_FLAG))) return null;
   const t = await getTranslations("creatorStudio.overview");
 
   const [profiles, credits, pendingApprovals] = await Promise.all([
