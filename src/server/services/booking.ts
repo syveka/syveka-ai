@@ -911,7 +911,11 @@ export async function cancelBookingAsOwner(ctx: TenantContext, bookingId: string
 export async function rescheduleBookingViaToken(
   raw: string,
   newStartIso: string,
-  admit?: (booking: { bookingTypeId: string; organizationId: string; guestEmail: string }) => Promise<void>,
+  admit?: (booking: {
+    bookingTypeId: string;
+    organizationId: string;
+    guestEmail: string;
+  }) => Promise<void>,
 ) {
   const { resolveToken, consumeTokenAtomic } = await import("./booking-tokens");
   const record = await resolveToken(raw, "RESCHEDULE");

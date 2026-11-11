@@ -77,7 +77,11 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   // allowances as a new public booking, once the new time is known to be
   // offered and before anything is written (see the create route).
   let refusal: NextResponse | null = null;
-  const admit = async (b: { bookingTypeId: string; organizationId: string; guestEmail: string }) => {
+  const admit = async (b: {
+    bookingTypeId: string;
+    organizationId: string;
+    guestEmail: string;
+  }) => {
     refusal =
       (await rateLimit.rateLimitRefusal(
         "publicBookingRecipient",
