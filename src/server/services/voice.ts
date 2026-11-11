@@ -11,7 +11,7 @@ import {
   type PhoneImportParams,
 } from "@/server/integrations/vapi";
 import { TOOL_REGISTRY, zodToJsonSchema } from "@/server/ai/tools";
-import { buildVoiceSystemPrompt } from "@/server/ai/prompts/voice";
+import { buildVoiceFirstMessage, buildVoiceSystemPrompt } from "@/server/ai/prompts/voice";
 import { getBusinessDnaContext } from "@/server/business-dna/context";
 import { lockPhoneNumber } from "@/server/calendar/locks";
 import { getEntitlements, EntitlementError } from "./billing/entitlements";
@@ -19,6 +19,8 @@ import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
 import {
   allowedVoiceTools,
+  recordingEnabledFor,
+  recordingToApply,
   type VoiceAssistantInput,
   type AttachPhoneNumberInput,
 } from "@/lib/validators/voice";
@@ -70,24 +72,61 @@ export async function upsertAssistant(
     enabledTools: input.enabledTools,
     useKnowledgeBase: input.useKnowledgeBase,
     transferNumber: input.transferNumber || null,
+    ...withRecording(recordingEnabledFor(input.recording, !assistantId)),
   };
+
+  const previous = assistantId
+    ? await db.voiceAssistant.findFirstOrThrow({ where: { id: assistantId } })
+    : null;
 
   const assistant = assistantId
     ? await db.voiceAssistant.update({ where: { id: assistantId }, data })
     : await db.voiceAssistant.create({ data });
 
-  // If already linked to Vapi, re-sync config on every save (§16.2)
-  if (assistant.vapiAssistantId) {
-    await syncToVapi(assistant.id, ctx.orgId);
-  }
-
+  // Before the sync: the save above is already committed, whether or not Vapi can be reached.
   await audit(ctx, {
     action: assistantId ? "voice_assistant.update" : "voice_assistant.create",
     resourceType: "voice_assistant",
     resourceId: assistant.id,
-    after: { name: input.name, language: input.language },
+    ...(previous ? { before: { recordingEnabled: previous.recordingEnabled } } : {}),
+    after: {
+      name: input.name,
+      language: input.language,
+      recordingEnabled: assistant.recordingEnabled,
+    },
   });
+
+  // If already linked to Vapi, re-sync config on every save (§16.2)
+  if (assistant.vapiAssistantId) {
+    try {
+      await syncToVapi(assistant.id, ctx.orgId);
+    } catch (error) {
+      // The saved setting and Vapi can now disagree, for example on whether calls are recorded.
+      // Provider errors can hold credentials or customer data, so none of it is stored.
+      await audit(ctx, {
+        action: "voice_assistant.sync_failed",
+        resourceType: "voice_assistant",
+        resourceId: assistant.id,
+        after: { recordingEnabled: assistant.recordingEnabled },
+      }).catch((auditError: unknown) => {
+        console.error(
+          JSON.stringify({
+            event: "voice_assistant_sync_failed_not_audited",
+            assistantId: assistant.id,
+            error: auditError instanceof Error ? auditError.name : "unknown",
+          }),
+        );
+      });
+      throw error;
+    }
+  }
+
   return assistant;
+}
+
+/** Leaves the stored choice alone when there's nothing to change. */
+function withRecording(recordingEnabled: boolean | undefined) {
+  return recordingEnabled === undefined ? {} : { recordingEnabled };
 }
 
 export type ActivateAssistantResult = {
@@ -149,7 +188,11 @@ export async function activateAssistant(
     resourceId: assistantId,
     // Provider response bodies can contain credentials or customer data.
     // Keep the operator-visible state without persisting the raw error.
-    after: { phoneNumber, phoneNumberProvisioned: Boolean(phoneNumber) },
+    after: {
+      phoneNumber,
+      phoneNumberProvisioned: Boolean(phoneNumber),
+      recordingEnabled: updated.recordingEnabled,
+    },
   });
   return { assistant: updated, phoneNumberError };
 }
@@ -321,12 +364,17 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
   });
 
   const toolNames = allowedVoiceTools(assistant.enabledTools);
+  const recordingEnabled = recordingToApply(
+    assistant.recordingEnabled,
+    Boolean(assistant.vapiAssistantId),
+  );
 
-  // Mandatory AI disclosure (§13.3, §16.5) is prepended server-side.
+  // Mandatory AI disclosure (§13.3, §16.5): the fixed notice is spoken in the first message
+  // (buildVoiceFirstMessage); the prompt keeps the model honest about it for the rest of the call.
   const disclosure =
     assistant.language === "FI"
-      ? "Aloita kertomalla, että olet tekoälyavustaja ja puhelu voidaan tallentaa."
-      : "Start by disclosing that you are an AI assistant and the call may be recorded.";
+      ? "Puhelun alussa on jo kerrottu, että olet tekoälyavustaja ja puhelu voidaan tallentaa. Älä toista sitä turhaan, mutta kerro se heti, jos et ole varma, että soittaja kuuli sen, tai jos sinulta kysytään."
+      : "The call has already opened with a notice that you are an AI assistant and the call may be recorded. Don't repeat it needlessly, but say it at once if you're unsure the caller heard it, or if asked.";
 
   // Business DNA is optional — the assistant degrades gracefully (falls back
   // to just the human-authored prompt) when the org hasn't filled it in yet.
@@ -335,7 +383,7 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
   const { NEXT_PUBLIC_APP_URL, VAPI_WEBHOOK_CREDENTIAL_ID } = getVapiEnv();
   const config: VapiAssistantConfig = {
     name: assistant.name,
-    firstMessage: assistant.firstMessage,
+    firstMessage: buildVoiceFirstMessage(assistant.language, assistant.firstMessage),
     systemPrompt: buildVoiceSystemPrompt({
       disclosure,
       businessDna,
@@ -350,6 +398,7 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
     tools: vapiToolsFor(toolNames),
     transferNumber: assistant.transferNumber,
     maxDurationSeconds: 15 * 60, // §16.5
+    recordingEnabled,
   };
 
   const { id } = await upsertVapiAssistant(config, assistant.vapiAssistantId);
@@ -357,6 +406,14 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
     await unscopedPrisma.voiceAssistant.update({
       where: { id: assistantId },
       data: { vapiAssistantId: id },
+    });
+  }
+  // Stored only while still unset, so a choice saved meanwhile isn't overwritten. Its own save
+  // syncs it to Vapi.
+  if (assistant.recordingEnabled === null && recordingEnabled === false) {
+    await unscopedPrisma.voiceAssistant.updateMany({
+      where: { id: assistantId, organizationId: orgId, recordingEnabled: null },
+      data: { recordingEnabled: false },
     });
   }
   return id;

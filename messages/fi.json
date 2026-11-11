@@ -640,6 +640,13 @@
     "persona": "Persoona",
     "tools": "Kyvyt",
     "toolsDescription": "Mitä avustaja saa tehdä puhelun aikana. Tietoja muokkaavat toimet vaativat aina soittajan vahvistuksen.",
+    "recording": {
+      "title": "Puheluiden tallennus",
+      "description": "Valintasi lähetetään puhepalvelulle aina, kun avustajan asetukset tallennetaan. Uusilla avustajilla tallennus on aluksi pois päältä.",
+      "off": "Pois päältä: puhelun ääntä ei tallenneta",
+      "on": "Päällä: puhepalvelu tallentaa puhelun äänen",
+      "keep": "Ei asetettu täällä: puhepalvelun oma asetus on voimassa"
+    },
     "useKb": "Vastaa tietopankin pohjalta",
     "firstMessagePlaceholder": "Hei! Tavoitit [yrityksen]. Kuinka voin auttaa?",
     "systemPromptPlaceholder": "Vastaat yrityksen [yritys] puheluihin. Ole ystävällinen ja ytimekäs…",
@@ -698,6 +705,60 @@
         "assistantNotSynced": "Tallenna ja aktivoi avustaja ennen puhelinnumeron liittämistä.",
         "invalidInput": "Tarkista puhelinnumeron muoto (E.164, esim. +358401234567) ja pakolliset kentät.",
         "generic": "Jokin meni pieleen. Yritä uudelleen."
+      }
+    },
+    "readiness": {
+      "title": "Puheluvalmius",
+      "summaryReady": "Asetuksissa ei löytynyt ongelmia. Tämä ei kerro, miltä oikea puhelu kuulostaa.",
+      "summaryBlocked": "Tämä avustaja ei voi vielä vastata puheluihin. Tarvitaan seuraavaa.",
+      "summaryUnverified": "Kaikkia tarkistuksia ei voitu tehdä, joten ei ole varmaa, voiko avustaja vastata puheluihin.",
+      "noticeLabel": "Soittaja kuulee tämän ensin",
+      "noticeApproved": "Hyväksytty",
+      "noticeAwaiting": "Luonnos, odottaa hyväksyntää",
+      "voiceNotSetUp": {
+        "title": "Puheluita ei ole vielä otettu käyttöön",
+        "action": "Ota yhteyttä Syvekan tukeen käyttöönoton viimeistelemiseksi."
+      },
+      "noticeAwaitingApproval": {
+        "title": "Puhuttu tekoälyilmoitus odottaa hyväksyntää",
+        "action": "Puhelut pysyvät estettyinä, kunnes Syveka hyväksyy ilmoituksen tällä kielellä. Sinun ei tarvitse tehdä mitään."
+      },
+      "notSynced": {
+        "title": "Tätä avustajaa ei ole vielä yhdistetty",
+        "action": "Yhdistä se valitsemalla ”Aktivoi ja hanki numero”."
+      },
+      "syncOutdated": {
+        "title": "Puhelinpalveluun lähetetyt asetukset ovat vanhentuneet",
+        "action": "Tallenna tämä avustaja, niin sen nykyiset asetukset ja ilmoitus lähetetään."
+      },
+      "syncUnverifiable": {
+        "title": "Yhteyttä ei voitu tarkistaa",
+        "action": "Lataa sivu hetken kuluttua uudelleen. Jos ongelma jatkuu, ota yhteyttä Syvekan tukeen."
+      },
+      "usageUnverifiable": {
+        "title": "Puheluminuutteja ei voitu tarkistaa",
+        "action": "Lataa sivu hetken kuluttua uudelleen. Jos ongelma jatkuu, ota yhteyttä Syvekan tukeen."
+      },
+      "noPhoneNumber": {
+        "title": "Puhelinnumeroa ei ole liitetty",
+        "action": "Liitä puhelinnumero tällä sivulla.",
+        "actionOnceConnected": "Kun avustaja on yhdistetty, liitä puhelinnumero tällä sivulla."
+      },
+      "inactive": {
+        "title": "Tämä avustaja on pois päältä",
+        "action": "Kytke se päälle valitsemalla ”Aktivoi ja hanki numero”."
+      },
+      "noMinutes": {
+        "title": "Tilaukseesi ei sisälly puheluminuutteja",
+        "action": "Työtilan omistaja voi tarkistaa tilauksen laskutusasetuksista."
+      },
+      "minutesUsed": {
+        "title": "Tämän kuun puheluminuutit on käytetty",
+        "action": "Työtilan omistaja voi tarkistaa käytön ja tilauksen laskutusasetuksista."
+      },
+      "readOnly": {
+        "title": "Tämä työtila on vain luku -tilassa",
+        "action": "Työtilan omistaja voi selvittää maksuasian laskutusasetuksissa."
       }
     }
   },

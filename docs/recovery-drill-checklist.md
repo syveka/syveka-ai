@@ -110,8 +110,9 @@ Scripted in `scripts/recovery-drill/s6-restore-disposable.sh`. Before any write 
 connection's project ref to equal an explicitly typed disposable-project ref (and differ from
 production and staging), then refuses a non-empty destination. It restores in one transaction and
 verifies the checks, row counts, grants and migration history. A failure after the commit reports
-`DATA REMAINS — OWNER CLEANUP REQUIRED` and deletes nothing. It reports `20261014000000_secure_prisma_migrations_table` as pending
-and doesn't apply it; applying it to the disposable project is a separate, authorized step before
+`DATA REMAINS — OWNER CLEANUP REQUIRED` and deletes nothing. It requires the pending migrations to be exactly those in
+`scripts/recovery-drill/expected-pending-migrations.txt` and doesn't apply them; applying them to
+the disposable project is a separate, authorized step before
 the `migrate status` item below.
 
 - [ ] Restore the **sanitized** dump only.

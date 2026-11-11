@@ -1,0 +1,7 @@
+# Migrations in this repository that production's history doesn't record yet. s6, s7 and the
+# rehearsal read this list, and stop if a restored history has any other pending set.
+#
+# Add each new migration here when it lands. Once production has applied one, remove its name and
+# raise the count in rehearsal/rehearse.sh's A1 check to match. A unit test compares the three.
+20261014000000_secure_prisma_migrations_table
+20261106000000_voice_assistant_recording_enabled
