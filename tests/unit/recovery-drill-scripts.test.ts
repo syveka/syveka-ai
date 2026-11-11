@@ -192,6 +192,54 @@ describe("recovery-drill isolation", () => {
 const bash = spawnSync("bash", ["-c", "echo $BASH_VERSION"], { encoding: "utf8" });
 const hasBash = bash.status === 0 && /^\d/.test(bash.stdout.trim());
 
+describe("recovery-drill pending migrations", () => {
+  const migrationsDir = path.join(dir, "../../prisma/migrations");
+  const allMigrations = fs
+    .readdirSync(migrationsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name);
+  const listed = read("expected-pending-migrations.txt")
+    .split("\n")
+    .filter((line) => line.trim() && !line.startsWith("#"));
+  // The history the rehearsal rebuilds is production's, so it stays fixed when a migration lands.
+  const productionApplied = Number(/"\$APPLIED" = (\d+)/.exec(read("rehearsal/rehearse.sh"))?.[1]);
+
+  it("lists only migrations that exist", () => {
+    expect(listed.filter((name) => !allMigrations.includes(name))).toEqual([]);
+  });
+
+  it("fails when a migration lands without being listed, as the real drill would stop", () => {
+    expect(allMigrations.length - listed.length).toBe(productionApplied);
+  });
+
+  it("gives the scripts one list, with no name of their own", () => {
+    for (const file of [
+      "s6-restore-disposable.sh",
+      "s7-verify-disposable.sh",
+      "rehearsal/rehearse.sh",
+    ]) {
+      expect(read(file)).toContain("expected-pending-migrations.txt");
+      expect(read(file)).not.toMatch(/^(EXPECT_PENDING|PENDING)=\d/m);
+    }
+  });
+
+  it.runIf(hasBash)("reads the list without comments or blank lines, in pending order", () => {
+    const run = spawnSync(
+      "bash",
+      [
+        "-c",
+        '. "$1"; expected_pending_migrations "$2"',
+        "_",
+        path.join(dir, "lib.sh").replace(/\\/g, "/"),
+        path.join(dir, "expected-pending-migrations.txt").replace(/\\/g, "/"),
+      ],
+      { encoding: "utf8" },
+    );
+    expect(run.status).toBe(0);
+    expect(run.stdout.split("\n").filter(Boolean)).toEqual([...listed].sort());
+  });
+});
+
 describe("recovery-drill shell helpers", () => {
   it.runIf(hasBash)("pass the offline self-test (validator, archive filters, extensions)", () => {
     const run = spawnSync("bash", [path.join(dir, "rehearsal/selftest.sh")], { encoding: "utf8" });

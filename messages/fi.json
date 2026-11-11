@@ -640,6 +640,51 @@
     "persona": "Persoona",
     "tools": "Kyvyt",
     "toolsDescription": "Mitä avustaja saa tehdä puhelun aikana. Tietoja muokkaavat toimet vaativat aina soittajan vahvistuksen.",
+    "recording": {
+      "title": "Puheluiden tallennus",
+      "description": "Valintasi lähetetään puhepalvelulle aina, kun avustajan asetukset tallennetaan. Uusilla avustajilla tallennus on aluksi pois päältä.",
+      "off": "Pois päältä: puhelun ääntä ei tallenneta",
+      "on": "Päällä: puhepalvelu tallentaa puhelun äänen",
+      "keep": "Ei tiedossa: ei koskaan asetettu täällä. Puhepalvelun oma asetus on voimassa, kunnes valitset",
+      "status": {
+        "requestedLabel": "Asetuksesi:",
+        "lastAcceptedLabel": "Puhepalvelu hyväksyi viimeksi:",
+        "reportedLabel": "Puhepalvelu ilmoittaa nyt:",
+        "valueOn": "tallennus päällä",
+        "valueOff": "tallennus pois päältä",
+        "sendAgain": "Lähetä puhepalvelulle uudelleen",
+        "sendAgainFailed": "Yritys epäonnistui, joten puhepalvelulla voi olla kumpi tahansa asetus. Yritä uudelleen.",
+        "needsReview": {
+          "title": "Tallennuksen tila ei ole tiedossa ja vaatii tarkistuksesi",
+          "body": "Tämä avustaja luotiin ennen kuin Syveka alkoi säilyttää puhelujen tallennuksen valintaa, joten puhepalvelun oma asetus on yhä voimassa. Syveka ei ole muuttanut sitä. Valitse päällä tai pois päältä alta ja tallenna."
+        },
+        "unreadable": {
+          "title": "Tallennuksen tilaa ei voida näyttää juuri nyt",
+          "body": "Syveka ei voinut lukea tietoja siitä, mitä lähetettiin, joten se ei voi sanoa, mikä asetus puhepalvelulla on."
+        },
+        "mismatch": {
+          "title": "Puhepalvelu ilmoittaa eri asetuksen",
+          "body": "Puhepalvelun ilmoittama asetus ei vastaa asetustasi. Puhelut eivät ehkä noudata valintaasi, ennen kuin se lähetetään uudelleen."
+        },
+        "failed": {
+          "title": "Asetustasi ei ehkä otettu käyttöön",
+          "body": "Viimeisin lähetysyritys epäonnistui. Puhepalvelulla voi olla kumpi tahansa asetus, joten puheluita saatetaan tallentaa tai ei."
+        },
+        "uncertain": {
+          "title": "Asetustasi ei ole vahvistettu",
+          "body": "Syvekalla ei ole vahvistettua tulosta viimeisimmälle asetuksellesi, joten se ei voi tietää, kumpi asetus puhepalvelulla on. Puheluita saatetaan tallentaa tai ei."
+        },
+        "pending": {
+          "title": "Asetustasi lähetetään",
+          "body": "Lataa tämä sivu uudelleen minuutin kuluttua nähdäksesi tuloksen."
+        },
+        "applied": {
+          "title": "Puhepalvelu hyväksyi asetuksesi",
+          "body": "Se hyväksyi tämän asetuksen, kun se lähetettiin. Se ei todista, mitä puhelussa tapahtuu."
+        },
+        "sendAgainSent": "Lähetetty. Yllä oleva tila näyttää, minkä puhepalvelu hyväksyi."
+      }
+    },
     "useKb": "Vastaa tietopankin pohjalta",
     "firstMessagePlaceholder": "Hei! Tavoitit [yrityksen]. Kuinka voin auttaa?",
     "systemPromptPlaceholder": "Vastaat yrityksen [yritys] puheluihin. Ole ystävällinen ja ytimekäs…",
@@ -679,7 +724,9 @@
       "entitlement_exceeded": "Puhe-AI vaatii Starter-tason tai korkeamman — päivitä tasoa jatkaaksesi.",
       "generic": "Jokin meni pieleen. Yritä uudelleen.",
       "rate_limited": "Liian monta muutosta lyhyessä ajassa. Yritä uudelleen minuutin kuluttua.",
-      "service_unavailable": "Muutosta ei voitu vahvistaa juuri nyt. Yritä hetken kuluttua uudelleen."
+      "service_unavailable": "Muutosta ei voitu vahvistaa juuri nyt. Yritä hetken kuluttua uudelleen.",
+      "invalid_input": "Tarkista kentät ja yritä uudelleen.",
+      "sync_failed": "Muutokset tallennettiin, mutta niitä ei voitu lähettää puhelinpalveluun. Se voi yhä käyttää aiempia asetuksia, myös puhelujen tallennuksessa. Yritä uudelleen tallentamalla."
     },
     "attachPhoneNumber": {
       "title": "Liitä olemassa oleva numero",
@@ -699,7 +746,62 @@
         "invalidInput": "Tarkista puhelinnumeron muoto (E.164, esim. +358401234567) ja pakolliset kentät.",
         "generic": "Jokin meni pieleen. Yritä uudelleen."
       }
-    }
+    },
+    "readiness": {
+      "title": "Puheluvalmius",
+      "summaryReady": "Asetuksissa ei löytynyt ongelmia. Tämä ei kerro, miltä oikea puhelu kuulostaa.",
+      "summaryBlocked": "Tämä avustaja ei voi vielä vastata puheluihin. Tarvitaan seuraavaa.",
+      "summaryUnverified": "Kaikkia tarkistuksia ei voitu tehdä, joten ei ole varmaa, voiko avustaja vastata puheluihin.",
+      "noticeLabel": "Soittaja kuulee tämän ensin",
+      "noticeApproved": "Hyväksytty",
+      "noticeAwaiting": "Luonnos, odottaa hyväksyntää",
+      "voiceNotSetUp": {
+        "title": "Puheluita ei ole vielä otettu käyttöön",
+        "action": "Ota yhteyttä Syvekan tukeen käyttöönoton viimeistelemiseksi."
+      },
+      "noticeAwaitingApproval": {
+        "title": "Puhuttu tekoälyilmoitus odottaa hyväksyntää",
+        "action": "Puhelut pysyvät estettyinä, kunnes Syveka hyväksyy ilmoituksen tällä kielellä. Sinun ei tarvitse tehdä mitään."
+      },
+      "notSynced": {
+        "title": "Tätä avustajaa ei ole vielä yhdistetty",
+        "action": "Yhdistä se valitsemalla ”Aktivoi ja hanki numero”."
+      },
+      "syncOutdated": {
+        "title": "Puhelinpalveluun lähetetyt asetukset ovat vanhentuneet",
+        "action": "Tallenna tämä avustaja, niin sen nykyiset asetukset ja ilmoitus lähetetään."
+      },
+      "syncUnverifiable": {
+        "title": "Yhteyttä ei voitu tarkistaa",
+        "action": "Lataa sivu hetken kuluttua uudelleen. Jos ongelma jatkuu, ota yhteyttä Syvekan tukeen."
+      },
+      "usageUnverifiable": {
+        "title": "Puheluminuutteja ei voitu tarkistaa",
+        "action": "Lataa sivu hetken kuluttua uudelleen. Jos ongelma jatkuu, ota yhteyttä Syvekan tukeen."
+      },
+      "noPhoneNumber": {
+        "title": "Puhelinnumeroa ei ole liitetty",
+        "action": "Liitä puhelinnumero tällä sivulla.",
+        "actionOnceConnected": "Kun avustaja on yhdistetty, liitä puhelinnumero tällä sivulla."
+      },
+      "inactive": {
+        "title": "Tämä avustaja on pois päältä",
+        "action": "Kytke se päälle valitsemalla ”Aktivoi ja hanki numero”."
+      },
+      "noMinutes": {
+        "title": "Tilaukseesi ei sisälly puheluminuutteja",
+        "action": "Työtilan omistaja voi tarkistaa tilauksen laskutusasetuksista."
+      },
+      "minutesUsed": {
+        "title": "Tämän kuun puheluminuutit on käytetty",
+        "action": "Työtilan omistaja voi tarkistaa käytön ja tilauksen laskutusasetuksista."
+      },
+      "readOnly": {
+        "title": "Tämä työtila on vain luku -tilassa",
+        "action": "Työtilan omistaja voi selvittää maksuasian laskutusasetuksissa."
+      }
+    },
+    "deactivateIncomplete": "Tämä avustaja on pois käytöstä Syvekassa eikä voi suorittaa toimintoja, mutta puhepalvelu säilyttää sen yhä ja voi vastata sen numeroon. Syveka yrittää katkaista nämä puhelut. Poista se käytöstä uudelleen, niin se poistetaan."
   },
   "calendar": {
     "title": "Kalenteri",

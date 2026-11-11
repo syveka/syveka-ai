@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState } from "react";
+import { useActionState, type ReactNode } from "react";
 import { useTranslations } from "next-intl";
 import {
   saveAssistantAction,
@@ -22,7 +22,20 @@ type Initial = VoiceAssistantInput & {
   phoneNumber?: string | null;
 };
 
-export function AssistantForm({ initial }: { initial?: Initial }) {
+export function AssistantForm({
+  initial,
+  statusPanel,
+  recordingStatus,
+  deactivationIncomplete = false,
+}: {
+  initial?: Initial;
+  /** Shown under the page heading, above the settings. */
+  statusPanel?: ReactNode;
+  /** Outside the settings form, because it holds a form of its own. */
+  recordingStatus?: ReactNode;
+  /** Off in Syveka, while the phone service still holds the assistant. */
+  deactivationIncomplete?: boolean;
+}) {
   const t = useTranslations("voice");
   const tc = useTranslations("common");
   const [state, action, pending] = useActionState<VoiceActionState, FormData>(
@@ -44,8 +57,10 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
         <Link href="/voice" className="text-sm text-muted-foreground hover:underline">
           ← {t("title")}
         </Link>
-        <div className="mt-1 flex items-center justify-between">
-          <h1 className="text-2xl font-semibold">{initial?.name ?? t("newAssistant")}</h1>
+        <div className="mt-1 flex flex-wrap items-center justify-between gap-2">
+          <h1 className="min-w-0 break-words text-2xl font-semibold">
+            {initial?.name ?? t("newAssistant")}
+          </h1>
           {initial?.id && !initial.isActive ? (
             <form action={activateAction}>
               <Button type="submit" variant="default" disabled={activatePending}>
@@ -53,7 +68,7 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
               </Button>
             </form>
           ) : null}
-          {initial?.id && initial.isActive ? (
+          {initial?.id && (initial.isActive || deactivationIncomplete) ? (
             <form action={deactivateAction}>
               <Button type="submit" variant="outline" disabled={deactivatePending}>
                 {deactivatePending ? tc("loading") : t("deactivate")}
@@ -63,7 +78,7 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
         </div>
         {initial?.phoneNumber ? (
           <p className="text-sm text-muted-foreground">
-            {t("phoneNumber")}: <strong>{initial.phoneNumber}</strong>
+            {t("phoneNumber")}: <strong dir="ltr">{initial.phoneNumber}</strong>
           </p>
         ) : null}
         {activateState.phoneNumberPending ? (
@@ -76,17 +91,26 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
             {t("activateFailed")}
           </p>
         ) : null}
+        {deactivationIncomplete || deactivateState.error === "vapi_delete_failed" ? (
+          <p role="alert" className="text-sm text-destructive">
+            {t("deactivateIncomplete")}
+          </p>
+        ) : null}
         {deactivateState.message === "deactivated" ? (
           <p role="status" className="text-sm text-muted-foreground">
             {t("deactivateSuccess")}
           </p>
         ) : null}
-        {deactivateState.error ? (
+        {deactivateState.error && deactivateState.error !== "vapi_delete_failed" ? (
           <p role="alert" className="text-sm text-destructive">
             {t("deactivateFailed")}
           </p>
         ) : null}
       </div>
+
+      {statusPanel}
+
+      {recordingStatus}
 
       {initial?.id && !initial.phoneNumber ? (
         <AttachPhoneNumberForm assistantId={initial.id} />
@@ -172,6 +196,31 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
                 {t(`toolNames.${tool}` as never)}
               </label>
             ))}
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{t("recording.title")}</CardTitle>
+            <CardDescription>{t("recording.description")}</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Label htmlFor="recording" className="sr-only">
+              {t("recording.title")}
+            </Label>
+            <select
+              id="recording"
+              name="recording"
+              defaultValue={initial?.recording ?? "off"}
+              className="h-9 w-full rounded-md border border-input bg-transparent px-3 text-sm"
+            >
+              <option value="off">{t("recording.off")}</option>
+              <option value="on">{t("recording.on")}</option>
+              {/* Only for an assistant whose recording was never chosen here. */}
+              {initial?.recording === "keep" ? (
+                <option value="keep">{t("recording.keep")}</option>
+              ) : null}
+            </select>
           </CardContent>
         </Card>
 

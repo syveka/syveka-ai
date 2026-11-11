@@ -1,0 +1,161 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+/**
+ * saveAssistantAction: who may save, and what the person saving is told. After a failed Vapi sync
+ * the choice is already saved, so "try again" alone would mislead them about whether calls are
+ * being recorded. The service is mocked here; voice-recording-setting.test.ts covers it.
+ */
+const mocks = vi.hoisted(() => ({
+  requirePermission: vi.fn(),
+  upsertAssistant: vi.fn(),
+  retryAssistantSync: vi.fn(),
+  revalidatePath: vi.fn(),
+  actionWriteLimitError: vi.fn(async () => null as string | null),
+  redirect: vi.fn(),
+}));
+
+class FakeSyncFailed extends Error {}
+
+vi.mock("@/server/auth/guard", () => ({ requirePermission: mocks.requirePermission }));
+vi.mock("@/server/security/rate-limit", () => ({
+  actionWriteLimitError: mocks.actionWriteLimitError,
+}));
+vi.mock("@/server/services/voice", () => ({
+  upsertAssistant: mocks.upsertAssistant,
+  retryAssistantSync: mocks.retryAssistantSync,
+  get VoiceSyncFailedError() {
+    return FakeSyncFailed;
+  },
+}));
+vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
+vi.mock("next/navigation", () => ({ redirect: mocks.redirect }));
+
+const { retryAssistantSyncAction, saveAssistantAction } = await import("@/actions/voice");
+
+describe("sending a recording setting again", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mocks.requirePermission.mockResolvedValue({ orgId: "org-a", userId: "user-1", role: "OWNER" });
+    mocks.actionWriteLimitError.mockResolvedValue(null);
+    mocks.retryAssistantSync.mockResolvedValue(undefined);
+  });
+
+  it("needs the same permission as configuring an assistant, before anything else", async () => {
+    mocks.requirePermission.mockRejectedValue(new Error("forbidden"));
+    await expect(retryAssistantSyncAction("assistant-1", {})).rejects.toThrow("forbidden");
+    expect(mocks.requirePermission).toHaveBeenCalledWith("voice:configure");
+    expect(mocks.retryAssistantSync).not.toHaveBeenCalled();
+  });
+
+  it("is limited like other writes that call the paid provider", async () => {
+    mocks.actionWriteLimitError.mockResolvedValue("rate_limited");
+    await expect(retryAssistantSyncAction("assistant-1", {})).resolves.toEqual({
+      error: "rate_limited",
+    });
+    expect(mocks.retryAssistantSync).not.toHaveBeenCalled();
+  });
+
+  it("acts as the session's organization, whatever the page sent", async () => {
+    await expect(retryAssistantSyncAction("assistant-1", {})).resolves.toEqual({
+      message: "sync_sent",
+    });
+    expect(mocks.retryAssistantSync).toHaveBeenCalledWith(
+      expect.objectContaining({ orgId: "org-a" }),
+      "assistant-1",
+    );
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/voice/assistant-1");
+  });
+
+  it("reports a failed attempt and refreshes the page, which reads the result", async () => {
+    mocks.retryAssistantSync.mockRejectedValue(new FakeSyncFailed("provider detail"));
+    await expect(retryAssistantSyncAction("assistant-1", {})).resolves.toEqual({
+      error: "sync_failed",
+    });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/voice/assistant-1");
+  });
+
+  it("doesn't show another organization's assistant, or a raw error", async () => {
+    mocks.retryAssistantSync.mockRejectedValue(new Error("No VoiceAssistant found: internal"));
+    await expect(retryAssistantSyncAction("someone-elses", {})).resolves.toEqual({
+      error: "generic",
+    });
+  });
+});
+
+function form(overrides: Record<string, string> = {}) {
+  const data = new FormData();
+  const fields = {
+    name: "Reception",
+    language: "FI",
+    voiceProvider: "azure",
+    firstMessage: "Hei!",
+    systemPrompt: "Olet avulias vastaanottovirkailija.",
+    useKnowledgeBase: "false",
+    recording: "off",
+    ...overrides,
+  };
+  for (const [key, value] of Object.entries(fields)) data.set(key, value);
+  return data;
+}
+
+beforeEach(() => {
+  vi.clearAllMocks();
+  mocks.requirePermission.mockResolvedValue({ userId: "user-1", orgId: "org-a", role: "OWNER" });
+  mocks.actionWriteLimitError.mockResolvedValue(null);
+  mocks.upsertAssistant.mockResolvedValue({ id: "assistant-1" });
+});
+
+describe("saveAssistantAction", () => {
+  it("needs voice:configure, and saves nothing without it", async () => {
+    mocks.requirePermission.mockRejectedValueOnce(new Error("forbidden"));
+
+    await expect(saveAssistantAction("assistant-1", {}, form())).rejects.toThrow("forbidden");
+
+    expect(mocks.requirePermission).toHaveBeenCalledWith("voice:configure");
+    expect(mocks.upsertAssistant).not.toHaveBeenCalled();
+  });
+
+  it("takes the organization from the session, and ignores one in the form", async () => {
+    await saveAssistantAction("assistant-1", {}, form({ organizationId: "org-b", orgId: "org-b" }));
+
+    const [ctx, input] = mocks.upsertAssistant.mock.calls[0]!;
+    expect(ctx.orgId).toBe("org-a");
+    expect(input).not.toHaveProperty("organizationId");
+    expect(input).not.toHaveProperty("orgId");
+  });
+
+  it("rejects a recording value that isn't offered", async () => {
+    const state = await saveAssistantAction("assistant-1", {}, form({ recording: "always" }));
+
+    expect(state).toEqual({ error: "invalid_input" });
+    expect(mocks.upsertAssistant).not.toHaveBeenCalled();
+  });
+
+  it("says the save stands when only the Vapi sync failed, and refreshes the page", async () => {
+    mocks.upsertAssistant.mockRejectedValueOnce(new FakeSyncFailed());
+
+    const state = await saveAssistantAction("assistant-1", {}, form());
+
+    expect(state).toEqual({ error: "sync_failed" });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/voice");
+  });
+
+  it("stays generic for any other failure, with no provider text", async () => {
+    mocks.upsertAssistant.mockRejectedValueOnce(new Error("Vapi 500: secret-provider-detail"));
+
+    const state = await saveAssistantAction("assistant-1", {}, form());
+
+    expect(state).toEqual({ error: "generic" });
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
+});
+
+describe("the messages it can return", () => {
+  it.each(["en", "fi", "ar"])("%s has text for every save error", async (locale) => {
+    const { default: messages } = await import(`../../messages/${locale}.json`);
+    for (const code of ["generic", "invalid_input", "sync_failed"]) {
+      expect(messages.voice.errors[code], code).toBeTruthy();
+    }
+    expect(messages.voice.errors.sync_failed).not.toBe(messages.voice.errors.generic);
+  });
+});
