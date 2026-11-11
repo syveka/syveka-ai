@@ -94,7 +94,9 @@ On Staging first, after deploying this change and editing the templates:
    it lands on `/ar/invite/<id>`.
 
 If step 2 shows a link starting with the Site URL followed by `&token_hash`, the
-redirect allow-list entry is missing or does not match.
+redirect allow-list entry is missing or does not match. Don't tap such a link: the browser
+reads everything up to the first `/` as a host name and sends it, hash included, to the DNS
+resolver. Fix the allow-list, request a new email, and only then change Production's templates.
 
 ## Known limits
 
