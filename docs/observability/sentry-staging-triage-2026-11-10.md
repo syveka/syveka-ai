@@ -66,18 +66,31 @@ hydration errors; then it checks that both browser-only parts appear.
 
 **Remaining risks:**
 
-- `ActionConfirmation`'s initial state and `supersededActions` read `Date.now()` during render.
-  - **When it can mismatch:** the page sends an action as pending only if it was unexpired at the
-    server's `now`, and actions live 600 seconds (`ACTION_TTL_SECONDS`). A mismatch therefore needs
-    the action to expire in the moment between the server render and hydration, or a device clock
-    running ahead of the server by more than the action's remaining lifetime.
-  - **Effect:** React recovers by re-rendering on the client, the user ends up with the correct
-    card, and Sentry gets one #418 event. Nothing is executed or exposed: the server refuses an
-    expired confirmation, and the card then shows "expired".
-  - **Decision (2026-11-10):** not fixed before merge. A fix means changing the confirmation card's
-    initial state machine, which sits in the Preview → Confirm → Execute flow, for one recoverable
-    event. It stays a follow-up, worth taking only if Sentry still reports #418 on this route after
-    deployment.
+- Action expiry against two clocks: fixed in this change (2026-11-11), not yet seen in production.
+  - **What it was:** `ActionConfirmation`'s initial state and `supersededActions` (called by
+    `ChatThread`) read `Date.now()` during render. The page sends an action as pending only if it
+    was unexpired at the server's `now`, and actions live 600 seconds (`ACTION_TTL_SECONDS`). When
+    the action expired between the server render and hydration, or the device clock ran ahead of
+    the server by more than the action's remaining lifetime, the server rendered "pending" and the
+    browser's first render "expired": one recoverable #418.
+  - **Fix:** the same `useSyncExternalStore` flag as above. On the server and during hydration
+    neither component reads the clock: an action without a recorded outcome is taken as open, which
+    is the page's verdict, so both renders match. The render right after hydration reads the clock:
+    an expired card becomes "expired" and what replaces what is recomputed. The card's
+    supersession effect waits for that render, so nothing is reported for a card on the strength of
+    the hydration pass alone. A card mounted in the browser (a new reply, client navigation) reads
+    the clock at once, as before. No request to the server changed.
+  - **Tests:** added to `tests/unit/chat-thread-hydration.test.tsx`, with the server's and the
+    browser's `Date.now` fixed separately: expiry between the two renders, a device clock an hour
+    ahead, an action still open, a recorded outcome, a mount in the browser, and a replaced
+    proposal with its replacement (both open, the replacement expired, the replaced one expired).
+  - **Residual risk:** an expired card is shown as pending, with its buttons, from the hydration
+    commit until the second re-render after it (one or two frames). A click in that window sends a
+    normal confirmation, which the server decides by its own clock (`tool-actions.ts`): an action
+    expired there is refused as `not_found` and the card shows "expired"; one that only the device
+    clock considers expired is still valid and runs, as it would from any pending card. A device
+    clock running behind the server was never a mismatch and is unchanged: the card stays
+    pending past its expiry until it is used.
 - The `bookMeeting` summary is formatted with an explicit zone, but its text comes from the
   runtime's ICU data. A browser with older ICU data than Node could in theory differ. Not observed.
 - 20% of this issue's events are on other routes, which Sentry's tag view didn't list. The issue
