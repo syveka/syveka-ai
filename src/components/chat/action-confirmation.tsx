@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Check, RotateCcw, ShieldCheck, X } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -63,6 +63,9 @@ const RECORDED_STATE: Record<RestoredActionState, State> = {
   unavailable: "unavailable",
 };
 
+const subscribeNever = () => () => {};
+
+/** `timeZone` undefined: the runtime's own zone (the browser's, once hydrated). */
 function formatWhen(iso: string, timeZone: string | undefined, locale: string) {
   return new Intl.DateTimeFormat(locale, {
     timeZone,
@@ -118,12 +121,26 @@ export function ActionConfirmation({
   const t = useTranslations("chat.actions");
   const field = useTranslations("businessDna");
   const locale = useLocale();
+  // A task's due time is formatted in the runtime's zone, so only in the
+  // browser: false on the server and during hydration, so the server render
+  // and the hydration pass match (formatting it on the server, in its zone,
+  // failed hydration, React error #418), and it appears right after hydration.
+  const inBrowser = useSyncExternalStore(
+    subscribeNever,
+    () => true,
+    () => false,
+  );
   // A reopened conversation shows the recorded outcome (never executable);
   // otherwise a pending card, or "expired" once it can't be decided any more.
+  // The clock is read only in the browser: the page sends an action without
+  // an outcome only while it is still open, and the server render and the
+  // hydration pass both take that verdict, so they match even when the
+  // action expires in between or the device clock runs ahead (React error
+  // #418 otherwise). Expiry is then applied right after hydration, below.
   const [state, setState] = useState<State>(() =>
     action.restored
       ? action.restored
-      : action.expiresAt <= Date.now()
+      : inBrowser && action.expiresAt <= Date.now()
         ? "expired"
         : superseded
           ? "superseded"
@@ -148,6 +165,9 @@ export function ActionConfirmation({
   // a replaced value) and offered again once the newer proposal is withdrawn.
   const releasedRef = useRef(false);
   useEffect(() => {
+    // Not during hydration: the thread hasn't consulted the clock yet, so
+    // what replaces what is only known on the render that follows.
+    if (!inBrowser) return;
     if (superseded) {
       if (releasedRef.current) return;
       if (state === "pending") setState("superseded");
@@ -163,7 +183,16 @@ export function ActionConfirmation({
     }
     // onSettled is a stable callback from the chat hook.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [superseded, action.id, state, retryable]);
+  }, [superseded, action.id, state, retryable, inBrowser]);
+
+  // Right after hydration: a card that was hydrated as open but has expired
+  // by the browser's clock becomes what it would have been had it mounted in
+  // the browser (expired, nothing reported). A card mounted in the browser
+  // already started that way, so this changes nothing for it.
+  useEffect(() => {
+    if (!inBrowser || action.restored || action.expiresAt > Date.now()) return;
+    setState((s) => (s === "pending" || s === "superseded" ? "expired" : s));
+  }, [inBrowser, action.restored, action.expiresAt]);
 
   // After the user's decision, the result is where their attention should go:
   // the buttons they used are gone, so focus moves to the card (its live
@@ -194,7 +223,7 @@ export function ActionConfirmation({
   const extra = [
     d.tool === "createContact" && d.email ? t("email", { value: d.email }) : null,
     d.tool === "createContact" && d.phone ? t("phone", { value: d.phone }) : null,
-    d.tool === "logActivity" && d.dueAt
+    d.tool === "logActivity" && d.dueAt && inBrowser
       ? t("dueAt", { when: formatWhen(d.dueAt, undefined, locale) })
       : null,
     d.tool === "bookMeeting" && d.contactName ? t("withContact", { contact: d.contactName }) : null,
