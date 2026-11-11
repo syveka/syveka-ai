@@ -151,7 +151,15 @@ describe.skipIf(!PG_URL)("withdraw vs accept on real Postgres (service path)", (
       },
     });
     const ctx = { orgId: org.id, userId: owner.id, role: "OWNER" } as unknown as Ctx;
-    return { orgId: org.id, ctx, joinerId: joiner.id, invitationId: invitation.id, token };
+    return {
+      orgId: org.id,
+      ctx,
+      joinerId: joiner.id,
+      // The signed-in identity the action passes from Supabase Auth.
+      joinerSession: { id: joiner.id, email: joiner.email },
+      invitationId: invitation.id,
+      token,
+    };
   }
 
   const members = (orgId: string) =>
@@ -226,7 +234,7 @@ describe.skipIf(!PG_URL)("withdraw vs accept on real Postgres (service path)", (
     const enteredPromise = new Promise<void>((r) => (entered = r));
     holder.gate = { entered, open: new Promise<void>((r) => (open = r)) };
     try {
-      const accept = acceptInvitation(seeded.token, seeded.joinerId);
+      const accept = acceptInvitation(seeded.token, seeded.joinerSession);
       await enteredPromise; // acceptance has re-read PENDING under the lock and is paused
       const revoke = revokeInvitation(seeded.ctx, seeded.invitationId);
 
@@ -256,7 +264,7 @@ describe.skipIf(!PG_URL)("withdraw vs accept on real Postgres (service path)", (
     const seeded = await seed();
 
     await revokeInvitation(seeded.ctx, seeded.invitationId);
-    await expect(acceptInvitation(seeded.token, seeded.joinerId)).rejects.toBeInstanceOf(
+    await expect(acceptInvitation(seeded.token, seeded.joinerSession)).rejects.toBeInstanceOf(
       InvitationAcceptError,
     );
     const row = await invitation(seeded.invitationId);
@@ -274,7 +282,7 @@ describe.skipIf(!PG_URL)("withdraw vs accept on real Postgres (service path)", (
     const { acceptInvitation, revokeInvitation } = await import("@/server/services/members");
     const seeded = await seed();
 
-    await acceptInvitation(seeded.token, seeded.joinerId);
+    await acceptInvitation(seeded.token, seeded.joinerSession);
     await expect(revokeInvitation(seeded.ctx, seeded.invitationId)).rejects.toMatchObject({
       code: "not_pending",
     });
@@ -307,7 +315,7 @@ describe.skipIf(!PG_URL)("withdraw vs accept on real Postgres (service path)", (
     for (let i = 0; i < 6; i++) {
       const seeded = await seed();
       const [a, r] = await Promise.allSettled([
-        acceptInvitation(seeded.token, seeded.joinerId),
+        acceptInvitation(seeded.token, seeded.joinerSession),
         revokeInvitation(seeded.ctx, seeded.invitationId),
       ]);
       await expectOneWinner(seeded, a, r);

@@ -93,7 +93,9 @@ export async function acceptInvitationAction(token: string, locale?: string): Pr
   // the redirects happen outside the try so nothing here can swallow them.
   let failure: "wrong_account" | InvitationAcceptError["code"] | null = null;
   try {
-    await acceptInvitation(token, user.id);
+    // The identity is the verified session's, id and email both; the client
+    // supplies only the token and the locale.
+    await acceptInvitation(token, { id: user.id, email: user.email });
   } catch (e) {
     if (e instanceof InvitationAccountMismatchError) failure = "wrong_account";
     else if (e instanceof InvitationAcceptError) failure = e.code;

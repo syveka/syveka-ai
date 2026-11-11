@@ -418,7 +418,10 @@ async function rejoin(orgId: string, userId: string) {
     status: "PENDING",
     expiresAt: new Date("2030-01-01T00:00:00Z"),
   });
-  return acceptInvitation(invitations.at(-1)!.token as string, userId);
+  return acceptInvitation(invitations.at(-1)!.token as string, {
+    id: userId,
+    email: `${userId}@example.test`,
+  });
 }
 afterEach(() => {
   vi.useRealTimers();
