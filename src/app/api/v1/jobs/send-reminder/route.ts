@@ -1,13 +1,20 @@
 import { createHash } from "node:crypto";
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { jobPayloadJson } from "@/server/jobs/payload";
+import { jobPayloadJson, jobWillBeRetried } from "@/server/jobs/payload";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
 const payloadSchema = z.object({ reminderId: z.string().guid() });
+
+/** Notifications are stored text, so the row is written in its recipient's language. */
+const OWNER_MESSAGES = {
+  EN: () => import("../../../../../../messages/en.json"),
+  FI: () => import("../../../../../../messages/fi.json"),
+  AR: () => import("../../../../../../messages/ar.json"),
+};
 
 /**
  * Resend's Idempotency-Key for one reminder to one recipient: the same on
@@ -128,6 +135,44 @@ export async function POST(request: Request): Promise<NextResponse> {
     return NextResponse.json({ skipped: true });
   }
 
+  // Only when QStash won't deliver again, so the owner is told once. Only a
+  // current member is told. Best effort: this must not change the job's answer.
+  const notifyOwnerOfFinalFailure = async (): Promise<void> => {
+    if (jobWillBeRetried(request)) return;
+    try {
+      const userId = event.ownerId ?? event.createdById;
+      const member = await unscopedPrisma.organizationMember.findFirst({
+        where: {
+          organizationId: reminder.organizationId,
+          userId,
+          organization: { deletedAt: null },
+        },
+        select: { user: { select: { locale: true } } },
+      });
+      if (!member) return;
+      const { default: messages } = await OWNER_MESSAGES[member.user.locale]();
+      await unscopedPrisma.notification.create({
+        data: {
+          organizationId: reminder.organizationId,
+          userId,
+          type: "reminder.failed",
+          title: event.title,
+          body: messages.notifications.reminderFailed,
+          href: "/calendar",
+        },
+      });
+    } catch (e) {
+      console.error(
+        JSON.stringify({
+          event: "reminder_failure_notification_failed",
+          reminderId: reminder.id,
+          orgId: reminder.organizationId,
+          name: e instanceof Error ? e.name : "unknown",
+        }),
+      );
+    }
+  };
+
   try {
     const timezone = event.booking?.guestTimezone ?? event.timezone;
     const locale =
@@ -196,6 +241,7 @@ export async function POST(request: Request): Promise<NextResponse> {
         where: { id: reminder.id },
         data: { status: "FAILED", lastError: `email delivery failed: ${lastErrorName}` },
       });
+      await notifyOwnerOfFinalFailure();
       return NextResponse.json({ error: "send failed", sent, failed }, { status: 500 });
     }
     if (notResent > 0 && sent === 0) {
@@ -221,8 +267,13 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch (e) {
     await unscopedPrisma.reminder.update({
       where: { id: reminder.id },
-      data: { status: "FAILED", lastError: e instanceof Error ? e.message : "send failed" },
+      // The error's name only, as above: its message can carry content or provider detail.
+      data: {
+        status: "FAILED",
+        lastError: `send failed: ${e instanceof Error ? e.name : "unknown"}`,
+      },
     });
+    await notifyOwnerOfFinalFailure();
     return NextResponse.json({ error: "send failed" }, { status: 500 });
   }
 }

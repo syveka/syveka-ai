@@ -833,6 +833,7 @@
     "markAllRead": "Mark all read",
     "empty": "You're all caught up.",
     "workflowFailed": "Workflow failed: <name></name>",
+    "reminderFailed": "The reminder email could not be delivered to the attendees.",
     "booking": {
       "confirmation": "New booking: <type></type> — <guest></guest>",
       "reschedule": "Booking rescheduled: <type></type> — <guest></guest>",
