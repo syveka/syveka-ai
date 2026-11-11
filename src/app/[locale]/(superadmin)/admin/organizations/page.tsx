@@ -1,6 +1,6 @@
 export const dynamic = "force-dynamic";
 
-import { requireSuperadmin } from "@/server/auth/superadmin";
+import { requireSuperadminPage } from "@/server/auth/page-guard";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { Card, CardContent } from "@/components/ui/card";
 import { StatCard } from "@/components/analytics/charts";
@@ -11,7 +11,7 @@ export default async function AdminOrganizationsPage({
 }: {
   searchParams: Promise<{ q?: string }>;
 }) {
-  await requireSuperadmin();
+  await requireSuperadminPage();
   const { q } = await searchParams;
 
   const monthStart = new Date();

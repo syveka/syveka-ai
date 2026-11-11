@@ -1,7 +1,7 @@
 export const dynamic = "force-dynamic";
 
 import { notFound } from "next/navigation";
-import { requireSuperadmin } from "@/server/auth/superadmin";
+import { requireSuperadminPage } from "@/server/auth/page-guard";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { listAllGrants } from "@/server/services/billing/entitlements";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -27,7 +27,7 @@ export default async function AdminOrganizationDetailPage({
 }: {
   params: Promise<{ orgId: string }>;
 }) {
-  await requireSuperadmin();
+  await requireSuperadminPage();
   const { orgId } = await params;
 
   const org = await unscopedPrisma.organization.findUnique({

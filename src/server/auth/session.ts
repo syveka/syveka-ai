@@ -4,6 +4,10 @@ import { cache } from "react";
 import type { Role } from "@/generated/prisma/client/client";
 import { createSupabaseServer } from "@/server/supabase/server";
 import { prisma } from "@/server/db/prisma";
+import {
+  AuthServiceUnavailableError,
+  isAuthServiceFailure,
+} from "@/server/auth/auth-service-failure";
 
 export type TenantContext = {
   userId: string;
@@ -23,8 +27,12 @@ export class AuthError extends Error {
   }
 }
 
-/** Raw session user or null. Cached per request. */
-export const getSessionUser = cache(async () => {
+/**
+ * This request's session check: the user (or null), and whether a null came
+ * from an auth-service failure rather than an expected "no valid session".
+ * Cached per request, so getSessionUser and the page guards share one call.
+ */
+export const getSessionLookup = cache(async () => {
   const supabase = await createSupabaseServer();
   const {
     data: { user },
@@ -44,8 +52,26 @@ export const getSessionUser = cache(async () => {
       }),
     );
   }
-  return user;
+  return { user, serviceFailure: !user && isAuthServiceFailure(error) };
 });
+
+/** Raw session user or null. Cached per request. */
+export const getSessionUser = cache(async () => (await getSessionLookup()).user);
+
+/**
+ * Throws AuthServiceUnavailableError when this request's session check failed
+ * because of the auth service, so a caller about to treat "no user" as an
+ * expected state (a redirect) reports an outage instead.
+ *
+ * Only for routes the middleware already requires a session for
+ * (PROTECTED_PREFIXES): there, the middleware's own session check has
+ * accepted the request, so this throws only when the auth service then fails.
+ * On a public route a request that merely looks signed in could make
+ * getUser() fail with AuthRetryableFetchError and force an error on demand.
+ */
+export async function assertAuthServiceAvailable(): Promise<void> {
+  if ((await getSessionLookup()).serviceFailure) throw new AuthServiceUnavailableError();
+}
 
 /**
  * Resolves the authenticated tenant context from JWT claims (org_id, role
