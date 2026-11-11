@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+import { createTranslator } from "next-intl";
+
+import { chatErrorText } from "@/lib/chat/error-text";
 
 import en from "../../messages/en.json";
 import fi from "../../messages/fi.json";
@@ -26,8 +29,10 @@ function codesIn(source: string, pattern: RegExp): string[] {
 const routeCodes = codesIn(read("src/app/api/v1/ai/chat/route.ts"), /code: "([a-z_]+)"/g);
 const hookCodes = codesIn(read("src/hooks/use-chat.ts"), /setError\("([a-z_]+)"\)/g);
 const hookFallbacks = codesIn(read("src/hooks/use-chat.ts"), /\?\? "([a-z_]+)"/g);
-// Thrown by guards the route calls, and reported with these codes.
-const guardCodes = ["entitlement_exceeded"];
+// Not written as `code: "x"` in the route, so listed here: EntitlementError.code
+// from the entitlement guard, and the voice-grant outcomes chosen in a
+// variable. A new code produced that way must be added to this list.
+const guardCodes = ["entitlement_exceeded", "voice_session_ended", "voice_turn_invalid"];
 
 const shownCodes = [
   ...new Set([...routeCodes, ...hookCodes, ...hookFallbacks, ...guardCodes, "generic"]),
@@ -61,10 +66,22 @@ describe("chat error messages", () => {
     expect(keys(ar)).toEqual(keys(en));
   });
 
-  it("the view checks that a code has a message before showing it", () => {
+  it.each(Object.entries(locales))(
+    "%s: a known code shows its sentence, an unknown one the generic message, never a key path",
+    (locale, messages) => {
+      const t = createTranslator({ locale, messages, namespace: "chat" });
+      const errors = messages.chat.errors as Record<string, string>;
+      expect(chatErrorText(t, "moderation_unavailable")).toBe(errors.moderation_unavailable);
+      expect(chatErrorText(t, "request_failed")).toBe(errors.request_failed);
+      expect(chatErrorText(t, "a_code_added_later")).toBe(errors.generic);
+      expect(chatErrorText(t, "a_code_added_later")).not.toMatch(/errors\./);
+    },
+  );
+
+  it("the chat view shows errors through chatErrorText", () => {
     const view = read("src/components/chat/chat-view.tsx");
-    expect(view).toMatch(/t\.has\(errorKey\) \? t\(errorKey\) : t\("errors\.generic"\)/);
+    expect(view).toContain("chatErrorText(t, error)");
     // The previous fallback could never apply: t() returns the key path.
-    expect(view).not.toMatch(/t\(`errors\.\$\{error\}` as never\) \?\?/);
+    expect(view).not.toMatch(/as never\) \?\? t\(/);
   });
 });

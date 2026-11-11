@@ -252,8 +252,8 @@
       "service_unavailable": "Palvelu ei ole tilapäisesti käytettävissä. Yritä uudelleen.",
       "moderation_unavailable": "Avustaja ei ole tilapäisesti käytettävissä. Yritä hetken kuluttua uudelleen.",
       "request_failed": "Pyyntö epäonnistui. Yritä uudelleen.",
-      "unauthenticated": "Istuntosi on vanhentunut. Kirjaudu uudelleen.",
-      "permission_denied": "Roolisi ei voi käyttää AI-keskustelua.",
+      "unauthenticated": "Olet kirjautunut ulos tai sinulla ei ole enää käyttöoikeutta. Kirjaudu uudelleen.",
+      "permission_denied": "Roolillasi ei ole oikeutta käyttää AI-keskustelua.",
       "invalid_input": "Viestiä ei voitu lähettää. Tarkista se ja yritä uudelleen.",
       "model_not_allowed": "Tämä malli ei sisälly tilaukseesi.",
       "resource_not_found": "Tämä keskustelu ei ole enää käytettävissä. Aloita uusi keskustelu."
