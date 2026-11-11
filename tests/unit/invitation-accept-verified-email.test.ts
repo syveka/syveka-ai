@@ -16,7 +16,9 @@ import type * as MembersModule from "@/server/services/members";
 type Row = Record<string, unknown>;
 
 const ORG = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-const TOKEN = "3f0c2b9e-8a41-4d2e-9b7c-1e5f6a7b8c9d";
+// Synthetic, low-entropy on purpose: a random-looking value is reported by the
+// secret scan as a possible key.
+const TOKEN = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const INVITED = "invitee@example.test";
 
 const s = vi.hoisted(() => ({
