@@ -1,270 +1,256 @@
-# Launch handoff (2026-11-11, afternoon)
+# Launch handoff (2026-11-11, final)
 
-**Verdict: NOT READY FOR PILOT, with specific blockers.** Staging can be released once the PRs
-below are merged. The pilot additionally needs the owner actions marked "before pilot", above all
-the P0 database fix (#443) and a restore drill.
+**Verdict:**
 
-This document supersedes `docs/overnight-handoff-2026-11-11.md` (#439) for status. That one stays
-useful as history.
+- **Merging #431–#442: GO.**
+- **Staging: GO** once those are merged and #443 is unblocked, released together.
+- **Pilot: NOT READY,** with specific blockers (section I).
 
-Nothing was merged, deployed, or changed in any dashboard or live database in this session. No
-paid API was called. All results below are from local runs or GitHub CI on the SHAs named.
+This document supersedes `docs/overnight-handoff-2026-11-11.md` (#439) for status.
+
+Nothing was merged, deployed, or changed in any dashboard or live database. No paid API was
+called and no secret was read. Every result below is from a local run or GitHub CI on the SHA
+named.
 
 ## A. Main
 
-`main` = `aaf36c47` (merge of #433). The CI `push` run on it is green.
+`main` = `aaf36c47` (merge of #433); its CI `push` run is green.
 
 ## B. Merge order, with exact heads
 
-| #   | PR   | Head       | What it does                                                                      | CI on head                          | Review                                   | Status                                                         |
-| --- | ---- | ---------- | --------------------------------------------------------------------------------- | ----------------------------------- | ---------------------------------------- | -------------------------------------------------------------- |
-| 1   | #431 | `0fc0a762` | Reopened conversations hydrate without React #418                                 | green                               | done (overnight)                         | READY TO MERGE                                                 |
-| 2   | #432 | `614ef540` | Admin pages settle their states; denied `/admin` visits are logged                | green                               | done (overnight)                         | READY TO MERGE                                                 |
-| 3   | #435 | `68abfadc` | Quota concurrency tests stop failing under load                                   | green                               | done (overnight)                         | READY TO MERGE                                                 |
-| 4   | #429 | `b230b523` | Only transient ingestion failures are retried; reminder failures are shown        | green                               | done (overnight)                         | READY TO MERGE                                                 |
-| 5   | #440 | `e406e95a` | Invitations accepted by the session's email; join audited in the same transaction | green                               | done (overnight)                         | READY TO MERGE                                                 |
-| 6   | #436 | `c8a539d8` | Chat refuses clearly when moderation is unavailable; every error code has text    | green                               | done (overnight)                         | READY TO MERGE                                                 |
-| 7   | #437 | `86d947b8` | Caps email to strangers from bookings, reschedules and reminders                  | green                               | **re-reviewed today**: 1 blocking, fixed | READY TO MERGE                                                 |
-| 8   | #434 | `c62ab9a9` | Script that checks a staging candidate is the tip of main with green CI           | green                               | done (overnight); patch reviewed today   | READY TO MERGE                                                 |
-| 9   | #442 | `c965aa93` | Email links work on another device (`token_hash`)                                 | green                               | **reviewed today**: 1 blocking, fixed    | READY TO MERGE                                                 |
-| 10  | #443 | `5cb57edc` | **P0:** revoke Data API table privileges                                          | red at `migrations:check` by design | **reviewed today**: no code blockers     | BLOCKED on owner: one protected line, diagnostics, drill first |
+The order is the sequence the combined tree was built and tested in. Some PRs touch the same files
+(`booking.ts` and the manage route: #440 and #437; `send-reminder`: #429 and #437; `messages/*.json`:
+#429 and #436; the chat route: #440 and #436; the quota test: #435 and #440). All merge cleanly
+in this order. None of 1–9 touches `prisma/`, dependencies or workflows.
 
-- **Do not merge:** #430, #438 and #441, which are superseded by #440 and #442.
-- **#439:** can be closed once this document is merged, or merged as history.
-- **#398** (Windows test fixes) can go anywhere.
-- **Dependencies:** none between 1–9. Each is a plain `git revert -m 1 <merge>`: none carries a
-  migration, an environment change or a dependency change. #443 carries a migration (section G).
-- **For each merge:** confirm the head SHA above, mark ready, merge with a merge commit, and wait
-  for the `push` CI run on main to go green before starting the next.
+| #   | PR   | Head       | Change                                                                            | CI                                        | Independent review                                                    | Status                          |
+| --- | ---- | ---------- | --------------------------------------------------------------------------------- | ----------------------------------------- | --------------------------------------------------------------------- | ------------------------------- |
+| 1   | #431 | `0fc0a762` | Reopened conversations hydrate without React #418                                 | 21/21                                     | overnight                                                             | READY TO MERGE                  |
+| 2   | #432 | `614ef540` | Admin pages settle their states; denied `/admin` visits are logged                | 21/21                                     | overnight                                                             | READY TO MERGE                  |
+| 3   | #435 | `68abfadc` | Quota concurrency tests stop failing under load                                   | 21/21                                     | overnight                                                             | READY TO MERGE                  |
+| 4   | #429 | `b230b523` | Only transient ingestion failures are retried; reminder failures are shown        | 21/21                                     | overnight                                                             | READY TO MERGE                  |
+| 5   | #440 | `e406e95a` | Invitations accepted by the session's email; join audited in the same transaction | 21/21                                     | overnight                                                             | READY TO MERGE                  |
+| 6   | #436 | `c8a539d8` | Chat refuses clearly when moderation is unavailable; every error code has text    | 21/21                                     | overnight                                                             | READY TO MERGE                  |
+| 7   | #437 | `4f8784ce` | Caps email to strangers from bookings, reschedules and reminders                  | confirm on the PR page                    | two today: 1 blocking fixed, then none                                | READY TO MERGE once CI is green |
+| 8   | #434 | `c62ab9a9` | Script that checks a staging candidate is main's tip with green CI                | 21/21                                     | overnight                                                             | READY TO MERGE                  |
+| 9   | #442 | `4d553e89` | Email links work on another device (`token_hash`)                                 | confirm on the PR page                    | two today: 1 blocking fixed, then none                                | READY TO MERGE once CI is green |
+| 10  | #443 | `90632826` | **P0:** revoke Data API table privileges                                          | red only at `migrations:check` (expected) | two today: no code blockers; exploit and fix reproduced independently | BLOCKED on owner actions 1–3    |
 
-### What today's reviews found
+- **Not to merge:** #430, #438 and #441 (superseded), and #439 (history; close it once #444 is
+  merged).
+- **Rollback:** each of 1–9 is a plain `git revert -m 1 <merge>`. #443: section G.
 
-- **#442, blocking (fixed in `c965aa93`):** an open redirect. `safeInternalNext` returned
-  `//evil.test/x` for `next=/.//evil.test/x`, because URL parsing removes dot segments after the
-  checks ran, and `token_hash` links make it reachable by anyone. The returned path is now
-  checked, and the token-hash path is rate-limited per address before `verifyOtp`.
-  - Accepted and recorded: login CSRF, which is inherent to Supabase's `token_hash` flow.
-    Invitations are not affected (#440).
-- **#437, blocking (fixed in `86d947b8`):** case variants of one address (`a@x`, `A@x`, …) were
-  charged once but each got its own reminder email. The send job now sends one email per mailbox.
-  - Accepted and recorded: a concurrent burst for one offered slot can use up that page's hourly
-    allowance. Moving the charge under the slot lock would hold the owner's calendar lock across
-    up to 10 s of Redis timeouts.
-- **#443 (P0):** see section D.
+## C. Combined tree
 
-## C. Combined-tree results
+Tree `0e85eda5` contains:
 
-Tree `37d11c3a` = `main` + the heads of rows 1–9 above + #443 at `a19c342b`. All nine merge
-cleanly. #443's later commit `5cb57edc` changes only the invariants SQL and the doc, and was
-re-verified by the two database runs below.
+- main;
+- 1–9 at the heads above, except #442 at `949b59fb`;
+- #443 at `5cb57edc`.
 
-| Check                                                                                                                  | Where                                                           | Result                                                                                                                                                                                                                                                                     |
-| ---------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `format:check`, `lint`, `typecheck`, `i18n:check`, `migrations:check`                                                  | Windows, at `c91735d8` (rows 1–9 at earlier heads of #437/#442) | PASS                                                                                                                                                                                                                                                                       |
-| Production dependency audit (`--audit-level=high`)                                                                     | Windows                                                         | PASS (lower-severity advisories exist)                                                                                                                                                                                                                                     |
-| Full unit suite                                                                                                        | Linux container                                                 | 5,545 passed, 58 skipped, **1 failed**: `hook-command-guard` › "no timeout binary on PATH". The test sets `PATH` to Node's directory, which in the Playwright image is `/usr/bin`, where `timeout` also lives. No PR touches hooks. Environment-specific, not a regression |
-| Browser tests                                                                                                          | Linux container                                                 | 30/30 passed                                                                                                                                                                                                                                                               |
-| Production build (cold)                                                                                                | Linux container                                                 | PASS. One warning (`supabase-js` uses `process.version` in the Edge runtime), also present in main's CI build                                                                                                                                                              |
-| CI `rls` job steps (migrations, invariants, 3 RLS suites, integrity, reconciliation, `match_chunks`, invariants again) | Linux, `pgvector:pg15`                                          | PASS, with the fixture reproducing hosted DML defaults                                                                                                                                                                                                                     |
-| #443 on Supabase's own image `supabase/postgres:17.6.1.167`                                                            | Linux                                                           | Exploit reproduced before the migration; refused after; invariants PASS                                                                                                                                                                                                    |
-| `migrations:check` with #443                                                                                           | —                                                               | FAILS until the owner appends one line (section H, Supabase/GitHub)                                                                                                                                                                                                        |
-| Playwright e2e against a running app                                                                                   | —                                                               | NOT RUN: needs a deployed or fully configured environment. The staging release runs them                                                                                                                                                                                   |
-| Redis suites                                                                                                           | —                                                               | NOT RUN locally. Limiters are mocked in unit tests; CI's Redis job covers the real client                                                                                                                                                                                  |
-| Opt-in Postgres suites (`*.postgres.test.ts`)                                                                          | —                                                               | NOT RUN locally; CI runs two of them. `invitation-accept-revoke.postgres.test.ts` runs nowhere (protected `ci.yml`)                                                                                                                                                        |
+The later commits are documentation, plus a comment-only edit in #443's migration.
 
-## D. Security assessment
+| Check                                                                                                                      | Result                                                                                                                                                                                                                           |
+| -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `format:check`, `lint`, `typecheck`, `i18n:check`                                                                          | PASS                                                                                                                                                                                                                             |
+| `migrations:check`                                                                                                         | FAIL as expected (`Migration order mismatch`). With the owner's one-line patch: PASS on this tree                                                                                                                                |
+| Full unit suite, Linux                                                                                                     | 5,560 passed, 58 skipped, 1 failed: `hook-command-guard` › "no timeout binary on PATH". The test hides `timeout` by setting `PATH` to Node's directory, which in this image is `/usr/bin`. Environment-only; no PR touches hooks |
+| Browser tests, Linux                                                                                                       | 30/30                                                                                                                                                                                                                            |
+| Production build, cold, Linux                                                                                              | PASS. One `supabase-js` Edge-runtime warning, also in main's CI build                                                                                                                                                            |
+| CI `rls` job steps (migrations, invariants, three RLS suites, integrity, reconciliation, `match_chunks`, invariants again) | PASS (`pgvector:pg15`, fixture with hosted DML defaults)                                                                                                                                                                         |
+| #443's own CI                                                                                                              | All database jobs pass (RLS, non-superuser RLS, legacy/drift, baseline idempotency, opt-in Postgres); only the migration-order check and the `CI required` aggregate fail                                                        |
+| Not run                                                                                                                    | e2e against a running app (the staging release runs it); the Redis suites locally (CI covers them); `invitation-accept-revoke.postgres.test.ts` runs nowhere                                                                     |
 
-### P0, open until #443 is deployed
+## D. Security status
 
-**A signed-in user can take over another person's future account membership.** Hosted Supabase
-grants `anon` and `authenticated` every privilege on public tables, and the Data API serves them.
-`users_self_update` checks only `id = auth.uid()`, so the attack works like this:
+**P0, open until #443 is applied to each database.**
 
-1. User A sets their own `public.users.email` to an address B hasn't used yet.
-2. When B signs up, `handle_new_user()` moves A's profile, and every membership, onto B.
+- **The issue.** Hosted Supabase grants `anon` and `authenticated` every privilege on public
+  tables, and the Data API serves them. `users_self_update` checks only `id = auth.uid()`.
+- **The attack.** A signed-in user can set their own `public.users.email` to an address nobody
+  has used. When that person signs up, `handle_new_user()` moves the attacker's profile and
+  memberships onto the new account.
+- **Reproduced twice, independently,** on `supabase/postgres:17.6.1.167`: the new account came
+  out as OWNER of the attacker's organization.
+- **#443's effect.** With the migration the update is refused, `notifications` stays readable,
+  re-applying it is a no-op, and its documented rollback reopens the path as described.
+- **Live exposure is unverified:** run D1 on each database.
 
-This was reproduced on Supabase's image: the new account came out as OWNER of A's organization.
-It also lets A confuse the "already a member" check and block B's invitation.
+**Staging for internal testing before #443: NO,** unless D1 on staging shows no `UPDATE` for
+`authenticated` on `users`. The fastest safe path is to release #443 with 1–9 in the first staging
+release.
 
-- **Fix:** #443 revokes the grants (the app never uses them) and adds release invariants.
-- **Live state:** unverified. Run diagnostics D1–D6 in `docs/security/data-api-table-privileges-2026-11-11.md`.
+**Kept dormant.** The custom access token hook is unregistered. Registering it as written would
+break PostgREST and Realtime, and switch on inert policy gaps (writes by any member,
+organization-wide reads of conversations, invitation tokens and secrets).
 
-### Dormant, must stay dormant
+**Accepted P2 risks for a small invite-only pilot:**
 
-The custom access token hook is not registered. **Do not register it as written:**
+- login CSRF through `token_hash` links;
+- a concurrent burst, or a sequential book-and-cancel loop, can use up a booking page's hourly
+  cap;
+- a per-IP limit can't protect Supabase's shared verification quota;
+- workflow `email.send` has no per-organization cap (unreachable on FREE);
+- per-organization budgets add up across organizations, and FREE organizations are cheap to
+  create;
+- future SECURITY DEFINER functions are executable by default (rule in #443's doc);
+- `avatars` uploads by any signed-in user.
 
-- it overwrites the JWT `role` claim, which would break PostgREST and Realtime;
-- it would switch on policy gaps that are inert today:
-  - writes by any member with no role check;
-  - organization-wide reads of conversations, invitation tokens, webhook secrets and key hashes.
-
-#443 removes the grants those gaps would need anyway.
-
-### P1 and P2 risks, accepted for a small trusted pilot
-
-- **Login CSRF through `token_hash` links** (P2). Fix: a confirm-then-POST page, which would also
-  stop mail scanners using up links.
-- **Concurrent bursts can use up a booking page's hourly cap** (P2), at the cost of one real
-  booking each.
-- **Organization farming:** each FREE organization gets its own AI and email allowances (P2).
-- **Workflow `email.send` has no per-organization cap.** It is unreachable on FREE.
-- **Login and reset emails** are limited per IP only.
-- **`storage_avatar_write`** lets any signed-in user upload to the public `avatars` bucket (P2).
-- **No cross-tenant path was found** in policies or application code.
+**No cross-tenant path** was found.
 
 ## E. Staging release procedure
 
-1. Merge rows 1–9 in order. Each must show a green `push` CI run on main.
-2. Apply patch A (and optionally B and C) from `docs/staging-release-hardening-2026-11-11.md`
-   (#434), or do its checks by hand.
-   - Patch A closes the two real gaps: CI isn't checked on the released SHA, and main can move
-     during the approval wait. It is complete for that purpose.
-   - It doesn't add a backup gate; that stays a manual checklist item.
-3. Pre-release checklist (in that doc):
-   - main CI green on the exact SHA;
-   - no merge in flight;
-   - backup or PITR confirmed;
-   - `git diff <released>..<candidate> -- prisma/` read;
-   - rollback target known;
-   - Vercel Build Command not overridden.
-4. Actions → **Staging release validation** → Run workflow from `main`, then approve the
-   `staging` environment.
-5. **After the run:**
-   - all steps green;
-   - `/api/health` on the stable alias reports the SHA;
-   - no unexpected skipped e2e specs.
-6. Run the pilot acceptance (section F).
-7. **For #443 later:** owner adds the protected line, runs D1–D6, runs the drill from a pre-#443
-   commit, merges, then releases again. The release invariants confirm the migration.
+1. Owner actions 1–4 (section H).
+2. Merge PRs 1–10 in order. Wait for a green main `push` run after each.
+3. Apply patch A from `docs/staging-release-hardening-2026-11-11.md`, or do its checks by hand:
+   - main CI is green on the exact SHA;
+   - no merge is in flight.
+4. Confirm staging's backup or PITR, read `git diff <released>..<candidate> -- prisma/` (it shows
+   only #443's migration), and know the rollback target.
+5. Actions → **Staging release validation** → Run from `main` → approve `staging`.
+6. **Check:**
+   - all steps are green, including the release invariants, which now prove #443's privilege
+     state;
+   - `/api/health` reports the SHA;
+   - D1 on staging shows only `authenticated SELECT notifications`.
+7. Pilot acceptance (section F).
 
-## F. Pilot acceptance checklist (on staging, EN, FI and AR, one phone)
+**Production** is a separate, separately authorized `deploy.yml` run. It comes after staging
+acceptance and one restore drill.
 
-- [ ] Sign up, confirm email (on a **different device** than the one that asked, after the
-      template change), create an organization.
-- [ ] Invite a second account as MEMBER; accept from the invitation email. A third account with a
-      different email can't accept it.
-- [ ] Business DNA: create, edit; a VIEWER can't edit.
-- [ ] CRM: create a company and a contact; ask chat to create a contact, then confirm.
-- [ ] Chat: a conversation, reload it while a reply streams, reopen it (no hydration error in
-      Sentry).
+## F. Pilot acceptance (staging; EN, FI, AR; one phone)
+
+- [ ] Sign up and confirm on a **different device**, after the template change; create an
+      organization.
+- [ ] Invite a MEMBER and accept as that address. Another account can't accept it.
+- [ ] Business DNA: create and edit; a VIEWER can't edit.
+- [ ] CRM: company and contact; a contact created through chat, then confirmed.
+- [ ] Chat: reload during a streaming reply, reopen it. No hydration error in Sentry.
 - [ ] Knowledge base: upload a PDF, ask a question it answers, see the citation.
-- [ ] Booking: public booking, then reschedule and cancel from the email link; the event appears
-      and disappears in the calendar and CRM.
-- [ ] Reminder email arrives (create an event about 25 h ahead, with yourself as attendee).
-- [ ] Password reset requested on a laptop, opened on a phone.
+- [ ] Booking: book, then reschedule and cancel from the email; calendar and CRM follow.
+- [ ] A reminder email arrives: an event about 25 h ahead, with yourself as attendee.
+- [ ] Password reset: requested on a laptop, opened on a phone.
 - [ ] Settings → Billing doesn't reach a live Stripe checkout.
-- [ ] `/admin` as a non-superadmin: denied, and the denial is logged.
+- [ ] `/admin` as a non-superadmin is denied, and the denial is logged.
 - [ ] Sentry shows no new issue during the run.
 
 ## G. Rollback and recovery
 
-| What             | How                                                                                                                                                                             |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Any of PRs 1–9   | `git revert -m 1 <merge commit>` on a branch, PR, merge, release                                                                                                                |
-| Staging build    | Dispatch `staging-deploy-only.yml` for its pinned commit (`b129d416`), or a reviewed re-pin PR; `vercel promote <previous deployment>` is possible but undocumented for staging |
-| #443's migration | A forward migration restoring the D1/D2 snapshots **and** removing its invariants in the same change; reopens the P0                                                            |
-| Database         | Restore from backup or PITR into a **separate** project first (`docs/recovery-drill-runbook.md`); never in place without a drill. No restore has ever been performed            |
+| What          | How                                                                                                                                                                                   |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PRs 1–9       | `git revert -m 1 <merge>`, PR, merge, release                                                                                                                                         |
+| #443          | A forward migration restoring the saved D1/D2 output, with its invariant checks removed in the same change. Verified to reopen the path, so use it only to unblock something specific |
+| Staging build | Dispatch `staging-deploy-only.yml` (pinned `b129d416`), or a reviewed re-pin                                                                                                          |
+| Database      | Restore or PITR into a **separate** project first (`docs/recovery-drill-runbook.md`). No restore has ever been performed                                                              |
 
-## H. Owner-only actions
+## H. Owner checklist
 
-Grouped by service. Each row says what it is, why, the evidence that it worked, whether it
-changes anything, and when.
+**Legend:**
 
-- **"Now":** can be done today.
-- **"After merge" / "After deploy":** needs the release SHA.
-
-### GitHub (syveka/syveka-ai)
-
-| P   | Path                                                   | Action                                                                                                                                               | Why                                             | Evidence of success                                     | Changes config? | When                        |
-| --- | ------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ------------------------------------------------------- | --------------- | --------------------------- |
-| P1  | Pull requests                                          | Authorize merging rows 1–9 of section B, in order, one at a time                                                                                     | Nothing reaches staging until merged            | 9 merge commits; green `push` CI after each             | Yes (merges)    | Now                         |
-| P1  | `.github/workflows/staging-release.yml`                | Apply patch A from `docs/staging-release-hardening-2026-11-11.md` (B and C optional)                                                                 | Stops releasing an unverified or moved SHA      | A dispatch with a wrong typed SHA fails before approval | Yes (protected) | Before staging              |
-| P0  | `scripts/check-migration-history.mjs` on #443's branch | Authorize appending `"20261111000000_revoke_data_api_table_privileges",` after `"20261014000000_secure_prisma_migrations_table",` in `expectedOrder` | Protected file; #443's CI can't pass without it | #443 CI fully green                                     | Yes (protected) | After the D1–D6 diagnostics |
-| P2  | `.github/workflows/ci.yml`                             | Add `invitation-accept-revoke.postgres.test.ts` to the Postgres job                                                                                  | It runs nowhere                                 | The job lists it                                        | Yes (protected) | Later                       |
-| P2  | Pull requests                                          | Close #430, #438, #441 (superseded) and #439 once this doc is merged                                                                                 | Avoids merging a superseded branch              | Closed                                                  | Yes             | After merges                |
-| P1  | Actions → Staging release validation                   | Dispatch from `main` and approve `staging` (section E)                                                                                               | Puts the fixes where a pilot runs               | All steps green; health reports the SHA                 | Yes (deploy)    | After merges                |
+- **RO:** read-only. **MOD:** changes something.
+- **Approval:** whether it needs explicit authorization for that instance.
+- **No step asks for a secret.** Look at prefixes only where a key is involved.
 
 ### Supabase (staging first, then production)
 
-| P   | Path                                                  | Action                                                                                                                                                                 | Why                                                                               | Evidence of success                                     | Changes config?   | When                            |
-| --- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------- | ------------------------------------------------------- | ----------------- | ------------------------------- |
-| P0  | Project → SQL Editor                                  | Run diagnostics D1–D6 from `docs/security/data-api-table-privileges-2026-11-11.md` (in #443) and keep the output                                                       | Confirms whether the P0 is open live; rollback reference                          | D1 output saved; D6 = 0 (or investigate)                | No (read-only)    | Now                             |
-| P0  | Authentication → Hooks                                | Confirm "Customize Access Token (JWT) Claims" is **off**; leave it off                                                                                                 | The hook as written breaks PostgREST and opens dormant gaps                       | Off                                                     | No                | Now                             |
-| P1  | Database → Backups (and PITR)                         | Note retention and PITR status; run the drill in `docs/recovery-drill-runbook.md` once into a disposable project, **from a commit before #443's merge**                | No restore has ever been performed; drill scripts expect only `20261014…` pending | Restored copy, row counts match, invariants as expected | Yes (new project) | Before #443 merge; before pilot |
-| P1  | Authentication → Sign In / Providers → Email          | Confirm **Confirm email** and **Secure email change** are on                                                                                                           | #440 trusts the session's email                                                   | Both on                                                 | No                | Now                             |
-| P1  | Authentication → Email Templates; → URL Configuration | After #442 is deployed: change Confirm signup, Reset password and Magic link as in `docs/auth-email-links.md`; confirm `https://<host>/api/auth/callback**` is allowed | Links opened on another device fail today                                         | A reset requested on a laptop works on a phone          | Yes               | After deploy                    |
+| #   | Path                                                          | Action                                                                                                                                                    | RO/MOD                                          | Expected evidence                                                                                                      | Risk                                                                      | Prerequisites                                                           | Approval         |
+| --- | ------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------------------------- | ---------------- |
+| 1   | Project → SQL Editor                                          | Run D1–D7 from `docs/security/data-api-table-privileges-2026-11-11.md` (in #443) on staging and production. Save the output                               | RO                                              | Matches the "expected before" column. D3 shows no rows; D6 shows `0, 0`                                                | None                                                                      | None                                                                    | No               |
+| 2   | Authentication → Hooks                                        | "Customize Access Token (JWT) Claims" is **off**; leave it off                                                                                            | RO                                              | Off                                                                                                                    | None                                                                      | None                                                                    | No               |
+| 3   | Authentication → Sign In / Providers → Email                  | **Confirm email** and **Secure email change** are on                                                                                                      | RO                                              | Both on                                                                                                                | None                                                                      | None                                                                    | No               |
+| 4   | Database → Backups (and Point in Time Recovery), staging      | Note retention and whether PITR is on                                                                                                                     | RO                                              | A backup newer than 24 h, or PITR                                                                                      | None                                                                      | None                                                                    | No               |
+| 5   | Database → Backups, production, then a new disposable project | Restore drill (`docs/recovery-drill-runbook.md`), from commit `aaf36c47` (or any commit before #443) while production lacks #443                          | MOD (new project; read-only dump of production) | A restored copy with matching row counts; `s6` reports `20261014…` pending (D7 on production tells which case applies) | Medium: personal data in a disposable project; delete it afterwards (§10) | Owner decisions in the drill README (outbound email isolation, storage) | Yes (§4–§7, §10) |
+| 6   | Authentication → URL Configuration                            | Redirect URLs include `https://<app-host>/api/auth/callback**` for each environment                                                                       | RO                                              | Present                                                                                                                | None                                                                      | None                                                                    | No               |
+| 7   | Authentication → Email Templates                              | Change Confirm signup, Reset password and Magic link as in `docs/auth-email-links.md` (#442). Staging first, then the doc's verify steps, then production | MOD                                             | A reset requested on a laptop works on a phone                                                                         | Low; revert the template                                                  | #442 deployed there; item 6                                             | Yes              |
+| 8   | SQL Editor, staging, after the release                        | Re-run D1                                                                                                                                                 | RO                                              | One row: `notifications`, `authenticated`, `SELECT`                                                                    | None                                                                      | The staging release                                                     | No               |
 
-### Vercel (`syveka-ai-staging`, and the pilot environment)
+### GitHub (syveka/syveka-ai)
 
-| P   | Path                                                 | Action                                                                                                      | Why                                                                                       | Evidence of success           | Changes config? | When           |
-| --- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------- | --------------- | -------------- |
-| P1  | Settings → Build and Deployment → Framework Settings | Confirm Build Command is the default (not overridden); note Node.js version (should be 22)                  | An override would skip `prisma generate && next build`'s type check                       | Default, Node 22              | No              | Now            |
-| P2  | Settings → Build and Deployment → Deployment Checks  | Remove the native TypeCheck/Lint checks or accept them as noise on CLI deployments                          | They can't run on prebuilt uploads                                                        | No red TypeCheck on a release | Yes             | Before staging |
-| P1  | Settings → Environment Variables                     | `EMAIL_FROM` is on `mail.syveka.com`; `STRIPE_SECRET_KEY` is absent or `sk_test_` (look at the prefix only) | Unverified sender fails; a live key takes real money (billing fails closed without a key) | Both as stated                | No              | Now            |
+| #   | Path                                                                             | Action                                                                                                                                                                                                                                                                                                            | RO/MOD          | Expected evidence                                       | Risk                                                            | Prerequisites                      | Approval    |
+| --- | -------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | ------------------------------------------------------- | --------------------------------------------------------------- | ---------------------------------- | ----------- |
+| 9   | PRs #431, #432, #435, #429, #440, #436, #437, #434, #442                         | Confirm each head matches section B and CI is green, then authorize merging in that order, one at a time                                                                                                                                                                                                          | MOD             | Nine merge commits; green main `push` CI after each     | Low; each is revertable                                         | None                               | Yes, per PR |
+| 10  | `scripts/check-migration-history.mjs`, on `fix/revoke-data-api-table-privileges` | Authorize this one line, after `"20261014000000_secure_prisma_migrations_table",` in `expectedOrder`: `  "20261111000000_revoke_data_api_table_privileges",`. Ready-made patch: `check-migration-history.patch` in the session's scratchpad (`owner-patch` folder), or let the next session add exactly that line | MOD (protected) | #443 CI fully green                                     | Low                                                             | Item 1 on staging                  | Yes         |
+| 11  | PR #443                                                                          | Authorize merging it after item 9                                                                                                                                                                                                                                                                                 | MOD             | Merge commit; main CI green                             | Low until released; the release applies a grants-only migration | Items 1, 4, 10                     | Yes         |
+| 12  | `.github/workflows/staging-release.yml`                                          | Apply patch A (B and C optional) from `docs/staging-release-hardening-2026-11-11.md`                                                                                                                                                                                                                              | MOD (protected) | A dispatch with a wrong typed SHA fails before approval | Low                                                             | #434 merged                        | Yes         |
+| 13  | Actions → Staging release validation                                             | Dispatch from `main` and approve `staging` (section E)                                                                                                                                                                                                                                                            | MOD (deploy)    | All steps green; health reports the SHA                 | Medium: migrations apply to staging                             | Items 4, 9, 11 (and 12 if applied) | Yes         |
+| 14  | `.github/workflows/ci.yml`                                                       | Add `invitation-accept-revoke.postgres.test.ts` to the opt-in Postgres job                                                                                                                                                                                                                                        | MOD (protected) | The job lists it                                        | Low                                                             | None                               | Yes         |
+| 15  | PRs #430, #438, #441, #439                                                       | Close them once this document is merged                                                                                                                                                                                                                                                                           | MOD             | Closed                                                  | None                                                            | #444 merged                        | Yes         |
+
+### Vercel (`syveka-ai-staging` and the pilot project)
+
+| #   | Path                                                 | Action                                                                                                 | RO/MOD | Expected evidence             | Risk                                                                                           | Prerequisites | Approval |
+| --- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------ | ------ | ----------------------------- | ---------------------------------------------------------------------------------------------- | ------------- | -------- |
+| 16  | Settings → Build and Deployment → Framework Settings | Build Command is the default; Node.js 22                                                               | RO     | Default; 22.x                 | None                                                                                           | None          | No       |
+| 17  | Settings → Environment Variables                     | `EMAIL_FROM` is on `mail.syveka.com`; `STRIPE_SECRET_KEY` is absent or starts `sk_test_` (prefix only) | RO     | Both as stated                | None. A live key would let the billing page take real money; without one, billing fails closed | None          | No       |
+| 18  | Settings → Build and Deployment → Deployment Checks  | Remove the native TypeCheck/Lint checks, or accept them as noise on CLI deployments                    | MOD    | No red TypeCheck on a release | Low                                                                                            | None          | Yes      |
 
 ### Resend
 
-| P   | Path                        | Action                       | Why                                    | Evidence | Changes config? | When |
-| --- | --------------------------- | ---------------------------- | -------------------------------------- | -------- | --------------- | ---- |
-| P1  | Domains → `mail.syveka.com` | Confirm Verified (SPF, DKIM) | Invitations, booking and reminder mail | Verified | No              | Now  |
+| #   | Path                        | Action                         | RO/MOD | Expected evidence | Risk | Prerequisites | Approval |
+| --- | --------------------------- | ------------------------------ | ------ | ----------------- | ---- | ------------- | -------- |
+| 19  | Domains → `mail.syveka.com` | Status is Verified (SPF, DKIM) | RO     | Verified          | None | None          | No       |
 
 ### Upstash QStash (EU)
 
-| P   | Path      | Action                                                                                                                        | Why                                                 | Evidence                   | Changes config? | When         |
-| --- | --------- | ----------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | -------------------------- | --------------- | ------------ |
-| P2  | Schedules | Create `POST <app URL>/api/v1/jobs/usage-rollup`, cron `0 2 * * *`, body `{}`. Confirm the signing keys match the environment | 30-day purge and usage warnings never run otherwise | First delivery answers 200 | Yes             | Before pilot |
+| #   | Path         | Action                                                                                          | RO/MOD | Expected evidence          | Risk                                          | Prerequisites              | Approval |
+| --- | ------------ | ----------------------------------------------------------------------------------------------- | ------ | -------------------------- | --------------------------------------------- | -------------------------- | -------- |
+| 20  | Signing Keys | The current/next signing keys match the environment's names (compare the first characters only) | RO     | Match                      | None                                          | None                       | No       |
+| 21  | Schedules    | Create `POST <app URL>/api/v1/jobs/usage-rollup`, cron `0 2 * * *`, body `{}`                   | MOD    | First delivery answers 200 | Low; runs the 30-day purge and usage warnings | Staging released (item 13) | Yes      |
 
-Reminders and ingestion need no schedules: they are delayed one-off publishes.
+Reminders and ingestion need no schedule.
 
-### Sentry, and uptime monitoring
+### Sentry, and uptime
 
-| P   | Path                           | Action                                                                | Why                                                                                     | Evidence                          | Changes config? | When         |
-| --- | ------------------------------ | --------------------------------------------------------------------- | --------------------------------------------------------------------------------------- | --------------------------------- | --------------- | ------------ |
-| P1  | Sentry → Alerts → Create alert | Alert on new issues for staging and production; send one test event   | Errors help only if someone is told                                                     | Alert email/Slack on a test event | Yes             | Before pilot |
-| P1  | Sentry Uptime or Better Stack  | `GET https://<pilot host>/api/health` every 1–5 min, alert on non-200 | Nobody is told when the app is down                                                     | An alert when the check fails     | Yes (new)       | Before pilot |
-| P2  | Sentry → Alerts                | Alert on the log line `middleware_session_check_failed` (sustained)   | The only signal of a Supabase Auth outage; `/api/health` checks only database and Redis | Alert fires on a test             | Yes             | Before pilot |
+| #   | Path                            | Action                                                                             | RO/MOD    | Expected evidence               | Risk | Prerequisites | Approval |
+| --- | ------------------------------- | ---------------------------------------------------------------------------------- | --------- | ------------------------------- | ---- | ------------- | -------- |
+| 22  | Alerts → Create alert           | Alert on new issues, for staging and production; send one test event               | MOD       | An alert email or Slack message | Low  | None          | Yes      |
+| 23  | Sentry Uptime (or Better Stack) | `GET https://<host>/api/health` every 1–5 min; alert on non-200                    | MOD (new) | An alert when the check fails   | Low  | None          | Yes      |
+| 24  | Alerts                          | Alert on sustained `middleware_session_check_failed` (the only Auth-outage signal) | MOD       | An alert on a test              | Low  | None          | Yes      |
 
-### Product decisions
+### Product decisions (yours)
 
-- **Pilot sign-up:** invite-only (recommended) or open.
-- **Accept the two P2 trade-offs** in section D (login CSRF, burst on a booking page), or ask for
-  the confirm page.
+- **Pilot sign-up:** invite-only (recommended), or open.
+- **Accept the P2 risks** in section D.
+
+### This machine
+
+- **C: has about 3.4 GB free.** Docker Desktop's disk (`%LOCALAPPDATA%\Docker\wsl\disk\docker_data.vhdx`,
+  45.8 GB) grew during the local verification.
+- My notes from 2026-11-05 record Docker stopping when C: filled.
+- Reclaim the space by compacting or pruning Docker's disk. Its images and volumes are not this
+  session's, so nothing was deleted.
 
 ## I. GO / NO-GO
 
-- **Merging rows 1–9: GO.** Each is reviewed, green and cleanly mergeable, and the combined tree
-  passes everything except one environment-only test.
-- **Staging release: GO after the merges,** with the pre-release checklist.
-- **Pilot: NOT READY.** It needs:
-  - #443 deployed (after the protected line, D1–D6 and a drill);
-  - one restore drill;
-  - an uptime monitor and error alert;
-  - the Stripe key check;
-  - the email template change;
-  - an acceptance run on staging.
+| Decision          | Recommendation                              | Why                                                                                                                                             |
+| ----------------- | ------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Merge 1–9         | **GO**                                      | Each is reviewed and mergeable. The combined tree passes everything except one environment-only test. Confirm CI on #437 and #442's last pushes |
+| Merge #443        | **GO after items 1, 4 and 10**              | Fix reproduced independently twice; CI's database jobs pass; one protected line missing                                                         |
+| Staging release   | **GO after the merges, with #443 included** | Then staging is safe for internal testing; without #443, internal testing on staging is **NO**                                                  |
+| Production deploy | **NO-GO for now**                           | After staging acceptance and one restore drill (item 5); separate authorization                                                                 |
+| First pilot       | **NOT READY**                               | Needs: #443 applied to the pilot's database; restore drill; items 7, 17, 22–23; acceptance (section F)                                          |
 
 ## J. Next-session prompt
 
-> Continue the Syveka pilot launch from `docs/launch-handoff-2026-11-11.md` (branch
-> `docs/launch-handoff-2026-11-11`).
+> Continue the Syveka launch from `docs/launch-handoff-2026-11-11.md` (#444).
 >
-> 1. Verify state with `git fetch`, `gh pr list` and main's CI. Do not trust the doc's SHAs
->    without checking.
-> 2. For each PR the owner merged, confirm main's `push` CI is green.
-> 3. If the owner authorized the `check-migration-history.mjs` line for #443, add it on
->    `fix/revoke-data-api-table-privileges`, run `migrations:check`, and confirm CI is fully green.
-> 4. If the owner shared the D1/D6 results (as text, never secrets), compare them with the
->    expectations in the #443 doc.
+> 1. Verify live state (`git fetch`, `gh pr list`, main CI). Re-check the PR heads against section
+>    B before trusting them.
+> 2. For each merge the owner authorized: confirm main's `push` CI is green.
+> 3. If the owner authorized item 10, add exactly that line on
+>    `fix/revoke-data-api-table-privileges`, then run `npm run migrations:check` and confirm #443's
+>    CI is fully green.
+> 4. Compare any D1–D7 output the owner shares (text only, never secrets) with the expected table
+>    in #443's doc.
 > 5. Remaining code work, in order:
->    - P2: confirm-then-POST page for `token_hash` links;
->    - per-user cap on FREE organization creation;
->    - redesign the access token hook (custom `org_role` claim; SELECT for `supabase_auth_admin`)
->      before any browser path to tenant tables;
->    - compare `auth.users.email` instead of `public.users.email` in invitation and notification
->      paths;
->    - limit the `avatars` upload policy to the user's own folder;
->    - the stale docs listed in `docs/overnight-handoff-2026-11-11.md` §2.
+>    - P2: a confirm-then-POST page for `token_hash` links;
+>    - a per-user cap on FREE organization creation;
+>    - a per-organization cap for workflow `email.send`;
+>    - redesign the access token hook before any browser path to tenant tables;
+>    - compare `auth.users.email` in the invitation and notification paths;
+>    - limit `avatars` uploads to the user's own folder;
+>    - correct the stale docs (overnight handoff §2).
 > 6. Rules:
 >    - no merges, deploys, dashboard changes or live database writes without explicit
 >      authorization for that instance;
->    - local Linux runs follow the method in the doc's section C.
+>    - check C: free space before any Docker work.
