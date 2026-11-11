@@ -27,7 +27,7 @@ vi.mock("@/server/integrations/vapi", () => ({ verifyVapiSignature: () => true }
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {
     voiceAssistant: { findFirst: vi.fn(async () => m.assistant) },
-    voiceCall: { findFirst: vi.fn(async () => null) },
+    voiceCall: { findFirst: vi.fn(async () => null), findMany: vi.fn(async () => []) },
   },
   tenantDb: vi.fn(),
 }));
