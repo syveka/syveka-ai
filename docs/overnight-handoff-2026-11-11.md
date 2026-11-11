@@ -27,13 +27,13 @@ released once the PRs below are merged (section 5).
 
 ### Draft PRs: new or updated tonight (none merged)
 
-> **Use #440 instead of #430, and #441 instead of #438.** Both old PRs fail the secret scan on a
+> **Use #440 instead of #430, and #442 instead of #438 (and #441).** Both old PRs fail the secret scan on a
 > false positive: a random-looking synthetic UUID in a test (rule `generic-api-key`). The scan
 > checks every commit in a PR, so a later commit can't clear it, and rewriting the branches would
 > need a force-push, which was not authorized. No scanner exception was added.
 >
 > - #440 has the same content as #430 on current `main`; its tree was checked identical.
-> - #441 is #438 plus the corrected test id, as one commit.
+> - #442 is #438 with both synthetic test values made low-entropy, as one commit (`f63e8c53`); #441 was a first replacement that the scan still flagged.
 > - The old PRs carry a comment pointing to their replacement. Close them when the replacement is
 >   accepted.
 
@@ -122,7 +122,7 @@ in the PR.
    - A sustained Supabase Auth outage shows only as the log line `middleware_session_check_failed`.
 4. **Cross-device email links fail.** A password-reset or sign-up email opened on a different device
    or browser lands on "link failed", because the callback needs the PKCE verifier from the browser
-   that asked. Code fix: #441 (replaces #438). Owner action: change the Supabase email templates after it is
+   that asked. Code fix: #442 (replaces #438). Owner action: change the Supabase email templates after it is
    deployed (owner action 9).
 5. **A pilot owner can reach a real Stripe checkout.** Settings → Billing has no pilot guard. Leave
    the Stripe keys unset on the pilot environment, or set test-mode keys (owner action 6).
@@ -180,7 +180,7 @@ None of these needs a secret pasted anywhere. Do the "before staging" items firs
 | 6   | Vercel                                                  | `syveka-ai-staging` (and the pilot environment) → Settings → Environment Variables                        | Check that `EMAIL_FROM` exists and its address is on `mail.syveka.com`. Check whether `STRIPE_SECRET_KEY` is absent or test-mode (look at the prefix only, never copy the value)                                                                                                | Mail from an unverified domain fails; a live Stripe key makes the billing page take real money         | `EMAIL_FROM` on the verified domain; Stripe absent or test             | None (read-only)                                  | No                          | Before pilot                            |
 | 7   | Resend                                                  | Domains → `mail.syveka.com`                                                                               | Confirm it still shows Verified (SPF, DKIM)                                                                                                                                                                                                                                     | Invitations and booking emails use it                                                                  | Verified                                                               | None                                              | No                          | Before pilot                            |
 | 8   | Supabase                                                | Authentication → Sign In / Providers → Email                                                              | Confirm **Confirm email** is on and **Secure email change** is on                                                                                                                                                                                                               | #430 trusts the session's email; both settings keep it a confirmed address                             | Both on                                                                | None (read-only)                                  | No                          | Before pilot                            |
-| 9   | Supabase                                                | Authentication → Email Templates, and → URL Configuration                                                 | After #441 is merged and deployed, change the Confirm signup, Reset password and Magic link templates as in `docs/auth-email-links.md` (in #441). Confirm `https://<app host>/api/auth/callback**` is in the redirect URLs                                                      | Links opened on another device fail today                                                              | A reset requested on a laptop and opened on a phone works              | Low (revert the template)                         | Yes                         | Before pilot                            |
+| 9   | Supabase                                                | Authentication → Email Templates, and → URL Configuration                                                 | After #442 is merged and deployed, change the Confirm signup, Reset password and Magic link templates as in `docs/auth-email-links.md` (in #442). Confirm `https://<app host>/api/auth/callback**` is in the redirect URLs                                                      | Links opened on another device fail today                                                              | A reset requested on a laptop and opened on a phone works              | Low (revert the template)                         | Yes                         | Before pilot                            |
 | 10  | GitHub                                                  | Actions → Staging release validation → Run workflow (from `main`), then approve the `staging` environment | Release main to staging after merges 1–9. Use the checklist in `docs/staging-release-hardening-2026-11-11.md` (#434): confirm main CI is green on that exact SHA first                                                                                                          | Puts the fixes where a pilot runs                                                                      | 43 steps green; `/api/health` on the stable alias reports the SHA      | Medium (migrations run first; none pending today) | Yes (dispatch and approval) | Staging                                 |
 | 11  | Staging site                                            | Sign in as owner; then as a member                                                                        | Acceptance: sign-up, invite a second account and accept it, Business DNA, chat (including reopening a conversation with replies), create a contact through chat and confirm, a public booking end to end, reschedule and cancel from the email link, in EN, FI and AR on mobile | Nothing in the pilot scope has been observed on a deployed build since 2026-11-03                      | Every journey completes; Sentry stays quiet on the reopened-chat route | Low                                               | No                          | After staging                           |
 | 12  | Sentry                                                  | Alerts → Create alert                                                                                     | An alert on new issues in the staging and production projects. Confirm one test event arrives from the pilot environment. Resolve SYVEKA-STAGING-1/-3/-4/-5/-7/-8 only after step 11 shows them quiet                                                                           | Errors are only useful if someone is told                                                              | An email or Slack alert on a test event                                | Low                                               | Yes (settings)              | Before pilot                            |
@@ -200,7 +200,7 @@ The order runs from the smallest behaviour change to the largest.
 6. #436 moderation outage
 7. #437 email caps
 8. #434 staging check
-9. #441 cross-device links (replaces #438)
+9. #442 cross-device links (replaces #438)
 
 #398 (Windows test fixes) can go anywhere.
 
@@ -250,7 +250,7 @@ The order runs from the smallest behaviour change to the largest.
     email or QStash down.
 - **Next session:**
   1. Re-run the combined check on the final heads, and get a security re-read of #437's last three
-     commits and a review of #441.
+     commits and a review of #442.
   2. The database grant correction migration (after owner action 4), with RLS tests.
   3. A pilot guard on Settings → Billing.
   4. A per-user cap on FREE organization creation.
