@@ -44,6 +44,8 @@ const s = vi.hoisted(() => ({
   reminders: [] as ReminderRow[],
   events: [] as EventRow[],
   failReminderLookup: false,
+  attendeeEmails: ["guest@example.test"] as string[],
+  guestEmail: null as string | null,
 }));
 const fx = vi.hoisted(() => ({
   enqueue: vi.fn(async (_job: string, _payload: { reminderId: string }, _opts: unknown) => ({
@@ -110,8 +112,8 @@ vi.mock("@/server/db/tenant", () => {
         event: e
           ? {
               ...e,
-              attendeeRecords: [{ email: "guest@example.test", name: "Guest" }],
-              booking: null,
+              attendeeRecords: s.attendeeEmails.map((email) => ({ email, name: "Guest" })),
+              booking: s.guestEmail ? { guestEmail: s.guestEmail } : null,
               organization: { name: "Org", deletedAt: null },
             }
           : null,
@@ -246,6 +248,27 @@ beforeEach(() => {
   s.reminders = [];
   s.events = [];
   s.failReminderLookup = false;
+  s.attendeeEmails = ["guest@example.test"];
+  s.guestEmail = null;
+});
+
+describe("one reminder per mailbox", () => {
+  it("addresses that differ only in letter case get one email, as the budget charged", async () => {
+    const [first] = await createEventWithReminders(tomorrowish);
+    s.guestEmail = "Victim@Example.test";
+    s.attendeeEmails = [
+      "victim@example.test",
+      "VICTIM@EXAMPLE.TEST",
+      " victim@example.test ",
+      "other@example.test",
+    ];
+
+    await deliver(first!);
+
+    const sentTo = fx.sendEmail.mock.calls.map((c) => c[0].to);
+    // The first spelling of each mailbox is the one used.
+    expect(sentTo).toEqual(["Victim@Example.test", "other@example.test"]);
+  });
 });
 afterEach(() => {
   vi.useRealTimers();
