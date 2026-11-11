@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { requirePermission } from "@/server/auth/guard";
 import { actionWriteLimitError } from "@/server/security/rate-limit";
+import { checkRateLimit } from "@/server/integrations/redis";
 import {
+  addedAttendeeEmails,
   CalendarError,
   cancelEvent,
   createEvent,
@@ -56,6 +58,22 @@ export async function saveEventAction(
           startsAt: c.startsAt.toISOString(),
         })),
       };
+    }
+  }
+
+  // Reminders email every attendee address from the platform's domain, so
+  // the addresses a save adds spend an hourly and a daily budget per
+  // organization. Refused before anything is saved, so the form never says
+  // reminders will go out when they won't.
+  const added = await addedAttendeeEmails(ctx, eventId, parsed.data.attendees);
+  if (added.length > 0) {
+    for (const limiter of ["eventReminderRecipientsHour", "eventReminderRecipientsDay"] as const) {
+      const decision = await checkRateLimit(limiter, ctx.orgId, added.length);
+      if (!decision.ok) {
+        return {
+          error: decision.reason === "unavailable" ? "service_unavailable" : "rate_limited",
+        };
+      }
     }
   }
 

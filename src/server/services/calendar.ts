@@ -317,6 +317,32 @@ async function syncAttendees(eventId: string, attendees: EventInput["attendees"]
   }
 }
 
+/**
+ * The attendee addresses a save would add to an event (lowercased, distinct):
+ * every address for a new event, only those not already on it for an edit.
+ * Reminders email every attendee address, so this is what a save adds to the
+ * platform's outgoing mail. An event of another organization reads as empty,
+ * and the save itself refuses it.
+ */
+export async function addedAttendeeEmails(
+  ctx: TenantContext,
+  eventId: string | undefined,
+  attendees: EventInput["attendees"],
+): Promise<string[]> {
+  const submitted = new Set(
+    attendees.flatMap((a) => (a.email ? [a.email.trim().toLowerCase()] : [])),
+  );
+  if (submitted.size === 0 || !eventId) return [...submitted];
+  const existing = await tenantDb(ctx.orgId).calendarEvent.findFirst({
+    where: { id: eventId, deletedAt: null },
+    select: { attendeeRecords: { select: { email: true } } },
+  });
+  for (const a of existing?.attendeeRecords ?? []) {
+    if (a.email) submitted.delete(a.email.trim().toLowerCase());
+  }
+  return [...submitted];
+}
+
 export async function createEvent(ctx: TenantContext, input: EventInput) {
   validateEventInput(input);
   const db = tenantDb(ctx.orgId);

@@ -16,7 +16,7 @@ export async function POST(
   { params }: { params: Promise<{ org: string; slug: string }> },
 ) {
   const [
-    { rateLimitRefusal },
+    { rateLimitRefusal, emailKey },
     { createPublicBooking, BookingError },
     { publicBookingSchema },
     { sendBookingLifecycleNotifications },
@@ -43,6 +43,21 @@ export async function POST(
   if (!parsed.success) return NextResponse.json({ error: "invalid_input" }, { status: 400 });
 
   const { org, slug } = await params;
+  // Each booking emails the address the guest typed. Beyond the per-IP limit,
+  // one address and one booking page are capped whatever the IP, so the page
+  // can't be used to mail strangers or fill the owner's calendar. Checked
+  // before anything is written or sent.
+  const recipientRefused = await rateLimitRefusal(
+    "publicBookingRecipient",
+    emailKey(parsed.data.email),
+  );
+  if (recipientRefused) return recipientRefused;
+  const pageRefused = await rateLimitRefusal(
+    "publicBookingType",
+    `${org.toLowerCase()}/${slug.toLowerCase()}`,
+  );
+  if (pageRefused) return pageRefused;
+
   try {
     const result = await createPublicBooking({ orgSlug: org, typeSlug: slug, input: parsed.data });
 
