@@ -136,7 +136,12 @@ describe.skipIf(!PG_URL)("acceptInvitation on real Postgres (service path)", () 
           expiresAt: new Date(Date.now() + 86_400_000),
         },
       });
-      joiners.push({ userId: user.id, token: invitation.token });
+      // `session` is the signed-in identity the action passes from Supabase Auth.
+      joiners.push({
+        userId: user.id,
+        token: invitation.token,
+        session: { id: user.id, email: user.email },
+      });
     }
     return { orgId: org.id, joiners };
   }
@@ -157,7 +162,7 @@ describe.skipIf(!PG_URL)("acceptInvitation on real Postgres (service path)", () 
     const { orgId, joiners } = await seed(2);
 
     const results = await Promise.allSettled(
-      joiners.map((j) => acceptInvitation(j.token, j.userId)),
+      joiners.map((j) => acceptInvitation(j.token, j.session)),
     );
 
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
@@ -204,7 +209,7 @@ describe.skipIf(!PG_URL)("acceptInvitation on real Postgres (service path)", () 
     holder.auditOrganizationId = randomUUID();
     let failure: unknown;
     try {
-      await acceptInvitation(joiner.token, joiner.userId);
+      await acceptInvitation(joiner.token, joiner.session);
     } catch (error) {
       failure = error;
     } finally {
@@ -226,7 +231,7 @@ describe.skipIf(!PG_URL)("acceptInvitation on real Postgres (service path)", () 
 
     // Nothing of the failed attempt is left behind: the same invitation is
     // accepted normally once the audit row can be written.
-    await expect(acceptInvitation(joiner.token, joiner.userId)).resolves.toBe(orgId);
+    await expect(acceptInvitation(joiner.token, joiner.session)).resolves.toBe(orgId);
     await expect(memberships(orgId, joiner.userId)).resolves.toBe(1);
     await expect(joinAudits({ organizationId: orgId })).resolves.toEqual([
       {
@@ -243,7 +248,7 @@ describe.skipIf(!PG_URL)("acceptInvitation on real Postgres (service path)", () 
     const { orgId, joiners } = await seed(1);
     await db.organization.update({ where: { id: orgId }, data: { deletedAt: new Date() } });
 
-    const refused = acceptInvitation(joiners[0]!.token, joiners[0]!.userId);
+    const refused = acceptInvitation(joiners[0]!.token, joiners[0]!.session);
     await expect(refused).rejects.toBeInstanceOf(InvitationAcceptError);
     await expect(refused).rejects.toMatchObject({ code: "invalid" });
     await expect(members(orgId)).resolves.toBe(1);

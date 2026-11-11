@@ -156,7 +156,23 @@ export async function revokeInvitation(ctx: TenantContext, invitationId: string)
   });
 }
 
-export async function acceptInvitation(token: string, userId: string): Promise<string> {
+/**
+ * The signed-in account as Supabase Auth reports it (getSessionUser). The
+ * caller passes it straight from the verified session, never from client
+ * input and never from `public.users`.
+ */
+export type InvitationSessionUser = { id: string; email?: string | null };
+
+/**
+ * `sessionUser.email` is what proves the invitation is this account's. The
+ * copy in `public.users.email` is not used for that: its row policy lets a
+ * signed-in user update their own row, so it can't decide who may join.
+ */
+export async function acceptInvitation(
+  token: string,
+  sessionUser: InvitationSessionUser,
+): Promise<string> {
+  const userId = sessionUser.id;
   const invitation = await unscopedPrisma.invitation.findUnique({ where: { token } });
   if (!invitation) throw new InvitationAcceptError("invalid");
   if (invitation.status === "EXPIRED") throw new InvitationAcceptError("expired");
@@ -169,10 +185,13 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
     throw new InvitationAcceptError("expired");
   }
 
-  const user = await unscopedPrisma.user.findUniqueOrThrow({ where: { id: userId } });
-  if (user.email.toLowerCase() !== invitation.email.toLowerCase()) {
+  const sessionEmail = sessionUser.email?.toLowerCase();
+  if (!sessionEmail || sessionEmail !== invitation.email.toLowerCase()) {
     throw new InvitationAccountMismatchError();
   }
+  // Only that the profile row exists (the membership references it); nothing
+  // in it is read.
+  await unscopedPrisma.user.findUniqueOrThrow({ where: { id: userId }, select: { id: true } });
 
   const ent = await getEntitlements(invitation.organizationId);
   if (ent.readOnly) throw new InvitationAcceptError("read_only");

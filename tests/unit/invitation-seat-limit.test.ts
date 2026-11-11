@@ -254,6 +254,9 @@ function invite(orgId: string, userId: string) {
   return token;
 }
 
+/** The signed-in identity the action passes: the address `invite` sent to. */
+const session = (userId: string) => ({ id: userId, email: `${userId}@example.test` });
+
 function seed(orgId: string, members: number) {
   for (let i = 0; i < members; i++) {
     s.members.push({
@@ -284,7 +287,7 @@ beforeEach(() => {
 describe("acceptInvitation seat limit", () => {
   it("joins while a seat is free, under the organization's seat lock", async () => {
     seed(ORG_A, 1);
-    await expect(acceptInvitation(invite(ORG_A, "u1"), "u1")).resolves.toBe(ORG_A);
+    await expect(acceptInvitation(invite(ORG_A, "u1"), session("u1"))).resolves.toBe(ORG_A);
     expect(membersOf(ORG_A)).toHaveLength(2);
     expect(s.lockCalls).toEqual([ORG_A]);
     // The join's audit row is written in the join's transaction, not after it
@@ -309,7 +312,7 @@ describe("acceptInvitation seat limit", () => {
     s.auditFailure = auditError;
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    await expect(acceptInvitation(invite(ORG_A, "u1"), "u1")).rejects.toBe(auditError);
+    await expect(acceptInvitation(invite(ORG_A, "u1"), session("u1"))).rejects.toBe(auditError);
 
     // No membership without its audit row: the join did not happen.
     expect(membersOf(ORG_A)).toHaveLength(0);
@@ -322,7 +325,7 @@ describe("acceptInvitation seat limit", () => {
     log.mockRestore();
 
     // The invitation is still usable once the audit trail can be written.
-    await expect(acceptInvitation("tok-u1", "u1")).resolves.toBe(ORG_A);
+    await expect(acceptInvitation("tok-u1", session("u1"))).resolves.toBe(ORG_A);
     expect(membersOf(ORG_A).map((m) => m.userId)).toEqual(["u1"]);
     expect(s.audits).toHaveLength(1);
   });
@@ -330,7 +333,7 @@ describe("acceptInvitation seat limit", () => {
   it("refuses a join that would exceed the plan, and changes nothing", async () => {
     seed(ORG_A, 2);
     const token = invite(ORG_A, "u1");
-    await expect(acceptInvitation(token, "u1")).rejects.toEqual(
+    await expect(acceptInvitation(token, session("u1"))).rejects.toEqual(
       new InvitationAcceptError("seat_limit"),
     );
     expect(membersOf(ORG_A)).toHaveLength(2);
@@ -340,8 +343,8 @@ describe("acceptInvitation seat limit", () => {
   it("lets exactly one of two concurrent acceptances take the last seat", async () => {
     seed(ORG_A, 1);
     const results = await Promise.allSettled([
-      acceptInvitation(invite(ORG_A, "u1"), "u1"),
-      acceptInvitation(invite(ORG_A, "u2"), "u2"),
+      acceptInvitation(invite(ORG_A, "u1"), session("u1")),
+      acceptInvitation(invite(ORG_A, "u2"), session("u2")),
     ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     const rejected = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
@@ -354,13 +357,13 @@ describe("acceptInvitation seat limit", () => {
   it("counts only its own organization's members (cross-tenant)", async () => {
     seed(ORG_B, 40);
     seed(ORG_A, 1);
-    await expect(acceptInvitation(invite(ORG_A, "u1"), "u1")).resolves.toBe(ORG_A);
+    await expect(acceptInvitation(invite(ORG_A, "u1"), session("u1"))).resolves.toBe(ORG_A);
     expect(membersOf(ORG_B)).toHaveLength(40);
   });
 
   it("refuses to join a deleted organization", async () => {
     s.orgs.set(ORG_A, { deletedAt: new Date() });
-    await expect(acceptInvitation(invite(ORG_A, "u1"), "u1")).rejects.toMatchObject({
+    await expect(acceptInvitation(invite(ORG_A, "u1"), session("u1"))).rejects.toMatchObject({
       code: "invalid",
     });
     expect(s.members).toHaveLength(0);
@@ -368,7 +371,7 @@ describe("acceptInvitation seat limit", () => {
 
   it("refuses to join a read-only (long past-due) workspace", async () => {
     s.ent = { maxSeats: 50, readOnly: true };
-    await expect(acceptInvitation(invite(ORG_A, "u1"), "u1")).rejects.toMatchObject({
+    await expect(acceptInvitation(invite(ORG_A, "u1"), session("u1"))).rejects.toMatchObject({
       code: "read_only",
     });
     expect(s.members).toHaveLength(0);
@@ -378,7 +381,9 @@ describe("acceptInvitation seat limit", () => {
     seed(ORG_A, 2); // full: the seat check must not be what answers
     const token = invite(ORG_A, "u1");
     s.members.push({ id: "m-existing", organizationId: ORG_A, userId: "u1", role: "MEMBER" });
-    await expect(acceptInvitation(token, "u1")).rejects.toMatchObject({ code: "already_member" });
+    await expect(acceptInvitation(token, session("u1"))).rejects.toMatchObject({
+      code: "already_member",
+    });
     expect(s.invitations[0]!.status).toBe("PENDING");
   });
 
@@ -386,8 +391,8 @@ describe("acceptInvitation seat limit", () => {
     seed(ORG_A, 0);
     const token = invite(ORG_A, "u1");
     const results = await Promise.allSettled([
-      acceptInvitation(token, "u1"),
-      acceptInvitation(token, "u1"),
+      acceptInvitation(token, session("u1")),
+      acceptInvitation(token, session("u1")),
     ]);
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
     const rejected = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
@@ -468,7 +473,7 @@ describe("withdrawal and acceptance are serialized by the same per-organization 
 
   it("a withdrawal arriving while the acceptance, past its re-read, holds the lock waits and is refused", async () => {
     const { token, id, userId } = pendingInvitation();
-    const accept = acceptInvitation(token, userId);
+    const accept = acceptInvitation(token, session(userId));
     // The acceptance now holds the lock, has re-read PENDING and is inside the
     // seat count. Before the lock was shared, a withdrawal here committed
     // REVOKED and the acceptance then overwrote it with ACCEPTED.
@@ -486,7 +491,7 @@ describe("withdrawal and acceptance are serialized by the same per-organization 
     const { token, id, userId } = pendingInvitation();
     const revoke = revokeInvitation(ctx, id);
     await yieldNow(); // the withdrawal holds the lock and has read the row
-    const accept = acceptInvitation(token, userId);
+    const accept = acceptInvitation(token, session(userId));
 
     const [a, r] = await Promise.allSettled([accept, revoke]);
     expectOneWinner(id, userId, a, r);
@@ -512,13 +517,15 @@ describe("withdrawal and acceptance are serialized by the same per-organization 
 
   it("sequentially: accept then withdraw is refused; withdraw then accept finds a dead link", async () => {
     const first = pendingInvitation();
-    await acceptInvitation(first.token, first.userId);
+    await acceptInvitation(first.token, session(first.userId));
     await expect(revokeInvitation(ctx, first.id)).rejects.toMatchObject({ code: "not_pending" });
     expect(s.invitations.find((i) => i.id === first.id)!.status).toBe("ACCEPTED");
 
     const token = invite(ORG_A, "second");
     await revokeInvitation(ctx, "inv-second");
-    await expect(acceptInvitation(token, "second")).rejects.toMatchObject({ code: "invalid" });
+    await expect(acceptInvitation(token, session("second"))).rejects.toMatchObject({
+      code: "invalid",
+    });
     expect(s.members.filter((m) => m.userId === "second")).toHaveLength(0);
   });
 });

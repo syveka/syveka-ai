@@ -211,6 +211,9 @@ function invite(orgId: string, userId: string) {
   return token;
 }
 
+/** The signed-in identity the action passes from Supabase Auth. */
+const session = (userId: string) => ({ id: userId, email: `${userId}@example.test` });
+
 function seedMember(orgId: string, userId: string) {
   s.members.push({ id: `m-${++s.seq}`, organizationId: orgId, userId, role: "MEMBER" });
 }
@@ -261,7 +264,7 @@ describe("the member.join audit row is part of the join", () => {
     s.auditFailure = auditError;
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    await expect(acceptInvitation(token, "u1")).rejects.toBe(auditError);
+    await expect(acceptInvitation(token, session("u1"))).rejects.toBe(auditError);
 
     // The transaction did run as far as the audit write, then undid everything.
     expect(db.$transaction).toHaveBeenCalledTimes(1);
@@ -280,10 +283,12 @@ describe("the member.join audit row is part of the join", () => {
   it("after a rolled-back attempt the same invitation can still be accepted, with one audit row", async () => {
     const token = invite(ORG_A, "u1");
     s.auditFailure = new Error("synthetic audit insert failure");
-    await expect(acceptInvitation(token, "u1")).rejects.toThrow("synthetic audit insert failure");
+    await expect(acceptInvitation(token, session("u1"))).rejects.toThrow(
+      "synthetic audit insert failure",
+    );
 
     s.auditFailure = null;
-    await expect(acceptInvitation(token, "u1")).resolves.toBe(ORG_A);
+    await expect(acceptInvitation(token, session("u1"))).resolves.toBe(ORG_A);
     expect(membersOf(ORG_A).map((m) => m.userId)).toEqual(["u1"]);
     expect(joinRows(s.audits)).toHaveLength(1);
   });
@@ -293,7 +298,7 @@ describe("the member.join audit row is part of the join", () => {
     seedBookingType(ORG_B, "u1");
     const token = invite(ORG_B, "u1");
 
-    await expect(acceptInvitation(token, "u1")).resolves.toBe(ORG_B);
+    await expect(acceptInvitation(token, session("u1"))).resolves.toBe(ORG_B);
 
     expect(s.audits).toEqual([
       {
@@ -324,9 +329,9 @@ describe("the member.join audit row is part of the join", () => {
 describe("duplicate requests leave exactly one audit row", () => {
   it("a second accept of the same token after the first committed is invalid", async () => {
     const token = invite(ORG_A, "u1");
-    await expect(acceptInvitation(token, "u1")).resolves.toBe(ORG_A);
+    await expect(acceptInvitation(token, session("u1"))).resolves.toBe(ORG_A);
 
-    const second = acceptInvitation(token, "u1");
+    const second = acceptInvitation(token, session("u1"));
     await expect(second).rejects.toBeInstanceOf(InvitationAcceptError);
     await expect(second).rejects.toMatchObject({ code: "invalid" });
 
@@ -340,8 +345,8 @@ describe("duplicate requests leave exactly one audit row", () => {
     const token = invite(ORG_A, "u1");
 
     const results = await Promise.allSettled([
-      acceptInvitation(token, "u1"),
-      acceptInvitation(token, "u1"),
+      acceptInvitation(token, session("u1")),
+      acceptInvitation(token, session("u1")),
     ]);
 
     // Both passed the first read and reached the lock; only one found PENDING there.
@@ -365,7 +370,7 @@ describe("authorization", () => {
     const token = invite(ORG_A, "u1");
     s.emails.set("intruder", "intruder@example.test");
 
-    await expect(acceptInvitation(token, "intruder")).rejects.toBeInstanceOf(
+    await expect(acceptInvitation(token, session("intruder"))).rejects.toBeInstanceOf(
       InvitationAccountMismatchError,
     );
 
@@ -388,7 +393,7 @@ describe("tenant isolation", () => {
     invite(ORG_A, "u1");
     const tokenB = invite(ORG_B, "u1");
 
-    await expect(acceptInvitation(tokenB, "u1")).resolves.toBe(ORG_B);
+    await expect(acceptInvitation(tokenB, session("u1"))).resolves.toBe(ORG_B);
 
     const invitationB = s.invitations.find((i) => i.token === tokenB)!;
     expect(s.audits).toHaveLength(1);
@@ -443,7 +448,7 @@ describe("refused joins write no member.join row", () => {
     arrange();
     const membersBefore = s.members.map((m) => m.userId);
 
-    const refused = acceptInvitation(token, "u1");
+    const refused = acceptInvitation(token, session("u1"));
     await expect(refused).rejects.toBeInstanceOf(InvitationAcceptError);
     await expect(refused).rejects.toMatchObject({ code });
 

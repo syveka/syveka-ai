@@ -266,7 +266,10 @@ describe("accepting as another account", () => {
       await expect(acceptInvitationAction(INVITATION_ID, locale)).rejects.toThrow(
         `NEXT_REDIRECT:/${locale}/dashboard`,
       );
-      expect(mocks.acceptInvitation).toHaveBeenCalledWith(INVITATION_ID, "user-1");
+      expect(mocks.acceptInvitation).toHaveBeenCalledWith(INVITATION_ID, {
+        id: "user-1",
+        email: "invitee@example.test",
+      });
       expect(mocks.refreshSession).toHaveBeenCalledOnce();
     },
   );
