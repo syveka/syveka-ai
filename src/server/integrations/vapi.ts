@@ -23,6 +23,28 @@ const VAPI_BASE = "https://api.vapi.ai";
  */
 export const VAPI_FETCH_TIMEOUT_MS = 20_000;
 
+/** A Vapi API error with its status, so a caller can tell "no such call" from an outage. */
+export class VapiHttpError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+  ) {
+    super(message);
+    this.name = "VapiHttpError";
+  }
+}
+
+/**
+ * Vapi doesn't retry a failed webhook unless told to. Client errors won't improve on a
+ * retry. Anything lost after these attempts is recovered by the reconcile-voice-calls job.
+ */
+const WEBHOOK_BACKOFF_PLAN = {
+  type: "exponential",
+  maxRetries: 3,
+  baseDelaySeconds: 2,
+  excludedStatusCodes: [400, 401, 403, 404, 409],
+} as const;
+
 async function vapiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const { VAPI_API_KEY } = getVapiEnv();
   let res: Response;
@@ -34,7 +56,7 @@ async function vapiFetch<T>(path: string, init?: RequestInit): Promise<T> {
         "Content-Type": "application/json",
         ...init?.headers,
       },
-      signal: AbortSignal.timeout(VAPI_FETCH_TIMEOUT_MS),
+      signal: init?.signal ?? AbortSignal.timeout(VAPI_FETCH_TIMEOUT_MS),
     });
   } catch (error) {
     if (error instanceof Error && error.name === "TimeoutError") {
@@ -46,7 +68,10 @@ async function vapiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Vapi ${init?.method ?? "GET"} ${path} → ${res.status}: ${body.slice(0, 500)}`);
+    throw new VapiHttpError(
+      `Vapi ${init?.method ?? "GET"} ${path} → ${res.status}: ${body.slice(0, 500)}`,
+      res.status,
+    );
   }
   return (await res.json()) as T;
 }
@@ -118,6 +143,13 @@ export function toVapiPayload(cfg: VapiAssistantConfig) {
   return {
     name: cfg.name,
     firstMessage: cfg.firstMessage,
+    // The first message carries the mandatory AI and recording notice
+    // (buildVoiceFirstMessage), so it is always spoken first and in full, never
+    // replaced by a model-generated opening or cut off by the caller. Both are
+    // Vapi's documented defaults; sending them keeps a dashboard edit from
+    // turning the notice off, since every sync re-applies them.
+    firstMessageMode: "assistant-speaks-first",
+    firstMessageInterruptionsEnabled: false,
     model: {
       provider: "anthropic",
       // Sourced from the canonical model router, not a second hardcoded
@@ -138,9 +170,18 @@ export function toVapiPayload(cfg: VapiAssistantConfig) {
     },
     // Custom Credential reference, not the legacy inline `server.secret` — Vapi
     // resolves the actual HMAC key server-side from the credential (§13.2).
-    server: { url: cfg.serverUrl, credentialId: cfg.serverCredentialId },
+    server: {
+      url: cfg.serverUrl,
+      credentialId: cfg.serverCredentialId,
+      backoffPlan: WEBHOOK_BACKOFF_PLAN,
+    },
+    // Refusing a call relies on Live Call Control, so a sync restores it if it was changed.
+    monitorPlan: { controlEnabled: true, controlAuthenticationEnabled: false },
     maxDurationSeconds: cfg.maxDurationSeconds,
-    recordingEnabled: true,
+    // Recording isn't set here. Syveka has no recording setting of its own, so a sync must not
+    // override a choice made in Vapi's dashboard. Left unset on a new assistant, Vapi's default
+    // applies. Whether calls are recorded is a pending legal decision, and the spoken notice
+    // doesn't depend on it.
   };
 }
 
@@ -155,6 +196,46 @@ export async function upsertVapiAssistant(
     });
   }
   return vapiFetch("/assistant", { method: "POST", body: JSON.stringify(toVapiPayload(cfg)) });
+}
+
+/** One call as Vapi has it. Read-only; the caller validates the untrusted shape. */
+export async function getVapiCall(id: string, signal?: AbortSignal): Promise<unknown> {
+  return vapiFetch(`/call/${encodeURIComponent(id)}`, signal ? { signal } : undefined);
+}
+
+/** The largest page Syveka asks for, so a caller can tell when a list may be cut short. */
+export const VAPI_CALL_LIST_LIMIT = 100;
+
+/** An assistant's recent calls, newest first. Read-only; the caller validates the shape. */
+export async function listVapiCalls(
+  assistantId: string,
+  createdAtGe: Date,
+  signal?: AbortSignal,
+): Promise<unknown[]> {
+  const query = new URLSearchParams({
+    assistantId,
+    createdAtGe: createdAtGe.toISOString(),
+    limit: String(VAPI_CALL_LIST_LIMIT),
+  });
+  const calls = await vapiFetch<unknown>(
+    `/call?${query.toString()}`,
+    signal ? { signal } : undefined,
+  );
+  // An unexpected shape is an outage to report, not "this assistant had no calls".
+  if (!Array.isArray(calls)) throw new Error("Unexpected Vapi call list");
+  return calls;
+}
+
+/** The assistant as Vapi holds it now, including anything changed in its dashboard. */
+export async function getVapiAssistant(
+  id: string,
+  signal?: AbortSignal,
+): Promise<{
+  firstMessage?: string | null;
+  firstMessageMode?: string | null;
+  firstMessageInterruptionsEnabled?: boolean | null;
+}> {
+  return vapiFetch(`/assistant/${encodeURIComponent(id)}`, signal ? { signal } : undefined);
 }
 
 export async function deleteVapiAssistant(id: string): Promise<void> {
