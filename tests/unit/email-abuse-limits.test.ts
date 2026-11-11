@@ -26,6 +26,7 @@ const s = vi.hoisted(() => ({
 
 const f = vi.hoisted(() => ({
   createPublicBooking: vi.fn(),
+  reschedule: vi.fn(),
   notify: vi.fn(async () => ({ guestEmail: "sent" })),
   reminders: vi.fn(async () => undefined),
   createEvent: vi.fn(async () => ({ id: "event-1", startsAt: new Date("2026-11-20T10:00:00Z") })),
@@ -60,8 +61,12 @@ vi.mock("@/server/integrations/redis", async (importActual) => {
   };
 });
 
+vi.mock("@/server/services/booking-tokens", () => ({
+  BookingTokenError: class BookingTokenError extends Error {},
+}));
 vi.mock("@/server/services/booking", () => ({
   createPublicBooking: f.createPublicBooking,
+  rescheduleBookingViaToken: f.reschedule,
   BookingError: class BookingError extends Error {
     constructor(
       message: string,
@@ -87,7 +92,7 @@ vi.mock("@/server/auth/guard", () => ({
   })),
 }));
 vi.mock("@/server/services/calendar", () => ({
-  addedAttendeeEmails: vi.fn(async () => s.addedEmails),
+  reminderRecipientsToCharge: vi.fn(async () => s.addedEmails),
   CalendarError: class CalendarError extends Error {},
   cancelEvent: vi.fn(),
   createEvent: f.createEvent,
@@ -106,6 +111,7 @@ vi.mock("@/server/services/ai-spend", () => ({
 }));
 
 import { POST as createBooking } from "@/app/api/v1/booking/[org]/[slug]/route";
+import { POST as rescheduleViaLink } from "@/app/api/v1/booking/manage/[token]/route";
 import { saveEventAction } from "@/actions/calendar";
 import {
   checkRateLimit,
@@ -300,6 +306,83 @@ describe("public booking: per recipient and per page", () => {
     );
     expect(res.status).toBe(400);
     expect([...s.counts.keys()].filter((k) => !k.startsWith("auth|"))).toEqual([]);
+  });
+});
+
+describe("rescheduling from the email link", () => {
+  function reschedule(startsAt = OFFERED_SLOT) {
+    return rescheduleViaLink(
+      new Request("http://localhost/api/v1/booking/manage/x", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-forwarded-for": freshIp() },
+        body: JSON.stringify({ startsAt }),
+      }),
+      { params: Promise.resolve({ token: "manage-token" }) },
+    );
+  }
+
+  beforeEach(() => {
+    // Like the real service: the new time must be offered, then admit runs,
+    // then the booking is moved (and a new link issued).
+    f.reschedule.mockImplementation(
+      async (
+        _token: string,
+        startsAt: string,
+        admit?: (b: {
+          bookingTypeId: string;
+          organizationId: string;
+          guestEmail: string;
+        }) => Promise<void>,
+      ) => {
+        if (startsAt === UNOFFERED_SLOT) {
+          throw new BookingError("Requested time is not available", "invalid_slot");
+        }
+        await admit?.({
+          bookingTypeId: "type-acme-intro",
+          organizationId: "org-acme",
+          guestEmail: "victim@example.test",
+        });
+        booked.push("victim@example.test");
+        return {
+          booking: {
+            id: `b-${booked.length}`,
+            organizationId: "org-acme",
+            startsAt: new Date(startsAt),
+          },
+          event: { id: "e-1" },
+          manageToken: "next-token",
+        };
+      },
+    );
+  });
+
+  it("each reschedule spends the guest's allowance, so a link can't mail the guest without limit", async () => {
+    for (let i = 0; i < PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY; i++) {
+      expect((await reschedule()).status).toBe(200);
+    }
+    booked.length = 0;
+    f.notify.mockClear();
+
+    const refused = await reschedule();
+    expect(refused.status).toBe(429);
+    expect(booked).toEqual([]);
+    expect(f.notify).not.toHaveBeenCalled();
+  });
+
+  it("a new booking and its reschedules share the guest's allowance with that business", async () => {
+    expect((await booking("victim@example.test", freshIp())).status).toBe(200);
+    for (let i = 1; i < PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY; i++) {
+      expect((await reschedule()).status).toBe(200);
+    }
+    expect((await reschedule()).status).toBe(429);
+  });
+
+  it("a reschedule to a time that isn't offered spends nothing", async () => {
+    for (let i = 0; i < PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY + 3; i++) {
+      expect((await reschedule(UNOFFERED_SLOT)).status).toBe(400);
+    }
+    expect([...s.counts.keys()].filter((k) => !k.startsWith("auth|"))).toEqual([]);
+    expect((await reschedule()).status).toBe(200);
   });
 });
 

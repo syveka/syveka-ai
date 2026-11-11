@@ -318,26 +318,32 @@ async function syncAttendees(eventId: string, attendees: EventInput["attendees"]
 }
 
 /**
- * The attendee addresses a save would add to an event (lowercased, distinct):
- * every address for a new event, only those not already on it for an edit.
- * Reminders email every attendee address, so this is what a save adds to the
- * platform's outgoing mail. An event of another organization reads as empty,
- * and the save itself refuses it.
+ * The attendee addresses a save will send new reminder email to (lowercased,
+ * distinct), which is what the reminder budget is spent by. Reminders email
+ * every attendee address at send time, so:
+ * - a new event: every address;
+ * - an edit that moves the start: every address, because the reminders are
+ *   scheduled again (updateEvent);
+ * - any other edit: only the addresses not already on the event.
+ * An event of another organization reads as new, and the save refuses it.
  */
-export async function addedAttendeeEmails(
+export async function reminderRecipientsToCharge(
   ctx: TenantContext,
   eventId: string | undefined,
-  attendees: EventInput["attendees"],
+  input: Pick<EventInput, "attendees" | "startsAt">,
 ): Promise<string[]> {
   const submitted = new Set(
-    attendees.flatMap((a) => (a.email ? [a.email.trim().toLowerCase()] : [])),
+    input.attendees.flatMap((a) => (a.email ? [a.email.trim().toLowerCase()] : [])),
   );
   if (submitted.size === 0 || !eventId) return [...submitted];
   const existing = await tenantDb(ctx.orgId).calendarEvent.findFirst({
     where: { id: eventId, deletedAt: null },
-    select: { attendeeRecords: { select: { email: true } } },
+    select: { startsAt: true, attendeeRecords: { select: { email: true } } },
   });
-  for (const a of existing?.attendeeRecords ?? []) {
+  if (!existing || existing.startsAt.getTime() !== new Date(input.startsAt).getTime()) {
+    return [...submitted];
+  }
+  for (const a of existing.attendeeRecords) {
     if (a.email) submitted.delete(a.email.trim().toLowerCase());
   }
   return [...submitted];

@@ -236,9 +236,14 @@ describe("manage API: a link that doesn't resolve", () => {
       expect(JSON.parse(text)).toEqual({ error: code });
       expectNoBookingFields(text);
       // The token from the URL is what reached the service (no bypass).
+      // A reschedule also passes its admission check (the guest and page caps).
       expect(routes[method].service).toHaveBeenCalledWith(
         TOKEN,
-        ...(method === "POST" ? [NEW_START] : method === "DELETE" ? ["synthetic reason"] : []),
+        ...(method === "POST"
+          ? [NEW_START, expect.any(Function)]
+          : method === "DELETE"
+            ? ["synthetic reason"]
+            : []),
       );
       expectNoSideEffects();
     },
@@ -280,7 +285,11 @@ describe("manage API: a link that doesn't resolve", () => {
       expect(await res.json()).toEqual({ error: "invalid" });
       expect(routes[method].service).toHaveBeenCalledWith(
         "",
-        ...(method === "GET" ? [] : [expect.anything()]),
+        ...(method === "GET"
+          ? []
+          : method === "POST"
+            ? [expect.anything(), expect.any(Function)]
+            : [expect.anything()]),
       );
       expect(mocks.tokenFindUnique).not.toHaveBeenCalled();
       expect(mocks.transaction).not.toHaveBeenCalled();

@@ -5,7 +5,7 @@ import { requirePermission } from "@/server/auth/guard";
 import { actionWriteLimitError } from "@/server/security/rate-limit";
 import { checkRateLimit } from "@/server/integrations/redis";
 import {
-  addedAttendeeEmails,
+  reminderRecipientsToCharge,
   CalendarError,
   cancelEvent,
   createEvent,
@@ -62,10 +62,11 @@ export async function saveEventAction(
   }
 
   // Reminders email every attendee address from the platform's domain, so
-  // the addresses a save adds spend an hourly and a daily budget per
-  // organization. Refused before anything is saved, so the form never says
-  // reminders will go out when they won't.
-  const added = await addedAttendeeEmails(ctx, eventId, parsed.data.attendees);
+  // the addresses a save sends new reminders to (all of them for a new or
+  // moved event, the added ones otherwise) spend an hourly and a daily budget
+  // per organization. Refused before anything is saved, so the form never
+  // says reminders will go out when they won't.
+  const added = await reminderRecipientsToCharge(ctx, eventId, parsed.data);
   if (added.length > 0) {
     for (const limiter of ["eventReminderRecipientsHour", "eventReminderRecipientsDay"] as const) {
       const decision = await checkRateLimit(limiter, ctx.orgId, added.length);

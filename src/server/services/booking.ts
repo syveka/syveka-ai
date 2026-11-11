@@ -903,7 +903,16 @@ export async function cancelBookingAsOwner(ctx: TenantContext, bookingId: string
   return booking;
 }
 
-export async function rescheduleBookingViaToken(raw: string, newStartIso: string) {
+/**
+ * `admit` runs once the new time is known to be offered and before anything
+ * is written; it may throw to refuse. Each reschedule emails the guest again,
+ * so the same caps as a new public booking apply (see createPublicBooking).
+ */
+export async function rescheduleBookingViaToken(
+  raw: string,
+  newStartIso: string,
+  admit?: (booking: { bookingTypeId: string; organizationId: string; guestEmail: string }) => Promise<void>,
+) {
   const { resolveToken, consumeTokenAtomic } = await import("./booking-tokens");
   const record = await resolveToken(raw, "RESCHEDULE");
   const oldBooking = record.booking;
@@ -938,6 +947,11 @@ export async function rescheduleBookingViaToken(raw: string, newStartIso: string
   if (!slots.some((s) => s.getTime() === startsAt.getTime())) {
     throw new BookingError("Requested time is not available", "invalid_slot");
   }
+  await admit?.({
+    bookingTypeId: bookingType.id,
+    organizationId: oldBooking.organizationId,
+    guestEmail: oldBooking.guestEmail,
+  });
 
   const orgId = oldBooking.organizationId;
   const result = await unscopedPrisma.$transaction(async (tx) => {

@@ -27,7 +27,7 @@ vi.mock("@/server/security/rate-limit", () => ({
 }));
 vi.mock("@/server/services/calendar", () => ({
   // These saves add no attendee address, so no reminder budget is spent.
-  addedAttendeeEmails: vi.fn(async () => []),
+  reminderRecipientsToCharge: vi.fn(async () => []),
   CalendarError: class CalendarError extends Error {},
   cancelEvent: vi.fn(),
   createEvent: vi.fn(),
