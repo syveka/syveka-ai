@@ -86,7 +86,16 @@ vi.mock("@/server/services/billing/seats", () => ({
   countActiveSeats: vi.fn(),
   lockOrgSeats: vi.fn(),
 }));
-vi.mock("@/server/services/audit", () => ({ audit: vi.fn() }));
+vi.mock("@/server/services/audit", () => ({
+  audit: vi.fn(),
+  auditLogData: vi.fn(
+    async (ctx: { orgId: string; userId: string }, input: Record<string, unknown>) => ({
+      organizationId: ctx.orgId,
+      actorId: ctx.userId,
+      ...input,
+    }),
+  ),
+}));
 vi.mock("@/server/integrations/resend", () => ({ sendEmail: vi.fn() }));
 vi.mock("../../emails/invitation", () => ({ InvitationEmail: () => null }));
 
@@ -279,7 +288,6 @@ describe("invitation page", () => {
 
   it.each([
     ["unknown", null],
-    ["already accepted", { ...pendingInvitation, status: "ACCEPTED" }],
     ["expired", { ...pendingInvitation, expiresAt: new Date(Date.now() - 1000) }],
   ])("%s invitation: not sent to register, nothing to accept", async (_label, invitation) => {
     mocks.findInvitation.mockResolvedValue(invitation);
@@ -289,17 +297,31 @@ describe("invitation page", () => {
     expect(mocks.redirect).not.toHaveBeenCalled();
     expect(mocks.getSessionUser).not.toHaveBeenCalled();
   });
+
+  // Reads the session only to recognize the invited member reopening the link.
+  it("already accepted invitation, signed out: not sent to register, nothing to accept", async () => {
+    mocks.findInvitation.mockResolvedValue({ ...pendingInvitation, status: "ACCEPTED" });
+    mocks.getSessionUser.mockResolvedValue(null);
+
+    await expect(page()).resolves.toBeTruthy();
+    expect(mocks.redirect).not.toHaveBeenCalled();
+    expect(mocks.acceptInvitationAction).not.toHaveBeenCalled();
+  });
 });
 
 describe("accepting still requires the invited account", () => {
+  // The signed-in identity the action passes from Supabase Auth.
+  const invitee = { id: "user-1", email: "invitee@example.test" };
+
   it("a different signed-in user can't accept someone else's invitation", async () => {
     mocks.findInvitation.mockResolvedValue(pendingInvitation);
     mocks.findUser.mockResolvedValue({ id: "user-2", email: "someone-else@example.test" });
+    const someoneElse = { id: "user-2", email: "someone-else@example.test" };
 
-    await expect(acceptInvitation(INVITATION_ID, "user-2")).rejects.toThrow(
+    await expect(acceptInvitation(INVITATION_ID, someoneElse)).rejects.toThrow(
       "Invitation was sent to a different email address",
     );
-    await expect(acceptInvitation(INVITATION_ID, "user-2")).rejects.toBeInstanceOf(
+    await expect(acceptInvitation(INVITATION_ID, someoneElse)).rejects.toBeInstanceOf(
       InvitationAccountMismatchError,
     );
     expect(mocks.transaction).not.toHaveBeenCalled();
@@ -311,7 +333,7 @@ describe("accepting still requires the invited account", () => {
       expiresAt: new Date(Date.now() - 1000),
     });
 
-    await expect(acceptInvitation(INVITATION_ID, "user-1")).rejects.toMatchObject({
+    await expect(acceptInvitation(INVITATION_ID, invitee)).rejects.toMatchObject({
       name: "InvitationAcceptError",
       code: "expired",
     });
@@ -330,7 +352,7 @@ describe("accepting still requires the invited account", () => {
   ])("an %s invitation is refused with a fixed code", async (_label, invitation, code) => {
     mocks.findInvitation.mockResolvedValue(invitation);
 
-    await expect(acceptInvitation(INVITATION_ID, "user-1")).rejects.toMatchObject({
+    await expect(acceptInvitation(INVITATION_ID, invitee)).rejects.toMatchObject({
       name: "InvitationAcceptError",
       code,
     });

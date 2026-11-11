@@ -325,6 +325,39 @@ describe("AI message quota reservation", () => {
     expect(inFlight()).toBe(0);
   });
 
+  it("a failure recording partial usage logs one event with the error name only; the turn ends as before", async () => {
+    m.streamClaude.mockImplementation(async ({ callbacks }) => {
+      callbacks.onText("Partial");
+      callbacks.onUsage(1_200, 40);
+      throw new Error("provider failed");
+    });
+    const usageError = Object.assign(new Error("usage write failed for tenant detail"), {
+      name: "UsageWriteError",
+    });
+    m.recordUsage
+      .mockRejectedValueOnce(usageError)
+      .mockRejectedValueOnce(usageError)
+      .mockRejectedValueOnce(usageError);
+    const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
+
+    const body = await (await chat("private synthetic question")).text();
+
+    expect(body).toContain('"code":"generation_failed"');
+    expect(m.events.at(-1)).toBe("release");
+    expect(inFlight()).toBe(0);
+    const lines = log.mock.calls.map(([line]) => String(line));
+    const events = lines.filter((line) => line.includes("ai_chat_partial_usage_record_failed"));
+    expect(events).toHaveLength(1);
+    expect(JSON.parse(events[0]!)).toEqual({
+      event: "ai_chat_partial_usage_record_failed",
+      name: "UsageWriteError",
+    });
+    for (const line of lines) {
+      expect(line).not.toContain("usage write failed");
+      expect(line).not.toContain("private synthetic question");
+    }
+  });
+
   it("the provider fails before producing anything: nothing recorded, reservation released", async () => {
     m.streamClaude.mockRejectedValue(Object.assign(new Error("overloaded"), { status: 529 }));
     vi.spyOn(console, "error").mockImplementation(() => undefined);

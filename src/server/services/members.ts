@@ -8,7 +8,7 @@ import { assertWithinLimit, getEntitlements } from "./billing/entitlements";
 import { countActiveSeats, lockOrgSeats } from "./billing/seats";
 import { sendEmail } from "@/server/integrations/resend";
 import { InvitationEmail } from "../../../emails/invitation";
-import { audit } from "./audit";
+import { audit, auditLogData } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
 import { getAppUrlEnv } from "@/env";
 import type { InvitationAcceptErrorCode } from "@/lib/invitation-errors";
@@ -156,7 +156,23 @@ export async function revokeInvitation(ctx: TenantContext, invitationId: string)
   });
 }
 
-export async function acceptInvitation(token: string, userId: string): Promise<string> {
+/**
+ * The signed-in account as Supabase Auth reports it (getSessionUser). The
+ * caller passes it straight from the verified session, never from client
+ * input and never from `public.users`.
+ */
+export type InvitationSessionUser = { id: string; email?: string | null };
+
+/**
+ * `sessionUser.email` is what proves the invitation is this account's. The
+ * copy in `public.users.email` is not used for that: its row policy lets a
+ * signed-in user update their own row, so it can't decide who may join.
+ */
+export async function acceptInvitation(
+  token: string,
+  sessionUser: InvitationSessionUser,
+): Promise<string> {
+  const userId = sessionUser.id;
   const invitation = await unscopedPrisma.invitation.findUnique({ where: { token } });
   if (!invitation) throw new InvitationAcceptError("invalid");
   if (invitation.status === "EXPIRED") throw new InvitationAcceptError("expired");
@@ -169,15 +185,18 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
     throw new InvitationAcceptError("expired");
   }
 
-  const user = await unscopedPrisma.user.findUniqueOrThrow({ where: { id: userId } });
-  if (user.email.toLowerCase() !== invitation.email.toLowerCase()) {
+  const sessionEmail = sessionUser.email?.toLowerCase();
+  if (!sessionEmail || sessionEmail !== invitation.email.toLowerCase()) {
     throw new InvitationAccountMismatchError();
   }
+  // Only that the profile row exists (the membership references it); nothing
+  // in it is read.
+  await unscopedPrisma.user.findUniqueOrThrow({ where: { id: userId }, select: { id: true } });
 
   const ent = await getEntitlements(invitation.organizationId);
   if (ent.readOnly) throw new InvitationAcceptError("read_only");
 
-  const { rejoinDisabled, activeSeats } = await unscopedPrisma.$transaction(async (tx) => {
+  await unscopedPrisma.$transaction(async (tx) => {
     // The seat check is authoritative here, where a seat is actually taken.
     // Joins to one organization are serialized, so concurrent acceptances
     // can't all pass the same count; an invitation sent while seats were
@@ -229,23 +248,26 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
       },
       data: { isActive: false },
     });
-    return { rejoinDisabled: disabled, activeSeats: seatsBefore + 1 };
+    // Recorded in the same transaction as the membership it describes: a
+    // join can't commit without its audit row, and a failed audit write
+    // rolls the join back. The organization is the invitation's own.
+    await tx.auditLog.create({
+      data: await auditLogData(
+        { orgId: invitation.organizationId, userId },
+        {
+          action: "member.join",
+          resourceType: "organization_member",
+          resourceId: userId,
+          after: { bookingTypesDisabled: disabled.count, activeSeats: seatsBefore + 1 },
+        },
+      ),
+    });
   });
 
   const admin = createSupabaseAdmin();
   await admin.auth.admin.updateUserById(userId, {
     app_metadata: { last_active_org: invitation.organizationId },
   });
-
-  await audit(
-    { orgId: invitation.organizationId, userId },
-    {
-      action: "member.join",
-      resourceType: "organization_member",
-      resourceId: userId,
-      after: { bookingTypesDisabled: rejoinDisabled.count, activeSeats },
-    },
-  );
 
   return invitation.organizationId;
 }
