@@ -121,6 +121,10 @@ describe("Supabase token-hash email links", () => {
       "/%2e//evil.test/onboarding",
       "/..//evil.test/onboarding",
       "/a/..//evil.test/onboarding",
+      // URL parsing drops tabs and newlines, which also yields "//evil.test".
+      "/\t/evil.test/onboarding",
+      "/\n/evil.test/onboarding",
+      "/.\r\n//evil.test/onboarding",
     ])("rejects external next target %s", async (next) => {
       const response = await GET(link("email", next));
       expect(response.headers.get("location")).toBe("https://staging.example.test/dashboard");
