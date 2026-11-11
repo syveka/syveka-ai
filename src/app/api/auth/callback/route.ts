@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
+import type { EmailOtpType } from "@supabase/supabase-js";
 import {
   inviteContinuation,
   localeFromPath,
@@ -7,14 +8,27 @@ import {
 } from "@/lib/auth-redirect";
 import { createSupabaseRouteClient } from "@/server/supabase/server";
 
-export async function GET(request: NextRequest) {
-  const next = safeInternalNext(request.nextUrl.searchParams.get("next"));
-  const locale = localeFromPath(next);
-  const code = request.nextUrl.searchParams.get("code");
+// Only the email links this app sends: sign-up confirmation ("email", and the
+// older "signup"), magic link ("magiclink", older; new templates use "email")
+// and password recovery. Invitations are sent by the app itself, not through
+// Supabase, so "invite" and "email_change" are refused.
+const TOKEN_HASH_TYPES = new Set<EmailOtpType>(["email", "signup", "magiclink", "recovery"]);
 
-  // A link opened in a different browser from the one that requested it (for
-  // example a phone's mail app) has no PKCE verifier there, so the exchange
-  // fails. An invitation is kept, so signing in on this login page still
+function tokenHashType(value: string | null): EmailOtpType | null {
+  return value !== null && TOKEN_HASH_TYPES.has(value) ? value : null;
+}
+
+export async function GET(request: NextRequest) {
+  const params = request.nextUrl.searchParams;
+  const next = safeInternalNext(params.get("next"));
+  const locale = localeFromPath(next);
+  const code = params.get("code");
+  const tokenHash = params.get("token_hash");
+
+  // A PKCE `code` link opened in a different browser from the one that
+  // requested it (for example a phone's mail app) has no verifier there, so
+  // the exchange fails; `token_hash` links (docs/auth-email-links.md) work in
+  // any browser. An invitation is kept, so signing in on this login page still
   // returns to it instead of to "Create your organization".
   const failed = () => {
     const unlocalized = next.startsWith(`/${locale}/`) ? next.slice(locale.length + 1) : next;
@@ -26,11 +40,24 @@ export async function GET(request: NextRequest) {
     );
   };
 
-  if (!code) return failed();
+  if (code) {
+    const response = NextResponse.redirect(new URL(next, request.url));
+    const supabase = createSupabaseRouteClient(request, response);
+    const { error } = await supabase.auth.exchangeCodeForSession(code);
 
-  const response = NextResponse.redirect(new URL(next, request.url));
+    if (error) return failed();
+
+    return response;
+  }
+
+  const type = tokenHashType(params.get("type"));
+  if (!tokenHash || !type) return failed();
+
+  // A recovery session only ever lands on the reset form, whatever `next` says.
+  const destination = type === "recovery" ? localizedPath(locale, "/reset-password") : next;
+  const response = NextResponse.redirect(new URL(destination, request.url));
   const supabase = createSupabaseRouteClient(request, response);
-  const { error } = await supabase.auth.exchangeCodeForSession(code);
+  const { error } = await supabase.auth.verifyOtp({ token_hash: tokenHash, type });
 
   if (error) return failed();
 
