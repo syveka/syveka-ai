@@ -14,6 +14,10 @@ const s = vi.hoisted(() => ({
   orgs: new Map<string, { deletedAt: Date | null }>(),
   members: [] as Array<{ id: string; organizationId: string; userId: string; role: string }>,
   invitations: [] as Array<Record<string, unknown>>,
+  // Audit rows written through a transaction client, and a failure to inject
+  // into the next such write.
+  audits: [] as Array<Record<string, unknown>>,
+  auditFailure: null as Error | null,
   locks: new Map<string, Promise<void>>(),
   lockCalls: [] as string[],
   seq: 0,
@@ -27,7 +31,11 @@ const yieldNow = () => new Promise((r) => setTimeout(r, 0));
 const membersOf = (orgId: string) =>
   s.orgs.get(orgId)?.deletedAt ? [] : s.members.filter((m) => m.organizationId === orgId);
 
-function makeTx(held: string[]) {
+/**
+ * `undo` collects how to take back each write of this transaction; the fake
+ * $transaction runs it when the callback throws, as a rollback does.
+ */
+function makeTx(held: string[], undo: Array<() => void>) {
   return {
     // pg_advisory_xact_lock(hashtext(orgId), 3): held until the transaction ends.
     $executeRaw: vi.fn(async (_sql: TemplateStringsArray, orgId: string) => {
@@ -70,6 +78,9 @@ function makeTx(held: string[]) {
         await yieldNow();
         const row = { id: `m-${++s.seq}`, role: "MEMBER", ...data } as (typeof s.members)[number];
         s.members.push(row);
+        undo.push(() => {
+          s.members = s.members.filter((m) => m !== row);
+        });
         return row;
       }),
     },
@@ -87,22 +98,40 @@ function makeTx(held: string[]) {
         await yieldNow();
         return row ? { ...row } : null;
       }),
-      update: vi.fn(async ({ where, data }: { where: Row; data: Row }) =>
-        Object.assign(
-          s.invitations.find((i) => i.id === where.id)!,
-          data,
-        ),
-      ),
+      update: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
+        const row = s.invitations.find((i) => i.id === where.id)!;
+        const previous = { ...row };
+        undo.push(() => Object.assign(row, previous));
+        return Object.assign(row, data);
+      }),
       // Like Prisma: a filter that isn't given matches every row.
       updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
         const rows = s.invitations.filter((i) =>
           Object.entries(where).every(([k, v]) => v === undefined || i[k] === v),
         );
-        for (const row of rows) Object.assign(row, data);
+        for (const row of rows) {
+          const previous = { ...row };
+          undo.push(() => Object.assign(row, previous));
+          Object.assign(row, data);
+        }
         return { count: rows.length };
       }),
     },
     bookingType: { updateMany: vi.fn(async () => ({ count: 0 })) },
+    auditLog: {
+      create: vi.fn(async ({ data }: { data: Row }) => {
+        if (s.auditFailure) {
+          const failure = s.auditFailure;
+          s.auditFailure = null;
+          throw failure;
+        }
+        s.audits.push(data);
+        undo.push(() => {
+          s.audits = s.audits.filter((a) => a !== data);
+        });
+        return data;
+      }),
+    },
   };
 }
 
@@ -136,8 +165,13 @@ const db = {
   },
   $transaction: vi.fn(async (fn: (tx: ReturnType<typeof makeTx>) => Promise<unknown>) => {
     const held: string[] = [];
+    const undo: Array<() => void> = [];
     try {
-      return await fn(makeTx(held));
+      return await fn(makeTx(held, undo));
+    } catch (error) {
+      // Rollback: nothing this transaction wrote survives.
+      for (const revert of undo.reverse()) revert();
+      throw error;
     } finally {
       for (const release of (held as unknown as { release?: Array<() => void> }).release ?? []) {
         release();
@@ -176,9 +210,20 @@ vi.mock("@/server/services/billing/entitlements", () => ({
   EntitlementError: EntitlementErrorMock,
 }));
 const auditMock = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock("@/server/services/audit", () => ({ audit: auditMock }));
+// auditLogData stays real: it builds the row acceptInvitation writes inside
+// its transaction. `audit` (the global-client write) is observed.
+vi.mock("@/server/services/audit", async (importActual) => ({
+  ...(await importActual<object>()),
+  audit: auditMock,
+}));
+vi.mock("next/headers", () => ({
+  headers: async () => {
+    throw new Error("no request");
+  },
+}));
+const updateUserByIdMock = vi.hoisted(() => vi.fn(async () => ({})));
 vi.mock("@/server/supabase/server", () => ({
-  createSupabaseAdmin: () => ({ auth: { admin: { updateUserById: vi.fn(async () => ({})) } } }),
+  createSupabaseAdmin: () => ({ auth: { admin: { updateUserById: updateUserByIdMock } } }),
 }));
 vi.mock("@/server/integrations/resend", () => ({ sendEmail: vi.fn(async () => undefined) }));
 vi.mock("../../emails/invitation", () => ({ InvitationEmail: () => null }));
@@ -228,6 +273,8 @@ beforeEach(() => {
   ]);
   s.members = [];
   s.invitations = [];
+  s.audits = [];
+  s.auditFailure = null;
   s.locks = new Map();
   s.lockCalls = [];
   s.ent = { maxSeats: 2, readOnly: false };
@@ -240,35 +287,44 @@ describe("acceptInvitation seat limit", () => {
     await expect(acceptInvitation(invite(ORG_A, "u1"), "u1")).resolves.toBe(ORG_A);
     expect(membersOf(ORG_A)).toHaveLength(2);
     expect(s.lockCalls).toEqual([ORG_A]);
-    expect(auditMock).toHaveBeenCalledWith(
-      { orgId: ORG_A, userId: "u1" },
+    // The join's audit row is written in the join's transaction, not after it
+    // through the global client.
+    expect(s.audits).toEqual([
       expect.objectContaining({
+        organizationId: ORG_A,
+        actorId: "u1",
         action: "member.join",
-        after: expect.objectContaining({ activeSeats: 2 }),
+        resourceType: "organization_member",
+        resourceId: "u1",
+        after: { bookingTypesDisabled: 0, activeSeats: 2 },
       }),
-    );
+    ]);
+    expect(auditMock).not.toHaveBeenCalled();
   });
 
-  it("an audit failure after the commit doesn't fail the completed join, and logs names only", async () => {
+  it("an audit failure rolls the join back and reaches the caller; nothing is logged in its place", async () => {
     const auditError = Object.assign(new Error("audit insert failed for u1@example.test"), {
       name: "AuditWriteError",
     });
-    auditMock.mockRejectedValueOnce(auditError);
+    s.auditFailure = auditError;
     const log = vi.spyOn(console, "error").mockImplementation(() => undefined);
 
-    await expect(acceptInvitation(invite(ORG_A, "u1"), "u1")).resolves.toBe(ORG_A);
+    await expect(acceptInvitation(invite(ORG_A, "u1"), "u1")).rejects.toBe(auditError);
 
-    expect(membersOf(ORG_A).map((m) => m.userId)).toEqual(["u1"]);
-    expect(s.invitations[0]!.status).toBe("ACCEPTED");
-    expect(log).toHaveBeenCalledTimes(1);
-    expect(JSON.parse(String(log.mock.calls[0]![0]))).toEqual({
-      event: "member_join_audit_failed",
-      orgId: ORG_A,
-      invitationId: s.invitations[0]!.id,
-      name: "AuditWriteError",
-    });
-    expect(String(log.mock.calls[0]![0])).not.toContain("u1@example.test");
+    // No membership without its audit row: the join did not happen.
+    expect(membersOf(ORG_A)).toHaveLength(0);
+    expect(s.invitations[0]!.status).toBe("PENDING");
+    expect(s.audits).toHaveLength(0);
+    expect(updateUserByIdMock).not.toHaveBeenCalled();
+    expect(auditMock).not.toHaveBeenCalled();
+    // The failure isn't swallowed into a log line (the old behaviour).
+    expect(log).not.toHaveBeenCalled();
     log.mockRestore();
+
+    // The invitation is still usable once the audit trail can be written.
+    await expect(acceptInvitation("tok-u1", "u1")).resolves.toBe(ORG_A);
+    expect(membersOf(ORG_A).map((m) => m.userId)).toEqual(["u1"]);
+    expect(s.audits).toHaveLength(1);
   });
 
   it("refuses a join that would exceed the plan, and changes nothing", async () => {

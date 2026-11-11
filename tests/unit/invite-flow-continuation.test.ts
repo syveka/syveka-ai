@@ -86,7 +86,16 @@ vi.mock("@/server/services/billing/seats", () => ({
   countActiveSeats: vi.fn(),
   lockOrgSeats: vi.fn(),
 }));
-vi.mock("@/server/services/audit", () => ({ audit: vi.fn() }));
+vi.mock("@/server/services/audit", () => ({
+  audit: vi.fn(),
+  auditLogData: vi.fn(
+    async (ctx: { orgId: string; userId: string }, input: Record<string, unknown>) => ({
+      organizationId: ctx.orgId,
+      actorId: ctx.userId,
+      ...input,
+    }),
+  ),
+}));
 vi.mock("@/server/integrations/resend", () => ({ sendEmail: vi.fn() }));
 vi.mock("../../emails/invitation", () => ({ InvitationEmail: () => null }));
 

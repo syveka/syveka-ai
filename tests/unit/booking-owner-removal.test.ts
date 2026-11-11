@@ -127,6 +127,8 @@ const tx = {
     }),
   },
   activity: { create: vi.fn(async () => ({})) },
+  // acceptInvitation records the join in its own transaction.
+  auditLog: { create: vi.fn(async () => ({})) },
 };
 
 const invitations: Array<Record<string, unknown>> = [];
@@ -270,7 +272,14 @@ vi.mock("@/server/db/tenant", () => ({
     availabilitySchedule: { findFirst: async () => null },
   }),
 }));
-vi.mock("@/server/services/audit", () => ({ audit: vi.fn(async () => undefined) }));
+vi.mock("@/server/services/audit", () => ({
+  audit: vi.fn(async () => undefined),
+  auditLogData: vi.fn(async (ctx: { orgId: string; userId: string }, input: Row) => ({
+    organizationId: ctx.orgId,
+    actorId: ctx.userId,
+    ...input,
+  })),
+}));
 vi.mock("@/server/services/workflow-events", () => ({ emitWorkflowEvent: vi.fn(async () => {}) }));
 vi.mock("@/server/services/booking-tokens", () => ({
   issueToken: vi.fn(async () => "synthetic-manage-token"),

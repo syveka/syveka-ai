@@ -66,12 +66,29 @@ vi.mock("@/server/services/billing/entitlements", async (importActual) => ({
   getEntitlements: vi.fn(async () => ({ maxSeats: 2, readOnly: false })),
 }));
 const audit = vi.hoisted(() => vi.fn(async () => undefined));
-vi.mock("@/server/services/audit", () => ({ audit }));
+// auditLogData stays real: the join's audit row is written inside the join's
+// transaction, against this database.
+vi.mock("@/server/services/audit", async (importActual) => ({
+  ...(await importActual<object>()),
+  audit,
+}));
+vi.mock("next/headers", () => ({
+  headers: async () => {
+    throw new Error("no request");
+  },
+}));
 vi.mock("@/server/supabase/server", () => ({
   createSupabaseAdmin: () => ({ auth: { admin: { updateUserById: vi.fn(async () => ({})) } } }),
 }));
 vi.mock("@/server/integrations/resend", () => ({ sendEmail: vi.fn(async () => undefined) }));
 vi.mock("../../emails/invitation", () => ({ InvitationEmail: () => null }));
+
+type AuditRow = {
+  organizationId: string;
+  actorId: string | null;
+  action: string;
+  resourceId: string | null;
+};
 
 type Db = {
   organization: { create: (a: object) => Promise<{ id: string }> };
@@ -84,6 +101,7 @@ type Db = {
     create: (a: object) => Promise<{ id: string; token: string }>;
     findUnique: (a: object) => Promise<{ status: string; token: string } | null>;
   };
+  auditLog: { findMany: (a: object) => Promise<AuditRow[]> };
   $disconnect: () => Promise<void>;
 };
 
@@ -141,6 +159,33 @@ describe.skipIf(!PG_URL)("withdraw vs accept on real Postgres (service path)", (
   const memberships = (orgId: string, userId: string) =>
     db.organizationMember.count({ where: { organizationId: orgId, userId } });
   const invitation = (id: string) => db.invitation.findUnique({ where: { id } });
+  /** The join audit rows stored in audit_logs, read back from the database. */
+  const joinAudits = (where: { organizationId: string } | { actorId: string }) =>
+    db.auditLog.findMany({
+      where: { ...where, action: "member.join" },
+      select: { organizationId: true, actorId: true, action: true, resourceId: true },
+    });
+
+  /** The join committed: exactly one audit row, by the joiner, in the invitation's organization. */
+  async function expectJoinAudited(seeded: Awaited<ReturnType<typeof seed>>) {
+    const expected = [
+      {
+        organizationId: seeded.orgId,
+        actorId: seeded.joinerId,
+        action: "member.join",
+        resourceId: seeded.joinerId,
+      },
+    ];
+    await expect(joinAudits({ organizationId: seeded.orgId })).resolves.toEqual(expected);
+    // Nor was one written for this person under any other organization.
+    await expect(joinAudits({ actorId: seeded.joinerId })).resolves.toEqual(expected);
+  }
+
+  /** The join was refused: no audit row for the organization or for the person. */
+  async function expectNoJoinAudit(seeded: Awaited<ReturnType<typeof seed>>) {
+    await expect(joinAudits({ organizationId: seeded.orgId })).resolves.toEqual([]);
+    await expect(joinAudits({ actorId: seeded.joinerId })).resolves.toEqual([]);
+  }
 
   /** Exactly one of the two settled operations succeeded, and the rows agree with it. */
   async function expectOneWinner(
@@ -159,6 +204,7 @@ describe.skipIf(!PG_URL)("withdraw vs accept on real Postgres (service path)", (
       expect(row?.token).toBe(seeded.token);
       await expect(memberships(seeded.orgId, seeded.joinerId)).resolves.toBe(1);
       await expect(members(seeded.orgId)).resolves.toBe(2);
+      await expectJoinAudited(seeded);
     } else {
       expect(revoke.status).toBe("fulfilled");
       expect((accept as PromiseRejectedResult).reason).toBeInstanceOf(InvitationAcceptError);
@@ -167,6 +213,7 @@ describe.skipIf(!PG_URL)("withdraw vs accept on real Postgres (service path)", (
       expect(row?.token).not.toBe(seeded.token);
       await expect(memberships(seeded.orgId, seeded.joinerId)).resolves.toBe(0);
       await expect(members(seeded.orgId)).resolves.toBe(1);
+      await expectNoJoinAudit(seeded);
     }
   }
 
@@ -216,6 +263,7 @@ describe.skipIf(!PG_URL)("withdraw vs accept on real Postgres (service path)", (
     expect(row?.status).toBe("REVOKED");
     expect(row?.token).not.toBe(seeded.token);
     await expect(memberships(seeded.orgId, seeded.joinerId)).resolves.toBe(0);
+    await expectNoJoinAudit(seeded);
     expect(audit).toHaveBeenCalledWith(
       seeded.ctx,
       expect.objectContaining({ action: "member.invite_revoke", resourceId: seeded.invitationId }),
@@ -232,6 +280,8 @@ describe.skipIf(!PG_URL)("withdraw vs accept on real Postgres (service path)", (
     });
     expect((await invitation(seeded.invitationId))?.status).toBe("ACCEPTED");
     await expect(memberships(seeded.orgId, seeded.joinerId)).resolves.toBe(1);
+    // The refused withdrawal neither removed the join's audit row nor added one.
+    await expectJoinAudited(seeded);
   });
 
   it("two concurrent withdrawals: exactly one succeeds, the token changes once", async () => {
