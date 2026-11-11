@@ -44,11 +44,18 @@ const mocks = vi.hoisted(() => {
       return counters.get(key)!;
     }),
     redisExpire: vi.fn(async (..._args: unknown[]) => 1),
+    verifyCallDisclosure: vi.fn(async (..._args: unknown[]) => "ok" as string),
+    callDisclosureState: vi.fn(async (..._args: unknown[]) => "verified" as string),
   };
 });
 
 vi.mock("@/server/integrations/vapi", () => ({
   verifyVapiSignature: mocks.verifyVapiSignature,
+}));
+// The gate is covered in voice-disclosure-gate and below. Elsewhere here, calls have passed it.
+vi.mock("@/server/voice/disclosure-gate", () => ({
+  verifyCallDisclosure: mocks.verifyCallDisclosure,
+  callDisclosureState: mocks.callDisclosureState,
 }));
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {
@@ -699,14 +706,13 @@ describe("Vapi voice webhook — per-call write caps", () => {
     expect(mocks.redisDel).toHaveBeenCalledWith("vapi:tool:org-a:b1");
   });
 
-  it("refuses writes without a call id (nothing to key the cap on); reads still run", async () => {
-    const results = await runTools("", [
+  it("runs nothing without a call id: its notice can't be confirmed", async () => {
+    await runTools("", [
       { id: "b1", name: "bookMeeting" },
       { id: "r1", name: "getCalendarAvailability" },
     ]);
 
-    expect(results).toEqual([err("call_required"), OK]);
-    expect(mocks.executeTool).toHaveBeenCalledTimes(1);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
   });
 });
 
@@ -1438,5 +1444,64 @@ describe("Vapi voice webhook — a phone caller can't search the organization's 
 
     expect(body.results[0].result).toBe(JSON.stringify({ error: "tool_not_enabled" }));
     expect(mocks.executeTool).not.toHaveBeenCalled();
+  });
+});
+
+describe("the spoken notice at the webhook", () => {
+  const CONTROL = "https://aws-us-west-2-production1-phone-call-websocket.vapi.ai/x/control";
+  const signed = (message: Record<string, unknown>) =>
+    new Request("http://localhost/api/v1/voice/webhook", {
+      method: "POST",
+      headers: { "x-vapi-signature": "sig" },
+      body: JSON.stringify({ message }),
+    });
+  const start = (extra: Record<string, unknown> = {}) =>
+    signed({
+      type: "status-update",
+      status: "in-progress",
+      call: { id: "call-1", assistantId: "assistant-1", monitor: { controlUrl: CONTROL } },
+      ...extra,
+    });
+
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocks.verifyCallDisclosure.mockResolvedValue("ok");
+    mocks.callDisclosureState.mockResolvedValue("verified");
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each(["language_not_approved", "live_config_mismatch", "unverifiable"])(
+    "ends the call and records nothing when the check says %s",
+    async (reason) => {
+      mocks.verifyCallDisclosure.mockResolvedValueOnce(reason);
+      const res = await POST(start());
+      expect(res.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    },
+  );
+
+  it("checks the notice before limits, with the assistant's language and the signed config", async () => {
+    await POST(start({ assistant: { firstMessage: "Puhut" } }));
+    expect(mocks.verifyCallDisclosure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: "org-a",
+        vapiCallId: "call-1",
+        vapiAssistantId: "assistant-1",
+        reported: { firstMessage: "Puhut" },
+      }),
+    );
+  });
+
+  it("lets a verified call continue", async () => {
+    await POST(start());
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(1);
   });
 });
