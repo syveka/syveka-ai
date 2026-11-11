@@ -20,6 +20,8 @@ export type PlanLimits = {
   aiMessagesPerOrgMonth: number;
   voiceAssistants: number;
   voiceMinutesMonth: number;
+  /** Concurrent phone calls: a safeguard for the shared Vapi account, not a commercial promise. */
+  voiceConcurrentCalls: number;
   kbStorageMb: number;
   activeWorkflows: number;
   maxContacts: number;
@@ -36,6 +38,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     aiMessagesPerOrgMonth: 50,
     voiceAssistants: 0,
     voiceMinutesMonth: 0,
+    voiceConcurrentCalls: 0,
     kbStorageMb: 50,
     activeWorkflows: 0,
     maxContacts: 200,
@@ -48,6 +51,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     aiMessagesPerOrgMonth: 1_000,
     voiceAssistants: 1,
     voiceMinutesMonth: 100,
+    voiceConcurrentCalls: 1,
     kbStorageMb: 1_024,
     activeWorkflows: 5,
     maxContacts: 5_000,
@@ -60,6 +64,7 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     aiMessagesPerOrgMonth: 5_000,
     voiceAssistants: 3,
     voiceMinutesMonth: 500,
+    voiceConcurrentCalls: 3,
     kbStorageMb: 10_240,
     activeWorkflows: 25,
     maxContacts: 50_000,
@@ -71,7 +76,9 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
     maxSeats: Number.MAX_SAFE_INTEGER,
     aiMessagesPerOrgMonth: Number.MAX_SAFE_INTEGER,
     voiceAssistants: Number.MAX_SAFE_INTEGER,
-    voiceMinutesMonth: Number.MAX_SAFE_INTEGER,
+    // Never unlimited: each contract adds its minutes with a VOICE_MINUTES_MONTH grant.
+    voiceMinutesMonth: 0,
+    voiceConcurrentCalls: 0,
     kbStorageMb: Number.MAX_SAFE_INTEGER,
     activeWorkflows: Number.MAX_SAFE_INTEGER,
     maxContacts: Number.MAX_SAFE_INTEGER,
