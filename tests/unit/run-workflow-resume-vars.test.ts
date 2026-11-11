@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fakeRunFinish } from "./helpers/fake-workflow-run";
 
 /**
  * A run parked on wait.duration resumes in a new delivery that rebuilds the
@@ -62,6 +63,12 @@ const db = {
       Object.assign(run, JSON.parse(JSON.stringify(data)));
       return run;
     }),
+    updateMany: vi.fn(
+      async ({ where, data }: { where: Row; data: Row }) =>
+        fakeRunFinish(state.runs, where, JSON.parse(JSON.stringify(data)) as Row) ?? {
+          count: 0,
+        },
+    ),
   },
   workflowStepExecution: {
     create: vi.fn(async ({ data }: { data: Row }) => {
