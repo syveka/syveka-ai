@@ -1,6 +1,6 @@
 import fs from "node:fs";
 import path from "node:path";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * Next.js renders a layout and its page in parallel. When the layout
@@ -10,7 +10,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
  * AuthError on GET /[locale]/dashboard and /[locale]/admin/organizations,
  * FeatureDisabledError on GET /[locale]/creator-studio), although the user
  * only sees the layout's response. The page guards settle those states the
- * way the layouts do. Mocked: the session, the audit write, redirect.
+ * way the layouts do. Mocked: the session, the audit write, redirect, and
+ * (for the superadmin denial record) console.warn / console.error.
  */
 
 const m = vi.hoisted(() => {
@@ -35,6 +36,7 @@ const m = vi.hoisted(() => {
       }
     }),
     getTenantContextOrNull: vi.fn(),
+    getSessionUser: vi.fn(),
     requireSuperadmin: vi.fn(),
     audit: vi.fn(),
     isFeatureEnabled: vi.fn(),
@@ -50,6 +52,7 @@ vi.mock("@/server/auth/session", () => ({
   AuthError: m.AuthError,
   assertAuthServiceAvailable: m.assertAuthServiceAvailable,
   getTenantContextOrNull: m.getTenantContextOrNull,
+  getSessionUser: m.getSessionUser,
   getTenantContext: vi.fn(),
 }));
 vi.mock("@/server/auth/superadmin", () => ({ requireSuperadmin: m.requireSuperadmin }));
@@ -184,6 +187,127 @@ describe("requireSuperadminPage", () => {
     m.requireSuperadmin.mockRejectedValue(new Error("Supabase client setup failed"));
     await expect(requireSuperadminPage()).rejects.toThrow("Supabase client setup failed");
     expect(m.redirect).not.toHaveBeenCalled();
+  });
+});
+
+describe("requireSuperadminPage: a denied signed-in user leaves a record", () => {
+  const USER_ID = "3f2b8c1e-5d4a-4b6f-9a7e-1c2d3e4f5a6b";
+  const tenantUser = {
+    id: USER_ID,
+    email: "tenant-user@example.test",
+    app_metadata: { is_superadmin: false, last_active_org: "org-1" },
+    user_metadata: { full_name: "Tenant User" },
+    access_token: "synthetic-access-token",
+  };
+
+  const silence = (level: "warn" | "error") =>
+    vi.spyOn(console, level).mockImplementation(() => {});
+  let warn: ReturnType<typeof silence>;
+  let error: ReturnType<typeof silence>;
+
+  beforeEach(() => {
+    warn = silence("warn");
+    error = silence("error");
+  });
+
+  afterEach(() => {
+    warn.mockRestore();
+    error.mockRestore();
+  });
+
+  /** Every line written to any console level that names the event. */
+  const denialLines = (): string[] =>
+    [...warn.mock.calls, ...error.mock.calls]
+      .map((args) => String(args[0]))
+      .filter((line) => line.includes("superadmin_access_denied"));
+
+  it("signed in, not a superadmin: one line with the user id, then the redirect", async () => {
+    m.requireSuperadmin.mockRejectedValue(new m.AuthError("Superadmin required", 403));
+    m.getSessionUser.mockResolvedValue(tenantUser);
+
+    expect(await redirectedTo(() => requireSuperadminPage())).toBe("/dashboard");
+
+    expect(denialLines()).toHaveLength(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(error).not.toHaveBeenCalled();
+    expect(JSON.parse(denialLines()[0] ?? "")).toEqual({
+      event: "superadmin_access_denied",
+      userId: USER_ID,
+      status: 403,
+    });
+  });
+
+  it("the line holds only the event, the user id and the status", async () => {
+    m.requireSuperadmin.mockRejectedValue(new m.AuthError("Superadmin required", 403));
+    m.getSessionUser.mockResolvedValue(tenantUser);
+
+    await redirectedTo(() => requireSuperadminPage());
+
+    const line = denialLines()[0] ?? "";
+    expect(Object.keys(JSON.parse(line)).sort()).toEqual(["event", "status", "userId"]);
+    expect(line).not.toContain("tenant-user@example.test");
+    expect(line).not.toContain("Tenant User");
+    expect(line).not.toContain("synthetic-access-token");
+    expect(line).not.toContain("org-1");
+  });
+
+  it("signed out (401): redirects without the line or a session read", async () => {
+    m.requireSuperadmin.mockRejectedValue(new m.AuthError("Not authenticated", 401));
+    m.getSessionUser.mockResolvedValue(null);
+
+    expect(await redirectedTo(() => requireSuperadminPage())).toBe("/dashboard");
+
+    expect(denialLines()).toEqual([]);
+    expect(m.getSessionUser).not.toHaveBeenCalled();
+  });
+
+  it("auth-service outage: throws AuthServiceUnavailableError, no line", async () => {
+    m.state.authServiceDown = true;
+    for (const status of [401, 403] as const) {
+      m.requireSuperadmin.mockRejectedValue(new m.AuthError("denied", status));
+      await expect(requireSuperadminPage()).rejects.toMatchObject({
+        name: "AuthServiceUnavailableError",
+      });
+    }
+    expect(denialLines()).toEqual([]);
+    expect(m.redirect).not.toHaveBeenCalled();
+  });
+
+  it("a superadmin: no line, no redirect", async () => {
+    m.requireSuperadmin.mockResolvedValue({ userId: "admin-1", email: "admin@example.test" });
+
+    await expect(requireSuperadminPage()).resolves.toMatchObject({ userId: "admin-1" });
+
+    expect(denialLines()).toEqual([]);
+    expect(m.redirect).not.toHaveBeenCalled();
+  });
+
+  it("an unexpected failure: rethrown untouched, no line", async () => {
+    const failure = new Error("Supabase client setup failed");
+    m.requireSuperadmin.mockRejectedValue(failure);
+
+    await expect(requireSuperadminPage()).rejects.toBe(failure);
+
+    expect(denialLines()).toEqual([]);
+    expect(m.redirect).not.toHaveBeenCalled();
+  });
+
+  it("a console that throws does not prevent the redirect", async () => {
+    m.requireSuperadmin.mockRejectedValue(new m.AuthError("Superadmin required", 403));
+    m.getSessionUser.mockResolvedValue(tenantUser);
+    warn.mockImplementation(() => {
+      throw new Error("log sink unavailable");
+    });
+
+    expect(await redirectedTo(() => requireSuperadminPage())).toBe("/dashboard");
+  });
+
+  it("a failing session read does not prevent the redirect", async () => {
+    m.requireSuperadmin.mockRejectedValue(new m.AuthError("Superadmin required", 403));
+    m.getSessionUser.mockRejectedValue(new Error("session read failed"));
+
+    expect(await redirectedTo(() => requireSuperadminPage())).toBe("/dashboard");
+    expect(denialLines()).toEqual([]);
   });
 });
 
