@@ -5,7 +5,9 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { tenantDb } from "@/server/db/tenant";
 import { getEntitlements } from "@/server/services/billing/entitlements";
+import { getAssistantReadiness } from "@/server/voice/assistant-readiness";
 import { AssistantForm } from "@/components/voice/assistant-form";
+import { AssistantReadinessPanel } from "@/components/voice/assistant-readiness-panel";
 import { formatCount, PLAN_NAMES } from "@/components/billing/plan-display";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -85,5 +87,43 @@ export default async function AssistantPage({
     transferNumber: assistant.transferNumber ?? "",
   };
 
-  return <AssistantForm initial={initial} />;
+  // The panel mustn't take the form down with it: saving is the remedy it often suggests.
+  const [ent, t] = await Promise.all([
+    getEntitlements(ctx.orgId).catch(() => null),
+    getTranslations("voice.readiness"),
+  ]);
+  const readiness = await getAssistantReadiness(ctx.orgId, assistant, ent);
+
+  const summaries = {
+    clear: t("summaryReady"),
+    blocked: t("summaryBlocked"),
+    unverified: t("summaryUnverified"),
+  };
+
+  return (
+    <AssistantForm
+      initial={initial}
+      statusPanel={
+        <AssistantReadinessPanel
+          text={{
+            title: t("title"),
+            summary: summaries[readiness.status],
+            items: readiness.blockers.map((blocker) => ({
+              key: blocker,
+              title: t(`${blocker}.title`),
+              action:
+                blocker === "noPhoneNumber" && !assistant.vapiAssistantId
+                  ? t("noPhoneNumber.actionOnceConnected")
+                  : t(`${blocker}.action`),
+            })),
+            noticeLabel: t("noticeLabel"),
+            notice: readiness.notice,
+            noticeLanguage: assistant.language.toLowerCase(),
+            noticeStatus: readiness.noticeApproved ? t("noticeApproved") : t("noticeAwaiting"),
+            noticeApproved: readiness.noticeApproved,
+          }}
+        />
+      }
+    />
+  );
 }

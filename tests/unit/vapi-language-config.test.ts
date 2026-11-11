@@ -114,3 +114,23 @@ describe("toVapiPayload — per-language transcriber/voice selection", () => {
     expect(payload.transcriber).toEqual({ provider: "deepgram", model: "nova-3", language: "ar" });
   });
 });
+
+describe("toVapiPayload — call recording", () => {
+  // Syveka has no recording setting, so it must not override a choice made in Vapi.
+  it("doesn't set recording, in the documented field or the old top-level one", () => {
+    const payload = toVapiPayload(baseConfig()) as Record<string, unknown>;
+
+    expect(payload).not.toHaveProperty("artifactPlan");
+    expect(payload).not.toHaveProperty("recordingEnabled");
+  });
+});
+
+describe("toVapiPayload — the first message (AI and recording notice) is always spoken", () => {
+  it("speaks the configured first message first, and the caller can't interrupt it", () => {
+    const payload = toVapiPayload(baseConfig({ firstMessage: "Notice. Hei!" }));
+
+    expect(payload.firstMessage).toBe("Notice. Hei!");
+    expect(payload.firstMessageMode).toBe("assistant-speaks-first");
+    expect(payload.firstMessageInterruptionsEnabled).toBe(false);
+  });
+});
