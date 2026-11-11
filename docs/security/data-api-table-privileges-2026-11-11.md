@@ -25,6 +25,7 @@ below).
 
 The other policy gaps on record need the `org_id` claim from the custom access token hook, which
 is not registered:
+
 - writes by any member with no role check;
 - organization-wide reads of conversations, invitation tokens, webhook secrets and API key
   hashes.
@@ -37,13 +38,14 @@ No cross-tenant path was found. Every policy predicate is `organization_id = aut
 
 ## 2. The change
 
-| File | Change |
-| --- | --- |
+| File                                                                              | Change                                                                                                                                                                                                                                                                                                                                                |
+| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `prisma/migrations/20261111000000_revoke_data_api_table_privileges/migration.sql` | Revokes from `anon` and `authenticated` every table and sequence privilege in `public`, and the migration role's defaults for new tables. Re-grants `SELECT` on `notifications` to `authenticated` (Realtime; rows still filtered by `notifications_select`). Revokes `EXECUTE` on `custom_access_token_hook` from everyone but `supabase_auth_admin` |
-| `tests/staging/release-invariants.sql` | Requires the migration. Fails the release if `anon` or `authenticated` holds any `public` table or sequence privilege other than `authenticated SELECT notifications`, or if the migration role's defaults grant them any |
-| `tests/migrations/supabase-compatibility.sql` | CI's empty database now starts with the hosted DML defaults, so CI tests the migration history against the grants that are live, not a narrower set |
+| `tests/staging/release-invariants.sql`                                            | Requires the migration. Fails the release if `anon` or `authenticated` holds any `public` table or sequence privilege other than `authenticated SELECT notifications`, or if the migration role's defaults grant them any                                                                                                                             |
+| `tests/migrations/supabase-compatibility.sql`                                     | CI's empty database now starts with the hosted DML defaults, so CI tests the migration history against the grants that are live, not a narrower set                                                                                                                                                                                                   |
 
 **Not affected:**
+
 - Prisma: connects as the table owner.
 - `service_role`: storage calls and the `gdpr-erasure` function.
 - The `storage` and `auth` schemas.
@@ -94,6 +96,7 @@ where lower(u.email) <> lower(a.email);
 ```
 
 **Reading the results:**
+
 - **D1:** `INSERT`/`UPDATE`/`DELETE` for `authenticated` on `users` means the path in section 1
   is open.
 - **D6:** expected `0`. Anything else needs a look before the migration: no row values are
