@@ -121,15 +121,16 @@ begin
   -- The Data API serves schema public with the anon key: anon and authenticated
   -- hold no table or sequence privilege there except SELECT on notifications
   -- (Realtime), and the migration role's defaults give new tables none.
-  select format('%s %s on public.%s', grantee_role.rolname, privilege.privilege_type, c.relname)
+  select format('%s %s on public.%s', coalesce(grantee_role.rolname, 'PUBLIC'),
+    privilege.privilege_type, c.relname)
   into missing_name
   from pg_class as c
   join pg_namespace as n on n.oid = c.relnamespace
   cross join lateral aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) as privilege
-  join pg_roles as grantee_role on grantee_role.oid = privilege.grantee
+  left join pg_roles as grantee_role on grantee_role.oid = privilege.grantee
   where n.nspname = 'public'
     and c.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
-    and grantee_role.rolname in ('anon', 'authenticated')
+    and (privilege.grantee = 0 or grantee_role.rolname in ('anon', 'authenticated'))
     and not (
       grantee_role.rolname = 'authenticated'
       and c.relname = 'notifications'
@@ -145,16 +146,25 @@ begin
   if exists (
     select 1
     from pg_default_acl as defaults
-    join pg_namespace as namespace on namespace.oid = defaults.defaclnamespace
+    join pg_roles as owner_role on owner_role.oid = defaults.defaclrole
+    left join pg_namespace as namespace on namespace.oid = defaults.defaclnamespace
     cross join lateral aclexplode(defaults.defaclacl) as privilege
     join pg_roles as grantee_role on grantee_role.oid = privilege.grantee
-    where defaults.defaclrole = (select oid from pg_roles where rolname = current_user)
-      and namespace.nspname = 'public'
+    where owner_role.rolname in ('postgres', current_user)
+      -- defaclnamespace 0 is a default for every schema, public included.
+      and (defaults.defaclnamespace = 0 or namespace.nspname = 'public')
       and defaults.defaclobjtype in ('r', 'S')
       and grantee_role.rolname in ('anon', 'authenticated')
   ) then
     raise exception 'STAGING RELEASE FAIL: the migration role''s public defaults grant tables or sequences to anon/authenticated';
   end if;
+
+  -- The access token hook is for supabase_auth_admin only, not an RPC endpoint.
+  foreach checked_role in array array['anon', 'authenticated'] loop
+    if has_function_privilege(checked_role, 'public.custom_access_token_hook(jsonb)', 'EXECUTE') then
+      raise exception 'STAGING RELEASE FAIL: role % can execute public.custom_access_token_hook', checked_role;
+    end if;
+  end loop;
 
   if exists (
     select 1

@@ -67,13 +67,15 @@ where n.nspname = 'public' and c.relkind in ('r','p','v','m','f','S')
   and (a.grantee = 0 or g.rolname in ('anon', 'authenticated'))
 group by 1, 2, 3, 4 order by 1, 3;
 
--- D2 default privileges that apply to new objects in public
-select r.rolname owner, d.defaclobjtype, a.privilege_type, coalesce(g.rolname, 'PUBLIC') grantee
+-- D2 default privileges that apply to new objects in public (schema '(all)' = every schema)
+select r.rolname owner, coalesce(n.nspname, '(all)') schema, d.defaclobjtype, a.privilege_type,
+       coalesce(g.rolname, 'PUBLIC') grantee
 from pg_default_acl d join pg_roles r on r.oid = d.defaclrole
 left join pg_namespace n on n.oid = d.defaclnamespace
 cross join lateral aclexplode(d.defaclacl) a left join pg_roles g on g.oid = a.grantee
-where n.nspname = 'public' and coalesce(g.rolname, 'PUBLIC') in ('anon', 'authenticated', 'PUBLIC')
-order by 1, 2, 4, 3;
+where (d.defaclnamespace = 0 or n.nspname = 'public')
+  and coalesce(g.rolname, 'PUBLIC') in ('anon', 'authenticated', 'PUBLIC')
+order by 1, 2, 3, 5, 4;
 
 -- D3 tables without RLS (expected: none)
 select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
@@ -132,8 +134,10 @@ needs regenerating.
   `notifications_select` needs the `org_id` claim.
 - **After staging:** D1 shows only `authenticated SELECT` on `notifications`. A sign-in, a chat and
   a booking work as before.
-- **Rollback:** a new forward migration that restores the D1 and D2 snapshots. This reopens the
-  issue, so do it only to unblock something specific. The blunt version:
+- **Rollback:** a new forward migration that restores the D1 and D2 snapshots, with the Data API
+  checks removed from `tests/staging/release-invariants.sql` in the same change (otherwise every
+  later release fails at them). This reopens the issue, so do it only to unblock something
+  specific. The blunt version:
 
 ```sql
 GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO anon, authenticated;
