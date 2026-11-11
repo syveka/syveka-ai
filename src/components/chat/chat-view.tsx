@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocale, useTranslations } from "next-intl";
+import { chatErrorText } from "@/lib/chat/error-text";
 import { AudioLines, Plus } from "lucide-react";
 import { useRouter } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
@@ -195,7 +196,7 @@ function ChatSession({
       />
       {error ? (
         <p role="alert" className="px-4 pb-1 text-sm text-destructive">
-          {t(`errors.${error}` as never) ?? t("errors.generic")}
+          {chatErrorText(t, error)}
         </p>
       ) : null}
       {voiceConversation ? (
