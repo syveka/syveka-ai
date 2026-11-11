@@ -8,8 +8,11 @@ import { NextRequest, type NextResponse } from "next/server";
 const mocks = vi.hoisted(() => ({
   exchangeCodeForSession: vi.fn(),
   verifyOtp: vi.fn(),
+  checkRateLimit: vi.fn(),
   response: null as NextResponse | null,
 }));
+
+vi.mock("@/server/integrations/redis", () => ({ checkRateLimit: mocks.checkRateLimit }));
 
 vi.mock("@/server/supabase/server", () => ({
   createSupabaseRouteClient: (_request: unknown, response: NextResponse) => {
@@ -47,6 +50,7 @@ describe("Supabase token-hash email links", () => {
     vi.clearAllMocks();
     mocks.response = null;
     mocks.exchangeCodeForSession.mockResolvedValue({ error: null });
+    mocks.checkRateLimit.mockResolvedValue({ ok: true, limit: 10, remaining: 9, reset: 0 });
     // A successful verification sets the session cookie on the client's response.
     mocks.verifyOtp.mockImplementation(async () => {
       mocks.response?.cookies.set(SESSION_COOKIE, "session-value", { path: "/" });
@@ -112,6 +116,11 @@ describe("Supabase token-hash email links", () => {
       "/\\evil.test/onboarding",
       "/%5C%5Cevil.test/onboarding",
       "/%2F%2Fevil.test/onboarding",
+      // Dot segments: parsing turns these into "//evil.test/onboarding".
+      "/.//evil.test/onboarding",
+      "/%2e//evil.test/onboarding",
+      "/..//evil.test/onboarding",
+      "/a/..//evil.test/onboarding",
     ])("rejects external next target %s", async (next) => {
       const response = await GET(link("email", next));
       expect(response.headers.get("location")).toBe("https://staging.example.test/dashboard");
@@ -174,6 +183,37 @@ describe("Supabase token-hash email links", () => {
           `/invite/${INVITATION_ID}`,
         )}`,
       );
+    });
+  });
+
+  describe("rate limit on verification", () => {
+    it("is keyed by the client address and charged before verifyOtp", async () => {
+      await GET(
+        new NextRequest(
+          `https://staging.example.test/api/auth/callback?token_hash=${TOKEN_HASH}&type=email`,
+          { headers: { "x-forwarded-for": "203.0.113.7, 10.0.0.1" } },
+        ),
+      );
+      expect(mocks.checkRateLimit).toHaveBeenCalledWith("auth", "auth-callback:203.0.113.7");
+      expect(mocks.verifyOtp).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ["limit reached", { ok: false, reason: "limited", limit: 10, remaining: 0, reset: 0 }],
+      ["limiter unavailable", { ok: false, reason: "unavailable" }],
+    ])("%s: failed without calling verifyOtp", async (_label, decision) => {
+      mocks.checkRateLimit.mockResolvedValue(decision);
+      const response = await GET(link("recovery", "/en/reset-password"));
+      expect(mocks.verifyOtp).not.toHaveBeenCalled();
+      expect(response.headers.get("location")).toBe(
+        "https://staging.example.test/en/login?error=auth_callback_failed",
+      );
+      expect(response.cookies.get(SESSION_COOKIE)).toBeUndefined();
+    });
+
+    it("a malformed link is refused before the limiter is charged", async () => {
+      await GET(link("invite", "/en/dashboard"));
+      expect(mocks.checkRateLimit).not.toHaveBeenCalled();
     });
   });
 

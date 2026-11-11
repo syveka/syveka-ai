@@ -6,6 +6,7 @@ import {
   localizedPath,
   safeInternalNext,
 } from "@/lib/auth-redirect";
+import { checkRateLimit } from "@/server/integrations/redis";
 import { createSupabaseRouteClient } from "@/server/supabase/server";
 
 // Only the email links this app sends: sign-up confirmation ("email", and the
@@ -53,7 +54,15 @@ export async function GET(request: NextRequest) {
   const type = tokenHashType(params.get("type"));
   if (!tokenHash || !type) return failed();
 
-  // A recovery session only ever lands on the reset form, whatever `next` says.
+  // verifyOtp reaches Supabase from this server's address, so unlimited
+  // guessing here would use up Supabase's verification limit for every user.
+  // Fails closed, like the other auth limits.
+  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() || "anon";
+  const limited = await checkRateLimit("auth", `auth-callback:${ip}`);
+  if (!limited.ok) return failed();
+
+  // A recovery link lands on the reset form, whatever `next` says. This is
+  // navigation, not a security boundary: the session is a full session.
   const destination = type === "recovery" ? localizedPath(locale, "/reset-password") : next;
   const response = NextResponse.redirect(new URL(destination, request.url));
   const supabase = createSupabaseRouteClient(request, response);

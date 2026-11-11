@@ -34,7 +34,13 @@ export function safeInternalNext(value: string | null, fallback = "/dashboard"):
     if (decoded.startsWith("//") || decoded.includes("\\")) return fallback;
     const parsed = new URL(value, INTERNAL_ORIGIN);
     if (parsed.origin !== INTERNAL_ORIGIN || parsed.username || parsed.password) return fallback;
-    return `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    const path = `${parsed.pathname}${parsed.search}${parsed.hash}`;
+    // Parsing removes dot segments, so "/.//evil.test" becomes "//evil.test",
+    // which a browser reads as another host. Check what is actually returned.
+    if (path.startsWith("//") || new URL(path, INTERNAL_ORIGIN).origin !== INTERNAL_ORIGIN) {
+      return fallback;
+    }
+    return path;
   } catch {
     return fallback;
   }
