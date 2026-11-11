@@ -114,14 +114,27 @@ import {
   PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY,
   PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR,
 } from "@/server/integrations/redis";
+import { BookingError } from "@/server/services/booking";
 
-function booking(email: string, ip: string, page = { org: "acme", slug: "intro" }) {
+const PAGE = { org: "acme", slug: "intro" };
+const OTHER_PAGE = { org: "other", slug: "intro" };
+/** Booking pages by their exact slugs, as getPublicBookingType finds them. */
+const PAGES: Record<string, { id: string; organizationId: string }> = {
+  "acme/intro": { id: "type-acme-intro", organizationId: "org-acme" },
+  "other/intro": { id: "type-other-intro", organizationId: "org-other" },
+};
+const OFFERED_SLOT = "2026-11-20T08:00:00.000Z";
+const UNOFFERED_SLOT = "2026-11-20T03:00:00.000Z";
+/** The guest addresses of bookings the fake service wrote. */
+const booked: string[] = [];
+
+function booking(email: string, ip: string, page = PAGE, startsAt = OFFERED_SLOT) {
   return createBooking(
     new Request(`http://localhost/api/v1/booking/${page.org}/${page.slug}`, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-forwarded-for": ip },
       body: JSON.stringify({
-        startsAt: "2026-11-20T08:00:00.000Z",
+        startsAt,
         timezone: "Europe/Helsinki",
         name: "Guest",
         email,
@@ -158,25 +171,44 @@ beforeEach(() => {
   s.unavailable = false;
   s.addedEmails = [];
   s.orgId = "org-a";
-  f.createPublicBooking.mockResolvedValue({
-    booking: {
-      id: "b-1",
-      organizationId: "org-a",
-      startsAt: new Date("2026-11-20T08:00:00Z"),
-      endsAt: new Date("2026-11-20T08:30:00Z"),
+  booked.length = 0;
+  // Like the real service: the page is found by its exact slugs, an offered
+  // slot is checked, then admit runs, then the booking is written.
+  f.createPublicBooking.mockImplementation(
+    async (call: {
+      orgSlug: string;
+      typeSlug: string;
+      input: { startsAt: string; email: string };
+      admit?: (t: { id: string; organizationId: string }) => Promise<void>;
+    }) => {
+      const page = PAGES[`${call.orgSlug}/${call.typeSlug}`];
+      if (!page) throw new BookingError("Booking page not found", "not_found");
+      if (call.input.startsAt === UNOFFERED_SLOT) {
+        throw new BookingError("Requested time is not available", "invalid_slot");
+      }
+      await call.admit?.(page);
+      booked.push(call.input.email);
+      return {
+        booking: {
+          id: `b-${booked.length}`,
+          organizationId: page.organizationId,
+          startsAt: new Date(OFFERED_SLOT),
+          endsAt: new Date("2026-11-20T08:30:00Z"),
+        },
+        event: { id: "e-1" },
+        bookingType: { confirmationMessage: null },
+        manageToken: "token",
+      };
     },
-    event: { id: "e-1" },
-    bookingType: { confirmationMessage: null },
-    manageToken: "token",
-  });
+  );
 });
 
 describe("public booking: per recipient and per page", () => {
-  it("one address is refused after its daily allowance, from any IP, with nothing booked or sent", async () => {
+  it("one address is refused after its daily allowance with one business, from any IP, with nothing booked or sent", async () => {
     for (let i = 0; i < PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY; i++) {
       expect((await booking("victim@example.test", freshIp())).status).toBe(200);
     }
-    f.createPublicBooking.mockClear();
+    booked.length = 0;
     f.notify.mockClear();
     f.reminders.mockClear();
 
@@ -186,17 +218,18 @@ describe("public booking: per recipient and per page", () => {
     expect(refused.status).toBe(429);
     await expect(refused.json()).resolves.toEqual({ error: { code: "rate_limited" } });
     expect(Number(refused.headers.get("Retry-After"))).toBeGreaterThan(0);
-    expect(f.createPublicBooking).not.toHaveBeenCalled();
+    expect(booked).toEqual([]);
     expect(f.notify).not.toHaveBeenCalled();
     expect(f.reminders).not.toHaveBeenCalled();
-    // Another address is unaffected.
+    // Another address, and the same address with another business, are unaffected.
     expect((await booking("someone-else@example.test", freshIp())).status).toBe(200);
+    expect((await booking("victim@example.test", freshIp(), OTHER_PAGE)).status).toBe(200);
   });
 
   it("the address is never a limiter key: only its hash is", async () => {
     await booking("guest@example.test", freshIp());
     const keys = [...s.counts.keys()];
-    expect(keys.some((k) => k.startsWith("publicBookingRecipient|"))).toBe(true);
+    expect(keys.some((k) => k.startsWith("publicBookingRecipient|org-acme:"))).toBe(true);
     expect(keys.join("\n")).not.toContain("guest@example.test");
   });
 
@@ -204,21 +237,30 @@ describe("public booking: per recipient and per page", () => {
     for (let i = 0; i < PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR; i++) {
       expect((await booking(`g${i}@example.test`, freshIp())).status).toBe(200);
     }
-    f.createPublicBooking.mockClear();
+    booked.length = 0;
     f.notify.mockClear();
 
     const refused = await booking("new@example.test", freshIp());
     expect(refused.status).toBe(429);
-    expect(f.createPublicBooking).not.toHaveBeenCalled();
+    expect(booked).toEqual([]);
     expect(f.notify).not.toHaveBeenCalled();
 
-    // Another organization's page has its own allowance; letter case doesn't make a new page.
-    expect(
-      (await booking("new@example.test", freshIp(), { org: "other", slug: "intro" })).status,
-    ).toBe(200);
-    expect(
-      (await booking("x@example.test", freshIp(), { org: "ACME", slug: "Intro" })).status,
-    ).toBe(429);
+    // Another organization's page has its own allowance.
+    expect((await booking("new@example.test", freshIp(), OTHER_PAGE)).status).toBe(200);
+    // The page is keyed by its booking type, not by the URL's spelling.
+    expect([...s.counts.keys()]).toContain("publicBookingType|type-acme-intro");
+  });
+
+  it("junk attempts don't use up a page or a guest: only bookable attempts count", async () => {
+    // Far more requests for a slot that isn't offered than either allowance.
+    for (let i = 0; i < PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR + 10; i++) {
+      const res = await booking("victim@example.test", freshIp(), PAGE, UNOFFERED_SLOT);
+      expect(res.status).toBe(400);
+    }
+    expect([...s.counts.keys()].filter((k) => !k.startsWith("auth|"))).toEqual([]);
+    // The real guest still books, and so does anyone else.
+    expect((await booking("victim@example.test", freshIp())).status).toBe(200);
+    expect((await booking("other@example.test", freshIp())).status).toBe(200);
   });
 
   it("an unavailable limiter refuses with the existing 503 and books nothing", async () => {
@@ -226,8 +268,25 @@ describe("public booking: per recipient and per page", () => {
     const res = await booking("guest@example.test", freshIp());
     expect(res.status).toBe(503);
     await expect(res.json()).resolves.toEqual({ error: { code: "service_unavailable" } });
-    expect(f.createPublicBooking).not.toHaveBeenCalled();
+    expect(booked).toEqual([]);
     expect(f.notify).not.toHaveBeenCalled();
+  });
+
+  it("the admission limiters alone being unavailable also refuse with 503 and book nothing", async () => {
+    const counter = vi.mocked(checkRateLimit).getMockImplementation()!;
+    vi.mocked(checkRateLimit).mockImplementation(async (name, key, cost) =>
+      name.startsWith("publicBooking")
+        ? { ok: false, reason: "unavailable" }
+        : counter(name, key, cost),
+    );
+    try {
+      const res = await booking("guest@example.test", freshIp());
+      expect(res.status).toBe(503);
+      expect(booked).toEqual([]);
+      expect(f.notify).not.toHaveBeenCalled();
+    } finally {
+      vi.mocked(checkRateLimit).mockImplementation(counter);
+    }
   });
 
   it("an invalid request spends no recipient or page allowance", async () => {

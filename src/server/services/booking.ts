@@ -485,6 +485,13 @@ export async function createPublicBooking(params: {
   orgSlug: string;
   typeSlug: string;
   input: PublicBookingInput;
+  /**
+   * Runs once the request is known to be bookable (page found, consent
+   * given, the slot offered) and before anything is written; it may throw
+   * to refuse. Abuse limits go here so that only attempts that would book
+   * count, and junk requests can't use up a page's or a guest's allowance.
+   */
+  admit?: (bookingType: { id: string; organizationId: string }) => Promise<void>;
 }) {
   const { input } = params;
   const bookingType = await getPublicBookingType(params.orgSlug, params.typeSlug);
@@ -511,6 +518,8 @@ export async function createPublicBooking(params: {
   if (!slots.some((s) => s.getTime() === startsAt.getTime())) {
     throw new BookingError("Requested time is not available", "invalid_slot");
   }
+
+  await params.admit?.({ id: bookingType.id, organizationId: bookingType.organizationId });
 
   const orgId = bookingType.organizationId;
   const guestLocale =

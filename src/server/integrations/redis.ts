@@ -55,12 +55,18 @@ export type RateLimiters = {
 export const EVENT_REMINDER_RECIPIENTS_PER_HOUR = 60;
 export const EVENT_REMINDER_RECIPIENTS_PER_DAY = 200;
 /**
- * Public booking attempts for one guest address per day, across the platform.
- * Refused attempts (slot just taken, consent missing) count too, so this is
- * above the two or three meetings one person plausibly books in a day.
+ * Bookable public bookings for one guest address with one organization per
+ * day. Only attempts for an offered slot count (see createPublicBooking's
+ * admit), so a stranger can't use up a guest's allowance with junk requests.
+ * Above the two or three meetings one person plausibly books with one
+ * business in a day; a slot taken at the last moment still counts.
  */
 export const PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY = 5;
-/** Public booking attempts for one booking page per hour, from any address or IP. */
+/**
+ * Bookable public bookings for one booking page per hour, from any address or
+ * IP. Only attempts for an offered slot count, so junk requests can't switch
+ * a page off; each counted attempt takes a real slot in the owner's calendar.
+ */
 export const PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR = 30;
 
 let rateLimitersClient: RateLimiters | null = null;
@@ -194,8 +200,9 @@ function getRateLimiters(): RateLimiters {
     }),
     // Public bookings: each one emails the address the guest typed (a
     // confirmation and two reminders) with no login in front. Capped per
-    // recipient address (hashed, any booking page, any IP) and per booking
-    // page (any address, any IP), next to the per-IP limit in the route.
+    // recipient address and organization (the address hashed, any IP) and
+    // per booking page (by booking type id, any address or IP), next to the
+    // per-IP limit in the route.
     publicBookingRecipient: new Ratelimit({
       redis: client,
       limiter: Ratelimit.slidingWindow(PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY, "1 d"),

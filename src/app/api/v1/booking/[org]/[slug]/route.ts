@@ -3,6 +3,9 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/** Thrown from the admission check to stop the booking; the route answers with the refusal. */
+class AdmissionRefused extends Error {}
+
 /**
  * Public: create a booking. Abuse controls: strict per-IP rate limit,
  * Zod validation, honeypot field, consent enforcement, availability
@@ -44,22 +47,28 @@ export async function POST(
 
   const { org, slug } = await params;
   // Each booking emails the address the guest typed. Beyond the per-IP limit,
-  // one address and one booking page are capped whatever the IP, so the page
-  // can't be used to mail strangers or fill the owner's calendar. Checked
-  // before anything is written or sent.
-  const recipientRefused = await rateLimitRefusal(
-    "publicBookingRecipient",
-    emailKey(parsed.data.email),
-  );
-  if (recipientRefused) return recipientRefused;
-  const pageRefused = await rateLimitRefusal(
-    "publicBookingType",
-    `${org.toLowerCase()}/${slug.toLowerCase()}`,
-  );
-  if (pageRefused) return pageRefused;
+  // a guest address (per organization) and a booking page are capped whatever
+  // the IP, so the page can't be used to mail strangers or fill the owner's
+  // calendar. Checked by the service once the slot is known to be bookable
+  // and before anything is written or sent: only attempts that would book
+  // count, so junk requests can't switch a page or a guest off.
+  let refusal: NextResponse | null = null;
+  const admit = async (bookingType: { id: string; organizationId: string }) => {
+    refusal =
+      (await rateLimitRefusal(
+        "publicBookingRecipient",
+        `${bookingType.organizationId}:${emailKey(parsed.data.email)}`,
+      )) ?? (await rateLimitRefusal("publicBookingType", bookingType.id));
+    if (refusal) throw new AdmissionRefused();
+  };
 
   try {
-    const result = await createPublicBooking({ orgSlug: org, typeSlug: slug, input: parsed.data });
+    const result = await createPublicBooking({
+      orgSlug: org,
+      typeSlug: slug,
+      input: parsed.data,
+      admit,
+    });
 
     // Side effects never fail the booking, but the guest is told whether the
     // confirmation email actually left (a retry of a failed send can still
@@ -88,6 +97,7 @@ export async function POST(
         notified.status === "fulfilled" && notified.value.guestEmail !== "failed",
     });
   } catch (e) {
+    if (e instanceof AdmissionRefused && refusal) return refusal;
     if (e instanceof BookingError) {
       if (e.code === "calendar_busy") {
         return NextResponse.json(

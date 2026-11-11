@@ -132,7 +132,6 @@ vi.mock("@/server/services/creator-studio-http", async () => {
 });
 
 import { forgotPasswordAction, loginAction, magicLinkAction, registerAction } from "@/actions/auth";
-import { emailKey } from "@/server/security/rate-limit";
 import { POST as createBookingRoute } from "@/app/api/v1/booking/[org]/[slug]/route";
 import { GET as slotsRoute } from "@/app/api/v1/booking/[org]/[slug]/slots/route";
 import {
@@ -331,8 +330,7 @@ describe.each(routes)("$name", ({ name, run, effect }) => {
   it("passes the limiter when it allows the request", async () => {
     const response = await run();
     expect([429, 503]).not.toContain(response.status);
-    // A public booking also checks its recipient address and its page.
-    expect(s.keys).toHaveLength(name.includes("(create)") ? 3 : 1);
+    expect(s.keys).toHaveLength(1);
     // Booking writes and reads run their operation; Creator Studio requests
     // here carry an empty body, so passing the limiter shows as a 400 from
     // validation (their success paths are covered in their own suites).
@@ -366,9 +364,6 @@ describe("limit keys", () => {
     for (const { run } of routes) await run();
     expect(s.keys).toEqual([
       "rl:auth|booking-create:203.0.113.5",
-      // The recipient is hashed: the address itself is never a Redis key.
-      `rl:public-booking:recipient|${emailKey("guest@example.com")}`,
-      "rl:public-booking:type|acme/intro",
       "rl:api|booking-slots:203.0.113.5",
       "rl:api|booking-manage:203.0.113.5",
       "rl:auth|booking-manage:203.0.113.5",
