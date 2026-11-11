@@ -16,7 +16,8 @@ declare
     '20260719000000_initial_security_baseline',
     '20260726000000_normalize_list_column_nullability',
     '20260826000000_harden_business_dna_table_privileges',
-    '20261014000000_secure_prisma_migrations_table'
+    '20261014000000_secure_prisma_migrations_table',
+    '20261111000000_revoke_data_api_table_privileges'
   ];
   -- Every application table, so a dropped or renamed one fails here too. The
   -- generic check below also covers any public table not listed.
@@ -115,6 +116,44 @@ begin
       and privilege.privilege_type in ('TRUNCATE', 'REFERENCES', 'TRIGGER', 'MAINTAIN')
   ) then
     raise exception 'STAGING RELEASE FAIL: postgres public-table defaults grant an unsafe privilege to anon/authenticated';
+  end if;
+
+  -- The Data API serves schema public with the anon key: anon and authenticated
+  -- hold no table or sequence privilege there except SELECT on notifications
+  -- (Realtime), and the migration role's defaults give new tables none.
+  select format('%s %s on public.%s', grantee_role.rolname, privilege.privilege_type, c.relname)
+  into missing_name
+  from pg_class as c
+  join pg_namespace as n on n.oid = c.relnamespace
+  cross join lateral aclexplode(coalesce(c.relacl, acldefault('r', c.relowner))) as privilege
+  join pg_roles as grantee_role on grantee_role.oid = privilege.grantee
+  where n.nspname = 'public'
+    and c.relkind in ('r', 'p', 'v', 'm', 'f', 'S')
+    and grantee_role.rolname in ('anon', 'authenticated')
+    and not (
+      grantee_role.rolname = 'authenticated'
+      and c.relname = 'notifications'
+      and privilege.privilege_type = 'SELECT'
+    )
+  order by 1
+  limit 1;
+
+  if missing_name is not null then
+    raise exception 'STAGING RELEASE FAIL: Data API role privilege %', missing_name;
+  end if;
+
+  if exists (
+    select 1
+    from pg_default_acl as defaults
+    join pg_namespace as namespace on namespace.oid = defaults.defaclnamespace
+    cross join lateral aclexplode(defaults.defaclacl) as privilege
+    join pg_roles as grantee_role on grantee_role.oid = privilege.grantee
+    where defaults.defaclrole = (select oid from pg_roles where rolname = current_user)
+      and namespace.nspname = 'public'
+      and defaults.defaclobjtype in ('r', 'S')
+      and grantee_role.rolname in ('anon', 'authenticated')
+  ) then
+    raise exception 'STAGING RELEASE FAIL: the migration role''s public defaults grant tables or sequences to anon/authenticated';
   end if;
 
   if exists (
