@@ -254,3 +254,62 @@ Repository checks on the merged tree (`1485949`):
 | `npm run test:e2e`                                 | **NOT APPLICABLE** (no app runtime with Supabase/Redis)                                              |
 
 CI on the final head is reported in the hand-off message, not here.
+
+## 13. Release record (2026-11-02)
+
+| Item                   | Value                                                                                                                                                                                                                                                                                                                                                     |
+| ---------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| PR #385                | marked ready and merged with a merge commit, bound to the reviewed head `c5a6810` (`expectedHeadSha`); no force-push, no branch deletion, no policy change                                                                                                                                                                                                |
+| Merge commit on `main` | `62af0635be6751f7d32735d6fda0329e96f8c592` (parents `af75e17`, `c5a6810`)                                                                                                                                                                                                                                                                                 |
+| CI on the merge commit | run [41363216530](https://github.com/syveka/syveka-ai/actions/runs/41363216530): success                                                                                                                                                                                                                                                                  |
+| Staging deployment     | **BLOCKED, not performed.** `staging-deploy-only.yml` deploys only its hard-coded `PINNED_SOURCE_SHA` (`611fd74`, the #371 merge) and refuses any other `source_sha`; moving the pin is a workflow change, which is a protected action. The migration workflow (`staging-release.yml`, used for every recent release) was not substituted, as instructed. |
+| Stable staging health  | **BLOCKED from this session:** outbound requests to `syveka-ai-staging.vercel.app` are refused by the session's network policy (CONNECT 403), so what the alias serves was not observed here.                                                                                                                                                             |
+| Follow-up branch       | `claude/chat-nav-race-coverage` from `62af063` (navigation-race coverage only, no product change)                                                                                                                                                                                                                                                         |
+
+## 14. Acceptance matrix (A–Q) against executed tests on `62af063`
+
+Executed locally on the merge commit (mocked providers, no paid call): 21 files, 439 tests,
+all PASS, including the #386 protection suites (`speech-playback-voice-wait`,
+`use-speech-playback`, `notification-display`, `run-workflow-contact-field`,
+`setup-readiness`, `inbox-email-channel-status`, `voice-assistant-plan-block`,
+`workflows-entitlement-ui`, `display-time-zone-pages`, `ar-acceptance-forms`,
+`booking-calendar-mobile-ui`, `plan-catalog`, `plan-cards-interval`, `settings-localization`).
+
+| Case | Scenario                                             | Evidence                                                                                                                        | Status                 |
+| ---- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- | ---------------------- |
+| A    | Update an existing field                             | `ai-business-dna-tool` "acceptance journey: update a value and clear another"                                                   | tested (integration)   |
+| B    | Clear a supported field                              | same test (`pricingNotes` cleared, shown as removed)                                                                            | tested (integration)   |
+| C    | Cancel a clear                                       | "cancel a clear: nothing changes, the cancel is recorded once"                                                                  | tested (integration)   |
+| D    | Correct a pending proposal                           | `chat-thread-supersession` "replaces the earlier proposal"                                                                      | tested (thread + card) |
+| E    | Cancel the correction, re-offer the earlier proposal | "Cancel the correction: the earlier proposal is offered again"                                                                  | tested (thread + card) |
+| F    | Apply the correction, earlier stays unavailable      | "Apply the correction: the earlier proposal stays replaced"                                                                     | tested (thread + card) |
+| G    | Partially overlapping proposals                      | "a partial correction names what it doesn't carry over"                                                                         | tested (thread + card) |
+| H    | Independent proposals for unrelated fields           | "proposals about unrelated fields stay independent"                                                                             | tested (thread + card) |
+| I    | Stale proposal after a settings edit                 | `ai-business-dna-tool` "the settings form never overwrites newer changes"                                                       | tested (integration)   |
+| J    | Expired proposal                                     | card "already expired", thread "expired earlier proposal can't come back", route "expired, never decided stays not found"       | tested                 |
+| K    | Lost confirmation response, replay                   | route "repeated confirmation … reports the first decision's outcome"; card "noAnswer then replay"                               | tested                 |
+| L    | Lost cancellation response, replay                   | route "cancel a clear … repeated cancel and later confirm refused with outcome canceled"                                        | tested (integration)   |
+| M    | Double click and concurrent decisions                | card "Confirm sends … once", "Confirm then Cancel"; store race "exactly one applies"                                            | tested                 |
+| N    | Unauthorized role                                    | route "a member without the role … can't confirm"; propose "refuses a role without write"                                       | tested (integration)   |
+| O    | Cross-tenant and cross-user                          | route "proposal from one organization can't be read, confirmed or canceled from another"; "repeat after expiry … nobody else's" | tested                 |
+| P    | Altered confirmation payload                         | route "an altered confirmation (digest, conversation, malformed body)"                                                          | tested (integration)   |
+| Q    | Prompt injection as data                             | route "instructions hidden in a business fact are stored as data … untrusted profile data"                                      | tested (integration)   |
+
+Levels of evidence, stated plainly: everything above is automated (Vitest, jsdom, mocked
+database/session/store/providers). No browser interaction, no screen-reader session and no
+physical Android test was run in this session; the staging journey was not exercised because
+the deployment is blocked (§13). The pilot organization's Business DNA was not touched.
+
+## 15. Navigation race: investigated, no defect
+
+Reproduced with controlled promises in `chat-view-action-navigation.test.tsx` ("a correction
+in a new chat and the held redirect"): the first reply proposes A, a correction proposes B
+about the same field, the held redirect passes from A (replaced) to B, canceling B releases
+it exactly once and re-offers A in the same commit. A click on the re-offered card inside
+that window sends only A's own request (A's id, digest and conversation); nothing navigates
+twice; nothing else is sent. Applying B keeps A replaced and releases once. A decision that
+can be sent again (429) holds the redirect until its repeat settles, then navigates once; a
+card awaiting its repeat passes the hold to the correction and gets its repeat back when the
+correction is withdrawn. The invariant: navigation is held exactly while an action this view
+can still decide exists, every request is bound to its own action, and a remount restores the
+card from the server (pending, or its recorded outcome).
