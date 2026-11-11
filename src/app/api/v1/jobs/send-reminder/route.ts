@@ -145,9 +145,17 @@ export async function POST(request: Request): Promise<NextResponse> {
       },
     ).format(event.startsAt);
 
-    const recipients = new Set<string>();
-    if (event.booking?.guestEmail) recipients.add(event.booking.guestEmail);
-    for (const a of event.attendeeRecords) if (a.email) recipients.add(a.email);
+    // One email per mailbox: addresses differing only in letter case are the
+    // same recipient. This is also the set the reminder budget charges
+    // (reminderRecipientsToCharge), so case variants can't multiply sends.
+    const byMailbox = new Map<string, string>();
+    const addRecipient = (email: string | null | undefined) => {
+      const key = email?.trim().toLowerCase();
+      if (email && key && !byMailbox.has(key)) byMailbox.set(key, email);
+    };
+    addRecipient(event.booking?.guestEmail);
+    for (const a of event.attendeeRecords) addRecipient(a.email);
+    const recipients = [...byMailbox.values()];
 
     let sent = 0;
     let failed = 0;

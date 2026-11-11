@@ -14,7 +14,10 @@ const mocks = vi.hoisted(() => ({
 }));
 
 // Rate limiting is covered by public-booking-rate-limit.test.ts; here it always allows.
-vi.mock("@/server/security/rate-limit", () => ({ rateLimitRefusal: vi.fn(async () => null) }));
+vi.mock("@/server/security/rate-limit", () => ({
+  rateLimitRefusal: vi.fn(async () => null),
+  emailKey: vi.fn((email: string) => `hash:${email}`),
+}));
 vi.mock("@/server/services/booking", () => ({
   createPublicBooking: mocks.createPublicBooking,
   BookingError: class BookingError extends Error {
