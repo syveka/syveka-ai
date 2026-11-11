@@ -54,6 +54,10 @@ const fx = vi.hoisted(() => ({
   })),
   publishPost: vi.fn(async () => ({ externalPostId: "ext-post-1" })),
   signUrl: vi.fn(async () => ({ data: { signedUrl: "https://storage.test/signed" }, error: null })),
+  download: vi.fn(async (): Promise<{ data: unknown; error: unknown }> => ({
+    data: null,
+    error: null,
+  })),
   notifyUser: vi.fn(async () => undefined),
   recordUsage: vi.fn(async (orgId: string, metric: string, qty: number, meta: unknown) => {
     s.usage.push({ organizationId: orgId, metric, qty, metadata: meta });
@@ -300,7 +304,9 @@ vi.mock("@/server/integrations/anthropic", () => ({
 vi.mock("@/server/ai/router", () => ({ routeModel: () => ({ model: "m", maxTokens: 100 }) }));
 vi.mock("@/server/services/workflow-events", () => ({ emitWorkflowEvent: fx.emitWorkflowEvent }));
 vi.mock("@/server/supabase/server", () => ({
-  createSupabaseAdmin: () => ({ storage: { from: () => ({ createSignedUrl: fx.signUrl }) } }),
+  createSupabaseAdmin: () => ({
+    storage: { from: () => ({ createSignedUrl: fx.signUrl, download: fx.download }) },
+  }),
 }));
 vi.mock("@/server/social", () => ({
   getSocialPublishingProvider: () => ({ publishPost: fx.publishPost }),
@@ -828,6 +834,8 @@ describe("send-reminder — the owner is told when the last attempt fails", () =
     expect(res.status).toBe(500);
     expect(await res.json()).toEqual({ error: "send failed" });
     expect(reminder().status).toBe("FAILED");
+    // The error's name only: its message (here it quotes the time zone) is not stored.
+    expect(reminder().lastError).toBe("send failed: RangeError");
     expect(failureNotices()).toHaveLength(1);
   });
 
@@ -1199,6 +1207,10 @@ describe("embed-document — one run at a time, nothing left stuck", () => {
  * A storage blip or provider outage is answered with 500 while QStash has deliveries
  * left, so the document isn't lost to it; a failure of the document itself isn't retried.
  * Either way the owner is told once, when the job has really ended.
+ *
+ * A retry embeds the whole document again (a paid call) before it reaches the step that
+ * failed, so only a failure recognized as transient is retried; any other is final on the
+ * first delivery (200, so QStash delivers nothing more).
  */
 describe("embed-document — transient failures are retried, permanent ones are not", () => {
   const GENERIC = "Processing failed. Please try again.";
@@ -1206,7 +1218,9 @@ describe("embed-document — transient failures are retried, permanent ones are 
     embedDocument(job({ documentId: DOC_A, orgId: ORG_A, inlineContent }, retried));
   const doc = () => s.documents.find((d) => d.id === DOC_A)!;
   const failureNotices = () => s.notifications.filter((n) => n.type === "document.failed");
-  const outage = () => new Error("503 from provider PROVIDER-INTERNAL-DETAIL");
+  // As the provider client reports an outage: the HTTP status is on the error.
+  const outage = () =>
+    Object.assign(new Error("503 from provider PROVIDER-INTERNAL-DETAIL"), { status: 503 });
   const failUrlExtraction = async (err: Error) => {
     const { extractFromUrl } = await import("@/server/ai/extract");
     vi.mocked(extractFromUrl).mockRejectedValueOnce(err);
@@ -1341,6 +1355,239 @@ describe("embed-document — transient failures are retried, permanent ones are 
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ ok: false, error: GENERIC });
     expect(failureNotices()).toHaveLength(1);
+  });
+
+  // ── which failures count as transient ────────────────────────────────────
+  // A raw query's failure as Prisma's pg driver adapter reports it: always P2010, with
+  // the driver's classification (and, for a statement Postgres refused, its SQLSTATE) in meta.
+  const rawQueryError = (cause: { kind: string; originalCode?: string }) =>
+    Object.assign(new Error("Raw query failed. DB-INTERNAL-DETAIL"), {
+      name: "PrismaClientKnownRequestError",
+      code: "P2010",
+      meta: { driverAdapterError: { cause } },
+    });
+  const rejectedInsert = () => rawQueryError({ kind: "postgres", originalCode: "22021" });
+  const connectionClosedAtInsert = () => rawQueryError({ kind: "ConnectionClosed" });
+  const modelQueryError = (code: string) =>
+    Object.assign(new Error("Model query failed. DB-INTERNAL-DETAIL"), {
+      name: "PrismaClientKnownRequestError",
+      code,
+    });
+
+  it.each<[string, () => void]>([
+    [
+      "the database rejects the chunk insert (invalid text, SQLSTATE 22021)",
+      () => db.$executeRaw.mockRejectedValueOnce(rejectedInsert()),
+    ],
+    [
+      "a raw query failure with no driver classification",
+      () =>
+        db.$executeRaw.mockRejectedValueOnce(
+          Object.assign(new Error("Raw query failed. DB-INTERNAL-DETAIL"), { code: "P2010" }),
+        ),
+    ],
+    [
+      // Pins today's behaviour: the provider client's timeout has no status, code or
+      // cause, so isTransientAiError doesn't recognize it. Retrying it is a decision
+      // for src/server/ai/retry.ts, and this case should change with it.
+      "the provider client's request timeout",
+      () =>
+        fx.embed.mockRejectedValueOnce(
+          Object.assign(new Error("Request timed out."), { name: "APIConnectionTimeoutError" }),
+        ),
+    ],
+    [
+      "the provider refuses the request (400)",
+      () =>
+        fx.embed.mockRejectedValueOnce(
+          Object.assign(new Error("400 invalid input PROVIDER-INTERNAL-DETAIL"), { status: 400 }),
+        ),
+    ],
+    [
+      "a programming error",
+      () => fx.embed.mockRejectedValueOnce(new TypeError("x is not a function")),
+    ],
+    ["an error of no known kind", () => fx.embed.mockRejectedValueOnce(new Error("unknown"))],
+  ])(
+    "not transient, retries left: final on the first delivery, embeddings paid once: %s",
+    async (_name, fail) => {
+      fail();
+
+      const res = await embedJob(0);
+
+      // 200 ends the message: QStash delivers again only after a non-2xx answer.
+      expect(res.status).toBe(200);
+      const body = await res.json();
+      expect(body).toEqual({ ok: false, error: GENERIC });
+      expect(JSON.stringify(body)).not.toContain("INTERNAL-DETAIL");
+      expect(doc().status).toBe("FAILED");
+      expect(doc().error).toBe(GENERIC);
+      expect(failureNotices()).toHaveLength(1);
+      expect(s.notifications).toHaveLength(1);
+      expect(fx.embed).toHaveBeenCalledTimes(1);
+      expect(fx.recordUsage).not.toHaveBeenCalled();
+    },
+  );
+
+  it("a connection closed at the insert is retried; the retry replaces the partial chunks", async () => {
+    db.$executeRaw.mockRejectedValueOnce(connectionClosedAtInsert());
+
+    const first = await embedJob(0);
+
+    expect(first.status).toBe(500);
+    expect(JSON.stringify(await first.json())).not.toContain("DB-INTERNAL-DETAIL");
+    expect(doc().status).toBe("FAILED");
+    expect(failureNotices()).toHaveLength(0);
+    expect(fx.recordUsage).not.toHaveBeenCalled();
+
+    const retry = await embedJob(1);
+
+    expect(await retry.json()).toEqual({ ok: true, chunks: 3 });
+    expect(doc().status).toBe("READY");
+    expect(s.chunks).toHaveLength(3);
+    expect(fx.recordUsage).toHaveBeenCalledTimes(1);
+    expect(s.notifications.map((n) => n.type)).toEqual(["document.ready"]);
+  });
+
+  it("the same closed connection on the last delivery: 200, FAILED, one notification", async () => {
+    db.$executeRaw.mockRejectedValueOnce(connectionClosedAtInsert());
+
+    const res = await embedJob(3);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: false, error: GENERIC });
+    expect(doc().status).toBe("FAILED");
+    expect(failureNotices()).toHaveLength(1);
+    expect(s.notifications).toHaveLength(1);
+  });
+
+  it.each([
+    ["DatabaseNotReachable"],
+    ["SocketTimeout"],
+    ["TransactionWriteConflict"],
+    ["TooManyConnections"],
+  ])("a raw query failure the driver calls %s is retried", async (kind) => {
+    db.$executeRaw.mockRejectedValueOnce(rawQueryError({ kind }));
+
+    const res = await embedJob(0);
+
+    expect(res.status).toBe(500);
+    expect(failureNotices()).toHaveLength(0);
+  });
+
+  it.each([
+    ["P1001 (database not reachable)"],
+    ["P1008 (socket timeout)"],
+    ["P1017 (connection closed)"],
+    ["P2034 (write conflict)"],
+    ["P2037 (too many connections)"],
+  ])("a model query failing with %s is retried, before anything is embedded", async (label) => {
+    db.documentChunk.deleteMany.mockRejectedValueOnce(modelQueryError(label.slice(0, 5)));
+
+    const res = await embedJob(0);
+
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(await res.json())).not.toContain("DB-INTERNAL-DETAIL");
+    expect(doc().status).toBe("FAILED");
+    expect(failureNotices()).toHaveLength(0);
+    expect(fx.embed).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["P2028 (transaction API error: an expired batch would expire again)"],
+    ["P2002 (unique constraint)"],
+  ])("a model query failing with %s is final on the first delivery", async (label) => {
+    db.documentChunk.deleteMany.mockRejectedValueOnce(modelQueryError(label.slice(0, 5)));
+
+    const res = await embedJob(0);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: false, error: GENERIC });
+    expect(failureNotices()).toHaveLength(1);
+    expect(fx.embed).not.toHaveBeenCalled();
+  });
+
+  it("a connection failure the provider client wrapped is transient", async () => {
+    fx.embed.mockRejectedValueOnce(
+      Object.assign(new Error("Connection error."), {
+        cause: Object.assign(new TypeError("fetch failed"), {
+          cause: Object.assign(new Error("read ECONNRESET"), { code: "ECONNRESET" }),
+        }),
+      }),
+    );
+
+    const res = await embedJob(0);
+
+    expect(res.status).toBe(500);
+    expect(failureNotices()).toHaveLength(0);
+  });
+
+  it("a transient failure without the retry header is the last delivery: 200 and one notification", async () => {
+    fx.embed.mockRejectedValueOnce(outage());
+
+    const res = await embedJob();
+
+    expect(res.status).toBe(200);
+    expect(failureNotices()).toHaveLength(1);
+  });
+
+  const storedFile = () =>
+    Object.assign(doc(), {
+      storagePath: `${ORG_A}/file.txt`,
+      mimeType: "text/plain",
+      sizeBytes: 10,
+    });
+  const storageAnswer = (name: string, status?: number) => ({
+    data: null,
+    error: Object.assign(new Error("STORAGE-INTERNAL-DETAIL"), { name, status }),
+  });
+
+  it.each<[string, { data: null; error: Error }]>([
+    ["storage answers 503", storageAnswer("StorageApiError", 503)],
+    ["storage answers 429", storageAnswer("StorageApiError", 429)],
+    ["storage can't be reached", storageAnswer("StorageUnknownError")],
+  ])("%s, retries left: 500, no notification, nothing embedded", async (_name, answer) => {
+    storedFile();
+    fx.download.mockResolvedValueOnce(answer);
+
+    const res = await urlJob(0);
+
+    expect(res.status).toBe(500);
+    expect(JSON.stringify(await res.json())).not.toContain("STORAGE-INTERNAL-DETAIL");
+    expect(doc().status).toBe("FAILED");
+    expect(failureNotices()).toHaveLength(0);
+    expect(fx.embed).not.toHaveBeenCalled();
+  });
+
+  it.each<[string, { data: null; error: Error | null }]>([
+    ["the stored file is missing", storageAnswer("StorageApiError", 400)],
+    ["storage refuses the request", storageAnswer("StorageApiError", 403)],
+    ["storage returns nothing", { data: null, error: null }],
+  ])("%s, retries left: final on the first delivery", async (_name, answer) => {
+    storedFile();
+    fx.download.mockResolvedValueOnce(answer);
+
+    const res = await urlJob(0);
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: false, error: GENERIC });
+    expect(doc().status).toBe("FAILED");
+    expect(failureNotices()).toHaveLength(1);
+    expect(fx.embed).not.toHaveBeenCalled();
+  });
+
+  it("U+0000 is removed before embedding and storing, so the insert isn't refused after the paid call", async () => {
+    const res = await embedJob(0, "o\u0000ne|two\u0000|\u0000three");
+
+    expect(await res.json()).toEqual({ ok: true, chunks: 3 });
+    expect(fx.embed).toHaveBeenCalledTimes(1);
+    expect(fx.embed).toHaveBeenCalledWith(["one", "two", "three"]);
+    const stored = db.$executeRaw.mock.calls.flatMap(
+      (call) => (call[0] as { values?: unknown[] }).values ?? [],
+    );
+    expect(stored).toEqual(expect.arrayContaining(["one", "two", "three"]));
+    expect(stored.filter((v) => typeof v === "string" && v.includes("\u0000"))).toEqual([]);
+    expect(doc().status).toBe("READY");
   });
 });
 

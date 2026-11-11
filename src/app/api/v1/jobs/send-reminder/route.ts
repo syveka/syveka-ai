@@ -267,7 +267,11 @@ export async function POST(request: Request): Promise<NextResponse> {
   } catch (e) {
     await unscopedPrisma.reminder.update({
       where: { id: reminder.id },
-      data: { status: "FAILED", lastError: e instanceof Error ? e.message : "send failed" },
+      // The error's name only, as above: its message can carry content or provider detail.
+      data: {
+        status: "FAILED",
+        lastError: `send failed: ${e instanceof Error ? e.name : "unknown"}`,
+      },
     });
     await notifyOwnerOfFinalFailure();
     return NextResponse.json({ error: "send failed" }, { status: 500 });
