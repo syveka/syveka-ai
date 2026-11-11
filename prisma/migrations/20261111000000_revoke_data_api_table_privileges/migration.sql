@@ -7,7 +7,7 @@
 --
 -- With the grants in place, RLS is the only control between a signed-in user
 -- and the tables, and some policies allow more than the application does. One
--- needs nothing else: `users_update` lets a user set their own
+-- needs nothing else: `users_self_update` lets a user set their own
 -- `public.users.email` to any address. The application reads that column, and
 -- `handle_new_user()` moves a `public.users` row whose email matches a new
 -- sign-up onto the new account, memberships included.
