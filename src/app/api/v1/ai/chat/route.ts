@@ -204,7 +204,26 @@ async function handleChat(request: Request, holder: ReservationHolder): Promise<
     throw e;
   }
 
-  if (await isFlaggedByModeration(input.message, request.signal)) {
+  let inputFlagged: boolean;
+  try {
+    inputFlagged = await isFlaggedByModeration(input.message, request.signal);
+  } catch (err) {
+    // The message could not be checked (provider down, rate-limited or not
+    // configured): refuse (fail closed) before any model call. Nothing is
+    // recorded; POST releases the reservation. Only the error's class name is
+    // logged: its message can quote the provider response or the user's text.
+    if (!isAbortError(err) && !request.signal.aborted) {
+      console.error(
+        JSON.stringify({
+          event: "ai_chat_moderation_unavailable",
+          stage: "input",
+          name: describeAiChatStreamError(err).name,
+        }),
+      );
+    }
+    return NextResponse.json({ error: { code: "moderation_unavailable" } }, { status: 503 });
+  }
+  if (inputFlagged) {
     return NextResponse.json({ error: { code: "content_flagged" } }, { status: 422 });
   }
 

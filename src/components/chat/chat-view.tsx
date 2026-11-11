@@ -173,6 +173,10 @@ function ChatSession({
     if (created) router.refresh(); // list the conversation that was just created
   };
 
+  // t() returns the key path for a missing message (never null), so a code
+  // without a message is detected with t.has() and shown as the generic error.
+  const errorKey = `errors.${error}` as never;
+
   return (
     <div ref={rootRef} className="flex h-[calc(100dvh-3rem)] flex-col md:h-[calc(100dvh-4.5rem)]">
       <div className="flex shrink-0 items-center justify-end border-b px-4 py-2">
@@ -195,7 +199,7 @@ function ChatSession({
       />
       {error ? (
         <p role="alert" className="px-4 pb-1 text-sm text-destructive">
-          {t(`errors.${error}` as never) ?? t("errors.generic")}
+          {t.has(errorKey) ? t(errorKey) : t("errors.generic")}
         </p>
       ) : null}
       {voiceConversation ? (
