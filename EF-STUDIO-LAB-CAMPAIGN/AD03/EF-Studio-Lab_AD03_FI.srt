@@ -1,0 +1,25 @@
+1
+00:00:00,350 --> 00:00:04,900
+Entä jos asiakaspalvelusi voisi auttaa myös työajan jälkeen?
+
+2
+00:00:05,350 --> 00:00:09,100
+Illalla saapuu viesti.
+
+3
+00:00:09,550 --> 00:00:14,300
+Tekoälyavustaja voi ottaa kysymyksen vastaan ja kirjata sen talteen.
+
+4
+00:00:14,750 --> 00:00:18,900
+Aamulla kaikki odottaa valmiina seurantaa varten.
+
+5
+00:00:19,350 --> 00:00:22,900
+Sinä päätät, miten jatketaan.
+
+6
+00:00:24,200 --> 00:00:27,700
+Tekoälyautomaatio yrityksesi tarpeisiin.
+Kysy, mitä voimme rakentaa
+
