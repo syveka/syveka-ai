@@ -100,7 +100,7 @@ export function PublicSyvekaAssistant({ locale }: { locale: string }) {
 
   const suggestions = [
     { key: "whatCanSyvekaDo", kind: "chat" as const },
-    { key: "aiVoice", kind: "chat" as const },
+    { key: "freePilot", kind: "chat" as const },
     { key: "howSyvekaHelps", kind: "chat" as const },
     { key: "pricing", kind: "link" as const, href: "/pricing" as const },
     { key: "createAccount", kind: "link" as const, href: "/register" as const },
