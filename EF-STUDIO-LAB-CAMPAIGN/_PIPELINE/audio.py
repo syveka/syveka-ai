@@ -149,6 +149,6 @@ if __name__ == '__main__':
     meta = json.load(open(meta_path))
     moods = json.load(open(os.path.join(os.path.dirname(meta_path), 'moods.json')))
     for i, ad in enumerate(sorted(meta)):
-        x = score(meta[ad]['fi'], moods[ad], transpose=[0, 2, -1, 3, -2, 1, 4, -3, 2, 0, -2, 1][i])
+        x = score(meta[ad]['fi'], moods[ad], transpose=[0, 2, -1, 3, -2, 1, 4, -3, 2, 0, -2, 1][i % 12])
         wavfile.write(os.path.join(out, ad + '.wav'), SR, (x.T * 32767).astype(np.int16))
         print(ad, moods[ad], f"{x.shape[1] / SR:.2f}s peak {np.abs(x).max():.2f} rms {np.sqrt((x ** 2).mean()):.3f}")

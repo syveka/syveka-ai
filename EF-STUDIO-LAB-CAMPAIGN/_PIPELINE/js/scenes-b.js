@@ -352,3 +352,29 @@ SCENES.ctaTap = (c, el, p) => {
   const btn = h('span', { class: 'btn', style: `font-size:${RTL ? 60 : 56}px;padding:54px 80px` }, p.btn); c.an(btn, K.pop, .25, .7); press(c, btn, 1.7);
   el.append(at(540, 800, btn), tapDot(c, 640, 840, 1.7));
 };
+
+// ---------------- AD13 website service (facts taken from the owner's own portfolio page) ----------------
+SCENES.svcHook = (c, el, p) => {
+  el.append(bg(c, 'ink', { beam: true, dots: 22, glow: [[300, 900, 700, '#27407a', .35]] }));
+  const d = site('biz', false, { heroH: 330 }), br = browser(d, 'www.yritys.example', 560), w = h('div', { class: 'abs p3d', style: 'left:70px;top:790px' }, br);
+  c.an(br, [{ opacity: 0, transform: 'translateY(200px) rotateX(22deg) scale(.9)' }, { opacity: 1, transform: 'rotateX(6deg) rotateY(-4deg)' }], .5, 1.2);
+  c.an(d, [{ transform: 'translateY(0)' }, { transform: 'translateY(-110px)' }], 1.9, 2.4, 'ease-in-out');
+  el.append(w, headline(c, p.hook, 330, .25, { size: 88 }));
+};
+SCENES.features = (c, el, p) => {
+  el.append(bg(c, 'ink', { grid: true, glow: [[240, 400, 600, '#c9a769', .2]] }));
+  const g = h('div', { class: 'abs', style: 'left:80px;top:420px;width:920px;display:grid;grid-template-columns:1fr 1fr;gap:34px' });
+  p.items.forEach((it, i) => { const card = h('div', { class: 'card', style: 'padding:44px 34px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:24px;min-height:400px;justify-content:center' }, st(icon(it[0], 130), 'color:#1a1408;background:var(--goldgrad);border-radius:36px;padding:30px;box-shadow:0 0 60px rgba(201,167,105,.35)'), h('div', { style: `font:600 ${RTL ? 40 : 46}px/1.2 var(--display)` }, it[1]), h('div', 't2', it[2])); c.an(card, [{ opacity: 0, transform: 'translateY(80px) scale(.9)' }, { opacity: 1, transform: 'none' }], .25 + i * .32, .6, 'cubic-bezier(.3,1.3,.5,1)'); g.append(card); });
+  el.append(g);
+};
+SCENES.refCard = (c, el, p) => {
+  el.append(bg(c, 'blue', { dots: 20, glow: [[200, 300, 700, '#c9a769', .22]] }));
+  const tags = h('div', { style: 'display:flex;flex-wrap:wrap;gap:16px;margin-top:34px' }, p.tags.map((t, i) => { const e = h('span', { class: 'tag', style: 'font-size:28px;padding:12px 26px;display:inline-flex;gap:12px;align-items:center' }, icon(t[0], 34), t[1]); c.an(e, K.pop, 1.5 + i * .25, .4); return e; }));
+  const card = h('div', { class: 'card', style: 'width:900px;padding:50px' }, h('div', { class: 'row', style: 'margin-bottom:26px' }, h('span', 'kicker', p.kicker), h('span', { class: 'tag g', style: 'margin-inline-start:auto;font-size:26px' }, p.status)), h('div', { class: 'row', style: 'gap:30px' }, st(icon('van', 130), 'color:var(--gold);background:rgba(201,167,105,.12);border-radius:34px;padding:26px'), h('div', { style: 'font:700 76px var(--display);direction:ltr' }, 'Kyytipro Oy')), h('div', { style: 'font:500 36px/1.45 var(--ui);color:var(--mute);margin-top:30px' }, p.desc), tags);
+  const w = h('div', { class: 'abs p3d', style: 'left:90px;top:420px' }, card); c.an(card, [{ opacity: 0, transform: 'rotateX(18deg) translateY(120px)' }, { opacity: 1, transform: 'rotateX(2deg)' }], .15, .9); el.append(w);
+};
+SCENES.sectors = (c, el, p) => {
+  el.append(bg(c, 'ink', { dots: 24, beam: true }));
+  const k = h('div', { class: 'abs kicker', style: 'left:0;right:0;top:400px;text-align:center' }, p.kicker); c.an(k, K.fade, .2, .5);
+  el.append(k, col(110, 500, 860, 34, p.items.map((it, i) => { const row = h('div', { class: 'card row', style: 'padding:36px 40px;gap:32px' }, st(icon(it[0], 100), 'color:var(--gold);background:rgba(201,167,105,.12);border-radius:28px;padding:22px'), h('div', { style: `font:600 ${RTL ? 46 : 54}px/1.15 var(--display)` }, it[1])); c.an(row, [{ opacity: 0, transform: `translateX(${(i % 2 ? 1 : -1) * 140}px)` }, { opacity: 1, transform: 'none' }], .35 + i * .35, .6); return row; })));
+};

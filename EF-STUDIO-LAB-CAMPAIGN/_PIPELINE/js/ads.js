@@ -153,4 +153,16 @@ const ADS = {
       { t: 'end', d: 4.6, tr: 'fade' },
     ],
   },
+  AD13: {
+    title: T('Verkkosivupalvelu', 'Website Service', 'خدمة تصميم المواقع'), board: 2, music: 'bright',
+    tagline: T('Verkkosivut, jotka tekevät töitä puolestasi.', 'A website that works for you.', 'موقع احترافي يعمل من أجلك.'), cta: CTA_CONSULT,
+    scenes: [
+      { t: 'svcHook', d: 4.6, sub: T('Verkkosivusi on ensimmäinen asia, jonka asiakas näkee.', 'Your website is the first thing your customer sees.', 'موقعك هو أول ما يراه عميلك.'), p: { hook: T('Verkkosivusi on ensimmäinen asia, jonka *asiakas näkee.*', 'Your website is the first thing *your customer sees.*', 'موقعك هو أول ما *يراه عميلك.*') } },
+      { t: 'features', d: 5.2, tr: 'up', cap: T('Suunnittelu, verkkovaraus ja WhatsApp-yhteys – samassa paketissa.', 'Design, online booking and WhatsApp contact — in one package.', 'تصميم، وحجز عبر الإنترنت، وتواصل عبر واتساب — في حزمة واحدة.'), p: { items: [['web', T('Verkkosivut', 'Website', 'موقع إلكتروني'), T('Suunnittelu ja toteutus', 'Design and build', 'تصميم وتنفيذ')], ['cal', T('Verkkovaraus', 'Online booking', 'حجز عبر الإنترنت'), T('Asiakas varaa itse', 'Customers book themselves', 'العميل يحجز بنفسه')], ['chat', T('WhatsApp', 'WhatsApp', 'واتساب'), T('Yhteys yhdellä napilla', 'Contact in one tap', 'تواصل بضغطة واحدة')], ['globe', T('Monikielinen', 'Multilingual', 'متعدد اللغات'), T('FI · EN · AR', 'FI · EN · AR', 'FI · EN · AR')]] }, sfx: ['pop@0.25', 'pop@0.57', 'pop@0.89', 'pop@1.21'] },
+      { t: 'responsive', d: 4.6, tr: 'zoom', concept: true, cap: T('Toimii puhelimella, tabletilla ja tietokoneella.', 'Works on phone, tablet and desktop.', 'يعمل على الهاتف والجهاز اللوحي والحاسوب.') },
+      { t: 'refCard', d: 5.4, tr: 'side', cap: T('Esimerkki työstämme: taksi- ja kuljetuspalvelun sivusto.', 'An example of our work: a taxi and transport service website.', 'مثال من أعمالنا: موقع لخدمات التاكسي والنقل.'), p: { kicker: T('Aktiivinen projekti', 'Active project', 'مشروع حالي'), status: T('Aktiivinen', 'Active', 'نشط'), desc: T('Taksi- ja kuljetuspalvelujen verkkosivusto, jossa on verkkovaraus ja WhatsApp-integraatio.', 'Taxi and transportation services website with online booking and WhatsApp integration.', 'موقع لخدمات التاكسي والنقل مع نظام حجز عبر الإنترنت وتكامل مع واتساب.'), tags: [['web', T('Verkkosivut', 'Website', 'موقع')], ['cal', T('Varaus', 'Booking', 'حجز')], ['chat', 'WhatsApp'], ['phone', T('Responsiivinen', 'Responsive', 'متجاوب')]] }, sfx: ['tick@1.5', 'tick@1.75', 'tick@2.0', 'tick@2.25'] },
+      { t: 'sectors', d: 4.6, tr: 'fade', cap: T('Kokemusta eri alojen sivustoista.', 'Experience with websites across different trades.', 'خبرة في مواقع لقطاعات مختلفة.'), p: { kicker: T('Toteutettuja aloja', 'Sectors we have built for', 'قطاعات عملنا لها'), items: [['van', T('Taksi ja kuljetus', 'Taxi & transport', 'التاكسي والنقل')], ['wrench', T('Autohuolto', 'Auto service', 'صيانة السيارات')], ['sparkle', T('Siivous ja muutto', 'Cleaning & moving', 'التنظيف والنقل')], ['web', T('Digi- ja IT-palvelut', 'Digital & IT services', 'الخدمات الرقمية والتقنية')]] }, sfx: ['tick@0.35', 'tick@0.7', 'tick@1.05', 'tick@1.4'] },
+      { t: 'end', d: 4.6, tr: 'fade' },
+    ],
+  },
 };

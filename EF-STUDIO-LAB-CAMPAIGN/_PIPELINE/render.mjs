@@ -23,7 +23,8 @@ const open = async (ad, lang) => { await page.goto(url(ad, lang)); return page.e
 
 if (args[0] === '--meta') {
   const out = {};
-  for (let i = 1; i <= 12; i++) { const ad = 'AD' + String(i).padStart(2, '0'); out[ad] = {}; for (const l of ['fi', 'en', 'ar']) out[ad][l] = await open(ad, l); }
+  await open('AD01', 'fi'); const ids = await page.evaluate(() => Object.keys(ADS));
+  for (const ad of ids) { out[ad] = {}; for (const l of ['fi', 'en', 'ar']) out[ad][l] = await open(ad, l); }
   writeFileSync(args[1], JSON.stringify(out, null, 1));
 } else if (args[2] === '--stills') {
   const [ad, lang, , dir, times] = args; mkdirSync(dir, { recursive: true });

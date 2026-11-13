@@ -23,6 +23,7 @@ CONCEPT = {
  'AD09': ('The owner\'s time: routine eats the day; repetitive tasks can often be automated.', 'Deliberately contains no hour or percentage figures — no quantified time-saving claim is made.'),
  'AD10': ('Website showcase: business card flips into a site; structure, design, responsive, multilingual.', 'All designs are concept visuals. Multilingual claim is supported by this trilingual campaign itself.'),
  'AD11': ('Brand film: spark → connections → four capability words → one ecosystem → "Your business. Smarter."', 'Pure brand statement; no feature, customer or result claims.'),
+ 'AD13': ('Website service explainer: what is included (design, online booking, WhatsApp contact, multilingual), responsive devices, one real active reference and the trades served.', 'Facts come from the owner\'s own portfolio page: Kyytipro Oy is shown there as an active project with website, booking, WhatsApp and responsive tags. Earlier projects are referred to only by trade, because the portfolio marks them as no longer online. The device scene is a concept visual, not the Kyytipro site.'),
  'AD12': ('Direct response: three pain questions, one conversation, three simple steps, a tap on the CTA.', 'No "free" or "no obligation" promise is made because consultation terms were not verified.'),
 }
 for ad in sorted(M):
