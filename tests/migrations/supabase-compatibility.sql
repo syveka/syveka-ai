@@ -21,6 +21,15 @@ end $$;
 alter default privileges for role current_user in schema public
 grant truncate, references, trigger on tables to anon, authenticated;
 
+-- Hosted Supabase also grants the Data API roles every DML privilege on new
+-- public tables and sequences. Reproduced so the migration history is tested
+-- against the grants that are live, not a narrower set
+-- (20261111000000_revoke_data_api_table_privileges removes them).
+alter default privileges for role current_user in schema public
+grant select, insert, update, delete on tables to anon, authenticated;
+alter default privileges for role current_user in schema public
+grant usage, select, update on sequences to anon, authenticated;
+
 do $$
 begin
   if current_setting('server_version_num')::integer >= 170000 then
