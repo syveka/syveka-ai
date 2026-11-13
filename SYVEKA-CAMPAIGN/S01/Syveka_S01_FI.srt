@@ -1,0 +1,25 @@
+1
+00:00:00,350 --> 00:00:04,100
+Kysy yrityksestäsi. Saat vastauksen.
+
+2
+00:00:04,550 --> 00:00:09,700
+Vastaukset tulevat yrityksesi omista tiedoista.
+
+3
+00:00:10,150 --> 00:00:14,500
+Yksi avustaja, monta arjen tehtävää.
+
+4
+00:00:14,950 --> 00:00:19,700
+Avustaja ehdottaa. Mitään ei tallenneta ennen kuin vahvistat.
+
+5
+00:00:20,150 --> 00:00:23,300
+Ei arvaile. Kertoo, jos ei tiedä.
+
+6
+00:00:24,600 --> 00:00:27,900
+Avustaja, joka tuntee yrityksesi.
+Kysy pilotista
+

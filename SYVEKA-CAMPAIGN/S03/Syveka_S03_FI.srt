@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,100
+Kerro yrityksestäsi kerran.
+
+2
+00:00:04,550 --> 00:00:09,500
+Palvelut, aukioloajat ja käytännöt yhteen profiiliin.
+
+3
+00:00:09,950 --> 00:00:14,900
+Avustaja käyttää profiilia vastauksissaan.
+
+4
+00:00:15,350 --> 00:00:20,100
+Muutokset tehdään vasta, kun hyväksyt ne.
+
+5
+00:00:21,400 --> 00:00:24,900
+Profiili, jonka avustajasi tuntee.
+Kysy pilotista
+

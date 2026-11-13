@@ -1,0 +1,25 @@
+1
+00:00:00,350 --> 00:00:03,900
+Bookings without the phone tag.
+
+2
+00:00:04,350 --> 00:00:08,300
+Calls and messages back and forth — for a single appointment.
+
+3
+00:00:08,750 --> 00:00:13,100
+Share your own booking link with customers.
+
+4
+00:00:13,550 --> 00:00:18,100
+Customers pick a time that suits them.
+
+5
+00:00:18,550 --> 00:00:22,500
+The booking appears in your calendar — and the customer can reschedule or cancel from a link.
+
+6
+00:00:23,800 --> 00:00:27,100
+Your own booking page.
+Ask about the pilot
+

@@ -1,0 +1,25 @@
+1
+00:00:00,350 --> 00:00:03,900
+Varaukset ilman puhelinrallia.
+
+2
+00:00:04,350 --> 00:00:08,300
+Soittoja ja viestejä edestakaisin – yhden ajan takia.
+
+3
+00:00:08,750 --> 00:00:13,100
+Jaa oma varauslinkkisi asiakkaille.
+
+4
+00:00:13,550 --> 00:00:18,100
+Asiakas valitsee itse sopivan ajan.
+
+5
+00:00:18,550 --> 00:00:22,500
+Varaus näkyy kalenterissasi – ja asiakas voi siirtää tai perua sen linkistä.
+
+6
+00:00:23,800 --> 00:00:27,100
+Oma varaussivu yrityksellesi.
+Kysy pilotista
+

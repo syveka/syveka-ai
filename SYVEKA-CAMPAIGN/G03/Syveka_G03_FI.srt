@@ -1,0 +1,25 @@
+1
+00:00:00,350 --> 00:00:04,100
+Pyöritätkö pientä yritystä Suomessa?
+
+2
+00:00:04,550 --> 00:00:09,300
+Hukkuvatko asiakastiedot? Vievätkö varaukset aikaa? Toistuvatko samat kysymykset?
+
+3
+00:00:09,750 --> 00:00:14,300
+Syveka on nyt maksuttomassa pilottivaiheessa.
+
+4
+00:00:14,750 --> 00:00:19,300
+Pilottiin otetaan rajattu määrä yrityksiä.
+
+5
+00:00:19,750 --> 00:00:23,100
+Aloitetaan keskustelusta.
+
+6
+00:00:24,400 --> 00:00:27,700
+Mukaan pilottiin?
+Kysy pilotista
+

@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,900
+Finnish. English. Arabic.
+
+2
+00:00:05,350 --> 00:00:10,900
+The same workspace in three languages.
+
+3
+00:00:11,350 --> 00:00:15,100
+Arabic runs right to left — as it should.
+
+4
+00:00:15,550 --> 00:00:19,100
+Use Syveka in your own language.
+
+5
+00:00:20,400 --> 00:00:23,900
+In Finnish, English and Arabic.
+Ask about the pilot
+
