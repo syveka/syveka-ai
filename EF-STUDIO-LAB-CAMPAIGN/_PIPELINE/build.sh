@@ -16,5 +16,5 @@ if [ -n "$1" ]; then one $1 $2; exit; fi
 node render.mjs --meta work/meta.json
 node tools/moods.mjs
 python3 audio.py work/meta.json work/audio
-for a in 01 02 03 04 05 06 07 08 09 10 11 12 13; do for l in fi en ar; do echo "AD$a $l"; done; done | xargs -P 4 -L 1 bash -c 'one $0 $1'
+for a in 01 02 03 04 05 06 07 08 09 10 11 12 13 14 15; do for l in fi en ar; do echo "AD$a $l"; done; done | xargs -P 4 -L 1 bash -c 'one $0 $1'
 python3 tools/docs.py

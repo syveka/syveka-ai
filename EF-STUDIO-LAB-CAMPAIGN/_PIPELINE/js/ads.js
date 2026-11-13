@@ -165,4 +165,29 @@ const ADS = {
       { t: 'end', d: 4.6, tr: 'fade' },
     ],
   },
+  AD14: {
+    title: T('Tekoälypalvelu', 'AI Service', 'خدمة الذكاء الاصطناعي'), board: 3, music: 'future',
+    tagline: T('Käytännön tekoälyä yrityksellesi.', 'Practical AI for your business.', 'ذكاء اصطناعي عملي لشركتك.'), cta: CTA_CONSULT,
+    note: T('Ratkaisut suunnitellaan tapauskohtaisesti.', 'Solutions are designed case by case.', 'تُصمَّم الحلول حسب كل حالة.'),
+    scenes: [
+      { t: 'aiHook', d: 4.6, sub: T('Tekoäly ei ole vain suuryrityksille.', "AI isn't only for big companies.", 'الذكاء الاصطناعي ليس للشركات الكبرى فقط.'), p: { hook: T('Tekoäly ei ole vain *suuryrityksille.*', "AI isn't only for *big companies.*", 'الذكاء الاصطناعي ليس *للشركات الكبرى فقط.*') }, sfx: ['rise@0.1'] },
+      { t: 'features', d: 5.4, tr: 'up', concept: true, cap: T('Tekoälyratkaisut rakennetaan sinun tapasi mukaan.', 'AI solutions built around the way you work.', 'حلول ذكاء اصطناعي تُبنى حول طريقة عملك.'), p: { items: [['chat', T('Avustaja', 'Assistant', 'مساعد ذكي'), T('Ottaa kysymykset vastaan', 'Receives inquiries', 'يستقبل الاستفسارات')], ['bolt', T('Automaatio', 'Automation', 'أتمتة'), T('Toistuvat rutiinit', 'Repetitive routines', 'للمهام المتكررة')], ['list', T('Järjestys', 'Organisation', 'تنظيم'), T('Pyynnöt yhteen paikkaan', 'Requests in one place', 'الطلبات في مكان واحد')], ['bell', T('Muistutukset', 'Reminders', 'تذكيرات'), T('Seuranta ei unohdu', 'Follow-ups not forgotten', 'للمتابعة في وقتها')]] }, sfx: ['pop@0.25', 'pop@0.57', 'pop@0.89', 'pop@1.21'] },
+      { t: 'automate', d: 4.6, tr: 'zoom', concept: true, cap: T('Toistuvat tehtävät voivat hoitua automaattisesti.', 'Repetitive tasks can be handled automatically.', 'المهام المتكررة يمكن أن تُنجَز تلقائياً.'), sfx: ['rise@0.2', 'chime@2.6'] },
+      { t: 'steps', d: 5.2, tr: 'up', cap: T('Aloitetaan pienestä – siitä, mistä on oikeasti hyötyä.', 'We start small — with what is genuinely useful.', 'نبدأ صغيراً — بما يفيد فعلاً.'), p: { steps: [T('Tutustumme toimintaasi', 'We learn how you work', 'نفهم طريقة عملك'), T('Valitaan, mikä kannattaa', "We pick what's worth it", 'نحدّد ما يستحق الأتمتة'), T('Rakennetaan ja testataan', 'We build and test it', 'نبنيه ونجرّبه معك')] }, sfx: ['tick@0.4', 'tick@1.3', 'tick@2.2'] },
+      { t: 'statement', d: 3.8, tr: 'fade', sub: T('Sinä pysyt päätöksentekijänä.', 'You stay in charge.', 'وأنت تبقى صاحب القرار.'), p: { bg: 'blue', icon: 'ai', top: 820, text: T('Sinä pysyt\n*päätöksentekijänä.*', 'You stay\n*in charge.*', 'وأنت تبقى\n*صاحب القرار.*') } },
+      { t: 'end', d: 4.8, tr: 'fade' },
+    ],
+  },
+  AD15: {
+    title: T('Kasvupalvelu', 'Growth Service', 'خدمة النمو'), board: 4, music: 'drive',
+    tagline: T('Digitaalinen läsnäolo, joka tukee kasvuasi.', 'A digital presence that supports your growth.', 'حضور رقمي يدعم نموّ عملك.'), cta: CTA_CONSULT,
+    scenes: [
+      { t: 'growHook', d: 4.6, sub: T('Kasvu alkaa siitä, että sinut on helppo tavoittaa.', 'Growth starts with being easy to reach.', 'النموّ يبدأ من سهولة الوصول إليك.'), p: { hook: T('Kasvu alkaa siitä, että sinut on *helppo tavoittaa.*', 'Growth starts with being *easy to reach.*', 'النموّ يبدأ من *سهولة الوصول إليك.*') }, sfx: ['tick@0.5', 'tick@0.72', 'tick@0.94', 'tick@1.16', 'tick@1.38'] },
+      { t: 'checklist', d: 5.4, tr: 'up', sub: T('Tietääkö asiakas, miten sinuun saa yhteyden? Voiko hän varata milloin vain? Puhutko hänen kieltään?', 'Do customers know how to contact you? Can they book at any time? Do you speak their language?', 'هل يعرف العميل كيف يتواصل معك؟ هل يستطيع الحجز في أي وقت؟ هل تخاطبه بلغته؟'), p: { qs: [['chat', T('Tietääkö asiakas, miten sinuun saa yhteyden?', 'Do customers know how to contact you?', 'هل يعرف العميل كيف يتواصل معك؟')], ['cal', T('Voiko hän varata milloin vain?', 'Can they book at any time?', 'هل يستطيع الحجز في أي وقت؟')], ['globe', T('Puhutko hänen kieltään?', 'Do you speak their language?', 'هل تخاطبه بلغته؟')]] }, sfx: ['pop@0.4', 'pop@1.5', 'pop@2.6'] },
+      { t: 'sectors', d: 5.0, tr: 'side', cap: T('Rakennamme asiakkaan polun ensisilmäyksestä varaukseen.', "We shape the customer's path from first glance to booking.", 'نرتّب رحلة عميلك من أول نظرة إلى الحجز.'), p: { kicker: T('Asiakkaan polku', 'The customer path', 'رحلة العميل'), items: [['search', T('Näkee sivustosi', 'Sees your website', 'يرى موقعك')], ['chat', T('Ottaa yhteyttä', 'Gets in touch', 'يتواصل معك')], ['cal', T('Varaa ajan', 'Books a time', 'يحجز موعداً')], ['check', T('Palaa uudelleen', 'Comes back again', 'ويعود مرة أخرى')]] }, sfx: ['tick@0.35', 'tick@0.7', 'tick@1.05', 'tick@1.4'] },
+      { t: 'steps', d: 5.2, tr: 'up', cap: T('Selkeät askeleet – ilman turhaa monimutkaisuutta.', 'Clear steps — without needless complexity.', 'خطوات واضحة — بلا تعقيد.'), p: { steps: [T('Käymme läpi nykytilanteen', 'We review where you are now', 'نراجع حضورك الرقمي'), T('Ehdotamme selkeät askeleet', 'We propose clear next steps', 'نقترح خطوات واضحة'), T('Toteutamme ne kanssasi', 'We carry them out with you', 'وننفّذها معك')] }, sfx: ['tick@0.4', 'tick@1.3', 'tick@2.2'] },
+      { t: 'ctaTap', d: 3.8, tr: 'zoom', cap: T('Aloitetaan keskustelusta.', "Let's start with a conversation.", 'لنبدأ بمحادثة.'), p: { btn: CTA_CONSULT }, sfx: ['pop@1.7', 'chime@1.9'] },
+      { t: 'end', d: 4.6, tr: 'fade' },
+    ],
+  },
 };

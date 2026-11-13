@@ -1,6 +1,6 @@
 # Export verification (ffprobe)
 
-39 of 39 files pass: H.264, yuv420p, 1080×1920, 30 fps, 20–30 s, AAC audio.
+45 of 45 files pass: H.264, yuv420p, 1080×1920, 30 fps, 20–30 s, AAC audio.
 
 | File | Size | Video | FPS | Duration | Audio | Bytes | Result |
 |---|---|---|---|---|---|---|---|
@@ -43,3 +43,9 @@
 | EF-Studio-Lab_AD13_AR.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 29.00 s | aac 48000 | 6.0 MB | PASS |
 | EF-Studio-Lab_AD13_EN.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 29.00 s | aac 48000 | 6.3 MB | PASS |
 | EF-Studio-Lab_AD13_FI.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 29.00 s | aac 48000 | 6.4 MB | PASS |
+| EF-Studio-Lab_AD14_AR.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 28.40 s | aac 48000 | 5.6 MB | PASS |
+| EF-Studio-Lab_AD14_EN.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 28.40 s | aac 48000 | 5.7 MB | PASS |
+| EF-Studio-Lab_AD14_FI.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 28.40 s | aac 48000 | 5.8 MB | PASS |
+| EF-Studio-Lab_AD15_AR.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 28.60 s | aac 48000 | 5.8 MB | PASS |
+| EF-Studio-Lab_AD15_EN.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 28.60 s | aac 48000 | 6.0 MB | PASS |
+| EF-Studio-Lab_AD15_FI.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 28.60 s | aac 48000 | 6.0 MB | PASS |

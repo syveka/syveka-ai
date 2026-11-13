@@ -378,3 +378,19 @@ SCENES.sectors = (c, el, p) => {
   const k = h('div', { class: 'abs kicker', style: 'left:0;right:0;top:400px;text-align:center' }, p.kicker); c.an(k, K.fade, .2, .5);
   el.append(k, col(110, 500, 860, 34, p.items.map((it, i) => { const row = h('div', { class: 'card row', style: 'padding:36px 40px;gap:32px' }, st(icon(it[0], 100), 'color:var(--gold);background:rgba(201,167,105,.12);border-radius:28px;padding:22px'), h('div', { style: `font:600 ${RTL ? 46 : 54}px/1.15 var(--display)` }, it[1])); c.an(row, [{ opacity: 0, transform: `translateX(${(i % 2 ? 1 : -1) * 140}px)` }, { opacity: 1, transform: 'none' }], .35 + i * .35, .6); return row; })));
 };
+
+// ---------------- AD14 AI service / AD15 growth service ----------------
+SCENES.aiHook = (c, el, p) => {
+  el.append(bg(c, 'blue', { grid: true, dots: 26, seed: 19, glow: [[240, 800, 600, '#3d6cff', .45]] }));
+  const orb = h('div', { style: 'width:300px;height:300px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#fff 0,#bcd3ff 14%,#5b8cff 44%,#1a2a7a 80%);box-shadow:0 0 160px rgba(91,140,255,.75),inset 0 0 50px rgba(255,255,255,.4)' });
+  c.an(orb, [{ transform: 'scale(.2)', opacity: 0 }, { transform: 'scale(1.05)', opacity: 1, offset: .3 }, { transform: 'scale(.95)', opacity: 1, offset: .65 }, { transform: 'scale(1.04)', opacity: 1 }], .2, c.dur, 'ease-in-out');
+  [420, 560, 720].forEach((s, i) => { const r = at(540, 1130, h('div', { style: `width:${s}px;height:${s}px;border-radius:50%;border:1.5px solid rgba(201,167,105,${.75 - i * .2});border-top-color:transparent;border-right-color:transparent` })); c.an(r.firstChild, [{ transform: 'rotate(0deg)' }, { transform: `rotate(${i % 2 ? -220 : 260}deg)` }], 0, c.dur + .5, 'linear'); el.append(r); });
+  el.append(at(540, 1130, orb), headline(c, p.hook, 330, .3, { size: 88 }));
+};
+SCENES.growHook = (c, el, p) => {
+  el.append(bg(c, 'ink', { beam: true, dots: 26, seed: 23, glow: [[300, 900, 700, '#c9a769', .22]] }));
+  const H = [150, 230, 320, 430, 560];
+  H.forEach((hh, i) => { const b = h('div', { class: 'abs', style: `left:${200 + i * 144}px;top:${1400 - hh}px;width:104px;height:${hh}px;border-radius:18px 18px 4px 4px;background:linear-gradient(180deg,#EAD6AA,#8f6e3b);transform-origin:bottom;opacity:${.45 + i * .14}` }); c.an(b, [{ transform: 'scaleY(0)' }, { transform: 'scaleY(1)' }], .5 + i * .22, .8, EASE); el.append(b); });
+  el.append(goldLine(c, 160, 1404, 760, .3, 1));
+  el.append(headline(c, p.hook, 330, .3, { size: 88 }));
+};
