@@ -42,6 +42,109 @@ Disable any independent Vercel, hosting-provider, or GitHub deployment path that
 can deploy production directly from `main`. Production deployment is allowed
 only through the manually dispatched `Production release` workflow.
 
+## Vercel Git Preview Builds (Ignored Build Step)
+
+Both Vercel projects are connected to this repository. `vercel.json` turns off Git
+deployments for `main` only, so without an Ignored Build Step every push to any other
+branch builds a Preview in each project. Those Previews count toward Functions Storage.
+
+- **Releases don't use them.** `staging-release.yml`, `staging-deploy-only.yml` and
+  `deploy.yml` upload CLI `vercel deploy --prebuilt` deployments.
+- **Only `pr-preview-e2e.yml` uses one.** It needs a successful
+  `Preview – syveka-ai-staging` GitHub deployment for an open PR's head SHA.
+
+Both settings are under Project → Settings → Build and Deployment → Ignored Build Step.
+They were read back on 2026-11-14:
+
+| Project                | Behavior              | Effect                                                                 |
+| ---------------------- | --------------------- | ---------------------------------------------------------------------- |
+| `syveka-ai-staging`    | Custom (204 chars)    | Builds a Git Preview only when the commit message contains `[preview]` |
+| `syveka-ai-production` | Only build production | Skips every Git Preview                                                |
+
+The staging command:
+
+```sh
+[ "$VERCEL_ENV" = production ]&&exit 1;[ -n "$VERCEL_GIT_COMMIT_REF" ]||exit 1;git rev-parse -q --verify HEAD >/dev/null 2>&1||exit 1;case "$VERCEL_GIT_COMMIT_MESSAGE" in *'[preview]'*)exit 1;;esac;exit 0
+```
+
+- **Exit codes.** Vercel builds on exit 1 and cancels on exit 0. Other codes are
+  undocumented; the previous command's exit 128 failed every Preview. This command
+  exits only with 0 or 1.
+- **It builds whenever it can't confirm a Git branch push.** That covers a production
+  target, missing Git metadata, no git checkout (such as a `--prebuilt` upload) and a
+  missing `git` binary. So CLI releases keep building whether or not Vercel runs the
+  step for them, which Vercel's docs don't say.
+- **Use the subject line for the marker.** Vercel truncates `VERCEL_GIT_COMMIT_MESSAGE`
+  at 2048 bytes.
+
+**Requesting a staging Preview** (for `pr-preview-e2e` or manual QA): push a commit
+whose message contains `[preview]`, then use that commit's SHA as `expected_sha`.
+
+```sh
+git commit --allow-empty -m "chore: request staging preview [preview]"
+```
+
+A Preview canceled by the step creates no GitHub deployment record, so it can't make
+the `pr-preview-e2e` selector ambiguous.
+
+**Rollback (staging).** Paste the previous command back into the same Custom field and
+save. Reload and confirm it shows 226 characters. Only later pushes are affected.
+
+```sh
+p=$VERCEL_GIT_PREVIOUS_SHA;case $p in ''|*[!0-9a-f]*)exit 1;;esac;f=$(git diff --no-renames --name-only "$p" HEAD --)&&{ printf '%s\n' "$f"|grep -qvE '^(docs/.*|[^/]+|syveka-skills/docs/[^/]+)\.md$';[ $? = 1 ];}&&exit 0;exit 1
+```
+
+The previous production value was Behavior "Automatic" with an empty command.
+
+### Validation (2026-11-14)
+
+The test used draft PR #446 on branch `test/staging-ibs-validation-2026-11-14`. The PR
+is disposable: it adds one probe text file.
+
+| Commit                              | Staging                                        | Production project                      | `CI required`         |
+| ----------------------------------- | ---------------------------------------------- | --------------------------------------- | --------------------- |
+| `72b07ef6` (ordinary, non-Markdown) | `9G4sFp84FKhKXZppT3G1xuEfDZze` Canceled        | `Bdmzz2M8Qub4FkippTbP8Tx4GH3T` Canceled | run 43624933320, pass |
+| `df252f55` (empty, `[preview]`)     | `5XNm1Eq5ndCEw81zcvi4uvqU2z11` Ready (Preview) | `ABT8k8aJCEGdXs2DpkLbiNG6doGz` Canceled | run 43625494757, pass |
+
+- **The `[preview]` build matches the selector.** It produced GitHub deployment
+  `7791795124`, which meets every GitHub-side criterion of
+  `scripts/ci/select-staging-preview-deployment.mjs`.
+- **Nothing live moved.** The stable staging alias (`syveka-ai-staging-jsxt3vbb7…`,
+  2026-11-03) and live production (`syveka-ai-production-o6pe39tm8…`, 2026-10-24) were
+  unchanged before, during and after the test.
+- **Local tests.** 52 synthetic cases pass under `sh` and `bash`, against depth-10 clones.
+
+### Not yet verified
+
+- **CLI deployments under the new staging command.** Confirm the next authorized
+  `staging-release.yml` or `staging-deploy-only.yml` run reaches Ready.
+- **A full `pr-preview-e2e.yml` run** against a `[preview]` build.
+- **Who changed the production setting.** It changed between 09:44 and 17:58 UTC on
+  2026-11-14; who made the change isn't recorded here.
+- **The storage effect.** At about 18:40 UTC on 2026-11-14, Functions Storage was
+  9.74 GB of the Hobby plan's 10 GB: `syveka-ai-staging` 6.22 GB and
+  `syveka-ai-production` 3.52 GB. Both projects keep deployments for 30 days, so any
+  relief is gradual. Don't treat the issue as resolved until Usage shows a decline.
+
+### Retention and rollback risk (review before 2026-11-23)
+
+Both projects use 30-day retention for Canceled, Errored, Pre-Production and Production
+deployments.
+
+- The live production deployment (2026-10-24) reaches 30 days on 2026-11-23.
+- Vercel's documented retention exceptions keep a deployment while it holds a production
+  alias. They also keep the last 3 Ready production deployments on Hobby. So
+  `syveka.com` should stay served.
+- Older rollback targets may already have been deleted.
+- An exception stops applying only after a re-evaluation that "can take up to 30 days".
+
+Before 2026-11-23:
+
+1. List the production project's deployments.
+2. Confirm the rollback target `deploy.yml` would use still exists.
+3. Decide whether production retention should change. That is a production setting
+   change, and it needs its own authorization.
+
 ## Secrets And Variables
 
 Repository or environment variables:
