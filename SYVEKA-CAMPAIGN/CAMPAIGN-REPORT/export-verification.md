@@ -1,6 +1,6 @@
 # Export verification (ffprobe + full decode)
 
-102 of 102 files pass: H.264, yuv420p, 1080×1920, 30 fps, 20–30 s, AAC audio, decodes without errors.
+111 of 111 files pass: H.264, yuv420p, 1080×1920, 30 fps, 20–30 s, AAC audio, decodes without errors.
 
 | File | Size | Video | FPS | Duration | Audio | Bytes | Result |
 |---|---|---|---|---|---|---|---|
@@ -94,6 +94,15 @@
 | Syveka_S10_AR.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 23.80 s | aac | 5.3 MB | PASS |
 | Syveka_S10_EN.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 23.80 s | aac | 5.6 MB | PASS |
 | Syveka_S10_FI.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 23.80 s | aac | 5.7 MB | PASS |
+| Syveka_ST01_AR.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 25.60 s | aac | 5.6 MB | PASS |
+| Syveka_ST01_EN.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 25.60 s | aac | 5.7 MB | PASS |
+| Syveka_ST01_FI.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 25.60 s | aac | 5.8 MB | PASS |
+| Syveka_ST02_AR.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 24.00 s | aac | 5.4 MB | PASS |
+| Syveka_ST02_EN.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 24.00 s | aac | 5.4 MB | PASS |
+| Syveka_ST02_FI.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 24.00 s | aac | 5.5 MB | PASS |
+| Syveka_ST03_AR.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 25.00 s | aac | 6.2 MB | PASS |
+| Syveka_ST03_EN.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 25.00 s | aac | 6.4 MB | PASS |
+| Syveka_ST03_FI.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 25.00 s | aac | 6.3 MB | PASS |
 | Syveka_V01_AR.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 24.60 s | aac | 5.4 MB | PASS |
 | Syveka_V01_EN.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 24.60 s | aac | 5.6 MB | PASS |
 | Syveka_V01_FI.mp4 | 1080×1920 | h264/yuv420p | 30/1 | 24.60 s | aac | 5.6 MB | PASS |

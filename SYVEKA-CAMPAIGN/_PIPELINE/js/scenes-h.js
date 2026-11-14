@@ -42,3 +42,18 @@ SCENES.holo = (c, el, p) => {
   });
   if (p.hook) el.append(headline(c, p.hook, 330, .2, { size: 84 }));
 };
+
+// ---------------- Syveka Studio: a social post being drafted, captioned and approved ----------------
+SCENES.postCard = (c, el, p) => {
+  el.append(bg(c, 'ink', { dots: 18, glow: [[100, 300, 700, '#7c3aed', .28], [500, 1000, 600, '#3b82f6', .25]] }));
+  const img = h('div', { class: 'h-biz', style: 'position:relative;height:560px;overflow:hidden' }, h('div', { style: 'position:absolute;inset:0;background:linear-gradient(110deg,#1e293b 30%,#475569 50%,#1e293b 70%);background-size:300% 100%' }), at(284, 280, st(icon('sparkle', 150), 'color:#fff;filter:drop-shadow(0 0 30px rgba(255,255,255,.8))')));
+  c.an(img.children[0], [{ backgroundPosition: '100% 0', opacity: 1 }, { backgroundPosition: '0% 0', opacity: 1, offset: .8 }, { backgroundPosition: '0% 0', opacity: 0 }], .3, 1.6, 'linear');
+  c.an(img.children[1].firstChild, [{ opacity: 0, transform: 'scale(.3) rotate(-40deg)' }, { opacity: 1, transform: 'scale(1) rotate(0deg)' }], 1.6, .6, 'cubic-bezier(.3,1.4,.5,1)');
+  const capt = h('div', { style: 'font:500 28px/1.4 var(--ui);color:#0f172a;min-height:120px;padding:22px 26px 0' }); typer(c, capt, p.caption, 2.1, 1.3);
+  const t1 = h('span', { style: 'font:700 22px var(--ui);padding:8px 20px;border-radius:30px;background:#e2e8f0;color:#475569' }, p.draft), t2 = h('span', { style: 'position:absolute;inset-inline-end:26px;top:0;font:700 22px var(--ui);padding:8px 20px;border-radius:30px;background:#dcfce7;color:#166534;white-space:nowrap' }, p.approved);
+  c.out(t1, K.out, 3.75, .15); c.an(t2, K.pop, 3.85, .4);
+  const scr = h('div', { style: 'height:100%;background:#fff' }, h('div', { class: 'row', style: 'padding:96px 26px 20px;gap:16px' }, h('div', { style: 'width:64px;height:64px;border-radius:50%;background:linear-gradient(135deg,#7dd3fc,#3b82f6,#7c3aed)' }), h('div', { style: 'font:700 28px var(--ui);color:#0f172a' }, p.name)), img, capt, h('div', { style: 'position:relative;display:flex;justify-content:flex-end;padding:20px 26px 0' }, t1, t2));
+  const ph = phone(scr), w = h('div', { class: 'abs p3d', style: 'left:240px;top:310px' }, ph);
+  c.an(ph, [{ transform: 'rotateY(-12deg) rotateX(5deg) scale(.86)' }, { transform: 'rotateY(5deg) rotateX(2deg) scale(.9)' }], 0, c.dur + .5, 'ease-out');
+  el.append(w);
+};

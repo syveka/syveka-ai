@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,100
+Tekoäly luo. Sinä hyväksyt.
+
+2
+00:00:04,550 --> 00:00:09,700
+Näet jokaisen julkaisun ennen kuin se lähtee.
+
+3
+00:00:10,150 --> 00:00:14,900
+Valitse, kuinka paljon tekoäly saa tehdä itse.
+
+4
+00:00:15,350 --> 00:00:18,900
+Brändisi. Sinun ehdoillasi.
+
+5
+00:00:20,200 --> 00:00:23,900
+Sinä päätät, mitä julkaistaan.
+Kysy ennakkokäytöstä
+

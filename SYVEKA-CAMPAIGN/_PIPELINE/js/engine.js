@@ -113,6 +113,7 @@ const TR = {
 let SC = [], TOTAL = 0;
 function build() {
   const ad = ADS[ADID], stage = document.getElementById('stage');
+  if (ad.bug) document.getElementById('brandbug').firstChild.textContent = ad.bug;
   let t = 0;
   ad.scenes.forEach((s, i) => {
     const c = mkCtx(s.d); c.ad = ad; c.i = i;

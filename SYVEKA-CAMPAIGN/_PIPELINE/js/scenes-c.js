@@ -18,7 +18,8 @@ SCENES.end = (c, el, p, ad) => {
   const tag = h('div', 'end-tag', L(ad.tagline)); c.an(tag, K.up(30), 1.1, .7);
   const cta = h('div', 'end-cta', h('span', 'btn', L(ad.cta), st(icon('arrow', 40), RTL ? 'transform:scaleX(-1)' : '')));
   c.an(cta, K.pop, 1.6, .6);
-  const note = h('div', 'end-note', CONTACT || L(ad.soon ? SOON_NOTE : PILOT_NOTE)); c.an(note, K.fade, 2.05, .6);
+  const ct = ad.contact || CONTACT, note = h('div', 'end-note', ct || L(ad.soon ? SOON_NOTE : PILOT_NOTE));
+  if (ct) st(note, 'font:700 46px Inter;color:#fff;direction:ltr;letter-spacing:1px'); c.an(note, K.fade, 2.05, .6);
   el.append(logo, tag, cta, note);
 };
 
