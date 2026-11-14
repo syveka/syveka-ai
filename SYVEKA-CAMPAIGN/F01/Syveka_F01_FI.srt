@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,300
+Entä jos puhelimeen vastaisi avustaja?
+
+2
+00:00:04,750 --> 00:00:09,500
+Puheavustaja voisi ottaa puhelun vastaan ja kirjata asian.
+
+3
+00:00:09,950 --> 00:00:13,900
+Sinä saisit yhteenvedon ja päättäisit jatkosta.
+
+4
+00:00:14,350 --> 00:00:17,900
+Tulossa: puheavustaja.
+
+5
+00:00:19,200 --> 00:00:22,700
+Puheavustaja – tulossa Syvekaan.
+Kysy lisää
+

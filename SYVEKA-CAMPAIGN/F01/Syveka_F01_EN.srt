@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,300
+What if an assistant answered the phone?
+
+2
+00:00:04,750 --> 00:00:09,500
+A voice assistant could take the call and log the request.
+
+3
+00:00:09,950 --> 00:00:13,900
+You would get a summary and decide what happens next.
+
+4
+00:00:14,350 --> 00:00:17,900
+Coming soon: voice assistant.
+
+5
+00:00:19,200 --> 00:00:22,700
+Voice assistant — coming to Syveka.
+Ask us more
+

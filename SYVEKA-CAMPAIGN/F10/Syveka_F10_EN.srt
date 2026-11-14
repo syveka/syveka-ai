@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,100
+A forgotten appointment is an empty slot in your calendar.
+
+2
+00:00:04,550 --> 00:00:08,700
+A reminder could go out to the customer before the appointment.
+
+3
+00:00:09,150 --> 00:00:13,900
+Confirmation, reminder and change link in one flow.
+
+4
+00:00:14,350 --> 00:00:17,900
+Coming soon: booking reminders.
+
+5
+00:00:19,200 --> 00:00:22,500
+Booking reminders — coming to Syveka.
+Ask us more
+

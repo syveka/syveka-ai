@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,100
+Tekoäly ehdottaa. Sinä päätät.
+
+2
+00:00:04,550 --> 00:00:09,500
+Jokainen toiminto näytetään ensin – ja tehdään vasta, kun vahvistat.
+
+3
+00:00:09,950 --> 00:00:14,700
+Sinä hallitset, kuka näkee ja tekee mitä.
+
+4
+00:00:15,150 --> 00:00:18,500
+Sinä pysyt ohjaksissa.
+
+5
+00:00:19,800 --> 00:00:23,300
+Tekoäly, joka kysyy ennen kuin tekee.
+Kysy pilotista
+

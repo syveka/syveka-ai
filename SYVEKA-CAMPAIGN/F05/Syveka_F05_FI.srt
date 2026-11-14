@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,300
+Tuotekuva otettu puhelimella. Näyttääkö se myyvältä?
+
+2
+00:00:04,750 --> 00:00:09,700
+Sisältöstudio voisi luoda yhdestä kuvasta useita tyylejä.
+
+3
+00:00:10,150 --> 00:00:14,700
+Sinä valitsisit ja hyväksyisit lopputuloksen.
+
+4
+00:00:15,150 --> 00:00:18,700
+Tulossa: sisältöstudio.
+
+5
+00:00:20,000 --> 00:00:23,300
+Sisältöstudio – tulossa Syvekaan.
+Kysy lisää
+

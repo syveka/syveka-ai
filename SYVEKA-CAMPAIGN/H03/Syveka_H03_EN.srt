@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,700
+Imagine an assistant that knows your business.
+
+2
+00:00:05,150 --> 00:00:10,100
+It answers from your business profile, documents and customer data.
+
+3
+00:00:10,550 --> 00:00:15,700
+Ask anything about your own business.
+
+4
+00:00:16,150 --> 00:00:20,900
+It proposes — and acts only when you confirm.
+
+5
+00:00:22,200 --> 00:00:25,700
+An assistant that knows your business.
+Ask about the pilot
+

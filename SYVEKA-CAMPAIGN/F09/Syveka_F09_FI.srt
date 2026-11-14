@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,500
+Kaksi kalenteria. Kumpi on oikeassa?
+
+2
+00:00:04,950 --> 00:00:09,900
+Synkronointi yhdistäisi nykyisen kalenterisi Syvekaan.
+
+3
+00:00:10,350 --> 00:00:14,900
+Varatut ajat näkyisivät samassa näkymässä.
+
+4
+00:00:15,350 --> 00:00:18,900
+Tulossa: kalenterisynkronointi.
+
+5
+00:00:20,200 --> 00:00:23,500
+Kalenterisynkronointi – tulossa Syvekaan.
+Kysy lisää
+

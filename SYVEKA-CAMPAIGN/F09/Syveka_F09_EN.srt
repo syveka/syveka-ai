@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,500
+Two calendars. Which one is right?
+
+2
+00:00:04,950 --> 00:00:09,900
+Sync would connect your existing calendar to Syveka.
+
+3
+00:00:10,350 --> 00:00:14,900
+Booked times would appear in the same view.
+
+4
+00:00:15,350 --> 00:00:18,900
+Coming soon: calendar sync.
+
+5
+00:00:20,200 --> 00:00:23,500
+Calendar sync — coming to Syveka.
+Ask us more
+

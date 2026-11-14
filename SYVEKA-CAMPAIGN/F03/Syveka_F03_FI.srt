@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,500
+Missä se asiakkaan viesti olikaan?
+
+2
+00:00:04,950 --> 00:00:09,700
+Jaettu postilaatikko kokoaisi asiakasviestit yhteen näkymään.
+
+3
+00:00:10,150 --> 00:00:14,700
+Koko tiimi näkisi saman tilanteen.
+
+4
+00:00:15,150 --> 00:00:18,700
+Tulossa: jaettu postilaatikko.
+
+5
+00:00:20,000 --> 00:00:23,300
+Jaettu postilaatikko – tulossa Syvekaan.
+Kysy lisää
+

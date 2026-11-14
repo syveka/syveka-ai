@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,500
+Where was that customer's message again?
+
+2
+00:00:04,950 --> 00:00:09,700
+A shared inbox would bring customer messages into one view.
+
+3
+00:00:10,150 --> 00:00:14,700
+The whole team would see the same picture.
+
+4
+00:00:15,150 --> 00:00:18,700
+Coming soon: shared inbox.
+
+5
+00:00:20,000 --> 00:00:23,300
+Shared inbox — coming to Syveka.
+Ask us more
+

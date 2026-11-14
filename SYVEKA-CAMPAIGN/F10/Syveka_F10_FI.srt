@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,100
+Unohtunut aika on tyhjä paikka kalenterissa.
+
+2
+00:00:04,550 --> 00:00:08,700
+Muistutus voisi lähteä asiakkaalle ennen varattua aikaa.
+
+3
+00:00:09,150 --> 00:00:13,900
+Vahvistus, muistutus ja muutoslinkki samassa ketjussa.
+
+4
+00:00:14,350 --> 00:00:17,900
+Tulossa: varausmuistutukset.
+
+5
+00:00:19,200 --> 00:00:22,500
+Varausmuistutukset – tulossa Syvekaan.
+Kysy lisää
+

@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,300
+Korjaamolla kädet ovat kiinni töissä.
+
+2
+00:00:04,750 --> 00:00:09,300
+Asiakas varaa huoltoajan itse varauslinkistä.
+
+3
+00:00:09,750 --> 00:00:14,700
+Tarjoukset ja työt etenevät vaihe vaiheelta.
+
+4
+00:00:15,150 --> 00:00:19,700
+Viikon työt yhdessä kalenterissa.
+
+5
+00:00:21,000 --> 00:00:24,300
+Syveka autokorjaamoille.
+Kysy pilotista
+

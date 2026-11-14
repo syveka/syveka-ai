@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,300
+A product photo taken on a phone. Does it sell?
+
+2
+00:00:04,750 --> 00:00:09,700
+A content studio could create several styles from one photo.
+
+3
+00:00:10,150 --> 00:00:14,700
+You would choose and approve the result.
+
+4
+00:00:15,150 --> 00:00:18,700
+Coming soon: content studio.
+
+5
+00:00:20,000 --> 00:00:23,300
+Content studio — coming to Syveka.
+Ask us more
+

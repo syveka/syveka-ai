@@ -1,0 +1,21 @@
+1
+00:00:00,350 --> 00:00:04,100
+Your customers message you on many channels.
+
+2
+00:00:04,550 --> 00:00:09,500
+The goal is to bring the channels into the same workspace.
+
+3
+00:00:09,950 --> 00:00:14,100
+One place to reply to everyone.
+
+4
+00:00:14,550 --> 00:00:18,100
+Coming soon: messaging channels.
+
+5
+00:00:19,400 --> 00:00:22,700
+Messaging channels — coming to Syveka.
+Ask us more
+

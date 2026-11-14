@@ -1,0 +1,25 @@
+1
+00:00:00,350 --> 00:00:04,300
+Yksi päivä. Yksi työtila.
+
+2
+00:00:04,750 --> 00:00:09,100
+Aamulla näet päivän yhdellä silmäyksellä.
+
+3
+00:00:09,550 --> 00:00:14,500
+Päivällä avustaja vastaa kysymyksiisi.
+
+4
+00:00:14,950 --> 00:00:18,900
+Illalla varauksia voi tulla, vaikka et ole paikalla.
+
+5
+00:00:19,350 --> 00:00:22,500
+Huomenna jatkat siitä, mihin jäit.
+
+6
+00:00:23,800 --> 00:00:27,100
+Yksi työtila aamusta iltaan.
+Kysy pilotista
+
