@@ -119,14 +119,14 @@ function build() {
     const el = h('div', 'scene'); el.style.zIndex = i + 1;
     SCENES[s.t](c, el, s.p || {}, ad);
     if (s.cap) { if (s.capbg !== false) el.append(h('div', 'capbg')); el.append(caption(c, s.cap, s.capo || {})); }
-    if (s.concept) { const b = h('div', 'concept', CONCEPT); c.an(b, K.fade, .5, .5); el.append(b); }
+    if ((s.concept || ad.soon) && s.t !== 'end') { const b = h('div', 'concept' + (ad.soon ? ' soon' : ''), ad.soon ? SOON : CONCEPT); c.an(b, K.fade, .5, .5); el.append(b); }
     el.append(h('div', 'vig'));
     (TR[s.tr] || TR[i ? 'fade' : 'open'])(c, el);
     stage.append(el);
     SC.push({ el, c, start: t, end: t + s.d, s }); t += s.d;
   });
   TOTAL = t;
-  window.META = { ad: ADID, lang: LANG, total: TOTAL, title: L(ad.title), tagline: L(ad.tagline), cta: L(ad.cta), board: ad.board, music: ad.music, scenes: SC.map(x => ({ start: x.start, end: x.end, type: x.s.t, tr: x.s.tr || 'fade', cap: L(x.s.cap) || L(x.s.sub) || '', sfx: x.s.sfx || [] })) };
+  window.META = { ad: ADID, lang: LANG, total: TOTAL, title: L(ad.title), tagline: L(ad.tagline), cta: L(ad.cta), board: ad.board, music: ad.music, soon: !!ad.soon, kind: ad.kind, scenes: SC.map(x => ({ start: x.start, end: x.end, type: x.s.t, tr: x.s.tr || 'fade', cap: L(x.s.cap) || L(x.s.sub) || '', sfx: x.s.sfx || [] })) };
 }
 window.seek = t => {
   const bug = document.getElementById('brandbug');
@@ -150,6 +150,7 @@ window.start = async () => {
   await Promise.all(fams.map(f => document.fonts.load(f, 'Aä س')));
   await document.fonts.ready;
   await Promise.all([...document.images].map(i => i.decode().catch(() => {})));
+  await Promise.all(window.PRELOAD || []);
   seek(0);
   return window.META;
 };

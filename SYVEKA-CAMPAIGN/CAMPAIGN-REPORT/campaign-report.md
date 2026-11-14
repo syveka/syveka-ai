@@ -2,30 +2,37 @@
 
 ## 1. Result
 
-36 vertical video ads: 3 general ads and 9 service ads, each in Finnish, English and Arabic.
-Produced locally with the same free pipeline as the EF Studio Lab campaign (headless Chromium, ffmpeg,
-open-licence fonts, a score synthesized in code). No Higgsfield credits and no paid service were used.
-Per-file technical results are in `export-verification.md`.
+102 vertical video ads: 34 concepts, each in Finnish, English and Arabic. 30 are the requested set
+(general, per-service, per-trade and future-service ads) and 4 are in the hologram style of the supplied
+reference clip. Produced locally with free tools (headless Chromium, ffmpeg, open-licence fonts, a score
+synthesized in code). No Higgsfield credits and no paid service were used; the unlimited allowance is
+not offered to this session, so nothing was generated there. Per-file results: `export-verification.md`.
 
 ## 2. The ads
 
-| Ad | Type | Subject | Hook (EN) |
-|---|---|---|---|
-| G01 | General | Brand film | The AI assistant that knows your business. |
-| G02 | General | Scattered → one workspace | Messages, bookings, questions. All in different places. |
-| G03 | General | Pilot invitation | Do you run a small business in Finland? |
-| S01 | Service | AI assistant | Ask about your business. Get an answer. |
-| S02 | Service | Knowledge base | Guides, price lists, policies. Who remembers it all? |
-| S03 | Service | Business profile | Tell it about your business once. |
-| S04 | Service | CRM: contacts | Customer details on notes, in email and in your head? |
-| S05 | Service | Deals pipeline | What stage are your deals at? |
-| S06 | Service | Calendar | A full week. Room for one more? |
-| S07 | Service | Booking page | Bookings without the phone tag. |
-| S08 | Service | Team and roles | Who sees what? |
-| S09 | Service | Three languages | Finnish. English. Arabic. |
+| Group | IDs | What they are |
+|---|---|---|
+| General | G01–G06 | Brand film, scattered → one workspace, pilot invitation, "AI Business Operating System" overview, a day with Syveka, "you decide" |
+| Services in the pilot | S01–S10 | AI assistant, knowledge base, business profile, contacts, deals pipeline, calendar, booking page, team and roles, three languages, profile from your website |
+| By trade | V01–V04 | Salons, auto workshops, cleaning companies, solo entrepreneurs (built only from pilot modules) |
+| Future services | F01–F10 | Voice assistant, automations, shared inbox, messaging channels, content studio (images), content studio (video and social), websites, analytics, calendar sync, booking reminders |
+| Hologram style | H01–H04 | H01–H02 use the supplied reference clip; H03–H04 are motion-graphics renditions |
 
 Each ad folder holds three MP4s, three SRT files, three thumbnails, `script.md` and `production-notes.md`.
-`FINAL-EXPORTS/` holds all 36 MP4s.
+`FINAL-EXPORTS/` holds all 102 MP4s. `HOLOGRAM-STYLE/prompt-pack.md` has ready prompts for generating
+more photoreal footage where the unlimited allowance works.
+
+### Future-service ads (F01–F10) are teasers, not offers
+
+They were made because they will be needed later. To keep them honest today, every scene carries a
+"Coming soon · concept" badge, the end card says "Coming soon — not yet available", the button says
+"Ask us more", and the copy uses conditional wording ("could", "planned"). Publish them only as teasers.
+Remove the badge and re-render when a service actually launches (`soon: true` in `_PIPELINE/js/ads2.js`).
+
+### Logo
+
+The end card uses the supplied Syveka AI banner as pixels (cropped to the logo and tagline, see `BRAND/`).
+It is not redrawn. The gradient accent in the ads follows the logo's blue-to-violet.
 
 ## 3. Which services are advertised, and why only these
 
@@ -56,9 +63,8 @@ No customers, testimonials, statistics or results appear. Names in the mock-ups 
 
 1. **No contact address on the end cards.** The repository uses `syveka.ai` addresses, while your
    account e-mail and earlier voice-overs use `syveka.com`. I did not guess. Set `CONTACT` in
-   `_PIPELINE/js/ads.js` and run `./build.sh` to add it to all 36.
-2. **No logo.** The product has no logo file; its navigation shows the name as text. The end card
-   therefore sets "Syveka AI" in type and invents no symbol. Supply a logo and it can replace the wordmark.
+   `_PIPELINE/js/ads.js` and run `./build.sh` to add it to all of them.
+2. **Logo.** The end card now uses the logo you supplied.
 3. **CTA is "Ask about the pilot"**, with the note "Free pilot phase · limited number of businesses".
    This matches the documented hand-picked pilot rather than the landing page's open "Start free".
 4. **Interface scenes are illustrations**, labelled as concept visuals. They are not screenshots, so

@@ -148,3 +148,11 @@ html[lang=ar] .end-tag{font:700 50px/1.5 var(--display)}
 .end-desc{top:800px}.end-tag{top:900px;font:700 58px/1.2 var(--display);letter-spacing:-1px}
 html[lang=ar] .end-tag{letter-spacing:0;font-size:50px;line-height:1.5}
 .end-cta{top:1180px}.end-note{top:1340px;font-size:28px}
+
+/* ---- supplied logo: blue→violet brand gradient, end-card layout ---- */
+:root{--goldgrad:linear-gradient(135deg,#7dd3fc 0%,#3b82f6 42%,#7c3aed 100%)}
+.end-tag{top:990px}.end-cta{top:1250px}.end-note{top:1410px}
+.concept.soon{color:#e9d5ff;border-color:rgba(167,139,250,.8);background:rgba(76,29,149,.45);font-weight:700}
+
+.h-biz{background:radial-gradient(circle at 76% 24%,#c4b5fd 0,#6d5df6 24%,transparent 52%),radial-gradient(circle at 16% 86%,#0b1b4d 0,transparent 58%),linear-gradient(160deg,#2447c9,#0a1030)}
+.site{background:#f3f6fc}

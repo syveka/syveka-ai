@@ -1,4 +1,5 @@
 // Reusable visual components.
+const SOON = { fi: 'Tulossa · havainnekuva', en: 'Coming soon · concept', ar: 'قريباً · صورة توضيحية' };
 const CONCEPT = { fi: 'Havainnekuva', en: 'Concept visual', ar: 'صورة توضيحية' };
 
 const IC = {

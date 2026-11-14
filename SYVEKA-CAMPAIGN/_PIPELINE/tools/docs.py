@@ -23,6 +23,21 @@ BASIS = {
  'S08': 'Five roles (Owner, Admin, Manager, Member, Viewer), audit log, per-organisation data isolation. No compliance claim ("GDPR compliant") is made.',
  'S09': 'Interface in Finnish, English and Arabic with right-to-left layout.',
 }
+BASIS.update({
+ 'G04': 'Uses the official tagline. Lists pilot modules as available and content creation, automations, voice and websites explicitly as coming soon.',
+ 'G05': 'A day built only from pilot modules (calendar, booking link, assistant, CRM). No figures.',
+ 'G06': 'Confirm-before-act, roles, audit log and per-organisation data separation, as documented. No compliance claim.',
+ 'S10': 'Business profile can be pre-filled as a preview from the company website and is approved by the user.',
+ 'V01': 'Salon use case built only from pilot modules.', 'V02': 'Workshop use case built only from pilot modules.',
+ 'V03': 'Cleaning-company use case built only from pilot modules.', 'V04': 'Solo-entrepreneur use case built only from pilot modules.',
+ 'H01': 'Uses the owner-supplied reference clip, labelled as a dramatization, followed by pilot-module scenes.',
+ 'H02': 'Uses the owner-supplied reference clip, labelled as a dramatization, then the documented free-pilot offer.',
+ 'H03': 'Motion-graphics hologram rendition; claims limited to the typed assistant and confirm-before-act.',
+ 'H04': 'Motion-graphics hologram rendition; claims limited to the booking link and calendar.',
+})
+def basis(ad, en):
+    if en.get('soon'): return 'FUTURE SERVICE. Not available today. Every scene carries a "Coming soon" badge, the end card says "Coming soon — not yet available", and the copy uses conditional wording. Publish only as a teaser; do not target it as a current offer.'
+    return BASIS[ad]
 for ad in sorted(M):
     d = f'{ROOT}/{ad}'
     for l in ('fi', 'en', 'ar'):
@@ -40,7 +55,7 @@ for ad in sorted(M):
             s += f"| {i + 1} | {sc['start']:.1f}–{sc['end']:.1f} s | {line} |\n"
         s += '\n'
     w(f'{d}/script.md', s)
-    n = f"# {ad} — production notes\n\n**What this ad claims, and on what basis.** {BASIS[ad]}\n\n## Scene timeline\n\n| # | Time | Scene module | Transition in |\n|---|---|---|---|\n"
+    n = f"# {ad} — production notes\n\n**What this ad claims, and on what basis.** {basis(ad, en)}\n\n## Scene timeline\n\n| # | Time | Scene module | Transition in |\n|---|---|---|---|\n"
     for i, sc in enumerate(en['scenes']):
         n += f"| {i + 1} | {sc['start']:.1f}–{sc['end']:.1f} s | `{sc['type']}` | {sc['tr'] if i else 'fade from black'} |\n"
     n += f"\n**Screens are illustrations.** Interface scenes are motion-graphics mock-ups labelled *Havainnekuva / Concept visual / صورة توضيحية*, not screenshots of the product.\n\n**Score.** Mood `{en['music']}`, synthesized in code by `_PIPELINE/audio.py`; no third-party audio.\n\n**Brand.** Syveka has no logo file, so the end card sets the name \"Syveka AI\" in type, as the product's own navigation does. Colours follow the product's primary blue.\n\n**Re-render.** `cd _PIPELINE && ./build.sh {ad} fi` (or `en` / `ar`). Copy lives in `_PIPELINE/js/ads.js`.\n"

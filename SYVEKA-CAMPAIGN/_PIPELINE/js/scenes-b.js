@@ -59,8 +59,8 @@ SCENES.quiet = (c, el, p) => {
 
 // ---------------- AD05 workshop ----------------
 SCENES.ringing = (c, el, p) => {
-  el.append(bg(c, 'steel', { grid: true, glow: [[-100, 900, 700, '#c96a2a', .3]] }));
-  el.append(at(250, 1220, drawIcon(c, 'wrench', 360, .2, 1.6, 'rgba(59,130,246,.5)')));
+  el.append(bg(c, 'steel', { grid: true, glow: [[-100, 900, 700, '#3b82f6', .3]] }));
+  el.append(at(250, 1220, drawIcon(c, p.icon || 'wrench', 360, .2, 1.6, 'rgba(59,130,246,.5)')));
   const scr = h('div', { style: 'height:100%;background:linear-gradient(180deg,#10202c,#0a1016);display:flex;flex-direction:column;align-items:center;color:#fff' }, h('div', { style: 'margin-top:230px;font:500 30px var(--ui);opacity:.7' }, T('Saapuva puhelu', 'Incoming call', 'مكالمة واردة')), h('div', { style: 'margin-top:16px;font:600 54px var(--ui)' }, T('Asiakas', 'Customer', 'عميل')), st(icon('phone', 150), 'margin-top:420px;background:#2fbf71;border-radius:50%;padding:40px;color:#fff;box-shadow:0 0 0 24px rgba(47,191,113,.2),0 0 0 54px rgba(47,191,113,.1)'));
   const ph = phone(scr), w = h('div', { class: 'abs p3d', style: 'left:420px;top:780px' }, ph); ph.style.zoom = .62;
   c.an(ph, [{ transform: 'rotateZ(8deg) rotateY(-14deg)' }, { transform: 'rotateZ(5deg) rotateY(-8deg)' }], 0, c.dur + .5);

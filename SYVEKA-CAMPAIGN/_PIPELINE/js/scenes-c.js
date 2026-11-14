@@ -1,5 +1,5 @@
-// Syveka-specific scenes. The product has no logo file: its own navigation shows the name as plain text,
-// so the end card sets "Syveka AI" in type and does not invent a symbol.
+// Syveka-specific scenes. The end card shows the supplied Syveka AI logo as pixels (cropped from the
+// supplied banner, see ../BRAND); it is never redrawn.
 Object.assign(IC, {
   doc: '<path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h6"/>',
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
@@ -10,17 +10,16 @@ Object.assign(IC, {
 });
 
 SCENES.end = (c, el, p, ad) => {
-  el.append(bg(c, 'ink', { dots: 30, seed: 6, glow: [[240, 300, 620, '#3b82f6', .35], [500, 1000, 600, '#1840b4', .3]] }));
-  const word = h('div', 'end-word', 'Syveka ', h('span', null, 'AI'));
-  c.an(word, [{ opacity: 0, transform: 'scale(.9)', filter: 'blur(16px)' }, { opacity: 1, transform: 'scale(1)', filter: 'blur(0)' }], .15, 1.0, 'ease-out');
-  const rule = at(540, 770, h('div', { style: 'width:120px;height:4px;border-radius:2px;background:var(--goldgrad)' })); c.an(rule.firstChild, [{ transform: 'scaleX(0)' }, { transform: 'scaleX(1)' }], .7, .6, EIO);
-  const desc = h('div', 'end-desc', h('span', 'kicker', T('Tekoälyavustaja pk-yrityksille', 'AI business assistant for small businesses', 'مساعد أعمال ذكي للشركات الصغيرة')));
-  c.an(desc, K.up(20), .9, .6);
-  const tag = h('div', 'end-tag', L(ad.tagline)); c.an(tag, K.up(30), 1.15, .7);
+  el.append(h('div', { class: 'bg', style: 'background:radial-gradient(ellipse 90% 55% at 50% 32%,#0a1650 0%,#050a26 55%,#02030f 100%)' }));
+  dots(c, el, 30, 6);
+  const logo = h('div', { class: 'abs', style: 'left:20px;top:300px;width:1040px;height:616px' }, h('img', { src: '../BRAND/Syveka-logo-endcard-crop.png', style: 'width:100%;height:100%;display:block' }));
+  c.an(logo, [{ opacity: 0, transform: 'scale(.92)', filter: 'blur(14px) brightness(1.5)' }, { opacity: 1, transform: 'scale(1)', filter: 'blur(0) brightness(1)' }], .15, 1.1, 'ease-out');
+  c.an(logo.firstChild, K.zoom(1, 1.03), 0, c.dur, 'linear');
+  const tag = h('div', 'end-tag', L(ad.tagline)); c.an(tag, K.up(30), 1.1, .7);
   const cta = h('div', 'end-cta', h('span', 'btn', L(ad.cta), st(icon('arrow', 40), RTL ? 'transform:scaleX(-1)' : '')));
-  c.an(cta, K.pop, 1.65, .6);
-  const note = h('div', 'end-note', CONTACT || L(PILOT_NOTE)); c.an(note, K.fade, 2.1, .6);
-  el.append(word, rule, desc, tag, cta, note);
+  c.an(cta, K.pop, 1.6, .6);
+  const note = h('div', 'end-note', CONTACT || L(ad.soon ? SOON_NOTE : PILOT_NOTE)); c.an(note, K.fade, 2.05, .6);
+  el.append(logo, tag, cta, note);
 };
 
 // Question → typed answer → source chip. The assistant answers from the business's own data.

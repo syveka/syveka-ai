@@ -13,6 +13,8 @@ one() {
 }
 export -f one
 if [ -n "$1" ]; then one $1 $2; exit; fi
+# frames of the owner-supplied reference clip (slowed 1.6x) for the hologram-style ads
+if [ ! -f work/clip/0239.jpg ]; then mkdir -p work/clip; ffmpeg -y -loglevel error -i ../HOLOGRAM-STYLE/source/reference-clip.mp4 -vf "minterpolate=fps=48:mi_mode=mci:mc_mode=aobmc:vsbmc=1,setpts=1.6*PTS,scale=1080:1882:flags=lanczos,crop=1080:1882,unsharp=5:5:0.6,pad=1080:1920:0:19:black" -r 30 -q:v 3 work/clip/%04d.jpg; fi
 node render.mjs --meta work/meta.json
 node tools/moods.mjs
 python3 audio.py work/meta.json work/audio
