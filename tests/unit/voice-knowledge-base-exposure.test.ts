@@ -65,7 +65,11 @@ const searchCall = (id: string) =>
           toolCallList: [
             {
               id,
-              function: { name: "searchKnowledgeBase", arguments: '{"query":"salary table"}' },
+              // This base's webhook parses only the flat tool-call shape (Vapi's
+              // nested spec shape is accepted from #282 on main), so the fix is
+              // exercised with the shape this code would actually execute.
+              name: "searchKnowledgeBase",
+              arguments: { query: "salary table" },
             },
           ],
         },
