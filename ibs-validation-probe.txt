@@ -1,0 +1,1 @@
+Disposable probe for validating the syveka-ai-staging Ignored Build Step (2026-11-14). Not for merge.
