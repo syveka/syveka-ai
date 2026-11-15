@@ -5,12 +5,17 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 export const maxDuration = 30;
 
-// The largest valid request is a 600-code-unit message plus 8 history entries of 600: about
-// 16.5 KB as UTF-8 in CJK, and about 32.9 KB when a client escapes every non-ASCII character as
-// \uXXXX (e.g. Python's json.dumps default). 64 KiB keeps every valid request with about 2x
-// headroom while bounding what zod 3 has to walk: a body this size full of failing array elements
-// yields at most ~44k issues (~75 ms, ~20 MB), versus ~2.8M issues and ~660 MB at Vercel's 4.5 MB
-// body cap (GHSA-mrhx-c7xc-m3w5: zod 3 records one issue per element even past .max(8)).
+// Measured sizes of the largest schema-valid request (a 600-code-unit message plus 8 history
+// entries of 600), as UTF-8 bytes:
+// - compact JSON.stringify: ASCII ~5.7 KB, Finnish/Arabic/emoji ~11.1 KB, CJK ~16.5 KB;
+// - every non-ASCII character escaped as \uXXXX (e.g. Python's json.dumps default) ~32.7 KB,
+//   or ~32.9 KB pretty-printed with a 2-space indent.
+// 64 KiB admits all of those with about 2x headroom. It does NOT admit every valid JSON
+// representation: JSON allows unlimited insignificant whitespace, so a valid request padded past
+// 64 KiB gets 413.
+// The bound also caps zod 3's work (GHSA-mrhx-c7xc-m3w5: one issue per array element even past
+// .max(8)). At the cap, a body full of failing elements measured ~44k issues, ~75 ms and ~21 MB.
+// At 4.2 MB (under Vercel's 4.5 MB body cap) it measured ~2.8M issues, ~3.8 s and ~665 MB.
 const MAX_REQUEST_BODY_BYTES = 64 * 1024;
 
 type BodyReadResult = { kind: "ok"; text: string } | { kind: "too_large" } | { kind: "unreadable" };
@@ -18,7 +23,8 @@ type BodyReadResult = { kind: "ok"; text: string } | { kind: "too_large" } | { k
 /**
  * Reads the body as UTF-8 text, refusing anything over `maxBytes` without buffering it: a
  * declared Content-Length over the limit is refused before reading, and the stream is cancelled
- * as soon as the running byte count passes the limit (covers chunked bodies and lying headers).
+ * (without waiting for the cancellation to finish) as soon as the running byte count passes the
+ * limit (covers chunked bodies and lying headers).
  * Decoding matches `request.json()` (UTF-8, BOM stripped, invalid sequences replaced).
  */
 async function readBodyWithinLimit(request: Request, maxBytes: number): Promise<BodyReadResult> {
@@ -37,7 +43,9 @@ async function readBodyWithinLimit(request: Request, maxBytes: number): Promise<
       if (done) break;
       total += value.byteLength;
       if (total > maxBytes) {
-        await reader.cancel().catch(() => undefined);
+        // Not awaited: the 413 must not depend on the stream's cleanup, whose promise may never
+        // settle. A rejected cancellation is swallowed so it can't surface as an unhandled one.
+        void reader.cancel().catch(() => undefined);
         return { kind: "too_large" };
       }
       chunks.push(value);

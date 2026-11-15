@@ -326,6 +326,59 @@ describe("POST /api/v1/public-assistant: request size cap (zod 3 issue-per-eleme
     expectNoAiWork();
   });
 
+  it.each([
+    ["never settles", () => new Promise<void>(() => {})],
+    ["rejects", () => Promise.reject(new Error("cancel failed"))],
+    [
+      "throws synchronously",
+      () => {
+        throw new Error("cancel threw");
+      },
+    ],
+  ])(
+    "returns 413 promptly when the stream's cancellation %s, without an unhandled rejection",
+    async (_label, cancel) => {
+      const unhandled: unknown[] = [];
+      const onUnhandled = (reason: unknown) => unhandled.push(reason);
+      process.on("unhandledRejection", onUnhandled);
+      try {
+        let cancelCalled = false;
+        const chunk = new Uint8Array(4096).fill(0x20);
+        const stream = new ReadableStream<Uint8Array>({
+          pull: (controller) => controller.enqueue(chunk),
+          cancel: () => {
+            cancelCalled = true;
+            return cancel();
+          },
+        });
+        const request = new Request(URL, {
+          method: "POST",
+          headers: HEADERS,
+          body: stream,
+          duplex: "half",
+        } as RequestInit);
+
+        const timedOut = Symbol("timed out");
+        const res = await Promise.race([
+          POST(request),
+          new Promise<typeof timedOut>((resolve) => setTimeout(() => resolve(timedOut), 2000)),
+        ]);
+        expect(res).not.toBe(timedOut);
+        const response = res as Response;
+        expect(response.status).toBe(413);
+        expect(await response.json()).toEqual({ error: "payload_too_large" });
+        expect(cancelCalled).toBe(true);
+        expectNoAiWork();
+
+        // Give a rejected cancellation time to surface as an unhandled rejection if it were one.
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        expect(unhandled).toEqual([]);
+      } finally {
+        process.off("unhandledRejection", onUnhandled);
+      }
+    },
+  );
+
   it("refuses a declared Content-Length over the limit without reading the body", async () => {
     const request = raw(JSON.stringify({ message: "hi" }), { "Content-Length": String(LIMIT + 1) });
     const res = await POST(request);
