@@ -169,3 +169,189 @@ describe("POST /api/v1/public-assistant", () => {
     expect(JSON.stringify(body)).not.toContain("sk-secret-leak-abc123");
   });
 });
+
+describe("POST /api/v1/public-assistant: request size cap (zod 3 issue-per-element DoS)", () => {
+  const LIMIT = 64 * 1024;
+  const URL = "http://localhost/api/v1/public-assistant";
+  const HEADERS = { "Content-Type": "application/json", "x-forwarded-for": "203.0.113.9" };
+
+  function raw(body: BodyInit, headers: Record<string, string> = {}) {
+    return new Request(URL, { method: "POST", headers: { ...HEADERS, ...headers }, body });
+  }
+
+  /** The largest request the schema accepts: a 600-code-unit message and 8 entries of 600. */
+  function largestValid(unit: string) {
+    const text = unit.repeat(600 / unit.length);
+    const history = Array.from({ length: 8 }, (_, i) => ({
+      role: i % 2 === 0 ? "user" : "assistant",
+      content: text,
+    }));
+    return { message: text, locale: "ar", history };
+  }
+
+  /** What a client with ensure_ascii-style JSON (e.g. Python's json.dumps default) sends. */
+  function asciiEscaped(json: string) {
+    return json.replace(
+      /[\u007f-\uffff]/g,
+      (c) => `\\u${c.charCodeAt(0).toString(16).padStart(4, "0")}`,
+    );
+  }
+
+  const byteLength = (s: string) => new TextEncoder().encode(s).byteLength;
+
+  /** A valid request padded with JSON whitespace to exactly `size` bytes. */
+  function validPaddedTo(size: number) {
+    const json = JSON.stringify({ message: "hi" });
+    return json + " ".repeat(size - byteLength(json));
+  }
+
+  function expectNoAiWork() {
+    expect(mocks.streamClaude).not.toHaveBeenCalled();
+    expect(mocks.isFlaggedByModeration).not.toHaveBeenCalled();
+  }
+
+  beforeEach(() => {
+    mocks.streamClaude.mockClear();
+    mocks.isFlaggedByModeration.mockClear();
+    mocks.isFlaggedByModeration.mockResolvedValue(false);
+    mocks.rateLimit.mockResolvedValue({
+      success: true,
+      reset: Date.now() + 1000,
+      limit: 10,
+      remaining: 9,
+    });
+  });
+
+  it("accepts a body of exactly the limit and refuses one byte more without any AI call", async () => {
+    const atLimit = validPaddedTo(LIMIT);
+    expect(byteLength(atLimit)).toBe(LIMIT);
+    expect((await POST(raw(atLimit))).status).toBe(200);
+
+    mocks.streamClaude.mockClear();
+    mocks.isFlaggedByModeration.mockClear();
+    const res = await POST(raw(validPaddedTo(LIMIT + 1)));
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "payload_too_large" });
+    expectNoAiWork();
+  });
+
+  it.each([
+    ["Finnish", "ä"],
+    ["Arabic", "ع"],
+    ["CJK (3-byte UTF-8)", "漢"],
+    ["emoji (surrogate pairs)", "😀"],
+  ])(
+    "accepts the largest valid %s conversation, compact and \\u-escaped, with content intact",
+    async (_label, unit) => {
+      const body = largestValid(unit);
+      const compact = JSON.stringify(body);
+      const escaped = asciiEscaped(compact);
+      expect(byteLength(escaped)).toBeLessThanOrEqual(LIMIT);
+
+      for (const encoded of [compact, escaped]) {
+        mocks.streamClaude.mockClear();
+        const res = await POST(raw(encoded));
+        expect(res.status).toBe(200);
+        const call = mocks.streamClaude.mock.calls[0]![0] as unknown as {
+          messages: { role: string; content: string }[];
+        };
+        expect(call.messages).toHaveLength(9);
+        expect(call.messages.at(-1)).toEqual({ role: "user", content: body.message });
+        expect(call.messages[0]).toEqual(body.history[0]);
+      }
+    },
+  );
+
+  it("still decodes a UTF-8 BOM-prefixed body like request.json() did", async () => {
+    const res = await POST(raw(`\uFEFF${JSON.stringify({ message: "hei" })}`));
+    expect(res.status).toBe(200);
+  });
+
+  it.each([
+    ["malformed JSON", "{not json"],
+    ["an empty body", ""],
+    ["a JSON string", '"hello"'],
+    ["truncated JSON", '{"message":"hi"'],
+  ])("answers %s with invalid_input and no AI call", async (_label, body) => {
+    const res = await POST(raw(body));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_input" });
+    expectNoAiWork();
+  });
+
+  it("refuses a multi-megabyte array of failing elements with 413 before parsing or zod", async () => {
+    const res = await POST(req({ message: "hi", history: new Array(500_000).fill(0) }));
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "payload_too_large" });
+    expectNoAiWork();
+  });
+
+  it("answers an under-limit array of failing elements with invalid_input and no AI call", async () => {
+    const prefix = '{"message":"hi","history":[';
+    const count = Math.floor((LIMIT - prefix.length - 2) / 3);
+    const body = `${prefix}${new Array(count).fill("{}").join(",")}]}`;
+    expect(byteLength(body)).toBeLessThanOrEqual(LIMIT);
+    const res = await POST(raw(body));
+    expect(res.status).toBe(400);
+    expect(await res.json()).toEqual({ error: "invalid_input" });
+    expectNoAiWork();
+  });
+
+  it("stops reading a streamed body without Content-Length once it passes the limit", async () => {
+    const chunk = new TextEncoder().encode(`[${"0,".repeat(2047)}0`); // 4096 bytes
+    let pulledBytes = 0;
+    let cancelled = false;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulledBytes += chunk.byteLength;
+        controller.enqueue(chunk);
+      },
+      cancel() {
+        cancelled = true;
+      },
+    });
+    const request = new Request(URL, {
+      method: "POST",
+      headers: HEADERS,
+      body: endless,
+      duplex: "half",
+    } as RequestInit);
+    expect(request.headers.get("content-length")).toBeNull();
+
+    const res = await POST(request);
+    expect(res.status).toBe(413);
+    expect(cancelled).toBe(true);
+    // Only the limit plus whatever the stream had queued ahead was ever pulled.
+    expect(pulledBytes).toBeLessThanOrEqual(LIMIT + 4 * chunk.byteLength);
+    expectNoAiWork();
+  });
+
+  it("refuses a declared Content-Length over the limit without reading the body", async () => {
+    const request = raw(JSON.stringify({ message: "hi" }), { "Content-Length": String(LIMIT + 1) });
+    const res = await POST(request);
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "payload_too_large" });
+    expect(request.bodyUsed).toBe(false);
+    expectNoAiWork();
+  });
+
+  it("enforces the real byte count even when Content-Length understates it", async () => {
+    const res = await POST(raw(validPaddedTo(LIMIT + 1), { "Content-Length": "10" }));
+    expect(res.status).toBe(413);
+    expect(await res.json()).toEqual({ error: "payload_too_large" });
+    expectNoAiWork();
+  });
+
+  it("applies the per-IP rate limit before reading any body", async () => {
+    mocks.rateLimit.mockResolvedValueOnce({
+      success: false,
+      reset: Date.now() + 5000,
+      limit: 10,
+      remaining: 0,
+    });
+    const request = raw(validPaddedTo(LIMIT + 1));
+    const res = await POST(request);
+    expect(res.status).toBe(429);
+    expect(request.bodyUsed).toBe(false);
+  });
+});
