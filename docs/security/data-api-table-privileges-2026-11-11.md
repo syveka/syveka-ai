@@ -2,17 +2,23 @@
 
 **Summary.** The application never uses Supabase's Data API (PostgREST) for tables. Hosted
 Supabase still grants `anon` and `authenticated` every privilege on each table the `postgres` role
-creates in `public`. Because of that, a signed-in user holding the public anon key can write to
-their own `public.users` row directly, `email` included.
+creates in `public`. Wherever that includes `UPDATE` on `public.users`, a signed-in user holding
+the public anon key can write to their own row directly, `email` included.
 
 The application trusts that column. A new sign-up whose email matches a `public.users` row
 inherits that row and all its memberships (`handle_new_user`, migration `20260902000000`).
-Migration `20261111000000_revoke_data_api_table_privileges` removes the grants. It needs one line
-of owner-authorized change before CI can pass (section 4).
+Migration `20261111000000_revoke_data_api_table_privileges` removes the grants.
 
-## 1. What a user can do today
+**Status on 19 Nov 2026.** A read-only catalog check on production showed `anon` and
+`authenticated` holding only `SELECT` on `public.users` (no `UPDATE`, not even per column), so the
+path in section 1 is **latent** there: it would open if `UPDATE` were granted again. What a
+signed-in user can read through the Data API today, as RLS allows, is the organization-less
+(`organization_id IS NULL`) rows of `prompts` and `creator_templates`; how sensitive they are is
+not yet determined.
 
-This works with no other precondition, assuming the platform's default grants are live (check D1
+## 1. What a user could do with `UPDATE` on `users`
+
+This needs no other precondition once `authenticated` holds `UPDATE` on `public.users` (check D1
 below).
 
 1. User A calls `PATCH /rest/v1/users?id=eq.<A>` with `{"email": "b@example.com"}`. The
@@ -58,11 +64,11 @@ settings simulated):
 
 ## 2. The change
 
-| File                                                                              | Change                                                                                                                                                                                                                                                                                                                                                |
-| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `prisma/migrations/20261111000000_revoke_data_api_table_privileges/migration.sql` | Revokes from `anon` and `authenticated` every table and sequence privilege in `public`, and the migration role's defaults for new tables. Re-grants `SELECT` on `notifications` to `authenticated` (Realtime; rows still filtered by `notifications_select`). Revokes `EXECUTE` on `custom_access_token_hook` from everyone but `supabase_auth_admin` |
-| `tests/staging/release-invariants.sql`                                            | Requires the migration. Fails the release if `anon` or `authenticated` holds any `public` table or sequence privilege other than `authenticated SELECT notifications`, or if the migration role's defaults grant them any                                                                                                                             |
-| `tests/migrations/supabase-compatibility.sql`                                     | CI's empty database now starts with the hosted DML defaults, so CI tests the migration history against the grants that are live, not a narrower set                                                                                                                                                                                                   |
+| File                                                                              | Change                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `prisma/migrations/20261111000000_revoke_data_api_table_privileges/migration.sql` | Revokes from `anon` and `authenticated` every table and sequence privilege in `public`, and the migration role's defaults for new tables. Re-grants `SELECT` on `notifications` to `authenticated` (Realtime; rows still filtered by `notifications_select`). Revokes `EXECUTE` on `custom_access_token_hook` from everyone but `supabase_auth_admin`, and on `handle_new_user()`, `match_chunks(…)` and `rls_auto_enable()` from `PUBLIC`, `anon` and `authenticated`; each function revoke runs only if the function exists |
+| `tests/staging/release-invariants.sql`                                            | Requires the migration. Fails the release if `anon` or `authenticated` holds any `public` table or sequence privilege other than `authenticated SELECT notifications`, if that `SELECT` is missing, if the migration role's defaults grant them any, or if either can execute any of those four functions that exists                                                                                                                                                                                                         |
+| `tests/migrations/supabase-compatibility.sql`                                     | CI's empty database now starts with the hosted DML defaults, so CI tests the migration history against the grants that are live, not a narrower set                                                                                                                                                                                                                                                                                                                                                                           |
 
 **Not affected:**
 
@@ -125,15 +131,15 @@ from public._prisma_migrations order by migration_name desc limit 3;
 
 **Expected results and what they mean:**
 
-| Query | Expected before #443                                                                                                                                         | Expected after #443                                                                         | If different                                                                                                                                                                                            |
-| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| D1    | Rows for nearly every table, `anon` and `authenticated` with `DELETE,INSERT,…,SELECT,…,UPDATE` (platform defaults); none on `_prisma_migrations`             | Exactly one row: `notifications`, `authenticated`, `SELECT`                                 | **Before:** `UPDATE` for `authenticated` on `users` = the takeover is **open** on that database. No such row = not open there (say so in the PR). **After:** any other row fails the release invariants |
-| D2    | `postgres` / `public` rows granting `anon` and `authenticated` on `r` (tables), `S` (sequences), `f` (functions); `supabase_admin` rows too                  | No `postgres` rows of type `r` or `S`. `f` rows and `supabase_admin` rows remain (expected) | A `postgres` `r`/`S` row after #443 fails the invariants                                                                                                                                                |
-| D3    | No rows                                                                                                                                                      | No rows                                                                                     | Any row is a separate P0 (a table with no RLS, served by the Data API); stop and report                                                                                                                 |
-| D4    | `custom_access_token_hook` executable by `anon`/`authenticated`; `handle_new_user` shows `definer = true` (a trigger function: not callable through the API) | The hook no longer executable by either                                                     | Any other `definer = true` function executable by `anon`/`authenticated` needs review                                                                                                                   |
-| D5    | Lists the tables Realtime publishes; `notifications` may or may not be there                                                                                 | Unchanged                                                                                   | Information only: live notifications don't work today either way (the `org_id` claim is missing)                                                                                                        |
-| D6    | `0`, `0`                                                                                                                                                     | Unchanged by #443 (it doesn't touch data)                                                   | A non-zero `pointing_at_unregistered_address` is the attack's set-up state: **don't let that address sign up** until it is reviewed. A non-zero first count alone may be an old copy                    |
-| D7    | The newest applied names                                                                                                                                     | Includes `20261111000000_…` once released                                                   | See section 5 (drill)                                                                                                                                                                                   |
+| Query | Expected before #443                                                                                                                                         | Expected after #443                                                                                                | If different                                                                                                                                                                                                  |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| D1    | Rows for nearly every table, `anon` and `authenticated` with `DELETE,INSERT,…,SELECT,…,UPDATE` (platform defaults); none on `_prisma_migrations`             | Exactly one row: `notifications`, `authenticated`, `SELECT`                                                        | **Before:** `UPDATE` for `authenticated` on `users` = the section 1 path is **open** on that database. No such row = not open there (say so in the PR). **After:** any other row fails the release invariants |
+| D2    | `postgres` / `public` rows granting `anon` and `authenticated` on `r` (tables), `S` (sequences), `f` (functions); `supabase_admin` rows too                  | No `postgres` rows of type `r` or `S`. `f` rows and `supabase_admin` rows remain (expected)                        | A `postgres` `r`/`S` row after #443 fails the invariants                                                                                                                                                      |
+| D3    | No rows                                                                                                                                                      | No rows                                                                                                            | Any row is a separate P0 (a table with no RLS, served by the Data API); stop and report                                                                                                                       |
+| D4    | `custom_access_token_hook` executable by `anon`/`authenticated`; `handle_new_user` shows `definer = true` (a trigger function: not callable through the API) | The hook, `handle_new_user`, `match_chunks` and `rls_auto_enable` (where it exists) no longer executable by either | Any other `definer = true` function executable by `anon`/`authenticated` needs review                                                                                                                         |
+| D5    | Lists the tables Realtime publishes; `notifications` may or may not be there                                                                                 | Unchanged                                                                                                          | Information only: live notifications don't work today either way (the `org_id` claim is missing)                                                                                                              |
+| D6    | `0`, `0`                                                                                                                                                     | Unchanged by #443 (it doesn't touch data)                                                                          | A non-zero `pointing_at_unregistered_address` is the attack's set-up state: **don't let that address sign up** until it is reviewed. A non-zero first count alone may be an old copy                          |
+| D7    | The newest applied names                                                                                                                                     | Includes `20261111000000_…` once released                                                                          | See section 5 (drill)                                                                                                                                                                                         |
 
 - **Also check:** Authentication → Hooks → "Customize Access Token (JWT) Claims" is **off**.
 
@@ -149,8 +155,9 @@ tester.
 ## 4. Owner authorization needed
 
 `npm run migrations:check` pins the migration list in `scripts/check-migration-history.mjs`,
-which is protected configuration. CI on this PR fails at that check until this one line is added
-after `"20261014000000_secure_prisma_migrations_table",` in `expectedOrder`:
+which is protected configuration. This PR adds this one line after
+`"20261014000000_secure_prisma_migrations_table",` in `expectedOrder` (commit `28af5ad0`), so the
+check passes; the line still needs the owner's authorization before merge:
 
 ```js
   "20261111000000_revoke_data_api_table_privileges",
@@ -206,8 +213,9 @@ ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE O
 ## 6. Not covered here
 
 - **Function defaults.** `postgres`'s and `supabase_admin`'s default privileges still give `anon`
-  and `authenticated` `EXECUTE` on future functions in `public`. Today the only SECURITY DEFINER
-  function there is the trigger function `handle_new_user()`, which can't be called directly.
+  and `authenticated` `EXECUTE` on future functions in `public`. This migration revokes it only on
+  `handle_new_user()`, `match_chunks(…)`, `rls_auto_enable()` and the hook; `auth_org_id()` and
+  `auth_role()` keep it because RLS policies call them.
   - **Rule for future migrations:** a new SECURITY DEFINER function must `REVOKE EXECUTE … FROM
 PUBLIC, anon, authenticated`.
   - Revoking the function defaults here could break RLS helper functions added later, so it isn't

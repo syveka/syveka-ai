@@ -61,6 +61,7 @@ declare
     'availability_schedules', 'booking_types', 'bookings'
   ];
   checked_role text;
+  checked_function text;
   checked_table text;
   checked_privilege text;
   checked_privileges text[] := array['TRUNCATE', 'REFERENCES', 'TRIGGER'];
@@ -159,10 +160,25 @@ begin
     raise exception 'STAGING RELEASE FAIL: the migration role''s public defaults grant tables or sequences to anon/authenticated';
   end if;
 
-  -- The access token hook is for supabase_auth_admin only, not an RPC endpoint.
-  foreach checked_role in array array['anon', 'authenticated'] loop
-    if has_function_privilege(checked_role, 'public.custom_access_token_hook(jsonb)', 'EXECUTE') then
-      raise exception 'STAGING RELEASE FAIL: role % can execute public.custom_access_token_hook', checked_role;
+  -- Realtime delivers notifications only while authenticated can read the table.
+  if not has_table_privilege('authenticated', 'public.notifications', 'SELECT') then
+    raise exception 'STAGING RELEASE FAIL: authenticated cannot SELECT public.notifications (Realtime)';
+  end if;
+
+  -- The access token hook is for supabase_auth_admin only, not an RPC endpoint,
+  -- and the trigger and table-owner functions aren't RPC endpoints either.
+  foreach checked_function in array array[
+    'public.custom_access_token_hook(jsonb)',
+    'public.handle_new_user()',
+    'public.match_chunks(uuid,vector,integer,double precision)',
+    'public.rls_auto_enable()'
+  ] loop
+    if to_regprocedure(checked_function) is not null then
+      foreach checked_role in array array['anon', 'authenticated'] loop
+        if has_function_privilege(checked_role, to_regprocedure(checked_function), 'EXECUTE') then
+          raise exception 'STAGING RELEASE FAIL: role % can execute %', checked_role, checked_function;
+        end if;
+      end loop;
     end if;
   end loop;
 
