@@ -1,4 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { Prisma } from "@/generated/prisma/client/client";
 import type { PublicBookingInput } from "@/lib/validators/booking";
 import { findFirstOver, findManyOver, findManyPagedOver } from "./helpers/calendar-event-where";
 
@@ -88,6 +89,13 @@ import {
   getPublicSlots,
   rescheduleBookingViaToken,
 } from "@/server/services/booking";
+
+function prismaKnownError(code: string) {
+  return new Prisma.PrismaClientKnownRequestError("synthetic Prisma failure", {
+    code,
+    clientVersion: "test",
+  });
+}
 
 // Booking type: Mon–Fri 09–17 Helsinki fallback schedule (schedule = null).
 function bookingType(overrides: Record<string, unknown> = {}) {
@@ -625,6 +633,27 @@ describe("createPublicBooking", () => {
       createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
     ).rejects.toMatchObject({ code: "invalid_slot" });
   });
+
+  it("a transaction that can't get the connection (P2028) is calendar_busy, with no side effects", async () => {
+    unscopedMock.$transaction.mockRejectedValueOnce(prismaKnownError("P2028"));
+    await expect(
+      createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
+    ).rejects.toMatchObject({ name: "BookingError", code: "calendar_busy" });
+    expect(issueTokenMock).not.toHaveBeenCalled();
+    expect(auditMock).not.toHaveBeenCalled();
+    expect(emitMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["another Prisma code", prismaKnownError("P2034")],
+    ["a non-Prisma error", new Error("connection reset")],
+  ])("%s from the transaction is left unchanged", async (_label, failure) => {
+    void _label;
+    unscopedMock.$transaction.mockRejectedValueOnce(failure);
+    await expect(
+      createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
+    ).rejects.toBe(failure);
+  });
 });
 
 describe("rescheduleBookingViaToken", () => {
@@ -950,6 +979,27 @@ describe("rescheduleBookingViaToken", () => {
     expect(txMock.reminder.updateMany).not.toHaveBeenCalled();
     expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
     expect(txMock.booking.create).not.toHaveBeenCalled();
+  });
+
+  it("a transaction that can't get the connection (P2028) is calendar_busy, with no side effects", async () => {
+    unscopedMock.$transaction.mockRejectedValueOnce(prismaKnownError("P2028"));
+    await expect(rescheduleBookingViaToken("raw-token", NEW_START)).rejects.toMatchObject({
+      name: "BookingError",
+      code: "calendar_busy",
+    });
+    expect(invalidateBookingTokensMock).not.toHaveBeenCalled();
+    expect(issueTokenMock).not.toHaveBeenCalled();
+    expect(auditMock).not.toHaveBeenCalled();
+    expect(emitMock).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["another Prisma code", prismaKnownError("P2034")],
+    ["a non-Prisma error", new Error("connection reset")],
+  ])("%s from the transaction is left unchanged", async (_label, failure) => {
+    void _label;
+    unscopedMock.$transaction.mockRejectedValueOnce(failure);
+    await expect(rescheduleBookingViaToken("raw-token", NEW_START)).rejects.toBe(failure);
   });
 });
 

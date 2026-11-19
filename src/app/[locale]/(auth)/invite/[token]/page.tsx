@@ -47,6 +47,23 @@ export default async function InvitePage({
     include: { organization: { select: { name: true } } },
   });
 
+  // Opening the email link again after joining: only the invited account, and
+  // only while it is still a member. Anyone else gets the invalid state below.
+  if (invitation?.status === "ACCEPTED") {
+    const signedIn = await getSessionUser();
+    const isCurrentMember =
+      signedIn?.email?.toLowerCase() === invitation.email.toLowerCase() &&
+      (await unscopedPrisma.organizationMember.findFirst({
+        where: {
+          organizationId: invitation.organizationId,
+          userId: signedIn.id,
+          organization: { deletedAt: null },
+        },
+        select: { id: true },
+      })) !== null;
+    if (isCurrentMember) redirect(localizedPath(normalizeLocale(locale), "/dashboard"));
+  }
+
   if (!invitation || invitation.status !== "PENDING" || invitation.expiresAt < new Date()) {
     return (
       <Card>

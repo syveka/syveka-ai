@@ -30,6 +30,7 @@ const mocks = vi.hoisted(() => {
     }),
     getSessionUser: vi.fn(),
     findInvitation: vi.fn(),
+    findMember: vi.fn(),
     acceptInvitation: vi.fn(),
     signOut: vi.fn(async () => ({ error: null })),
     refreshSession: vi.fn(async () => ({})),
@@ -65,7 +66,10 @@ vi.mock("@/server/auth/session", () => ({
 }));
 vi.mock("@/server/auth/guard", () => ({ requirePermission: vi.fn() }));
 vi.mock("@/server/db/tenant", () => ({
-  unscopedPrisma: { invitation: { findUnique: mocks.findInvitation } },
+  unscopedPrisma: {
+    invitation: { findUnique: mocks.findInvitation },
+    organizationMember: { findFirst: mocks.findMember },
+  },
 }));
 vi.mock("@/server/supabase/server", () => ({
   createSupabaseServer: async () => ({
@@ -143,6 +147,97 @@ describe("invitation page signed in to another account", () => {
   });
 });
 
+describe("opening an already accepted invitation again", () => {
+  const INVALID_FI = "Kutsu on virheellinen tai vanhentunut.";
+  const accepted = {
+    ...pendingInvitation,
+    organizationId: "org-1",
+    status: "ACCEPTED",
+  };
+
+  async function openAccepted(
+    session: { id: string; email: string } | null,
+    invitation: Record<string, unknown> = accepted,
+    locale = "fi",
+  ) {
+    mocks.locale = locale;
+    mocks.findInvitation.mockResolvedValue(invitation);
+    mocks.getSessionUser.mockResolvedValue(session);
+    const element = await InvitePage({
+      params: Promise.resolve({ locale, token: INVITATION_ID }),
+      searchParams: Promise.resolve({}),
+    });
+    return renderToStaticMarkup(element);
+  }
+
+  it.each(["fi", "en", "ar"])(
+    "the invited account, still a member, goes to the dashboard (%s)",
+    async (locale) => {
+      mocks.findMember.mockResolvedValue({ id: "member-1" });
+
+      await expect(
+        openAccepted({ id: "user-1", email: "invitee@example.test" }, accepted, locale),
+      ).rejects.toThrow(`NEXT_REDIRECT:/${locale}/dashboard`);
+      expect(mocks.findMember).toHaveBeenCalledWith({
+        where: { organizationId: "org-1", userId: "user-1", organization: { deletedAt: null } },
+        select: { id: true },
+      });
+    },
+  );
+
+  it("the address in other letter case and a past expiry date still go to the dashboard", async () => {
+    mocks.findMember.mockResolvedValue({ id: "member-1" });
+
+    await expect(
+      openAccepted(
+        { id: "user-1", email: "Invitee@Example.TEST" },
+        { ...accepted, expiresAt: new Date(Date.now() - 86_400_000) },
+      ),
+    ).rejects.toThrow("NEXT_REDIRECT:/fi/dashboard");
+  });
+
+  it("another signed-in account sees the invalid page, even as a member of that organization", async () => {
+    mocks.findMember.mockResolvedValue({ id: "member-2" });
+
+    const html = await openAccepted({ id: "user-2", email: "someone-else@example.test" });
+
+    expect(html).toContain(INVALID_FI);
+    expect(html).not.toContain("invitee@example.test");
+    expect(mocks.findMember).not.toHaveBeenCalled();
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it("the invited account, no longer a member, sees the invalid page", async () => {
+    mocks.findMember.mockResolvedValue(null);
+
+    const html = await openAccepted({ id: "user-1", email: "invitee@example.test" });
+
+    expect(html).toContain(INVALID_FI);
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it("signed out sees the invalid page and is not sent to register", async () => {
+    const html = await openAccepted(null);
+
+    expect(html).toContain(INVALID_FI);
+    expect(mocks.findMember).not.toHaveBeenCalled();
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+
+  it.each(["REVOKED", "EXPIRED"])("a %s invitation never redirects a member", async (status) => {
+    mocks.findMember.mockResolvedValue({ id: "member-1" });
+
+    const html = await openAccepted(
+      { id: "user-1", email: "invitee@example.test" },
+      { ...accepted, status },
+    );
+
+    expect(html).toContain(INVALID_FI);
+    expect(mocks.findMember).not.toHaveBeenCalled();
+    expect(mocks.redirect).not.toHaveBeenCalled();
+  });
+});
+
 describe("accepting as another account", () => {
   it("returns to the invitation instead of an error page", async () => {
     mocks.getSessionUser.mockResolvedValue({ id: "user-2", email: "someone-else@example.test" });
@@ -171,7 +266,10 @@ describe("accepting as another account", () => {
       await expect(acceptInvitationAction(INVITATION_ID, locale)).rejects.toThrow(
         `NEXT_REDIRECT:/${locale}/dashboard`,
       );
-      expect(mocks.acceptInvitation).toHaveBeenCalledWith(INVITATION_ID, "user-1");
+      expect(mocks.acceptInvitation).toHaveBeenCalledWith(INVITATION_ID, {
+        id: "user-1",
+        email: "invitee@example.test",
+      });
       expect(mocks.refreshSession).toHaveBeenCalledOnce();
     },
   );

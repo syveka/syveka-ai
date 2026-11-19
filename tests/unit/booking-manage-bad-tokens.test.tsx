@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { renderToStaticMarkup } from "react-dom/server";
 import type * as BookingService from "@/server/services/booking";
 
@@ -287,4 +287,108 @@ describe("manage API: a link that doesn't resolve", () => {
       expectNoSideEffects();
     },
   );
+
+  describe("retrying a cancel that already succeeded", () => {
+    const FUTURE = new Date(Date.now() + 86_400_000);
+    const usedRow = (overrides: Record<string, unknown> = {}) => ({
+      purpose: "MANAGE",
+      usedAt: new Date(Date.now() - 60_000),
+      expiresAt: FUTURE,
+      booking: { status: "CANCELED" },
+      ...overrides,
+    });
+
+    function storedToken(row: unknown) {
+      mocks.tokenFindUnique.mockResolvedValue(row as never);
+    }
+
+    afterEach(() => {
+      mocks.tokenFindUnique.mockResolvedValue(null);
+    });
+
+    it.each(["MANAGE", "CANCEL"])(
+      "a used %s token of a canceled booking: the same success, no write, email or reminder",
+      async (purpose) => {
+        storedToken(usedRow({ purpose }));
+        mocks.cancel.mockRejectedValue(new BookingTokenError("Token already used", "used"));
+
+        const res = await call("DELETE");
+
+        expect(res.status).toBe(200);
+        const text = await res.text();
+        expect(JSON.parse(text)).toEqual({ status: "canceled" });
+        expectNoBookingFields(text);
+        expect(mocks.transaction).not.toHaveBeenCalled();
+        expectNoSideEffects();
+      },
+    );
+
+    it("control: the first, successful cancel does notify, with the same response", async () => {
+      mocks.cancel.mockResolvedValue({ id: BOOKING.id });
+
+      const res = await call("DELETE");
+
+      expect(await res.json()).toEqual({ status: "canceled" });
+      expect(mocks.notify).toHaveBeenCalledTimes(1);
+    });
+
+    it.each([
+      ["a booking still confirmed", usedRow({ booking: { status: "CONFIRMED" } })],
+      ["a rescheduled booking", usedRow({ booking: { status: "RESCHEDULED" } })],
+      ["a completed booking", usedRow({ booking: { status: "COMPLETED" } })],
+      ["an expired link", usedRow({ expiresAt: new Date(Date.now() - 1_000) })],
+      ["a link that can only reschedule", usedRow({ purpose: "RESCHEDULE" })],
+      ["a link not marked used", usedRow({ usedAt: null })],
+      ["no stored link", null],
+    ])("stays 404 for %s", async (_label, row) => {
+      void _label;
+      storedToken(row);
+      mocks.cancel.mockRejectedValue(new BookingTokenError("Token already used", "used"));
+
+      const res = await call("DELETE");
+
+      expect(res.status).toBe(404);
+      expect(await res.json()).toEqual({ error: "used" });
+      expectNoSideEffects();
+    });
+
+    it("stays 404 when the booking can't be checked, without exposing the failure", async () => {
+      mocks.tokenFindUnique.mockRejectedValue(new Error("db down for bk-synthetic"));
+      mocks.cancel.mockRejectedValue(new BookingTokenError("Token already used", "used"));
+
+      const res = await call("DELETE");
+
+      expect(res.status).toBe(404);
+      expect(await res.text()).toBe(JSON.stringify({ error: "used" }));
+      expectNoSideEffects();
+    });
+
+    it.each(["invalid", "expired"] as const)(
+      "a %s token is not looked up again and stays 404",
+      async (code) => {
+        storedToken(usedRow());
+        mocks.cancel.mockRejectedValue(new BookingTokenError("synthetic", code));
+
+        const res = await call("DELETE");
+
+        expect(res.status).toBe(404);
+        expect(await res.json()).toEqual({ error: code });
+        expect(mocks.tokenFindUnique).not.toHaveBeenCalled();
+      },
+    );
+
+    it.each(["GET", "POST"] as const)(
+      "%s with a used token of a canceled booking stays 404",
+      async (method) => {
+        storedToken(usedRow());
+        routes[method].service.mockRejectedValue(new BookingTokenError("synthetic", "used"));
+
+        const res = await call(method);
+
+        expect(res.status).toBe(404);
+        expect(await res.json()).toEqual({ error: "used" });
+        expectNoSideEffects();
+      },
+    );
+  });
 });
