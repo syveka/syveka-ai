@@ -6,7 +6,7 @@ const mocks = vi.hoisted(() => ({
   voiceAssistantFindFirstOrThrow: vi.fn(),
   voiceAssistantUpdate: vi.fn(async () => ({})),
   upsertVapiAssistant: vi.fn(
-    async (_config: { systemPrompt: string; tools: { name: string }[] }) => ({
+    async (_config: { firstMessage: string; systemPrompt: string; tools: { name: string }[] }) => ({
       id: "vapi-assistant-1",
     }),
   ),
@@ -45,6 +45,7 @@ vi.mock("@/env", () => ({
   }),
 }));
 
+import { VOICE_DISCLOSURE_INSTRUCTION, VOICE_DISCLOSURE_NOTICE } from "@/server/ai/prompts/voice";
 import { activateAssistant, resyncActiveAssistants } from "@/server/services/voice";
 
 function ctx(orgId = "org-a"): TenantContext {
@@ -248,6 +249,40 @@ describe("resyncActiveAssistants — Business DNA staleness fix", () => {
     await resyncActiveAssistants("org-a");
 
     expect(mocks.upsertVapiAssistant).not.toHaveBeenCalled();
+  });
+});
+
+describe("voice assistant sync — mandatory AI/recording disclosure", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it.each(["FI", "EN", "AR"] as const)(
+    "%s: the first message sent to Vapi starts with the server-owned notice",
+    async (language) => {
+      mocks.tenantDb.mockReturnValue(businessDnaMock("org-a", null));
+      mocks.voiceAssistantFindFirstOrThrow.mockResolvedValue(
+        assistantRow("org-a", { language, firstMessage: "  Welcome!  " }),
+      );
+
+      await activateAssistant(ctx("org-a"), "assistant-1");
+
+      const config = mocks.upsertVapiAssistant.mock.calls[0]![0];
+      expect(config.firstMessage).toBe(`${VOICE_DISCLOSURE_NOTICE[language]} Welcome!`);
+      expect(config.systemPrompt.startsWith(VOICE_DISCLOSURE_INSTRUCTION[language])).toBe(true);
+    },
+  );
+
+  it("AR uses the Arabic instruction, not the English one", async () => {
+    mocks.tenantDb.mockReturnValue(businessDnaMock("org-a", null));
+    mocks.voiceAssistantFindFirstOrThrow.mockResolvedValue(
+      assistantRow("org-a", { language: "AR" }),
+    );
+
+    await activateAssistant(ctx("org-a"), "assistant-1");
+
+    const config = mocks.upsertVapiAssistant.mock.calls[0]![0];
+    expect(config.systemPrompt).not.toContain(VOICE_DISCLOSURE_INSTRUCTION.EN);
   });
 });
 

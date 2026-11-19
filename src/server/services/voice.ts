@@ -11,7 +11,11 @@ import {
   type PhoneImportParams,
 } from "@/server/integrations/vapi";
 import { TOOL_REGISTRY, zodToJsonSchema } from "@/server/ai/tools";
-import { buildVoiceSystemPrompt } from "@/server/ai/prompts/voice";
+import {
+  buildVoiceFirstMessage,
+  buildVoiceSystemPrompt,
+  voiceDisclosureInstruction,
+} from "@/server/ai/prompts/voice";
 import { getBusinessDnaContext } from "@/server/business-dna/context";
 import { lockPhoneNumber } from "@/server/calendar/locks";
 import { getEntitlements, EntitlementError } from "./billing/entitlements";
@@ -323,10 +327,7 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
   const toolNames = allowedVoiceTools(assistant.enabledTools);
 
   // Mandatory AI disclosure (§13.3, §16.5) is prepended server-side.
-  const disclosure =
-    assistant.language === "FI"
-      ? "Aloita kertomalla, että olet tekoälyavustaja ja puhelu voidaan tallentaa."
-      : "Start by disclosing that you are an AI assistant and the call may be recorded.";
+  const disclosure = voiceDisclosureInstruction(assistant.language);
 
   // Business DNA is optional — the assistant degrades gracefully (falls back
   // to just the human-authored prompt) when the org hasn't filled it in yet.
@@ -335,7 +336,7 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
   const { NEXT_PUBLIC_APP_URL, VAPI_WEBHOOK_CREDENTIAL_ID } = getVapiEnv();
   const config: VapiAssistantConfig = {
     name: assistant.name,
-    firstMessage: assistant.firstMessage,
+    firstMessage: buildVoiceFirstMessage(assistant.language, assistant.firstMessage),
     systemPrompt: buildVoiceSystemPrompt({
       disclosure,
       businessDna,
