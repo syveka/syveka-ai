@@ -95,7 +95,11 @@ const pendingInvitation = {
 async function renderWithError(error: unknown, locale = "en"): Promise<string> {
   mocks.locale = locale;
   mocks.findInvitation.mockResolvedValue(pendingInvitation);
-  mocks.getSessionUser.mockResolvedValue({ id: "user-1", email: "invitee@example.test" });
+  mocks.getSessionUser.mockResolvedValue({
+    id: "user-1",
+    email: "invitee@example.test",
+    email_confirmed_at: "2030-01-01T00:00:00Z",
+  });
   const element = await InvitePage({
     params: Promise.resolve({ locale, token: INVITATION_ID }),
     searchParams: Promise.resolve({ error } as { error?: string }),
@@ -105,7 +109,11 @@ async function renderWithError(error: unknown, locale = "en"): Promise<string> {
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.getSessionUser.mockResolvedValue({ id: "user-1", email: "invitee@example.test" });
+  mocks.getSessionUser.mockResolvedValue({
+    id: "user-1",
+    email: "invitee@example.test",
+    email_confirmed_at: "2030-01-01T00:00:00Z",
+  });
 });
 
 describe("the error codes", () => {
@@ -166,7 +174,11 @@ describe("acceptInvitationAction", () => {
     await expect(acceptInvitationAction(INVITATION_ID, "ar")).rejects.toThrow(
       "NEXT_REDIRECT:/ar/dashboard",
     );
-    expect(mocks.acceptInvitation).toHaveBeenCalledWith(INVITATION_ID, "user-1");
+    expect(mocks.acceptInvitation).toHaveBeenCalledWith(INVITATION_ID, {
+      id: "user-1",
+      email: "invitee@example.test",
+      emailConfirmedAt: "2030-01-01T00:00:00Z",
+    });
     expect(mocks.refreshSession).toHaveBeenCalledOnce();
     expect(mocks.redirect).toHaveBeenCalledTimes(1);
   });
