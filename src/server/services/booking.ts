@@ -124,7 +124,9 @@ async function assertSharedBookingCaps(
     });
     const reset = (oldest?.createdAt.getTime() ?? now) + windowMs;
     // Both caps full: report the later reset (and that cap's limit), so a retry
-    // at the reported time isn't refused again by the other cap.
+    // isn't sent while one of them is certain to be full. It is only a lower
+    // bound: bookings made in the meantime can refill a cap, so a retry at the
+    // reported time may still be refused.
     if (!refusal || reset > refusal.reset) refusal = { limit, reset };
   }
   if (refusal) {
