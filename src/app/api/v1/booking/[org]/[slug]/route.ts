@@ -47,18 +47,25 @@ export async function POST(
 
   const { org, slug } = await params;
   // Each booking emails the address the guest typed. Beyond the per-IP limit,
-  // a guest address (per organization) and a booking page are capped whatever
-  // the IP, so the page can't be used to mail strangers or fill the owner's
-  // calendar. Checked by the service once the slot is known to be bookable
+  // five caps (guest per org and per day, IP per org, page, org; order below)
+  // stop the page mailing strangers or filling the calendar. Checked by the service once the slot is known to be bookable
   // and before anything is written or sent: only attempts that would book
   // count, so junk requests can't switch a page or a guest off.
   let refusal: NextResponse | null = null;
   const admit = async (bookingType: { id: string; organizationId: string }) => {
+    // Narrowest first and short-circuiting: a check that passes is spent even
+    // when a later one refuses, so the narrow checks (guest, then this IP in
+    // this organization) go first and the shared page and organization budgets
+    // last. One IP or guest can't drain what everyone else shares.
     refusal =
       (await rateLimitRefusal(
         "publicBookingRecipient",
         `${bookingType.organizationId}:${emailKey(parsed.data.email)}`,
-      )) ?? (await rateLimitRefusal("publicBookingType", bookingType.id));
+      )) ??
+      (await rateLimitRefusal("publicBookingRecipientDay", emailKey(parsed.data.email))) ??
+      (await rateLimitRefusal("publicBookingIpOrgDay", `${ip}:${bookingType.organizationId}`)) ??
+      (await rateLimitRefusal("publicBookingType", bookingType.id)) ??
+      (await rateLimitRefusal("publicBookingOrgDay", bookingType.organizationId));
     if (refusal) throw new AdmissionRefused();
   };
 

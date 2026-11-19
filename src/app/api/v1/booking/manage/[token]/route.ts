@@ -29,9 +29,12 @@ async function deps() {
 /** Thrown from the admission check to stop a reschedule; the route answers with the refusal. */
 class AdmissionRefused extends Error {}
 
+function clientIp(request: Request): string {
+  return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "anon";
+}
+
 function limitKey(request: Request): string {
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "anon";
-  return `booking-manage:${ip}`;
+  return `booking-manage:${clientIp(request)}`;
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ token: string }> }) {
@@ -82,11 +85,23 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
     organizationId: string;
     guestEmail: string;
   }) => {
+    // Same order as the create route: narrowest first, so a passing check is
+    // not spent on the shared budgets of a request a narrower one refuses.
     refusal =
       (await rateLimit.rateLimitRefusal(
         "publicBookingRecipient",
         `${b.organizationId}:${rateLimit.emailKey(b.guestEmail)}`,
-      )) ?? (await rateLimit.rateLimitRefusal("publicBookingType", b.bookingTypeId));
+      )) ??
+      (await rateLimit.rateLimitRefusal(
+        "publicBookingRecipientDay",
+        rateLimit.emailKey(b.guestEmail),
+      )) ??
+      (await rateLimit.rateLimitRefusal(
+        "publicBookingIpOrgDay",
+        `${clientIp(request)}:${b.organizationId}`,
+      )) ??
+      (await rateLimit.rateLimitRefusal("publicBookingType", b.bookingTypeId)) ??
+      (await rateLimit.rateLimitRefusal("publicBookingOrgDay", b.organizationId));
     if (refusal) throw new AdmissionRefused();
   };
   try {

@@ -874,6 +874,24 @@ describe("rescheduleBookingViaToken", () => {
     expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
   });
 
+  it("re-checks start time inside the transaction when the booking began after the pre-admit read", async () => {
+    // Pre-admit read still shows a future booking (default fixture); the fresh
+    // in-transaction read shows it has since started.
+    txMock.booking.findUniqueOrThrow.mockResolvedValue(
+      oldBooking({
+        startsAt: new Date("2026-01-20T08:00:00Z"),
+        endsAt: new Date("2026-01-20T09:00:00Z"),
+      }),
+    );
+    await expect(rescheduleBookingViaToken("raw-token", NEW_START)).rejects.toMatchObject({
+      code: "too_late",
+    });
+    expect(txMock.booking.updateMany).not.toHaveBeenCalled();
+    expect(txMock.booking.update).not.toHaveBeenCalled();
+    expect(txMock.booking.create).not.toHaveBeenCalled();
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+  });
+
   it("rejects moving a COMPLETED booking", async () => {
     txMock.booking.findUniqueOrThrow.mockResolvedValue(oldBooking({ status: "COMPLETED" }));
     await expect(rescheduleBookingViaToken("raw-token", NEW_START)).rejects.toMatchObject({
@@ -882,6 +900,32 @@ describe("rescheduleBookingViaToken", () => {
     expect(txMock.booking.updateMany).not.toHaveBeenCalled();
     expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
   });
+
+  it.each([
+    [
+      "already started",
+      {
+        startsAt: new Date("2026-01-20T08:00:00Z"),
+        endsAt: new Date("2026-01-20T09:00:00Z"),
+      },
+    ],
+    ["COMPLETED", { status: "COMPLETED" }],
+  ])(
+    "a %s booking is refused as too_late before admit runs (replayed links spend no allowance)",
+    async (_label, overrides) => {
+      resolveTokenMock.mockResolvedValue({
+        id: "token-1",
+        purpose: "RESCHEDULE",
+        booking: oldBooking(overrides),
+      });
+      const admit = vi.fn().mockResolvedValue(undefined);
+
+      await expect(rescheduleBookingViaToken("raw-token", NEW_START, admit)).rejects.toMatchObject({
+        code: "too_late",
+      });
+      expect(admit).not.toHaveBeenCalled();
+    },
+  );
 
   it("the guarded claim never moves a booking that became COMPLETED concurrently", async () => {
     await rescheduleBookingViaToken("raw-token", NEW_START);

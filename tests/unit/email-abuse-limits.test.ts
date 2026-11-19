@@ -39,6 +39,9 @@ vi.mock("@/server/integrations/redis", async (importActual) => {
     auth: 10,
     publicBookingRecipient: actual.PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY,
     publicBookingType: actual.PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR,
+    publicBookingOrgDay: actual.PUBLIC_BOOKING_ATTEMPTS_PER_ORG_PER_DAY,
+    publicBookingRecipientDay: actual.PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_ANY_ORG_PER_DAY,
+    publicBookingIpOrgDay: actual.PUBLIC_BOOKING_ATTEMPTS_PER_IP_PER_ORG_PER_DAY,
     eventReminderRecipientsHour: actual.EVENT_REMINDER_RECIPIENTS_PER_HOUR,
     eventReminderRecipientsDay: actual.EVENT_REMINDER_RECIPIENTS_PER_DAY,
     api: 100,
@@ -117,17 +120,37 @@ import {
   checkRateLimit,
   EVENT_REMINDER_RECIPIENTS_PER_DAY,
   EVENT_REMINDER_RECIPIENTS_PER_HOUR,
+  PUBLIC_BOOKING_ATTEMPTS_PER_IP_PER_ORG_PER_DAY,
+  PUBLIC_BOOKING_ATTEMPTS_PER_ORG_PER_DAY,
+  PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_ANY_ORG_PER_DAY,
   PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY,
   PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR,
 } from "@/server/integrations/redis";
+import { emailKey } from "@/server/security/rate-limit";
 import { BookingError } from "@/server/services/booking";
+
+const BOOKING_LIMITERS = [
+  "publicBookingRecipient",
+  "publicBookingRecipientDay",
+  "publicBookingIpOrgDay",
+  "publicBookingType",
+  "publicBookingOrgDay",
+] as const;
+/** The booking limiter calls made, in order, as `name|key`. */
+const bookingCalls = () =>
+  vi
+    .mocked(checkRateLimit)
+    .mock.calls.filter(([name]) => (BOOKING_LIMITERS as readonly string[]).includes(name))
+    .map(([name, key]) => `${name}|${key}`);
 
 const PAGE = { org: "acme", slug: "intro" };
 const OTHER_PAGE = { org: "other", slug: "intro" };
+const THIRD_PAGE = { org: "third", slug: "intro" };
 /** Booking pages by their exact slugs, as getPublicBookingType finds them. */
 const PAGES: Record<string, { id: string; organizationId: string }> = {
   "acme/intro": { id: "type-acme-intro", organizationId: "org-acme" },
   "other/intro": { id: "type-other-intro", organizationId: "org-other" },
+  "third/intro": { id: "type-third-intro", organizationId: "org-third" },
 };
 const OFFERED_SLOT = "2026-11-20T08:00:00.000Z";
 const UNOFFERED_SLOT = "2026-11-20T03:00:00.000Z";
@@ -383,6 +406,193 @@ describe("rescheduling from the email link", () => {
     }
     expect([...s.counts.keys()].filter((k) => !k.startsWith("auth|"))).toEqual([]);
     expect((await reschedule()).status).toBe(200);
+  });
+});
+
+describe("daily caps per organization and per recipient mailbox", () => {
+  function moveBooking(email = "victim@example.test", ip = freshIp()) {
+    f.reschedule.mockImplementation(
+      async (
+        _token: string,
+        startsAt: string,
+        admit?: (b: {
+          bookingTypeId: string;
+          organizationId: string;
+          guestEmail: string;
+        }) => Promise<void>,
+      ) => {
+        await admit?.({
+          bookingTypeId: "type-acme-intro",
+          organizationId: "org-acme",
+          guestEmail: email,
+        });
+        booked.push(email);
+        return {
+          booking: { id: "b-1", organizationId: "org-acme", startsAt: new Date(startsAt) },
+          event: { id: "e-1" },
+          manageToken: "next-token",
+        };
+      },
+    );
+    return rescheduleViaLink(
+      new Request("http://localhost/api/v1/booking/manage/x", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-forwarded-for": ip },
+        body: JSON.stringify({ startsAt: OFFERED_SLOT }),
+      }),
+      { params: Promise.resolve({ token: "manage-token" }) },
+    );
+  }
+
+  it("create checks exactly these limiters and keys, narrowest first", async () => {
+    expect((await booking("Guest@Example.test", "203.0.113.7")).status).toBe(200);
+    expect(bookingCalls()).toEqual([
+      `publicBookingRecipient|org-acme:${emailKey("guest@example.test")}`,
+      `publicBookingRecipientDay|${emailKey("guest@example.test")}`,
+      "publicBookingIpOrgDay|203.0.113.7:org-acme",
+      "publicBookingType|type-acme-intro",
+      "publicBookingOrgDay|org-acme",
+    ]);
+  });
+
+  it("reschedule checks the same limiters and keys", async () => {
+    expect((await moveBooking("victim@example.test", "203.0.113.7")).status).toBe(200);
+    expect(bookingCalls()).toEqual([
+      `publicBookingRecipient|org-acme:${emailKey("victim@example.test")}`,
+      `publicBookingRecipientDay|${emailKey("victim@example.test")}`,
+      "publicBookingIpOrgDay|203.0.113.7:org-acme",
+      "publicBookingType|type-acme-intro",
+      "publicBookingOrgDay|org-acme",
+    ]);
+  });
+
+  it("the per-recipient daily key is the mailbox alone, folding aliases and case", async () => {
+    await booking("first.last@gmail.com", freshIp());
+    await booking("FirstLast+promo@googlemail.com", freshIp());
+    const dayKeys = [...s.counts.keys()].filter((k) => k.startsWith("publicBookingRecipientDay|"));
+    expect(dayKeys).toEqual([`publicBookingRecipientDay|${emailKey("firstlast@gmail.com")}`]);
+    expect(s.counts.get(dayKeys[0]!)).toBe(2);
+    expect(dayKeys[0]).not.toContain("org-");
+    expect(dayKeys[0]).not.toContain("gmail");
+  });
+
+  it("one mailbox is capped across organizations, though each organization allows more", async () => {
+    // Three organizations, so no per-organization count reaches its cap (5):
+    // only the cross-organization recipient cap can refuse the last request.
+    const pages = [PAGE, OTHER_PAGE, THIRD_PAGE];
+    for (let i = 0; i < PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_ANY_ORG_PER_DAY; i++) {
+      expect((await booking("victim@example.test", freshIp(), pages[i % 3])).status).toBe(200);
+    }
+    for (const org of ["org-acme", "org-other", "org-third"]) {
+      expect(
+        s.counts.get(`publicBookingRecipient|${org}:${emailKey("victim@example.test")}`),
+      ).toBeLessThan(PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY);
+    }
+    booked.length = 0;
+    f.notify.mockClear();
+    vi.mocked(checkRateLimit).mockClear();
+
+    const refused = await booking("Victim+x@example.test", freshIp(), OTHER_PAGE);
+    expect(refused.status).toBe(429);
+    await expect(refused.json()).resolves.toEqual({ error: { code: "rate_limited" } });
+    expect(Number(refused.headers.get("Retry-After"))).toBeGreaterThan(0);
+    // Refused by the cross-organization cap, the last limiter that ran.
+    expect(bookingCalls().at(-1)).toBe(
+      `publicBookingRecipientDay|${emailKey("victim@example.test")}`,
+    );
+    expect(booked).toEqual([]);
+    expect(f.notify).not.toHaveBeenCalled();
+    expect((await booking("someone-else@example.test", freshIp())).status).toBe(200);
+  });
+
+  it("a reschedule is refused by the cross-organization recipient cap too", async () => {
+    s.counts.set(
+      `publicBookingRecipientDay|${emailKey("victim@example.test")}`,
+      PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_ANY_ORG_PER_DAY,
+    );
+    const refused = await moveBooking();
+    expect(refused.status).toBe(429);
+    expect(Number(refused.headers.get("Retry-After"))).toBeGreaterThan(0);
+    expect(booked).toEqual([]);
+    expect(f.notify).not.toHaveBeenCalled();
+  });
+
+  it("one organization is refused after its daily cap, whatever the page, guest or IP", async () => {
+    s.counts.set("publicBookingOrgDay|org-acme", PUBLIC_BOOKING_ATTEMPTS_PER_ORG_PER_DAY);
+
+    const refused = await booking("new@example.test", freshIp());
+    expect(refused.status).toBe(429);
+    await expect(refused.json()).resolves.toEqual({ error: { code: "rate_limited" } });
+    expect(Number(refused.headers.get("Retry-After"))).toBeGreaterThan(0);
+    expect(booked).toEqual([]);
+    expect(f.notify).not.toHaveBeenCalled();
+
+    expect((await moveBooking("fresh@example.test")).status).toBe(429);
+    expect(booked).toEqual([]);
+    expect(f.notify).not.toHaveBeenCalled();
+    // Another organization has its own cap.
+    expect((await booking("new@example.test", freshIp(), OTHER_PAGE)).status).toBe(200);
+  });
+
+  it("one IP is refused after its daily allowance in one organization, with fresh guests, before the shared budgets", async () => {
+    const ip = "203.0.113.9";
+    // (The route's own per-IP "auth" limiter is a separate, earlier check.)
+    s.counts.set(
+      `publicBookingIpOrgDay|${ip}:org-acme`,
+      PUBLIC_BOOKING_ATTEMPTS_PER_IP_PER_ORG_PER_DAY,
+    );
+    booked.length = 0;
+    f.notify.mockClear();
+    vi.mocked(checkRateLimit).mockClear();
+
+    const refused = await booking("fresh@example.test", ip);
+    expect(refused.status).toBe(429);
+    expect(Number(refused.headers.get("Retry-After"))).toBeGreaterThan(0);
+    expect(bookingCalls().at(-1)).toBe(`publicBookingIpOrgDay|${ip}:org-acme`);
+    expect(s.counts.has("publicBookingType|type-acme-intro")).toBe(false);
+    expect(s.counts.has("publicBookingOrgDay|org-acme")).toBe(false);
+    expect(booked).toEqual([]);
+    expect(f.notify).not.toHaveBeenCalled();
+
+    expect((await moveBooking("fresh2@example.test", ip)).status).toBe(429);
+    expect(booked).toEqual([]);
+    // Another organization, and another IP, are unaffected.
+    expect((await booking("fresh@example.test", ip, OTHER_PAGE)).status).toBe(200);
+    expect((await booking("fresh3@example.test", freshIp())).status).toBe(200);
+  });
+
+  it.each(["publicBookingRecipientDay", "publicBookingIpOrgDay", "publicBookingOrgDay"] as const)(
+    "%s unavailable refuses create and reschedule with 503 and writes nothing",
+    async (unavailableName) => {
+      const counter = vi.mocked(checkRateLimit).getMockImplementation()!;
+      vi.mocked(checkRateLimit).mockImplementation(async (name, key, cost) =>
+        name === unavailableName ? { ok: false, reason: "unavailable" } : counter(name, key, cost),
+      );
+      try {
+        const created = await booking("guest@example.test", freshIp());
+        expect(created.status).toBe(503);
+        await expect(created.json()).resolves.toEqual({ error: { code: "service_unavailable" } });
+        expect((await moveBooking()).status).toBe(503);
+        expect(booked).toEqual([]);
+        expect(f.notify).not.toHaveBeenCalled();
+        expect(f.reminders).not.toHaveBeenCalled();
+      } finally {
+        vi.mocked(checkRateLimit).mockImplementation(counter);
+      }
+    },
+  );
+
+  it("a request refused by a narrow limiter spends none of the broader budgets", async () => {
+    s.counts.set(
+      `publicBookingRecipient|org-acme:${emailKey("victim@example.test")}`,
+      PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY,
+    );
+    expect((await booking("victim@example.test", freshIp())).status).toBe(429);
+    expect(bookingCalls()).toEqual([
+      `publicBookingRecipient|org-acme:${emailKey("victim@example.test")}`,
+    ]);
+    expect(s.counts.has("publicBookingOrgDay|org-acme")).toBe(false);
+    expect(s.counts.has("publicBookingType|type-acme-intro")).toBe(false);
   });
 });
 

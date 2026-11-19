@@ -924,6 +924,11 @@ export async function rescheduleBookingViaToken(
   if (oldBooking.status === "CANCELED") {
     throw new BookingError("Booking was canceled", "already_canceled");
   }
+  // Refused before admit so replaying a link for a past booking spends no
+  // allowance; the transaction below re-checks against fresh state.
+  if (oldBooking.status === "COMPLETED" || oldBooking.startsAt < new Date()) {
+    throw new BookingError("Booking already started", "too_late");
+  }
 
   const bookingType = await unscopedPrisma.bookingType.findFirst({
     where: { id: oldBooking.bookingTypeId, deletedAt: null },

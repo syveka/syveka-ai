@@ -44,6 +44,9 @@ export type RateLimiters = {
   eventReminderRecipientsDay: Ratelimit;
   publicBookingRecipient: Ratelimit;
   publicBookingType: Ratelimit;
+  publicBookingOrgDay: Ratelimit;
+  publicBookingRecipientDay: Ratelimit;
+  publicBookingIpOrgDay: Ratelimit;
 };
 
 /**
@@ -68,6 +71,33 @@ export const PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY = 5;
  * a page off; each counted attempt takes a real slot in the owner's calendar.
  */
 export const PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR = 30;
+/**
+ * Bookable public booking attempts (new bookings and reschedules) per
+ * organization per day, across all its pages, guests and IPs. Each one emails
+ * a guest address from the platform domain, so this bounds what one tenant
+ * can send. Conservative for a Finnish SMB (a busy one takes a few dozen
+ * bookings a day); an owner-tunable constant, raise it for a known high-volume
+ * tenant.
+ */
+export const PUBLIC_BOOKING_ATTEMPTS_PER_ORG_PER_DAY = 100;
+/**
+ * Bookable public booking attempts per recipient mailbox per day across ALL
+ * organizations. Sign-up and org creation are open, so the per-organization
+ * recipient cap alone would let one attacker mail a stranger 5 times per
+ * organization they create. Two businesses a person books with in a day, at
+ * the per-organization allowance each (2 x 5), reach exactly this cap, so a
+ * third business that day is refused.
+ */
+export const PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_ANY_ORG_PER_DAY = 10;
+/**
+ * Bookable public booking attempts per client IP per organization per day.
+ * Fresh throwaway guest addresses pass the recipient caps, so without this one
+ * IP could drain an organization's shared page and daily budgets and switch
+ * its booking page off. A genuine guest books or moves a handful of times; an
+ * owner-tunable constant. Requests without an IP header share one "anon"
+ * bucket per organization.
+ */
+export const PUBLIC_BOOKING_ATTEMPTS_PER_IP_PER_ORG_PER_DAY = 10;
 
 let rateLimitersClient: RateLimiters | null = null;
 
@@ -213,6 +243,24 @@ function getRateLimiters(): RateLimiters {
       limiter: Ratelimit.slidingWindow(PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR, "1 h"),
       prefix: "rl:public-booking:type",
     }),
+    publicBookingOrgDay: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(PUBLIC_BOOKING_ATTEMPTS_PER_ORG_PER_DAY, "1 d"),
+      prefix: "rl:public-booking:org:day",
+    }),
+    publicBookingRecipientDay: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(
+        PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_ANY_ORG_PER_DAY,
+        "1 d",
+      ),
+      prefix: "rl:public-booking:recipient:day",
+    }),
+    publicBookingIpOrgDay: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(PUBLIC_BOOKING_ATTEMPTS_PER_IP_PER_ORG_PER_DAY, "1 d"),
+      prefix: "rl:public-booking:ip-org:day",
+    }),
   };
   return rateLimitersClient;
 }
@@ -280,6 +328,15 @@ export const rateLimiters = {
   },
   get publicBookingType() {
     return getRateLimiters().publicBookingType;
+  },
+  get publicBookingOrgDay() {
+    return getRateLimiters().publicBookingOrgDay;
+  },
+  get publicBookingRecipientDay() {
+    return getRateLimiters().publicBookingRecipientDay;
+  },
+  get publicBookingIpOrgDay() {
+    return getRateLimiters().publicBookingIpOrgDay;
   },
 } satisfies RateLimiters;
 
