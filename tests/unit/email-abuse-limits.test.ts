@@ -597,7 +597,8 @@ describe("requests that book nothing write no booking row; a cap refusal is the 
   const RACERS = 5;
   /** The Redis limiter names of the page and organization caps, which no longer exist. */
   const SHARED_LIMITER = /^publicBooking(Type|OrgDay)\|/;
-  const RESET = 1_900_000_000_000;
+  // The service reports the reset rounded up to a whole minute, and the route passes it on as is.
+  const RESET = 1_900_000_020_000;
   const capRefusal = () =>
     new BookingError("Booking limit reached", "booking_cap", { limit: 30, reset: RESET });
 
@@ -656,7 +657,7 @@ describe("requests that book nothing write no booking row; a cap refusal is the 
     return Promise.all(inFlight);
   }
 
-  it("parallel creates for one offered slot write one row, and the losers write none", async () => {
+  it("route: parallel creates for one slot map one 200 and the losers to 409 slot_taken, spending the narrow caps once per attempt", async () => {
     s.exclusiveSlot = true;
     const responses = await race((i) => booking(`racer${i}@example.test`, freshIp()));
 
@@ -675,7 +676,7 @@ describe("requests that book nothing write no booking row; a cap refusal is the 
     for (const key of narrow) expect(s.counts.get(key)).toBe(1);
   });
 
-  it("one IP repeating losing requests is refused by its own limits, and writes no row", async () => {
+  it("route: one IP repeating slot_taken requests gets 409s and then its own 429, with no row written by the mocked service", async () => {
     s.exclusiveSlot = true;
     s.slotTaken = true; // someone else already holds the slot
     const ip = "203.0.113.50";
@@ -690,7 +691,7 @@ describe("requests that book nothing write no booking row; a cap refusal is the 
     expect(booked).toEqual([]);
   });
 
-  it("a cap refusal from the booking transaction is the exact 429 of any rate limit, with nothing booked or sent", async () => {
+  it("route: a booking_cap error from the service maps to the exact 429 of any rate limit, with nothing booked or sent", async () => {
     f.createPublicBooking.mockRejectedValueOnce(capRefusal());
     const res = await booking("guest@example.test", freshIp());
 
@@ -703,6 +704,19 @@ describe("requests that book nothing write no booking row; a cap refusal is the 
     expect(booked).toEqual([]);
     expect(f.notify).not.toHaveBeenCalled();
     expect(f.reminders).not.toHaveBeenCalled();
+  });
+
+  it("the 429's X-RateLimit-Reset is minute-aligned and Retry-After is consistent with it", async () => {
+    f.createPublicBooking.mockRejectedValueOnce(capRefusal());
+    const res = await booking("guest@example.test", freshIp());
+
+    const reset = Number(res.headers.get("X-RateLimit-Reset"));
+    expect(res.status).toBe(429);
+    expect(reset % 60_000).toBe(0);
+    expect(res.headers.get("Retry-After")).toBe(
+      String(Math.max(1, Math.ceil((reset - Date.now()) / 1000))),
+    );
+    expect(res.headers.get("Retry-After")).toBe("90");
   });
 
   it("a cap that frees up sooner than a second is retried after at least one second", async () => {
@@ -725,7 +739,7 @@ describe("requests that book nothing write no booking row; a cap refusal is the 
     expect([...s.counts.keys()].filter((k) => SHARED_LIMITER.test(k))).toEqual([]);
   });
 
-  it("parallel reschedules for one offered slot write one row", async () => {
+  it("route: parallel reschedules for one slot map one 200 and the losers to 409 slot_taken", async () => {
     fakeReschedule();
     s.exclusiveSlot = true;
     const responses = await race((i) => rescheduleFrom(`r${i}`, freshIp()));
@@ -738,7 +752,7 @@ describe("requests that book nothing write no booking row; a cap refusal is the 
     expect(booked).toHaveLength(1);
   });
 
-  it("a reschedule cap refusal is the same 429, and a failed move writes no row", async () => {
+  it("route: a booking_cap error on a reschedule maps to the same 429, and a failed move maps to 500 with no row written by the mocked service", async () => {
     fakeReschedule();
     f.reschedule.mockRejectedValueOnce(capRefusal());
     const refused = await rescheduleFrom("a", freshIp());

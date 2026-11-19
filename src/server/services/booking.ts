@@ -76,6 +76,7 @@ export const PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR = 30;
  */
 export const PUBLIC_BOOKING_ATTEMPTS_PER_ORG_PER_DAY = 100;
 
+const MINUTE_MS = 60_000;
 const HOUR_MS = 3_600_000;
 const DAY_MS = 24 * HOUR_MS;
 
@@ -112,6 +113,7 @@ async function assertSharedBookingCaps(
       windowMs: DAY_MS,
     },
   ];
+  let refusal: { limit: number; reset: number } | undefined;
   for (const { where, limit, windowMs } of caps) {
     const inWindow = { ...where, createdAt: { gte: new Date(now - windowMs) } };
     if ((await tx.booking.count({ where: inWindow })) < limit) continue;
@@ -121,7 +123,15 @@ async function assertSharedBookingCaps(
       select: { createdAt: true },
     });
     const reset = (oldest?.createdAt.getTime() ?? now) + windowMs;
-    throw new BookingError("Booking limit reached", "booking_cap", { limit, reset });
+    // Both caps full: report the later reset (and that cap's limit), so a retry
+    // at the reported time isn't refused again by the other cap.
+    if (!refusal || reset > refusal.reset) refusal = { limit, reset };
+  }
+  if (refusal) {
+    // The exact reset is derived from another guest's booking time, which goes
+    // out in X-RateLimit-Reset and Retry-After: round it up to a whole minute.
+    const reset = Math.ceil(refusal.reset / MINUTE_MS) * MINUTE_MS;
+    throw new BookingError("Booking limit reached", "booking_cap", { limit: refusal.limit, reset });
   }
 }
 

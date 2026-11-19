@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { PublicBookingInput } from "@/lib/validators/booking";
+import { Prisma } from "@/generated/prisma/client/client";
 import { findFirstOver, findManyOver, findManyPagedOver } from "./helpers/calendar-event-where";
 
 const {
@@ -1012,9 +1013,11 @@ describe("shared booking caps (page per hour, organization per day)", () => {
   const ORG_CAP = 100;
 
   type Row = { bookingTypeId: string; organizationId: string; status: string; createdAt: Date };
+  type StatusFilter = string | { equals?: string; in?: string[]; notIn?: string[]; not?: string };
   type Where = {
     bookingTypeId?: string;
     organizationId?: string;
+    status?: StatusFilter;
     createdAt: { gte: Date };
   };
   let rows: Row[];
@@ -1054,12 +1057,38 @@ describe("shared booking caps (page per hour, organization per day)", () => {
     }
   }
 
+  function matchesStatus(status: string, filter: StatusFilter): boolean {
+    if (typeof filter === "string") return status === filter;
+    for (const key of Object.keys(filter)) {
+      if (!["equals", "in", "notIn", "not"].includes(key)) {
+        throw new Error(`fake bookings table: unsupported status filter key "${key}"`);
+      }
+    }
+    return (
+      (filter.equals === undefined || status === filter.equals) &&
+      (filter.in === undefined || filter.in.includes(status)) &&
+      (filter.notIn === undefined || !filter.notIn.includes(status)) &&
+      (filter.not === undefined || status !== filter.not)
+    );
+  }
+
+  /** Applies every `where` key the service sends; throws on one it doesn't know, so none is silently ignored. */
   function inWindow(args: unknown): Row[] {
     const { where } = args as { where: Where };
+    for (const key of Object.keys(where)) {
+      if (!["bookingTypeId", "organizationId", "status", "createdAt"].includes(key)) {
+        throw new Error(`fake bookings table: unsupported where key "${key}"`);
+      }
+    }
+    const createdAtKeys = Object.keys(where.createdAt);
+    if (createdAtKeys.length !== 1 || createdAtKeys[0] !== "gte") {
+      throw new Error("fake bookings table: createdAt must be exactly { gte }");
+    }
     return rows.filter(
       (r) =>
         (where.bookingTypeId === undefined || r.bookingTypeId === where.bookingTypeId) &&
         (where.organizationId === undefined || r.organizationId === where.organizationId) &&
+        (where.status === undefined || matchesStatus(r.status, where.status)) &&
         r.createdAt >= where.createdAt.gte,
     );
   }
@@ -1189,8 +1218,10 @@ describe("shared booking caps (page per hour, organization per day)", () => {
       name: "page",
       limit: PAGE_CAP,
       windowMs: HOUR,
-      // 29 on this page (oldest 50 min old): one unit left.
-      seedLeftOne: () => seed(PAGE_CAP - 1, { oldestAgeMs: 50 * MIN }),
+      // 29 on this page (oldest 50 min 17.5 s old): one unit left. The exact
+      // reset, NOW + 9 min 42.5 s, is reported rounded up to NOW + 10 min.
+      seedLeftOne: () => seed(PAGE_CAP - 1, { oldestAgeMs: 50 * MIN + 17_500 }),
+      expectedReset: NOW + 10 * MIN,
       seedFull: (status: string) => seed(PAGE_CAP, { status }),
       seedExpired: () => seed(PAGE_CAP, { createdAt: new Date(NOW - HOUR - MIN) }),
     },
@@ -1198,8 +1229,12 @@ describe("shared booking caps (page per hour, organization per day)", () => {
       name: "organization",
       limit: ORG_CAP,
       windowMs: 24 * HOUR,
-      // 99 in the organization on other pages (oldest 20 h old): one unit left.
-      seedLeftOne: () => seed(ORG_CAP - 1, { bookingTypeId: "bt-2", oldestAgeMs: 20 * HOUR }),
+      // 99 in the organization on other pages (oldest 20 h 17.5 s old): one
+      // unit left. The exact reset, NOW + 3 h 59 min 42.5 s, is reported rounded
+      // up to NOW + 4 h.
+      seedLeftOne: () =>
+        seed(ORG_CAP - 1, { bookingTypeId: "bt-2", oldestAgeMs: 20 * HOUR + 17_500 }),
+      expectedReset: NOW + 4 * HOUR,
       seedFull: (status: string) => seed(ORG_CAP, { bookingTypeId: "bt-2", status }),
       seedExpired: () =>
         seed(ORG_CAP, { bookingTypeId: "bt-2", createdAt: new Date(NOW - 24 * HOUR - MIN) }),
@@ -1227,11 +1262,9 @@ describe("shared booking caps (page per hour, organization per day)", () => {
         expect(r.reason).toBeInstanceOf(BookingError);
         expect(r.reason).toMatchObject({
           code: "booking_cap",
-          // Free again when the oldest counted booking leaves the window.
-          cap: {
-            limit: c.limit,
-            reset: NOW - (c.name === "page" ? 50 * MIN : 20 * HOUR) + c.windowMs,
-          },
+          // Free again when the oldest counted booking leaves the window,
+          // rounded up to a whole minute.
+          cap: { limit: c.limit, reset: c.expectedReset },
         });
       }
       expect(rows.length).toBe(before + 1);
@@ -1308,6 +1341,76 @@ describe("shared booking caps (page per hour, organization per day)", () => {
       });
       await expect(createAt(CREATE_SLOTS[0]!)).rejects.toMatchObject({ code: "slot_taken" });
     });
+  });
+
+  it("another organization's (and page's) full cap doesn't count against this one", async () => {
+    seed(ORG_CAP, { organizationId: "org-b", bookingTypeId: "bt-9" });
+
+    await expect(createAt(CREATE_SLOTS[0]!)).resolves.toMatchObject({
+      manageToken: "raw-manage-token",
+    });
+    await expect(rescheduleBookingViaToken("t0", MOVE_SLOTS[0]!)).resolves.toBeDefined();
+    expect(txMock.booking.create).toHaveBeenCalledTimes(2);
+  });
+
+  describe.each([
+    ["create", () => createAt(CREATE_SLOTS[0]!)],
+    ["reschedule", () => rescheduleBookingViaToken("t0", MOVE_SLOTS[0]!)],
+  ] as const)("%s transaction", (_name, run) => {
+    it("takes the organization calendar lock before the first cap count", async () => {
+      await run();
+
+      const calls = txMock.$executeRaw.mock.calls as unknown as Array<
+        [TemplateStringsArray, ...unknown[]]
+      >;
+      const lockIndex = calls.findIndex(([strings]) => lockKind(strings) === "org-calendar");
+      expect(lockIndex).toBeGreaterThanOrEqual(0);
+      expect(txMock.booking.count).toHaveBeenCalled();
+      expect(txMock.$executeRaw.mock.invocationCallOrder[lockIndex]!).toBeLessThan(
+        txMock.booking.count.mock.invocationCallOrder[0]!,
+      );
+    });
+
+    it("runs READ COMMITTED, so each count's snapshot is taken after the lock", async () => {
+      await run();
+
+      expect(unscopedMock.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+        isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+      });
+    });
+  });
+
+  it("both caps full: the refusal carries the later reset, with that cap's limit", async () => {
+    // Organization frees up later (oldest 20 h old -> in 4 h) than the page (in 10 min).
+    seed(PAGE_CAP, { oldestAgeMs: 50 * MIN });
+    seed(ORG_CAP - PAGE_CAP, { bookingTypeId: "bt-2", oldestAgeMs: 20 * HOUR });
+    await expect(createAt(CREATE_SLOTS[0]!)).rejects.toMatchObject({
+      code: "booking_cap",
+      cap: { limit: ORG_CAP, reset: NOW + 4 * HOUR },
+    });
+
+    // Page frees up later (oldest 10 min old -> in 50 min) than the organization (in 10 min).
+    rows.length = 0;
+    seed(PAGE_CAP);
+    seed(ORG_CAP - PAGE_CAP, { bookingTypeId: "bt-2", oldestAgeMs: 23 * HOUR + 50 * MIN });
+    await expect(createAt(CREATE_SLOTS[0]!)).rejects.toMatchObject({
+      code: "booking_cap",
+      cap: { limit: PAGE_CAP, reset: NOW + 50 * MIN },
+    });
+  });
+
+  it("the reset is rounded up to a whole minute, never earlier than the exact one", async () => {
+    // Oldest counted row is 50 min 17.5 s old: the exact reset is NOW + 9 min 42.5 s.
+    seed(PAGE_CAP, { oldestAgeMs: 50 * MIN + 17_500 });
+    const exact = NOW - (50 * MIN + 17_500) + HOUR;
+
+    const error = await createAt(CREATE_SLOTS[0]!).catch((e: unknown) => e);
+
+    expect(error).toBeInstanceOf(BookingError);
+    const { reset } = (error as BookingError).cap!;
+    expect(reset % MIN).toBe(0);
+    expect(reset).toBeGreaterThanOrEqual(exact);
+    expect(reset).toBe(NOW + 10 * MIN);
   });
 
   it("when counting the bookings fails, nothing is booked and the error propagates", async () => {
