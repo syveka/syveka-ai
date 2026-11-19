@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/server/security/rate-limit", () => ({
   rateLimitRefusal: vi.fn(async () => null),
+  refusalFor: vi.fn(() => null),
   emailKey: vi.fn((email: string) => `hash:${email}`),
 }));
 vi.mock("@/server/services/booking", () => ({

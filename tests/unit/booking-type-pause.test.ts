@@ -107,6 +107,9 @@ const tx = {
   },
   eventAttendee: { findFirst: vi.fn(async () => null), create: vi.fn(async () => ({})) },
   booking: {
+    // Shared booking caps (assertSharedBookingCaps): nothing in the window.
+    count: vi.fn(async () => 0),
+    findFirst: vi.fn(async () => null),
     findUniqueOrThrow: vi.fn(async ({ where }: { where: Row }) => {
       const b = bookingRow(where.id as string);
       return { ...b, bookingType: { ...typeRow(b.bookingTypeId as string) } };

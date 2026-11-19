@@ -43,8 +43,6 @@ export type RateLimiters = {
   eventReminderRecipientsHour: Ratelimit;
   eventReminderRecipientsDay: Ratelimit;
   publicBookingRecipient: Ratelimit;
-  publicBookingType: Ratelimit;
-  publicBookingOrgDay: Ratelimit;
   publicBookingRecipientDay: Ratelimit;
   publicBookingIpOrgDay: Ratelimit;
 };
@@ -65,21 +63,9 @@ export const EVENT_REMINDER_RECIPIENTS_PER_DAY = 200;
  * business in a day; a slot taken at the last moment still counts.
  */
 export const PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY = 5;
-/**
- * Bookable public bookings for one booking page per hour, from any address or
- * IP. Only attempts for an offered slot count, so junk requests can't switch
- * a page off; each counted attempt takes a real slot in the owner's calendar.
- */
-export const PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR = 30;
-/**
- * Bookable public booking attempts (new bookings and reschedules) per
- * organization per day, across all its pages, guests and IPs. Each one emails
- * a guest address from the platform domain, so this bounds what one tenant
- * can send. Conservative for a Finnish SMB (a busy one takes a few dozen
- * bookings a day); an owner-tunable constant, raise it for a known high-volume
- * tenant.
- */
-export const PUBLIC_BOOKING_ATTEMPTS_PER_ORG_PER_DAY = 100;
+// The per-page and per-organization caps are not Redis limits: they are counted
+// from the bookings table inside the booking transaction (see
+// PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR in services/booking.ts).
 /**
  * Bookable public booking attempts per recipient mailbox per day across ALL
  * organizations. Sign-up and org creation are open, so the per-organization
@@ -230,23 +216,14 @@ function getRateLimiters(): RateLimiters {
     }),
     // Public bookings: each one emails the address the guest typed (a
     // confirmation and two reminders) with no login in front. Capped per
-    // recipient address and organization (the address hashed, any IP) and
-    // per booking page (by booking type id, any address or IP), next to the
-    // per-IP limit in the route.
+    // recipient address and organization (the address hashed, any IP), per
+    // recipient across organizations and per IP and organization, next to the
+    // per-IP limit in the route. The caps shared by all guests (page,
+    // organization) are counted from the bookings table instead.
     publicBookingRecipient: new Ratelimit({
       redis: client,
       limiter: Ratelimit.slidingWindow(PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY, "1 d"),
       prefix: "rl:public-booking:recipient",
-    }),
-    publicBookingType: new Ratelimit({
-      redis: client,
-      limiter: Ratelimit.slidingWindow(PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR, "1 h"),
-      prefix: "rl:public-booking:type",
-    }),
-    publicBookingOrgDay: new Ratelimit({
-      redis: client,
-      limiter: Ratelimit.slidingWindow(PUBLIC_BOOKING_ATTEMPTS_PER_ORG_PER_DAY, "1 d"),
-      prefix: "rl:public-booking:org:day",
     }),
     publicBookingRecipientDay: new Ratelimit({
       redis: client,
@@ -325,12 +302,6 @@ export const rateLimiters = {
   },
   get publicBookingRecipient() {
     return getRateLimiters().publicBookingRecipient;
-  },
-  get publicBookingType() {
-    return getRateLimiters().publicBookingType;
-  },
-  get publicBookingOrgDay() {
-    return getRateLimiters().publicBookingOrgDay;
   },
   get publicBookingRecipientDay() {
     return getRateLimiters().publicBookingRecipientDay;

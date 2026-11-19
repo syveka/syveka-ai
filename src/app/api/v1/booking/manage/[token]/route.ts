@@ -85,8 +85,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
     organizationId: string;
     guestEmail: string;
   }) => {
-    // Same order as the create route: narrowest first, so a passing check is
-    // not spent on the shared budgets of a request a narrower one refuses.
+    // Same rule as the create route (see there): narrow caps spent now, the
+    // page and organization caps counted by the service inside the transaction.
     refusal =
       (await rateLimit.rateLimitRefusal(
         "publicBookingRecipient",
@@ -99,9 +99,7 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
       (await rateLimit.rateLimitRefusal(
         "publicBookingIpOrgDay",
         `${clientIp(request)}:${b.organizationId}`,
-      )) ??
-      (await rateLimit.rateLimitRefusal("publicBookingType", b.bookingTypeId)) ??
-      (await rateLimit.rateLimitRefusal("publicBookingOrgDay", b.organizationId));
+      ));
     if (refusal) throw new AdmissionRefused();
   };
   try {
@@ -132,6 +130,15 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
       return NextResponse.json({ error: e.code }, { status: 404 });
     }
     if (e instanceof booking.BookingError) {
+      if (e.code === "booking_cap" && e.cap) {
+        const capRefusal = rateLimit.refusalFor({
+          ok: false,
+          reason: "limited",
+          remaining: 0,
+          ...e.cap,
+        });
+        if (capRefusal) return capRefusal;
+      }
       if (e.code === "calendar_busy") {
         return NextResponse.json(
           { error: e.code },

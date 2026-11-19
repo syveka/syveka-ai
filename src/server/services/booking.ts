@@ -50,10 +50,78 @@ export class BookingError extends Error {
       | "too_late"
       | "already_canceled"
       | "owner_not_member"
-      | "calendar_busy",
+      | "calendar_busy"
+      | "booking_cap",
+    /** Set with "booking_cap": the cap that refused and when its oldest counted booking leaves the window (epoch ms). */
+    public readonly cap?: { limit: number; reset: number },
   ) {
     super(message);
     this.name = "BookingError";
+  }
+}
+
+/**
+ * Bookings (new and moved, any status) per booking page per hour, from any
+ * address or IP. Each one takes a real slot in the owner's calendar and mails
+ * the guest from the platform domain. Counted from the bookings table inside
+ * the booking transaction (see assertSharedBookingCaps), so the cap is exact.
+ */
+export const PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR = 30;
+/**
+ * Bookings (new and moved, any status) per organization per day, across all
+ * its pages, guests and IPs. Each one emails a guest address from the platform
+ * domain, so this bounds what one tenant can send. Conservative for a Finnish
+ * SMB (a busy one takes a few dozen bookings a day); an owner-tunable
+ * constant, raise it for a known high-volume tenant.
+ */
+export const PUBLIC_BOOKING_ATTEMPTS_PER_ORG_PER_DAY = 100;
+
+const HOUR_MS = 3_600_000;
+const DAY_MS = 24 * HOUR_MS;
+
+const READ_COMMITTED = { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted };
+
+/**
+ * The page and organization caps shared by every guest. Call inside the
+ * booking transaction after lockBookingCalendars and before the booking row is
+ * written: every booking write holds the organization's calendar lock, so the
+ * counts are exact under concurrency, a rolled-back transaction leaves no row
+ * and a request that loses its slot or fails never counts. Canceled and moved
+ * rows count too: they sent mail.
+ *
+ * Exact only because the org advisory lock is held and the transaction is READ
+ * COMMITTED, so each count's statement snapshot is taken after the lock. Only
+ * the two tx.booking.create calls in this file may write Booking rows; any other
+ * writer must take the same lock, and a source filter would be needed if
+ * non-public bookings were ever written.
+ */
+async function assertSharedBookingCaps(
+  tx: Prisma.TransactionClient,
+  ids: { bookingTypeId: string; organizationId: string },
+): Promise<void> {
+  const now = Date.now();
+  const caps = [
+    {
+      where: { bookingTypeId: ids.bookingTypeId },
+      limit: PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR,
+      windowMs: HOUR_MS,
+    },
+    {
+      where: { organizationId: ids.organizationId },
+      limit: PUBLIC_BOOKING_ATTEMPTS_PER_ORG_PER_DAY,
+      windowMs: DAY_MS,
+    },
+  ];
+  for (const { where, limit, windowMs } of caps) {
+    const inWindow = { ...where, createdAt: { gte: new Date(now - windowMs) } };
+    if ((await tx.booking.count({ where: inWindow })) < limit) continue;
+    const oldest = await tx.booking.findFirst({
+      where: inWindow,
+      orderBy: { createdAt: "asc" },
+      select: { createdAt: true },
+    });
+    const reset = (oldest?.createdAt.getTime() ?? now) + windowMs;
+    throw new BookingError("Booking limit reached", "booking_cap", { limit, reset });
   }
 }
 
@@ -490,6 +558,8 @@ export async function createPublicBooking(params: {
    * given, the slot offered) and before anything is written; it may throw
    * to refuse. Abuse limits go here so that only attempts that would book
    * count, and junk requests can't use up a page's or a guest's allowance.
+   * The caps shared by all guests (page, organization) are not here: they are
+   * counted from the bookings table inside the transaction (assertSharedBookingCaps).
    */
   admit?: (bookingType: { id: string; organizationId: string }) => Promise<void>;
 }) {
@@ -543,6 +613,7 @@ export async function createPublicBooking(params: {
       bookingType.bufferBeforeMinutes,
       bookingType.bufferAfterMinutes,
     );
+    await assertSharedBookingCaps(tx, { bookingTypeId: bookingType.id, organizationId: orgId });
 
     const event = await tx.calendarEvent.create({
       data: {
@@ -640,7 +711,7 @@ export async function createPublicBooking(params: {
     });
 
     return { booking, event, contactId: matchedContact.id, newContact };
-  });
+  }, READ_COMMITTED);
 
   const manageToken = await issueToken(
     created.booking.id,
@@ -993,6 +1064,10 @@ export async function rescheduleBookingViaToken(
       bookingType.bufferAfterMinutes,
       oldBooking.eventId ?? undefined,
     );
+    await assertSharedBookingCaps(tx, {
+      bookingTypeId: bookingType.id,
+      organizationId: orgId,
+    });
 
     // Guarded, not a blind update: closes the race against a concurrent
     // owner-cancel (calendar.ts's cancelEvent -> booking.ts's
@@ -1086,7 +1161,7 @@ export async function rescheduleBookingViaToken(
       },
     });
     return { booking, event, contactId: previousGuest?.contactId ?? null };
-  });
+  }, READ_COMMITTED);
 
   // Belt-and-braces: also invalidate any OTHER outstanding tokens for the
   // old booking - the token actually used above is already consumed

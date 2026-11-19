@@ -1,10 +1,11 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type * as RedisModule from "@/server/integrations/redis";
 
 /**
  * Outgoing email from the platform's domain can't be pointed at strangers in
- * bulk. Public bookings email the address the guest typed, so one address and
- * one booking page are capped whatever the IP. Calendar-event reminders email
+ * bulk. Public bookings email the address the guest typed, so one address, one
+ * IP and (counted in the booking transaction, see booking-service.test.ts) one
+ * booking page and one organization are capped. Calendar-event reminders email
  * every attendee address, so the addresses a save adds spend a per-organization
  * hourly and daily budget.
  *
@@ -22,6 +23,15 @@ const s = vi.hoisted(() => ({
   addedEmails: [] as string[],
   /** The tenant the event action runs as. */
   orgId: "org-a",
+  /** When set, the fake booking transaction lets one request win the slot and refuses the rest. */
+  exclusiveSlot: false,
+  slotTaken: false,
+  /** When above zero, the fake transaction waits until this many requests reached it. */
+  barrier: 0,
+  arrived: 0,
+  releases: [] as Array<() => void>,
+  /** When set, the fake booking transaction fails and rolls back. */
+  txFails: false,
 }));
 
 const f = vi.hoisted(() => ({
@@ -38,8 +48,6 @@ vi.mock("@/server/integrations/redis", async (importActual) => {
   s.limits = {
     auth: 10,
     publicBookingRecipient: actual.PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY,
-    publicBookingType: actual.PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR,
-    publicBookingOrgDay: actual.PUBLIC_BOOKING_ATTEMPTS_PER_ORG_PER_DAY,
     publicBookingRecipientDay: actual.PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_ANY_ORG_PER_DAY,
     publicBookingIpOrgDay: actual.PUBLIC_BOOKING_ATTEMPTS_PER_IP_PER_ORG_PER_DAY,
     eventReminderRecipientsHour: actual.EVENT_REMINDER_RECIPIENTS_PER_HOUR,
@@ -74,6 +82,7 @@ vi.mock("@/server/services/booking", () => ({
     constructor(
       message: string,
       readonly code: string,
+      readonly cap?: { limit: number; reset: number },
     ) {
       super(message);
     }
@@ -121,10 +130,8 @@ import {
   EVENT_REMINDER_RECIPIENTS_PER_DAY,
   EVENT_REMINDER_RECIPIENTS_PER_HOUR,
   PUBLIC_BOOKING_ATTEMPTS_PER_IP_PER_ORG_PER_DAY,
-  PUBLIC_BOOKING_ATTEMPTS_PER_ORG_PER_DAY,
   PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_ANY_ORG_PER_DAY,
   PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY,
-  PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR,
 } from "@/server/integrations/redis";
 import { emailKey } from "@/server/security/rate-limit";
 import { BookingError } from "@/server/services/booking";
@@ -133,8 +140,6 @@ const BOOKING_LIMITERS = [
   "publicBookingRecipient",
   "publicBookingRecipientDay",
   "publicBookingIpOrgDay",
-  "publicBookingType",
-  "publicBookingOrgDay",
 ] as const;
 /** The booking limiter calls made, in order, as `name|key`. */
 const bookingCalls = () =>
@@ -154,8 +159,40 @@ const PAGES: Record<string, { id: string; organizationId: string }> = {
 };
 const OFFERED_SLOT = "2026-11-20T08:00:00.000Z";
 const UNOFFERED_SLOT = "2026-11-20T03:00:00.000Z";
-/** The guest addresses of bookings the fake service wrote. */
+/** The guest addresses of bookings the fake service wrote: one entry per booking row. */
 const booked: string[] = [];
+
+/**
+ * The fake booking transaction. A lost slot or a failed transaction throws
+ * before the row is written, as the real one does (it rolls back).
+ */
+async function commitFake(email: string): Promise<void> {
+  await Promise.resolve(); // let parallel requests interleave before they commit
+  if (s.barrier > 0) {
+    // Hold every request here until all of them were admitted, so none can
+    // commit before the others have been admitted too.
+    s.arrived++;
+    if (s.arrived >= s.barrier) for (const release of s.releases) release();
+    else await new Promise<void>((resolve) => s.releases.push(resolve));
+  }
+  if (s.exclusiveSlot) {
+    if (s.slotTaken) throw new BookingError("Slot no longer available", "slot_taken");
+    s.slotTaken = true;
+  }
+  if (s.txFails) throw new Error("transaction rolled back");
+  booked.push(email);
+}
+
+/** Makes only the limiters accepted by `match` unavailable. */
+function makeUnavailable(match: (name: string) => boolean): () => void {
+  const counter = vi.mocked(checkRateLimit).getMockImplementation()!;
+  vi.mocked(checkRateLimit).mockImplementation(async (name, key, cost) =>
+    match(name) ? { ok: false, reason: "unavailable" } : counter(name, key, cost),
+  );
+  return () => {
+    vi.mocked(checkRateLimit).mockImplementation(counter);
+  };
+}
 
 function booking(email: string, ip: string, page = PAGE, startsAt = OFFERED_SLOT) {
   return createBooking(
@@ -201,8 +238,15 @@ beforeEach(() => {
   s.addedEmails = [];
   s.orgId = "org-a";
   booked.length = 0;
+  s.exclusiveSlot = false;
+  s.slotTaken = false;
+  s.barrier = 0;
+  s.arrived = 0;
+  s.releases = [];
+  s.txFails = false;
   // Like the real service: the page is found by its exact slugs, an offered
-  // slot is checked, then admit runs, then the booking is written.
+  // slot is checked, then admit runs, then the booking is written (the page
+  // and organization caps, counted there, are covered in booking-service.test.ts).
   f.createPublicBooking.mockImplementation(
     async (call: {
       orgSlug: string;
@@ -216,7 +260,7 @@ beforeEach(() => {
         throw new BookingError("Requested time is not available", "invalid_slot");
       }
       await call.admit?.(page);
-      booked.push(call.input.email);
+      await commitFake(call.input.email);
       return {
         booking: {
           id: `b-${booked.length}`,
@@ -262,27 +306,9 @@ describe("public booking: per recipient and per page", () => {
     expect(keys.join("\n")).not.toContain("guest@example.test");
   });
 
-  it("one booking page is refused after its hourly allowance, across addresses and IPs", async () => {
-    for (let i = 0; i < PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR; i++) {
-      expect((await booking(`g${i}@example.test`, freshIp())).status).toBe(200);
-    }
-    booked.length = 0;
-    f.notify.mockClear();
-
-    const refused = await booking("new@example.test", freshIp());
-    expect(refused.status).toBe(429);
-    expect(booked).toEqual([]);
-    expect(f.notify).not.toHaveBeenCalled();
-
-    // Another organization's page has its own allowance.
-    expect((await booking("new@example.test", freshIp(), OTHER_PAGE)).status).toBe(200);
-    // The page is keyed by its booking type, not by the URL's spelling.
-    expect([...s.counts.keys()]).toContain("publicBookingType|type-acme-intro");
-  });
-
-  it("junk attempts don't use up a page or a guest: only bookable attempts count", async () => {
-    // Far more requests for a slot that isn't offered than either allowance.
-    for (let i = 0; i < PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR + 10; i++) {
+  it("junk attempts don't use up a guest: only bookable attempts count", async () => {
+    // Far more requests for a slot that isn't offered than the guest's allowance.
+    for (let i = 0; i < PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY + 10; i++) {
       const res = await booking("victim@example.test", freshIp(), PAGE, UNOFFERED_SLOT);
       expect(res.status).toBe(400);
     }
@@ -302,19 +328,14 @@ describe("public booking: per recipient and per page", () => {
   });
 
   it("the admission limiters alone being unavailable also refuse with 503 and book nothing", async () => {
-    const counter = vi.mocked(checkRateLimit).getMockImplementation()!;
-    vi.mocked(checkRateLimit).mockImplementation(async (name, key, cost) =>
-      name.startsWith("publicBooking")
-        ? { ok: false, reason: "unavailable" }
-        : counter(name, key, cost),
-    );
+    const restore = makeUnavailable((name) => name.startsWith("publicBooking"));
     try {
       const res = await booking("guest@example.test", freshIp());
       expect(res.status).toBe(503);
       expect(booked).toEqual([]);
       expect(f.notify).not.toHaveBeenCalled();
     } finally {
-      vi.mocked(checkRateLimit).mockImplementation(counter);
+      restore();
     }
   });
 
@@ -365,7 +386,7 @@ describe("rescheduling from the email link", () => {
           organizationId: "org-acme",
           guestEmail: "victim@example.test",
         });
-        booked.push("victim@example.test");
+        await commitFake("victim@example.test");
         return {
           booking: {
             id: `b-${booked.length}`,
@@ -426,7 +447,7 @@ describe("daily caps per organization and per recipient mailbox", () => {
           organizationId: "org-acme",
           guestEmail: email,
         });
-        booked.push(email);
+        await commitFake(email);
         return {
           booking: { id: "b-1", organizationId: "org-acme", startsAt: new Date(startsAt) },
           event: { id: "e-1" },
@@ -450,8 +471,6 @@ describe("daily caps per organization and per recipient mailbox", () => {
       `publicBookingRecipient|org-acme:${emailKey("guest@example.test")}`,
       `publicBookingRecipientDay|${emailKey("guest@example.test")}`,
       "publicBookingIpOrgDay|203.0.113.7:org-acme",
-      "publicBookingType|type-acme-intro",
-      "publicBookingOrgDay|org-acme",
     ]);
   });
 
@@ -461,8 +480,6 @@ describe("daily caps per organization and per recipient mailbox", () => {
       `publicBookingRecipient|org-acme:${emailKey("victim@example.test")}`,
       `publicBookingRecipientDay|${emailKey("victim@example.test")}`,
       "publicBookingIpOrgDay|203.0.113.7:org-acme",
-      "publicBookingType|type-acme-intro",
-      "publicBookingOrgDay|org-acme",
     ]);
   });
 
@@ -517,24 +534,7 @@ describe("daily caps per organization and per recipient mailbox", () => {
     expect(f.notify).not.toHaveBeenCalled();
   });
 
-  it("one organization is refused after its daily cap, whatever the page, guest or IP", async () => {
-    s.counts.set("publicBookingOrgDay|org-acme", PUBLIC_BOOKING_ATTEMPTS_PER_ORG_PER_DAY);
-
-    const refused = await booking("new@example.test", freshIp());
-    expect(refused.status).toBe(429);
-    await expect(refused.json()).resolves.toEqual({ error: { code: "rate_limited" } });
-    expect(Number(refused.headers.get("Retry-After"))).toBeGreaterThan(0);
-    expect(booked).toEqual([]);
-    expect(f.notify).not.toHaveBeenCalled();
-
-    expect((await moveBooking("fresh@example.test")).status).toBe(429);
-    expect(booked).toEqual([]);
-    expect(f.notify).not.toHaveBeenCalled();
-    // Another organization has its own cap.
-    expect((await booking("new@example.test", freshIp(), OTHER_PAGE)).status).toBe(200);
-  });
-
-  it("one IP is refused after its daily allowance in one organization, with fresh guests, before the shared budgets", async () => {
+  it("one IP is refused after its daily allowance in one organization, with fresh guests", async () => {
     const ip = "203.0.113.9";
     // (The route's own per-IP "auth" limiter is a separate, earlier check.)
     s.counts.set(
@@ -549,8 +549,6 @@ describe("daily caps per organization and per recipient mailbox", () => {
     expect(refused.status).toBe(429);
     expect(Number(refused.headers.get("Retry-After"))).toBeGreaterThan(0);
     expect(bookingCalls().at(-1)).toBe(`publicBookingIpOrgDay|${ip}:org-acme`);
-    expect(s.counts.has("publicBookingType|type-acme-intro")).toBe(false);
-    expect(s.counts.has("publicBookingOrgDay|org-acme")).toBe(false);
     expect(booked).toEqual([]);
     expect(f.notify).not.toHaveBeenCalled();
 
@@ -561,13 +559,10 @@ describe("daily caps per organization and per recipient mailbox", () => {
     expect((await booking("fresh3@example.test", freshIp())).status).toBe(200);
   });
 
-  it.each(["publicBookingRecipientDay", "publicBookingIpOrgDay", "publicBookingOrgDay"] as const)(
+  it.each(["publicBookingRecipientDay", "publicBookingIpOrgDay"] as const)(
     "%s unavailable refuses create and reschedule with 503 and writes nothing",
     async (unavailableName) => {
-      const counter = vi.mocked(checkRateLimit).getMockImplementation()!;
-      vi.mocked(checkRateLimit).mockImplementation(async (name, key, cost) =>
-        name === unavailableName ? { ok: false, reason: "unavailable" } : counter(name, key, cost),
-      );
+      const restore = makeUnavailable((name) => name === unavailableName);
       try {
         const created = await booking("guest@example.test", freshIp());
         expect(created.status).toBe(503);
@@ -577,7 +572,7 @@ describe("daily caps per organization and per recipient mailbox", () => {
         expect(f.notify).not.toHaveBeenCalled();
         expect(f.reminders).not.toHaveBeenCalled();
       } finally {
-        vi.mocked(checkRateLimit).mockImplementation(counter);
+        restore();
       }
     },
   );
@@ -591,8 +586,174 @@ describe("daily caps per organization and per recipient mailbox", () => {
     expect(bookingCalls()).toEqual([
       `publicBookingRecipient|org-acme:${emailKey("victim@example.test")}`,
     ]);
-    expect(s.counts.has("publicBookingOrgDay|org-acme")).toBe(false);
-    expect(s.counts.has("publicBookingType|type-acme-intro")).toBe(false);
+  });
+});
+
+// The page and organization caps are counted from committed booking rows inside
+// the booking transaction (booking-service.test.ts). Here: a request that books
+// nothing (lost slot, rolled back) writes no row, so it can't affect them, and
+// the route answers a cap refusal like any other rate limit.
+describe("requests that book nothing write no booking row; a cap refusal is the usual 429", () => {
+  const RACERS = 5;
+  /** The Redis limiter names of the page and organization caps, which no longer exist. */
+  const SHARED_LIMITER = /^publicBooking(Type|OrgDay)\|/;
+  const RESET = 1_900_000_000_000;
+  const capRefusal = () =>
+    new BookingError("Booking limit reached", "booking_cap", { limit: 30, reset: RESET });
+
+  beforeEach(() => {
+    // Only Date: the race helper below waits on real timers. 90 s until the cap frees up.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(RESET - 90_000);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function rescheduleFrom(email: string, ip: string) {
+    return rescheduleViaLink(
+      new Request("http://localhost/api/v1/booking/manage/x", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-forwarded-for": ip },
+        body: JSON.stringify({ startsAt: OFFERED_SLOT }),
+      }),
+      { params: Promise.resolve({ token: `manage-token-${email}` }) },
+    );
+  }
+
+  function fakeReschedule() {
+    f.reschedule.mockImplementation(
+      async (_token: string, _startsAt: string, admit?: (b: unknown) => Promise<void>) => {
+        const email = `${_token}@example.test`;
+        await admit?.({
+          bookingTypeId: "type-acme-intro",
+          organizationId: "org-acme",
+          guestEmail: email,
+        });
+        await commitFake(email);
+        return {
+          booking: { id: "b-1", organizationId: "org-acme", startsAt: new Date(OFFERED_SLOT) },
+          event: { id: "e-1" },
+          manageToken: "next-token",
+        };
+      },
+    );
+  }
+
+  /**
+   * Runs `RACERS` requests in flight together: each starts one macrotask after
+   * the last (the vitest mocker resolves a mocked module wrongly when several
+   * dynamic imports of it start in the same tick, which the real runtime
+   * doesn't do), and none commits until all were admitted.
+   */
+  async function race(start: (i: number) => Promise<Response>): Promise<Response[]> {
+    s.barrier = RACERS;
+    const inFlight: Promise<Response>[] = [];
+    for (let i = 0; i < RACERS; i++) {
+      inFlight.push(start(i));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    return Promise.all(inFlight);
+  }
+
+  it("parallel creates for one offered slot write one row, and the losers write none", async () => {
+    s.exclusiveSlot = true;
+    const responses = await race((i) => booking(`racer${i}@example.test`, freshIp()));
+
+    const statuses = responses.map((r) => r.status).sort();
+    expect(statuses).toEqual([200, ...Array<number>(RACERS - 1).fill(409)]);
+    for (const r of responses.filter((x) => x.status === 409)) {
+      await expect(r.json()).resolves.toEqual({ error: "slot_taken" });
+    }
+    expect(booked).toHaveLength(1);
+    expect([...s.counts.keys()].filter((k) => SHARED_LIMITER.test(k))).toEqual([]);
+    // The narrow caps are spent by every attempt, as before: one per guest, per IP.
+    const narrow = [...s.counts.keys()].filter((k) =>
+      /^publicBooking(Recipient|RecipientDay|IpOrgDay)\|/.test(k),
+    );
+    expect(narrow).toHaveLength(RACERS * 3);
+    for (const key of narrow) expect(s.counts.get(key)).toBe(1);
+  });
+
+  it("one IP repeating losing requests is refused by its own limits, and writes no row", async () => {
+    s.exclusiveSlot = true;
+    s.slotTaken = true; // someone else already holds the slot
+    const ip = "203.0.113.50";
+    const statuses: number[] = [];
+    for (let i = 0; i < PUBLIC_BOOKING_ATTEMPTS_PER_IP_PER_ORG_PER_DAY + 2; i++) {
+      statuses.push((await booking(`loser${i}@example.test`, ip)).status);
+    }
+    expect(statuses.slice(0, PUBLIC_BOOKING_ATTEMPTS_PER_IP_PER_ORG_PER_DAY)).toEqual(
+      Array(PUBLIC_BOOKING_ATTEMPTS_PER_IP_PER_ORG_PER_DAY).fill(409),
+    );
+    expect(statuses.slice(-2)).toEqual([429, 429]);
+    expect(booked).toEqual([]);
+  });
+
+  it("a cap refusal from the booking transaction is the exact 429 of any rate limit, with nothing booked or sent", async () => {
+    f.createPublicBooking.mockRejectedValueOnce(capRefusal());
+    const res = await booking("guest@example.test", freshIp());
+
+    expect(res.status).toBe(429);
+    await expect(res.json()).resolves.toEqual({ error: { code: "rate_limited" } });
+    expect(res.headers.get("Retry-After")).toBe("90");
+    expect(res.headers.get("X-RateLimit-Limit")).toBe("30");
+    expect(res.headers.get("X-RateLimit-Remaining")).toBe("0");
+    expect(res.headers.get("X-RateLimit-Reset")).toBe(String(RESET));
+    expect(booked).toEqual([]);
+    expect(f.notify).not.toHaveBeenCalled();
+    expect(f.reminders).not.toHaveBeenCalled();
+  });
+
+  it("a cap that frees up sooner than a second is retried after at least one second", async () => {
+    f.createPublicBooking.mockRejectedValueOnce(
+      new BookingError("Booking limit reached", "booking_cap", {
+        limit: 100,
+        reset: RESET - 91_000,
+      }),
+    );
+    const res = await booking("guest@example.test", freshIp());
+    expect(res.status).toBe(429);
+    expect(res.headers.get("Retry-After")).toBe("1");
+  });
+
+  it("a failed or rolled-back transaction writes no row", async () => {
+    s.txFails = true;
+    const res = await booking("guest@example.test", freshIp());
+    expect(res.status).toBe(500);
+    expect(booked).toEqual([]);
+    expect([...s.counts.keys()].filter((k) => SHARED_LIMITER.test(k))).toEqual([]);
+  });
+
+  it("parallel reschedules for one offered slot write one row", async () => {
+    fakeReschedule();
+    s.exclusiveSlot = true;
+    const responses = await race((i) => rescheduleFrom(`r${i}`, freshIp()));
+
+    const statuses = responses.map((r) => r.status).sort();
+    expect(statuses).toEqual([200, ...Array<number>(RACERS - 1).fill(409)]);
+    for (const r of responses.filter((x) => x.status === 409)) {
+      await expect(r.json()).resolves.toEqual({ error: "slot_taken" });
+    }
+    expect(booked).toHaveLength(1);
+  });
+
+  it("a reschedule cap refusal is the same 429, and a failed move writes no row", async () => {
+    fakeReschedule();
+    f.reschedule.mockRejectedValueOnce(capRefusal());
+    const refused = await rescheduleFrom("a", freshIp());
+    expect(refused.status).toBe(429);
+    await expect(refused.json()).resolves.toEqual({ error: { code: "rate_limited" } });
+    expect(refused.headers.get("X-RateLimit-Limit")).toBe("30");
+    expect(refused.headers.get("X-RateLimit-Remaining")).toBe("0");
+    expect(refused.headers.get("X-RateLimit-Reset")).toBe(String(RESET));
+    expect(refused.headers.get("Retry-After")).toBe("90");
+    expect(booked).toEqual([]);
+    expect(f.notify).not.toHaveBeenCalled();
+
+    s.txFails = true;
+    expect((await rescheduleFrom("b", freshIp())).status).toBe(500);
+    expect(booked).toEqual([]);
   });
 });
 

@@ -23,6 +23,9 @@ const {
     contact: { findFirst: vi.fn(), findMany: vi.fn(), create: vi.fn() },
     eventAttendee: { create: vi.fn(), findFirst: vi.fn() },
     booking: {
+      // Shared page/org caps (assertSharedBookingCaps): nothing booked yet.
+      count: vi.fn(async (_args?: unknown) => 0),
+      findFirst: vi.fn(async (_args?: unknown): Promise<{ createdAt: Date } | null> => null),
       create: vi.fn(),
       update: vi.fn(),
       updateMany: vi.fn(async () => ({ count: 1 })),
@@ -49,7 +52,7 @@ const {
     emitMock: vi.fn(async () => undefined),
     issueTokenMock: vi.fn(async () => "raw-manage-token"),
     resolveTokenMock: vi.fn(),
-    consumeTokenAtomicMock: vi.fn(async () => undefined),
+    consumeTokenAtomicMock: vi.fn(async (_tx?: unknown, _id?: string): Promise<void> => undefined),
     invalidateBookingTokensMock: vi.fn(async () => undefined),
     sendBookingLifecycleNotificationsMock: vi.fn(async () => undefined),
   };
@@ -994,6 +997,335 @@ describe("rescheduleBookingViaToken", () => {
     expect(txMock.reminder.updateMany).not.toHaveBeenCalled();
     expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
     expect(txMock.booking.create).not.toHaveBeenCalled();
+  });
+});
+
+// The page (30 per hour) and organization (100 per day) caps are counted from the
+// bookings table inside the booking transaction. Both write paths take the
+// organization advisory lock first, so transactions run one at a time: the fake
+// below queues them the same way and keeps a real in-memory bookings table.
+describe("shared booking caps (page per hour, organization per day)", () => {
+  const NOW = Date.parse("2026-02-01T10:00:00Z");
+  const MIN = 60_000;
+  const HOUR = 60 * MIN;
+  const PAGE_CAP = 30;
+  const ORG_CAP = 100;
+
+  type Row = { bookingTypeId: string; organizationId: string; status: string; createdAt: Date };
+  type Where = {
+    bookingTypeId?: string;
+    organizationId?: string;
+    createdAt: { gte: Date };
+  };
+  let rows: Row[];
+  let events: Array<{ startsAt: Date; endsAt: Date }>;
+  let consumedTokens: Set<string>;
+  // Overlap barrier. While `holdBeforeWrite` is on, every transaction parks
+  // just before its first write (after the cap counts) until all
+  // `expectedTransactions` have been requested and every running one is parked.
+  // Serialized, only one runs at a time, so it is released as soon as the rest
+  // are queued; unserialized, all of them have counted before any commits.
+  let requested: number;
+  let active: number;
+  let held: Array<() => void>;
+  let holdBeforeWrite: boolean;
+  let expectedTransactions: number;
+
+  function releaseIfAllParked(): void {
+    if (held.length > 0 && held.length >= active && requested >= expectedTransactions) {
+      for (const release of held.splice(0)) release();
+    }
+  }
+
+  /** Seeds n committed rows; the first one is `oldestAgeMs` old, the others 10 minutes. */
+  function seed(
+    n: number,
+    over: Partial<Row> & { oldestAgeMs?: number; status?: string } = {},
+  ): void {
+    const { oldestAgeMs = 10 * MIN, ...rest } = over;
+    for (let i = 0; i < n; i++) {
+      rows.push({
+        bookingTypeId: "bt-1",
+        organizationId: "org-a",
+        status: "CONFIRMED",
+        createdAt: new Date(NOW - (i === 0 ? oldestAgeMs : 10 * MIN)),
+        ...rest,
+      });
+    }
+  }
+
+  function inWindow(args: unknown): Row[] {
+    const { where } = args as { where: Where };
+    return rows.filter(
+      (r) =>
+        (where.bookingTypeId === undefined || r.bookingTypeId === where.bookingTypeId) &&
+        (where.organizationId === undefined || r.organizationId === where.organizationId) &&
+        r.createdAt >= where.createdAt.gte,
+    );
+  }
+
+  beforeEach(() => {
+    rows = [];
+    events = [];
+    consumedTokens = new Set();
+    requested = 0;
+    active = 0;
+    held = [];
+    holdBeforeWrite = false;
+    expectedTransactions = 0;
+
+    txMock.booking.count.mockImplementation(async (args) => {
+      await Promise.resolve(); // a query takes time: an unserialized second transaction would interleave here
+      return inWindow(args).length;
+    });
+    txMock.booking.findFirst.mockImplementation(async (args) => {
+      const oldest = inWindow(args).sort(
+        (a, b) => a.createdAt.getTime() - b.createdAt.getTime(),
+      )[0];
+      return oldest ? { createdAt: oldest.createdAt } : null;
+    });
+    txMock.calendarEvent.findFirst.mockImplementation(async (args: unknown) => {
+      const { where } = args as { where: { startsAt: { lt: Date }; endsAt: { gt: Date } } };
+      const hit = events.find((e) => e.startsAt < where.startsAt.lt && e.endsAt > where.endsAt.gt);
+      return hit ? { id: "taken" } : null;
+    });
+    txMock.calendarEvent.create.mockImplementation(
+      async ({ data }: { data: { startsAt: Date; endsAt: Date } }) => {
+        if (holdBeforeWrite) {
+          await new Promise<void>((release) => {
+            held.push(release);
+            releaseIfAllParked();
+          });
+        }
+        events.push({ startsAt: data.startsAt, endsAt: data.endsAt });
+        return { id: `evt-${events.length}` };
+      },
+    );
+    txMock.booking.create.mockImplementation(async (args: { data: Record<string, unknown> }) => {
+      rows.push({
+        bookingTypeId: args.data.bookingTypeId as string,
+        organizationId: args.data.organizationId as string,
+        status: "CONFIRMED",
+        createdAt: new Date(),
+      });
+      return { id: `bk-new-${rows.length}`, ...args.data };
+    });
+    consumeTokenAtomicMock.mockImplementation(async (_tx, id) => {
+      consumedTokens.add(String(id));
+    });
+    // Each reschedule token belongs to its own booking: "t<i>" moves "old-t<i>".
+    resolveTokenMock.mockImplementation(async (raw: string) => ({
+      id: `tok-${raw}`,
+      purpose: "RESCHEDULE",
+      booking: oldBookingFor(raw),
+    }));
+    txMock.booking.findUniqueOrThrow.mockImplementation(
+      async ({ where }: { where: { id: string } }) => oldBookingFor(where.id.replace("old-", "")),
+    );
+    txMock.calendarEvent.update.mockResolvedValue({});
+    txMock.reminder.updateMany.mockResolvedValue({ count: 0 });
+
+    // One transaction at a time, like the organization advisory lock; a thrown
+    // transaction rolls back what the fake keeps outside tx (consumed tokens).
+    let tail: Promise<unknown> = Promise.resolve();
+    unscopedMock.$transaction.mockImplementation(async (fn) => {
+      requested++;
+      releaseIfAllParked();
+      const run = tail.then(async () => {
+        const before = new Set(consumedTokens);
+        active++;
+        try {
+          return await fn(txMock);
+        } catch (e) {
+          consumedTokens = before;
+          throw e;
+        } finally {
+          active--;
+          releaseIfAllParked();
+        }
+      });
+      tail = run.catch(() => undefined);
+      return run;
+    });
+  });
+
+  afterEach(() => {
+    txMock.booking.count.mockImplementation(async () => 0);
+    txMock.booking.findFirst.mockImplementation(async () => null);
+    consumeTokenAtomicMock.mockImplementation(async () => undefined);
+    unscopedMock.$transaction.mockImplementation(async (fn) => fn(txMock));
+  });
+
+  function oldBookingFor(token: string) {
+    return {
+      id: `old-${token}`,
+      organizationId: "org-a",
+      bookingTypeId: "bt-1",
+      eventId: `evt-old-${token}`,
+      status: "CONFIRMED",
+      guestName: "Guest One",
+      guestEmail: "guest@example.com",
+      guestPhone: null,
+      guestCompany: null,
+      guestNotes: null,
+      guestTimezone: "Europe/Helsinki",
+      guestLocale: "EN",
+      consentAt: new Date("2026-01-01T00:00:00Z"),
+      startsAt: new Date(VALID_START),
+      endsAt: new Date(new Date(VALID_START).getTime() + HOUR),
+    };
+  }
+
+  // Five distinct, offered, free slots (09:00-13:00 Helsinki).
+  const CREATE_SLOTS = [7, 8, 9, 10, 11].map(
+    (h) => `2026-02-02T${String(h).padStart(2, "0")}:00:00.000Z`,
+  );
+  const MOVE_SLOTS = [8, 9, 10, 11, 12].map(
+    (h) => `2026-02-03T${String(h).padStart(2, "0")}:00:00.000Z`,
+  );
+
+  const CASES = [
+    {
+      name: "page",
+      limit: PAGE_CAP,
+      windowMs: HOUR,
+      // 29 on this page (oldest 50 min old): one unit left.
+      seedLeftOne: () => seed(PAGE_CAP - 1, { oldestAgeMs: 50 * MIN }),
+      seedFull: (status: string) => seed(PAGE_CAP, { status }),
+      seedExpired: () => seed(PAGE_CAP, { createdAt: new Date(NOW - HOUR - MIN) }),
+    },
+    {
+      name: "organization",
+      limit: ORG_CAP,
+      windowMs: 24 * HOUR,
+      // 99 in the organization on other pages (oldest 20 h old): one unit left.
+      seedLeftOne: () => seed(ORG_CAP - 1, { bookingTypeId: "bt-2", oldestAgeMs: 20 * HOUR }),
+      seedFull: (status: string) => seed(ORG_CAP, { bookingTypeId: "bt-2", status }),
+      seedExpired: () =>
+        seed(ORG_CAP, { bookingTypeId: "bt-2", createdAt: new Date(NOW - 24 * HOUR - MIN) }),
+    },
+  ];
+
+  const createAt = (startsAt: string) =>
+    createPublicBooking({
+      orgSlug: "acme",
+      typeSlug: "intro-call",
+      input: input({ startsAt }),
+    });
+
+  describe.each(CASES)("$name cap", (c) => {
+    it("one unit left, concurrent creates for DIFFERENT free slots: exactly one books, the rest are refused and write nothing", async () => {
+      c.seedLeftOne();
+      const before = rows.length;
+
+      const results = await Promise.allSettled(CREATE_SLOTS.map(createAt));
+
+      expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+      const refused = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+      expect(refused).toHaveLength(CREATE_SLOTS.length - 1);
+      for (const r of refused) {
+        expect(r.reason).toBeInstanceOf(BookingError);
+        expect(r.reason).toMatchObject({
+          code: "booking_cap",
+          // Free again when the oldest counted booking leaves the window.
+          cap: {
+            limit: c.limit,
+            reset: NOW - (c.name === "page" ? 50 * MIN : 20 * HOUR) + c.windowMs,
+          },
+        });
+      }
+      expect(rows.length).toBe(before + 1);
+      expect(txMock.booking.create).toHaveBeenCalledTimes(1);
+      expect(txMock.calendarEvent.create).toHaveBeenCalledTimes(1);
+      expect(txMock.eventAttendee.create).toHaveBeenCalledTimes(1);
+      expect(txMock.activity.create).toHaveBeenCalledTimes(1);
+      expect(issueTokenMock).toHaveBeenCalledTimes(1);
+    });
+
+    it("one unit left, concurrent moves to DIFFERENT free slots: exactly one is moved, the rest are refused, move nothing and keep their token", async () => {
+      c.seedLeftOne();
+      const before = rows.length;
+      const tokens = MOVE_SLOTS.map((_, i) => `t${i}`);
+
+      // The service imports the token module lazily and vitest's mock of it
+      // isn't applied to calls started in the same tick, so each call is
+      // started once the previous one's import settled. The barrier holds every
+      // transaction after the cap counts until all of them have been requested,
+      // so none can commit before all have counted.
+      holdBeforeWrite = true;
+      expectedTransactions = tokens.length;
+      const pending: Array<Promise<PromiseSettledResult<unknown>>> = [];
+      for (const [i, t] of tokens.entries()) {
+        pending.push(
+          Promise.allSettled([rescheduleBookingViaToken(t, MOVE_SLOTS[i]!)]).then(([r]) => r!),
+        );
+        await vi.dynamicImportSettled();
+      }
+      const results = await Promise.all(pending);
+
+      const moved = results.flatMap((r, i) => (r.status === "fulfilled" ? [i] : []));
+      expect(moved).toHaveLength(1);
+      const refused = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+      expect(refused).toHaveLength(tokens.length - 1);
+      for (const r of refused) expect(r.reason).toMatchObject({ code: "booking_cap" });
+
+      expect(rows.length).toBe(before + 1);
+      expect(txMock.booking.create).toHaveBeenCalledTimes(1);
+      expect(txMock.calendarEvent.create).toHaveBeenCalledTimes(1);
+      // Only the moved booking was claimed and had its old event canceled.
+      expect(txMock.booking.updateMany).toHaveBeenCalledTimes(1);
+      expect(txMock.calendarEvent.update).toHaveBeenCalledTimes(1);
+      expect(txMock.calendarEvent.update).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { id: `evt-old-t${moved[0]}` } }),
+      );
+      // The refused moves' tokens are not consumed (their transaction rolled back).
+      expect([...consumedTokens]).toEqual([`tok-t${moved[0]}`]);
+    });
+
+    it("canceled and moved rows still count", async () => {
+      c.seedFull("CANCELED");
+      await expect(createAt(CREATE_SLOTS[0]!)).rejects.toMatchObject({ code: "booking_cap" });
+      rows.length = 0;
+      c.seedFull("RESCHEDULED");
+      await expect(createAt(CREATE_SLOTS[0]!)).rejects.toMatchObject({ code: "booking_cap" });
+      expect(txMock.booking.create).not.toHaveBeenCalled();
+      expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+    });
+
+    it("rows older than the window don't count", async () => {
+      c.seedExpired();
+      await expect(createAt(CREATE_SLOTS[0]!)).resolves.toMatchObject({
+        manageToken: "raw-manage-token",
+      });
+      expect(txMock.booking.create).toHaveBeenCalledTimes(1);
+    });
+
+    it("a lost slot is still slot_taken, not a cap refusal", async () => {
+      c.seedFull("CONFIRMED");
+      events.push({
+        startsAt: new Date(CREATE_SLOTS[0]!),
+        endsAt: new Date(Date.parse(CREATE_SLOTS[0]!) + HOUR),
+      });
+      await expect(createAt(CREATE_SLOTS[0]!)).rejects.toMatchObject({ code: "slot_taken" });
+    });
+  });
+
+  it("when counting the bookings fails, nothing is booked and the error propagates", async () => {
+    txMock.booking.count.mockRejectedValueOnce(new Error("db down"));
+    await expect(createAt(CREATE_SLOTS[0]!)).rejects.toThrow("db down");
+    expect(rows).toHaveLength(0);
+    expect(txMock.booking.create).not.toHaveBeenCalled();
+    expect(txMock.calendarEvent.create).not.toHaveBeenCalled();
+    expect(txMock.contact.create).not.toHaveBeenCalled();
+    expect(txMock.eventAttendee.create).not.toHaveBeenCalled();
+    expect(txMock.activity.create).not.toHaveBeenCalled();
+    expect(issueTokenMock).not.toHaveBeenCalled();
+
+    txMock.booking.count.mockRejectedValueOnce(new Error("db down"));
+    await expect(rescheduleBookingViaToken("t0", MOVE_SLOTS[0]!)).rejects.toThrow("db down");
+    expect(txMock.booking.updateMany).not.toHaveBeenCalled();
+    expect(txMock.booking.create).not.toHaveBeenCalled();
+    expect(consumedTokens.size).toBe(0);
   });
 });
 

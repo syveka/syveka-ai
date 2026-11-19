@@ -120,6 +120,9 @@ const tx = {
   },
   eventAttendee: { create: vi.fn(async () => ({})) },
   booking: {
+    // Shared booking caps (assertSharedBookingCaps): nothing in the window.
+    count: vi.fn(async () => 0),
+    findFirst: vi.fn(async () => null),
     create: vi.fn(async ({ data }: { data: Row }) => {
       const row = { id: nextId("bk"), status: "CONFIRMED", ...data };
       s.bookings.push(row);
