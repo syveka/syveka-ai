@@ -100,7 +100,7 @@ describe.skipIf(!PG_URL)("acceptInvitation on real Postgres (service path)", () 
           expiresAt: new Date(Date.now() + 86_400_000),
         },
       });
-      joiners.push({ userId: user.id, token: invitation.token });
+      joiners.push({ userId: user.id, email: user.email, token: invitation.token });
     }
     return { orgId: org.id, joiners };
   }
@@ -113,7 +113,13 @@ describe.skipIf(!PG_URL)("acceptInvitation on real Postgres (service path)", () 
     const { orgId, joiners } = await seed(2);
 
     const results = await Promise.allSettled(
-      joiners.map((j) => acceptInvitation(j.token, j.userId)),
+      joiners.map((j) =>
+        acceptInvitation(j.token, {
+          id: j.userId,
+          email: j.email,
+          emailConfirmedAt: "2030-01-01T00:00:00Z",
+        }),
+      ),
     );
 
     expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
@@ -134,7 +140,11 @@ describe.skipIf(!PG_URL)("acceptInvitation on real Postgres (service path)", () 
     const { orgId, joiners } = await seed(1);
     await db.organization.update({ where: { id: orgId }, data: { deletedAt: new Date() } });
 
-    const refused = acceptInvitation(joiners[0]!.token, joiners[0]!.userId);
+    const refused = acceptInvitation(joiners[0]!.token, {
+      id: joiners[0]!.userId,
+      email: joiners[0]!.email,
+      emailConfirmedAt: "2030-01-01T00:00:00Z",
+    });
     await expect(refused).rejects.toBeInstanceOf(InvitationAcceptError);
     await expect(refused).rejects.toMatchObject({ code: "invalid" });
     await expect(members(orgId)).resolves.toBe(1);

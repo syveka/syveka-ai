@@ -156,7 +156,29 @@ export async function revokeInvitation(ctx: TenantContext, invitationId: string)
   });
 }
 
-export async function acceptInvitation(token: string, userId: string): Promise<string> {
+/**
+ * The signed-in account as Supabase Auth reports it (getSessionUser, i.e.
+ * supabase.auth.getUser()). The caller passes it straight from the verified
+ * session, never from client input and never from `public.users`.
+ */
+export type InvitationSessionUser = {
+  id: string;
+  email?: string | null;
+  /** Supabase `User.email_confirmed_at`; missing or null means unconfirmed. */
+  emailConfirmedAt?: string | null;
+};
+
+/**
+ * `sessionUser.email` is what proves the invitation is this account's. The
+ * copy in `public.users.email` is not used for that: its row policy lets a
+ * signed-in user update their own row, so it can't decide who may join.
+ */
+export async function acceptInvitation(
+  token: string,
+  sessionUser: InvitationSessionUser,
+): Promise<string> {
+  const userId = sessionUser.id;
+  const sessionEmail = sessionUser.email?.trim().toLowerCase();
   const invitation = await unscopedPrisma.invitation.findUnique({ where: { token } });
   if (!invitation) throw new InvitationAcceptError("invalid");
   if (invitation.status === "EXPIRED") throw new InvitationAcceptError("expired");
@@ -169,10 +191,20 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
     throw new InvitationAcceptError("expired");
   }
 
-  const user = await unscopedPrisma.user.findUniqueOrThrow({ where: { id: userId } });
-  if (user.email.toLowerCase() !== invitation.email.toLowerCase()) {
+  // Defence in depth: an unconfirmed address proves nothing. This only helps
+  // when the Supabase project requires email confirmation (autoconfirm sets
+  // email_confirmed_at at signup), so the production "Confirm email" setting
+  // is the real control.
+  if (
+    !sessionUser.emailConfirmedAt ||
+    !sessionEmail ||
+    sessionEmail !== invitation.email.trim().toLowerCase()
+  ) {
     throw new InvitationAccountMismatchError();
   }
+  // Only that the profile row exists (the membership references it); nothing
+  // in it is read.
+  await unscopedPrisma.user.findUniqueOrThrow({ where: { id: userId }, select: { id: true } });
 
   const ent = await getEntitlements(invitation.organizationId);
   if (ent.readOnly) throw new InvitationAcceptError("read_only");
@@ -185,12 +217,23 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
     await lockOrgSeats(tx, invitation.organizationId);
     // Re-read under the lock: a concurrent acceptance (another tab, a double
     // submit) or a revocation since the read above leaves it no longer
-    // PENDING, and this attempt becomes a plain invalid result.
+    // PENDING, and this attempt becomes a plain invalid result. The role is
+    // read here too: re-inviting the same address updates it (inviteMember),
+    // so the membership gets the role as it stands under the lock, not the
+    // one from the unlocked read above.
     const current = await tx.invitation.findUnique({
       where: { id: invitation.id },
-      select: { status: true },
+      select: { status: true, role: true, email: true, token: true, expiresAt: true },
     });
     if (current?.status !== "PENDING") throw new InvitationAcceptError("invalid");
+    // The unlocked read was by token. A revoke rotates the token and a
+    // re-invite can set the row back to PENDING while this request waited on
+    // the lock; a request holding the old token must not accept the new one.
+    if (current.token !== token) throw new InvitationAcceptError("invalid");
+    if (current.expiresAt < new Date()) throw new InvitationAcceptError("expired");
+    if (current.email.trim().toLowerCase() !== sessionEmail) {
+      throw new InvitationAccountMismatchError();
+    }
     const org = await tx.organization.findUnique({
       where: { id: invitation.organizationId },
       select: { deletedAt: true },
@@ -208,7 +251,7 @@ export async function acceptInvitation(token: string, userId: string): Promise<s
       data: {
         organizationId: invitation.organizationId,
         userId,
-        role: invitation.role,
+        role: current.role,
       },
     });
     await tx.invitation.update({

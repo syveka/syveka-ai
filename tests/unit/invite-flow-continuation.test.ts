@@ -294,14 +294,23 @@ describe("invitation page", () => {
 describe("accepting still requires the invited account", () => {
   it("a different signed-in user can't accept someone else's invitation", async () => {
     mocks.findInvitation.mockResolvedValue(pendingInvitation);
-    mocks.findUser.mockResolvedValue({ id: "user-2", email: "someone-else@example.test" });
+    // The profile row carries the invited address; it is ignored.
+    mocks.findUser.mockResolvedValue({ id: "user-2", email: "invitee@example.test" });
 
-    await expect(acceptInvitation(INVITATION_ID, "user-2")).rejects.toThrow(
-      "Invitation was sent to a different email address",
-    );
-    await expect(acceptInvitation(INVITATION_ID, "user-2")).rejects.toBeInstanceOf(
-      InvitationAccountMismatchError,
-    );
+    await expect(
+      acceptInvitation(INVITATION_ID, {
+        id: "user-2",
+        email: "someone-else@example.test",
+        emailConfirmedAt: "2030-01-01T00:00:00Z",
+      }),
+    ).rejects.toThrow("Invitation was sent to a different email address");
+    await expect(
+      acceptInvitation(INVITATION_ID, {
+        id: "user-2",
+        email: "someone-else@example.test",
+        emailConfirmedAt: "2030-01-01T00:00:00Z",
+      }),
+    ).rejects.toBeInstanceOf(InvitationAccountMismatchError);
     expect(mocks.transaction).not.toHaveBeenCalled();
   });
 
@@ -311,7 +320,13 @@ describe("accepting still requires the invited account", () => {
       expiresAt: new Date(Date.now() - 1000),
     });
 
-    await expect(acceptInvitation(INVITATION_ID, "user-1")).rejects.toMatchObject({
+    await expect(
+      acceptInvitation(INVITATION_ID, {
+        id: "user-1",
+        email: "invitee@example.test",
+        emailConfirmedAt: "2030-01-01T00:00:00Z",
+      }),
+    ).rejects.toMatchObject({
       name: "InvitationAcceptError",
       code: "expired",
     });
@@ -330,7 +345,13 @@ describe("accepting still requires the invited account", () => {
   ])("an %s invitation is refused with a fixed code", async (_label, invitation, code) => {
     mocks.findInvitation.mockResolvedValue(invitation);
 
-    await expect(acceptInvitation(INVITATION_ID, "user-1")).rejects.toMatchObject({
+    await expect(
+      acceptInvitation(INVITATION_ID, {
+        id: "user-1",
+        email: "invitee@example.test",
+        emailConfirmedAt: "2030-01-01T00:00:00Z",
+      }),
+    ).rejects.toMatchObject({
       name: "InvitationAcceptError",
       code,
     });
