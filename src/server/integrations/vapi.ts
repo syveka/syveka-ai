@@ -23,6 +23,17 @@ const VAPI_BASE = "https://api.vapi.ai";
  */
 export const VAPI_FETCH_TIMEOUT_MS = 20_000;
 
+/** Non-2xx Vapi response; carries only the status so callers can branch on it. */
+export class VapiHttpError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+    this.name = "VapiHttpError";
+  }
+}
+
 async function vapiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const { VAPI_API_KEY } = getVapiEnv();
   let res: Response;
@@ -46,7 +57,10 @@ async function vapiFetch<T>(path: string, init?: RequestInit): Promise<T> {
   }
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Vapi ${init?.method ?? "GET"} ${path} → ${res.status}: ${body.slice(0, 500)}`);
+    throw new VapiHttpError(
+      `Vapi ${init?.method ?? "GET"} ${path} → ${res.status}: ${body.slice(0, 500)}`,
+      res.status,
+    );
   }
   return (await res.json()) as T;
 }
@@ -158,7 +172,14 @@ export async function upsertVapiAssistant(
 }
 
 export async function deleteVapiAssistant(id: string): Promise<void> {
-  await vapiFetch(`/assistant/${id}`, { method: "DELETE" });
+  try {
+    await vapiFetch(`/assistant/${id}`, { method: "DELETE" });
+  } catch (error) {
+    // 404 means the assistant is already gone (e.g. an earlier delete succeeded
+    // but its response was lost), which is the state the caller wants.
+    if (error instanceof VapiHttpError && error.status === 404) return;
+    throw error;
+  }
 }
 
 export async function buyPhoneNumber(assistantId: string): Promise<{ id: string; number: string }> {

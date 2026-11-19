@@ -97,14 +97,18 @@ export async function deactivateAssistantAction(
   const limited = await actionWriteLimitError("voice", ctx);
   if (limited) return { error: limited };
 
+  let result: Awaited<ReturnType<typeof deactivateAssistant>>;
   try {
-    await deactivateAssistant(ctx, assistantId);
+    result = await deactivateAssistant(ctx, assistantId);
   } catch {
     return { error: "generic" };
   }
 
   revalidatePath(`/voice/${assistantId}`);
   revalidatePath("/voice");
+  // The assistant is stopped DB-side, but the Vapi delete did not complete (the
+  // id is kept): report failure so the operator retries from the page.
+  if (result.vapiAssistantId) return { error: "generic" };
   return { message: "deactivated" };
 }
 

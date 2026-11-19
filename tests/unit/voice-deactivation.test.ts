@@ -48,18 +48,25 @@ describe("deactivateAssistant", () => {
     voiceAssistant: {
       findFirstOrThrow: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
+      updateMany: ReturnType<typeof vi.fn>;
     };
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
+    // Stateful like a real table: each update returns the full persisted row.
+    let stored: Record<string, unknown> = assistantRow();
     db = {
       voiceAssistant: {
-        findFirstOrThrow: vi.fn(async () => assistantRow()),
-        update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
-          ...assistantRow(),
-          ...data,
-        })),
+        findFirstOrThrow: vi.fn(async () => stored),
+        update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+          stored = { ...stored, ...data };
+          return stored;
+        }),
+        updateMany: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+          stored = { ...stored, ...data };
+          return { count: 1 };
+        }),
       },
     };
     mocks.tenantDb.mockReturnValue(db);
@@ -93,6 +100,92 @@ describe("deactivateAssistant", () => {
     expect(db.voiceAssistant.update).toHaveBeenCalledTimes(1);
     expect(JSON.stringify(consoleSpy.mock.calls)).not.toContain(providerSecret);
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('"errorType":"Error"'));
+    consoleSpy.mockRestore();
+  });
+
+  it("keeps vapiAssistantId and phoneNumber when the Vapi delete fails so a re-run can retry", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.deleteVapiAssistant.mockRejectedValue(new Error("Vapi is unreachable"));
+
+    const result = await deactivateAssistant(ctx(), "assistant-1");
+
+    expect(db.voiceAssistant.update).toHaveBeenCalledTimes(1);
+    expect(db.voiceAssistant.update).toHaveBeenCalledWith({
+      where: { id: "assistant-1" },
+      data: { isActive: false },
+    });
+    expect(result.isActive).toBe(false);
+    expect(result.vapiAssistantId).toBe("vapi-assistant-1");
+    expect(result.phoneNumber).toBe("+358401234567");
+    consoleSpy.mockRestore();
+  });
+
+  it("clears vapiAssistantId/phoneNumber only after a successful delete (isActive write, delete, clear)", async () => {
+    const order: string[] = [];
+    db.voiceAssistant.update.mockImplementation(
+      async ({ data }: { data: Record<string, unknown> }) => {
+        order.push(`update:${Object.keys(data).join(",")}`);
+        return { ...assistantRow(), ...data };
+      },
+    );
+    db.voiceAssistant.updateMany.mockImplementation(
+      async ({ data }: { data: Record<string, unknown> }) => {
+        order.push(`updateMany:${Object.keys(data).join(",")}`);
+        return { count: 1 };
+      },
+    );
+    mocks.deleteVapiAssistant.mockImplementation(async () => {
+      order.push("delete");
+    });
+
+    await deactivateAssistant(ctx(), "assistant-1");
+
+    expect(order).toEqual([
+      "update:isActive",
+      "delete",
+      "updateMany:vapiAssistantId,phoneNumber,isActive",
+    ]);
+  });
+
+  it("clears with a write conditional on the deleted id so a concurrent re-link is not clobbered", async () => {
+    await deactivateAssistant(ctx(), "assistant-1");
+
+    expect(db.voiceAssistant.updateMany).toHaveBeenCalledWith({
+      where: { id: "assistant-1", vapiAssistantId: "vapi-assistant-1" },
+      data: { vapiAssistantId: null, phoneNumber: null, isActive: false },
+    });
+  });
+
+  it("skips the clear write for a never-synced assistant with no phone number", async () => {
+    db.voiceAssistant.findFirstOrThrow.mockResolvedValue(
+      assistantRow({ vapiAssistantId: null, phoneNumber: null }),
+    );
+
+    await deactivateAssistant(ctx(), "assistant-1");
+
+    expect(db.voiceAssistant.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("audits after.vapiDeleted true when the delete succeeds", async () => {
+    await deactivateAssistant(ctx(), "assistant-1");
+
+    expect(mocks.auditMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ after: { vapiDeleted: true } }),
+    );
+  });
+
+  it("audits after.vapiDeleted false and skips the clear write when the delete fails (timeout-like plain Error)", async () => {
+    const consoleSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    mocks.deleteVapiAssistant.mockRejectedValue(new Error("The operation timed out"));
+
+    await deactivateAssistant(ctx(), "assistant-1");
+
+    expect(mocks.auditMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ after: { vapiDeleted: false } }),
+    );
+    expect(db.voiceAssistant.updateMany).not.toHaveBeenCalled();
     consoleSpy.mockRestore();
   });
 

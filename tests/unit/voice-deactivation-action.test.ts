@@ -36,11 +36,28 @@ describe("deactivateAssistantAction — controlled results, never a crash", () =
   beforeEach(() => vi.clearAllMocks());
 
   it("returns a plain success message once deactivated", async () => {
-    mocks.deactivateAssistant.mockResolvedValue({ id: "assistant-1", isActive: false });
+    mocks.deactivateAssistant.mockResolvedValue({
+      id: "assistant-1",
+      isActive: false,
+      vapiAssistantId: null,
+    });
 
     const state = await deactivateAssistantAction("assistant-1", {});
 
     expect(state).toEqual({ message: "deactivated" });
+  });
+
+  it("returns a generic error (and still revalidates) when the Vapi cleanup did not complete", async () => {
+    mocks.deactivateAssistant.mockResolvedValue({
+      id: "assistant-1",
+      isActive: false,
+      vapiAssistantId: "vapi-assistant-1",
+    });
+
+    const state = await deactivateAssistantAction("assistant-1", {});
+
+    expect(state).toEqual({ error: "generic" });
+    expect(mocks.revalidatePath).toHaveBeenCalledWith("/voice/assistant-1");
   });
 
   it("returns a controlled, generic error instead of throwing or leaking a raw message on failure", async () => {
