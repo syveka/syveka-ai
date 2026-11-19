@@ -31,3 +31,26 @@ export function buildVoiceSystemPrompt(params: {
 
   return parts.join("\n\n");
 }
+
+// Spoken before the owner's greeting on every call. The system-prompt disclosure alone isn't
+// enough: the model may skip it, and the greeting is spoken before the model runs at all.
+const SPOKEN_AI_DISCLOSURE: Record<"FI" | "EN" | "AR", string> = {
+  FI: "Puhut tekoälyavustajan kanssa, ja puhelu voidaan tallentaa.",
+  EN: "You are speaking with an AI assistant, and this call may be recorded.",
+  // Avoids gendered address. Not approved yet: see VOICE_DISCLOSURE_APPROVED_LANGUAGES.
+  AR: "تتم هذه المكالمة مع مساعد يعمل بالذكاء الاصطناعي، وقد يتم تسجيلها.",
+};
+
+/** The notice for a language, or null for one that has none. */
+export function spokenDisclosure(language: string): string | null {
+  return Object.hasOwn(SPOKEN_AI_DISCLOSURE, language)
+    ? SPOKEN_AI_DISCLOSURE[language as keyof typeof SPOKEN_AI_DISCLOSURE]
+    : null;
+}
+
+/** The assistant's first spoken message: the fixed AI and recording notice, then the greeting. */
+export function buildVoiceFirstMessage(language: string, greeting: string): string {
+  const notice =
+    SPOKEN_AI_DISCLOSURE[language as keyof typeof SPOKEN_AI_DISCLOSURE] ?? SPOKEN_AI_DISCLOSURE.EN;
+  return `${notice} ${greeting}`;
+}

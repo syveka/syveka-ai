@@ -163,25 +163,25 @@ Version and emptiness alone are not trusted.
 - the grant fingerprint is equal (object grants **and** `postgres`'s public default privileges);
 - `on_auth_user_created` is present;
 - the history has no unfinished rows;
-- **exactly** `20261014000000_secure_prisma_migrations_table` is pending.
+- **exactly** the migrations in `expected-pending-migrations.txt` are pending.
 
-`s6` does not apply that migration. Applying it to the disposable project only (`npx prisma migrate
+`s6` does not apply them. Applying them to the disposable project only (`npx prisma migrate
 deploy`) is a separate, separately authorized step, followed by `tests/staging/release-invariants.sql`
 and the RLS scripts; `s7-verify-disposable.sh` runs that sequence (see below).
 
-## §7 verification and the pending migration (`s7`)
+## §7 verification and the pending migrations (`s7`)
 
 `s7-verify-disposable.sh <restore-remote-TS dir>` runs only after `s6` recorded `S6_RESULT=PASS`,
-and only with a separate §7 authorization. Applying the migration needs its own authorization,
+and only with a separate §7 authorization. Applying the migrations needs its own authorization,
 given at run time.
 
 - **Identity:** the same prompts and `validate_remote_target` check as `s6`, before the password
   and before any container or connection. It then requires the 17.11 server, an existing migration
   history and row counts equal to what `s6` verified.
-- **Migration:** if exactly `20261014000000_secure_prisma_migrations_table` is pending, it asks
+- **Migration:** if exactly the migrations in `expected-pending-migrations.txt` are pending, it asks
   for `APPLY MIGRATION TO DISPOSABLE` and runs the real `npx --no-install prisma migrate deploy`.
   It never edits `_prisma_migrations` and never runs migration SQL itself.
-  - On a repeat run, where the migration is already recorded, it skips the deploy and only verifies.
+  - On a repeat run, where the migrations are already recorded, it skips the deploy and only verifies.
   - A recorded failed attempt stops it; it doesn't resolve or retry.
 - **Verification:** `prisma migrate status` up to date; the history fully applied;
   `tests/staging/release-invariants.sql`; the three RLS suites with exactly the
@@ -255,14 +255,14 @@ bash scripts/recovery-drill/rehearsal/rehearse.sh <empty-work-dir>      # Docker
 It needs `public.ecr.aws/supabase/postgres:17.6.1.167`, `pgvector/pgvector:pg17` and `postgres:17`
 locally (it never pulls), about 1 GB of free RAM, and one container at a time.
 
-| Stage | Proves                                                                                                                                                                                                                                                                        |
-| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| A     | A production-shaped source: 31 migrations, Prisma history, the 2026-10-21 manual remediation without a history row, and synthetic secrets in token columns, nested JSON, free text and text arrays. Dumped with the §4 options as `postgres`                                  |
-| B     | `s5` passes. Every check, including JSON and text, sees its synthetic value before sanitizing; all are 0 after. Identities are kept                                                                                                                                           |
-| C     | Seven sabotaged copies each stop `s5` with nothing released: a missing statement, a SQL error, a missing check, an omitted JSON scrub, an omitted text scrub, an omitted workflow-recipient rule, and the text scrub plus its check disabled (caught by the archive scan)     |
-| D     | No marker survives in the archives. The wrong version is refused. A positive restore matches checks, row counts and grants (including default privileges) with exactly the expected migration pending. Invariants fail before the migration is applied locally and pass after |
-| E     | Each guard (Auth users, Storage rows, migration history, other public relations) refuses before any write. A mid-load failure rolls back with no cleanup banner. A post-commit failure prints `DATA REMAINS` with its stage and deletes nothing                               |
-| F     | Remote identity: production, staging, mismatched, equal-to-production/staging, non-pooler and malformed inputs are refused before the password prompt, with no container started and no network connection                                                                    |
+| Stage | Proves                                                                                                                                                                                                                                                                           |
+| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| A     | A production-shaped source: 31 migrations, Prisma history, the 2026-10-21 manual remediation without a history row, and synthetic secrets in token columns, nested JSON, free text and text arrays. Dumped with the §4 options as `postgres`                                     |
+| B     | `s5` passes. Every check, including JSON and text, sees its synthetic value before sanitizing; all are 0 after. Identities are kept                                                                                                                                              |
+| C     | Seven sabotaged copies each stop `s5` with nothing released: a missing statement, a SQL error, a missing check, an omitted JSON scrub, an omitted text scrub, an omitted workflow-recipient rule, and the text scrub plus its check disabled (caught by the archive scan)        |
+| D     | No marker survives in the archives. The wrong version is refused. A positive restore matches checks, row counts and grants (including default privileges) with exactly the expected migrations pending. Invariants fail before the migrations are applied locally and pass after |
+| E     | Each guard (Auth users, Storage rows, migration history, other public relations) refuses before any write. A mid-load failure rolls back with no cleanup banner. A post-commit failure prints `DATA REMAINS` with its stage and deletes nothing                                  |
+| F     | Remote identity: production, staging, mismatched, equal-to-production/staging, non-pooler and malformed inputs are refused before the password prompt, with no container started and no network connection                                                                       |
 
 ## What the local rehearsal cannot prove (the real drill's open blockers)
 

@@ -152,8 +152,9 @@ describe("staging release migration contract", () => {
     // contract.mjs) -- a legacy-missing table's FKs are still part of this static contract
     // (the runtime check's own `expected.source_table = ANY(legacy_missing_tables)` guard,
     // asserted below, is what actually tolerates them not existing yet, not an omission from
-    // the contract itself).
-    expect(columnRows).toHaveLength(704);
+    // the contract itself). Then to 705 with voice_assistants.recording_enabled, a nullable
+    // column registered in LEGACY_MISSING_COLUMN_ENTRIES.
+    expect(columnRows).toHaveLength(705);
     expect(foreignKeyRows).toHaveLength(85);
     expect(contract).toContain("expected.table_name = ANY(legacy_missing_tables)");
     expect(contract).toContain("expected.source_table = ANY(legacy_missing_tables)");
@@ -188,6 +189,26 @@ describe("staging release migration contract", () => {
     );
     expect(contract).toContain(`'::("[^"]+"|[a-z_][a-z0-9_]*)(\\[\\])?'`);
     expect(contract).toContain("'[()]'");
+  });
+
+  it("keeps the recording column additive, and its release on the path that allows a schema change", () => {
+    const name = "20261106000000_voice_assistant_recording_enabled";
+    const statements = read(`prisma/migrations/${name}/migration.sql`)
+      .split("\n")
+      .filter((line) => line.trim() && !line.startsWith("--"));
+    expect(statements).toEqual([
+      'ALTER TABLE "voice_assistants" ADD COLUMN "recording_enabled" BOOLEAN;',
+    ]);
+
+    // Option B needs no schema change and Option B-M allows no column DDL, so only PITR fits.
+    const runbook = read("docs/release-runbook.md");
+    const at = runbook.indexOf(`\`${name}\``);
+    expect(at).toBeGreaterThan(-1);
+    const note = runbook.slice(at, at + 900);
+    expect(note).toMatch(/Option A/);
+    expect(note).toMatch(/Option B and Option B-M don't apply/);
+
+    expect(releaseInvariants).toContain(`'${name}'`);
   });
 
   it("closes Prisma's own migration table to anon and authenticated, and keeps it closed", () => {

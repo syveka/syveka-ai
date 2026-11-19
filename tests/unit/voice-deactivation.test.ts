@@ -51,15 +51,19 @@ describe("deactivateAssistant", () => {
     };
   };
 
+  let stored: Record<string, unknown>;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    stored = assistantRow();
     db = {
       voiceAssistant: {
         findFirstOrThrow: vi.fn(async () => assistantRow()),
-        update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => ({
-          ...assistantRow(),
-          ...data,
-        })),
+        // Keeps what earlier updates wrote, as the row would.
+        update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
+          stored = { ...stored, ...data };
+          return stored;
+        }),
       },
     };
     mocks.tenantDb.mockReturnValue(db);
@@ -91,9 +95,43 @@ describe("deactivateAssistant", () => {
 
     expect(result.isActive).toBe(false);
     expect(db.voiceAssistant.update).toHaveBeenCalledTimes(1);
+    // Vapi still holds it and answers its number, so what finds it again stays.
+    expect(db.voiceAssistant.update.mock.calls[0]![0].data).toEqual({ isActive: false });
+    expect(result.vapiAssistantId).toBe("vapi-assistant-1");
+    expect(result.phoneNumber).toBe("+358401234567");
     expect(JSON.stringify(consoleSpy.mock.calls)).not.toContain(providerSecret);
     expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('"errorType":"Error"'));
+    // Vapi may keep the assistant, so the audit trail says so, without the provider's text.
+    expect(mocks.auditMock).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ after: { vapiDeleteFailed: true } }),
+    );
+    expect(JSON.stringify(mocks.auditMock.mock.calls)).not.toContain(providerSecret);
     consoleSpy.mockRestore();
+  });
+
+  it("closes the assistant before contacting Vapi, and clears its links only after the delete", async () => {
+    await deactivateAssistant(ctx(), "assistant-1");
+
+    const updates = db.voiceAssistant.update.mock.calls.map(([call]) => call.data);
+    expect(updates).toEqual([
+      { isActive: false },
+      { isActive: false, vapiAssistantId: null, phoneNumber: null },
+    ]);
+    const [closed, cleared] = db.voiceAssistant.update.mock.invocationCallOrder;
+    const [deleted] = mocks.deleteVapiAssistant.mock.invocationCallOrder;
+    expect(closed!).toBeLessThan(deleted!);
+    expect(deleted!).toBeLessThan(cleared!);
+  });
+
+  it("finishes when deactivated again after a delete that failed", async () => {
+    stored = assistantRow({ isActive: false });
+    db.voiceAssistant.findFirstOrThrow.mockResolvedValue(stored);
+
+    const result = await deactivateAssistant(ctx(), "assistant-1");
+
+    expect(mocks.deleteVapiAssistant).toHaveBeenCalledWith("vapi-assistant-1");
+    expect(result.vapiAssistantId).toBeNull();
   });
 
   it("skips the Vapi delete call entirely for an assistant that was never synced", async () => {

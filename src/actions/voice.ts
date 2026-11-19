@@ -9,8 +9,10 @@ import {
   activateAssistant,
   deactivateAssistant,
   attachPhoneNumber,
+  retryAssistantSync,
   DuplicatePhoneNumberError,
   AssistantNotSyncedError,
+  VoiceSyncFailedError,
 } from "@/server/services/voice";
 import { EntitlementError } from "@/server/services/billing/entitlements";
 import { voiceAssistantSchema, attachPhoneNumberSchema } from "@/lib/validators/voice";
@@ -52,6 +54,11 @@ export async function saveAssistantAction(
     // chat action's convention -- never surface a raw Error.message here,
     // that path exists only as a fallback for a truly unexpected failure.
     if (e instanceof EntitlementError) return { error: e.code };
+    // Saved, so "try again" alone would mislead: the page refreshes to the saved value.
+    if (e instanceof VoiceSyncFailedError) {
+      revalidatePath("/voice");
+      return { error: "sync_failed" };
+    }
     return { error: "generic" };
   }
 
@@ -79,6 +86,8 @@ export async function activateAssistantAction(
     // renders this value verbatim in the UI. A generic, translated message
     // is the fix; the specific phoneNumberError case above is unaffected --
     // that path already returns a controlled, non-error state.
+    // The failed sync is on record, and the page reads it.
+    revalidatePath(`/voice/${assistantId}`);
     return { error: "generic" };
   }
 
@@ -97,15 +106,38 @@ export async function deactivateAssistantAction(
   const limited = await actionWriteLimitError("voice", ctx);
   if (limited) return { error: limited };
 
+  let updated: Awaited<ReturnType<typeof deactivateAssistant>>;
   try {
-    await deactivateAssistant(ctx, assistantId);
+    updated = await deactivateAssistant(ctx, assistantId);
   } catch {
     return { error: "generic" };
   }
 
   revalidatePath(`/voice/${assistantId}`);
   revalidatePath("/voice");
+  // Off in Syveka, but the phone service still holds it. The page says so and offers this again.
+  if (updated.vapiAssistantId) return { error: "vapi_delete_failed" };
   return { message: "deactivated" };
+}
+
+export async function retryAssistantSyncAction(
+  assistantId: string,
+  _prev: VoiceActionState,
+): Promise<VoiceActionState> {
+  const ctx = await requirePermission("voice:configure");
+  const limited = await actionWriteLimitError("voice", ctx);
+  if (limited) return { error: limited };
+
+  try {
+    await retryAssistantSync(ctx, assistantId);
+  } catch (e) {
+    // Revalidated either way: the page reads the attempt's result from the record.
+    revalidatePath(`/voice/${assistantId}`);
+    return { error: e instanceof VoiceSyncFailedError ? "sync_failed" : "generic" };
+  }
+
+  revalidatePath(`/voice/${assistantId}`);
+  return { message: "sync_sent" };
 }
 
 export async function attachPhoneNumberAction(

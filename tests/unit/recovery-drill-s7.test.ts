@@ -17,7 +17,10 @@ import { afterEach, describe, expect, it } from "vitest";
 const repo = path.join(__dirname, "../..");
 const script = path.join(repo, "scripts/recovery-drill/s7-verify-disposable.sh");
 const migrationsDir = path.join(repo, "prisma/migrations");
-const pendingMigration = "20261014000000_secure_prisma_migrations_table";
+const pendingMigrations = fs
+  .readFileSync(path.join(repo, "scripts/recovery-drill/expected-pending-migrations.txt"), "utf8")
+  .split(/\r?\n/)
+  .filter((line) => line.trim() && !line.startsWith("#"));
 
 const bash = spawnSync("bash", ["-c", "echo $BASH_VERSION"], { encoding: "utf8" });
 const hasBash = bash.status === 0 && /^\d/.test(bash.stdout.trim());
@@ -36,7 +39,7 @@ const PASSWORD_ENCODED = encodeURIComponent(PASSWORD);
 
 const applied31 = fs
   .readdirSync(migrationsDir, { withFileTypes: true })
-  .filter((d) => d.isDirectory() && d.name !== pendingMigration)
+  .filter((d) => d.isDirectory() && !pendingMigrations.includes(d.name))
   .map((d) => d.name)
   .sort();
 
@@ -77,7 +80,7 @@ state=$(cat "$FAKE_DIR/state")
 case "$sql" in
   *"current_setting('server_version')"*) echo "$FAKE_VERSION|postgres|1|62|5"; exit 0 ;;
   *"select migration_name from public._prisma_migrations"*)
-    cat "$FAKE_DIR/applied31"; [ "$state" = applied ] && echo "${pendingMigration}"; exit 0 ;;
+    cat "$FAKE_DIR/applied31"; [ "$state" = applied ] && cat "$FAKE_DIR/pending"; exit 0 ;;
   *"where finished_at is null or rolled_back_at is not null"*)
     [ "$state" = failed ] && echo 1 || echo 0; exit 0 ;;
   *"select 1"*) echo 1; exit 0 ;;
@@ -126,6 +129,8 @@ type Scenario = {
   invariantsRc?: number;
   s6Result?: string;
   version?: string;
+  /** Overrides what the restored history records, for a state the drill must refuse. */
+  applied?: string[];
 };
 
 const temps: string[] = [];
@@ -143,7 +148,8 @@ function run(s: Scenario = {}) {
   fs.writeFileSync(path.join(fake, "docker"), FAKE_DOCKER, { mode: 0o755 });
   fs.writeFileSync(path.join(fake, "npx"), FAKE_NPX, { mode: 0o755 });
   fs.writeFileSync(path.join(fake, "state"), (s.state ?? "pending") + "\n");
-  fs.writeFileSync(path.join(fake, "applied31"), applied31.join("\n") + "\n");
+  fs.writeFileSync(path.join(fake, "applied31"), (s.applied ?? applied31).join("\n") + "\n");
+  fs.writeFileSync(path.join(fake, "pending"), pendingMigrations.join("\n") + "\n");
   const rows = "rows|auth.users|5\nrows|public.organizations|3\n";
   fs.writeFileSync(path.join(fake, "rows"), rows);
   fs.writeFileSync(
@@ -248,6 +254,32 @@ describe.runIf(hasTools)("s7-verify-disposable.sh (fake docker and npx, no datab
     expect(r.kept).not.toContain(HOST);
     expect(r.kept).not.toContain(`postgres.${DISPOSABLE}`);
     expect(r.kept).not.toContain("::add-mask::");
+  }, 240_000);
+
+  it("deploys when exactly the listed migrations are pending, and names each of them", () => {
+    const r = run();
+    expect(r.status).toBe(0);
+    expect(r.npxLog).toContain("migrate deploy");
+    for (const name of pendingMigrations) expect(r.kept + r.out).toContain(name);
+  }, 240_000);
+
+  // With one name listed, this history would be a complete one, which the repeat-run test covers.
+  it.runIf(pendingMigrations.length > 1)(
+    "refuses a history with fewer pending migrations than expected, without deploying",
+    () => {
+      const r = run({ applied: [...applied31, pendingMigrations.at(-1)!].sort() });
+      expect(r.status).toBe(1);
+      expect(r.out).toContain("are not exactly");
+      expect(r.npxLog).not.toContain("migrate deploy");
+    },
+    240_000,
+  );
+
+  it("refuses a history with more pending migrations than expected, without deploying", () => {
+    const r = run({ applied: applied31.slice(1) });
+    expect(r.status).toBe(1);
+    expect(r.out).toContain("are not exactly");
+    expect(r.npxLog).not.toContain("migrate deploy");
   }, 240_000);
 
   it("does not run migrate deploy without the run-time migration phrase, and reports data remains", () => {

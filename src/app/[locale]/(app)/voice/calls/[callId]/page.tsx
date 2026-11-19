@@ -40,13 +40,15 @@ export default async function CallDetailPage({ params }: { params: Promise<{ cal
             <CardTitle className="text-base">{t("summary")}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm">
-            <p>{call.summary}</p>
+            <p dir="auto">{call.summary}</p>
             {followUps.length > 0 ? (
               <div>
                 <p className="font-medium">{t("followUps")}:</p>
                 <ul className="ms-4 list-disc space-y-1 text-muted-foreground">
                   {followUps.map((f, i) => (
-                    <li key={i}>{f}</li>
+                    <li key={i}>
+                      <span dir="auto">{f}</span>
+                    </li>
                   ))}
                 </ul>
               </div>

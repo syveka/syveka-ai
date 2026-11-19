@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => {
     enqueue: vi.fn(async (..._args: unknown[]) => {
       callOrder.push("enqueue");
     }),
-    redisGet: vi.fn(async () => null as string | null),
+    redisGet: vi.fn(async (_key: string) => null as string | null),
     redisSet: vi.fn(async (..._args: unknown[]) => {
       callOrder.push("redis-set");
       return "OK" as string | null;
@@ -44,16 +44,40 @@ const mocks = vi.hoisted(() => {
       return counters.get(key)!;
     }),
     redisExpire: vi.fn(async (..._args: unknown[]) => 1),
+    verifyCallDisclosure: vi.fn(async (..._args: unknown[]) => "ok" as string),
+    callDisclosureState: vi.fn(async (..._args: unknown[]) => "verified" as string),
+    confirmNotice: vi.fn(async (..._args: unknown[]) => "ok" as string),
+    // Call slots: every call gets the only slot, unless a test says otherwise.
+    // The script's own arithmetic is proven on real Redis. A first ask has no slot to report.
+    redisEval: vi.fn(async (_script: unknown, _keys: unknown, args: unknown) =>
+      (args as string[])?.[2] === "0" ? ([-1, 0] as unknown) : ([1, 0] as unknown),
+    ),
   };
 });
 
 vi.mock("@/server/integrations/vapi", () => ({
   verifyVapiSignature: mocks.verifyVapiSignature,
 }));
+// The gate is covered in voice-disclosure-gate and voice-disclosure-webhook.
+vi.mock("@/server/voice/disclosure-gate", () => ({
+  verifyCallDisclosure: mocks.verifyCallDisclosure,
+  callDisclosureState: mocks.callDisclosureState,
+  callLiveness: async () => ({ liveness: "live", calledAt: new Date().toISOString() }),
+  startedJustNow: () => true,
+  earliestCallTime: (...times: unknown[]) => times.find((time) => typeof time === "string"),
+  confirmNoticeFromMessages: mocks.confirmNotice,
+  confirmNoticeFromCallRecord: async (...args: unknown[]) => ({
+    outcome: await mocks.confirmNotice(...args),
+  }),
+}));
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {
     voiceAssistant: { findFirst: mocks.voiceAssistantFindFirst },
-    voiceCall: { upsert: mocks.voiceCallUpsert, findFirst: mocks.voiceCallFindFirst },
+    voiceCall: {
+      upsert: mocks.voiceCallUpsert,
+      findFirst: mocks.voiceCallFindFirst,
+      findMany: async () => [],
+    },
   },
 }));
 vi.mock("@/server/ai/tools", () => ({ executeTool: mocks.executeTool }));
@@ -70,6 +94,7 @@ vi.mock("@/server/integrations/redis", () => ({
     incr: mocks.redisIncr,
     decr: mocks.redisDecr,
     expire: mocks.redisExpire,
+    eval: mocks.redisEval,
   },
 }));
 
@@ -194,7 +219,7 @@ describe("Vapi voice webhook — unrelated message types are unchanged", () => {
     await expect(response.json()).resolves.toEqual({ ok: true });
     expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(1);
     expect(mocks.enqueue).not.toHaveBeenCalled();
-    expect(mocks.redisGet).not.toHaveBeenCalled();
+    expect(mocks.redisGet).not.toHaveBeenCalledWith(expect.stringContaining("vapi:eocr"));
     expect(mocks.redisSet).not.toHaveBeenCalled();
   });
 
@@ -227,7 +252,7 @@ describe("Vapi voice webhook — unrelated message types are unchanged", () => {
     expect(body.results).toEqual([{ toolCallId: "tc-1", result: JSON.stringify({ ok: true }) }]);
     expect(mocks.executeTool).toHaveBeenCalledTimes(1);
     expect(mocks.enqueue).not.toHaveBeenCalled();
-    expect(mocks.redisGet).not.toHaveBeenCalled();
+    expect(mocks.redisGet).not.toHaveBeenCalledWith(expect.stringContaining("vapi:eocr"));
   });
 });
 
@@ -299,7 +324,7 @@ describe("Vapi voice webhook — tool-calls replay protection", () => {
     ]);
     expect(mocks.redisSet).toHaveBeenCalledWith("vapi:tool:org-a:tc-1", "1", {
       nx: true,
-      ex: 60 * 60 * 24,
+      ex: 96 * 60 * 60,
     });
     expect(mocks.executeTool).toHaveBeenCalledTimes(1);
   });
@@ -699,14 +724,14 @@ describe("Vapi voice webhook — per-call write caps", () => {
     expect(mocks.redisDel).toHaveBeenCalledWith("vapi:tool:org-a:b1");
   });
 
-  it("refuses writes without a call id (nothing to key the cap on); reads still run", async () => {
-    const results = await runTools("", [
+  it("runs nothing without a call id: its notice can't be confirmed", async () => {
+    mocks.confirmNotice.mockResolvedValueOnce("absent");
+    await runTools("", [
       { id: "b1", name: "bookMeeting" },
       { id: "r1", name: "getCalendarAvailability" },
     ]);
 
-    expect(results).toEqual([err("call_required"), OK]);
-    expect(mocks.executeTool).toHaveBeenCalledTimes(1);
+    expect(mocks.executeTool).not.toHaveBeenCalled();
   });
 });
 
@@ -759,6 +784,32 @@ describe("Vapi voice webhook — writes refused after the call has ended", () =>
 
     expect(await runTools("call-7", [{ id: "b1", name: "bookMeeting" }])).toEqual([OK]);
     expect(mocks.executeTool).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("Vapi voice webhook — a call longer than the maximum Vapi was asked to enforce", () => {
+  const warned = () => JSON.stringify(warn.mock.calls);
+  let warn: ReturnType<typeof vi.spyOn>;
+  beforeEach(() => {
+    warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    warn.mockRestore();
+  });
+
+  it("is logged, with no call content, and billed for what it really ran", async () => {
+    const res = await POST(eocrRequest({ durationSeconds: 1200 }));
+    expect(res.status).toBe(200);
+    expect(warned()).toContain("voice_call_over_max_duration");
+    expect(warned()).toContain("1200");
+    expect(mocks.voiceCallUpsert).toHaveBeenCalledWith(
+      expect.objectContaining({ create: expect.objectContaining({ durationSeconds: 1200 }) }),
+    );
+  });
+
+  it("isn't logged for a call that stopped at the maximum", async () => {
+    await POST(eocrRequest({ durationSeconds: 905 }));
+    expect(warned()).not.toContain("voice_call_over_max_duration");
   });
 });
 
@@ -957,7 +1008,7 @@ describe("Vapi voice webhook — over-quota calls are actually ended", () => {
     const response = await POST(statusUpdate());
 
     expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock).toHaveBeenCalledTimes(2); // one retry
     expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
     expect(loggedText()).not.toContain("call-secret-123");
   });
@@ -1338,7 +1389,9 @@ describe("Vapi voice webhook — a call row is only ever written within the assi
 
   it("a status-update racing this organization's own first write retries once, with no conflict logged", async () => {
     mocks.voiceCallUpsert.mockRejectedValueOnce(uniqueViolation());
-    // The conflict check finds the row this organization's end-of-call-report just created.
+    // The replay check finds nothing yet, then the conflict check finds the row this
+    // organization's end-of-call-report just created.
+    mocks.voiceCallFindFirst.mockResolvedValueOnce(null);
     mocks.voiceCallFindFirst.mockResolvedValueOnce({ id: "row-1" } as never);
 
     const response = await POST(statusUpdate());
@@ -1438,5 +1491,357 @@ describe("Vapi voice webhook — a phone caller can't search the organization's 
 
     expect(body.results[0].result).toBe(JSON.stringify({ error: "tool_not_enabled" }));
     expect(mocks.executeTool).not.toHaveBeenCalled();
+  });
+});
+
+describe("end-of-call report — how long the call was", () => {
+  const written = () =>
+    mocks.voiceCallUpsert.mock.calls[0]![0] as {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    };
+
+  it("uses Vapi's documented times, when the undocumented field is absent", async () => {
+    await POST(
+      eocrRequest({
+        durationSeconds: undefined,
+        startedAt: "2026-11-20T10:00:00Z",
+        endedAt: "2026-11-20T10:03:01Z",
+      }),
+    );
+    expect(written().create).toMatchObject({
+      durationSeconds: 181,
+      startedAt: new Date("2026-11-20T10:00:00Z"),
+      endedAt: new Date("2026-11-20T10:03:01Z"),
+    });
+  });
+
+  it("also reads the times from the nested call", async () => {
+    await POST(
+      eocrRequest({
+        durationSeconds: undefined,
+        call: {
+          id: "call-1",
+          assistantId: "assistant-1",
+          startedAt: "2026-11-20T10:00:00Z",
+          endedAt: "2026-11-20T10:01:00Z",
+        },
+      }),
+    );
+    expect(written().create).toMatchObject({ durationSeconds: 60 });
+  });
+
+  it("the times win over a contradicting duration", async () => {
+    await POST(
+      eocrRequest({
+        durationSeconds: 1,
+        startedAt: "2026-11-20T10:00:00Z",
+        endedAt: "2026-11-20T10:05:00Z",
+      }),
+    );
+    expect(written().create).toMatchObject({ durationSeconds: 300 });
+  });
+
+  it.each([
+    ["no length information", { durationSeconds: undefined }],
+    ["a negative length", { durationSeconds: -60 }],
+    [
+      "an end before the start",
+      { startedAt: "2026-11-20T10:05:00Z", endedAt: "2026-11-20T10:00:00Z" },
+    ],
+  ])("records an unknown length, not zero, for %s", async (_name, overrides) => {
+    const res = await POST(eocrRequest(overrides));
+    expect(res.status).toBe(200);
+    expect(written().create.durationSeconds).toBeNull();
+    // The job defers it rather than charging; see post-call-idempotency.
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("a retry that finally knows the length fills it in", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValueOnce({
+      endedAt: new Date("2026-11-20T10:05:00Z"),
+      durationSeconds: null,
+      postCallProcessedAt: null,
+    });
+    await POST(eocrRequest({ durationSeconds: 300 }));
+    expect(written().update).toMatchObject({ durationSeconds: 300 });
+  });
+
+  it("a retry can't erase or change a known length", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValueOnce({
+      endedAt: new Date("2026-11-20T10:05:00Z"),
+      durationSeconds: 300,
+      postCallProcessedAt: null,
+    });
+    await POST(eocrRequest({ durationSeconds: undefined }));
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+  });
+});
+
+describe("call limits at the webhook", () => {
+  const CONTROL = "https://aws-us-west-2-production1-phone-call-websocket.vapi.ai/x/control";
+  const start = (overrides: Record<string, unknown> = {}) =>
+    new Request("http://localhost/api/v1/voice/webhook", {
+      method: "POST",
+      headers: { "x-vapi-signature": "sig" },
+      body: JSON.stringify({
+        message: {
+          type: "status-update",
+          status: "in-progress",
+          call: {
+            id: "call-1",
+            assistantId: "assistant-1",
+            monitor: { controlUrl: CONTROL },
+          },
+          ...overrides,
+        },
+      }),
+    });
+  const releases = () =>
+    mocks.redisEval.mock.calls.filter((c) => String(c[0]).includes('"ZREM", KEYS[1], ARGV[1]'));
+
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+  });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it("ends the call and records no row at the concurrency limit", async () => {
+    mocks.redisEval.mockResolvedValueOnce([-1, 0]).mockResolvedValueOnce([-1, 0]);
+    const res = await POST(start());
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    expect(mocks.redisSet).toHaveBeenCalledWith(
+      "voice:refused:org-a:call-1",
+      "ended",
+      expect.objectContaining({ ex: expect.any(Number) }),
+    );
+  });
+
+  it("fails closed: ends the call when limits can't be checked", async () => {
+    mocks.redisEval.mockRejectedValueOnce(new Error("redis down"));
+    const res = await POST(start());
+    expect(res.status).toBe(200);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+  });
+
+  it("ends a call for a deactivated assistant, without taking a slot", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce({
+      id: "assistant-1",
+      organizationId: "org-a",
+      enabledTools: [],
+      useKnowledgeBase: false,
+      isActive: false,
+      organization: { members: [{ userId: "owner-1" }] },
+    });
+    await POST(start());
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(mocks.redisEval).not.toHaveBeenCalled();
+  });
+
+  it("a start replayed after the call ended takes no slot and writes nothing", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValueOnce({ endedAt: new Date("2026-11-20T10:00:00Z") });
+    const res = await POST(start());
+    await expect(res.json()).resolves.toEqual({ ok: true, duplicate: true });
+    expect(mocks.redisEval).not.toHaveBeenCalled();
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("admits a call within limits, and doesn't touch the control URL", async () => {
+    await POST(start());
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(1);
+  });
+
+  it("frees the slot on the end-of-call report, and on an ended status", async () => {
+    await POST(eocrRequest());
+    expect(releases()).toHaveLength(1);
+    await POST(start({ status: "ended" }));
+    expect(releases()).toHaveLength(2);
+  });
+
+  it("a retried start for a call already recorded takes no new slot and can't end it", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValueOnce({ endedAt: null });
+    await POST(start());
+    expect(mocks.redisEval).not.toHaveBeenCalled();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("keeps and charges nothing for a call Syveka hung up", async () => {
+    mocks.redisGet.mockImplementation(async (key: string) =>
+      key === "voice:refused:org-a:call-1" ? "ended" : null,
+    );
+    const res = await POST(eocrRequest());
+    await expect(res.json()).resolves.toEqual({ ok: true, refused: true });
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    expect(mocks.enqueue).not.toHaveBeenCalled();
+    mocks.redisGet.mockImplementation(async () => null);
+  });
+
+  it("marks a refused call as running when the hang-up fails, and retries it once", async () => {
+    mocks.redisEval.mockResolvedValueOnce([-1, 0]).mockResolvedValueOnce([-1, 0]);
+    fetchMock.mockImplementation(async () => new Response("{}", { status: 500 }));
+    await POST(start());
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(mocks.redisSet).toHaveBeenCalledWith(
+      "voice:refused:org-a:call-1",
+      "running",
+      expect.anything(),
+    );
+  });
+
+  it("marks the refusal before hanging up, so nothing slips through meanwhile", async () => {
+    mocks.redisEval.mockResolvedValueOnce([-1, 0]).mockResolvedValueOnce([-1, 0]);
+    let markedAtHangUp = false;
+    fetchMock.mockImplementation(async () => {
+      markedAtHangUp = mocks.redisSet.mock.calls.some(
+        (c) => c[0] === "voice:refused:org-a:call-1" && c[1] === "ended",
+      );
+      return new Response("{}");
+    });
+    await POST(start());
+    expect(markedAtHangUp).toBe(true);
+  });
+
+  it("bills a refused call that really ran", async () => {
+    mocks.redisGet.mockImplementation(async (key: string) =>
+      key === "voice:refused:org-a:call-1" ? "running" : null,
+    );
+    await POST(eocrRequest());
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+    mocks.redisGet.mockImplementation(async () => null);
+  });
+
+  it("gives a refused call no tools, and this reply ends it", async () => {
+    mocks.redisGet.mockImplementation(async (key: string) =>
+      key === "voice:refused:org-a:call-1" ? "running" : null,
+    );
+    const res = await POST(
+      new Request("http://localhost/api/v1/voice/webhook", {
+        method: "POST",
+        headers: { "x-vapi-signature": "sig" },
+        body: JSON.stringify({
+          message: {
+            type: "tool-calls",
+            call: { id: "call-1", assistantId: "assistant-1" },
+            toolCallList: [{ id: "t1", function: { name: "bookMeeting", arguments: "{}" } }],
+          },
+        }),
+      }),
+    );
+    await expect(res.json()).resolves.toMatchObject({
+      results: [
+        {
+          error: "call_refused",
+          message: { type: "request-failed", endCallAfterSpokenEnabled: true },
+        },
+      ],
+    });
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+    mocks.redisGet.mockImplementation(async () => null);
+  });
+
+  it("hangs up on a connecting call whose assistant is unknown", async () => {
+    mocks.voiceAssistantFindFirst.mockResolvedValueOnce(null as never);
+    const res = await POST(start());
+    expect(res.status).toBe(404);
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("a slot that can't be freed doesn't fail the report", async () => {
+    mocks.redisEval.mockRejectedValueOnce(new Error("redis down"));
+    const res = await POST(eocrRequest());
+    expect(res.status).toBe(200);
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed for tools when limits can't be checked: nothing runs", async () => {
+    mocks.getEntitlements.mockRejectedValueOnce(new Error("database down"));
+    const res = await POST(
+      new Request("http://localhost/api/v1/voice/webhook", {
+        method: "POST",
+        headers: { "x-vapi-signature": "sig" },
+        body: JSON.stringify({
+          message: {
+            type: "tool-calls",
+            call: { id: "call-1", assistantId: "assistant-1" },
+            toolCallList: [{ id: "t1", function: { name: "bookMeeting", arguments: "{}" } }],
+          },
+        }),
+      }),
+    );
+    await expect(res.json()).resolves.toEqual({
+      results: [{ toolCallId: "t1", result: JSON.stringify({ error: "limits_unavailable" }) }],
+    });
+    expect(mocks.executeTool).not.toHaveBeenCalled();
+  });
+});
+
+describe("the spoken notice at the webhook", () => {
+  const CONTROL = "https://aws-us-west-2-production1-phone-call-websocket.vapi.ai/x/control";
+  const signed = (message: Record<string, unknown>) =>
+    new Request("http://localhost/api/v1/voice/webhook", {
+      method: "POST",
+      headers: { "x-vapi-signature": "sig" },
+      body: JSON.stringify({ message }),
+    });
+  const start = (extra: Record<string, unknown> = {}) =>
+    signed({
+      type: "status-update",
+      status: "in-progress",
+      call: { id: "call-1", assistantId: "assistant-1", monitor: { controlUrl: CONTROL } },
+      ...extra,
+    });
+
+  let fetchMock: ReturnType<typeof vi.fn>;
+  beforeEach(() => {
+    fetchMock = vi.fn(async () => new Response("{}"));
+    vi.stubGlobal("fetch", fetchMock);
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    mocks.verifyCallDisclosure.mockResolvedValue("ok");
+    mocks.callDisclosureState.mockResolvedValue("unverified");
+  });
+  afterEach(() => {
+    mocks.callDisclosureState.mockResolvedValue("verified");
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  it.each(["language_not_approved", "live_config_mismatch", "unverifiable"])(
+    "ends the call and records nothing when the check says %s",
+    async (reason) => {
+      mocks.verifyCallDisclosure.mockResolvedValueOnce(reason);
+      const res = await POST(start());
+      expect(res.status).toBe(200);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
+    },
+  );
+
+  it("checks the notice before limits, with the assistant's language and the signed config", async () => {
+    await POST(start({ assistant: { firstMessage: "Puhut" } }));
+    expect(mocks.verifyCallDisclosure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        orgId: "org-a",
+        vapiCallId: "call-1",
+        vapiAssistantId: "assistant-1",
+        reported: { firstMessage: "Puhut" },
+      }),
+    );
+  });
+
+  it("lets a verified call continue", async () => {
+    await POST(start());
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(mocks.voiceCallUpsert).toHaveBeenCalledTimes(1);
   });
 });

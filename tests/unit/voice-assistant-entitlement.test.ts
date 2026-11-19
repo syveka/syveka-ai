@@ -21,7 +21,14 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("@/server/db/tenant", () => ({
   tenantDb: mocks.tenantDb,
-  unscopedPrisma: { voiceAssistant: { findFirstOrThrow: vi.fn(), update: vi.fn() } },
+  unscopedPrisma: {
+    voiceAssistant: { findFirstOrThrow: vi.fn(), update: vi.fn() },
+    $transaction: async (step: (tx: unknown) => Promise<unknown>) =>
+      step({
+        voiceAssistant: mocks.tenantDb().voiceAssistant,
+        auditLog: { create: vi.fn(async () => ({})) },
+      }),
+  },
 }));
 vi.mock("@/server/services/billing/entitlements", async (importOriginal) => ({
   ...(await importOriginal<typeof EntitlementsModule>()),
@@ -31,7 +38,10 @@ vi.mock("@/server/integrations/vapi", () => ({
   upsertVapiAssistant: mocks.upsertVapiAssistant,
   buyPhoneNumber: mocks.buyPhoneNumber,
 }));
-vi.mock("@/server/services/audit", () => ({ audit: mocks.auditMock }));
+vi.mock("@/server/services/audit", () => ({
+  audit: mocks.auditMock,
+  auditLogData: async (_ctx: unknown, input: unknown) => input,
+}));
 
 import { upsertAssistant } from "@/server/services/voice";
 
@@ -60,6 +70,7 @@ describe("upsertAssistant — entitlement gate on creation", () => {
       count: ReturnType<typeof vi.fn>;
       create: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
+      findFirstOrThrow: ReturnType<typeof vi.fn>;
     };
   };
 
@@ -74,6 +85,7 @@ describe("upsertAssistant — entitlement gate on creation", () => {
           ...data,
         })),
         update: vi.fn(async ({ data }) => ({ id: "assistant-1", vapiAssistantId: null, ...data })),
+        findFirstOrThrow: vi.fn(async () => ({ recordingEnabled: null })),
       },
     };
     mocks.tenantDb.mockReturnValue(db);

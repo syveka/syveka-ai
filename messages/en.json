@@ -640,6 +640,51 @@
     "persona": "Persona",
     "tools": "Capabilities",
     "toolsDescription": "What the assistant is allowed to do during calls. Actions that modify data always require caller confirmation.",
+    "recording": {
+      "title": "Call recording",
+      "description": "Your choice is sent to the voice provider whenever this assistant's settings are saved. New assistants start with recording off.",
+      "off": "Off: call audio isn't recorded",
+      "on": "On: the voice provider records call audio",
+      "keep": "Unknown: never set here. The voice provider's own setting applies until you choose",
+      "status": {
+        "requestedLabel": "Your setting:",
+        "lastAcceptedLabel": "Last accepted by the voice provider:",
+        "reportedLabel": "The voice provider reports now:",
+        "valueOn": "recording on",
+        "valueOff": "recording off",
+        "sendAgain": "Send to the voice provider again",
+        "sendAgainFailed": "That attempt failed, so the voice provider may hold either setting. Try again.",
+        "needsReview": {
+          "title": "Recording is unknown and needs your review",
+          "body": "This assistant was made before Syveka stored a recording choice, so the voice provider's own setting still applies. Syveka hasn't changed it. Choose on or off below and save."
+        },
+        "unreadable": {
+          "title": "Recording state can't be shown right now",
+          "body": "Syveka couldn't read its record of what was sent, so it can't say which setting the voice provider holds."
+        },
+        "mismatch": {
+          "title": "The voice provider reports a different setting",
+          "body": "What the voice provider reports doesn't match your setting. Calls may not follow your choice until it's sent again."
+        },
+        "failed": {
+          "title": "Your setting may not be applied",
+          "body": "The last attempt to send it failed. The voice provider may hold either setting, so calls may or may not be recorded."
+        },
+        "uncertain": {
+          "title": "Your setting isn't confirmed",
+          "body": "Syveka has no confirmed result for your latest setting, so it can't tell which one the voice provider holds. Calls may or may not be recorded."
+        },
+        "pending": {
+          "title": "Your setting is being sent",
+          "body": "Reload this page in a minute to see the result."
+        },
+        "applied": {
+          "title": "The voice provider accepted your setting",
+          "body": "It accepted this setting when it was sent. That doesn't prove what happens on a call."
+        },
+        "sendAgainSent": "Sent. The status above shows what the voice provider accepted."
+      }
+    },
     "useKb": "Answer from the knowledge base",
     "firstMessagePlaceholder": "Hello! You've reached [company]. How can I help?",
     "systemPromptPlaceholder": "You answer calls for [company]. Be friendly and concise…",
@@ -679,7 +724,9 @@
       "entitlement_exceeded": "Voice AI requires Starter or higher — upgrade your plan to continue.",
       "generic": "Something went wrong. Please try again.",
       "rate_limited": "Too many changes in a short time. Try again in a minute.",
-      "service_unavailable": "The change could not be verified right now. Try again in a moment."
+      "service_unavailable": "The change could not be verified right now. Try again in a moment.",
+      "invalid_input": "Check the fields and try again.",
+      "sync_failed": "Your changes were saved, but they couldn't be sent to the phone service. It may still use the previous settings, including call recording. Save again to retry."
     },
     "attachPhoneNumber": {
       "title": "Attach an existing number",
@@ -699,7 +746,62 @@
         "invalidInput": "Check the phone number format (E.164, e.g. +358401234567) and required fields.",
         "generic": "Something went wrong. Please try again."
       }
-    }
+    },
+    "readiness": {
+      "title": "Call readiness",
+      "summaryReady": "No setup problems found. This can't confirm how a real call sounds.",
+      "summaryBlocked": "This assistant can't take calls yet. Here is what's needed.",
+      "summaryUnverified": "Some checks couldn't be completed, so it's unclear whether this assistant can take calls.",
+      "noticeLabel": "Callers hear this first",
+      "noticeApproved": "Approved",
+      "noticeAwaiting": "Draft, awaiting approval",
+      "voiceNotSetUp": {
+        "title": "Phone calls aren't set up yet",
+        "action": "Contact Syveka support to finish the setup."
+      },
+      "noticeAwaitingApproval": {
+        "title": "The spoken AI notice is awaiting approval",
+        "action": "Calls stay blocked until Syveka approves the notice in this language. You don't need to do anything."
+      },
+      "notSynced": {
+        "title": "This assistant isn't connected yet",
+        "action": "Select \"Activate & get number\" to connect it."
+      },
+      "syncOutdated": {
+        "title": "The settings sent to the phone service are out of date",
+        "action": "Save this assistant to send its current settings and notice."
+      },
+      "syncUnverifiable": {
+        "title": "The connection couldn't be checked",
+        "action": "Reload this page in a moment. If this continues, contact Syveka support."
+      },
+      "usageUnverifiable": {
+        "title": "Voice minutes couldn't be checked",
+        "action": "Reload this page in a moment. If this continues, contact Syveka support."
+      },
+      "noPhoneNumber": {
+        "title": "No phone number is attached",
+        "action": "Attach a phone number on this page.",
+        "actionOnceConnected": "Once this assistant is connected, attach a phone number on this page."
+      },
+      "inactive": {
+        "title": "This assistant is switched off",
+        "action": "Select \"Activate & get number\" to switch it on."
+      },
+      "noMinutes": {
+        "title": "Your plan has no voice minutes",
+        "action": "The workspace owner can check the plan in billing settings."
+      },
+      "minutesUsed": {
+        "title": "This month's voice minutes are used up",
+        "action": "The workspace owner can check usage and the plan in billing settings."
+      },
+      "readOnly": {
+        "title": "This workspace is read-only",
+        "action": "The workspace owner can resolve the payment issue in billing settings."
+      }
+    },
+    "deactivateIncomplete": "This assistant is off in Syveka and can't take any action, but the voice provider still holds it and may answer its number. Syveka tries to hang up those calls. Deactivate again to remove it."
   },
   "calendar": {
     "title": "Calendar",

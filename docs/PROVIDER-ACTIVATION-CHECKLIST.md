@@ -345,6 +345,29 @@ Webhook endpoint: `{NEXT_PUBLIC_APP_URL}/api/v1/webhooks/inbox-email/resend`.
   in production.**
 - Phone number provisioning (+358 numbers) happens through the app's voice settings once the
   assistant is active.
+- **Spoken AI notice.** `VOICE_DISCLOSURE_APPROVED_LANGUAGES` (comma-separated, for example
+  `FI@2026-11-12T08:00:00Z,EN@2026-11-12T08:00:00Z`) lists the languages whose wording counsel
+  and a native speaker have approved, each with the UTC time its approval takes effect. It is
+  empty by default, and every call in an unlisted language is hung up. Set it per environment,
+  only after that approval. A call is kept only if it began at or after its language's time, so a
+  later approval never covers an earlier call: set the time no earlier than the deploy that
+  applies it. An entry without a time, such as `FI`, approves nothing.
+- **Re-sync every assistant after deploying.** Saving an assistant in its settings page sends the
+  current notice, live-call control and webhook retries. An assistant without the current notice
+  is refused at each call, and its settings page shows that. The page doesn't check the other two,
+  so re-sync every assistant even if its page shows no problem.
+- **Recording.** Each assistant has a setting. Once chosen, Syveka sends it as
+  `artifactPlan.recordingEnabled` on every sync, and a new assistant starts with it off. An assistant
+  never set in Syveka keeps Vapi's setting, whose schema defaults to on for a new assistant. Check
+  it in the Vapi dashboard, and Vapi's retention, against the owner's recording decision.
+  The settings page separates the setting from what Vapi accepted, on every visit. It reads the
+  `voice_assistant.recording_sync_started`, `voice_assistant.recording_sync_applied` and
+  `voice_assistant.sync_failed` audit rows, and what Vapi itself reports. Before relying on
+  recording being off, its panel should say Vapi accepted the setting, and an assistant marked
+  unknown needs someone to choose.
+- **Reconciliation schedule.** Create a QStash schedule for `reconcile-voice-calls`. Until it
+  exists, nothing recovers a lost webhook. A known call stays uncertain. A call with no row,
+  including one whose report showed no evidence of the notice, isn't kept, counted or billed.
 - [ ] **Manual verification required**: place one real call through the provisioned number and
       confirm a `VoiceCall` row reaches `COMPLETED` status — this is exactly what
       `getOrgSetupReadiness` requires before reporting the voice channel `ready` rather than
@@ -391,7 +414,7 @@ Webhook endpoint: `{NEXT_PUBLIC_APP_URL}/api/v1/webhooks/inbox-email/resend`.
 - No inbound webhook to configure manually — QStash calls back into the app's own job routes
   (`src/app/api/v1/jobs/{calendar-sync,embed-document,post-call,run-workflow,send-reminder,
 usage-rollup}/route.ts`). Most are enqueued by the app via `enqueue()`; `calendar-sync`,
-  `usage-rollup` and `reconcile-creator-generations` are started only by manually registered QStash
+  `usage-rollup`, `reconcile-creator-generations` and `reconcile-voice-calls` are started only by manually registered QStash
   schedules (see `docs/release-runbook.md`; `calendar-sync` then re-enqueues its own follow-up pages). Every job
   route verifies the request with `verifyJobRequest()` (QStash's `Receiver.verify()`) before
   doing any work.

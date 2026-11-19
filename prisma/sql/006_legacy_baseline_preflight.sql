@@ -70,11 +70,14 @@ DECLARE
   --     20260818000000_workflow_run_source_event_key.
   --   - voice_calls.post_call_processed_at: same situation, added by
   --     20260830000000_voice_call_post_call_processed_at.
+  --   - voice_assistants.recording_enabled: same situation, added by
+  --     20261106000000_voice_assistant_recording_enabled.
   legacy_missing_columns TEXT[] := ARRAY[
 -- BEGIN LEGACY MISSING COLUMNS
     'calendar_sync_states.webhook_verification_secret_hash',
     'workflow_runs.source_event_key',
-    'voice_calls.post_call_processed_at'
+    'voice_calls.post_call_processed_at',
+    'voice_assistants.recording_enabled'
 -- END LEGACY MISSING COLUMNS
   ];
 -- BEGIN LEGACY MISSING TABLES
@@ -1027,6 +1030,7 @@ BEGIN
       ('voice_assistants', 'name', 'text', 'true', '', '', ''),
       ('voice_assistants', 'organization_id', 'uuid', 'true', '', '', ''),
       ('voice_assistants', 'phone_number', 'text', 'false', '', '', ''),
+      ('voice_assistants', 'recording_enabled', 'boolean', 'false', '', '', ''),
       ('voice_assistants', 'system_prompt', 'text', 'true', '', '', ''),
       ('voice_assistants', 'transfer_number', 'text', 'false', '', '', ''),
       ('voice_assistants', 'updated_at', 'timestamp(3) without time zone', 'true', '', '', ''),

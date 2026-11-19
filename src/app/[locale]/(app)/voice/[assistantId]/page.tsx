@@ -1,16 +1,28 @@
 export const dynamic = "force-dynamic";
 
 import { notFound } from "next/navigation";
-import { getLocale, getTranslations } from "next-intl/server";
+import { getFormatter, getLocale, getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { tenantDb } from "@/server/db/tenant";
 import { getEntitlements } from "@/server/services/billing/entitlements";
+import { getAssistantReadiness } from "@/server/voice/assistant-readiness";
+import {
+  readRecordingSyncState,
+  recordingStatusKind,
+  type RecordingSyncState,
+} from "@/server/voice/recording-sync";
 import { AssistantForm } from "@/components/voice/assistant-form";
+import { AssistantReadinessPanel } from "@/components/voice/assistant-readiness-panel";
+import { RecordingStatusPanel } from "@/components/voice/recording-status-panel";
 import { formatCount, PLAN_NAMES } from "@/components/billing/plan-display";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Link } from "@/i18n/routing";
-import type { VoiceAssistantInput } from "@/lib/validators/voice";
+import {
+  recordingChoice,
+  recordingToApply,
+  type VoiceAssistantInput,
+} from "@/lib/validators/voice";
 
 export default async function AssistantPage({
   params,
@@ -83,7 +95,82 @@ export default async function AssistantPage({
     enabledTools: (assistant.enabledTools as VoiceAssistantInput["enabledTools"]) ?? [],
     useKnowledgeBase: assistant.useKnowledgeBase,
     transferNumber: assistant.transferNumber ?? "",
+    recording: recordingChoice(
+      recordingToApply(assistant.recordingEnabled, Boolean(assistant.vapiAssistantId)),
+    ),
   };
 
-  return <AssistantForm initial={initial} />;
+  // The panel mustn't take the form down with it: saving is the remedy it often suggests.
+  const [ent, t] = await Promise.all([
+    getEntitlements(ctx.orgId).catch(() => null),
+    getTranslations("voice.readiness"),
+  ]);
+  const readiness = await getAssistantReadiness(ctx.orgId, assistant, ent);
+
+  // Read on every visit: a saved setting isn't what Vapi holds. Unreadable says so, never "fine".
+  const recordingSync: RecordingSyncState | null =
+    assistant.vapiAssistantId && assistant.recordingEnabled !== null
+      ? await readRecordingSyncState(ctx.orgId, assistant.id, assistant.recordingEnabled).catch(
+          () => null,
+        )
+      : null;
+  const format = await getFormatter();
+  const lastAccepted = recordingSync?.lastAccepted ?? null;
+
+  const summaries = {
+    clear: t("summaryReady"),
+    blocked: t("summaryBlocked"),
+    unverified: t("summaryUnverified"),
+  };
+
+  return (
+    <AssistantForm
+      initial={initial}
+      deactivationIncomplete={Boolean(
+        !assistant.isActive && assistant.vapiAssistantId && assistant.phoneNumber,
+      )}
+      recordingStatus={
+        <RecordingStatusPanel
+          assistantId={assistant.id}
+          kind={recordingStatusKind({
+            requested: assistant.recordingEnabled,
+            inVapi: Boolean(assistant.vapiAssistantId),
+            sync: recordingSync,
+            reportedByVapi: readiness.recordingReportedByVapi,
+          })}
+          requested={assistant.recordingEnabled}
+          reportedByVapi={readiness.recordingReportedByVapi}
+          lastAccepted={
+            lastAccepted
+              ? {
+                  enabled: lastAccepted.enabled,
+                  at: format.dateTime(lastAccepted.at, { dateStyle: "medium", timeStyle: "short" }),
+                }
+              : null
+          }
+        />
+      }
+      statusPanel={
+        <AssistantReadinessPanel
+          text={{
+            title: t("title"),
+            summary: summaries[readiness.status],
+            items: readiness.blockers.map((blocker) => ({
+              key: blocker,
+              title: t(`${blocker}.title`),
+              action:
+                blocker === "noPhoneNumber" && !assistant.vapiAssistantId
+                  ? t("noPhoneNumber.actionOnceConnected")
+                  : t(`${blocker}.action`),
+            })),
+            noticeLabel: t("noticeLabel"),
+            notice: readiness.notice,
+            noticeLanguage: assistant.language.toLowerCase(),
+            noticeStatus: readiness.noticeApproved ? t("noticeApproved") : t("noticeAwaiting"),
+            noticeApproved: readiness.noticeApproved,
+          }}
+        />
+      }
+    />
+  );
 }

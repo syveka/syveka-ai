@@ -140,12 +140,20 @@ describe("upsertVapiAssistant — outbound server config uses credentialId, neve
     await upsertVapiAssistant(baseConfig, "assistant-1");
 
     expect(fetchMock).toHaveBeenCalledTimes(1);
-    const [, init] = fetchMock.mock.calls[0]!;
+    const patches = fetchMock.mock.calls.filter(([, i]) => i?.method === "PATCH");
+    expect(patches).toHaveLength(1);
+    const [, init] = patches[0]!;
     const sentBody = JSON.parse((init as RequestInit).body as string);
 
     expect(sentBody.server).toEqual({
       url: baseConfig.serverUrl,
       credentialId: baseConfig.serverCredentialId,
+      backoffPlan: {
+        type: "exponential",
+        maxRetries: 3,
+        baseDelaySeconds: 2,
+        excludedStatusCodes: [400, 401, 403, 404, 409],
+      },
     });
     expect(sentBody.server.secret).toBeUndefined();
     expect(JSON.stringify(sentBody)).not.toContain('"secret"');
@@ -168,6 +176,12 @@ describe("upsertVapiAssistant — outbound server config uses credentialId, neve
     expect(sentBody.server).toEqual({
       url: baseConfig.serverUrl,
       credentialId: baseConfig.serverCredentialId,
+      backoffPlan: {
+        type: "exponential",
+        maxRetries: 3,
+        baseDelaySeconds: 2,
+        excludedStatusCodes: [400, 401, 403, 404, 409],
+      },
     });
     expect(sentBody.server.secret).toBeUndefined();
   });

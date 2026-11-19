@@ -16,7 +16,8 @@ declare
     '20260719000000_initial_security_baseline',
     '20260726000000_normalize_list_column_nullability',
     '20260826000000_harden_business_dna_table_privileges',
-    '20261014000000_secure_prisma_migrations_table'
+    '20261014000000_secure_prisma_migrations_table',
+    '20261106000000_voice_assistant_recording_enabled'
   ];
   -- Every application table, so a dropped or renamed one fails here too. The
   -- generic check below also covers any public table not listed.

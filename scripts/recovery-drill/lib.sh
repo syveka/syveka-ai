@@ -153,6 +153,11 @@ compare_rowcounts() {
   diff <(grep '^rows|' "$1" | sort) <(grep '^rows|' "$2" | sort)
 }
 
+# expected_pending_migrations <list>: the names a restored history should still be missing.
+expected_pending_migrations() {
+  grep -v '^#' "$1" | tr -d '\r' | sed '/^[[:space:]]*$/d' | sort
+}
+
 # pending_migrations <migrations-dir> <applied-names-file>: migration
 # directories at this commit that are not recorded as applied.
 pending_migrations() {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildVoiceSystemPrompt } from "@/server/ai/prompts/voice";
+import { buildVoiceFirstMessage, buildVoiceSystemPrompt } from "@/server/ai/prompts/voice";
 import type { BusinessDnaContext } from "@/server/business-dna/context";
 
 const disclosure = "Start by disclosing that you are an AI assistant and the call may be recorded.";
@@ -133,5 +133,19 @@ describe("buildVoiceSystemPrompt", () => {
     expect(result).toBe(
       `${disclosure}\n\nPrompt.\n\nIf the caller asks for a human, transfer the call to +358401234567.`,
     );
+  });
+});
+
+describe("buildVoiceFirstMessage", () => {
+  it("speaks the AI and recording notice before the owner's greeting, in the assistant's language", () => {
+    expect(buildVoiceFirstMessage("EN", "Hi there!")).toBe(
+      "You are speaking with an AI assistant, and this call may be recorded. Hi there!",
+    );
+    expect(buildVoiceFirstMessage("FI", "Hei!")).toMatch(/^Puhut tekoälyavustajan kanssa.* Hei!$/);
+    expect(buildVoiceFirstMessage("AR", "مرحباً")).toMatch(/الذكاء الاصطناعي.*مرحباً$/);
+  });
+
+  it("falls back to English for an unknown language rather than skipping the notice", () => {
+    expect(buildVoiceFirstMessage("SV", "Hej")).toMatch(/^You are speaking with an AI assistant/);
   });
 });

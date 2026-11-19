@@ -114,3 +114,32 @@ describe("toVapiPayload — per-language transcriber/voice selection", () => {
     expect(payload.transcriber).toEqual({ provider: "deepgram", model: "nova-3", language: "ar" });
   });
 });
+
+describe("toVapiPayload — call recording", () => {
+  // With no choice made in Syveka, a sync mustn't override the one made in Vapi.
+  it.each([undefined, null])("doesn't set recording when none was chosen (%s)", (choice) => {
+    const config = baseConfig({ recordingEnabled: choice });
+    const payload: Record<string, unknown> = toVapiPayload(config);
+
+    expect(payload).not.toHaveProperty("artifactPlan");
+    expect(payload).not.toHaveProperty("recordingEnabled");
+  });
+
+  it.each([false, true])("sends a choice in the documented field (%s)", (choice) => {
+    const config = baseConfig({ recordingEnabled: choice });
+    const payload: Record<string, unknown> = toVapiPayload(config);
+
+    expect(payload.artifactPlan).toEqual({ recordingEnabled: choice });
+    expect(payload).not.toHaveProperty("recordingEnabled");
+  });
+});
+
+describe("toVapiPayload — the first message (AI and recording notice) is always spoken", () => {
+  it("speaks the configured first message first, and the caller can't interrupt it", () => {
+    const payload = toVapiPayload(baseConfig({ firstMessage: "Notice. Hei!" }));
+
+    expect(payload.firstMessage).toBe("Notice. Hei!");
+    expect(payload.firstMessageMode).toBe("assistant-speaks-first");
+    expect(payload.firstMessageInterruptionsEnabled).toBe(false);
+  });
+});

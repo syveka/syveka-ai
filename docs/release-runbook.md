@@ -620,6 +620,23 @@ step 6 applies it as a no-op and records it, and step 7's `release-invariants.sq
 row. After the release, confirm `prisma migrate status` is clean. Do not insert or edit
 `_prisma_migrations` rows by hand. This remediation does not lift the backup/recovery gate above.
 
+**Note on `20261106000000_voice_assistant_recording_enabled`:** it adds one nullable column with
+no default to `voice_assistants`, and changes no existing row.
+
+- **Backup path:** Option A only. Option B and Option B-M don't apply, because this is a schema
+  change and a column addition isn't metadata. Option A also needs its restore test, because the
+  schema changed.
+- **Restore test:** run the recovery drill at the release SHA. `s6` and `s7` expect the migrations
+  in `scripts/recovery-drill/expected-pending-migrations.txt`. Update that list when production's
+  history changes, or the drill stops by design.
+- **Order:** step 6 applies it before the new code is promoted, so no build reads a missing column.
+- **Application rollback:** use `vercel rollback <recorded deployment>`. The column stays, and
+  older code ignores it. Don't drop it. Code before #408 sends an undocumented top-level
+  `recordingEnabled: true` on each sync, and its effect on Vapi is unverified, so check each
+  assistant's `artifactPlan` in Vapi during and after a rollback, then re-save each assistant after
+  rolling forward. An assistant created during the rollback gets Vapi's default, which records, and
+  has no stored choice, so a later sync leaves that as is. Set its choice explicitly.
+
 Required production Environment secrets are `PROD_DATABASE_URL`,
 `PROD_DIRECT_URL`, `VERCEL_TOKEN`, `VERCEL_ORG_ID`, `VERCEL_PROJECT_ID`, and
 `VERCEL_AUTOMATION_BYPASS_SECRET` (the production Vercel project's Protection
@@ -674,6 +691,22 @@ environment, before this is operationally complete:
 environment until this schedule has actually been registered against it** — until then, a generation
 whose process crashes mid-flight stays stuck `GENERATING` with credits `RESERVED` indefinitely, exactly
 as before that work, because nothing will be calling this route on a recurring basis.
+
+## Voice call reconciliation schedule (QStash)
+
+`src/app/api/v1/jobs/reconcile-voice-calls/route.ts` recovers voice calls whose webhooks were lost or late,
+and requeues their post-call jobs. Like the jobs above, **the code alone doesn't create its own trigger**. A
+QStash recurring schedule must be registered manually, once per environment, **before voice is enabled there**:
+
+- POST destination: `/api/v1/jobs/reconcile-voice-calls`
+- Cron: `*/15 * * * *` (every 15 minutes; a call is looked at once it's 20 minutes old with no end, or 30 minutes
+  past its end with its job unprocessed)
+- Initial JSON body: `{}`
+- The request must be delivered and signed by QStash (verified via `verifyJobRequest`).
+
+Until it's registered, a call whose report is lost or has no length is never billed, and counts as 15 minutes
+against the organization's limits for 48 hours. Log events to watch: `voice_reconcile_long_unresolved` (a call
+no longer counted against limits and still unresolved), `voice_reconcile_list_full` (older calls may be missed, since the list isn't paged) and `voice_reconcile_row_failed`.
 
 ## Nightly usage rollup and retention purge schedule (QStash)
 
