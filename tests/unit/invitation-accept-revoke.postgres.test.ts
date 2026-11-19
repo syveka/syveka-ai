@@ -189,6 +189,7 @@ describe.skipIf(!PG_URL)("withdraw vs accept on real Postgres (service path)", (
       const accept = acceptInvitation(seeded.token, {
         id: seeded.joinerId,
         email: seeded.joinerEmail,
+        emailConfirmedAt: "2030-01-01T00:00:00Z",
       });
       await enteredPromise; // acceptance has re-read PENDING under the lock and is paused
       const revoke = revokeInvitation(seeded.ctx, seeded.invitationId);
