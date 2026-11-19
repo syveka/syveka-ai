@@ -12,9 +12,10 @@ Migration `20261111000000_revoke_data_api_table_privileges` removes the grants.
 **Status on 19 Nov 2026.** A read-only catalog check on production showed `anon` and
 `authenticated` holding only `SELECT` on `public.users` (no `UPDATE`, not even per column), so the
 path in section 1 is **latent** there: it would open if `UPDATE` were granted again. What a
-signed-in user can read through the Data API today, as RLS allows, is the organization-less
-(`organization_id IS NULL`) rows of `prompts` and `creator_templates`; how sensitive they are is
-not yet determined.
+signed-in user can read through the Data API today is the organization-less rows of `prompts` and
+`creator_templates`: `authenticated` holds `SELECT` on both, and their select policies allow
+`organization_id IS NULL`. How sensitive those rows are is not yet determined. The full results
+are in section 3.
 
 ## 1. What a user could do with `UPDATE` on `users`
 
@@ -143,6 +144,21 @@ from public._prisma_migrations order by migration_name desc limit 3;
 
 - **Also check:** Authentication → Hooks → "Customize Access Token (JWT) Claims" is **off**.
 
+**Results before #443 (read-only, 19 Nov 2026):**
+
+| Query | Production                                                                                                                                                                                              | Staging                                                                                          |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| D1    | Every table with every privilege for `anon` and `authenticated` (including `MAINTAIN`, PostgreSQL 17), except `users` (`SELECT` only, no `UPDATE`, no column privilege) and `_prisma_migrations` (none) | `MAINTAIN` only, on 48 relations, for each of `anon` and `authenticated`; no `SELECT` and no DML |
+| D3    | 0 rows                                                                                                                                                                                                  | 0 rows                                                                                           |
+| D5    | The `supabase_realtime` publication is empty                                                                                                                                                            | The `supabase_realtime` publication is empty                                                     |
+| D6    | `0`, `0`                                                                                                                                                                                                | `0`, `0`                                                                                         |
+| D7    | Newest applied migration: `20260914000000`                                                                                                                                                              | Newest applied migration: `20261014000000`                                                       |
+
+- **Realtime:** with `supabase_realtime` empty on both, live notifications work on neither. The
+  migration's `GRANT SELECT` on `notifications` is kept for when the table is published.
+- **Readable today on production:** the organization-less rows of `prompts` and
+  `creator_templates` (section 1, status).
+
 ### Can the staging database be used for internal testing before #443 is applied there?
 
 **No, unless D1 on staging shows no `UPDATE` for `authenticated` on `users`.** Staging's anon key
@@ -191,7 +207,8 @@ from before the staging-release branch are pinned.
     production access is the owner's read-only dump.
 - **Production.** `deploy.yml` applies migrations separately and needs its own authorization.
   Apply #443 to production after it has passed on staging and after one drill, so backups are proven
-  before production's grants change.
+  before production's grants change. The drill is a precondition for production only, not for
+  merging #443 or for the staging release.
 - **Locking:** catalog-only changes with brief locks; no table rewrite.
 - **Browser effect:** none expected. The only browser path is the Realtime subscription on
   `notifications`, which keeps `SELECT`. Today it receives nothing anyway, because
