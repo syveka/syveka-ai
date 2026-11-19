@@ -9,7 +9,11 @@ const mocks = vi.hoisted(() => ({
   reschedule: vi.fn(),
 }));
 
-vi.mock("@/server/security/rate-limit", () => ({ rateLimitRefusal: vi.fn(async () => null) }));
+vi.mock("@/server/security/rate-limit", () => ({
+  rateLimitRefusal: vi.fn(async () => null),
+  refusalFor: vi.fn(() => null),
+  emailKey: vi.fn((email: string) => `hash:${email}`),
+}));
 vi.mock("@/server/services/booking", () => ({
   createPublicBooking: mocks.create,
   rescheduleBookingViaToken: mocks.reschedule,

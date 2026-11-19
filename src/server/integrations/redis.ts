@@ -40,7 +40,50 @@ export type RateLimiters = {
   memberInviteOrg: Ratelimit;
   memberInviteRecipient: Ratelimit;
   creatorPostWorkflow: Ratelimit;
+  eventReminderRecipientsHour: Ratelimit;
+  eventReminderRecipientsDay: Ratelimit;
+  publicBookingRecipient: Ratelimit;
+  publicBookingRecipientDay: Ratelimit;
+  publicBookingIpOrgDay: Ratelimit;
 };
+
+/**
+ * External addresses one organization may add to calendar-event reminders
+ * (each gets up to two reminder emails from the platform domain). Sized for a
+ * small business: a few meetings a day with a handful of outside guests. One
+ * event holds at most 50 attendees, so a single full event still fits an hour.
+ */
+export const EVENT_REMINDER_RECIPIENTS_PER_HOUR = 60;
+export const EVENT_REMINDER_RECIPIENTS_PER_DAY = 200;
+/**
+ * Bookable public bookings for one guest address with one organization per
+ * day. Only attempts for an offered slot count (see createPublicBooking's
+ * admit), so a stranger can't use up a guest's allowance with junk requests.
+ * Above the two or three meetings one person plausibly books with one
+ * business in a day; a slot taken at the last moment still counts.
+ */
+export const PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY = 5;
+// The per-page and per-organization caps are not Redis limits: they are counted
+// from the bookings table inside the booking transaction (see
+// PUBLIC_BOOKING_ATTEMPTS_PER_TYPE_PER_HOUR in services/booking.ts).
+/**
+ * Bookable public booking attempts per recipient mailbox per day across ALL
+ * organizations. Sign-up and org creation are open, so the per-organization
+ * recipient cap alone would let one attacker mail a stranger 5 times per
+ * organization they create. Two businesses a person books with in a day, at
+ * the per-organization allowance each (2 x 5), reach exactly this cap, so a
+ * third business that day is refused.
+ */
+export const PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_ANY_ORG_PER_DAY = 10;
+/**
+ * Bookable public booking attempts per client IP per organization per day.
+ * Fresh throwaway guest addresses pass the recipient caps, so without this one
+ * IP could drain an organization's shared page and daily budgets and switch
+ * its booking page off. A genuine guest books or moves a handful of times; an
+ * owner-tunable constant. Requests without an IP header share one "anon"
+ * bucket per organization.
+ */
+export const PUBLIC_BOOKING_ATTEMPTS_PER_IP_PER_ORG_PER_DAY = 10;
 
 let rateLimitersClient: RateLimiters | null = null;
 
@@ -158,6 +201,43 @@ function getRateLimiters(): RateLimiters {
       limiter: Ratelimit.slidingWindow(60, "10 m"),
       prefix: "rl:creator-post-workflow",
     }),
+    // Calendar-event reminders email every attendee address from the platform
+    // domain. A budget of external recipients per organization, spent by the
+    // number of addresses a save adds (checkRateLimit's `cost`), not per save.
+    eventReminderRecipientsHour: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(EVENT_REMINDER_RECIPIENTS_PER_HOUR, "1 h"),
+      prefix: "rl:event-reminder-recipients:org:hour",
+    }),
+    eventReminderRecipientsDay: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(EVENT_REMINDER_RECIPIENTS_PER_DAY, "1 d"),
+      prefix: "rl:event-reminder-recipients:org:day",
+    }),
+    // Public bookings: each one emails the address the guest typed (a
+    // confirmation and two reminders) with no login in front. Capped per
+    // recipient address and organization (the address hashed, any IP), per
+    // recipient across organizations and per IP and organization, next to the
+    // per-IP limit in the route. The caps shared by all guests (page,
+    // organization) are counted from the bookings table instead.
+    publicBookingRecipient: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_PER_DAY, "1 d"),
+      prefix: "rl:public-booking:recipient",
+    }),
+    publicBookingRecipientDay: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(
+        PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_ANY_ORG_PER_DAY,
+        "1 d",
+      ),
+      prefix: "rl:public-booking:recipient:day",
+    }),
+    publicBookingIpOrgDay: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(PUBLIC_BOOKING_ATTEMPTS_PER_IP_PER_ORG_PER_DAY, "1 d"),
+      prefix: "rl:public-booking:ip-org:day",
+    }),
   };
   return rateLimitersClient;
 }
@@ -214,6 +294,21 @@ export const rateLimiters = {
   get creatorPostWorkflow() {
     return getRateLimiters().creatorPostWorkflow;
   },
+  get eventReminderRecipientsHour() {
+    return getRateLimiters().eventReminderRecipientsHour;
+  },
+  get eventReminderRecipientsDay() {
+    return getRateLimiters().eventReminderRecipientsDay;
+  },
+  get publicBookingRecipient() {
+    return getRateLimiters().publicBookingRecipient;
+  },
+  get publicBookingRecipientDay() {
+    return getRateLimiters().publicBookingRecipientDay;
+  },
+  get publicBookingIpOrgDay() {
+    return getRateLimiters().publicBookingIpOrgDay;
+  },
 } satisfies RateLimiters;
 
 /**
@@ -244,15 +339,22 @@ function logRateLimitUnavailable(limiter: keyof RateLimiters, cause: "timeout" |
  * errors, and reading a limiter throws when Redis isn't configured. All three
  * are "unavailable", for the caller to refuse (fail closed). A "cacheBlock"
  * or "denyList" refusal is "limited".
+ *
+ * `cost` is how many units of the limit this request spends (default one).
+ * With @upstash/ratelimit's sliding window, a request that costs more than
+ * what is left is refused but still counted (the script increments, then
+ * compares), so a budget can be under-used but never exceeded.
  */
 export async function checkRateLimit(
   name: keyof RateLimiters,
   key: string,
+  cost = 1,
 ): Promise<LimitDecision> {
   let result;
   try {
     // The limiter is read inside the try: its getter throws without Redis config.
-    result = await rateLimiters[name].limit(key);
+    const limiter = rateLimiters[name];
+    result = await (cost === 1 ? limiter.limit(key) : limiter.limit(key, { rate: cost }));
   } catch {
     logRateLimitUnavailable(name, "error");
     return { ok: false, reason: "unavailable" };

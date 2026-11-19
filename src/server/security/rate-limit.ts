@@ -77,8 +77,23 @@ export async function actionWriteLimitError(
 
 /**
  * A stable key part for an email address that doesn't store the address in
- * the limiter's keys (Redis).
+ * the limiter's keys (Redis). Addresses that reach the same mailbox share a
+ * key, so a per-recipient cap can't be stepped around with aliases:
+ * `a+1@x` is `a@x`, and Gmail ignores dots (`a.b@gmail.com` is
+ * `ab@gmail.com`). Folding can only merge distinct addresses into one key,
+ * which over-counts: the safe direction for a cap.
  */
 export function emailKey(email: string): string {
-  return createHash("sha256").update(email.trim().toLowerCase()).digest("hex").slice(0, 32);
+  return createHash("sha256").update(mailbox(email)).digest("hex").slice(0, 32);
+}
+
+function mailbox(email: string): string {
+  const address = email.trim().toLowerCase();
+  const at = address.lastIndexOf("@");
+  if (at <= 0) return address;
+  let local = address.slice(0, at).split("+")[0] || address.slice(0, at);
+  let domain = address.slice(at + 1);
+  if (domain === "googlemail.com") domain = "gmail.com";
+  if (domain === "gmail.com") local = local.split(".").join("");
+  return `${local}@${domain}`;
 }

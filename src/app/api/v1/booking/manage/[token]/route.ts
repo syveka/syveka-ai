@@ -26,9 +26,15 @@ async function deps() {
   return { rateLimit, booking, tokens, validators, notifications, reminders };
 }
 
+/** Thrown from the admission check to stop a reschedule; the route answers with the refusal. */
+class AdmissionRefused extends Error {}
+
+function clientIp(request: Request): string {
+  return request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "anon";
+}
+
 function limitKey(request: Request): string {
-  const ip = request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "anon";
-  return `booking-manage:${ip}`;
+  return `booking-manage:${clientIp(request)}`;
 }
 
 export async function GET(request: Request, { params }: { params: Promise<{ token: string }> }) {
@@ -70,8 +76,34 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
   if (!parsed.success) return NextResponse.json({ error: "invalid_input" }, { status: 400 });
 
   const { token } = await params;
+  // A reschedule emails the guest again, so it spends the same guest and page
+  // allowances as a new public booking, once the new time is known to be
+  // offered and before anything is written (see the create route).
+  let refusal: NextResponse | null = null;
+  const admit = async (b: {
+    bookingTypeId: string;
+    organizationId: string;
+    guestEmail: string;
+  }) => {
+    // Same rule as the create route (see there): narrow caps spent now, the
+    // page and organization caps counted by the service inside the transaction.
+    refusal =
+      (await rateLimit.rateLimitRefusal(
+        "publicBookingRecipient",
+        `${b.organizationId}:${rateLimit.emailKey(b.guestEmail)}`,
+      )) ??
+      (await rateLimit.rateLimitRefusal(
+        "publicBookingRecipientDay",
+        rateLimit.emailKey(b.guestEmail),
+      )) ??
+      (await rateLimit.rateLimitRefusal(
+        "publicBookingIpOrgDay",
+        `${clientIp(request)}:${b.organizationId}`,
+      ));
+    if (refusal) throw new AdmissionRefused();
+  };
   try {
-    const result = await booking.rescheduleBookingViaToken(token, parsed.data.startsAt);
+    const result = await booking.rescheduleBookingViaToken(token, parsed.data.startsAt, admit);
     const [notified] = await Promise.allSettled([
       notifications.sendBookingLifecycleNotifications({
         kind: "reschedule",
@@ -93,10 +125,20 @@ export async function POST(request: Request, { params }: { params: Promise<{ tok
         notified.status === "fulfilled" && notified.value.guestEmail !== "failed",
     });
   } catch (e) {
+    if (e instanceof AdmissionRefused && refusal) return refusal;
     if (e instanceof tokens.BookingTokenError) {
       return NextResponse.json({ error: e.code }, { status: 404 });
     }
     if (e instanceof booking.BookingError) {
+      if (e.code === "booking_cap" && e.cap) {
+        const capRefusal = rateLimit.refusalFor({
+          ok: false,
+          reason: "limited",
+          remaining: 0,
+          ...e.cap,
+        });
+        if (capRefusal) return capRefusal;
+      }
       if (e.code === "calendar_busy") {
         return NextResponse.json(
           { error: e.code },

@@ -423,7 +423,7 @@ jobs:
           SEAT_LIMIT_PG_URL: ${{ env.SCRATCH_URL }}
           VOICE_PG_URL: ${{ env.SCRATCH_URL }}
         run: |
-          npx vitest run tests/unit/invitation-seat-limit.postgres.test.ts tests/unit/post-call-concurrency.postgres.test.ts --reporter=default --reporter=json --outputFile=opt-in-postgres.json
+          npx vitest run tests/unit/invitation-seat-limit.postgres.test.ts tests/unit/post-call-concurrency.postgres.test.ts tests/unit/booking-shared-caps.postgres.test.ts --reporter=default --reporter=json --outputFile=opt-in-postgres.json
           node -e '
             const r = require("./opt-in-postgres.json");
             console.log(JSON.stringify({ total: r.numTotalTests, passed: r.numPassedTests, skipped: r.numPendingTests, todo: r.numTodoTests, failed: r.numFailedTests }));
