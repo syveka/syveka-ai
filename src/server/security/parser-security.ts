@@ -1,6 +1,6 @@
 import "server-only";
 
-import { createRequire } from "node:module";
+import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { MAX_EXTRACTED_CHARS } from "@/server/security/document-ingestion";
 
@@ -49,19 +49,20 @@ function fail(code, message) {
 
 (async () => {
   try {
-    const buffer = Buffer.from(workerData.input);
     let text;
     if (workerData.mimeType === "application/pdf") {
       const loaded = require(workerData.pdfParsePath);
       const pdfParse = loaded.default || loaded;
-      const result = await pdfParse(buffer, { max: workerData.maxPdfPages + 1 });
+      // A plain Uint8Array: pdf-parse's pdf.js misreads some PDFs given as a Buffer.
+      const data = new Uint8Array(workerData.input);
+      const result = await pdfParse(data, { max: workerData.maxPdfPages + 1 });
       if (result.numpages > workerData.maxPdfPages) {
         return fail("pdf_page_limit", "PDF exceeds the page limit");
       }
       text = result.text;
     } else {
       const mammoth = require(workerData.mammothPath);
-      const result = await mammoth.extractRawText({ buffer });
+      const result = await mammoth.extractRawText({ buffer: Buffer.from(workerData.input) });
       text = result.value;
     }
     if (typeof text !== "string") return fail("parser_failed", "Parser returned invalid output");
@@ -209,6 +210,27 @@ export async function awaitParserWorker(
   });
 }
 
+/**
+ * Filesystem paths of the parser libraries, for the worker to require. Resolved
+ * by Node from the app root at runtime. webpack rewrites `createRequire` from
+ * "node:module" -- `.resolve` became a numeric module id, which the worker can't
+ * require, so every PDF and DOCX failed as unreadable in built deployments --
+ * so it is taken through `process.getBuiltinModule`, which webpack leaves alone.
+ * pdf-parse is loaded from its library file: its package entry is only a
+ * re-export. Both packages are traced into the deployment by next.config.ts.
+ */
+export function resolveParserPaths(root: string = process.cwd()): {
+  pdfParsePath: string;
+  mammothPath: string;
+} {
+  const { createRequire } = process.getBuiltinModule("node:module");
+  const nodeRequire = createRequire(path.join(root, "package.json"));
+  return {
+    pdfParsePath: nodeRequire.resolve("pdf-parse/lib/pdf-parse.js"),
+    mammothPath: nodeRequire.resolve("mammoth"),
+  };
+}
+
 export async function parseDocumentIsolated(
   buffer: Buffer,
   mimeType:
@@ -221,7 +243,7 @@ export async function parseDocumentIsolated(
   if (mimeType.includes("wordprocessingml")) validateDocxArchive(buffer);
 
   const transferable = Uint8Array.from(buffer);
-  const require = createRequire(import.meta.url);
+  const parserPaths = resolveParserPaths();
   const worker = new Worker(WORKER_SOURCE, {
     eval: true,
     workerData: {
@@ -229,8 +251,7 @@ export async function parseDocumentIsolated(
       mimeType,
       maxOutputChars: MAX_EXTRACTED_CHARS,
       maxPdfPages: MAX_PDF_PAGES,
-      pdfParsePath: require.resolve("pdf-parse"),
-      mammothPath: require.resolve("mammoth"),
+      ...parserPaths,
     },
     transferList: [transferable.buffer],
     resourceLimits: {
