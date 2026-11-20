@@ -2,6 +2,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { PlanCards } from "@/components/billing/plan-cards";
 import { UsageMeters } from "@/components/billing/usage-meters";
 import { PLAN_NAMES } from "@/components/billing/plan-display";
+import { hasVoiceEntitlement } from "@/lib/billing/plan-catalog";
 import { openPortalAction } from "@/actions/billing";
 import { PendingSubmitButton } from "@/components/billing/pending-submit-button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -28,14 +29,18 @@ export default async function BillingPage({
   const canManage = can(ctx.role, "billing:manage");
 
   const db = tenantDb(ctx.orgId);
-  const [ent, aiMessages, voiceMinutes, contacts, storageAgg, seats] = await Promise.all([
-    getEntitlements(ctx.orgId),
-    getMonthUsage(ctx.orgId, "AI_MESSAGES"),
-    getMonthUsage(ctx.orgId, "VOICE_MINUTES"),
-    db.contact.count({ where: { deletedAt: null } }),
-    db.document.aggregate({ where: { deletedAt: null }, _sum: { sizeBytes: true } }),
-    db.organizationMember.count(),
-  ]);
+  const [ent, aiMessages, voiceMinutes, contacts, storageAgg, seats, assistantCount] =
+    await Promise.all([
+      getEntitlements(ctx.orgId),
+      getMonthUsage(ctx.orgId, "AI_MESSAGES"),
+      getMonthUsage(ctx.orgId, "VOICE_MINUTES"),
+      db.contact.count({ where: { deletedAt: null } }),
+      db.document.aggregate({ where: { deletedAt: null }, _sum: { sizeBytes: true } }),
+      db.organizationMember.count(),
+      db.voiceAssistant.count(),
+    ]);
+  // No voice in the plan and no assistant: no voice minutes row (as getVoiceAccess).
+  const showVoice = hasVoiceEntitlement(ent) || assistantCount > 0;
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
@@ -91,7 +96,9 @@ export default async function BillingPage({
             used: aiMessages,
             limit: ent.aiMessagesPerOrgMonth,
           },
-          { label: t("usage.voiceMinutes"), used: voiceMinutes, limit: ent.voiceMinutesMonth },
+          ...(showVoice
+            ? [{ label: t("usage.voiceMinutes"), used: voiceMinutes, limit: ent.voiceMinutesMonth }]
+            : []),
           { label: t("usage.contacts"), used: contacts, limit: ent.maxContacts },
           {
             label: t("usage.storage"),

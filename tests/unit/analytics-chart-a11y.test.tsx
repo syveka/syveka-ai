@@ -36,6 +36,11 @@ vi.mock("next-intl/server", async () => {
 vi.mock("@/server/auth/guard", () => ({
   requirePermission: vi.fn(async () => ({ orgId: "org-a", userId: "user-1", role: "OWNER" })),
 }));
+// A plan with voice: the voice cards and charts render (hidden case:
+// voice-entitlement-gate.test.ts).
+vi.mock("@/server/services/voice-access", () => ({
+  getVoiceAccess: vi.fn(async () => ({ entitled: true, hasAssistant: false, visible: true })),
+}));
 vi.mock("@/server/services/analytics", () => ({
   getSalesAnalytics: vi.fn(async () => ({ funnel: [], winRate: null })),
   getAiAnalytics: vi.fn(async () => ({

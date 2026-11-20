@@ -63,7 +63,10 @@ function baseDb() {
         async () => ({ address: "org-a@in.example.test" }) as { address: string } | null,
       ),
     },
-    voiceAssistant: { findFirst: vi.fn(async () => null as { id: string } | null) },
+    voiceAssistant: {
+      findFirst: vi.fn(async () => null as { id: string } | null),
+      count: vi.fn(async () => 0),
+    },
     voiceCall: { findFirst: vi.fn(async () => null as { id: string } | null) },
   };
 }
@@ -185,17 +188,26 @@ describe("getOrgSetupReadiness", () => {
     expect(items.find((i) => i.key === "voice")?.state).toBe("setup_required");
   });
 
-  it("marks voice plan_required, not setup_required, when the plan includes no assistants", async () => {
+  it("has no voice row when the plan includes no voice and the org never had an assistant", async () => {
     getEntitlementsMock.mockResolvedValue({ plan: "FREE", voiceAssistants: 0 });
     db.voiceAssistant.findFirst.mockResolvedValue(null);
     const items = await getOrgSetupReadiness(ctx("org-b"));
-    expect(items.find((i) => i.key === "voice")?.state).toBe("plan_required");
+    expect(items.map((i) => i.key)).toEqual(["businessDna", "emailChannel", "booking", "crm"]);
     expect(getEntitlementsMock).toHaveBeenCalledWith("org-b");
+  });
+
+  it("marks voice plan_required, not setup_required, for an inactive assistant the plan no longer includes", async () => {
+    getEntitlementsMock.mockResolvedValue({ plan: "FREE", voiceAssistants: 0 });
+    db.voiceAssistant.findFirst.mockResolvedValue(null);
+    db.voiceAssistant.count.mockResolvedValue(1);
+    const items = await getOrgSetupReadiness(ctx());
+    expect(items.find((i) => i.key === "voice")?.state).toBe("plan_required");
   });
 
   it("keeps an existing active assistant's state even if the plan no longer includes one", async () => {
     getEntitlementsMock.mockResolvedValue({ plan: "FREE", voiceAssistants: 0 });
     db.voiceAssistant.findFirst.mockResolvedValue({ id: "assistant-1" });
+    db.voiceAssistant.count.mockResolvedValue(1);
     const items = await getOrgSetupReadiness(ctx());
     expect(items.find((i) => i.key === "voice")?.state).toBe("verification_required");
   });

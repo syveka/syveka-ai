@@ -4,6 +4,7 @@ import { redirect } from "next/navigation";
 import { getTenantContextOrNull } from "@/server/auth/session";
 import { unscopedPrisma } from "@/server/db/tenant";
 import { unreadCount } from "@/server/services/notifications";
+import { getVoiceAccess } from "@/server/services/voice-access";
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { Topbar } from "@/components/layout/topbar";
 import { permissionsFor } from "@/server/auth/permissions";
@@ -12,24 +13,27 @@ export default async function AppLayout({ children }: { children: React.ReactNod
   const ctx = await getTenantContextOrNull();
   if (!ctx) redirect("/onboarding");
 
-  const [org, unread] = await Promise.all([
+  const [org, unread, voice] = await Promise.all([
     unscopedPrisma.organization.findUniqueOrThrow({
       where: { id: ctx.orgId },
       select: { name: true },
     }),
     unreadCount(ctx),
+    getVoiceAccess(ctx.orgId),
   ]);
   const permissions = permissionsFor(ctx.role);
+  const hideVoice = !voice.visible;
 
   return (
     <div className="flex min-h-screen">
-      <AppSidebar role={ctx.role} permissions={permissions} />
+      <AppSidebar role={ctx.role} permissions={permissions} hideVoice={hideVoice} />
       <div className="flex min-w-0 flex-1 flex-col">
         <Topbar
           userId={ctx.userId}
           orgName={org.name}
           initialUnread={unread}
           permissions={permissions}
+          hideVoice={hideVoice}
         />
         <main className="flex-1 p-4 md:p-6">{children}</main>
       </div>

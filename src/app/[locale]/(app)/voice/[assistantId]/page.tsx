@@ -5,6 +5,7 @@ import { getLocale, getTranslations } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { tenantDb } from "@/server/db/tenant";
 import { getEntitlements } from "@/server/services/billing/entitlements";
+import { getVoiceAccess } from "@/server/services/voice-access";
 import { AssistantForm } from "@/components/voice/assistant-form";
 import { formatCount, PLAN_NAMES } from "@/components/billing/plan-display";
 import { Button } from "@/components/ui/button";
@@ -19,6 +20,9 @@ export default async function AssistantPage({
 }) {
   const { assistantId } = await params;
   const ctx = await requirePermission("voice:configure");
+  // An organization that never had voice gets no configuration UI at all.
+  const access = await getVoiceAccess(ctx.orgId);
+  if (!access.visible) notFound();
 
   if (assistantId === "new") {
     // Detect the entitlement *before* the customer fills out the whole
@@ -85,5 +89,5 @@ export default async function AssistantPage({
     transferNumber: assistant.transferNumber ?? "",
   };
 
-  return <AssistantForm initial={initial} />;
+  return <AssistantForm initial={initial} voiceEntitled={access.entitled} />;
 }

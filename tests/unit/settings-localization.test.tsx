@@ -77,6 +77,7 @@ vi.mock("@/server/db/tenant", () => ({
     },
     contact: { count: vi.fn(async () => 1234) },
     document: { aggregate: vi.fn(async () => ({ _sum: { sizeBytes: 5 * 1_048_576 } })) },
+    voiceAssistant: { count: vi.fn(async () => 0) },
   })),
   unscopedPrisma: {
     user: {
@@ -117,6 +118,7 @@ vi.mock("@/server/services/billing/entitlements", () => ({
     plan: state.plan,
     status: state.status,
     aiMessagesPerOrgMonth: 1000,
+    voiceAssistants: 1,
     voiceMinutesMonth: 100,
     maxContacts: 5000,
     kbStorageMb: 1024,
