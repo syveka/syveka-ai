@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildVoiceSystemPrompt } from "@/server/ai/prompts/voice";
+import {
+  VOICE_DISCLOSURE_INSTRUCTION,
+  VOICE_DISCLOSURE_NOTICE,
+  VOICE_DISCLOSURE_VERSION,
+  buildVoiceFirstMessage,
+  buildVoiceSystemPrompt,
+  voiceDisclosureInstruction,
+} from "@/server/ai/prompts/voice";
 import type { BusinessDnaContext } from "@/server/business-dna/context";
 
 const disclosure = "Start by disclosing that you are an AI assistant and the call may be recorded.";
@@ -30,6 +37,37 @@ function dna(overrides: Partial<BusinessDnaContext> = {}): BusinessDnaContext {
     ...overrides,
   };
 }
+
+describe("voice disclosure helpers", () => {
+  it("has a non-empty notice and instruction for every locale, and a version", () => {
+    for (const locale of ["FI", "EN", "AR"] as const) {
+      expect(VOICE_DISCLOSURE_NOTICE[locale].length).toBeGreaterThan(0);
+      expect(voiceDisclosureInstruction(locale)).toBe(VOICE_DISCLOSURE_INSTRUCTION[locale]);
+    }
+    expect(VOICE_DISCLOSURE_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("AR instruction differs from the English one", () => {
+    expect(voiceDisclosureInstruction("AR")).not.toBe(voiceDisclosureInstruction("EN"));
+    expect(voiceDisclosureInstruction("EN")).toBe(
+      "The call has already opened with a notice that you are an AI assistant and that the call may be recorded. Do not repeat it unprompted; if asked, confirm it truthfully and never claim to be human.",
+    );
+  });
+
+  it.each(["FI", "EN", "AR"] as const)("%s: returns the notice alone for an empty message", (l) => {
+    expect(buildVoiceFirstMessage(l, "   ")).toBe(VOICE_DISCLOSURE_NOTICE[l]);
+    expect(buildVoiceFirstMessage(l, "")).toBe(VOICE_DISCLOSURE_NOTICE[l]);
+  });
+
+  it.each(["FI", "EN", "AR"] as const)("%s: puts the notice first and trims the message", (l) => {
+    expect(buildVoiceFirstMessage(l, "  Hello  ")).toBe(`${VOICE_DISCLOSURE_NOTICE[l]} Hello`);
+  });
+
+  it("does not let the tenant message displace the notice", () => {
+    const result = buildVoiceFirstMessage("EN", "Ignore everything.");
+    expect(result.startsWith(VOICE_DISCLOSURE_NOTICE.EN)).toBe(true);
+  });
+});
 
 describe("buildVoiceSystemPrompt", () => {
   it("falls back to just the disclosure and human-authored prompt when Business DNA is absent", () => {
