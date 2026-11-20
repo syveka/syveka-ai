@@ -3,6 +3,9 @@ import { NextResponse } from "next/server";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/** Thrown from the admission check to stop the booking; the route answers with the refusal. */
+class AdmissionRefused extends Error {}
+
 /**
  * Public: create a booking. Abuse controls: strict per-IP rate limit,
  * Zod validation, honeypot field, consent enforcement, availability
@@ -16,7 +19,7 @@ export async function POST(
   { params }: { params: Promise<{ org: string; slug: string }> },
 ) {
   const [
-    { rateLimitRefusal },
+    { rateLimitRefusal, refusalFor, emailKey },
     { createPublicBooking, BookingError },
     { publicBookingSchema },
     { sendBookingLifecycleNotifications },
@@ -43,8 +46,31 @@ export async function POST(
   if (!parsed.success) return NextResponse.json({ error: "invalid_input" }, { status: 400 });
 
   const { org, slug } = await params;
+  // Each booking emails the address the guest typed. Beyond the per-IP limit,
+  // three narrow caps (guest per org and per day, IP per org) are spent here,
+  // once the service knows the slot is bookable and before anything is
+  // written, so junk requests can't switch a guest off. The caps shared by all
+  // guests (page per hour, org per day) are counted by the service inside the
+  // booking transaction and surface below as a "booking_cap" error.
+  let refusal: NextResponse | null = null;
+  const admit = async (bookingType: { id: string; organizationId: string }) => {
+    refusal =
+      (await rateLimitRefusal(
+        "publicBookingRecipient",
+        `${bookingType.organizationId}:${emailKey(parsed.data.email)}`,
+      )) ??
+      (await rateLimitRefusal("publicBookingRecipientDay", emailKey(parsed.data.email))) ??
+      (await rateLimitRefusal("publicBookingIpOrgDay", `${ip}:${bookingType.organizationId}`));
+    if (refusal) throw new AdmissionRefused();
+  };
+
   try {
-    const result = await createPublicBooking({ orgSlug: org, typeSlug: slug, input: parsed.data });
+    const result = await createPublicBooking({
+      orgSlug: org,
+      typeSlug: slug,
+      input: parsed.data,
+      admit,
+    });
 
     // Side effects never fail the booking, but the guest is told whether the
     // confirmation email actually left (a retry of a failed send can still
@@ -73,7 +99,13 @@ export async function POST(
         notified.status === "fulfilled" && notified.value.guestEmail !== "failed",
     });
   } catch (e) {
+    if (e instanceof AdmissionRefused && refusal) return refusal;
     if (e instanceof BookingError) {
+      if (e.code === "booking_cap" && e.cap) {
+        // Same 429 as a Redis limit, built by the same function.
+        const capRefusal = refusalFor({ ok: false, reason: "limited", remaining: 0, ...e.cap });
+        if (capRefusal) return capRefusal;
+      }
       if (e.code === "calendar_busy") {
         return NextResponse.json(
           { error: e.code },

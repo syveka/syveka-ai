@@ -101,6 +101,9 @@
     },
     "@swc/helpers": "0.5.23",
     "nanoid": "3.3.18",
-    "deepmerge-ts": "8.0.1"
+    "deepmerge-ts": "8.0.1",
+    "@prisma/config": {
+      "effect": "3.22.1"
+    }
   }
 }

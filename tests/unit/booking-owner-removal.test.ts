@@ -120,6 +120,9 @@ const tx = {
   },
   eventAttendee: { create: vi.fn(async () => ({})) },
   booking: {
+    // Shared booking caps (assertSharedBookingCaps): nothing in the window.
+    count: vi.fn(async () => 0),
+    findFirst: vi.fn(async () => null),
     create: vi.fn(async ({ data }: { data: Row }) => {
       const row = { id: nextId("bk"), status: "CONFIRMED", ...data };
       s.bookings.push(row);
@@ -409,7 +412,11 @@ async function rejoin(orgId: string, userId: string) {
     status: "PENDING",
     expiresAt: new Date("2030-01-01T00:00:00Z"),
   });
-  return acceptInvitation(invitations.at(-1)!.token as string, userId);
+  return acceptInvitation(invitations.at(-1)!.token as string, {
+    id: userId,
+    email: `${userId}@example.test`,
+    emailConfirmedAt: "2030-01-01T00:00:00Z",
+  });
 }
 afterEach(() => {
   vi.useRealTimers();

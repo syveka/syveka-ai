@@ -103,7 +103,11 @@ const pendingInvitation = {
 async function renderInvite(sessionEmail: string, locale = "en"): Promise<string> {
   mocks.locale = locale;
   mocks.findInvitation.mockResolvedValue(pendingInvitation);
-  mocks.getSessionUser.mockResolvedValue({ id: "user-1", email: sessionEmail });
+  mocks.getSessionUser.mockResolvedValue({
+    id: "user-1",
+    email: sessionEmail,
+    email_confirmed_at: "2030-01-01T00:00:00Z",
+  });
   const element = await InvitePage({
     params: Promise.resolve({ locale, token: INVITATION_ID }),
     searchParams: Promise.resolve({}),
@@ -145,7 +149,11 @@ describe("invitation page signed in to another account", () => {
 
 describe("accepting as another account", () => {
   it("returns to the invitation instead of an error page", async () => {
-    mocks.getSessionUser.mockResolvedValue({ id: "user-2", email: "someone-else@example.test" });
+    mocks.getSessionUser.mockResolvedValue({
+      id: "user-2",
+      email: "someone-else@example.test",
+      email_confirmed_at: "2030-01-01T00:00:00Z",
+    });
     mocks.acceptInvitation.mockRejectedValue(new mocks.InvitationAccountMismatchError());
 
     await expect(acceptInvitationAction(INVITATION_ID, "ar")).rejects.toThrow(
@@ -155,7 +163,11 @@ describe("accepting as another account", () => {
   });
 
   it("any other failure still fails", async () => {
-    mocks.getSessionUser.mockResolvedValue({ id: "user-1", email: "invitee@example.test" });
+    mocks.getSessionUser.mockResolvedValue({
+      id: "user-1",
+      email: "invitee@example.test",
+      email_confirmed_at: "2030-01-01T00:00:00Z",
+    });
     mocks.acceptInvitation.mockRejectedValue(new Error("Invalid invitation"));
 
     await expect(acceptInvitationAction(INVITATION_ID, "en")).rejects.toThrow("Invalid invitation");
@@ -165,13 +177,21 @@ describe("accepting as another account", () => {
   it.each(["fi", "en", "ar"])(
     "the invited account joins and goes to the dashboard in the page's language (%s)",
     async (locale) => {
-      mocks.getSessionUser.mockResolvedValue({ id: "user-1", email: "invitee@example.test" });
+      mocks.getSessionUser.mockResolvedValue({
+        id: "user-1",
+        email: "invitee@example.test",
+        email_confirmed_at: "2030-01-01T00:00:00Z",
+      });
       mocks.acceptInvitation.mockResolvedValue("org-1");
 
       await expect(acceptInvitationAction(INVITATION_ID, locale)).rejects.toThrow(
         `NEXT_REDIRECT:/${locale}/dashboard`,
       );
-      expect(mocks.acceptInvitation).toHaveBeenCalledWith(INVITATION_ID, "user-1");
+      expect(mocks.acceptInvitation).toHaveBeenCalledWith(INVITATION_ID, {
+        id: "user-1",
+        email: "invitee@example.test",
+        emailConfirmedAt: "2030-01-01T00:00:00Z",
+      });
       expect(mocks.refreshSession).toHaveBeenCalledOnce();
     },
   );
@@ -179,7 +199,11 @@ describe("accepting as another account", () => {
   it.each([undefined, "xx", "//evil.example", "../en"])(
     "a missing or unknown locale (%j) falls back to the default locale",
     async (locale) => {
-      mocks.getSessionUser.mockResolvedValue({ id: "user-1", email: "invitee@example.test" });
+      mocks.getSessionUser.mockResolvedValue({
+        id: "user-1",
+        email: "invitee@example.test",
+        email_confirmed_at: "2030-01-01T00:00:00Z",
+      });
       mocks.acceptInvitation.mockResolvedValue("org-1");
 
       await expect(acceptInvitationAction(INVITATION_ID, locale)).rejects.toThrow(

@@ -77,6 +77,9 @@ const tx = {
     }),
   },
   booking: {
+    // Shared booking caps (assertSharedBookingCaps): nothing in the window.
+    count: vi.fn(async () => 0),
+    findFirst: vi.fn(async () => null),
     findUniqueOrThrow: vi.fn(async ({ where }: { where: Row }) => {
       const b = s.bookings.find((x) => x.id === where.id);
       if (!b) throw new Error("P2025");

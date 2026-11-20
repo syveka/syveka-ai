@@ -317,6 +317,38 @@ async function syncAttendees(eventId: string, attendees: EventInput["attendees"]
   }
 }
 
+/**
+ * The attendee addresses a save will send new reminder email to (lowercased,
+ * distinct), which is what the reminder budget is spent by. Reminders email
+ * every attendee address at send time, so:
+ * - a new event: every address;
+ * - an edit that moves the start: every address, because the reminders are
+ *   scheduled again (updateEvent);
+ * - any other edit: only the addresses not already on the event.
+ * An event of another organization reads as new, and the save refuses it.
+ */
+export async function reminderRecipientsToCharge(
+  ctx: TenantContext,
+  eventId: string | undefined,
+  input: Pick<EventInput, "attendees" | "startsAt">,
+): Promise<string[]> {
+  const submitted = new Set(
+    input.attendees.flatMap((a) => (a.email ? [a.email.trim().toLowerCase()] : [])),
+  );
+  if (submitted.size === 0 || !eventId) return [...submitted];
+  const existing = await tenantDb(ctx.orgId).calendarEvent.findFirst({
+    where: { id: eventId, deletedAt: null },
+    select: { startsAt: true, attendeeRecords: { select: { email: true } } },
+  });
+  if (!existing || existing.startsAt.getTime() !== new Date(input.startsAt).getTime()) {
+    return [...submitted];
+  }
+  for (const a of existing.attendeeRecords) {
+    if (a.email) submitted.delete(a.email.trim().toLowerCase());
+  }
+  return [...submitted];
+}
+
 export async function createEvent(ctx: TenantContext, input: EventInput) {
   validateEventInput(input);
   const db = tenantDb(ctx.orgId);
