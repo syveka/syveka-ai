@@ -37,6 +37,7 @@ vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 
 import { attachPhoneNumberAction } from "@/actions/voice";
 import { DuplicatePhoneNumberError, AssistantNotSyncedError } from "@/server/services/voice";
+import { EntitlementError } from "@/server/services/billing/entitlements";
 
 function formData(fields: Record<string, string>): FormData {
   const fd = new FormData();
@@ -56,6 +57,26 @@ describe("attachPhoneNumberAction — controlled results, never a crash", () => 
 
     expect(state).toEqual({ error: "invalid_input" });
     expect(mocks.attachPhoneNumber).not.toHaveBeenCalled();
+  });
+
+  it("maps a plan without voice to its translated entitlement code", async () => {
+    mocks.attachPhoneNumber.mockRejectedValue(
+      new EntitlementError("voiceAssistants", "Voice AI is not included in your plan"),
+    );
+
+    const state = await attachPhoneNumberAction(
+      "assistant-1",
+      {},
+      formData({
+        provider: "twilio",
+        phoneNumber: "+358401234567",
+        twilioAccountSid: "AC1",
+        twilioAuthToken: "secret",
+      }),
+    );
+
+    expect(state).toEqual({ error: "entitlement_exceeded" });
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
   });
 
   it("returns a controlled error for a duplicate phone number instead of throwing", async () => {

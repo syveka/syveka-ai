@@ -71,7 +71,9 @@ export async function activateAssistantAction(
   let result: Awaited<ReturnType<typeof activateAssistant>>;
   try {
     result = await activateAssistant(ctx, assistantId);
-  } catch {
+  } catch (e) {
+    // A plan without voice is refused before any provider call.
+    if (e instanceof EntitlementError) return { error: e.code };
     // Never surface a raw Error.message here -- activateAssistant() can
     // throw a raw Vapi provider error (see vapiFetch's error construction,
     // up to 500 chars of the provider's own response text), and unlike
@@ -125,6 +127,7 @@ export async function attachPhoneNumberAction(
   } catch (e) {
     if (e instanceof DuplicatePhoneNumberError) return { error: "phone_number_in_use" };
     if (e instanceof AssistantNotSyncedError) return { error: "assistant_not_synced" };
+    if (e instanceof EntitlementError) return { error: e.code };
     // Never surface a raw Error.message here -- for this action that could
     // include up to 500 chars of a raw Vapi/Twilio provider error response
     // (see vapiFetch's error construction), which must not reach the client

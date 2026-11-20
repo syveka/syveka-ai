@@ -126,12 +126,23 @@ describe("upsertAssistant entitlement gating", () => {
     expect(mocks.voiceAssistantCreate).toHaveBeenCalledTimes(1);
   });
 
-  it("does not re-check the limit when updating an existing assistant", async () => {
+  it("does not re-count the limit when updating an existing assistant", async () => {
+    mocks.getEntitlementsMock.mockResolvedValue(entitlements(1));
     mocks.voiceAssistantUpdate.mockResolvedValue({ id: "assistant-1", vapiAssistantId: null });
 
     await upsertAssistant(ctx(), assistantInput(), "assistant-1");
 
-    expect(mocks.getEntitlementsMock).not.toHaveBeenCalled();
     expect(mocks.voiceAssistantCount).not.toHaveBeenCalled();
+    expect(mocks.voiceAssistantUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses an update when the plan no longer includes voice, before any write or sync", async () => {
+    mocks.getEntitlementsMock.mockResolvedValue(entitlements(0));
+
+    await expect(upsertAssistant(ctx(), assistantInput(), "assistant-1")).rejects.toMatchObject({
+      code: "entitlement_exceeded",
+      limit: "voiceAssistants",
+    });
+    expect(mocks.voiceAssistantUpdate).not.toHaveBeenCalled();
   });
 });

@@ -113,7 +113,8 @@ describe("upsertAssistant — entitlement gate on creation", () => {
     expect(assistant.id).toBe("new-assistant");
   });
 
-  it("does not re-check or re-count the limit when updating an existing assistant", async () => {
+  it("does not re-count the limit when updating an existing assistant (only checks voice is included)", async () => {
+    mocks.getEntitlements.mockResolvedValue({ voiceAssistants: 1 });
     db.voiceAssistant.update.mockResolvedValue({
       id: "assistant-1",
       vapiAssistantId: null,
@@ -121,7 +122,7 @@ describe("upsertAssistant — entitlement gate on creation", () => {
 
     await upsertAssistant(ctx(), input({ name: "Renamed" }), "assistant-1");
 
-    expect(mocks.getEntitlements).not.toHaveBeenCalled();
+    expect(mocks.getEntitlements).toHaveBeenCalledTimes(1);
     expect(db.voiceAssistant.count).not.toHaveBeenCalled();
     expect(db.voiceAssistant.update).toHaveBeenCalledTimes(1);
   });

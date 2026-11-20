@@ -39,9 +39,21 @@ vi.mock("next/cache", () => ({ revalidatePath: mocks.revalidatePath }));
 vi.mock("next/navigation", () => ({ redirect: vi.fn() }));
 
 import { activateAssistantAction } from "@/actions/voice";
+import { EntitlementError } from "@/server/services/billing/entitlements";
 
 describe("activateAssistantAction — controlled results, never a crash", () => {
   beforeEach(() => vi.clearAllMocks());
+
+  it("maps a plan without voice to its translated entitlement code", async () => {
+    mocks.activateAssistant.mockRejectedValue(
+      new EntitlementError("voiceAssistants", "Voice AI is not included in your plan"),
+    );
+
+    const state = await activateAssistantAction("assistant-1", {});
+
+    expect(state).toEqual({ error: "entitlement_exceeded" });
+    expect(mocks.revalidatePath).not.toHaveBeenCalled();
+  });
 
   it("returns phoneNumberPending instead of throwing when the assistant synced but no number could be provisioned", async () => {
     mocks.activateAssistant.mockResolvedValue({
