@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import path from "node:path";
 import { Worker } from "node:worker_threads";
 import { describe, expect, it } from "vitest";
 import { MAX_EXTRACTED_CHARS } from "@/server/security/document-ingestion";
@@ -6,8 +8,11 @@ import {
   awaitParserWorker,
   MAX_DOCX_DECOMPRESSED_BYTES,
   MAX_DOCX_ENTRIES,
+  parseDocumentIsolated,
+  resolveParserPaths,
   validateDocxArchive,
 } from "@/server/security/parser-security";
+import { makeTextDocx, makeTextPdf } from "./helpers/document-files";
 
 type ZipEntry = { compressed: number; uncompressed: number };
 
@@ -54,6 +59,41 @@ describe("DOCX ZIP preflight", () => {
     expect(() =>
       validateDocxArchive(zipDirectory([{ compressed: 1, uncompressed: 2 * 1024 * 1024 }])),
     ).toThrowError(expect.objectContaining({ code: "docx_compression_ratio" }));
+  });
+});
+
+describe("parser library paths", () => {
+  it("resolves both parsers to files on disk, as strings the worker can require", () => {
+    const { pdfParsePath, mammothPath } = resolveParserPaths();
+    for (const resolved of [pdfParsePath, mammothPath]) {
+      expect(typeof resolved).toBe("string");
+      expect(path.isAbsolute(resolved)).toBe(true);
+      expect(existsSync(resolved)).toBe(true);
+    }
+    // The library file, not the package entry.
+    expect(pdfParsePath.endsWith(path.join("pdf-parse", "lib", "pdf-parse.js"))).toBe(true);
+    expect(mammothPath).toContain(path.join("node_modules", "mammoth"));
+  });
+
+  it("fails rather than falling back when the app root has no parsers", () => {
+    expect(() => resolveParserPaths(path.join(path.parse(process.cwd()).root, "no-app"))).toThrow(
+      /Cannot find module/,
+    );
+  });
+});
+
+describe("isolated document parsing", () => {
+  it("extracts the text of a PDF", async () => {
+    const text = await parseDocumentIsolated(makeTextPdf("Syveka test 123"), "application/pdf");
+    expect(text).toContain("Syveka test 123");
+  });
+
+  it("extracts the text of a DOCX", async () => {
+    const text = await parseDocumentIsolated(
+      makeTextDocx("Syveka DOCX test 456"),
+      "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    );
+    expect(text).toContain("Syveka DOCX test 456");
   });
 });
 
