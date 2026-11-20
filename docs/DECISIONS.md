@@ -105,6 +105,20 @@ Add new entries at the bottom with a date; never delete a prior entry (mark supe
 validate`/`generate`, migration history check) after the override, all passing. **Revisit this
   override once Prisma ships a release with a patched `@prisma/config`** — remove it rather than
   leaving it to drift once the upstream fix lands.
+- **`effect` is pinned to `3.22.1` for `@prisma/config` only, via a nested `overrides` entry**
+  (same closure and reasoning as the `deepmerge-ts` override above). `@prisma/config@6.19.3` pins
+  `effect` to an exact `3.21.0`, vulnerable to
+  [GHSA-7589-6fvf-x4pw](https://github.com/advisories/GHSA-7589-6fvf-x4pw) (high: ReDoS in
+  `Schema.TemplateLiteral`, affected `<=3.22.0`, first patched `3.22.1`), which failed the blocking
+  production audit on 2026-11-20. `6.19.3` is the last Prisma 6 release, and the newest stable
+  `@prisma/config` (`7.10.1`) still pins a vulnerable `3.20.0`, so no Prisma release resolves it.
+  `@prisma/config` is the only consumer of `effect` in the tree; it uses `effect` to decode
+  `prisma.config.ts` and does not use `Schema.TemplateLiteral`, and no application code imports
+  `effect`. The override is nested under `@prisma/config` so it cannot change any other package's
+  `effect`, and `3.22.1` is a minor release within `effect` 3.x with the same dependencies as
+  `3.21.0`. Verified with `prisma generate`/`validate` (both load `prisma.config.ts`), typecheck,
+  build and the production audit. **Remove this override once a Prisma release pins
+  `effect >= 3.22.1`.**
 - **The AI `bookMeeting`/`getCalendarAvailability` tools (`src/server/ai/tools/index.ts`)
   intentionally treat "the company calendar" as one shared, organization-wide bookable resource,
   not per-staff-member scheduling** — confirmed by both tools' conflict/busy queries having no
