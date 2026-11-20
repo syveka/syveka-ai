@@ -171,9 +171,40 @@ describe("citations", () => {
     expect(screen.queryByRole("region")).toBeNull();
   });
 
+  // A citation right after closing emphasis used to leave the delimiters raw
+  // ("**85 €**" shown with its asterisks): the token did not count as
+  // punctuation, so a run ending in "€" or ")" could not close.
+  it.each([
+    ["**85 €**", "85 €"],
+    ["**85 €** ", "85 €"],
+    ["**Price (VAT 0%)**", "Price (VAT 0%)"],
+    ["**Price**", "Price"],
+    ["*85 €*", "85 €"],
+  ])("emphasis closes before a citation chip: %j", (emphasis, inner) => {
+    const { container } = renderThread([
+      reply(`Monthly fee ${emphasis}[doc:${KNOWN}] per seat.`, { citations }),
+    ]);
+    const body = container.querySelector("p")!;
+    expect(body.textContent).not.toContain("*");
+    expect(body.querySelector("strong, em")?.textContent).toBe(inner);
+    expect(screen.getByRole("link", { name: "Source 1: pilot-kb-test" }).textContent).toBe("1");
+  });
+
+  it("emphasis still opens right after a citation chip", () => {
+    const { container } = renderThread([
+      reply(`See [doc:${KNOWN}]**85 €** monthly.`, { citations }),
+    ]);
+    expect(container.querySelector("p")!.textContent).not.toContain("*");
+    expect(container.querySelector("strong")?.textContent).toBe("85 €");
+  });
+
   it("model text can't forge a citation token", () => {
     expect(withCitationTokens("x \uE0001\uE001 y", citations)).toBe("x 1 y");
-    expect(withCitationTokens(`x [doc:${KNOWN}]`, citations)).toBe("x\uE0001\uE001");
+    expect(withCitationTokens(`x [doc:${KNOWN}]`, citations)).toBe("x\u2E28\uE0001\uE001\u2E29");
+    // The outer punctuation alone is ordinary text, never a chip.
+    const { container } = renderThread([reply("a \u2E281\u2E29 b")]);
+    expect(container.textContent).toBe("a \u2E281\u2E29 b");
+    expect(container.querySelector("sup")).toBeNull();
   });
 });
 

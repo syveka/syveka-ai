@@ -23,6 +23,12 @@ export const DOCUMENT_PROCESSING_RECLAIM_MS = 7 * 60_000;
  */
 export const DOCUMENT_STALLED_AFTER_MS = 2 * 60 * 60_000;
 
+/**
+ * How often the Knowledge list re-reads documents while one is still queued
+ * or processing. Polling stops once every document is READY, FAILED or stalled.
+ */
+export const DOCUMENT_STATUS_POLL_MS = 5_000;
+
 /** Whether the document is stuck: queued or processing, with nothing left to finish it. */
 export function isDocumentStalled(
   document: { status: string; updatedAt: Date },

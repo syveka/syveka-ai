@@ -10,11 +10,13 @@ export type MessageCitation = { documentId: string; title: string };
 /**
  * Private-use characters wrap a citation's number while the reply goes
  * through the Markdown parser; nothing a user or model types can produce one
- * (they are removed from the reply first).
+ * (they are removed from the reply first). The outer double parentheses
+ * (U+2E28, U+2E29) are Unicode punctuation, so emphasis ending in a currency sign or ")"
+ * still closes right before a citation, as it would before "[".
  */
-const CITE_OPEN = "\uE000";
-const CITE_CLOSE = "\uE001";
-const CITE_TOKEN = /\uE000(\d+)\uE001/g;
+const CITE_OPEN = "\u2E28\uE000";
+const CITE_CLOSE = "\uE001\u2E29";
+const CITE_TOKEN = /\u2E28\uE000(\d+)\uE001\u2E29/g;
 const ANY_CITE_CHAR = /[\uE000\uE001]/g;
 
 /** Every `[doc:…]` marker, well-formed or not (never more than one line). */

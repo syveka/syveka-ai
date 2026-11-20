@@ -1,10 +1,12 @@
 "use client";
 
+import { useEffect } from "react";
 import { useRouter } from "@/i18n/routing";
 import { useTranslations } from "next-intl";
 import { FileText, Globe, StickyNote, Trash2, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
+import { DOCUMENT_STATUS_POLL_MS } from "@/lib/knowledge/processing";
 import { cn } from "@/lib/utils";
 
 export type DocumentRow = {
@@ -32,6 +34,19 @@ const STATUS_STYLE: Record<string, string> = {
 export function DocumentTable({ documents }: { documents: DocumentRow[] }) {
   const t = useTranslations("knowledge");
   const router = useRouter();
+  const inProgress = documents.some(
+    (doc) => !doc.stalled && doc.status !== "READY" && doc.status !== "FAILED",
+  );
+
+  // Re-read the list (a server render, scoped to the session's org) until every
+  // document is final; a hidden tab skips the refresh.
+  useEffect(() => {
+    if (!inProgress) return;
+    const timer = setInterval(() => {
+      if (document.visibilityState !== "hidden") router.refresh();
+    }, DOCUMENT_STATUS_POLL_MS);
+    return () => clearInterval(timer);
+  }, [inProgress, router]);
 
   const remove = async (id: string) => {
     await fetch(`/api/v1/kb/documents/${id}`, { method: "DELETE" });
