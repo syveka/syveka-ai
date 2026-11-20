@@ -1,4 +1,37 @@
 {
+  "platformAdmin": {
+    "title": "إدارة Syveka",
+    "exit": "العودة إلى لوحة التحكم",
+    "overview": "نظرة عامة على المنصة",
+    "organizations": "المؤسسات",
+    "manageOrganizations": "إدارة المؤسسات",
+    "activePaidPlans": "الباقات المدفوعة النشطة",
+    "monthlyMessages": "رسائل الذكاء الاصطناعي هذا الشهر",
+    "monthlyVoice": "دقائق المكالمات هذا الشهر",
+    "messageHistory": "سجل رسائل الذكاء الاصطناعي",
+    "messageHistoryPeriod": "آخر ستة أشهر تقويمية بما فيها الشهر الحالي",
+    "noMessageHistory": "لم يُسجّل استخدام لرسائل الذكاء الاصطناعي في هذه الفترة.",
+    "planDistribution": "باقات الاشتراك",
+    "activeSubscriptions": "الاشتراكات النشطة: {count, number}",
+    "searchOrganizations": "البحث عن مؤسسات",
+    "noOrganizations": "لم يتم العثور على مؤسسات.",
+    "noBusinessId": "بلا رقم تسجيل تجاري",
+    "organizationCounts": "الأعضاء {members, number} · جهات الاتصال {contacts, number} · المكالمات {calls, number}",
+    "plans": {
+      "FREE": "مجانية",
+      "STARTER": "Starter",
+      "PRO": "Pro",
+      "ENTERPRISE": "Enterprise"
+    },
+    "statuses": {
+      "ACTIVE": "نشط",
+      "TRIALING": "تجريبي",
+      "PAST_DUE": "متأخر الدفع",
+      "CANCELED": "ملغى",
+      "INCOMPLETE": "غير مكتمل",
+      "PAUSED": "متوقف مؤقتًا"
+    }
+  },
   "common": {
     "appName": "Syveka AI",
     "save": "حفظ",

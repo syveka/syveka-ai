@@ -1,4 +1,37 @@
 {
+  "platformAdmin": {
+    "title": "Syvekan ylläpito",
+    "exit": "Takaisin hallintapaneeliin",
+    "overview": "Alustan yleiskatsaus",
+    "organizations": "Organisaatiot",
+    "manageOrganizations": "Hallitse organisaatioita",
+    "activePaidPlans": "Aktiiviset maksulliset tilaukset",
+    "monthlyMessages": "Tekoälyviestit tässä kuussa",
+    "monthlyVoice": "Puheminuutit tässä kuussa",
+    "messageHistory": "Tekoälyviestien historia",
+    "messageHistoryPeriod": "Viimeiset kuusi kalenterikuukautta, kuluva kuukausi mukaan lukien",
+    "noMessageHistory": "Tällä ajanjaksolla ei ole kirjattu tekoälyviestejä.",
+    "planDistribution": "Tilauspaketit",
+    "activeSubscriptions": "Aktiivisia tilauksia: {count, number}",
+    "searchOrganizations": "Hae organisaatioita",
+    "noOrganizations": "Organisaatioita ei löytynyt.",
+    "noBusinessId": "Ei Y-tunnusta",
+    "organizationCounts": "Jäseniä {members, number} · Kontakteja {contacts, number} · Puheluita {calls, number}",
+    "plans": {
+      "FREE": "Maksuton",
+      "STARTER": "Starter",
+      "PRO": "Pro",
+      "ENTERPRISE": "Enterprise"
+    },
+    "statuses": {
+      "ACTIVE": "Aktiivinen",
+      "TRIALING": "Kokeilu",
+      "PAST_DUE": "Maksu myöhässä",
+      "CANCELED": "Peruttu",
+      "INCOMPLETE": "Keskeneräinen",
+      "PAUSED": "Keskeytetty"
+    }
+  },
   "common": {
     "appName": "Syveka AI",
     "save": "Tallenna",
