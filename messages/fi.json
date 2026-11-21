@@ -833,6 +833,7 @@
     "markAllRead": "Merkitse kaikki luetuiksi",
     "empty": "Ei uusia ilmoituksia.",
     "workflowFailed": "Työnkulku epäonnistui: <name></name>",
+    "reminderFailed": "Muistutussähköpostia ei voitu toimittaa osallistujille.",
     "booking": {
       "confirmation": "Uusi varaus: <type></type> — <guest></guest>",
       "reschedule": "Varaus siirretty: <type></type> — <guest></guest>",

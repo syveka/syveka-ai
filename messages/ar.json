@@ -833,6 +833,7 @@
     "markAllRead": "تحديد الكل كمقروء",
     "empty": "لا توجد إشعارات جديدة.",
     "workflowFailed": "فشل مسار العمل: <name></name>",
+    "reminderFailed": "تعذّر تسليم رسالة التذكير إلى الحضور.",
     "booking": {
       "confirmation": "حجز جديد: <type></type> — <guest></guest>",
       "reschedule": "تمت إعادة جدولة الحجز: <type></type> — <guest></guest>",
