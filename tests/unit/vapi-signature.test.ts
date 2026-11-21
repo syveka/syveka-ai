@@ -146,6 +146,12 @@ describe("upsertVapiAssistant — outbound server config uses credentialId, neve
     expect(sentBody.server).toEqual({
       url: baseConfig.serverUrl,
       credentialId: baseConfig.serverCredentialId,
+      backoffPlan: {
+        type: "exponential",
+        maxRetries: 3,
+        baseDelaySeconds: 2,
+        excludedStatusCodes: [400, 401, 403, 404, 409],
+      },
     });
     expect(sentBody.server.secret).toBeUndefined();
     expect(JSON.stringify(sentBody)).not.toContain('"secret"');
@@ -168,6 +174,12 @@ describe("upsertVapiAssistant — outbound server config uses credentialId, neve
     expect(sentBody.server).toEqual({
       url: baseConfig.serverUrl,
       credentialId: baseConfig.serverCredentialId,
+      backoffPlan: {
+        type: "exponential",
+        maxRetries: 3,
+        baseDelaySeconds: 2,
+        excludedStatusCodes: [400, 401, 403, 404, 409],
+      },
     });
     expect(sentBody.server.secret).toBeUndefined();
   });

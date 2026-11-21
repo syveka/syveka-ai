@@ -391,7 +391,7 @@ Webhook endpoint: `{NEXT_PUBLIC_APP_URL}/api/v1/webhooks/inbox-email/resend`.
 - No inbound webhook to configure manually — QStash calls back into the app's own job routes
   (`src/app/api/v1/jobs/{calendar-sync,embed-document,post-call,run-workflow,send-reminder,
 usage-rollup}/route.ts`). Most are enqueued by the app via `enqueue()`; `calendar-sync`,
-  `usage-rollup` and `reconcile-creator-generations` are started only by manually registered QStash
+  `usage-rollup`, `reconcile-creator-generations` and `reconcile-voice-calls` are started only by manually registered QStash
   schedules (see `docs/release-runbook.md`; `calendar-sync` then re-enqueues its own follow-up pages). Every job
   route verifies the request with `verifyJobRequest()` (QStash's `Receiver.verify()`) before
   doing any work.

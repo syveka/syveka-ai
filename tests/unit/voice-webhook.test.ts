@@ -53,7 +53,11 @@ vi.mock("@/server/integrations/vapi", () => ({
 vi.mock("@/server/db/tenant", () => ({
   unscopedPrisma: {
     voiceAssistant: { findFirst: mocks.voiceAssistantFindFirst },
-    voiceCall: { upsert: mocks.voiceCallUpsert, findFirst: mocks.voiceCallFindFirst },
+    voiceCall: {
+      upsert: mocks.voiceCallUpsert,
+      findFirst: mocks.voiceCallFindFirst,
+      findMany: async () => [],
+    },
   },
 }));
 vi.mock("@/server/ai/tools", () => ({ executeTool: mocks.executeTool }));
@@ -1438,5 +1442,89 @@ describe("Vapi voice webhook — a phone caller can't search the organization's 
 
     expect(body.results[0].result).toBe(JSON.stringify({ error: "tool_not_enabled" }));
     expect(mocks.executeTool).not.toHaveBeenCalled();
+  });
+});
+
+describe("end-of-call report — how long the call was", () => {
+  const written = () =>
+    mocks.voiceCallUpsert.mock.calls[0]![0] as {
+      create: Record<string, unknown>;
+      update: Record<string, unknown>;
+    };
+
+  it("uses Vapi's documented times, when the undocumented field is absent", async () => {
+    await POST(
+      eocrRequest({
+        durationSeconds: undefined,
+        startedAt: "2026-11-20T10:00:00Z",
+        endedAt: "2026-11-20T10:03:01Z",
+      }),
+    );
+    expect(written().create).toMatchObject({
+      durationSeconds: 181,
+      startedAt: new Date("2026-11-20T10:00:00Z"),
+      endedAt: new Date("2026-11-20T10:03:01Z"),
+    });
+  });
+
+  it("also reads the times from the nested call", async () => {
+    await POST(
+      eocrRequest({
+        durationSeconds: undefined,
+        call: {
+          id: "call-1",
+          assistantId: "assistant-1",
+          startedAt: "2026-11-20T10:00:00Z",
+          endedAt: "2026-11-20T10:01:00Z",
+        },
+      }),
+    );
+    expect(written().create).toMatchObject({ durationSeconds: 60 });
+  });
+
+  it("the times win over a contradicting duration", async () => {
+    await POST(
+      eocrRequest({
+        durationSeconds: 1,
+        startedAt: "2026-11-20T10:00:00Z",
+        endedAt: "2026-11-20T10:05:00Z",
+      }),
+    );
+    expect(written().create).toMatchObject({ durationSeconds: 300 });
+  });
+
+  it.each([
+    ["no length information", { durationSeconds: undefined }],
+    ["a negative length", { durationSeconds: -60 }],
+    [
+      "an end before the start",
+      { startedAt: "2026-11-20T10:05:00Z", endedAt: "2026-11-20T10:00:00Z" },
+    ],
+  ])("records an unknown length, not zero, for %s", async (_name, overrides) => {
+    const res = await POST(eocrRequest(overrides));
+    expect(res.status).toBe(200);
+    expect(written().create.durationSeconds).toBeNull();
+    // The job defers it rather than charging; see post-call-idempotency.
+    expect(mocks.enqueue).toHaveBeenCalledTimes(1);
+  });
+
+  it("a retry that finally knows the length fills it in", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValueOnce({
+      endedAt: new Date("2026-11-20T10:05:00Z"),
+      durationSeconds: null,
+      postCallProcessedAt: null,
+    });
+    await POST(eocrRequest({ durationSeconds: 300 }));
+    expect(written().update).toMatchObject({ durationSeconds: 300 });
+  });
+
+  it("a retry can't erase or change a known length", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValueOnce({
+      endedAt: new Date("2026-11-20T10:05:00Z"),
+      durationSeconds: 300,
+      postCallProcessedAt: null,
+    });
+    await POST(eocrRequest({ durationSeconds: undefined }));
+    expect(mocks.voiceCallUpsert).not.toHaveBeenCalled();
   });
 });
