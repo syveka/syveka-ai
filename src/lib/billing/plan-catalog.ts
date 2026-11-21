@@ -92,9 +92,16 @@ export const DEEP_MODEL_PLANS: ReadonlySet<Plan> = new Set<Plan>();
 export const SELF_SERVE_PLANS = ["STARTER", "PRO"] as const;
 export type SelfServePlan = (typeof SELF_SERVE_PLANS)[number];
 
-/** Plans on the public pricing page, in display order. Enterprise is contact-sales. */
+/** Plans with a displayed list price, in display order. Enterprise is contact-sales. */
 export const PUBLIC_PLANS = ["FREE", "STARTER", "PRO"] as const;
 export type PublicPlan = (typeof PUBLIC_PLANS)[number];
+
+/**
+ * Plans the public pricing page shows. Only FREE during the free pilot: no
+ * paid plan or price may be promised until billing is part of the offer
+ * (docs/free-pilot-launch-runbook.md §15). In-app plan cards are separate.
+ */
+export const PRICING_PAGE_PLANS: readonly PublicPlan[] = ["FREE"];
 
 /** Displayed list price, EUR per seat per month, excluding VAT. */
 export const PLAN_MONTHLY_PRICE_EUR: Record<PublicPlan, number> = {

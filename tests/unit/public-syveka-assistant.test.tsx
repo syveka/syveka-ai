@@ -55,7 +55,9 @@ describe("PublicSyvekaAssistant", () => {
     fireEvent.click(screen.getByRole("button", { name: "Chat with Syveka" }));
 
     expect(screen.getByText("What can Syveka do?")).toBeTruthy();
-    expect(screen.getByText("Tell me about AI Voice")).toBeTruthy();
+    expect(screen.getByText("Tell me about the free pilot")).toBeTruthy();
+    // Voice is not part of the pilot offer, so no chip invites a question about it.
+    expect(screen.queryByText(/voice/i)).toBeNull();
     expect(screen.getByText("How does Syveka help my business?")).toBeTruthy();
     expect(screen.getByText("Pricing")).toBeTruthy();
     expect(screen.getByText("Create an account")).toBeTruthy();
