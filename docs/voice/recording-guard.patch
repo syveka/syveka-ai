@@ -1,0 +1,31 @@
+diff --git a/scripts/check-migration-history.mjs b/scripts/check-migration-history.mjs
+--- a/scripts/check-migration-history.mjs
++++ b/scripts/check-migration-history.mjs
+@@ -36,6 +36,7 @@
+   "20260910233000_creator_generation_idempotency_key",
+   "20260914000000_entitlement_grants",
+   "20261014000000_secure_prisma_migrations_table",
++  "20261106000000_voice_assistant_recording_enabled",
+ ];
+ 
+ // These eight migrations were published before the staging-release branch.
+diff --git a/scripts/generate-legacy-schema-contract.mjs b/scripts/generate-legacy-schema-contract.mjs
+--- a/scripts/generate-legacy-schema-contract.mjs
++++ b/scripts/generate-legacy-schema-contract.mjs
+@@ -357,6 +357,8 @@
+ //     20260818000000_workflow_run_source_event_key.
+ //   - voice_calls.post_call_processed_at: same situation, added by
+ //     20260830000000_voice_call_post_call_processed_at.
++//   - voice_assistants.recording_enabled: same situation, added by
++//     20261106000000_voice_assistant_recording_enabled.
+ const LEGACY_MISSING_COLUMN_ENTRIES = [
+   [
+     "calendar_sync_states.webhook_verification_secret_hash",
+@@ -364,6 +366,7 @@
+   ],
+   ["workflow_runs.source_event_key", "20260818000000_workflow_run_source_event_key"],
+   ["voice_calls.post_call_processed_at", "20260830000000_voice_call_post_call_processed_at"],
++  ["voice_assistants.recording_enabled", "20261106000000_voice_assistant_recording_enabled"],
+ ];
+ 
+ const seenMissingColumnKeys = new Set();
