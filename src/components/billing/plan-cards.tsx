@@ -103,12 +103,18 @@ export function PlanCards({ currentPlan }: { currentPlan: Plan }) {
         {PLANS.map(({ plan, limits }) => {
           const isCurrent = plan === currentPlan;
           const annual = interval === "annual";
+          // The current plan stays choosable: its other billing interval is a
+          // change too. The stored subscription doesn't record its interval,
+          // so the server tells when the choice is what the org already has.
           // What is charged, and how often; annual also shows its monthly
           // equivalent to the cent.
           return (
             <Card key={plan} className={cn(isCurrent && "border-primary")}>
               <CardHeader className="space-y-1">
                 <CardTitle>{PLAN_NAMES[plan]}</CardTitle>
+                {isCurrent ? (
+                  <p className="text-xs font-medium text-primary">{t("current")}</p>
+                ) : null}
                 <p>
                   <span className="text-2xl font-semibold">
                     {formatEur(
@@ -137,10 +143,9 @@ export function PlanCards({ currentPlan }: { currentPlan: Plan }) {
                 <form action={startCheckoutAction.bind(null, plan, interval)}>
                   <PendingSubmitButton
                     className="w-full"
-                    disabled={isCurrent}
                     variant={isCurrent ? "outline" : "default"}
                   >
-                    {isCurrent ? t("current") : t("choosePlan")}
+                    {isCurrent ? t("useThisInterval") : t("choosePlan")}
                   </PendingSubmitButton>
                 </form>
               </CardContent>

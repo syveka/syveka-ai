@@ -1017,7 +1017,14 @@
     "redirecting": "Opening…",
     "priceMonthlyUnit": "per user per month, billed monthly",
     "priceAnnualUnit": "per user per year, billed once a year",
-    "annualEquivalent": "Equals {price} per user per month: 12 months for the price of 10."
+    "annualEquivalent": "Equals {price} per user per month: 12 months for the price of 10.",
+    "useThisInterval": "Use this billing interval",
+    "planChangeAlreadyCurrent": "That is already your plan and billing interval. Nothing was changed.",
+    "planChangeCancellationPending": "Your subscription is set to end, so its plan can't be changed. Renew it in the Stripe portal first, then choose the new plan. Nothing was changed.",
+    "planChangeNotOffered": "This plan change can't be made online for your subscription. Nothing was changed. Contact support and we'll help you change it.",
+    "planChangeSubmitted": "Your plan change was sent to Stripe. The plan shown here changes once Stripe confirms the change and any amount due for it has been paid, usually within a minute. If that payment fails or is billed later, you keep your current plan until it is paid.",
+    "cancellationScheduled": "Your {plan} subscription is set to end on {date}. You keep {plan} features until then, and you won't be charged again. To keep your subscription, renew it in the Stripe portal.",
+    "renewInPortal": "Renew in Stripe portal"
   },
   "booking": {
     "durationLabel": "{minutes} min",

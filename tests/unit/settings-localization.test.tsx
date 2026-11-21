@@ -30,6 +30,13 @@ const state = vi.hoisted(() => ({
   actionState: {} as { error?: string; message?: string },
   plan: "STARTER" as string,
   status: "ACTIVE" as string,
+  /** The org's webhook-synced subscription row (billing page). */
+  subscription: null as null | {
+    plan: string;
+    status: string;
+    cancelAtPeriodEnd: boolean;
+    currentPeriodEnd: Date | null;
+  },
 }));
 
 vi.mock("react", async (importOriginal) => {
@@ -77,6 +84,7 @@ vi.mock("@/server/db/tenant", () => ({
     },
     contact: { count: vi.fn(async () => 1234) },
     document: { aggregate: vi.fn(async () => ({ _sum: { sizeBytes: 5 * 1_048_576 } })) },
+    subscription: { findFirst: vi.fn(async () => state.subscription) },
   })),
   unscopedPrisma: {
     user: {
@@ -195,6 +203,7 @@ beforeEach(() => {
   state.actionState = {};
   state.plan = "STARTER";
   state.status = "ACTIVE";
+  state.subscription = null;
 });
 afterEach(cleanup);
 
@@ -383,6 +392,72 @@ describe.each(LOCALES)("Settings pages render real %s translations", (locale) =>
     await renderPage(locale, PAGES.billing);
     expect(screen.getByRole("status").textContent).toBe(s("billingPage", "paymentPending"));
     expect(screen.getByRole("button", { name: s("billingPage", "completePayment") })).toBeTruthy();
+  });
+
+  /** Stripe's period end for a Starter subscription cancelled in the portal: 3 December 2026. */
+  const PERIOD_END = new Date("2026-12-03T09:30:00Z");
+  const END_DATE = { en: "December 3, 2026", fi: "3. joulukuuta 2026", ar: "3 ديسمبر 2026" };
+
+  it("Billing: a cancellation at period end shows its end date, keeps the plan, and offers renewal", async () => {
+    state.subscription = {
+      plan: "STARTER",
+      status: "ACTIVE",
+      cancelAtPeriodEnd: true,
+      currentPeriodEnd: PERIOD_END,
+    };
+    await renderPage(locale, PAGES.billing);
+    const notice = screen.getByRole("status").textContent ?? "";
+    expect(notice).toContain(END_DATE[locale]);
+    expect(notice.match(/Starter/g)).toHaveLength(2);
+    expect(notice).not.toMatch(/[٠-٩]/);
+    expect(notice).not.toContain("{");
+    expect(screen.getByRole("button", { name: s("billingPage", "renewInPortal") })).toBeTruthy();
+    // Until the period ends the current plan is unchanged.
+    expect(document.body.textContent).toContain(s("billingPage", "currentPlan"));
+  });
+
+  it("Billing: once the cancellation is reversed in Stripe, the notice is gone", async () => {
+    state.subscription = {
+      plan: "STARTER",
+      status: "ACTIVE",
+      cancelAtPeriodEnd: false,
+      currentPeriodEnd: PERIOD_END,
+    };
+    await renderPage(locale, PAGES.billing);
+    expect(screen.queryByRole("status")).toBeNull();
+    expect(document.body.textContent).not.toContain(END_DATE[locale]);
+    expect(screen.queryByRole("button", { name: s("billingPage", "renewInPortal") })).toBeNull();
+  });
+
+  it("Billing: an ended (CANCELED) subscription shows no pending-cancellation notice", async () => {
+    state.plan = "FREE";
+    state.subscription = {
+      plan: "FREE",
+      status: "CANCELED",
+      cancelAtPeriodEnd: true,
+      currentPeriodEnd: PERIOD_END,
+    };
+    await renderPage(locale, PAGES.billing);
+    expect(document.body.textContent).not.toContain(END_DATE[locale]);
+  });
+
+  it.each([
+    ["already_current", "planChangeAlreadyCurrent"],
+    ["cancellation_pending", "planChangeCancellationPending"],
+    ["not_offered", "planChangeNotOffered"],
+    ["plan_change_submitted", "planChangeSubmitted"],
+    ["busy", "planChangeBusy"],
+    ["unavailable", "planChangeUnavailable"],
+  ])("Billing: the %s outcome is explained in this language", async (status, key) => {
+    await renderPage(locale, () => BillingPage({ searchParams: Promise.resolve({ status }) }));
+    expect(screen.getByRole("status").textContent).toBe(s("billingPage", key));
+  });
+
+  it("Billing: an unknown status in the URL shows nothing", async () => {
+    await renderPage(locale, () =>
+      BillingPage({ searchParams: Promise.resolve({ status: "toString" }) }),
+    );
+    expect(screen.queryByRole("status")).toBeNull();
   });
 });
 
