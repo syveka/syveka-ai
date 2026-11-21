@@ -1,0 +1,41 @@
+diff --git a/.claude/settings.json b/.claude/settings.json
+index 85107f9..4c2993e 100644
+--- a/.claude/settings.json
++++ b/.claude/settings.json
+@@ -1,4 +1,36 @@
+ {
++  "enabledPlugins": {
++    "shopify-ai-toolkit@claude-plugins-official": false,
++    "cli-anything@cli-anything": false
++  },
++  "env": {
++    "OPT_OUT_INSTRUMENTATION": "true"
++  },
++  "permissions": {
++    "deny": [
++      "Read(~/.claude.json)",
++      "Read(~/.claude.json.*)",
++      "Read(~/.claude/.credentials.json)",
++      "Read(~/.claude/backups/**)",
++      "Read(~/.ssh/**)",
++      "Read(~/.aws/credentials)",
++      "Read(~/.docker/config.json)",
++      "Read(~/.git-credentials)",
++      "Read(~/.netrc)",
++      "Read(~/_netrc)",
++      "Read(~/.npmrc)",
++      "Read(~/.pgpass)",
++      "Read(~/.config/gh/hosts.yml)",
++      "Read(~/.supabase/access-token)",
++      "Read(~/AppData/Roaming/GitHub CLI/hosts.yml)",
++      "Read(~/AppData/Roaming/postgresql/pgpass.conf)",
++      "Read(~/AppData/Roaming/com.vercel.cli/**)",
++      "Edit(~/.claude.json)",
++      "Edit(~/.claude.json.*)",
++      "Edit(~/.claude/.credentials.json)",
++      "Edit(~/.ssh/**)"
++    ]
++  },
+   "hooks": {
+     "PreToolUse": [
+       {

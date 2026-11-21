@@ -253,4 +253,5 @@ pre-existing git/gh aliases or push configuration, `git stash pop`/`merge`/`cher
 commits that change protected files (git plumbing can craft such commits), `npx prettier --write .`
 reformatting protected files,
 and hosts where Claude Code runs hooks under PowerShell instead of Git Bash (the `|| exit 2`
-registration needs Bash).
+registration needs Bash). Further gaps confirmed on 2026-11-06, with patches awaiting owner
+review, are listed in `docs/security/claude-hardening-2026-11/README.md`.

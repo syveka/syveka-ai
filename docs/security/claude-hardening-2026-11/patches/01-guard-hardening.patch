@@ -1,0 +1,1233 @@
+diff --git a/.claude/hooks/command-guard.mjs b/.claude/hooks/command-guard.mjs
+index 59d316b..8c1dcfd 100644
+--- a/.claude/hooks/command-guard.mjs
++++ b/.claude/hooks/command-guard.mjs
+@@ -19,11 +19,15 @@ import fs from "node:fs";
+ import path from "node:path";
+ import { isSensitiveText, runGuard } from "./lib/hook-io.mjs";
+ import {
++  decodePercent,
++  expandHomeAlias,
+   globMatches,
++  HOME_ALIAS,
+   isOverrideEnabled,
+   isSecretPath,
+   protectedConfigLabel,
+   resolveArgPath,
++  stripFileUrl,
+ } from "./lib/protected-paths.mjs";
+ import { commandName, parseScript, stringLiterals } from "./lib/shell-parse.mjs";
+ 
+@@ -33,10 +37,59 @@ const NOT_SECRET_NAME = /^(NEXT_PUBLIC_\w+|SSH_AUTH_SOCK|GIT_(AUTHOR|COMMITTER)_
+ const HOOK_BYPASS_ENV =
+   /^(HUSKY|HUSKY_SKIP_HOOKS|SKIP|SKIP_HOOKS|LEFTHOOK|LEFTHOOK_EXCLUDE|PRE_COMMIT_ALLOW_NO_CONFIG|GIT_CONFIG_PARAMETERS|GIT_CONFIG_COUNT|GIT_CONFIG_KEY_\d+|GIT_CONFIG_VALUE_\d+|GIT_CONFIG_GLOBAL|GIT_CONFIG_SYSTEM|GIT_CONFIG_NOSYSTEM)$/i;
+ // Environment variables that make git run an arbitrary program.
+-const GIT_EXEC_ENV = /^(GIT_SSH_COMMAND|GIT_SSH|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND)$/i;
++const GIT_EXEC_ENV =
++  /^(GIT_SSH_COMMAND|GIT_SSH|GIT_EXTERNAL_DIFF|GIT_ASKPASS|GIT_PROXY_COMMAND|GIT_ALLOW_PROTOCOL)$/i;
++// Long option -> shortest abbreviation checked, per subcommand. `--rec` could also mean
++// --recurse-submodules, so --receive-pack needs more characters.
++const GIT_UPLOAD_PACK = { "--upload-pack": 3, "--exec": 3 };
++const GIT_EXEC_OPTIONS = {
++  fetch: GIT_UPLOAD_PACK,
++  "fetch-pack": GIT_UPLOAD_PACK,
++  pull: GIT_UPLOAD_PACK,
++  "ls-remote": GIT_UPLOAD_PACK,
++  clone: { ...GIT_UPLOAD_PACK, "--template": 3 },
++  init: { "--template": 3 },
++  archive: { "--exec": 3 },
++  push: { "--receive-pack": 6, "--exec": 3 },
++  "send-pack": { "--receive-pack": 6, "--exec": 3 },
++  remote: {},
++  difftool: { "--extcmd": 4 },
++  grep: { "--open-files-in-pager": 3 },
++};
++const GIT_EXEC_SHORT_OPTIONS = { clone: "u", "ls-remote": "u", difftool: "x", grep: "O" };
++const GIT_OUTPUT_SUBCOMMANDS = [
++  "diff",
++  "log",
++  "show",
++  "shortlog",
++  "whatchanged",
++  "range-diff",
++  "diff-tree",
++  "diff-index",
++  "diff-files",
++  "reflog",
++  "archive",
++  "format-patch",
++  "stash",
++];
++const SCRIPT_SHELLS = new Map([
++  ["bash", "bash"],
++  ["sh", "bash"],
++  ["zsh", "bash"],
++  ["dash", "bash"],
++  ["ksh", "bash"],
++  ["source", "bash"],
++  [".", "bash"],
++  ["pwsh", "powershell"],
++  ["powershell", "powershell"],
++]);
+ // Config keys whose value git executes as a command (or that pull in other config).
+ const GIT_EXEC_CONFIG =
+   /^(core\.(fsmonitor|pager|editor|sshcommand|askpass|gitproxy)|credential\.(.+\.)?helper|diff\.external|diff\..+\.(textconv|command)|sequence\.editor|gpg\.(.+\.)?program|filter\..+\.(clean|smudge|process)|merge\..+\.driver|include\.path|includeif\..+\.path|pager\..+|uploadpack\.packobjectshook|remote\..+\.(uploadpack|receivepack|proxy)|ssh\.variant)$/;
++// Keys that can point a remote at a command transport. Reading them is routine, so unlike the
++// keys above they only count when a value is being set.
++const GIT_TRANSPORT_CONFIG =
++  /^(remote\..+\.(url|pushurl)|url\..+\.(insteadof|pushinsteadof)|protocol\.(ext\.)?allow)$/;
+ // Words whose final value is only known at run time: substitutions, parameter
+ // expansions, brace expansion.
+ function isDynamicWord(word) {
+@@ -119,9 +172,11 @@ const SECRETISH_WORD =
+   /(^|[\\/*])\.env([.*?[]|$)|^env$|credential|\.git-credentials|hosts\.ya?ml|\.claude\.json|\.netrc|\.pem$/i;
+ 
+ function substituteKnown(word, state) {
+-  return word.replace(/\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*)(?![\w{]))/g, (m, a, b) =>
+-    state.values.has(a || b) ? state.values.get(a || b) : m,
+-  );
++  return word.replace(/\$(?:\{([A-Za-z_]\w*)\}|([A-Za-z_]\w*)(?![\w{]))/g, (m, a, b, at, whole) => {
++    // `$env:NAME` is PowerShell's environment drive, not the variable `$env`.
++    if (/^env$/i.test(b ?? "") && whole[at + m.length] === ":") return m;
++    return state.values.has(a || b) ? state.values.get(a || b) : m;
++  });
+ }
+ const SECRETISH_TEXT =
+   /\benv\b|\.env|secret|credential|token|passw|api.?key|\.claude|claude\.md|hosts\.ya?ml|\.ssh|netrc|\.git\//i;
+@@ -488,7 +543,14 @@ function makeContext(payload) {
+ // Script inspection
+ 
+ function newState(ctx, source) {
+-  return { cwd: ctx.cwd, assigns: new Set(), values: new Map(), rootSource: String(source ?? "") };
++  return {
++    cwd: ctx.cwd,
++    assigns: new Set(),
++    values: new Map(),
++    heredocScripts: new Map(),
++    inspectedScripts: new Set(),
++    rootSource: String(source ?? ""),
++  };
+ }
+ 
+ function inspectScript(source, dialect, ctx, depth, state = newState(ctx, source)) {
+@@ -631,7 +693,7 @@ function inspectPipelines(commands, depth, ctx, state) {
+     if (lister) {
+       const target = path.resolve(
+         state.cwd,
+-        (args.find((a) => !isFlag(a)) ?? ".").replace(/\\/g, "/"),
++        expandHomeAlias(args.find((a) => !isFlag(a)) ?? ".").replace(/\\/g, "/"),
+       );
+       const found = findSecretEnvFile(target, name === "find" ? 3 : 0);
+       secretListing = found ? path.basename(found) : null;
+@@ -723,10 +785,24 @@ function inspectCommand(command, ctx, state) {
+     }
+   }
+ 
++  // `cat > x.js <<EOF` followed by `node x.js`: remember the body so running it is inspected.
++  const pipedHeredocs = command.piped ? (state.previousHeredocs ?? []) : [];
++  state.previousHeredocs = command.heredocs;
++  const writtenBodies = [...command.heredocs, ...pipedHeredocs];
++  if (writtenBodies.length) {
++    for (const redirect of command.redirects) {
++      if (/^&?>[>|]?$|^1>[>|]?$/.test(redirect.op) && redirect.target) {
++        const target = substituteKnown(redirect.target, state);
++        rememberScript(target, writtenBodies, redirect.op.includes(">>"), state);
++      }
++    }
++  }
++
+   // PowerShell `$x = <command>` / `$env:X = value` — the right-hand side may run a command.
+   // Only plain literals are recorded; an expression ('ma'+'in', -join, arrays) stays a
+-  // variable, so later uses count as computed at run time.
+-  const isLiteralValue = (v) => !/[+(),\[$]|-join|-f\b/i.test(String(v));
++  // variable, so later uses count as computed at run time. A leading home alias is a
++  // literal location: `$p = "$HOME\.ssh\id_x"; gc $p` must be inspected as that path.
++  const isLiteralValue = (v) => !/[+(),\[$]|-join|-f\b/i.test(String(v).replace(HOME_ALIAS, ""));
+   const psGlued = /^\$(?:env:)?(\w+)=(.*)$/i.exec(words[0] ?? "");
+   if (psGlued && words.length === 1) {
+     if (isLiteralValue(psGlued[2])) state.values.set(psGlued[1], psGlued[2]);
+@@ -954,6 +1030,12 @@ function inspectCommand(command, ctx, state) {
+     }
+   }
+ 
++  if (name === "tee" && writtenBodies.length) {
++    const append = args.some((a) => /^(-[a-z]*a[a-z]*|--append)$/.test(a));
++    for (const a of args) if (!isFlag(a)) rememberScript(a, writtenBodies, append, state);
++  }
++  if (name === "vitest") inspectTestRunnerArgs(args, ctx);
++  inspectWrittenScript(name, words, command, ctx, state, depth);
+   inspectInlineCode(name, args, command, ctx, state, depth, hereStrings);
+   inspectFileArguments(name, args, ctx, state);
+   inspectRecursiveSearch(name, args, ctx, state);
+@@ -964,6 +1046,49 @@ function roots(ctx, state) {
+   return [ctx.projectDir, ctx.cwd, state.cwd];
+ }
+ 
++function rememberScript(target, bodies, append, state) {
++  const key = resolveArgPath(target, state.cwd);
++  if (!key || !state.heredocScripts) return;
++  const earlier = append ? (state.heredocScripts.get(key) ?? "") : "";
++  state.heredocScripts.set(key, [earlier, ...bodies].filter(Boolean).join("\n"));
++}
++
++// Inspects a heredoc-written script when this same command line runs it. This is pattern
++// analysis of one common form: a script written any other way (printf, a PowerShell
++// here-string, cp, an earlier tool call) is not covered. See the header comment.
++function inspectWrittenScript(name, words, command, ctx, state, depth) {
++  const scripts = state.heredocScripts;
++  if (!scripts?.size) return;
++  const dialect = SCRIPT_SHELLS.get(name);
++  const interpreter =
++    dialect || Object.hasOwn(INLINE_CODE_FLAGS, name) || /^(python[\d.]*|deno|busybox)$/.test(name);
++  // The script is the first positional word: later ones are its data. `node --import=x.mjs
++  // app.js` and `node < x.js` load a script too.
++  const candidates = [words[0]];
++  if (interpreter) {
++    candidates.length = 0;
++    const positional = words.slice(1).find((w) => !isFlag(w));
++    if (positional) candidates.push(positional);
++    for (const w of words.slice(1)) {
++      if (isFlag(w) && w.includes("=")) candidates.push(w.slice(w.indexOf("=") + 1));
++    }
++    for (const r of command.redirects) if (r.op === "<" && r.target) candidates.push(r.target);
++  }
++  for (const word of candidates) {
++    const body = scripts.get(resolveArgPath(word, state.cwd));
++    if (body === undefined || state.inspectedScripts.has(body)) continue;
++    state.inspectedScripts.add(body);
++    // A child interpreter's `cd` and variables don't reach the caller; `source` does.
++    const scriptState =
++      name === "source" || name === "." ? state : { ...state, values: new Map(state.values) };
++    // Run directly, the shebang decides what the file is, so inspect it both ways.
++    if (dialect || !interpreter || name === "busybox") {
++      inspectScript(body, dialect ?? "bash", ctx, depth + 1, scriptState);
++    }
++    if (!dialect) inspectCode(body, ctx, scriptState, depth + 1);
++  }
++}
++
+ function checkConfigWrite(abs, display, ctx, state) {
+   const label = protectedConfigLabel(abs, roots(ctx, state));
+   if (label && !isOverrideEnabled()) {
+@@ -1222,6 +1347,7 @@ function unwrap(initialWords, command, ctx, state, assigns) {
+         words = rest;
+         continue;
+       }
++      inspectNpmOverrides(name, rest, [...assigns, ...state.assigns], ctx, state.rootSource);
+       return words;
+     }
+     if (["dotenv", "dotenvx", "with-env"].includes(name)) {
+@@ -1362,6 +1488,58 @@ function stdinScript(ctx, state) {
+   }
+ }
+ 
++// A broad `npm ci *` or `npm test *` allow rule would otherwise approve a registry, config
++// file or test configuration chosen by the command, each of which can run arbitrary code.
++const NPM_CONFIG_OPTIONS = [
++  "--registry",
++  "--userconfig",
++  "--globalconfig",
++  "--prefix",
++  "--script-shell",
++  "--node-options",
++];
++const NPM_CONFIG_ENV =
++  /^npm_config_(registry|userconfig|globalconfig|prefix|script_shell|node_options|@.+:registry)$/i;
++// `--max-old-space-size` is routine; these make node load a chosen module.
++const NODE_OPTIONS_LOADS_CODE = /NODE_OPTIONS\s*=\s*\S*(?:--require|-r\b|--import|--loader)/i;
++const TEST_RUNNER_CONFIG = /^(--config|--root|--globalSetup|--setupFiles|--workspace)(=|$)|^-[cr]/;
++// These accept a built-in name (`--reporter=verbose`) or a module path, which runs as code.
++const TEST_RUNNER_MODULE = /^--(reporter|runner|environment|pool)(=|$)/;
++
++function inspectTestRunnerArgs(args, ctx) {
++  args.forEach((a, index) => {
++    const moduleOption = TEST_RUNNER_MODULE.test(a);
++    const value = a.includes("=") ? a.slice(a.indexOf("=") + 1) : (args[index + 1] ?? "");
++    if (TEST_RUNNER_CONFIG.test(a) || (moduleOption && /[\\/.]/.test(value))) {
++      ctx.ask(`the test run replaces the runner configuration with ${a}`);
++    }
++  });
++}
++
++function inspectNpmOverrides(name, rest, assigned, ctx, source) {
++  if (NODE_OPTIONS_LOADS_CODE.test(source))
++    ctx.ask(`\`${name}\` runs with NODE_OPTIONS loading code`);
++  const separator = rest.indexOf("--");
++  const own = separator === -1 ? rest : rest.slice(0, separator);
++  const override = own.find(
++    (a) =>
++      NPM_CONFIG_OPTIONS.some((o) => prefixOf(o, a.split("=")[0], 5)) ||
++      /^--@[^=]+:registry(=|$)/i.test(a),
++  );
++  if (override) ctx.ask(`\`${name}\` overrides its registry or config with ${override}`);
++  const envOverride = assigned.find((n) => NPM_CONFIG_ENV.test(n));
++  if (envOverride) ctx.ask(`\`${name}\` runs with ${envOverride} set`);
++  const words = own.filter((a) => !isFlag(a));
++  const isTest =
++    ["test", "t", "tst"].includes(words[0]) ||
++    (["run", "run-script", "rum", "urn"].includes(words[0]) && /^test/.test(words[1] ?? ""));
++  if (isTest) {
++    // pnpm and yarn pass arguments to the script without `--`.
++    const passed = name === "npm" ? (separator === -1 ? [] : rest.slice(separator + 1)) : rest;
++    inspectTestRunnerArgs(passed, ctx);
++  }
++}
++
+ function stripPackageVersion(words) {
+   if (!words.length) return words;
+   const [first, ...rest] = words;
+@@ -1372,6 +1550,63 @@ function stripPackageVersion(words) {
+ // ---------------------------------------------------------------------------
+ // git
+ 
++// Options whose value is a program git runs, or configuration or hooks it then honours. git
++// accepts any unique abbreviation of a long option.
++function inspectGitExecOptions(sub, rest, ctx) {
++  const options = GIT_EXEC_OPTIONS[sub] ?? {};
++  const shortValues = sub === "clone" ? "obcj" : "";
++  for (const [option, minLength] of Object.entries(options)) {
++    if (rest.some((a) => prefixOf(option, a.split("=")[0], minLength))) {
++      ctx.deny(`\`git ${sub} ${option}\` can make git run an arbitrary program`);
++    }
++  }
++  for (const flag of GIT_EXEC_SHORT_OPTIONS[sub] ?? "") {
++    if (shortClusterHas(rest, flag, shortValues)) {
++      ctx.deny(`\`git ${sub} -${flag}\` can make git run an arbitrary program`);
++    }
++  }
++  if (Object.hasOwn(GIT_EXEC_OPTIONS, sub)) {
++    for (const a of rest) {
++      const value = a.startsWith("-") && a.includes("=") ? a.slice(a.indexOf("=") + 1) : a;
++      if (/^(ext|fd)::/i.test(value)) ctx.deny(`\`git ${sub}\` uses a command transport (${a})`);
++    }
++  }
++  if (sub === "clone") {
++    rest.forEach((a, index) => {
++      const flag = a.split("=")[0];
++      const short = /^-[qvnls]*c(.*)$/.exec(a);
++      if (prefixOf("--config", flag, 4)) {
++        inspectGitConfigPair(
++          a.includes("=") ? a.slice(a.indexOf("=") + 1) : (rest[index + 1] ?? ""),
++          ctx,
++        );
++      } else if (short) inspectGitConfigPair(short[1] || (rest[index + 1] ?? ""), ctx);
++    });
++  }
++}
++
++// The files a read-style git command would overwrite. Empty when it writes none.
++function gitOutputTargets(sub, rest) {
++  if (sub === "bundle") {
++    const file = rest[0] === "create" ? rest.slice(1).find((a) => !isFlag(a)) : undefined;
++    return file === undefined ? [] : [file];
++  }
++  if (sub === "stash" && !["show", "list"].includes(rest[0])) return [];
++  if (!GIT_OUTPUT_SUBCOMMANDS.includes(sub)) return [];
++  const longOptions = sub === "format-patch" ? ["--output", "--output-directory"] : ["--output"];
++  const hasShortOption = sub === "archive" || sub === "format-patch";
++  const targets = [];
++  rest.forEach((a, index) => {
++    const flag = a.split("=")[0];
++    if (longOptions.some((o) => prefixOf(o, flag, 5))) {
++      targets.push(a.includes("=") ? a.slice(a.indexOf("=") + 1) : (rest[index + 1] ?? ""));
++    } else if (hasShortOption && /^-o/.test(a)) {
++      targets.push(a === "-o" ? (rest[index + 1] ?? "") : a.slice(2));
++    }
++  });
++  return targets;
++}
++
+ function inspectGit(args, ctx, state, assigns) {
+   let gitCwd = state.cwd;
+   let i = 0;
+@@ -1459,6 +1694,15 @@ function inspectGit(args, ctx, state, assigns) {
+     );
+   const hasNoVerify = rest.some((a) => prefixOf("--no-verify", a.split("=")[0], 9));
+ 
++  inspectGitExecOptions(sub, rest, ctx);
++  // `git log --output=<file>` overwrites the file, so it is a write despite the subcommand.
++  for (const target of gitOutputTargets(sub, rest)) {
++    const abs = resolveArgPath(target, gitCwd);
++    checkConfigWrite(abs, target, ctx, state);
++    if (isSecretPath(abs)) ctx.deny(`writes to a credential store (${target})`);
++    ctx.ask(`\`git ${sub}\` overwrites ${target || "a file"}`);
++  }
++
+   switch (sub) {
+     case "commit":
+       if (hasNoVerify || shortClusterHas(rest, "n", "mFcCtSu")) {
+@@ -1833,6 +2077,9 @@ function secretEnvFilesIn(dir) {
+ 
+ function inspectGitConfigKey(key, value, ctx) {
+   if (GIT_EXEC_CONFIG.test(key)) ctx.deny(`sets ${key}, which makes git run an arbitrary command`);
++  if (value !== "" && GIT_TRANSPORT_CONFIG.test(key)) {
++    ctx.deny(`sets ${key}, which can make git run an arbitrary command`);
++  }
+   if (key === "core.hookspath") ctx.deny("sets core.hooksPath, which disables verification hooks");
+   if (key.startsWith("alias.")) ctx.deny("defines a git alias, which can hide a protected command");
+   if (/^remote\..+\.(push|mirror)$/.test(key)) {
+@@ -2423,13 +2670,26 @@ function inspectInlineCode(name, args, command, ctx, state, depth, hereStrings)
+     interpreter = "node";
+     rest = ["-e", ...args.slice(1)];
+   }
++  if (/^python[\d.]+$/.test(interpreter)) interpreter = "python";
+   const flags = INLINE_CODE_FLAGS[interpreter];
+   if (!flags) return;
+   const code = [];
+   for (let i = 0; i < rest.length; i++) {
+     if (flags.includes(rest[i])) code.push(rest[i + 1] ?? "");
+   }
+-  const readsStdin = !rest.some((a) => !isFlag(a) && !code.includes(a)) || rest.includes("-");
++  const readsStdin =
++    !rest.some((a) => !isFlag(a) && !code.includes(a)) ||
++    rest.some((a) => ["-", "/dev/stdin", "/dev/fd/0"].includes(a));
++  // `echo '<code>' | node`: same as a shell reading its script from a pipe.
++  if (
++    readsStdin &&
++    !code.length &&
++    command.piped &&
++    !command.heredocs.length &&
++    !hereStrings.length
++  ) {
++    stdinScript(ctx, state);
++  }
+   if (readsStdin) code.push(...command.heredocs, ...hereStrings);
+   for (const snippet of code) inspectCode(snippet, ctx, state, depth);
+   // node -e "fs.writeFileSync(process.argv[1], 'x')" CLAUDE.md
+@@ -2550,7 +2810,9 @@ const WRITE_LIKE_CMDLETS = new Set([
+ const PROTECTED_HINT =
+   /claude|\.git\b|settings\.json|hooks|\.mcp|\.github|eslint|tsconfig|vitest|playwright|\.env/i;
+ 
+-function expandPatternUncached(candidate, cwd, budget = { left: MAX_EXPANSIONS }) {
++function expandPatternUncached(rawCandidate, cwd, budget = { left: MAX_EXPANSIONS }) {
++  // curl expands `[a-z]` in a file URL itself, so glob the path the URL names.
++  const candidate = stripFileUrl(rawCandidate);
+   const braces = /\{([^{}]*,[^{}]*)\}/.exec(candidate);
+   if (braces) {
+     const out = [];
+@@ -2600,7 +2862,7 @@ function expandPatternUncached(candidate, cwd, budget = { left: MAX_EXPANSIONS }
+   }
+   try {
+     const regex = new RegExp(`${source}$`, "i");
+-    const entries = fs.readdirSync(path.resolve(cwd, dir));
++    const entries = fs.readdirSync(path.resolve(cwd, expandHomeAlias(dir)));
+     const matches = entries.filter((entry) => regex.test(entry));
+     return [candidate, ...matches.map((m) => (slash === -1 ? m : `${dir}/${m}`))];
+   } catch {
+@@ -2910,7 +3172,12 @@ function inspectFileArguments(name, args, ctx, state) {
+       continue;
+     }
+     if (a.includes("=")) candidates.push(a.slice(a.indexOf("=") + 1));
+-    if (!isFlag(a)) candidates.push(a.replace(/^@/, "").replace(/^file:\/\/\/?/i, ""));
++    if (!isFlag(a)) {
++      candidates.push(a.replace(/^@/, ""));
++      // Also the path with only the scheme removed: to a tool that doesn't parse URLs, `?` and
++      // `#` are ordinary characters, and a shell or curl expands braces before any URL parsing.
++      if (/^@?file:\/\//i.test(a)) candidates.push(a.replace(/^@?file:\/\/\/?/i, ""));
++    }
+   }
+   const positional = args.filter((a) => !isFlag(a));
+   if (COPY_COMMANDS.has(name) && destination === null)
+@@ -3033,24 +3300,39 @@ const MCP_PATH_KEYS = [
+   "paths",
+ ];
+ 
++// How a server might read a path: as a URL, or by dropping the scheme and keeping the rest
++// (`?`, `#` and a relative name included), with or without decoding percent-escapes.
++function mcpPathReadings(value) {
++  const withoutScheme = value.replace(/^(?:view-source:)?file:\/\/\/?/i, "");
++  return new Set([value, decodePercent(value), withoutScheme, decodePercent(withoutScheme)]);
++}
++
+ function inspectMcp(toolName, input, ctx) {
+   const tool = toolName.split("__").slice(2).join("__").toLowerCase();
+   const serialized = JSON.stringify(input ?? {});
+   for (const value of collectStrings(input)) {
++    if (value.length > 500) continue;
++    const decoded = decodePercent(value);
++    // Cheap pre-filter: must name everything CREDENTIAL_PATHS can match.
+     if (
+-      value.length > 500 ||
+-      !/\.env|\.claude|credential|\.ssh|\.netrc|hosts\.yml|\.pem|environ/i.test(value)
++      !/\.env|\.claude|credential|\.ssh|netrc|hosts\.ya?ml|\.pem|environ|npmrc|pgpass|\.docker|\.aws|access-token|auth\.json/i.test(
++        decoded,
++      )
+     )
+       continue;
+-    const abs = resolveArgPath(value.replace(/^file:\/\/\/?/i, ""), ctx.cwd);
+-    if (isSecretPath(abs)) ctx.deny(`passes a secret file path (${value}) to an MCP tool`);
++    for (const form of mcpPathReadings(value)) {
++      if (isSecretPath(resolveArgPath(form, ctx.cwd))) {
++        ctx.deny(`passes a secret file path (${value}) to an MCP tool`);
++      }
++    }
+   }
+   // File-system style MCP servers get the same protected-config rules as Edit/Write.
+   if (MCP_WRITE_TOOL.test(tool)) {
+     for (const key of MCP_PATH_KEYS) {
+       for (const p of collectStrings(input?.[key])) {
+-        const abs = resolveArgPath(p.replace(/^file:\/\/\/?/i, ""), ctx.cwd);
+-        checkConfigWrite(abs, p, ctx, { cwd: ctx.cwd });
++        for (const form of mcpPathReadings(p)) {
++          checkConfigWrite(resolveArgPath(form, ctx.cwd), p, ctx, { cwd: ctx.cwd });
++        }
+       }
+     }
+   }
+diff --git a/.claude/hooks/config-protection.mjs b/.claude/hooks/config-protection.mjs
+index 4045f38..6e31897 100644
+--- a/.claude/hooks/config-protection.mjs
++++ b/.claude/hooks/config-protection.mjs
+@@ -153,6 +153,8 @@ runGuard(
+       changesCriticalScripts(toolName, input, path.resolve(cwd, filePath))
+     ) {
+       reason = `the edit touches a required validation script entry in package.json ("scripts")`;
++    } else if (isSecretPath(abs)) {
++      reason = `"${filePath}" is a secret or credential file`;
+     }
+     if (!reason) return verdict;
+ 
+diff --git a/.claude/hooks/lib/hook-io.mjs b/.claude/hooks/lib/hook-io.mjs
+index 3b12fcf..76500ad 100644
+--- a/.claude/hooks/lib/hook-io.mjs
++++ b/.claude/hooks/lib/hook-io.mjs
+@@ -94,7 +94,7 @@ export function ask(guard, reasons) {
+ }
+ 
+ export const SENSITIVE_FALLBACK =
+-  /no-ver|hookspath|husky|\bgit\b|\bcommit\b|\bpush\b|\breset\b|\bclean\b|checkout|restore|\bbranch\b|worktree|rebase|filter-|\bgh\b|vercel|supabase|prisma|psql|pg_|\.env|secret|token|password|credential|\.claude|claude\.md|staging|deploy|release|mcp__|environ|printenv|invoke-expression|\biex\b|-enc/i;
++  /no-ver|hookspath|husky|\bgit\b|\bcommit\b|\bpush\b|\breset\b|\bclean\b|checkout|restore|\bbranch\b|worktree|rebase|filter-|\bgh\b|vercel|supabase|prisma|psql|pg_|\.env|secret|token|password|credential|\.claude|claude\.md|staging|deploy|release|mcp__|environ|printenv|invoke-expression|\biex\b|-enc|\.ssh|npmrc|pgpass|netrc|\.aws|\.docker|auth\.json|\.pem|hosts\.ya?ml/i;
+ 
+ export function isSensitiveText(text) {
+   return SENSITIVE_FALLBACK.test(String(text ?? ""));
+diff --git a/.claude/hooks/lib/protected-paths.mjs b/.claude/hooks/lib/protected-paths.mjs
+index 489686c..b65b741 100644
+--- a/.claude/hooks/lib/protected-paths.mjs
++++ b/.claude/hooks/lib/protected-paths.mjs
+@@ -42,7 +42,8 @@ const NESTED_WORKTREE = /^(?:\.claude\/worktrees|\.worktrees)\/[^/]+\//;
+ // Credential stores outside the repository (absolute, posix, lower-cased suffixes).
+ const CREDENTIAL_PATHS = [
+   /\/\.claude\/\.credentials\.json$/,
+-  /\/\.claude\.json(\.backup(\.\d+)?)?$/,
++  // Includes Claude Code's own siblings: .backup, .backup.<n>, .tmp, .corrupted.<ts>.
++  /\/\.claude\.json(\.[^/]+)?$/,
+   /\/\.claude\/backups\/.*claude\.json/,
+   /\/\.config\/gh\/hosts\.ya?ml$/,
+   /\/github cli\/hosts\.ya?ml$/,
+@@ -117,23 +118,60 @@ export function resolveArgPath(arg, cwd) {
+   return resolved;
+ }
+ 
++// A leading `~`, `$HOME`, `${env:USERPROFILE}`, `%APPDATA%`, `%HOMEDRIVE%%HOMEPATH%`, …
++export const HOME_ALIAS =
++  /^(?:~|\$\{?(?:env:)?(HOME|USERPROFILE|APPDATA|LOCALAPPDATA)\}?|%(HOME|USERPROFILE|APPDATA|LOCALAPPDATA)%|%HOMEDRIVE%%HOMEPATH%)(?=$|[\\/])/i;
++const HOME_SUBFOLDER = { APPDATA: "/AppData/Roaming", LOCALAPPDATA: "/AppData/Local" };
++
++/** Replaces a leading home-directory alias with the path it stands for. */
++export function expandHomeAlias(value) {
++  return String(value).replace(HOME_ALIAS, (_alias, dollar, percent) => {
++    const name = String(dollar ?? percent ?? "").toUpperCase();
++    return `${os.homedir()}${HOME_SUBFOLDER[name] ?? ""}`;
++  });
++}
++
++function decodeEscapes(run) {
++  try {
++    return decodeURIComponent(run);
++  } catch {
++    return null;
++  }
++}
++
++/** Decodes percent escapes; one malformed escape can't hide the others beside it. */
++export function decodePercent(value) {
++  return String(value).replace(
++    /(?:%[0-9a-f]{2})+/gi,
++    (run) =>
++      decodeEscapes(run) ?? run.replace(/%[0-9a-f]{2}/gi, (one) => decodeEscapes(one) ?? one),
++  );
++}
++
++// file: URLs name the same file as their path. The query and fragment are not part of it, and
++// percent-encoding hides its characters. `file:x` has no slash, so it is an ordinary file name.
++export function stripFileUrl(value) {
++  const match = /^(?:view-source:)?file:[\\/]+(?:localhost[\\/]+)?([^?#]*)/i.exec(value);
++  if (!match) return value;
++  const rest = decodePercent(match[1]).replace(/^[\\/]+/, "");
++  return /^[a-z]:/i.test(rest) ? rest : `/${rest}`;
++}
++
+ function resolveArgPathUncached(arg, cwd) {
+   let raw = String(arg ?? "").trim();
+   if (!raw) return null;
+-  const home = os.homedir();
+-  raw = raw
+-    .replace(/^~(?=$|[\\/])/, home)
+-    .replace(/^\$HOME(?=$|[\\/])/i, home)
+-    .replace(/^\$\{HOME\}(?=$|[\\/])/i, home)
+-    .replace(/^\$env:(USERPROFILE|HOME)(?=$|[\\/])/i, home)
+-    .replace(/^%USERPROFILE%(?=$|[\\/])/i, home)
+-    .replace(/^\\\\\?\\/, "")
+-    .replace(/^\/\/\?\//, "");
+-  let posix = toPosix(raw);
+-  // NTFS alternate data streams (file::$DATA, file:stream) address the same file.
++  raw = expandHomeAlias(stripFileUrl(raw));
++  // Win32 namespace prefixes, in either slash direction. `//./x` stays as it is unless a drive
++  // follows: on POSIX it is a valid spelling of the absolute path `/x`.
++  let posix = toPosix(raw)
++    .replace(/^\/\/\?\//, "")
++    .replace(/^\/\/\.\/(?=[a-z]:)/i, "");
++  // NTFS alternate data streams (file::$DATA, file:stream) address the same file. Cut per path
++  // component: `$env:TEMP/.env` still names `.env`. Other URLs are not local paths.
+   const drive = /^[a-z]:/i.test(posix) ? posix.slice(0, 2) : "";
+   const rest = posix.slice(drive.length);
+-  if (rest.includes(":")) posix = drive + rest.slice(0, rest.indexOf(":"));
++  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(rest)) posix = drive + rest.slice(0, rest.indexOf(":"));
++  else if (rest.includes(":")) posix = drive + rest.replace(/:[^/]*/g, "");
+   const isAbsolute = /^[a-z]:\//i.test(posix) || posix.startsWith("/");
+   const abs = isAbsolute ? posix : path.posix.join(toPosix(cwd || process.cwd()), posix);
+   // Windows ignores trailing dots and spaces in path components (`CLAUDE.md.` is
+@@ -167,6 +205,28 @@ function mainCheckoutRoot(dir) {
+   return root;
+ }
+ 
++const worktreeCache = new Map();
++
++// Every worktree registered with a primary checkout. Compared lower-cased by relativeWithin.
++function worktreesOf(main) {
++  if (worktreeCache.has(main)) return worktreeCache.get(main);
++  let worktrees = [];
++  try {
++    worktrees = execFileSync("git", ["-C", main, "worktree", "list", "--porcelain"], {
++      encoding: "utf8",
++      stdio: ["ignore", "pipe", "ignore"],
++      timeout: 8000,
++    })
++      .split(/\r?\n/)
++      .filter((line) => line.startsWith("worktree "))
++      .map((line) => line.slice("worktree ".length));
++  } catch {
++    worktrees = [];
++  }
++  worktreeCache.set(main, worktrees);
++  return worktrees;
++}
++
+ function relativeWithin(root, abs) {
+   if (!root) return null;
+   const base = toPosixLower(root).replace(/\/+$/, "");
+@@ -221,7 +281,10 @@ export function protectedConfigLabel(abs, roots) {
+   // outside the session's own roots need the (git-spawning) lookup.
+   if (candidates.some((root) => relativeWithin(root, abs) !== null)) return null;
+   const mains = [...new Set(roots.filter(Boolean).map(mainCheckoutRoot).filter(Boolean))];
+-  return check(mains.map((r) => canonicalize(toPosix(r))));
++  const mainLabel = check(mains.map((r) => canonicalize(toPosix(r))));
++  if (mainLabel) return mainLabel;
++  // A sibling worktree of the same repository holds the same protected configuration.
++  return check(mains.flatMap(worktreesOf));
+ }
+ 
+ /** Shell-style glob match on a single path component (*, ?, [...], {a,b}). */
+diff --git a/.claude/hooks/lib/shell-parse.mjs b/.claude/hooks/lib/shell-parse.mjs
+index fed0578..4cb9ee1 100644
+--- a/.claude/hooks/lib/shell-parse.mjs
++++ b/.claude/hooks/lib/shell-parse.mjs
+@@ -251,8 +251,10 @@ function tokenize(rawSrc, dialect, depth, result) {
+           continue;
+         }
+         if (c === "$") {
+-          j += 1 + recordVariable(src, j, dialect, result);
+-          text += c;
++          // Keep the name: "$env:USERPROFILE\x" has to reach the path checks as written.
++          const length = 1 + recordVariable(src, j, dialect, result);
++          text += src.slice(j, j + length);
++          j += length;
+           continue;
+         }
+         text += c;
+@@ -379,6 +381,7 @@ function tokenize(rawSrc, dialect, depth, result) {
+         const m = /^\s*(['"]?)([A-Za-z_][A-Za-z0-9_-]*)\1/.exec(rest);
+         if (m) {
+           pendingHeredocs.push({ delimiter: m[2], stripTabs: op.endsWith("-") });
++          tokens.push({ t: "heredoc-start" });
+           i = j + m[0].length;
+           continue;
+         }
+@@ -436,6 +439,7 @@ function groupCommands(tokens, dialect, depth, result) {
+   /** @type {SimpleCommand} */
+   let current = { words: [], redirects: [], heredocs: [], dialect, depth, piped: false };
+   let pendingRedirect = null;
++  const heredocOwners = [];
+   const flush = () => {
+     if (pendingRedirect) current.redirects.push({ op: pendingRedirect, target: null });
+     pendingRedirect = null;
+@@ -456,10 +460,15 @@ function groupCommands(tokens, dialect, depth, result) {
+     } else if (token.t === "redir") {
+       if (pendingRedirect) current.redirects.push({ op: pendingRedirect, target: null });
+       pendingRedirect = token.v;
++    } else if (token.t === "heredoc-start") {
++      heredocOwners.push(current);
+     } else if (token.t === "heredoc") {
+-      // Heredoc bodies arrive after the command's newline; attach to the last command.
++      // Heredoc bodies arrive after the command's newline. Attach to the last command, which
++      // reads it in `cat <<E | bash`, and to the command that opened it (`cat > x <<E && y`).
+       const last = result.commands[result.commands.length - 1];
+       if (last) last.heredocs.push(token.v);
++      const owner = heredocOwners.shift();
++      if (owner && owner !== last) owner.heredocs.push(token.v);
+     } else if (pendingRedirect) {
+       current.redirects.push({ op: pendingRedirect, target: token.v });
+       pendingRedirect = null;
+diff --git a/docs/DEVELOPMENT.md b/docs/DEVELOPMENT.md
+index 58fca04..1ce07c2 100644
+--- a/docs/DEVELOPMENT.md
++++ b/docs/DEVELOPMENT.md
+@@ -199,19 +199,24 @@ and enforcement lives here.
+     reading `.env*` files, credential stores or secret environment variables, `gh auth token`,
+     encoded PowerShell, shell writes to protected configuration (including downloads, git
+     plumbing and formatters), git config that executes commands (`core.fsmonitor`,
+-    `core.pager`, `credential.helper`, `include.path`, …) or re-routes pushes, and risky git
+-    commands whose arguments are computed at run time (`$(…)`, `${…}`, brace expansion, `xargs`).
++    `core.pager`, `credential.helper`, `include.path`, …) or re-routes pushes, git options that
++    name a program or hooks to run (`--upload-pack`, `--exec`, `--template`, `ext::` transports,
++    `url.*.insteadOf`), and risky git commands whose arguments are computed at run time (`$(…)`,
++    `${…}`, brace expansion, `xargs`). A heredoc script run in the same command is inspected too.
+   - **Ask** (a human must approve this specific instance, even in auto mode): PR merge/approval,
+     workflow dispatch/rerun/cancel, mutating `gh api` calls, release/secret/repo-settings changes,
+     other Vercel/Supabase changes, migrations and `npm run db:*`, database clients, destructive
+     local git operations (`reset --hard`, `checkout --`, `clean -f`, branch/worktree deletion,
+-    rebase), remote branch deletion, the staging-ops helpers, and destructive or write-SQL MCP tools.
++    rebase), remote branch deletion, the staging-ops helpers, destructive or write-SQL MCP tools,
++    git commands that overwrite a file (`--output`, `archive -o`, `format-patch -o`,
++    `bundle create`), and npm or Vitest runs that replace their registry, config or runner module.
+ - **`config-protection`** (`Edit`, `Write`, `NotebookEdit`, `MultiEdit`, `Read`, `Grep`) denies
+   edits to `CLAUDE.md` (any directory), everything under `.claude/`, `.mcp.json`, git's own
+   `.git/config`, `.git/hooks/` and `~/.gitconfig`, `.env*` (templates such as `.env.example`
+   excepted), ESLint/Prettier/TypeScript/Vitest/Playwright config, `.github/`, CI and
+   release-verification scripts, `vercel.json`, the guardrail tests, user-level Claude Code
+-  settings, and `package.json`'s required validation script entries. It also denies `Read`/`Grep` of
++  settings, and `package.json`'s required validation script entries. These rules also cover sibling
++  worktrees of the same repository. It also denies edits to credential stores, and `Read`/`Grep` of
+   secret files and credential stores.
+ 
+ **Fail-safe.** Hooks are registered as `node "${CLAUDE_PROJECT_DIR}/.claude/hooks/<guard>.mjs" ||
+@@ -253,5 +258,5 @@ pre-existing git/gh aliases or push configuration, `git stash pop`/`merge`/`cher
+ commits that change protected files (git plumbing can craft such commits), `npx prettier --write .`
+ reformatting protected files,
+ and hosts where Claude Code runs hooks under PowerShell instead of Git Bash (the `|| exit 2`
+-registration needs Bash). Further gaps confirmed on 2026-11-06, with patches awaiting owner
+-review, are listed in `docs/security/claude-hardening-2026-11/README.md`.
++registration needs Bash). Residual gaps confirmed on 2026-11-06 are listed in
++`docs/security/claude-hardening-2026-11/README.md`.
+diff --git a/tests/unit/hook-path-hardening.test.ts b/tests/unit/hook-path-hardening.test.ts
+new file mode 100644
+index 0000000..215fbc5
+--- /dev/null
++++ b/tests/unit/hook-path-hardening.test.ts
+@@ -0,0 +1,506 @@
++import { spawn, spawnSync } from "node:child_process";
++import fs from "node:fs";
++import os from "node:os";
++import path from "node:path";
++import { fileURLToPath } from "node:url";
++import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
++
++// Synthetic payloads only: the guards classify the text and nothing in it is executed. The
++// home directory is a temporary fixture, so no real credential file is ever looked at.
++const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
++const HOOKS = path.join(REPO_ROOT, ".claude", "hooks");
++
++vi.setConfig({ testTimeout: 120_000, hookTimeout: 120_000 });
++
++// Mixed case on purpose: the guards lower-case paths, and a case-sensitive file system must
++// still find these checkouts.
++const BASE = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), "Syveka-Guard-")));
++const HOME = path.join(BASE, "Home");
++const P = HOME.replace(/\\/g, "/");
++const SESSION = path.join(BASE, "Session");
++const S = SESSION.replace(/\\/g, "/");
++const SIBLING = path.join(BASE, "Sibling");
++const OTHER_REPO = path.join(BASE, "Other-Repo");
++const CLAUDE_JSON = ".claude.json";
++const fileUrl = (posixPath: string) => `file:///${posixPath.replace(/^\//, "")}`;
++
++type Decision = "allow" | "ask" | "deny";
++type Payload = { tool_name: string; tool_input: Record<string, unknown>; cwd?: string };
++
++// Isolated from the developer's git configuration and from any GIT_* a calling hook exports.
++function gitEnv() {
++  const env: NodeJS.ProcessEnv = { ...process.env, HOME, USERPROFILE: HOME };
++  for (const name of Object.keys(env)) if (name.startsWith("GIT_")) delete env[name];
++  env.GIT_CONFIG_NOSYSTEM = "1";
++  return env;
++}
++
++function git(cwd: string, ...args: string[]) {
++  const identity = ["-c", "user.name=guard-test", "-c", "user.email=guard-test@example.invalid"];
++  const result = spawnSync("git", [...identity, "-c", "commit.gpgsign=false", ...args], {
++    cwd,
++    encoding: "utf8",
++    env: gitEnv(),
++  });
++  if (result.status !== 0) throw new Error(`git ${args.join(" ")}: ${result.stderr}`);
++}
++
++function evaluate(hook: string, payload: Payload): Promise<Decision> {
++  return new Promise((resolve, reject) => {
++    const child = spawn(process.execPath, [path.join(HOOKS, `${hook}.mjs`)], {
++      env: {
++        ...gitEnv(),
++        CLAUDE_PROJECT_DIR: SESSION,
++        SYVEKA_ALLOW_PROTECTED_CONFIG_EDIT: "",
++      },
++    });
++    let stdout = "";
++    child.stdout.on("data", (chunk) => (stdout += chunk));
++    child.stderr.resume();
++    child.on("error", reject);
++    child.on("close", (status) => {
++      if (status === 2) resolve("deny");
++      else if (status === 0)
++        resolve(stdout.includes('"permissionDecision":"ask"') ? "ask" : "allow");
++      else reject(new Error(`unexpected exit ${status}`));
++    });
++    child.stdin.end(JSON.stringify({ cwd: SESSION, ...payload }));
++  });
++}
++
++const bash = (command: string) =>
++  evaluate("command-guard", { tool_name: "Bash", tool_input: { command } });
++const powershell = (command: string) =>
++  evaluate("command-guard", { tool_name: "PowerShell", tool_input: { command } });
++const mcp = (tool_name: string, tool_input: Record<string, unknown>) =>
++  evaluate("command-guard", { tool_name, tool_input });
++const read = (file_path: string) =>
++  evaluate("config-protection", { tool_name: "Read", tool_input: { file_path } });
++const edit = (file_path: string) =>
++  evaluate("config-protection", {
++    tool_name: "Edit",
++    tool_input: { file_path, old_string: "a", new_string: "b" },
++  });
++
++beforeAll(() => {
++  fs.mkdirSync(HOME, { recursive: true });
++  fs.writeFileSync(path.join(HOME, CLAUDE_JSON), "{}\n");
++  fs.writeFileSync(path.join(HOME, "notes.txt"), "x\n");
++  fs.mkdirSync(SESSION, { recursive: true });
++  git(SESSION, "init", "--quiet");
++  git(SESSION, "commit", "--quiet", "--allow-empty", "-m", "fixture");
++  git(SESSION, "worktree", "add", "--quiet", SIBLING);
++  fs.mkdirSync(path.join(SIBLING, "scripts", "ci"), { recursive: true });
++  git(path.join(SIBLING, "scripts", "ci"), "init", "--quiet");
++  fs.mkdirSync(OTHER_REPO, { recursive: true });
++  git(OTHER_REPO, "init", "--quiet");
++});
++
++afterAll(() => {
++  fs.rmSync(BASE, { recursive: true, force: true, maxRetries: 3 });
++});
++
++describe("credential path forms", () => {
++  it.each([
++    ["Claude Code's .tmp sibling", `${P}/${CLAUDE_JSON}.tmp`],
++    ["a corrupted copy", `${P}/${CLAUDE_JSON}.corrupted.123`],
++    ["a file URL with an encoded name", fileUrl(`${P}/%2Eclaude%2Ejson`)],
++    ["a file URL with a query", `${fileUrl(`${P}/${CLAUDE_JSON}`)}?x=1`],
++    ["a file URL with a fragment", `${fileUrl(`${P}/${CLAUDE_JSON}`)}#x`],
++    ["a view-source URL", `view-source:${fileUrl(`${P}/${CLAUDE_JSON}`)}`],
++    [
++      "a file URL with a malformed escape in its query",
++      `${fileUrl(`${P}/%2Eclaude%2Ejson`)}?x=%ZZ`,
++    ],
++    [
++      "a file URL with backslashes",
++      `file:\\\\\\${P.replace(/^\//, "").replace(/\//g, "\\")}\\${CLAUDE_JSON}`,
++    ],
++  ])("Read denies %s", async (_label, file) => {
++    expect(await read(file)).toBe("deny");
++  });
++
++  // Pass before and after the fix: they pin behaviour the rewritten resolver must keep.
++  it.each([
++    ["a numbered backup", `${P}/${CLAUDE_JSON}.backup.123`],
++    ["the Win32 device prefix", `\\\\.\\${P.replace(/\//g, "\\")}\\${CLAUDE_JSON}`],
++    ["the Win32 extended prefix", `\\\\?\\${P.replace(/\//g, "\\")}\\${CLAUDE_JSON}`],
++  ])("Read keeps denying %s", async (_label, file) => {
++    expect(await read(file)).toBe("deny");
++  });
++
++  it("does not treat an unrelated name as the credential file", async () => {
++    expect(await read(`${P}/.claude.jsonnet`)).toBe("allow");
++  });
++
++  it("keeps //./ meaning an absolute path, not a relative one", async () => {
++    expect(await bash(`echo x > //./${S.replace(/^\//, "")}/vitest.config.ts`)).toBe("deny");
++  });
++
++  it("keeps file:name relative to the current directory", async () => {
++    expect(await bash("cd .github/workflows && echo x > file:x.yml")).toBe("deny");
++  });
++
++  it.each([
++    ["mixed-slash device prefix", `\\\\./${P.replace(/^\//, "")}/.ssh/id_x`],
++    [
++      "mixed-slash device prefix, other way",
++      `//.\\${P.replace(/^\//, "").replace(/\//g, "\\")}\\${CLAUDE_JSON}`,
++    ],
++    ["a file URL with a numeric host", `file://127.0.0.1/${P.replace(/^\//, "")}/.ssh/id_x`],
++  ])("Read denies %s", async (_label, file) => {
++    expect(await read(file)).toBe("deny");
++  });
++
++  it.each(["https://example.com/.env", "https://example.com/docs"])(
++    "does not read the URL %s as a local secret",
++    async (url) => {
++      expect(await mcp("mcp__browser__navigate", { url })).toBe("allow");
++    },
++  );
++
++  it("does not read a search pattern as a file URL", async () => {
++    expect(await bash("grep 'file:.env' notes.txt")).toBe("allow");
++  });
++});
++
++describe("home aliases reach the real directory", () => {
++  it.each(["cat ~/.claude.j*", "cat ~/.claude.jso?", "cat ~/.cl[a]ude.json"])(
++    "Bash denies %s",
++    async (command) => {
++      expect(await bash(command)).toBe("deny");
++    },
++  );
++
++  it.each([`cat "$USERPROFILE/.claude.j*"`, `cat "$HOME/.claude.j*"`])(
++    "Bash denies the quoted %s",
++    async (command) => {
++      expect(await bash(command)).toBe("deny");
++    },
++  );
++
++  it.each([
++    "Get-Content $HOME\\.claude.j*",
++    'Get-Content "$env:USERPROFILE\\.claude.j*"',
++    "Get-Content $env:APPDATA\\com.vercel.cli\\auth.json",
++  ])("PowerShell denies %s", async (command) => {
++    expect(await powershell(command)).toBe("deny");
++  });
++
++  // A variable that isn't a home alias must not hide the rest of the path.
++  it.each([
++    'Get-Content "$env:TEMP\\.env"',
++    'Get-Content "${env:TEMP}\\.env"',
++    "Get-Content $env:TEMP\\.env",
++    'Get-Content "$env:TEMP\\..\\..\\..\\.ssh\\id_x"',
++    'Get-Content "$env:HOMEDRIVE$env:HOMEPATH\\.claude.json"',
++    'Copy-Item "$env:X\\.env" out.txt',
++    'Select-String -Path "$env:X\\.env" k',
++    'Get-Content "C:\\x\\$env:Y\\.env"',
++    'Set-Content "$env:REPO\\.prettierrc" x',
++  ])("PowerShell denies %s", async (command) => {
++    expect(await powershell(command)).toBe("deny");
++  });
++
++  it("does not let a variable named env rewrite the environment drive", async () => {
++    const command = `$env = "foo://"; Get-Content "$env:USERPROFILE\\.ssh\\id_x"`;
++    expect(await powershell(command)).toBe("deny");
++  });
++
++  it("still allows a home glob that matches nothing secret", async () => {
++    expect(await bash("cat ~/not*")).toBe("allow");
++  });
++});
++
++describe("PowerShell home-relative variables", () => {
++  it.each([
++    `$p = "$HOME\\${CLAUDE_JSON}"; Get-Content $p`,
++    `$p = "$env:USERPROFILE\\${CLAUDE_JSON}"; Get-Content $p`,
++  ])("denies %s", async (command) => {
++    expect(await powershell(command)).toBe("deny");
++  });
++
++  it("allows the same shape for an ordinary file", async () => {
++    expect(await powershell(`$p = "$HOME\\notes.txt"; Get-Content $p`)).toBe("allow");
++  });
++});
++
++describe("scripts written and run in one command", () => {
++  const code = `const fs=require('fs'),os=require('os'),path=require('path');
++fs.readFileSync(path.join(os.homedir(),'${CLAUDE_JSON}'),'utf8')`;
++  const shell = `cat ~/${CLAUDE_JSON}`;
++
++  it.each([
++    ["a JavaScript heredoc", `cat > /tmp/x.js <<'EOF'\n${code}\nEOF\nnode /tmp/x.js`],
++    ["a shell heredoc", `cat > /tmp/x.sh <<'EOF'\n${shell}\nEOF\nbash /tmp/x.sh`],
++    ["direct execution", `cat > /tmp/x.sh <<'EOF'\n${shell}\nEOF\nchmod +x /tmp/x.sh; /tmp/x.sh`],
++    ["a chained line", `cat > /tmp/x.js <<'EOF' && node /tmp/x.js\n${code}\nEOF`],
++    [
++      "a harmless append after the payload",
++      `cat > x.sh <<'A'\n${shell}\nA\ncat >> x.sh <<'B'\necho hi\nB\nbash x.sh`,
++    ],
++    ["tee with a heredoc", `tee /tmp/x.js <<'EOF'\n${code}\nEOF\nnode /tmp/x.js`],
++    ["a heredoc piped into tee", `cat <<'EOF' | tee /tmp/x.js\n${code}\nEOF\nnode /tmp/x.js`],
++    ["stdin redirection", `cat > /tmp/x.js <<'EOF'\n${code}\nEOF\nnode < /tmp/x.js`],
++    ["node --import", `cat > /tmp/x.mjs <<'EOF'\n${code}\nEOF\nnode --import=/tmp/x.mjs app.js`],
++    [
++      "a versioned python",
++      `cat > /tmp/x.py <<'EOF'\nopen('${CLAUDE_JSON}')\nEOF\npython3.12 /tmp/x.py`,
++    ],
++    [
++      "a heredoc piped through a redirecting cat",
++      `cat <<'EOF' | cat > /tmp/x.js && node /tmp/x.js\n${code}\nEOF`,
++    ],
++    [
++      "a harmless script later rewritten",
++      `cat > /tmp/x.sh <<'A'\necho ok\nA\nbash /tmp/x.sh\ncat > /tmp/x.sh <<'B'\n${shell}\nB\nbash /tmp/x.sh`,
++    ],
++  ])("denies %s", async (_label, command) => {
++    expect(await bash(command)).toBe("deny");
++  });
++
++  it("keeps a script's variables out of the caller", async () => {
++    const command = `p=.env\ncat > x.sh <<'EOF'\np=safe\nEOF\nbash x.sh\ncat "$p"`;
++    expect(await bash(command)).toBe("deny");
++  });
++
++  it("does not read a data argument as the script", async () => {
++    const write = `cat > data.json <<'EOF'\n{"p":".env.local"}\nEOF`;
++    expect(await bash(`${write}\nnode tool.js data.json`)).toBe("allow");
++  });
++
++  it("allows a benign heredoc script", async () => {
++    expect(await bash(`cat > /tmp/s.js <<'EOF'\nconsole.log('hi')\nEOF\nnode /tmp/s.js`)).toBe(
++      "allow",
++    );
++  });
++
++  it("allows heredoc text that only mentions the file and is never run", async () => {
++    expect(await bash(`cat > /tmp/n.txt <<'EOF'\n'${CLAUDE_JSON}' holds state\nEOF`)).toBe("allow");
++  });
++
++  it("ignores a heredoc-style write to stderr", async () => {
++    expect(await bash(`cat 2> /tmp/e.log <<'EOF'\nhello\nEOF\nnode /tmp/e.log`)).toBe("allow");
++  });
++
++  it("finishes on a script that runs itself", async () => {
++    expect(await bash(`cat > a.sh <<'EOF'\nbash a.sh\nbash a.sh\nEOF\nbash a.sh`)).toBe("allow");
++  });
++
++  it.each([
++    `echo "readFileSync('${CLAUDE_JSON}')" | node`,
++    `echo "readFileSync('/tmp/.ssh/id_x')" | node`,
++    `echo "readFileSync('${CLAUDE_JSON}')" | node /dev/stdin`,
++  ])("denies piped code: %s", async (command) => {
++    expect(await bash(command)).toBe("deny");
++  });
++
++  it("allows plain code piped into an interpreter", async () => {
++    expect(await bash(`echo "console.log(1)" | node`)).toBe("allow");
++  });
++
++  it("does not treat stdin data for inline code as a script", async () => {
++    expect(await bash(`cat data.txt | node -e "console.log(1)"`)).toBe("allow");
++  });
++
++  it("does not treat an interpreter flag as reading a script", async () => {
++    expect(await bash("git status; node --version")).toBe("allow");
++  });
++});
++
++describe("MCP credential paths", () => {
++  it.each([
++    `${P}/.pgpass`,
++    `${P}/.npmrc`,
++    `${P}/.docker/config.json`,
++    `${P}/.config/gh/hosts.yaml`,
++    `${P}/.supabase/access-token`,
++    `${P}/AppData/Roaming/com.vercel.cli/auth.json`,
++    `${P}/AppData/Roaming/postgresql/pgpass.conf`,
++    `${P}/%2Eclaude%2Ejson`,
++    `${P}/%2Essh/id_x%ZZ`,
++    `${P}/.ssh/key%2Ffoo`,
++  ])("denies %s", async (value) => {
++    expect(await mcp("mcp__fs__read_file", { path: value })).toBe("deny");
++  });
++
++  it("denies a percent-encoded file URL to a protected path on write", async () => {
++    const value = fileUrl(`${S}/%2Eclaude/settings.json`);
++    expect(await mcp("mcp__fs__write_file", { path: value })).toBe("deny");
++  });
++
++  it("denies a percent-encoded file URL handed to curl", async () => {
++    expect(await bash(`curl ${fileUrl(`${P}/%2Essh/id_x`)}`)).toBe("deny");
++  });
++
++  it.each([
++    ["a range glob", `curl "${fileUrl(`${P}/.claude.jso[m-o]`)}"`],
++    ["a fragment inside braces", `curl ${fileUrl(`${P}/{a#,.ssh/id_x}`)}`],
++    ["a query inside braces", `curl ${fileUrl(`${P}/{a?,${CLAUDE_JSON}}`)}`],
++    ["a literal path that looks like a URL", `cat 'file:///a#/../../.env'`],
++    ["a write through the same spelling", `tee 'file:///a#/../../CLAUDE.md'`],
++  ])("Bash denies %s", async (_label, command) => {
++    expect(await bash(command)).toBe("deny");
++  });
++
++  it.each([
++    ["a scheme-stripped relative name", "file://vitest.config.ts"],
++    ["the same with three slashes", "file:///vitest.config.ts"],
++    ["a fragment hiding a traversal", fileUrl(`${S}/x#/../.claude/settings.json`)],
++  ])("denies an MCP write through %s", async (_label, value) => {
++    expect(await mcp("mcp__fs__write_file", { path: value })).toBe("deny");
++  });
++
++  it("denies an MCP read with a fragment hiding a traversal", async () => {
++    const value = fileUrl(`/tmp/#/../${P.replace(/^\//, "")}/.ssh/id_x`);
++    expect(await mcp("mcp__fs__read_file", { path: value })).toBe("deny");
++  });
++
++  it("decodes the valid escapes beside a malformed one", async () => {
++    const value = `${P}/x%FF%2F%2E%2E%2F%2Essh%2Fid_x`;
++    expect(await mcp("mcp__fs__read_file", { path: value })).toBe("deny");
++  });
++
++  it("allows ordinary MCP input", async () => {
++    expect(await mcp("mcp__browser__navigate", { url: "https://example.com/docs" })).toBe("allow");
++    expect(await mcp("mcp__design__generate", { prompt: "a login page" })).toBe("allow");
++  });
++});
++
++describe("git options that run programs or write files", () => {
++  it.each([
++    "git fetch --upload-pack=x origin",
++    "git fetch --upl=x origin",
++    "git ls-remote --upload-pack=x origin",
++    "git ls-remote --u=x origin",
++    "git ls-remote -u x origin",
++    "git pull --upload-pack=x origin",
++    "git fetch-pack --upload-pack=x host:repo",
++    "git clone -u x origin /tmp/y",
++    "git clone -qu x origin /tmp/y",
++    "git clone --u=x origin /tmp/y",
++    "git clone --upload-pack=x origin /tmp/y",
++    "git clone -c core.sshCommand=x ssh://host/repo",
++    "git clone --template=/tmp/t origin /tmp/y",
++    "git init --template=/tmp/t",
++    "git archive --e=x --remote=r HEAD",
++    "git archive --remote=ext::x HEAD",
++    "git fetch ext::x",
++    "git -c url.ext::x.insteadOf=origin fetch origin",
++    "git config remote.x.url ext::y",
++    // Execution keys stay denied even when the guard can't see a value.
++    "git config core.hooksPath",
++    "git config core.pager",
++    "cmd //c git config core.hooksPath '#x'",
++    "git difftool -x cmd",
++    "git grep -Ocmd pattern",
++    "git log --output=.claude/settings.json",
++    "git log --outp=.claude/settings.json",
++    "git show HEAD --output .github/workflows/ci.yml",
++    "git archive -o vitest.config.ts HEAD",
++    "git archive --output=.husky/pre-commit HEAD",
++    "git format-patch -o .husky HEAD~1",
++    "git format-patch --output=tsconfig.json HEAD~1",
++    "git bundle create .husky/x HEAD",
++    "git stash show -p --output=vitest.config.ts",
++    "git stash list --output=vitest.config.ts",
++    "git reflog --output=vitest.config.ts",
++    "git clone -qc core.sshCommand=x ssh://host/repo",
++    "git clone --conf=core.sshCommand=x ssh://host/repo",
++    "git fetch-pack --exec=x host:repo",
++    "git ls-remote --exec=x origin",
++    "git remote add e ext::x",
++    "GIT_ALLOW_PROTOCOL=ext git fetch origin",
++  ])("denies %s", async (command) => {
++    expect(await bash(command)).toBe("deny");
++  });
++
++  it.each([
++    "git log --output=/tmp/overwrite.txt",
++    "git archive -o /tmp/a.zip HEAD",
++    "git format-patch -o /tmp/patches HEAD~1",
++  ])("asks before %s overwrites an ordinary file", async (command) => {
++    expect(await bash(command)).toBe("ask");
++  });
++
++  it.each([
++    "git fetch origin --prune",
++    "git log --oneline -5",
++    "git diff --output-indicator-new=x",
++    "git fetch --update-shallow origin",
++    "git clone --rec https://example.invalid/r",
++    "git ls-remote --exit-code origin",
++    "git grep -n pattern",
++    "git config --get remote.origin.url",
++    "git config remote.origin.url",
++    "git -c protocol.file.allow=always submodule status",
++  ])("allows %s", async (command) => {
++    expect(await bash(command)).toBe("allow");
++  });
++});
++
++describe("npm overrides under broad allow rules", () => {
++  it.each([
++    "npm ci --registry=https://example.invalid",
++    "npm ci --reg=https://example.invalid",
++    "npm ci --userconfig=/tmp/x",
++    "npm_config_registry=https://example.invalid npm ci",
++    "NODE_OPTIONS=--require=/tmp/x.js npm test",
++    "npm test -- --globalSetup=/tmp/x.ts",
++    "npm test -- --config=/tmp/x.ts",
++    "npm test -- -c/tmp/x.ts",
++    "npm test -- --reporter=/tmp/x.js",
++    "npm run test -- --config=/tmp/x.ts",
++    "npm rum test -- --config=/tmp/x.ts",
++    "npm --silent test -- --config=/tmp/x.ts",
++    "pnpm test --config=/tmp/x.ts",
++    "npx vitest --config=/tmp/x.ts",
++  ])("asks for %s", async (command) => {
++    expect(await bash(command)).toBe("ask");
++  });
++
++  it.each([
++    "npm ci --no-audit",
++    "npm test",
++    "npm test -- tests/unit/foo.test.ts",
++    "npm test -- --reporter=verbose",
++    "npm test -- --prefix=a",
++    "NODE_OPTIONS=--max-old-space-size=4096 npm test",
++  ])("allows %s", async (command) => {
++    expect(await bash(command)).toBe("allow");
++  });
++});
++
++describe("file tools writing to credential stores", () => {
++  it.each([`${P}/.ssh/authorized_keys`, `${P}/.npmrc`, `${P}/${CLAUDE_JSON}.tmp`])(
++    "Edit denies %s",
++    async (file) => {
++      expect(await edit(file)).toBe("deny");
++    },
++  );
++});
++
++describe("sibling worktrees of the session's repository", () => {
++  it.each([
++    "tests/unit/hook-command-guard.test.ts",
++    "vitest.config.ts",
++    ".github/dependabot.yml",
++    "eslint.config.mjs",
++    "scripts/ci/x.ts",
++  ])("Edit denies protected %s", async (rel) => {
++    expect(await edit(path.join(SIBLING, rel))).toBe("deny");
++  });
++
++  it("Bash denies a shell write to a sibling's protected file", async () => {
++    const target = path.join(SIBLING, "vitest.config.ts").replace(/\\/g, "/");
++    expect(await bash(`echo x > "${target}"`)).toBe("deny");
++  });
++
++  it("allows ordinary sibling files", async () => {
++    expect(await edit(path.join(SIBLING, "docs", "notes.md"))).toBe("allow");
++  });
++
++  it("does not extend the rules to an unrelated repository", async () => {
++    expect(await edit(path.join(OTHER_REPO, "vitest.config.ts"))).toBe("allow");
++  });
++});
