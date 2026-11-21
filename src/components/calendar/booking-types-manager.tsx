@@ -216,6 +216,15 @@ function BookingTypeDialog({
               pattern="[a-z0-9]+(-[a-z0-9]+)*"
               dir="ltr"
               required
+              // Phone keyboards capitalize the first letter and add a space after
+              // a suggestion, which the lowercase pattern then rejects.
+              autoCapitalize="none"
+              autoCorrect="off"
+              autoComplete="off"
+              spellCheck={false}
+              onBlur={(e) => {
+                e.currentTarget.value = e.currentTarget.value.trim().toLowerCase();
+              }}
             />
           </div>
         </div>

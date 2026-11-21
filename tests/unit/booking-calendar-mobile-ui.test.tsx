@@ -65,6 +65,7 @@ const { BookingTypesManager } = await import("@/components/calendar/booking-type
 const { PublicLanguageSwitcher } = await import("@/components/calendar/public-language-switcher");
 const { AttendeePicker } = await import("@/components/calendar/attendee-picker");
 const { CalendarModal } = await import("@/components/calendar/calendar-modal");
+const { SLUG_REGEX } = await import("@/lib/validators/booking");
 const { default: BookingPageUnavailable } =
   await import("@/app/[locale]/(public)/book/[org]/[slug]/not-found");
 
@@ -377,6 +378,30 @@ describe("booking pages: public URL and copy", () => {
     )!;
     await act(async () => edit.click());
     expect(document.querySelector("#bt-slug")?.getAttribute("dir")).toBe("ltr");
+  });
+
+  it("the slug field accepts what a phone keyboard types", async () => {
+    const host = await manager();
+    await click([...host.querySelectorAll("button")].find((b) => b.textContent === "Edit"));
+    const slug = document.querySelector<HTMLInputElement>("#bt-slug")!;
+    expect(slug.getAttribute("autocapitalize")).toBe("none");
+    expect(slug.getAttribute("autocorrect")).toBe("off");
+    expect(slug.getAttribute("autocomplete")).toBe("off");
+    expect(slug.getAttribute("spellcheck")).toBe("false");
+
+    // Browsers compile `pattern` anchored, with the `v` flag.
+    const pattern = new RegExp(`^(?:${slug.getAttribute("pattern")})$`, "v");
+    expect(pattern.test("test-meeting")).toBe(true);
+    expect(pattern.test("Test-meeting ")).toBe(false);
+
+    slug.value = "Test-meeting ";
+    await act(async () => {
+      slug.focus();
+      slug.blur();
+    });
+    expect(slug.value).toBe("test-meeting");
+    expect(pattern.test(slug.value)).toBe(true);
+    expect(SLUG_REGEX.test(slug.value)).toBe(true);
   });
 
   it("copies the URL and announces it", async () => {
