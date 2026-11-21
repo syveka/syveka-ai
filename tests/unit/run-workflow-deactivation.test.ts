@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { fakeRunFinish } from "./helpers/fake-workflow-run";
 
 /**
  * A run-workflow delivery stops before any step side effect when:
@@ -74,6 +75,8 @@ const db = {
       return run;
     }),
     updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
+      const finished = fakeRunFinish(state.runs, where, data);
+      if (finished) return finished;
       const allowed = (where.status as { in?: string[] } | undefined)?.in;
       const matched = state.runs.filter(
         (r) =>

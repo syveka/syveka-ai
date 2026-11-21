@@ -41,6 +41,10 @@ const state = vi.hoisted(() => ({
   contactLookups: 0,
   /** Step executions started: a create, or a reclaim of a FAILED/stale step. */
   stepClaims: 0,
+  /** Makes the next notification insert fail, like a database error. */
+  failNextNotification: false,
+  /** The next transaction commits, then reports an error (connection lost after COMMIT). */
+  errorAfterNextCommit: false,
 }));
 
 /**
@@ -73,6 +77,14 @@ function matches(row: Row, where: Row): boolean {
     if (k === "OR") return (v as Row[]).some((w) => matches(row, w));
     if (k === "AND") return (v as Row[]).every((w) => matches(row, w));
     if (k === "NOT") return !([v].flat() as Row[]).some((w) => matches(row, w));
+    if (k === "stepExecutions") {
+      const own = state.steps.filter((s) => s.workflowRunId === row.id);
+      const filter = v as { some?: Row; none?: Row };
+      return (
+        (!filter.some || own.some((s) => matches(s, filter.some!))) &&
+        (!filter.none || !own.some((s) => matches(s, filter.none!)))
+      );
+    }
     return fieldMatches(row[k], v);
   });
 }
@@ -173,11 +185,34 @@ const db = {
   },
   notification: {
     create: vi.fn(async ({ data }: { data: Row }) => {
+      if (state.failNextNotification) {
+        state.failNextNotification = false;
+        throw new FakePrismaKnownError("P2003");
+      }
       state.notifications.push(data);
       return data;
     }),
   },
-  $transaction: async (fn: (tx: unknown) => unknown) => fn(db),
+  // All or nothing, like the database: a throw rolls back runs and notifications.
+  $transaction: async (fn: (tx: unknown) => unknown) => {
+    const runs = structuredClone(state.runs);
+    const notifications = structuredClone(state.notifications);
+    try {
+      const result = await fn(db);
+      if (state.errorAfterNextCommit) {
+        state.errorAfterNextCommit = false;
+        throw Object.assign(new Error("connection lost after commit"), { committed: true });
+      }
+      return result;
+    } catch (err) {
+      if ((err as { committed?: boolean }).committed) throw err; // committed: nothing to undo
+      // Restore the snapshots wholesale: rows added inside the transaction go,
+      // and fields set inside it don't survive on the restored rows.
+      state.runs.splice(0, Infinity, ...runs);
+      state.notifications.splice(0, Infinity, ...notifications);
+      throw err;
+    }
+  },
 };
 
 // The pilot organization: internal-only scope on (crm.create_activity is allowed).
@@ -213,6 +248,8 @@ import {
   CONTACT_MISSING_ERROR,
   CONTACT_MISSING_TEST_RUN_ERROR,
   CONTACT_NOT_FOUND_ERROR,
+  isTerminalRunError,
+  TERMINAL_RUN_ERRORS,
   workflowRunFailure,
 } from "@/lib/workflows/run-failure";
 
@@ -278,6 +315,8 @@ beforeEach(() => {
   state.notifications = [];
   state.contactLookups = 0;
   state.stepClaims = 0;
+  state.failNextNotification = false;
+  state.errorAfterNextCommit = false;
   vi.spyOn(console, "error").mockImplementation(() => {});
 });
 
@@ -346,6 +385,106 @@ describe("crm.create_activity: contact field resolution", () => {
     expect(state.stepClaims).toBe(1);
     expect(state.steps[0]).toMatchObject({ status: "FAILED", error: CONTACT_NOT_FOUND_ERROR });
     expect(state.notifications).toHaveLength(1);
+    expect(state.activities).toEqual([]);
+  });
+
+  it("a terminal failure whose notification can't be written stays retryable, then notifies once", async () => {
+    const UNKNOWN = "e0e0e0e0-e0e0-4e0e-8e0e-e0e0e0e0e0e0";
+    const event = {
+      triggerType: "contact.created",
+      triggerData: { contactId: UNKNOWN },
+      sourceEventKey: `contact.created:${UNKNOWN}`,
+    };
+    state.failNextNotification = true;
+    const first = await deliver(event, { "upstash-retried": "0" });
+    // Neither the terminal state nor the notification was recorded together,
+    // so the run is left retryable and the delivery asks for a retry.
+    expect(first.status).toBe(500);
+    expect(state.notifications).toEqual([]);
+    expect(state.runs[0]!.status).toBe("FAILED");
+    expect(isTerminalRunError(state.runs[0]!.error as string)).toBe(false);
+    expect(state.runs[0]!.error).toBe("failure not recorded (Error)");
+
+    const retry = await deliver(event, { "upstash-retried": "1" });
+    expect(retry.status).toBe(200);
+    expect(state.runs).toHaveLength(1);
+    expect(state.runs[0]).toMatchObject({ status: "FAILED", error: CONTACT_NOT_FOUND_ERROR });
+    expect(state.stepClaims).toBe(2);
+    expect(state.notifications).toHaveLength(1);
+
+    // And from now on it is terminal.
+    const again = await deliver(event, { "upstash-retried": "0" });
+    expect(await again.json()).toEqual({ skipped: "terminal_failure" });
+    expect(state.stepClaims).toBe(2);
+    expect(state.notifications).toHaveLength(1);
+  });
+
+  it("a failure record that committed but reported an error is not overwritten (no second notification)", async () => {
+    const UNKNOWN = "e0e0e0e0-e0e0-4e0e-8e0e-e0e0e0e0e0e0";
+    const event = {
+      triggerType: "contact.created",
+      triggerData: { contactId: UNKNOWN },
+      sourceEventKey: `contact.created:${UNKNOWN}`,
+    };
+    // The contact lookup fails before any step transaction, so the next
+    // transaction is the failure record: it commits, then reports an error.
+    state.errorAfterNextCommit = true;
+    const first = await deliver(event, { "upstash-retried": "0" });
+    expect(first.status).toBe(500);
+    // The committed terminal record stands: the fallback only touches a RUNNING run.
+    expect(state.runs[0]).toMatchObject({ status: "FAILED", error: CONTACT_NOT_FOUND_ERROR });
+    expect(state.notifications).toHaveLength(1);
+
+    const again = await deliver(event, { "upstash-retried": "1" });
+    expect(await again.json()).toEqual({ skipped: "terminal_failure" });
+    expect(state.notifications).toHaveLength(1);
+    expect(state.stepClaims).toBe(1);
+  });
+
+  it("a crashed run with no recorded error is reclaimed by redelivery", async () => {
+    const event = {
+      triggerType: "contact.created",
+      triggerData: { contactId: CONTACT },
+      sourceEventKey: `contact.created:${CONTACT}`,
+    };
+    state.runs.push({
+      id: "run-crashed",
+      workflowId: WORKFLOW,
+      organizationId: ORG,
+      triggerData: event.triggerData,
+      status: "FAILED",
+      error: null,
+      stepResults: [],
+      startedAt: new Date(),
+      sourceEventKey: event.sourceEventKey,
+    });
+    const res = await deliver(event, { "upstash-retried": "1" });
+    expect(res.status).toBe(200);
+    expect(state.runs).toHaveLength(1);
+    expect(state.runs[0]).toMatchObject({ id: "run-crashed", status: "SUCCEEDED" });
+    expect(state.activities).toHaveLength(1);
+  });
+
+  it("a runId of another workflow's run is never resumed, even if retryable", async () => {
+    state.runs.push({
+      id: TEST_RUN,
+      workflowId: "99999999-9999-4999-8999-999999999999",
+      organizationId: ORG,
+      triggerData: { contactId: CONTACT },
+      status: "FAILED",
+      error: null,
+      stepResults: [],
+      startedAt: new Date(),
+    });
+    const res = await deliver({
+      triggerType: "manual",
+      triggerData: { contactId: CONTACT },
+      runId: TEST_RUN,
+      resumeFromIndex: 0,
+    });
+    expect(await res.json()).toEqual({ skipped: "run not found for workflow" });
+    expect(state.runs[0]).toMatchObject({ status: "FAILED", error: null });
+    expect(state.stepClaims).toBe(0);
     expect(state.activities).toEqual([]);
   });
 
@@ -493,5 +632,31 @@ describe("workflowRunFailure", () => {
     ["ai.generate failed (AuthenticationError)", "internal"],
   ])("%s → %s", (stored, code) => {
     expect(workflowRunFailure(stored)).toBe(code);
+  });
+});
+
+describe("isTerminalRunError", () => {
+  it.each([
+    [CONTACT_MISSING_TEST_RUN_ERROR, true],
+    [CONTACT_MISSING_ERROR, true],
+    [CONTACT_NOT_FOUND_ERROR, true],
+    ['email.send: invalid recipient "x"', true],
+    ["ai_quota_exceeded", true],
+    // Retryable: crashes, provider or database errors, legacy rows, and a
+    // failure record that itself could not be written.
+    [null, false],
+    ["", false],
+    ["step failed (DriverAdapterError)", false],
+    ["email.send failed (EmailSendError)", false],
+    ["failure not recorded (PrismaClientKnownRequestError)", false],
+    ["step_not_allowed", false],
+  ])("%s → %s", (stored, terminal) => {
+    expect(isTerminalRunError(stored)).toBe(terminal);
+  });
+
+  it("every terminal error has its own translated reason, never 'internal'", () => {
+    for (const error of [...TERMINAL_RUN_ERRORS.exact, 'email.send: invalid recipient "x"']) {
+      expect(workflowRunFailure(error)).not.toBe("internal");
+    }
   });
 });
