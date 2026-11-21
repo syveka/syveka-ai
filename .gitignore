@@ -23,3 +23,8 @@ syveka-backup.sql
 
 # Personal Claude Code settings (permissions allowlist) - never shared
 .claude/settings.local.json
+
+# Strix security testing (docs/strix-security-testing-runbook.md): scan output and the
+# local-only target allowlist / instruction files, which can hold test credentials
+strix_runs/
+security/strix/*.local.*

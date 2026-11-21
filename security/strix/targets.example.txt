@@ -1,0 +1,12 @@
+# Strix target allowlist template. Copy to targets.local.txt (gitignored) and edit.
+# One target per line; lines starting with # are ignored. Strix reads it with:
+#   strix -n --target-list security/strix/targets.local.txt ...
+#
+# Only targets that appear here are in scope. Never list:
+#   - any production host, the production Supabase project, or production databases
+#   - the staging environment until docs/strix-security-testing-runbook.md section 4.3 is complete for it
+#   - any third-party service (Stripe, Resend, Vapi, Anthropic, OpenAI, Upstash, calendar, Meta, fal)
+#
+# Phase 1 (source only): give the clean checkout path with -t instead of listing it here.
+# Phase 2 (isolated dynamic target), example:
+# http://host.docker.internal:3000
