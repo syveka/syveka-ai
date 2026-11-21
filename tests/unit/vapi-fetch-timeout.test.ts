@@ -16,7 +16,11 @@ vi.mock("@/env", () => ({
   }),
 }));
 
-import { buyPhoneNumber, VAPI_FETCH_TIMEOUT_MS } from "@/server/integrations/vapi";
+import {
+  buyPhoneNumber,
+  deleteVapiAssistant,
+  VAPI_FETCH_TIMEOUT_MS,
+} from "@/server/integrations/vapi";
 
 const originalFetch = global.fetch;
 
@@ -70,5 +74,23 @@ describe("vapiFetch — request timeout", () => {
     );
 
     await expect(buyPhoneNumber("vapi-assistant-1")).rejects.toThrow("400");
+  });
+});
+
+describe("deleteVapiAssistant — 404 handling", () => {
+  afterEach(() => {
+    global.fetch = originalFetch;
+  });
+
+  it("treats a 404 as already deleted", async () => {
+    global.fetch = vi.fn().mockResolvedValue(new Response("not found", { status: 404 }));
+
+    await expect(deleteVapiAssistant("vapi-assistant-1")).resolves.toBeUndefined();
+  });
+
+  it("still rejects on other non-2xx statuses", async () => {
+    global.fetch = vi.fn().mockResolvedValue(new Response("boom", { status: 500 }));
+
+    await expect(deleteVapiAssistant("vapi-assistant-1")).rejects.toThrow("500");
   });
 });

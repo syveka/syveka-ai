@@ -70,10 +70,12 @@ export default async function AssistantPage({
     id: string;
     isActive: boolean;
     phoneNumber: string | null;
+    vapiLinked: boolean;
   } = {
     id: assistant.id,
     isActive: assistant.isActive,
     phoneNumber: assistant.phoneNumber,
+    vapiLinked: Boolean(assistant.vapiAssistantId),
     name: assistant.name,
     language: assistant.language,
     voiceProvider: assistant.voiceProvider as "azure" | "elevenlabs",

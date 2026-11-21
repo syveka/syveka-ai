@@ -20,6 +20,8 @@ type Initial = VoiceAssistantInput & {
   id?: string;
   isActive?: boolean;
   phoneNumber?: string | null;
+  /** A Vapi assistant is still linked (never the id itself). */
+  vapiLinked?: boolean;
 };
 
 export function AssistantForm({ initial }: { initial?: Initial }) {
@@ -53,7 +55,7 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
               </Button>
             </form>
           ) : null}
-          {initial?.id && initial.isActive ? (
+          {initial?.id && (initial.isActive || initial.vapiLinked) ? (
             <form action={deactivateAction}>
               <Button type="submit" variant="outline" disabled={deactivatePending}>
                 {deactivatePending ? tc("loading") : t("deactivate")}

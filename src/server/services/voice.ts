@@ -177,10 +177,13 @@ export async function activateAssistant(
  *    Syveka's DB flag) controls whether it picks up the call in the first
  *    place. A failure here must never block the guaranteed step 1 above.
  *
- * `vapiAssistantId` and `phoneNumber` are cleared rather than left pointing
- * at now-deleted/orphaned Vapi resources -- re-activating a previously
- * deactivated assistant is a clean restart (re-sync, then re-attach a
- * number), not a resume from stale state.
+ * `vapiAssistantId` and `phoneNumber` are cleared only AFTER Vapi confirms the
+ * delete (a 404 counts as already deleted), so re-activating is a clean
+ * restart (re-sync, then re-attach a number), not a resume from stale state.
+ * If the delete fails they are kept, so Syveka still knows which Vapi
+ * assistant is live and re-running deactivate retries the delete. The
+ * function still resolves in that case, returning the row with
+ * `isActive: false` and the ids retained.
  */
 export async function deactivateAssistant(
   ctx: TenantContext,
@@ -189,15 +192,17 @@ export async function deactivateAssistant(
   const db = tenantDb(ctx.orgId);
   const assistant = await db.voiceAssistant.findFirstOrThrow({ where: { id: assistantId } });
 
-  const updated = await db.voiceAssistant.update({
+  let updated = await db.voiceAssistant.update({
     where: { id: assistantId },
-    data: { isActive: false, vapiAssistantId: null, phoneNumber: null },
+    data: { isActive: false },
   });
 
+  let vapiGone = true;
   if (assistant.vapiAssistantId) {
     try {
       await deleteVapiAssistant(assistant.vapiAssistantId);
     } catch (error) {
+      vapiGone = false;
       console.error(
         JSON.stringify({
           event: "voice_assistant_deactivate_vapi_delete_failed",
@@ -209,11 +214,24 @@ export async function deactivateAssistant(
     }
   }
 
+  if (vapiGone && (assistant.vapiAssistantId || assistant.phoneNumber)) {
+    // Conditional on the id we just deleted, so a concurrent activation that
+    // already linked a new Vapi assistant is not clobbered. Callers detect an
+    // incomplete cleanup via `result.vapiAssistantId !== null`. isActive is
+    // forced false so a racing activation cannot leave an active row with no link.
+    await db.voiceAssistant.updateMany({
+      where: { id: assistantId, vapiAssistantId: assistant.vapiAssistantId },
+      data: { vapiAssistantId: null, phoneNumber: null, isActive: false },
+    });
+    updated = await db.voiceAssistant.findFirstOrThrow({ where: { id: assistantId } });
+  }
+
   await audit(ctx, {
     action: "voice_assistant.deactivate",
     resourceType: "voice_assistant",
     resourceId: assistantId,
     before: { phoneNumber: assistant.phoneNumber, vapiAssistantId: assistant.vapiAssistantId },
+    after: { vapiDeleted: vapiGone },
   });
   return updated;
 }
