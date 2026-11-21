@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="__LANG__" dir="__DIR__">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=__WIDTH__, height=__HEIGHT__" />
+    <link rel="stylesheet" href="assets/base.css" />
+    <style>
+      html,
+      body {
+        width: __WIDTH__px;
+        height: __HEIGHT__px;
+      }
+      #root {
+        width: 100%;
+        height: 100%;
+      }
+      #media-frame {
+        position: absolute;
+        inset: 0;
+        overflow: hidden;
+      }
+      /* Keeps text readable over any footage. */
+      #scrim {
+        position: absolute;
+        inset: 0;
+        background:
+          linear-gradient(to bottom, var(--background), transparent 22%),
+          linear-gradient(to top, var(--background) 34%, transparent 82%);
+      }
+      #content {
+        position: absolute;
+        inset: var(--pad);
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
+      }
+      #copy {
+        display: flex;
+        flex-direction: column;
+        gap: calc(var(--unit) * 3);
+        align-items: flex-start;
+      }
+      #root[data-aspect="16x9"] #copy {
+        max-width: 62%;
+      }
+      #root[data-aspect="16x9"] .headline,
+      #root[data-aspect="1x1"] .headline {
+        font-size: calc(var(--unit) * 9);
+      }
+      #root[data-aspect="1x1"] .description,
+      #root[data-aspect="16x9"] .description {
+        font-size: calc(var(--unit) * 3.6);
+      }
+    </style>
+  </head>
+  <body>
+    <div
+      id="root"
+      data-aspect="__ASPECT__"
+      data-composition-id="main"
+      data-start="0"
+      data-duration="__DURATION__"
+      data-width="__WIDTH__"
+      data-height="__HEIGHT__"
+    >
+      <div id="media-frame"><!--MEDIA_SLOT--></div>
+      <div id="scrim"></div>
+      <div id="content">
+        <div class="brand-row" id="brand-row">
+          <img id="logo" class="logo" alt="" />
+          <div id="brand" class="brand"></div>
+        </div>
+        <div id="copy">
+          <h1 id="headline" class="headline"></h1>
+          <p id="description" class="description"></p>
+          <div id="cta" class="cta"></div>
+        </div>
+      </div>
+    </div>
+    <script id="job-data" type="application/json">
+      __JOB_DATA__
+    </script>
+    <script src="assets/base.js"></script>
+    <script>
+      (function () {
+        const { fitCopy, enter, drift, fadeOutAll, timeline } = window.SyvekaTemplate;
+        window.__timelines = window.__timelines || {};
+        window.__timelines["main"] = timeline;
+        drift("#media");
+        enter("#brand-row", 0.2);
+        enter("#headline", 0.8);
+        enter("#description", 1.8);
+        enter("#cta", 3.2, 0.6, 24);
+        fadeOutAll("#root");
+        document.fonts.ready.then(() => fitCopy("#content"));
+      })();
+    </script>
+  </body>
+</html>
