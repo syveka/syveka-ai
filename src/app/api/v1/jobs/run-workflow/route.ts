@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
+import { replyText } from "@/server/ai/reply-text";
 import { jobPayloadJson, jobWillBeRetried } from "@/server/jobs/payload";
 import type { Prisma } from "@/generated/prisma/client/client";
 import { WorkflowNotificationEmail } from "../../../../../../emails/workflow-notification";
@@ -636,7 +637,7 @@ export async function POST(request: Request): Promise<NextResponse> {
               // between the call succeeding and completeStep() persisting.
               { idempotencyKey: claim.stepExecutionId },
             );
-            const text = res.content[0]?.type === "text" ? res.content[0].text : "";
+            const text = replyText(res.content);
             const truncated = stripWorkflowDataMarkers(text).slice(0, 2000);
             ctx.vars[step.outputVar] = truncated;
             let completedHere = true;

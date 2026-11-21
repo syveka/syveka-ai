@@ -1,5 +1,6 @@
 import "server-only";
 
+import { replyText } from "@/server/ai/reply-text";
 import type { Prisma } from "@/generated/prisma/client/client";
 import { tenantDb, unscopedPrisma } from "@/server/db/tenant";
 import type { TenantContext } from "@/server/auth/session";
@@ -175,7 +176,7 @@ export async function ensureConversationSummary(params: {
       signal: params.signal,
     },
   );
-  const summary = response.content[0]?.type === "text" ? response.content[0].text.trim() : "";
+  const summary = replyText(response.content).trim();
   if (!summary) return conversation.summary;
 
   const usage = { tokensIn: response.usage.input_tokens, tokensOut: response.usage.output_tokens };
@@ -222,7 +223,7 @@ export async function generateTitle(conversationId: string, firstMessage: string
         }),
       { maxAttempts: AI_RETRY_MAX_ATTEMPTS, baseDelayMs: AI_RETRY_BASE_DELAY_MS },
     );
-    const title = res.content[0]?.type === "text" ? res.content[0].text.trim().slice(0, 80) : null;
+    const title = replyText(res.content).trim().slice(0, 80) || null;
     if (title) {
       await unscopedPrisma.conversation.update({ where: { id: conversationId }, data: { title } });
     }
