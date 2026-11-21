@@ -111,6 +111,7 @@ export const ROUTE_TEMPLATES: readonly string[] = [
   "/api/v1/jobs/post-call",
   "/api/v1/jobs/publish-creator-post",
   "/api/v1/jobs/reconcile-creator-generations",
+  "/api/v1/jobs/reconcile-voice-calls",
   "/api/v1/jobs/run-workflow",
   "/api/v1/jobs/send-reminder",
   "/api/v1/jobs/usage-rollup",

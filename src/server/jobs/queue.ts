@@ -22,7 +22,8 @@ export type JobName =
   | "send-reminder"
   | "calendar-sync"
   | "publish-creator-post"
-  | "reconcile-creator-generations";
+  | "reconcile-creator-generations"
+  | "reconcile-voice-calls";
 
 /** Enqueue an async job (§2.2). Delivered to /api/v1/jobs/{name} with QStash signature. */
 export async function enqueue(

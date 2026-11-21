@@ -60,6 +60,8 @@ vi.mock("@/server/integrations/redis", () => ({
     incr: async () => 1,
     decr: async () => 0,
     expire: async () => 1,
+    eval: async (_script: string, _keys: string[], args: string[]) =>
+      args[2] === "0" ? [-1, 0] : [1, 0],
   },
 }));
 vi.mock("@/server/ai/tools", () => ({ executeTool: vi.fn() }));

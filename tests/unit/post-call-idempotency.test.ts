@@ -7,7 +7,8 @@ type CallRow = {
   contactId: string | null;
   callerNumber: string;
   status: string;
-  durationSeconds: number;
+  durationSeconds: number | null;
+  startedAt?: Date;
   transcript: unknown;
   summary: string | null;
   sentiment: string | null;
@@ -519,5 +520,56 @@ describe("post-call job — two simultaneous runs for the same call", () => {
     expect(notifications).toHaveLength(1);
     expect(locks.statements.length).toBeGreaterThan(0);
     expect(locks.statements.every((sql) => sql.includes("pg_advisory_xact_lock"))).toBe(true);
+  });
+});
+
+describe("post-call job — what a call's length means for usage", () => {
+  it("charges nothing and stays unsettled when the length is unknown", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValue({ ...freshCallRow(), durationSeconds: null });
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    const response = await POST(jobRequest());
+
+    await expect(response.json()).resolves.toEqual({ deferred: "duration_unknown" });
+    expect(response.status).toBe(200);
+    expect(mocks.recordUsage).not.toHaveBeenCalled();
+    expect(mocks.contactCreate).not.toHaveBeenCalled();
+    expect(mocks.notificationCreate).not.toHaveBeenCalled();
+    // Not marked processed, so reconciliation can still settle it.
+    expect(mocks.voiceCallUpdate).not.toHaveBeenCalled();
+  });
+
+  it("records no usage for a call that never connected, and still settles it", async () => {
+    mocks.voiceCallFindFirst.mockResolvedValue({ ...freshCallRow(), durationSeconds: 0 });
+
+    const response = await POST(jobRequest());
+
+    expect(response.status).toBe(200);
+    expect(mocks.recordUsage).not.toHaveBeenCalled();
+    expect(mocks.contactCreate).not.toHaveBeenCalled();
+    expect(mocks.anthropicCreate).not.toHaveBeenCalled();
+    expect(mocks.notificationCreate).not.toHaveBeenCalled();
+    const updates = mocks.voiceCallUpdate.mock.calls as unknown as UpdateCall[];
+    expect(updates.some(([u]) => "postCallProcessedAt" in u.data)).toBe(true);
+  });
+
+  it("rounds up, and dates usage from the call, so a late report keeps its month", async () => {
+    const startedAt = new Date("2026-10-31T23:55:00Z");
+    mocks.voiceCallFindFirst.mockResolvedValue({
+      ...freshCallRow(),
+      durationSeconds: 61,
+      startedAt,
+    });
+
+    await POST(jobRequest());
+
+    const [org, metric, minutes, metadata, , occurredAt] = mocks.recordUsage.mock.calls[0]!;
+    expect([org, metric, minutes, metadata]).toEqual([
+      ORG_ID,
+      "VOICE_MINUTES",
+      2,
+      { callId: "call-row-1" },
+    ]);
+    expect(occurredAt).toEqual(startedAt);
   });
 });

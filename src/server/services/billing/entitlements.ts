@@ -97,7 +97,7 @@ const CACHE_TTL_SECONDS = 60;
  * whenever PlanLimits' fields change.
  */
 export function entitlementsCacheKey(orgId: string): string {
-  return `ent:v2:${orgId}`;
+  return `ent:v3:${orgId}`;
 }
 
 /** Subscription statuses that keep the stored plan's limits. */
@@ -180,8 +180,10 @@ export async function recordUsage(
   quantity: number,
   metadata: Record<string, unknown> = {},
   db: Prisma.TransactionClient = unscopedPrisma,
+  /** When the usage happened, if not now: late news still counts in its own month. */
+  occurredAt: Date = new Date(),
 ): Promise<void> {
-  const periodStart = new Date();
+  const periodStart = new Date(occurredAt);
   periodStart.setUTCHours(0, 0, 0, 0);
   await db.usageRecord.create({
     data: {
