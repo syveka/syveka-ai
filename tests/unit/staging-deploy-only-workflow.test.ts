@@ -2,7 +2,11 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+
+// These tests run the workflow steps with spawnSync, many times per test, and spawnSync blocks
+// the runner. Starting a shell is slow on Windows, so a full suite can pass 5 s without a fault.
+vi.setConfig({ testTimeout: 60_000 });
 
 /**
  * staging-deploy-only.yml creates a new staging deployment of a pinned, reviewed

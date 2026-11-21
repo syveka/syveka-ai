@@ -193,9 +193,17 @@ const bash = spawnSync("bash", ["-c", "echo $BASH_VERSION"], { encoding: "utf8" 
 const hasBash = bash.status === 0 && /^\d/.test(bash.stdout.trim());
 
 describe("recovery-drill shell helpers", () => {
-  it.runIf(hasBash)("pass the offline self-test (validator, archive filters, extensions)", () => {
-    const run = spawnSync("bash", [path.join(dir, "rehearsal/selftest.sh")], { encoding: "utf8" });
-    expect(run.stdout).toContain("selftest: 0 failure(s)");
-    expect(run.status).toBe(0);
-  });
+  // spawnSync blocks the runner, so a slow shell can't be interrupted, only reported as
+  // late: it takes 14-19 s under a full suite on Windows, where starting bash is slow.
+  it.runIf(hasBash)(
+    "pass the offline self-test (validator, archive filters, extensions)",
+    () => {
+      const run = spawnSync("bash", [path.join(dir, "rehearsal/selftest.sh")], {
+        encoding: "utf8",
+      });
+      expect(run.stdout).toContain("selftest: 0 failure(s)");
+      expect(run.status).toBe(0);
+    },
+    60_000,
+  );
 });
