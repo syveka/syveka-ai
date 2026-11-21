@@ -1,10 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import type { ReplyLanguage } from "@/lib/voice/reply-language";
 import { splitForSpeech, toSpokenText } from "@/lib/voice/spoken-text";
 import { watchVoices } from "@/lib/voice/voice-list";
 import { chooseReplyVoice } from "@/lib/voice/voices";
+
+const subscribeNever = () => () => {};
+const readSpeechSupport = () =>
+  "speechSynthesis" in window && typeof window.SpeechSynthesisUtterance !== "undefined";
 
 export type PlaybackError =
   "unsupported" | "no_voice" | "no_voices_listed" | "unknown_language" | "playback_failed";
@@ -55,10 +59,11 @@ export function useSpeechPlayback() {
   const watchdogRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const cancelWaitRef = useRef<(() => void) | null>(null);
 
-  const supported =
-    typeof window !== "undefined" &&
-    "speechSynthesis" in window &&
-    typeof window.SpeechSynthesisUtterance !== "undefined";
+  // False on the server and during hydration, so the server's HTML (no
+  // read-aloud controls) and the first browser render match; true right after
+  // hydration where the browser can speak. Reading window during render instead
+  // failed hydration of every reopened conversation (React error #418).
+  const supported = useSyncExternalStore(subscribeNever, readSpeechSupport, () => false);
 
   const stop = useCallback(() => {
     tokenRef.current += 1;

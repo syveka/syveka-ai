@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { useLocale, useTranslations } from "next-intl";
 import { Sparkles, Volume2, Square } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -23,6 +23,8 @@ export type ReplyPlayback = {
   stop: () => void;
 };
 
+const subscribeNever = () => () => {};
+
 export function ChatThread({
   messages,
   playback,
@@ -35,6 +37,12 @@ export function ChatThread({
 }) {
   const t = useTranslations("chat");
   const bottomRef = useRef<HTMLDivElement>(null);
+  // False on the server and during hydration (see `superseded` below).
+  const inBrowser = useSyncExternalStore(
+    subscribeNever,
+    () => true,
+    () => false,
+  );
 
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -66,9 +74,14 @@ export function ChatThread({
 
   // A Business DNA proposal replaced by a later one about the same fields
   // (the user corrected a fact) is shown as such instead of staying confirmable.
+  // The clock is read only in the browser. On the server and during
+  // hydration no action counts as expired: the page sends an action without
+  // an outcome only while it is still open, so both renders take that verdict
+  // and match (an expiry in between, or a device clock running ahead, failed
+  // hydration otherwise). The render right after hydration uses the clock.
   const superseded = supersededActions(
     messages.flatMap((m) => (m.role === "assistant" ? (m.actions ?? []) : [])),
-    Date.now(),
+    inBrowser ? Date.now() : Number.NEGATIVE_INFINITY,
     decided,
   );
 
