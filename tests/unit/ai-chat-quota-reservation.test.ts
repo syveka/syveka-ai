@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 /**
  * The monthly AI message quota is enforced atomically: each chat turn
@@ -116,6 +116,10 @@ vi.mock("@/server/services/billing/entitlements", () => {
     EntitlementError,
     getMonthUsage: vi.fn(async () => {
       const value = m.recorded;
+      // Bound to the gate installed when this request read the count: from here
+      // on it only ever touches that gate, never a later test's. A request that
+      // is still running when a later gate is installed would join that one, so
+      // the cleanup after each test settles every request first.
       const gate = m.monthUsageGate;
       if (gate) {
         // Hold every caller until all concurrent requests have read the count.
@@ -145,15 +149,41 @@ vi.mock("@/server/services/conversations", () => ({
 import { redis } from "@/server/integrations/redis";
 import { POST } from "@/app/api/v1/ai/chat/route";
 
+/** Every request started and not yet settled by the cleanup (settleStartedRequests). */
+const started: Array<Promise<Response>> = [];
+
 function chat(message = "Hello") {
-  return POST(
+  const response = POST(
     new Request("http://localhost/api/v1/ai/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ conversationId: "33333333-3333-4333-8333-333333333333", message }),
     }),
   );
+  started.push(response);
+  // A test that fails before it awaits this request must not also produce an
+  // unhandled rejection. Tests that await the request still see it reject.
+  response.catch(() => undefined);
+  return response;
 }
+
+/**
+ * The first request pays the route's first-use dynamic imports. That time
+ * depends on how busy the machine is, not on the code under test, so it is
+ * paid here, under its own bound, and never inside a test's wait for requests
+ * to overlap.
+ */
+const WARM_UP_TIMEOUT_MS = 30_000;
+
+/**
+ * Bounds the wait for a whole batch of requests to be parked at the count.
+ * With the modules loaded (see the warm-up), a request gets there through
+ * mocks that resolve at once: no module loading, I/O or timers, so the wait is
+ * normally one poll per request. Several seconds only pass if a request never
+ * arrives. Kept under vitest's default 5 s test timeout, so that failure
+ * names the request that didn't arrive.
+ */
+const PARKED_BATCH_TIMEOUT_MS = 4_000;
 
 /**
  * n overlapping requests that all read the recorded count before any of them
@@ -162,11 +192,18 @@ function chat(message = "Hello") {
  * would race vitest's mocking instead.
  */
 async function concurrentChats(n: number) {
+  // The gate can't tell requests apart, so one left over from an earlier test
+  // would be counted here as one of the n.
+  if (started.length > 0) throw new Error("requests from an earlier test are still running");
   m.gate(n);
+  const gate = m.monthUsageGate!;
+  const deadline = Date.now() + PARKED_BATCH_TIMEOUT_MS;
   const pending: Array<Promise<Response>> = [];
   for (let i = 0; i < n; i++) {
     pending.push(chat());
-    await vi.waitFor(() => expect(m.monthUsageGate!.waiting).toBe(i + 1));
+    await vi.waitFor(() => expect(gate.waiting).toBe(i + 1), {
+      timeout: Math.max(1, deadline - Date.now()),
+    });
   }
   return Promise.all(pending);
 }
@@ -174,6 +211,50 @@ async function concurrentChats(n: number) {
 const inFlight = () => [...m.sets.values()].reduce((n, s) => n + s.size, 0);
 const usageRows = () =>
   m.recordUsage.mock.calls.map((c) => [c[1], c[2]] as [string, number]).sort();
+
+/**
+ * Lets every started request run to its end, so none is still pending, or
+ * still able to touch the gate, the counters or the mocks, when the next test
+ * starts. Without this, a test that fails while its requests are parked or
+ * still on their way to the count leaves them behind to be counted by the
+ * next test's gate.
+ */
+async function settleStartedRequests() {
+  try {
+    // Parked requests continue; one that arrives later passes straight through.
+    m.monthUsageGate?.open();
+    const settled = await Promise.allSettled(started);
+    // Every request has settled: none is left for the next test's guard,
+    // even if reading a body below fails.
+    started.length = 0;
+    // A successful turn keeps recording usage and releases its reservation
+    // while its body streams: read any body the test left unread.
+    await Promise.all(
+      settled.map(async (result) => {
+        if (result.status === "fulfilled" && !result.value.bodyUsed) await result.value.text();
+      }),
+    );
+    await vi.waitFor(() => expect(inFlight()).toBe(0), { timeout: PARKED_BATCH_TIMEOUT_MS });
+  } finally {
+    m.monthUsageGate = null;
+    m.sets.clear();
+    m.recorded = 0;
+    m.events = [];
+  }
+}
+
+// One request at a time, awaited to its end before any other starts, so the
+// module loading can't race vitest's mocking (see concurrentChats). Refused at
+// the quota: that goes through every import a request makes on its way to the
+// count, and starts no stream.
+beforeAll(async () => {
+  m.recorded = m.limit;
+  const res = await chat();
+  expect(res.status).toBe(402);
+  await settleStartedRequests();
+}, WARM_UP_TIMEOUT_MS);
+
+afterEach(settleStartedRequests);
 
 beforeEach(() => {
   vi.clearAllMocks();
