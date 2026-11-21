@@ -22,7 +22,17 @@ type Initial = VoiceAssistantInput & {
   phoneNumber?: string | null;
 };
 
-export function AssistantForm({ initial }: { initial?: Initial }) {
+/**
+ * `voiceEntitled` false: the plan no longer includes voice. The server refuses
+ * activation and numbers, so those controls are hidden; Deactivate stays.
+ */
+export function AssistantForm({
+  initial,
+  voiceEntitled = true,
+}: {
+  initial?: Initial;
+  voiceEntitled?: boolean;
+}) {
   const t = useTranslations("voice");
   const tc = useTranslations("common");
   const [state, action, pending] = useActionState<VoiceActionState, FormData>(
@@ -46,7 +56,7 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
         </Link>
         <div className="mt-1 flex items-center justify-between">
           <h1 className="text-2xl font-semibold">{initial?.name ?? t("newAssistant")}</h1>
-          {initial?.id && !initial.isActive ? (
+          {initial?.id && !initial.isActive && voiceEntitled ? (
             <form action={activateAction}>
               <Button type="submit" variant="default" disabled={activatePending}>
                 {activatePending ? tc("loading") : t("activate")}
@@ -88,7 +98,7 @@ export function AssistantForm({ initial }: { initial?: Initial }) {
         ) : null}
       </div>
 
-      {initial?.id && !initial.phoneNumber ? (
+      {initial?.id && !initial.phoneNumber && voiceEntitled ? (
         <AttachPhoneNumberForm assistantId={initial.id} />
       ) : null}
 

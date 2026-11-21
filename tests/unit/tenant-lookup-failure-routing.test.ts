@@ -37,6 +37,9 @@ vi.mock("@/server/db/tenant", () => ({
 }));
 
 vi.mock("@/server/services/notifications", () => ({ unreadCount: vi.fn(async () => 0) }));
+vi.mock("@/server/services/voice-access", () => ({
+  getVoiceAccess: vi.fn(async () => ({ entitled: false, hasAssistant: false, visible: false })),
+}));
 vi.mock("@/components/layout/app-sidebar", () => ({ AppSidebar: () => null }));
 vi.mock("@/components/layout/topbar", () => ({ Topbar: () => null }));
 vi.mock("@/app/[locale]/(onboarding)/onboarding/onboarding-form", () => ({

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type * as EntitlementsModule from "@/server/services/billing/entitlements";
 import type { TenantContext } from "@/server/auth/session";
 import type { AttachPhoneNumberInput } from "@/lib/validators/voice";
 
@@ -37,6 +38,12 @@ vi.mock("@/server/integrations/vapi", () => ({
   importPhoneNumber: mocks.importPhoneNumber,
 }));
 vi.mock("@/server/services/audit", () => ({ audit: mocks.auditMock }));
+// An organization whose plan includes voice; the gate itself is covered in
+// voice-entitlement-gate.test.ts.
+vi.mock("@/server/services/billing/entitlements", async () => ({
+  ...(await vi.importActual<typeof EntitlementsModule>("@/server/services/billing/entitlements")),
+  getEntitlements: async () => ({ voiceAssistants: 1 }),
+}));
 
 import {
   attachPhoneNumber,

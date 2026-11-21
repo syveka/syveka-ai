@@ -54,7 +54,14 @@ export const NAV: NavItem[] = [
   { href: "/settings/profile", key: "settings", icon: Settings },
 ];
 
-export function visibleNavItems(permissions: Permission[]): NavItem[] {
+/**
+ * `hideVoice`: the organization has no voice in its plan and no assistant
+ * (see getVoiceAccess), so the Voice entry is left out on both surfaces.
+ */
+export function visibleNavItems(permissions: Permission[], hideVoice = false): NavItem[] {
   const allowed = new Set(permissions);
-  return NAV.filter((item) => !item.permission || allowed.has(item.permission));
+  return NAV.filter(
+    (item) =>
+      (!item.permission || allowed.has(item.permission)) && !(hideVoice && item.href === "/voice"),
+  );
 }

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import type * as EntitlementsModule from "@/server/services/billing/entitlements";
 import type { TenantContext } from "@/server/auth/session";
 
 /**
@@ -52,6 +53,12 @@ vi.mock("@/env", () => ({
     VAPI_WEBHOOK_CREDENTIAL_ID: "cred_test",
     NEXT_PUBLIC_APP_URL: "https://app.example.com",
   }),
+}));
+// An organization whose plan includes voice; the gate itself is covered in
+// voice-entitlement-gate.test.ts.
+vi.mock("@/server/services/billing/entitlements", async () => ({
+  ...(await vi.importActual<typeof EntitlementsModule>("@/server/services/billing/entitlements")),
+  getEntitlements: async () => ({ voiceAssistants: 1 }),
 }));
 
 import { activateAssistant } from "@/server/services/voice";

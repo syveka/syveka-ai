@@ -82,6 +82,15 @@ export const PLAN_LIMITS: Record<Plan, PlanLimits> = {
 };
 
 /**
+ * Whether the effective limits (plan plus active grants) include the voice
+ * receptionist at all. FREE has no voice assistants, so neither does a pilot
+ * organization unless it is granted VOICE_ASSISTANTS.
+ */
+export function hasVoiceEntitlement(limits: Pick<PlanLimits, "voiceAssistants">): boolean {
+  return limits.voiceAssistants > 0;
+}
+
+/**
  * Plans whose organizations may run chat on the "deep" model, the most
  * expensive route. No plan or pricing page offers it, so none is listed. It is
  * a commercial decision: add a plan here when that plan is sold with it.

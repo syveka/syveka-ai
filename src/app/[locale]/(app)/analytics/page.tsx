@@ -3,6 +3,7 @@ export const dynamic = "force-dynamic";
 import { getTranslations, getLocale } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { getSalesAnalytics, getAiAnalytics, getVoiceAnalytics } from "@/server/services/analytics";
+import { getVoiceAccess } from "@/server/services/voice-access";
 import { BarChart, FunnelChart, StatCard } from "@/components/analytics/charts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { formatCents } from "@/lib/utils";
@@ -14,10 +15,12 @@ export default async function AnalyticsPage() {
   const tCrm = await getTranslations("crm");
   const locale = await getLocale();
 
+  // No voice in the plan and no assistant: no voice cards or charts.
+  const showVoice = (await getVoiceAccess(ctx.orgId)).visible;
   const [sales, ai, voice] = await Promise.all([
     getSalesAnalytics(ctx),
     getAiAnalytics(ctx),
-    getVoiceAnalytics(ctx),
+    showVoice ? getVoiceAnalytics(ctx) : null,
   ]);
 
   const number = new Intl.NumberFormat(locale);
@@ -47,8 +50,12 @@ export default async function AnalyticsPage() {
           value={sales.winRate !== null ? `${sales.winRate} %` : "—"}
         />
         <StatCard label={t("aiTokens")} value={number.format(ai.tokensIn + ai.tokensOut)} />
-        <StatCard label={t("voiceCalls30d")} value={voice.totalCalls} />
-        <StatCard label={t("voiceMinutes30d")} value={voice.totalMinutes} />
+        {voice ? (
+          <>
+            <StatCard label={t("voiceCalls30d")} value={voice.totalCalls} />
+            <StatCard label={t("voiceMinutes30d")} value={voice.totalMinutes} />
+          </>
+        ) : null}
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -93,49 +100,53 @@ export default async function AnalyticsPage() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">{t("callVolume30d")}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <BarChart
-              data={series(voice.callsByDay)}
-              title={t("callVolume30d")}
-              summary={chartText(voice.callsByDay)}
-              emptyLabel={t("noCalls")}
-              dateHeader={t("chartDate")}
-              valueHeader={t("chartValue")}
-            />
-          </CardContent>
-        </Card>
+        {voice ? (
+          <>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t("callVolume30d")}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <BarChart
+                  data={series(voice.callsByDay)}
+                  title={t("callVolume30d")}
+                  summary={chartText(voice.callsByDay)}
+                  emptyLabel={t("noCalls")}
+                  dateHeader={t("chartDate")}
+                  valueHeader={t("chartValue")}
+                />
+              </CardContent>
+            </Card>
 
-        <Card>
-          <CardHeader>
-            <CardTitle className="text-base">{t("callSentiment")}</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <FunnelChart
-              data={[
-                {
-                  stage: t("sentiment.positive"),
-                  count: voice.sentiments.positive,
-                  value: "",
-                  isWon: true,
-                },
-                { stage: t("sentiment.neutral"), count: voice.sentiments.neutral, value: "" },
-                {
-                  stage: t("sentiment.negative"),
-                  count: voice.sentiments.negative,
-                  value: "",
-                  isLost: true,
-                },
-              ]}
-            />
-            <p className="mt-3 text-sm text-muted-foreground">
-              {t("transferred")}: {voice.transferred}
-            </p>
-          </CardContent>
-        </Card>
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base">{t("callSentiment")}</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <FunnelChart
+                  data={[
+                    {
+                      stage: t("sentiment.positive"),
+                      count: voice.sentiments.positive,
+                      value: "",
+                      isWon: true,
+                    },
+                    { stage: t("sentiment.neutral"), count: voice.sentiments.neutral, value: "" },
+                    {
+                      stage: t("sentiment.negative"),
+                      count: voice.sentiments.negative,
+                      value: "",
+                      isLost: true,
+                    },
+                  ]}
+                />
+                <p className="mt-3 text-sm text-muted-foreground">
+                  {t("transferred")}: {voice.transferred}
+                </p>
+              </CardContent>
+            </Card>
+          </>
+        ) : null}
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import { tenantDb } from "@/server/db/tenant";
 import { getBusinessDnaContext } from "@/server/business-dna/context";
 import { getEmailChannelAdapter } from "@/server/channels/email";
 import { getEntitlements } from "@/server/services/billing/entitlements";
+import { voiceAccessFrom } from "@/server/services/voice-access";
 import type { TenantContext } from "@/server/auth/session";
 
 export type ReadinessState =
@@ -115,6 +116,7 @@ export async function getOrgSetupReadiness(ctx: TenantContext): Promise<Readines
     activeVoiceAssistant,
     hasCompletedRealCall,
     entitlements,
+    assistantCount,
   ] = await Promise.all([
     getBusinessDnaContext(ctx.orgId),
     db.bookingType.count({ where: { isActive: true, deletedAt: null } }),
@@ -125,6 +127,7 @@ export async function getOrgSetupReadiness(ctx: TenantContext): Promise<Readines
     }),
     db.voiceCall.findFirst({ where: { status: "COMPLETED" }, select: { id: true } }),
     getEntitlements(ctx.orgId),
+    db.voiceAssistant.count(),
   ]);
 
   // The simulated test provider is not a configured channel; an org without
@@ -136,17 +139,19 @@ export async function getOrgSetupReadiness(ctx: TenantContext): Promise<Readines
         ? "setup_required"
         : emailStatus;
 
-  // A plan without voice assistants can't set one up: say so rather than
-  // pointing at a setup page that will refuse.
+  // A plan without voice that never had an assistant has no Voice row at all
+  // (the voice receptionist is not part of it). One that still has an
+  // assistant is told the plan no longer includes it.
+  const voice = voiceAccessFrom(entitlements, assistantCount);
   const voiceState: ReadinessState = !activeVoiceAssistant
-    ? entitlements.voiceAssistants > 0
+    ? voice.entitled
       ? "setup_required"
       : "plan_required"
     : hasCompletedRealCall
       ? "ready"
       : "verification_required";
 
-  return [
+  const items: ReadinessItem[] = [
     {
       key: "businessDna",
       state: businessDnaHasAnyFact(businessDna) ? "ready" : "setup_required",
@@ -156,6 +161,7 @@ export async function getOrgSetupReadiness(ctx: TenantContext): Promise<Readines
     // CRM has no external configuration or org action required to become
     // usable — it is ready as soon as the organization exists.
     { key: "crm", state: "ready" },
-    { key: "voice", state: voiceState },
   ];
+  if (voice.visible) items.push({ key: "voice", state: voiceState });
+  return items;
 }

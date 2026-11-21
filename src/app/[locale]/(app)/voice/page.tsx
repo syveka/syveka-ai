@@ -1,10 +1,12 @@
 export const dynamic = "force-dynamic";
 
+import { notFound } from "next/navigation";
 import { getTranslations } from "next-intl/server";
 import { Phone, Plus } from "lucide-react";
 import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";
 import { listAssistants } from "@/server/services/voice";
+import { getVoiceAccess } from "@/server/services/voice-access";
 import { Link } from "@/i18n/routing";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,9 +14,12 @@ import { cn } from "@/lib/utils";
 
 export default async function VoicePage() {
   const ctx = await requirePermission("voice:view-calls");
+  const access = await getVoiceAccess(ctx.orgId);
+  if (!access.visible) notFound();
   const t = await getTranslations("voice");
   const assistants = await listAssistants(ctx);
-  const canConfigure = can(ctx.role, "voice:configure");
+  // Without voice in the plan, existing assistants stay listed (read-only).
+  const canConfigure = access.entitled && can(ctx.role, "voice:configure");
 
   return (
     <div className="space-y-6">

@@ -19,6 +19,7 @@ import {
 import { getBusinessDnaContext } from "@/server/business-dna/context";
 import { lockPhoneNumber } from "@/server/calendar/locks";
 import { getEntitlements, EntitlementError } from "./billing/entitlements";
+import { hasVoiceEntitlement } from "@/lib/billing/plan-catalog";
 import { audit } from "./audit";
 import type { TenantContext } from "@/server/auth/session";
 import {
@@ -40,6 +41,18 @@ function vapiToolsFor(enabledNames: string[]) {
   }));
 }
 
+/**
+ * Every path that creates, syncs, activates or numbers an assistant calls the
+ * paid voice provider, so an organization whose plan (plus grants) includes no
+ * voice assistant is refused here, before any provider call. Deactivating and
+ * reading existing calls stay open.
+ */
+async function assertVoiceEntitled(orgId: string): Promise<void> {
+  if (!hasVoiceEntitlement(await getEntitlements(orgId))) {
+    throw new EntitlementError("voiceAssistants", "Voice AI is not included in your plan");
+  }
+}
+
 export async function listAssistants(ctx: TenantContext) {
   const db = tenantDb(ctx.orgId);
   return db.voiceAssistant.findMany({
@@ -55,6 +68,8 @@ export async function upsertAssistant(
 ) {
   const db = tenantDb(ctx.orgId);
 
+  // An edit re-syncs a linked assistant to Vapi below.
+  if (assistantId) await assertVoiceEntitled(ctx.orgId);
   if (!assistantId) {
     const ent = await getEntitlements(ctx.orgId);
     const count = await db.voiceAssistant.count();
@@ -125,6 +140,7 @@ export async function activateAssistant(
   ctx: TenantContext,
   assistantId: string,
 ): Promise<ActivateAssistantResult> {
+  await assertVoiceEntitled(ctx.orgId);
   const db = tenantDb(ctx.orgId);
   const assistant = await db.voiceAssistant.findFirstOrThrow({ where: { id: assistantId } });
 
@@ -243,6 +259,7 @@ export async function attachPhoneNumber(
   assistantId: string,
   input: AttachPhoneNumberInput,
 ): Promise<VoiceAssistant> {
+  await assertVoiceEntitled(ctx.orgId);
   const db = tenantDb(ctx.orgId);
   const assistant = await db.voiceAssistant.findFirstOrThrow({ where: { id: assistantId } });
 
@@ -382,6 +399,9 @@ async function syncToVapi(assistantId: string, orgId: string): Promise<string> {
  */
 export async function resyncActiveAssistants(orgId: string): Promise<void> {
   try {
+    // No voice in the plan: no sync calls to the paid provider. The
+    // assistant keeps its last synced config until it is deactivated.
+    if (!hasVoiceEntitlement(await getEntitlements(orgId))) return;
     const db = tenantDb(orgId);
     const assistants = await db.voiceAssistant.findMany({
       where: { vapiAssistantId: { not: null } },

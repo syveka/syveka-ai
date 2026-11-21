@@ -1,8 +1,10 @@
 export const dynamic = "force-dynamic";
 
+import { notFound } from "next/navigation";
 import { getTranslations, getLocale } from "next-intl/server";
 import { requirePermission } from "@/server/auth/guard";
 import { listCalls } from "@/server/services/voice";
+import { getVoiceAccess } from "@/server/services/voice-access";
 import { Link } from "@/i18n/routing";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatDate, cn } from "@/lib/utils";
@@ -15,6 +17,7 @@ const SENTIMENT_STYLE: Record<string, string> = {
 
 export default async function CallsPage() {
   const ctx = await requirePermission("voice:view-calls");
+  if (!(await getVoiceAccess(ctx.orgId)).visible) notFound();
   const t = await getTranslations("voice");
   const locale = await getLocale();
   const calls = await listCalls(ctx);

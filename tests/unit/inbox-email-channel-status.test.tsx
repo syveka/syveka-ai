@@ -59,7 +59,7 @@ vi.mock("@/server/db/tenant", () => ({
     inboxThread: { findFirst: vi.fn(async () => state.inbound) },
     inboxMailbox: { findFirst: vi.fn(async () => state.mailbox) },
     bookingType: { count: vi.fn(async () => 0) },
-    voiceAssistant: { findFirst: vi.fn(async () => null) },
+    voiceAssistant: { findFirst: vi.fn(async () => null), count: vi.fn(async () => 0) },
     voiceCall: { findFirst: vi.fn(async () => null) },
   })),
   unscopedPrisma: {

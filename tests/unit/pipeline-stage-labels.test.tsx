@@ -105,6 +105,9 @@ const STORED: StoredStage[] = [
 const COUNTS = [3, 2, 1, 4, 5, 2, 7];
 const AMOUNTS = [100_00, 2_500_00, 330_00, 12_000_00, 9_999_00, 0, 4_200_00];
 
+vi.mock("@/server/services/voice-access", () => ({
+  getVoiceAccess: vi.fn(async () => ({ entitled: true, hasAssistant: false, visible: true })),
+}));
 vi.mock("@/server/services/analytics", () => ({
   getSalesAnalytics: vi.fn(async () => ({
     funnel: STORED.map((s, i) => ({
