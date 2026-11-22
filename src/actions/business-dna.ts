@@ -34,6 +34,10 @@ export async function updateBusinessDnaAction(
     raw.expectedUpdatedAt ? String(raw.expectedUpdatedAt) : null,
   );
   if (!expected.success) return { error: "invalid_input" };
+  // The form sends opening hours only when the user changed them (seven
+  // closed days nobody touched look exactly like a deliberately closed week):
+  // no field means keep whatever is stored.
+  const keepOpeningHours = !formData.has("openingHours");
   let openingHours: unknown;
   if (raw.openingHours) {
     try {
@@ -118,7 +122,7 @@ export async function updateBusinessDnaAction(
 
   let saved;
   try {
-    saved = await upsertBusinessDNA(ctx, parsed.data, expected.data);
+    saved = await upsertBusinessDNA(ctx, parsed.data, expected.data, { keepOpeningHours });
   } catch {
     return { error: "failed" };
   }

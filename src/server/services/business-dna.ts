@@ -24,11 +24,17 @@ export type UpsertBusinessDnaResult =
  * profile's `updatedAt` as loaded, or null when there was no profile yet.
  * `sourceUrl` presence re-stamps `extractedAt`; its absence clears both,
  * so provenance always reflects the data currently on record.
+ *
+ * `keepOpeningHours`: the caller sent no opening hours on purpose (the form
+ * sends them only when the user changed them), so stored hours stay as they
+ * are, and a new profile starts with none. Otherwise every field, opening
+ * hours included, is replaced by what was sent.
  */
 export async function upsertBusinessDNA(
   ctx: TenantContext,
   input: BusinessDNAInput,
   expectedUpdatedAt: string | null,
+  options: { keepOpeningHours?: boolean } = {},
 ): Promise<UpsertBusinessDnaResult> {
   const db = tenantDb(ctx.orgId);
   const shared = {
@@ -55,6 +61,8 @@ export async function upsertBusinessDNA(
     sourceUrl: input.sourceUrl ?? null,
     extractedAt: input.sourceUrl ? new Date() : null,
   };
+  const updateData: Partial<typeof shared> = { ...shared };
+  if (options.keepOpeningHours) delete updateData.openingHours;
 
   // Compare-and-set in one statement: only the version the user loaded is
   // replaced. A save from a stale form (the profile was changed since, in
@@ -66,7 +74,7 @@ export async function upsertBusinessDNA(
     const savedAt = new Date();
     const { count } = await db.businessDNA.updateMany({
       where: { updatedAt: new Date(expectedUpdatedAt) },
-      data: { ...shared, updatedAt: savedAt },
+      data: { ...updateData, updatedAt: savedAt },
     });
     if (count === 0) return { ok: false, reason: "conflict" };
     const current = await db.businessDNA.findFirst({});
@@ -74,11 +82,12 @@ export async function upsertBusinessDNA(
     // Exactly what this save wrote, at the version it wrote -- even if
     // another change landed right after it (before this read): the caller's
     // next save must then conflict rather than replace a change it never saw.
-    // (openingHours: the stored value, not Prisma's JsonNull write sentinel.)
+    // (openingHours: the stored value, not Prisma's JsonNull write sentinel;
+    // kept hours are whatever is on record.)
     record = {
       ...current,
-      ...shared,
-      openingHours: input.openingHours ?? null,
+      ...updateData,
+      openingHours: options.keepOpeningHours ? current.openingHours : (input.openingHours ?? null),
       updatedAt: savedAt,
     };
   } else {
