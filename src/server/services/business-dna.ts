@@ -5,7 +5,28 @@ import { tenantDb } from "@/server/db/tenant";
 import { audit } from "./audit";
 import { resyncActiveAssistants } from "./voice";
 import type { TenantContext } from "@/server/auth/session";
-import type { BusinessDNAInput } from "@/lib/validators/business-dna";
+import type { BusinessDNAInput, OpeningHours } from "@/lib/validators/business-dna";
+import { DAY_KEYS, DEFAULT_DAY_HOURS } from "@/lib/business-dna/opening-hours";
+
+/**
+ * Exactly what the form submits when nobody touched the opening hours: all
+ * seven days closed with the default times (see normalizeOpeningHours).
+ */
+function isUntouchedDefaultWeek(hours: OpeningHours | null | undefined): boolean {
+  if (!hours) return false;
+  const keys = Object.keys(hours);
+  if (keys.length !== DAY_KEYS.length) return false;
+  return DAY_KEYS.every((day) => {
+    const value = hours[day];
+    return (
+      !!value &&
+      Object.keys(value).length === 3 &&
+      value.closed === true &&
+      value.open === DEFAULT_DAY_HOURS.open &&
+      value.close === DEFAULT_DAY_HOURS.close
+    );
+  });
+}
 
 /** One profile per organization. Returns null until first saved. */
 export async function getBusinessDNA(ctx: TenantContext) {
@@ -31,6 +52,16 @@ export async function upsertBusinessDNA(
   expectedUpdatedAt: string | null,
 ): Promise<UpsertBusinessDnaResult> {
   const db = tenantDb(ctx.orgId);
+  // An untouched form would otherwise store "closed every day", which the AI
+  // then states as fact. With no hours on record that week means unset; over
+  // stored hours it is a deliberate change and is stored as sent.
+  let openingHours = input.openingHours ?? null;
+  if (isUntouchedDefaultWeek(openingHours)) {
+    const stored = expectedUpdatedAt
+      ? await db.businessDNA.findFirst({ select: { openingHours: true } })
+      : null;
+    if (stored?.openingHours == null) openingHours = null;
+  }
   const shared = {
     displayName: input.displayName ?? null,
     industry: input.industry ?? null,
@@ -41,7 +72,7 @@ export async function upsertBusinessDNA(
     brandTone: input.brandTone ?? null,
     communicationStyle: input.communicationStyle ?? null,
     responseInstructions: input.responseInstructions ?? null,
-    openingHours: input.openingHours ?? Prisma.JsonNull,
+    openingHours: openingHours ?? Prisma.JsonNull,
     cancellationPolicy: input.cancellationPolicy ?? null,
     bookingPolicy: input.bookingPolicy ?? null,
     refundPolicy: input.refundPolicy ?? null,
@@ -78,7 +109,7 @@ export async function upsertBusinessDNA(
     record = {
       ...current,
       ...shared,
-      openingHours: input.openingHours ?? null,
+      openingHours,
       updatedAt: savedAt,
     };
   } else {
