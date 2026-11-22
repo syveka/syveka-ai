@@ -67,6 +67,8 @@ vi.mock("@/server/db/tenant", () => ({
     calendarEvent: { create: mocks.eventCreate },
     availabilitySchedule: { findFirst: vi.fn(async () => null) },
     businessDnaService: { findFirst: vi.fn(async () => null) },
+    // No Business DNA profile: no day is closed.
+    businessDNA: { findFirst: vi.fn(async () => null) },
   })),
   unscopedPrisma: {
     message: { findMany: vi.fn(async () => mocks.history), create: vi.fn(async () => ({})) },

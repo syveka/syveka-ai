@@ -2,6 +2,7 @@ import "server-only";
 
 import { tenantDb } from "@/server/db/tenant";
 import { neutralizeTagBreakout } from "@/server/ai/prompts/untrusted";
+import { closedWeekdays } from "@/lib/business-dna/opening-hours";
 
 const WEEKDAY_ORDER = [
   "monday",
@@ -81,6 +82,17 @@ export type BusinessDnaContext = {
   /** Active services only, ordered for display — never includes inactive/draft items. */
   services: BusinessDnaContextService[];
 };
+
+/**
+ * The weekdays the org's Business DNA explicitly marks closed (see
+ * `closedWeekdays`). Every slot computation passes them to
+ * `computeAvailableSlots`, so booking never offers a day the business says it
+ * is closed. No profile or unset hours: none.
+ */
+export async function getClosedWeekdays(orgId: string): Promise<number[]> {
+  const profile = await tenantDb(orgId).businessDNA.findFirst({ select: { openingHours: true } });
+  return closedWeekdays(profile?.openingHours);
+}
 
 /**
  * The single tenant-scoped read every AI-facing consumer (AI chat, Voice,

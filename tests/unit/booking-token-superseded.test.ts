@@ -186,7 +186,8 @@ vi.mock("@/server/db/tenant", () => ({
   get unscopedPrisma() {
     return db;
   },
-  tenantDb: vi.fn(),
+  // No Business DNA profile: no day is closed.
+  tenantDb: vi.fn(() => ({ businessDNA: { findFirst: async () => null } })),
 }));
 vi.mock("@/server/services/audit", () => ({ audit: vi.fn(async () => undefined) }));
 vi.mock("@/server/services/workflow-events", () => ({

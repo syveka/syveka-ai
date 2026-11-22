@@ -46,6 +46,8 @@ function baseDb() {
     },
     contact: { findFirst: vi.fn(async (): Promise<Record<string, unknown> | null> => null) },
     deal: { findFirst: vi.fn(async (): Promise<Record<string, unknown> | null> => null) },
+    // No Business DNA profile: no day is closed.
+    businessDNA: { findFirst: async () => null },
   };
 }
 

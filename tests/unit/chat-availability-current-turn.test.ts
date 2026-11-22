@@ -25,6 +25,8 @@ vi.mock("@/server/db/tenant", async () => {
         findFirst: async () =>
           h.serviceDuration === null ? null : { durationMinutes: h.serviceDuration },
       },
+      // No Business DNA profile: no day is closed.
+      businessDNA: { findFirst: async () => null },
     }),
     unscopedPrisma: {
       bookingType: {

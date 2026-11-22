@@ -41,6 +41,8 @@ describe("getCalendarAvailability tool", () => {
       availabilitySchedule: { findFirst: scheduleFindFirstMock },
       calendarEvent: { findMany: eventFindManyMock },
       businessDnaService: { findFirst: serviceFindFirstMock },
+      // No Business DNA profile: no day is closed.
+      businessDNA: { findFirst: async () => null },
     });
     scheduleFindFirstMock.mockResolvedValue(null);
     eventFindManyMock.mockResolvedValue([]);

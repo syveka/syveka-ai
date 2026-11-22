@@ -271,6 +271,8 @@ vi.mock("@/server/db/tenant", () => ({
       },
     },
     availabilitySchedule: { findFirst: async () => null },
+    // No Business DNA profile: no day is closed.
+    businessDNA: { findFirst: async () => null },
   }),
 }));
 vi.mock("@/server/services/audit", () => ({ audit: vi.fn(async () => undefined) }));

@@ -42,6 +42,24 @@ function normalizeDay(value: unknown): DayHours {
   return { closed, open, close };
 }
 
+/**
+ * The weekdays (0 = Sunday, as in the calendar's `localDays`) that the stored
+ * `BusinessDNA.openingHours` explicitly marks `closed: true`. Unlike
+ * `normalizeOpeningHours`, a missing, malformed or unset day is NOT closed:
+ * only an explicit closed day blocks booking.
+ */
+export function closedWeekdays(raw: unknown): number[] {
+  if (!raw || typeof raw !== "object") return [];
+  const source = raw as Partial<Record<DayKey, unknown>>;
+  return DAY_KEYS.flatMap((day, index) => {
+    const value = source[day];
+    const closed =
+      !!value && typeof value === "object" && (value as Record<string, unknown>).closed === true;
+    // DAY_KEYS starts on Monday (1); Sunday is last (0).
+    return closed ? [(index + 1) % 7] : [];
+  });
+}
+
 /** `WeekHours` is already shaped exactly like `businessDnaSchema`'s openingHours input. */
 export function weekHoursToPayload(hours: WeekHours): OpeningHours {
   return hours;

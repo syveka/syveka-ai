@@ -250,6 +250,8 @@ describe("bookMeeting from a phone caller (voice_ai)", () => {
     tenantDbMock.mockReturnValue({
       businessDnaService: { findFirst: serviceFindFirstMock },
       availabilitySchedule: { findFirst: vi.fn(async () => null) },
+      // No Business DNA profile: no day is closed.
+      businessDNA: { findFirst: async () => null },
     });
   });
   afterEach(() => {

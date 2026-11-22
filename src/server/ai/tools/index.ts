@@ -28,6 +28,7 @@ import {
 import type { ProposedActionView } from "@/lib/validators/chat";
 import { toZonedWallTime } from "@/lib/date-time";
 import { DEFAULT_WEEKLY_RULES } from "@/server/services/booking";
+import { getClosedWeekdays } from "@/server/business-dna/context";
 import { emitContactCreated } from "@/server/services/contacts";
 import {
   businessDnaPatchSchema,
@@ -305,17 +306,23 @@ async function resolveOrgDefaultSchedule(orgId: string): Promise<{
   timezone: string;
   rules: WeeklyRule[];
   overrides: DateOverride[];
+  /** Days closed in Business DNA: no slots, as in the public booking flow. */
+  closedWeekdays: number[];
   isOrgConfigured: boolean;
 }> {
-  const schedule = await tenantDb(orgId).availabilitySchedule.findFirst({
-    orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
-    include: { rules: true, overrides: true },
-  });
+  const [schedule, closedWeekdays] = await Promise.all([
+    tenantDb(orgId).availabilitySchedule.findFirst({
+      orderBy: [{ isDefault: "desc" }, { createdAt: "asc" }],
+      include: { rules: true, overrides: true },
+    }),
+    getClosedWeekdays(orgId),
+  ]);
   if (!schedule) {
     return {
       timezone: "Europe/Helsinki",
       rules: DEFAULT_WEEKLY_RULES,
       overrides: [],
+      closedWeekdays,
       isOrgConfigured: false,
     };
   }
@@ -332,6 +339,7 @@ async function resolveOrgDefaultSchedule(orgId: string): Promise<{
       endMinute: o.endMinute,
       isUnavailable: o.isUnavailable,
     })),
+    closedWeekdays,
     isOrgConfigured: true,
   };
 }
@@ -392,9 +400,8 @@ const getCalendarAvailability = defineTool({
   execute: async (id, input) => {
     const db = tenantDb(id.orgId);
     const [year, month, day] = input.date.split("-").map(Number) as [number, number, number];
-    const { timezone, rules, overrides, isOrgConfigured } = await resolveOrgDefaultSchedule(
-      id.orgId,
-    );
+    const { timezone, rules, overrides, closedWeekdays, isOrgConfigured } =
+      await resolveOrgDefaultSchedule(id.orgId);
     const dayStart = zonedTimeToUtc(year, month, day, 0, timezone);
     const dayEnd = addDaysUtc(dayStart, 1);
     const durationMinutes =
@@ -417,6 +424,7 @@ const getCalendarAvailability = defineTool({
       timezone,
       rules,
       overrides,
+      closedWeekdays,
       busy: busyIntervals(events, dayStart, dayEnd, { complete }),
       from: dayStart,
       to: dayEnd,
@@ -451,7 +459,7 @@ type BookMeetingResult =
  * Existing events are checked separately, under the calendar lock.
  */
 async function isBookableSlot(orgId: string, startsAt: Date, durationMinutes: number) {
-  const { timezone, rules, overrides } = await resolveOrgDefaultSchedule(orgId);
+  const { timezone, rules, overrides, closedWeekdays } = await resolveOrgDefaultSchedule(orgId);
   const [year, month, day] = localIsoDate(startsAt, timezone).split("-").map(Number) as [
     number,
     number,
@@ -462,6 +470,7 @@ async function isBookableSlot(orgId: string, startsAt: Date, durationMinutes: nu
     timezone,
     rules,
     overrides,
+    closedWeekdays,
     busy: [],
     from: dayStart,
     to: addDaysUtc(dayStart, 1),

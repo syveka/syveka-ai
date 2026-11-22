@@ -15,6 +15,7 @@ import {
   type WeeklyRule,
 } from "@/server/calendar/slots";
 import { isValidTimezone } from "@/server/calendar/timezone";
+import { getClosedWeekdays } from "@/server/business-dna/context";
 import {
   BUSY_ROW_ORDER,
   BUSY_ROW_SELECT,
@@ -481,7 +482,10 @@ export async function getPublicSlots(params: {
   }
 
   const now = params.now ?? new Date();
-  const parts = await resolveScheduleParts(bookingType);
+  const [parts, closedWeekdays] = await Promise.all([
+    resolveScheduleParts(bookingType),
+    getClosedWeekdays(bookingType.organizationId),
+  ]);
   const busy = await getOwnerBusy(
     bookingType.organizationId,
     bookingType.ownerId,
@@ -489,10 +493,13 @@ export async function getPublicSlots(params: {
     new Date(params.to.getTime() + 86_400_000),
   );
 
+  // Booking and rescheduling accept only these slots, so a closed day is
+  // refused there too (including a submit from a page loaded before it closed).
   const slots = computeAvailableSlots({
     timezone: parts.timezone,
     rules: parts.rules,
     overrides: parts.overrides,
+    closedWeekdays,
     busy,
     from: params.from,
     to: params.to,

@@ -138,6 +138,8 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-02-01T10:00:00Z"));
   unscopedMock.bookingType.findFirst.mockResolvedValue(bookingType());
+  // No Business DNA profile: no day is closed.
+  tenantDbMock.mockReturnValue({ businessDNA: { findFirst: vi.fn(async () => null) } });
   unscopedMock.availabilitySchedule.findFirst.mockResolvedValue(null);
   unscopedMock.calendarEvent.findMany.mockResolvedValue([]);
   txMock.calendarEvent.findFirst.mockResolvedValue(null); // no conflict inside tx
