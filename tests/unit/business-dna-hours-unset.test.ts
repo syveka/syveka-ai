@@ -4,12 +4,13 @@ import type { BusinessDNAInput, OpeningHours } from "@/lib/validators/business-d
 import { Prisma } from "@/generated/prisma/client/client";
 
 /**
- * The Business DNA form always submits all seven days, and a day nobody
+ * The Business DNA form always rendered all seven days, and a day nobody
  * touched is "closed, 09:00-17:00". Saving the form untouched used to store
  * that week, so the AI then told customers the business is closed every day
- * and the completeness check counted opening hours as filled. A first save
- * of exactly that week now stores no hours (unset). Every deliberate week is
- * still stored as sent.
+ * and the completeness check counted opening hours as filled. The form now
+ * sends opening hours only when the user changed them; the save then keeps
+ * whatever is stored (keepOpeningHours). Any week that is sent, including a
+ * deliberately all-closed one, is stored exactly as sent.
  */
 const { tenantDbMock } = vi.hoisted(() => ({ tenantDbMock: vi.fn() }));
 
@@ -23,7 +24,7 @@ import { upsertBusinessDNA } from "@/server/services/business-dna";
 import { buildBusinessDnaPromptBlock } from "@/server/business-dna/context";
 import type { BusinessDnaContext } from "@/server/business-dna/context";
 import { missingBusinessDnaFields } from "@/lib/business-dna/completeness";
-import { DAY_KEYS, normalizeOpeningHours } from "@/lib/business-dna/opening-hours";
+import { normalizeOpeningHours } from "@/lib/business-dna/opening-hours";
 
 const ctx: TenantContext = {
   userId: "user-1",
@@ -33,15 +34,17 @@ const ctx: TenantContext = {
   locale: "en",
 };
 const LOADED = "2026-11-22T10:00:00.000Z";
+const KEEP = { keepOpeningHours: true };
 
-/** Exactly what the form submits when nobody touched the opening hours. */
-const untouchedWeek = (): OpeningHours => normalizeOpeningHours(null);
+/** Seven closed days with the default times: untouched, or chosen on purpose. */
+const allClosedWeek = (): OpeningHours => normalizeOpeningHours(null);
+const storedWeek = { monday: { closed: false, open: "08:00", close: "16:00" } };
 
-const input = (openingHours: OpeningHours | null): BusinessDNAInput => ({
+const input = (openingHours?: OpeningHours | null): BusinessDNAInput => ({
   displayName: "Acme",
   supportedLocales: [],
   keyFacts: [],
-  openingHours,
+  ...(openingHours !== undefined ? { openingHours } : {}),
 });
 
 type QueryArgs = { data: Record<string, unknown> };
@@ -63,60 +66,54 @@ beforeEach(() => {
   tenantDbMock.mockReturnValue(db);
 });
 
-const createdHours = () => db.businessDNA.create.mock.calls[0]![0]!.data.openingHours;
-const updatedHours = () => db.businessDNA.updateMany.mock.calls[0]![0]!.data.openingHours;
+const created = () => db.businessDNA.create.mock.calls[0]![0]!.data;
+const updated = () => db.businessDNA.updateMany.mock.calls[0]![0]!.data;
 
-describe("saving the Business DNA form with untouched opening hours", () => {
-  it("the untouched week is all seven days closed with the default times", () => {
-    const week = untouchedWeek();
-    expect(Object.keys(week)).toEqual([...DAY_KEYS]);
-    for (const day of DAY_KEYS) {
-      expect(week[day]).toEqual({ closed: true, open: "09:00", close: "17:00" });
-    }
+describe("opening hours the user did not touch (form sends none)", () => {
+  it("(a) a first save stores no opening hours", async () => {
+    await upsertBusinessDNA(ctx, input(), null, KEEP);
+    expect(created().openingHours).toBe(Prisma.JsonNull);
   });
 
-  it("a first save (no profile yet) stores no opening hours", async () => {
-    const result = await upsertBusinessDNA(ctx, input(untouchedWeek()), null);
-    expect(createdHours()).toBe(Prisma.JsonNull);
-    expect(result).toMatchObject({ ok: true });
-  });
-
-  it("a save over a profile with no stored hours stores no opening hours", async () => {
-    db.businessDNA.findFirst
-      .mockResolvedValueOnce({ openingHours: null })
-      .mockResolvedValueOnce({ id: "bd-1", openingHours: null });
-    const result = await upsertBusinessDNA(ctx, input(untouchedWeek()), LOADED);
-    expect(updatedHours()).toBe(Prisma.JsonNull);
+  it("(b) an unrelated edit while hours are unset leaves them unset", async () => {
+    db.businessDNA.findFirst.mockResolvedValueOnce({ id: "bd-1", openingHours: null });
+    const result = await upsertBusinessDNA(ctx, input(), LOADED, KEEP);
+    expect(updated()).not.toHaveProperty("openingHours");
+    expect(updated().displayName).toBe("Acme");
     expect(result).toMatchObject({ ok: true, record: { openingHours: null } });
   });
 
-  it("an all-closed week over stored hours is stored: the user closed every day", async () => {
-    db.businessDNA.findFirst
-      .mockResolvedValueOnce({
-        openingHours: { monday: { closed: false, open: "08:00", close: "16:00" } },
-      })
-      .mockResolvedValueOnce({ id: "bd-1" });
-    await upsertBusinessDNA(ctx, input(untouchedWeek()), LOADED);
-    expect(updatedHours()).toEqual(untouchedWeek());
+  it("(c) an unrelated edit keeps stored hours exactly as stored", async () => {
+    db.businessDNA.findFirst.mockResolvedValueOnce({ id: "bd-1", openingHours: storedWeek });
+    const result = await upsertBusinessDNA(ctx, input(), LOADED, KEEP);
+    expect(updated()).not.toHaveProperty("openingHours");
+    expect(result).toMatchObject({ ok: true, record: { openingHours: storedWeek } });
+  });
+});
+
+describe("opening hours that are sent are stored as sent", () => {
+  it("(d) a deliberately all-closed week saved for the first time is stored", async () => {
+    await upsertBusinessDNA(ctx, input(allClosedWeek()), null, { keepOpeningHours: false });
+    expect(created().openingHours).toEqual(allClosedWeek());
   });
 
-  it("a week with an open day is stored", async () => {
-    const week = { ...untouchedWeek(), monday: { closed: false, open: "09:00", close: "17:00" } };
-    await upsertBusinessDNA(ctx, input(week), null);
-    expect(createdHours()).toEqual(week);
+  it("(e) an explicit all-closed week from the API is stored, also with no stored hours", async () => {
+    db.businessDNA.findFirst.mockResolvedValue({ id: "bd-1", openingHours: null });
+    await upsertBusinessDNA(ctx, input(allClosedWeek()), LOADED);
+    expect(updated().openingHours).toEqual(allClosedWeek());
   });
 
-  it("an all-closed week with a changed time is stored", async () => {
-    const week = { ...untouchedWeek(), friday: { closed: true, open: "09:00", close: "18:00" } };
-    await upsertBusinessDNA(ctx, input(week), null);
-    expect(createdHours()).toEqual(week);
+  it("(f) an explicit clear still clears stored hours", async () => {
+    db.businessDNA.findFirst.mockResolvedValueOnce({ id: "bd-1", openingHours: null });
+    const result = await upsertBusinessDNA(ctx, input(null), LOADED);
+    expect(updated().openingHours).toBe(Prisma.JsonNull);
+    expect(result).toMatchObject({ ok: true, record: { openingHours: null } });
   });
 
-  it("a week missing a day is stored as sent", async () => {
-    const week: OpeningHours = untouchedWeek();
-    delete week.sunday;
-    await upsertBusinessDNA(ctx, input(week), null);
-    expect(createdHours()).toEqual(week);
+  it("without keepOpeningHours (the API's full replace), omitted hours still clear", async () => {
+    db.businessDNA.findFirst.mockResolvedValueOnce({ id: "bd-1", openingHours: null });
+    await upsertBusinessDNA(ctx, input(), LOADED);
+    expect(updated().openingHours).toBe(Prisma.JsonNull);
   });
 });
 

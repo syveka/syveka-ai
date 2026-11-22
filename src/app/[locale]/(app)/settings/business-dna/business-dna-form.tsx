@@ -137,6 +137,10 @@ export function BusinessDnaForm({
   const [values, setValues] = useState<TextFieldValues>(() => toTextFieldValues(initial));
   const [supportedLocales, setSupportedLocales] = useState<string[]>(initial.supportedLocales);
   const [hours, setHours] = useState<WeekHours>(initial.openingHours);
+  // Untouched hours (seven closed days by default) can't be told apart from a
+  // deliberately closed week, so they are sent only once changed here or by
+  // a website extraction; otherwise the save keeps what is stored.
+  const [hoursTouched, setHoursTouched] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
   const [justRegenerated, setJustRegenerated] = useState(false);
   const [fieldReview, setFieldReview] = useState<TextFieldClassifications | null>(null);
@@ -156,6 +160,7 @@ export function BusinessDnaForm({
 
   function setDay(day: DayKey, patch: Partial<WeekHours[DayKey]>) {
     setHours((prev) => ({ ...prev, [day]: { ...prev[day], ...patch } }));
+    setHoursTouched(true);
   }
 
   function setField(field: keyof TextFieldValues, value: string) {
@@ -190,6 +195,7 @@ export function BusinessDnaForm({
       setSupportedLocales((prev) => mergeExtractedSupportedLocales(prev, data));
     }
     setHours((prev) => mergeExtractedOpeningHours(prev, data));
+    if (data.openingHours) setHoursTouched(true);
 
     setFieldReview(textClassifications);
     setLocaleReview(localeClassification.classification === "SAME" ? null : localeClassification);
@@ -480,7 +486,9 @@ export function BusinessDnaForm({
                     </div>
                   );
                 })}
-                <input type="hidden" name="openingHours" value={JSON.stringify(hours)} />
+                {hoursTouched ? (
+                  <input type="hidden" name="openingHours" value={JSON.stringify(hours)} />
+                ) : null}
                 <p className="pt-1 text-xs text-muted-foreground">{t("hoursTimezoneHint")}</p>
               </fieldset>
             </CardContent>

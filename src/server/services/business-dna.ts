@@ -5,28 +5,7 @@ import { tenantDb } from "@/server/db/tenant";
 import { audit } from "./audit";
 import { resyncActiveAssistants } from "./voice";
 import type { TenantContext } from "@/server/auth/session";
-import type { BusinessDNAInput, OpeningHours } from "@/lib/validators/business-dna";
-import { DAY_KEYS, DEFAULT_DAY_HOURS } from "@/lib/business-dna/opening-hours";
-
-/**
- * Exactly what the form submits when nobody touched the opening hours: all
- * seven days closed with the default times (see normalizeOpeningHours).
- */
-function isUntouchedDefaultWeek(hours: OpeningHours | null | undefined): boolean {
-  if (!hours) return false;
-  const keys = Object.keys(hours);
-  if (keys.length !== DAY_KEYS.length) return false;
-  return DAY_KEYS.every((day) => {
-    const value = hours[day];
-    return (
-      !!value &&
-      Object.keys(value).length === 3 &&
-      value.closed === true &&
-      value.open === DEFAULT_DAY_HOURS.open &&
-      value.close === DEFAULT_DAY_HOURS.close
-    );
-  });
-}
+import type { BusinessDNAInput } from "@/lib/validators/business-dna";
 
 /** One profile per organization. Returns null until first saved. */
 export async function getBusinessDNA(ctx: TenantContext) {
@@ -45,23 +24,19 @@ export type UpsertBusinessDnaResult =
  * profile's `updatedAt` as loaded, or null when there was no profile yet.
  * `sourceUrl` presence re-stamps `extractedAt`; its absence clears both,
  * so provenance always reflects the data currently on record.
+ *
+ * `keepOpeningHours`: the caller sent no opening hours on purpose (the form
+ * sends them only when the user changed them), so stored hours stay as they
+ * are, and a new profile starts with none. Otherwise every field, opening
+ * hours included, is replaced by what was sent.
  */
 export async function upsertBusinessDNA(
   ctx: TenantContext,
   input: BusinessDNAInput,
   expectedUpdatedAt: string | null,
+  options: { keepOpeningHours?: boolean } = {},
 ): Promise<UpsertBusinessDnaResult> {
   const db = tenantDb(ctx.orgId);
-  // An untouched form would otherwise store "closed every day", which the AI
-  // then states as fact. With no hours on record that week means unset; over
-  // stored hours it is a deliberate change and is stored as sent.
-  let openingHours = input.openingHours ?? null;
-  if (isUntouchedDefaultWeek(openingHours)) {
-    const stored = expectedUpdatedAt
-      ? await db.businessDNA.findFirst({ select: { openingHours: true } })
-      : null;
-    if (stored?.openingHours == null) openingHours = null;
-  }
   const shared = {
     displayName: input.displayName ?? null,
     industry: input.industry ?? null,
@@ -72,7 +47,7 @@ export async function upsertBusinessDNA(
     brandTone: input.brandTone ?? null,
     communicationStyle: input.communicationStyle ?? null,
     responseInstructions: input.responseInstructions ?? null,
-    openingHours: openingHours ?? Prisma.JsonNull,
+    openingHours: input.openingHours ?? Prisma.JsonNull,
     cancellationPolicy: input.cancellationPolicy ?? null,
     bookingPolicy: input.bookingPolicy ?? null,
     refundPolicy: input.refundPolicy ?? null,
@@ -86,6 +61,8 @@ export async function upsertBusinessDNA(
     sourceUrl: input.sourceUrl ?? null,
     extractedAt: input.sourceUrl ? new Date() : null,
   };
+  const updateData: Partial<typeof shared> = { ...shared };
+  if (options.keepOpeningHours) delete updateData.openingHours;
 
   // Compare-and-set in one statement: only the version the user loaded is
   // replaced. A save from a stale form (the profile was changed since, in
@@ -97,7 +74,7 @@ export async function upsertBusinessDNA(
     const savedAt = new Date();
     const { count } = await db.businessDNA.updateMany({
       where: { updatedAt: new Date(expectedUpdatedAt) },
-      data: { ...shared, updatedAt: savedAt },
+      data: { ...updateData, updatedAt: savedAt },
     });
     if (count === 0) return { ok: false, reason: "conflict" };
     const current = await db.businessDNA.findFirst({});
@@ -105,11 +82,12 @@ export async function upsertBusinessDNA(
     // Exactly what this save wrote, at the version it wrote -- even if
     // another change landed right after it (before this read): the caller's
     // next save must then conflict rather than replace a change it never saw.
-    // (openingHours: the stored value, not Prisma's JsonNull write sentinel.)
+    // (openingHours: the stored value, not Prisma's JsonNull write sentinel;
+    // kept hours are whatever is on record.)
     record = {
       ...current,
-      ...shared,
-      openingHours,
+      ...updateData,
+      openingHours: options.keepOpeningHours ? current.openingHours : (input.openingHours ?? null),
       updatedAt: savedAt,
     };
   } else {
