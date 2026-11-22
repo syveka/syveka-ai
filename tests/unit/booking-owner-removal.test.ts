@@ -214,6 +214,8 @@ const db = {
     }),
   },
   availabilitySchedule: { findFirst: vi.fn(async () => null) },
+  // No Business DNA profile: no day is closed.
+  businessDNA: { findUnique: vi.fn(async () => null) },
   calendarEvent: {
     // Owner busy times; optionally held open to sequence a concurrent removal.
     findMany: vi.fn(async () => {
@@ -271,8 +273,6 @@ vi.mock("@/server/db/tenant", () => ({
       },
     },
     availabilitySchedule: { findFirst: async () => null },
-    // No Business DNA profile: no day is closed.
-    businessDNA: { findFirst: async () => null },
   }),
 }));
 vi.mock("@/server/services/audit", () => ({ audit: vi.fn(async () => undefined) }));

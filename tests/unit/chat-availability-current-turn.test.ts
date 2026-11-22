@@ -50,6 +50,8 @@ vi.mock("@/server/db/tenant", async () => {
       availabilitySchedule: {
         findFirst: (args: never) => findFirstOver(h.schedule ? [h.schedule as never] : [])(args),
       },
+      // No Business DNA profile: no day is closed.
+      businessDNA: { findUnique: async () => null },
       calendarEvent: { findMany: events },
     },
   };

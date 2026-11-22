@@ -9,7 +9,7 @@ import { closedWeekdays } from "@/lib/business-dna/opening-hours";
  * never touched and can still be canceled.
  */
 
-const { unscopedMock, txMock, tenantDbMock, dnaFindFirstMock, resolveTokenMock } = vi.hoisted(
+const { unscopedMock, txMock, tenantDbMock, dnaFindUniqueMock, resolveTokenMock } = vi.hoisted(
   () => {
     const txMock = {
       $executeRaw: vi.fn(async () => 0),
@@ -29,17 +29,19 @@ const { unscopedMock, txMock, tenantDbMock, dnaFindFirstMock, resolveTokenMock }
       reminder: { updateMany: vi.fn(async () => ({ count: 0 })) },
       bookingToken: { updateMany: vi.fn() },
     };
+    const dnaFindUniqueMock = vi.fn();
     return {
       txMock,
+      dnaFindUniqueMock,
       unscopedMock: {
         bookingType: { findFirst: vi.fn() },
         organizationMember: { findFirst: vi.fn(async () => ({ id: "member-1" })) },
         availabilitySchedule: { findFirst: vi.fn(async () => null) },
         calendarEvent: { findMany: vi.fn(async () => []) },
+        businessDNA: { findUnique: dnaFindUniqueMock },
         $transaction: vi.fn(async (fn: (tx: typeof txMock) => Promise<unknown>) => fn(txMock)),
       },
       tenantDbMock: vi.fn(),
-      dnaFindFirstMock: vi.fn(),
       resolveTokenMock: vi.fn(),
     };
   },
@@ -116,7 +118,7 @@ const tuesdaySlots = () => slotsBetween("2026-02-02T22:00:00Z", "2026-02-03T22:0
 const mondaySlots = () => slotsBetween("2026-02-01T22:00:00Z", "2026-02-02T22:00:00Z");
 
 function storedHours(openingHours: unknown) {
-  dnaFindFirstMock.mockResolvedValue({ openingHours });
+  dnaFindUniqueMock.mockResolvedValue({ openingHours });
 }
 
 const TUESDAY_CLOSED = {
@@ -162,8 +164,11 @@ beforeEach(() => {
   vi.useFakeTimers();
   vi.setSystemTime(new Date("2026-02-01T10:00:00Z"));
   unscopedMock.bookingType.findFirst.mockResolvedValue(bookingType());
-  tenantDbMock.mockReturnValue({ businessDNA: { findFirst: dnaFindFirstMock } });
-  dnaFindFirstMock.mockResolvedValue(null);
+  // A guest has no session: the public path never reads through tenantDb.
+  tenantDbMock.mockImplementation(() => {
+    throw new Error("tenantDb is not used by the public booking path");
+  });
+  dnaFindUniqueMock.mockResolvedValue(null);
   txMock.calendarEvent.findFirst.mockResolvedValue(null);
   txMock.calendarEvent.findMany.mockResolvedValue([]);
   txMock.calendarEvent.create.mockResolvedValue({ id: "evt-1" });
@@ -192,9 +197,23 @@ describe("Business DNA closed days", () => {
     expect(await tuesdaySlots()).toEqual([]);
   });
 
-  it("reads the closed days of the booking type's own organization", async () => {
+  it("reads only openingHours, for the organization of the booking type the server loaded", async () => {
+    unscopedMock.bookingType.findFirst.mockResolvedValue(bookingType({ organizationId: "org-z" }));
     await tuesdaySlots();
-    expect(tenantDbMock).toHaveBeenCalledWith("org-a");
+    expect(dnaFindUniqueMock).toHaveBeenCalledWith({
+      where: { organizationId: "org-z" },
+      select: { openingHours: true },
+    });
+    expect(tenantDbMock).not.toHaveBeenCalled();
+  });
+
+  it("a failed Business DNA read fails the request; it never means no closed days", async () => {
+    dnaFindUniqueMock.mockRejectedValue(new Error("synthetic read failure"));
+    await expect(tuesdaySlots()).rejects.toThrow("synthetic read failure");
+    await expect(
+      createPublicBooking({ orgSlug: "acme", typeSlug: "intro-call", input: input() }),
+    ).rejects.toThrow("synthetic read failure");
+    expect(unscopedMock.$transaction).not.toHaveBeenCalled();
   });
 
   it("an open day keeps exactly the slots it has without Business DNA", async () => {
@@ -271,7 +290,7 @@ describe("Business DNA closed days", () => {
     ])("%s", async (_label, profile) => {
       const withoutDna = await tuesdaySlots();
       expect(withoutDna).toHaveLength(8);
-      dnaFindFirstMock.mockResolvedValue(profile);
+      dnaFindUniqueMock.mockResolvedValue(profile);
       expect(await tuesdaySlots()).toEqual(withoutDna);
     });
   });

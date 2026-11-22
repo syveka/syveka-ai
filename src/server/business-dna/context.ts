@@ -85,7 +85,8 @@ export type BusinessDnaContext = {
 
 /**
  * The weekdays the org's Business DNA explicitly marks closed (see
- * `closedWeekdays`). Every slot computation passes them to
+ * `closedWeekdays`), for the AI and signed-in slot paths; the public booking
+ * path reads the same column unscoped (booking.ts). Each passes them to
  * `computeAvailableSlots`, so booking never offers a day the business says it
  * is closed. No profile or unset hours: none.
  */

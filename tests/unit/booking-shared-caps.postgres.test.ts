@@ -57,6 +57,7 @@ type Db = {
   };
   organizationMember: { create: (a: object) => Promise<unknown> };
   availabilitySchedule: { create: (a: object) => Promise<{ id: string }> };
+  businessDNA: { create: (a: object) => Promise<unknown> };
   bookingType: { create: (a: object) => Promise<{ id: string }> };
   calendarEvent: {
     create: (a: object) => Promise<{ id: string }>;
@@ -318,5 +319,111 @@ describe.skipIf(!PG_URL)("shared booking caps under concurrency on real Postgres
 
     await expect(counts(orgId)).resolves.toEqual(before);
     await assertUntouched(existing[0]!);
+  }, 30_000);
+
+  // Business DNA closed days (Policy A), read on the public path without a session.
+
+  /** The first `weekday` (0 = Sunday, UTC) on or after dayStart(). */
+  const nextUtcWeekday = (weekday: number) => {
+    const start = dayStart();
+    return new Date(start.getTime() + ((weekday - start.getUTCDay() + 7) % 7) * DAY_MS);
+  };
+
+  /** One organization, Monday and Tuesday 09:00-17:00 UTC, with the given Business DNA hours. */
+  async function seedHours(label: string, openingHours: object | undefined) {
+    const org = await db.organization.create({
+      data: { name: `Synthetic closed days ${label}`, slug: `closed-days-${randomUUID()}` },
+    });
+    orgIds.push(org.id);
+    const owner = await db.user.create({
+      data: { id: randomUUID(), email: `owner-${randomUUID()}@example.test` },
+    });
+    userIds.push(owner.id);
+    await db.organizationMember.create({
+      data: { organizationId: org.id, userId: owner.id, role: "OWNER" },
+    });
+    const schedule = await db.availabilitySchedule.create({
+      data: {
+        organizationId: org.id,
+        userId: owner.id,
+        name: "Monday and Tuesday",
+        timezone: "UTC",
+        isDefault: true,
+        rules: {
+          create: [1, 2].map((weekday) => ({ weekday, startMinute: 9 * 60, endMinute: 17 * 60 })),
+        },
+      },
+    });
+    await db.bookingType.create({
+      data: {
+        organizationId: org.id,
+        ownerId: owner.id,
+        scheduleId: schedule.id,
+        slug: "page",
+        name: "Synthetic page",
+        durationMinutes: SLOT_MINUTES,
+        durationOptions: [SLOT_MINUTES],
+        minNoticeMinutes: 0,
+        maxWindowDays: 60,
+        requiresConsent: false,
+      },
+    });
+    if (openingHours !== undefined) {
+      await db.businessDNA.create({ data: { organizationId: org.id, openingHours } });
+    }
+    return { orgId: org.id, orgSlug: org.slug };
+  }
+
+  const slotsOn = async (orgSlug: string, day: Date) =>
+    (
+      await booking.getPublicSlots({
+        orgSlug,
+        typeSlug: "page",
+        from: day,
+        to: new Date(day.getTime() + DAY_MS),
+      })
+    ).slots;
+
+  /** 10:00 UTC on `day`, on the 30-minute grid inside 09:00-17:00. */
+  const tenOClock = (day: Date) => new Date(day.getTime() + 10 * HOUR_MS);
+
+  it("a Tuesday closed in Business DNA has no public slots or bookings, while Monday stays open", async () => {
+    const { BookingError } = booking;
+    const a = await seedHours("A", { tuesday: { closed: true } });
+    const monday = nextUtcWeekday(1);
+    const tuesday = nextUtcWeekday(2);
+
+    expect(await slotsOn(a.orgSlug, tuesday)).toEqual([]);
+    expect((await slotsOn(a.orgSlug, monday)).length).toBeGreaterThan(0);
+
+    const before = await counts(a.orgId);
+    const create = booking.createPublicBooking({
+      orgSlug: a.orgSlug,
+      typeSlug: "page",
+      input: guest(tenOClock(tuesday), "closed-tuesday"),
+    });
+    await expect(create).rejects.toBeInstanceOf(BookingError);
+    await expect(create).rejects.toMatchObject({ code: "invalid_slot" });
+    await expect(counts(a.orgId)).resolves.toEqual(before);
+  }, 30_000);
+
+  it("one organization's closed Tuesday does not block another organization's Tuesday", async () => {
+    await seedHours("A", { tuesday: { closed: true } });
+    const unset = await seedHours("B unset", undefined);
+    const open = await seedHours("C open", {
+      tuesday: { closed: false, open: "09:00", close: "17:00" },
+    });
+    const tuesday = nextUtcWeekday(2);
+
+    for (const other of [unset, open]) {
+      expect((await slotsOn(other.orgSlug, tuesday)).length).toBeGreaterThan(0);
+      const before = await counts(other.orgId);
+      await booking.createPublicBooking({
+        orgSlug: other.orgSlug,
+        typeSlug: "page",
+        input: guest(tenOClock(tuesday), "open-tuesday"),
+      });
+      expect((await counts(other.orgId)).bookings).toBe(before.bookings + 1);
+    }
   }, 30_000);
 });
