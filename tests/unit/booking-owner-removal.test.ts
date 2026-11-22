@@ -214,6 +214,8 @@ const db = {
     }),
   },
   availabilitySchedule: { findFirst: vi.fn(async () => null) },
+  // No Business DNA profile: no day is closed.
+  businessDNA: { findUnique: vi.fn(async () => null) },
   calendarEvent: {
     // Owner busy times; optionally held open to sequence a concurrent removal.
     findMany: vi.fn(async () => {

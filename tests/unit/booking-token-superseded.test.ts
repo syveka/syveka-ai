@@ -166,6 +166,8 @@ const db = {
   },
   organizationMember: { findFirst: vi.fn(async () => ({ id: "m-owner" })) },
   availabilitySchedule: { findFirst: vi.fn(async () => null) },
+  // No Business DNA profile: no day is closed.
+  businessDNA: { findUnique: vi.fn(async () => null) },
   calendarEvent: { findMany: vi.fn(async () => []) },
   $transaction: vi.fn(async (fn: (t: typeof tx) => Promise<unknown>) => {
     const tokens = s.tokens.map((t) => ({ ...t }));

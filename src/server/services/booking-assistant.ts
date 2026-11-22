@@ -13,7 +13,11 @@ import {
 } from "@/server/calendar/busy";
 import { DEFAULT_WEEKLY_RULES } from "./booking";
 import { neutralizeTagBreakout } from "@/server/ai/prompts/untrusted";
-import { buildBusinessDnaPromptBlock, getBusinessDnaContext } from "@/server/business-dna/context";
+import {
+  buildBusinessDnaPromptBlock,
+  getBusinessDnaContext,
+  getClosedWeekdays,
+} from "@/server/business-dna/context";
 import {
   formatCrmContactLine,
   formatCrmDealLine,
@@ -62,8 +66,9 @@ export async function suggestAvailableTimes(
   const now = new Date();
   const to = new Date(now.getTime() + (params.daysAhead ?? 10) * 86_400_000);
 
-  const [parts, { rows: events, complete }] = await Promise.all([
+  const [parts, closedWeekdays, { rows: events, complete }] = await Promise.all([
     getOwnerScheduleParts(ctx),
+    getClosedWeekdays(ctx.orgId),
     loadBusyRows((page) =>
       db.calendarEvent.findMany({
         where: {
@@ -85,6 +90,7 @@ export async function suggestAvailableTimes(
     timezone: parts.timezone,
     rules: parts.rules,
     overrides: [],
+    closedWeekdays,
     busy: busyIntervals(events, now, to, { complete }),
     from: now,
     to,

@@ -15,6 +15,7 @@ import {
   type WeeklyRule,
 } from "@/server/calendar/slots";
 import { isValidTimezone } from "@/server/calendar/timezone";
+import { closedWeekdays } from "@/lib/business-dna/opening-hours";
 import {
   BUSY_ROW_ORDER,
   BUSY_ROW_SELECT,
@@ -438,6 +439,20 @@ async function resolveScheduleParts(bookingType: PublicBookingType): Promise<{
   };
 }
 
+/**
+ * The weekdays the booking page's organization closes in Business DNA (see
+ * `closedWeekdays`). A guest has no session, so this reads unscoped, by the id
+ * of the booking type the server loaded, never by anything the request sent.
+ * A failed read propagates: it never means no closed days.
+ */
+async function getPublicClosedWeekdays(organizationId: string): Promise<number[]> {
+  const profile = await unscopedPrisma.businessDNA.findUnique({
+    where: { organizationId },
+    select: { openingHours: true },
+  });
+  return closedWeekdays(profile?.openingHours);
+}
+
 /** Owner busy intervals: their non-canceled events (bookings create events). */
 async function getOwnerBusy(
   orgId: string,
@@ -481,7 +496,10 @@ export async function getPublicSlots(params: {
   }
 
   const now = params.now ?? new Date();
-  const parts = await resolveScheduleParts(bookingType);
+  const [parts, closedWeekdays] = await Promise.all([
+    resolveScheduleParts(bookingType),
+    getPublicClosedWeekdays(bookingType.organizationId),
+  ]);
   const busy = await getOwnerBusy(
     bookingType.organizationId,
     bookingType.ownerId,
@@ -489,10 +507,13 @@ export async function getPublicSlots(params: {
     new Date(params.to.getTime() + 86_400_000),
   );
 
+  // Booking and rescheduling accept only these slots, so a closed day is
+  // refused there too (including a submit from a page loaded before it closed).
   const slots = computeAvailableSlots({
     timezone: parts.timezone,
     rules: parts.rules,
     overrides: parts.overrides,
+    closedWeekdays,
     busy,
     from: params.from,
     to: params.to,

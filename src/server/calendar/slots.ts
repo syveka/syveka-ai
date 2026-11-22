@@ -29,6 +29,11 @@ export type SlotParams = {
   timezone: string;
   rules: WeeklyRule[];
   overrides: DateOverride[];
+  /**
+   * Weekdays (0 = Sunday) closed in Business DNA: no slots on them, judged in
+   * `timezone`, whatever the rules or overrides say.
+   */
+  closedWeekdays?: number[];
   busy: BusyInterval[];
   from: Date;
   to: Date;
@@ -76,9 +81,11 @@ export function computeAvailableSlots(params: SlotParams): Date[] {
     overridesByDate.set(o.date, list);
   }
 
+  const closed = new Set(params.closedWeekdays ?? []);
   const slots: Date[] = [];
 
   for (const day of localDays(earliest, latest, timezone)) {
+    if (closed.has(day.weekday)) continue;
     const iso = localIsoDate(day.dayStartUtc, timezone);
     const dayOverrides = overridesByDate.get(iso);
 

@@ -43,6 +43,8 @@ const {
       // The booking type's owner is a current member.
       organizationMember: { findFirst: vi.fn(async () => ({ id: "member-1" })) },
       availabilitySchedule: { findFirst: vi.fn(async () => null) },
+      // No Business DNA profile: no day is closed.
+      businessDNA: { findUnique: vi.fn(async () => null) },
       calendarEvent: {
         findMany: vi.fn(async (): Promise<Array<{ startsAt: Date; endsAt: Date }>> => []),
       },
