@@ -1017,6 +1017,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     await recordUsage(orgId, "WORKFLOW_RUNS", 1, { workflowId });
     return NextResponse.json({ ok: true });
   } catch (err) {
+    if (err instanceof StepFencedError) {
+      // Another worker reclaimed this step (the email limits marker write
+      // matched no row) and now owns the run, or has already finished it.
+      // This attempt sent nothing, so it records, logs, notifies and
+      // retries nothing either: a write here would overwrite that worker's
+      // result.
+      return NextResponse.json({ skipped: "step_superseded" });
+    }
     const message = failureText(err, "step failed").slice(0, 500);
     results.push({ stepId: "error", status: "failed", output: message });
     await persist("FAILED", message);

@@ -31,6 +31,11 @@ const state = vi.hoisted(() => ({
   notifications: [] as Array<Record<string, unknown>>,
   /** Throw once from the next SUCCEEDED write (a crash right after the send). */
   failNextCompletion: false,
+  /**
+   * Runs instead of the next limits-marker write, which then matches no row:
+   * another worker reclaimed the step in the meantime.
+   */
+  supersedeAtMarker: null as (() => void) | null,
 }));
 
 const limiter = vi.hoisted(() => {
@@ -173,6 +178,13 @@ const db = {
       state.steps.find((s) => matches(s, where))!,
     ),
     updateMany: vi.fn(async ({ where, data }: { where: Row; data: Row }) => {
+      const output = data.output as { emailLimitsSpentFor?: unknown } | undefined;
+      if (output?.emailLimitsSpentFor !== undefined && state.supersedeAtMarker) {
+        const supersede = state.supersedeAtMarker;
+        state.supersedeAtMarker = null;
+        supersede();
+        return { count: 0 };
+      }
       if (data.status === "SUCCEEDED" && state.failNextCompletion) {
         state.failNextCompletion = false;
         throw new Error("database unavailable");
@@ -198,6 +210,7 @@ const db = {
   $transaction: async (fn: (tx: unknown) => unknown) => fn(db),
 };
 
+const recordUsage = vi.hoisted(() => vi.fn(async (..._args: unknown[]) => undefined));
 const sendEmail = vi.hoisted(() =>
   vi.fn(async (_args: { to: string; idempotencyKey?: string }) => ({ id: "email-1" })),
 );
@@ -224,7 +237,7 @@ vi.mock("@/server/integrations/anthropic", () => ({
 vi.mock("@/server/ai/router", () => ({ routeModel: () => ({ model: "m", maxTokens: 1 }) }));
 vi.mock("@/server/integrations/resend", () => ({ sendEmail }));
 vi.mock("@/server/services/billing/entitlements", () => ({
-  recordUsage: vi.fn(async () => undefined),
+  recordUsage,
   getEntitlements: async () => ({ readOnly: false, activeWorkflows: 5 }),
 }));
 vi.mock("@/server/services/ai-spend", () => ({
@@ -321,6 +334,7 @@ beforeEach(() => {
   state.steps = [];
   state.notifications = [];
   state.failNextCompletion = false;
+  state.supersedeAtMarker = null;
   limiter.hits.clear();
   limiter.calls = [];
   limiter.unavailable = false;
@@ -560,6 +574,31 @@ describe("email.send retries", () => {
     expect(marker).toContain(emailKey("lead@example.com"));
     expect(marker).not.toContain("@");
     expect(marker).not.toContain("lead");
+  });
+
+  it("a worker whose step was taken over leaves the newer worker's finished run alone", async () => {
+    // While this (stale) worker is between spending the limits and writing
+    // its marker, a newer worker reclaims the step, sends and finishes the run.
+    const finished = [{ stepId: "ack", status: "ok" }];
+    state.supersedeAtMarker = () => {
+      const run = runFor("contact.created:1");
+      run.status = "SUCCEEDED";
+      run.error = null;
+      run.stepResults = finished;
+      run.finishedAt = new Date();
+    };
+
+    const res = await deliver("lead@example.com", "contact.created:1");
+
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ skipped: "step_superseded" });
+    const run = runFor("contact.created:1");
+    expect(run.status).toBe("SUCCEEDED");
+    expect(run.error).toBeNull();
+    expect(run.stepResults).toEqual([{ stepId: "ack", status: "ok" }]);
+    expect(sendEmail).not.toHaveBeenCalled();
+    expect(state.notifications).toHaveLength(0);
+    expect(recordUsage).not.toHaveBeenCalled();
   });
 
   it("a succeeded step is never sent or counted again", async () => {
