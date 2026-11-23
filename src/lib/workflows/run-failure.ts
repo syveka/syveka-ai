@@ -36,6 +36,13 @@ export const EMAIL_LIMIT_REACHED_ERROR_PREFIX = "email.send: limit reached";
  * same way on every attempt.
  */
 export const EMAIL_IDEMPOTENCY_CONFLICT_ERROR = "email.send: provider refused a reused send key";
+/**
+ * A retry of an email.send step that may already have reached the provider,
+ * too long after its first attempt for the provider to still recognize the
+ * send key. Not resent; see EMAIL_RESEND_SAFE_WINDOW_MS in the run-workflow
+ * job.
+ */
+export const EMAIL_OUTCOME_UNKNOWN_ERROR = "email.send: earlier send outcome unknown, not resent";
 
 /**
  * Run errors that end the job without a retry (the run-workflow job answers
@@ -51,6 +58,7 @@ export const TERMINAL_RUN_ERRORS = {
     CONTACT_NOT_FOUND_ERROR,
     "ai_quota_exceeded",
     EMAIL_IDEMPOTENCY_CONFLICT_ERROR,
+    EMAIL_OUTCOME_UNKNOWN_ERROR,
   ],
   prefixes: [INVALID_RECIPIENT_ERROR_PREFIX, EMAIL_LIMIT_REACHED_ERROR_PREFIX],
 } as const;

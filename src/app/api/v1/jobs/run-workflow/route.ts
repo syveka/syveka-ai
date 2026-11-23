@@ -10,6 +10,7 @@ import {
   CONTACT_NOT_FOUND_ERROR,
   EMAIL_IDEMPOTENCY_CONFLICT_ERROR,
   EMAIL_LIMIT_REACHED_ERROR_PREFIX,
+  EMAIL_OUTCOME_UNKNOWN_ERROR,
   INVALID_RECIPIENT_ERROR_PREFIX,
   isTerminalRunError,
   TERMINAL_RUN_ERRORS,
@@ -271,10 +272,43 @@ class WorkflowEmailLimiterUnavailableError extends Error {
  * completeStep) reclaims that row: claimStep's reclaim never clears `output`.
  * It sends without spending the limits again only if it resolves to the same
  * recipient. The workflow is read live, so an edited `to` keeps the step id
- * and reaches the same row; that recipient is admitted on its own, and an
- * older marker without a fingerprint is not trusted.
+ * and reaches the same row; that recipient is admitted on its own.
+ *
+ * `firstAttemptAt` (epoch ms) is when the allowance was spent, right before
+ * the first provider call for it. A marker means the provider may already
+ * have the send; see EMAIL_RESEND_SAFE_WINDOW_MS.
  */
-type EmailLimitsSpent = { emailLimitsSpentFor: string };
+type EmailLimitsSpent = { emailLimitsSpentFor: string; firstAttemptAt: number };
+
+/**
+ * How long after a step's first provider attempt a retry may still send.
+ * Resend documents its idempotency keys as kept for 24 hours; after that a
+ * resend of the same key is not deduplicated, so an attempt the provider
+ * accepted but this job never recorded would go out twice. 12 hours sits
+ * well inside that window, and the normal QStash retries of a job finish
+ * within minutes. Only a late replay (a dead-letter message replayed by
+ * hand, a redelivered source event) reaches past it.
+ */
+const EMAIL_RESEND_SAFE_WINDOW_MS = 12 * 60 * 60_000;
+
+/**
+ * The limits marker on an email.send step's row, or null if no attempt got
+ * as far as spending the limits (so none reached the provider). Any marker
+ * counts, including the earlier `{ emailLimitsSpent: true }` shape and one
+ * without a usable time.
+ */
+function emailLimitsMarker(output: unknown): Partial<EmailLimitsSpent> | null {
+  if (typeof output !== "object" || output === null) return null;
+  return "emailLimitsSpentFor" in output || "emailLimitsSpent" in output
+    ? (output as Partial<EmailLimitsSpent>)
+    : null;
+}
+
+/** Whether a marker's first attempt is recent enough for the provider to dedupe a resend. */
+function withinResendSafeWindow(marker: Partial<EmailLimitsSpent>, now: number): boolean {
+  const at = marker.firstAttemptAt;
+  return typeof at === "number" && Number.isFinite(at) && now - at <= EMAIL_RESEND_SAFE_WINDOW_MS;
+}
 
 /**
  * Resend's invalid_idempotent_request, as sendEmail surfaces it: an
@@ -760,9 +794,15 @@ export async function POST(request: Request): Promise<NextResponse> {
             const to = normalizeWorkflowRecipient(interpolate(step.to, ctx));
             if (!to) throw new WorkflowStepError(INVALID_RECIPIENT_ERROR_PREFIX);
             const fingerprint = workflowRecipientFingerprint(to);
-            const limitsSpent =
-              (claim.output as Partial<EmailLimitsSpent> | null)?.emailLimitsSpentFor ===
-              fingerprint;
+            // An earlier attempt spent the limits, so it may have reached the
+            // provider. Past the safe window (or with no usable time) the
+            // provider may no longer dedupe the key, and a resend could be a
+            // second email: refused for good, nothing sent or spent.
+            const marker = emailLimitsMarker(claim.output);
+            if (marker && !withinResendSafeWindow(marker, Date.now())) {
+              throw new WorkflowStepError(EMAIL_OUTCOME_UNKNOWN_ERROR);
+            }
+            const limitsSpent = marker?.emailLimitsSpentFor === fingerprint;
             if (!limitsSpent) {
               const admission = await admitWorkflowEmail(orgId, to);
               if (!admission.ok) {
@@ -776,8 +816,12 @@ export async function POST(request: Request): Promise<NextResponse> {
               // Fenced like completeStep: a superseded worker stops here,
               // before sending. If this write fails the limits stay spent
               // and the retry spends them again (over-counts, never sends
-              // past them). Overwrites a marker for another recipient.
-              const spent: EmailLimitsSpent = { emailLimitsSpentFor: fingerprint };
+              // past them). Overwrites a marker for another recipient, with
+              // this attempt's time.
+              const spent: EmailLimitsSpent = {
+                emailLimitsSpentFor: fingerprint,
+                firstAttemptAt: Date.now(),
+              };
               const marked = await unscopedPrisma.workflowStepExecution.updateMany({
                 where: { id: claim.stepExecutionId, startedAt: claim.startedAt },
                 data: { output: spent },

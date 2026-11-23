@@ -248,6 +248,36 @@ validate`/`generate`, migration history check) after the override, all passing. 
     response is lost before `completeStep()` runs, and that provider has no idempotency support (or
     the key's retention window has lapsed), the outcome is truly ambiguous — this is an inherent
     limit of distributed side effects, not something this fix papers over.
+- **A late retry of a workflow `email.send` step that may already have reached Resend is not
+  resent (PR #461).** When the job spends a step's email limits, right before the first provider
+  call for them, it writes a marker on the step's own `WorkflowStepExecution.output`: a hash of
+  the recipient's mailbox (never the address) and the time of that attempt. No schema change.
+  - **Bound:** `EMAIL_RESEND_SAFE_WINDOW_MS`, 12 hours after that first attempt. A retry of the
+    same step past it, or with a marker that has no usable time (including the earlier
+    `{ emailLimitsSpent: true }` shape), ends the step for good with the fixed reason
+    `email.send: earlier send outcome unknown, not resent`. That reason is in the terminal run
+    errors; nothing is sent and no limit is spent. Inside the window a retry for the same
+    recipient sends again on the same idempotency key without spending the limits again; a
+    changed recipient is admitted on its own limits and the marker is rewritten with its hash
+    and a new time.
+  - **Why a marker is required:** only an attempt that spent the limits can have called the
+    provider. A reclaimed step without a marker never did, so it sends normally, limits checked,
+    however old the row is.
+  - **Why 12 hours:** Resend's public documentation keeps idempotency keys for 24 hours; after
+    that a resend is not deduplicated, and an attempt Resend accepted but this job never recorded
+    would go out twice. 12 hours sits well inside that window, and the normal QStash retries
+    (3) finish within minutes. Only a late replay reaches past it: a dead-letter message replayed
+    by hand, or a source event delivered again much later.
+  - **Tradeoff:** a late replay is stopped even when the first attempt never reached Resend (a
+    provider error before acceptance). The run then shows the fixed reason, and an operator
+    decides whether the email should still go out.
+  - **Operational rule:** before manually replaying any `run-workflow` dead-letter message,
+    inspect the run and its email step first (status, error, and whether the step has a limits
+    marker).
+  - **Unverified:** the 24-hour retention comes from Resend's public documentation, not from a
+    test against Resend. Beyond the documented 409 (`invalid_idempotent_request`, which the job
+    treats as terminal), Resend's behavior for a reused key with a different payload is
+    unverified.
 
 ## Standing engineering conventions (from `README.md`, verified still enforced)
 

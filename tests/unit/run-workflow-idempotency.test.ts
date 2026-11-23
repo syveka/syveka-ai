@@ -125,6 +125,7 @@ import {
   CONTACT_NOT_FOUND_ERROR,
   EMAIL_IDEMPOTENCY_CONFLICT_ERROR,
   EMAIL_LIMIT_REACHED_ERROR_PREFIX,
+  EMAIL_OUTCOME_UNKNOWN_ERROR,
   INVALID_RECIPIENT_ERROR_PREFIX,
 } from "@/lib/workflows/run-failure";
 
@@ -144,6 +145,7 @@ const RETRYABLE_FAILED_RUN = {
                 CONTACT_NOT_FOUND_ERROR,
                 "ai_quota_exceeded",
                 EMAIL_IDEMPOTENCY_CONFLICT_ERROR,
+                EMAIL_OUTCOME_UNKNOWN_ERROR,
               ],
             },
           },

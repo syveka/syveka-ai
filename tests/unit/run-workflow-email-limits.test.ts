@@ -249,6 +249,7 @@ vi.mock("../../emails/workflow-notification", () => ({ WorkflowNotificationEmail
 import { POST } from "@/app/api/v1/jobs/run-workflow/route";
 import {
   EMAIL_IDEMPOTENCY_CONFLICT_ERROR,
+  EMAIL_OUTCOME_UNKNOWN_ERROR,
   INVALID_RECIPIENT_ERROR_PREFIX,
   isTerminalRunError,
 } from "@/lib/workflows/run-failure";
@@ -545,8 +546,21 @@ describe("email.send retries", () => {
     await deliver("lead-a@example.com", "contact.created:1");
     const workflow = state.workflow as { steps: Array<Record<string, unknown>> };
     workflow.steps[0]!.to = "lead-b@example.com";
+    // Inside the safe window, the step is admitted again for B; the marker
+    // then names B and the time of this attempt.
+    vi.setSystemTime(new Date(Date.now() + 30 * 60_000));
+    let markerAtSend: unknown;
+    sendEmail.mockImplementationOnce(async () => {
+      markerAtSend = structuredClone(state.steps[0]!.output);
+      return { id: "email-2" };
+    });
 
     const retry = await deliver("lead-a@example.com", "contact.created:1");
+
+    expect(markerAtSend).toEqual({
+      emailLimitsSpentFor: emailKey("lead-b@example.com"),
+      firstAttemptAt: Date.now(),
+    });
 
     expect(retry.status).toBe(200);
     expect(sendEmail).toHaveBeenCalledTimes(2);
@@ -558,24 +572,15 @@ describe("email.send retries", () => {
     expect(limiter.spent("workflowEmailOrgHour", ORG)).toBe(2);
   });
 
-  it("a marker without a recipient fingerprint is not trusted", async () => {
-    sendEmail.mockRejectedValueOnce(new Error("provider timeout"));
-    await deliver("lead@example.com", "contact.created:1");
-    // A row written before markers carried a fingerprint.
-    state.steps[0]!.output = { emailLimitsSpent: true };
-
-    const retry = await deliver("lead@example.com", "contact.created:1");
-
-    expect(retry.status).toBe(200);
-    expect(limiter.spent("workflowEmailOrgHour", ORG)).toBe(2);
-  });
-
-  it("the marker holds the recipient's hash, never the address", async () => {
+  it("the marker holds the recipient's hash and the first attempt's time, never the address", async () => {
     sendEmail.mockRejectedValueOnce(new Error("provider timeout"));
     await deliver("lead@example.com", "contact.created:1");
 
+    expect(state.steps[0]!.output).toEqual({
+      emailLimitsSpentFor: emailKey("lead@example.com"),
+      firstAttemptAt: Date.now(),
+    });
     const marker = JSON.stringify(state.steps[0]!.output);
-    expect(marker).toContain(emailKey("lead@example.com"));
     expect(marker).not.toContain("@");
     expect(marker).not.toContain("lead");
   });
@@ -682,6 +687,128 @@ describe("email.send provider idempotency refusals", () => {
 
     expect(res.status).toBe(500);
     expect(isTerminalRunError(runFor("contact.created:1").error as string)).toBe(false);
+  });
+});
+
+describe("email.send retries after the provider's key may have expired", () => {
+  const HOUR = 60 * 60_000;
+
+  /** Attempt 1 spends the limits, writes the marker, then the provider fails. */
+  async function failFirstAttempt(): Promise<void> {
+    sendEmail.mockRejectedValueOnce(new ProviderRefusal("application_error"));
+    const first = await deliver("lead@example.com", "contact.created:1");
+    expect(first.status).toBe(500);
+  }
+
+  function expectRefusedUnsent(res: Response, sendsBefore: number, limiterCallsBefore: number) {
+    expect(res.status).toBe(200);
+    const run = runFor("contact.created:1");
+    expect(run.status).toBe("FAILED");
+    expect(run.error).toBe(EMAIL_OUTCOME_UNKNOWN_ERROR);
+    expect(isTerminalRunError(run.error as string)).toBe(true);
+    expect(state.steps[0]!.status).toBe("FAILED");
+    expect(state.steps[0]!.error).toBe(EMAIL_OUTCOME_UNKNOWN_ERROR);
+    expect(sendEmail).toHaveBeenCalledTimes(sendsBefore);
+    expect(limiter.calls).toHaveLength(limiterCallsBefore);
+  }
+
+  it("a retry inside the safe window with the same recipient sends again on the same key", async () => {
+    await failFirstAttempt();
+    vi.setSystemTime(new Date(Date.now() + 12 * HOUR - 60_000));
+
+    const retry = await deliver("lead@example.com", "contact.created:1");
+
+    expect(retry.status).toBe(200);
+    expect(sendEmail).toHaveBeenCalledTimes(2);
+    expect(sendEmail.mock.calls[1]![0].idempotencyKey).toBe(
+      sendEmail.mock.calls[0]![0].idempotencyKey,
+    );
+    expect(limiter.spent("workflowEmailOrgDay", ORG)).toBe(1);
+    expect(runFor("contact.created:1").status).toBe("SUCCEEDED");
+  });
+
+  it("a retry after the safe window is refused for good, unsent and uncounted", async () => {
+    await failFirstAttempt();
+    const limiterCalls = limiter.calls.length;
+    vi.setSystemTime(new Date(Date.now() + 12 * HOUR + 60_000));
+
+    const retry = await deliver("lead@example.com", "contact.created:1");
+
+    expectRefusedUnsent(retry, 1, limiterCalls);
+    expect(limiter.spent("workflowEmailOrgDay", ORG)).toBe(1);
+    // A redelivery of the same message is acknowledged without a send.
+    const again = await deliver("lead@example.com", "contact.created:1");
+    expect(await again.json()).toEqual({ skipped: "terminal_failure" });
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("a recipient change after the safe window is refused too", async () => {
+    await failFirstAttempt();
+    const limiterCalls = limiter.calls.length;
+    const workflow = state.workflow as { steps: Array<Record<string, unknown>> };
+    workflow.steps[0]!.to = "lead-b@example.com";
+    vi.setSystemTime(new Date(Date.now() + 13 * HOUR));
+
+    const retry = await deliver("lead@example.com", "contact.created:1");
+
+    expectRefusedUnsent(retry, 1, limiterCalls);
+  });
+
+  it.each([
+    ["a fingerprint without a time", () => ({ emailLimitsSpentFor: emailKey("lead@example.com") })],
+    ["the earlier marker shape", () => ({ emailLimitsSpent: true })],
+    [
+      "an unreadable time",
+      () => ({ emailLimitsSpentFor: emailKey("lead@example.com"), firstAttemptAt: "soon" }),
+    ],
+  ])("a marker with %s is treated as too old to resend", async (_label, marker) => {
+    await failFirstAttempt();
+    state.steps[0]!.output = marker();
+    const limiterCalls = limiter.calls.length;
+
+    const retry = await deliver("lead@example.com", "contact.created:1");
+
+    expectRefusedUnsent(retry, 1, limiterCalls);
+  });
+
+  it("an old step that never reached the provider (no marker) sends normally, with the limits checked", async () => {
+    // Attempt 1 stops at the limiter, so nothing was spent and no marker written.
+    limiter.unavailable = true;
+    const first = await deliver("lead@example.com", "contact.created:1");
+    expect(first.status).toBe(500);
+    expect(state.steps[0]!.output).toBeNull();
+    limiter.unavailable = false;
+    vi.setSystemTime(new Date(Date.now() + 30 * HOUR));
+
+    const retry = await deliver("lead@example.com", "contact.created:1");
+
+    expect(retry.status).toBe(200);
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    expect(limiter.spent("workflowEmailOrgHour", ORG)).toBe(1);
+    expect(runFor("contact.created:1").status).toBe("SUCCEEDED");
+  });
+
+  it("the refusal stores and logs no address or provider text", async () => {
+    const logs = [
+      vi.spyOn(console, "error").mockImplementation(() => undefined),
+      vi.spyOn(console, "warn").mockImplementation(() => undefined),
+      vi.spyOn(console, "log").mockImplementation(() => undefined),
+    ];
+    await failFirstAttempt();
+    vi.setSystemTime(new Date(Date.now() + 13 * HOUR));
+    await deliver("lead@example.com", "contact.created:1");
+
+    const stored = JSON.stringify([
+      state.runs.map((r) => [r.error, r.stepResults]),
+      state.steps.map((s) => [s.error, s.output]),
+      state.notifications,
+    ]);
+    const logged = logs.flatMap((spy) => spy.mock.calls.map((args) => JSON.stringify(args)));
+    for (const text of [stored, ...logged]) {
+      expect(text).not.toContain("lead@");
+      expect(text).not.toContain("does not match");
+    }
+    expect(state.notifications.map((n) => n.body)).toContain(EMAIL_OUTCOME_UNKNOWN_ERROR);
   });
 });
 
