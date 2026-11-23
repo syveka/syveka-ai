@@ -8,6 +8,7 @@ import {
   CONTACT_MISSING_ERROR,
   CONTACT_MISSING_TEST_RUN_ERROR,
   CONTACT_NOT_FOUND_ERROR,
+  EMAIL_IDEMPOTENCY_CONFLICT_ERROR,
   EMAIL_LIMIT_REACHED_ERROR_PREFIX,
   INVALID_RECIPIENT_ERROR_PREFIX,
   isTerminalRunError,
@@ -274,6 +275,20 @@ class WorkflowEmailLimiterUnavailableError extends Error {
  * older marker without a fingerprint is not trusted.
  */
 type EmailLimitsSpent = { emailLimitsSpentFor: string };
+
+/**
+ * Resend's invalid_idempotent_request, as sendEmail surfaces it: an
+ * EmailSendError whose `code` is Resend's error name. Matched by name and
+ * code, not instanceof: the route takes only sendEmail from the dynamically
+ * imported resend module.
+ */
+function isIdempotencyConflict(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    err.name === "EmailSendError" &&
+    (err as Error & { code?: unknown }).code === "invalid_idempotent_request"
+  );
+}
 
 /** Step output recorded when a notification was skipped for a non-member. */
 const RECIPIENT_NOT_MEMBER = { skipped: "recipient_not_member" } as const;
@@ -782,6 +797,17 @@ export async function POST(request: Request): Promise<NextResponse> {
               // persisting it) - see docs/DECISIONS.md for the provider
               // contract and its limits.
               idempotencyKey: claim.stepExecutionId,
+            }).catch((sendErr: unknown) => {
+              // Resend refuses a key it already saw with a different request
+              // (the recipient or text changed since an earlier attempt). That
+              // repeats on every retry of this key, so it ends the step with a
+              // fixed reason, never the provider's text. Every other provider
+              // error, including a concurrent request with the same key, is
+              // retried as before.
+              if (isIdempotencyConflict(sendErr)) {
+                throw new WorkflowStepError(EMAIL_IDEMPOTENCY_CONFLICT_ERROR);
+              }
+              throw sendErr;
             });
             try {
               await completeStep(unscopedPrisma, claim, undefined, sent.id);

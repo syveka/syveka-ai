@@ -247,7 +247,11 @@ vi.mock("@/server/services/ai-spend", () => ({
 vi.mock("../../emails/workflow-notification", () => ({ WorkflowNotificationEmail: () => null }));
 
 import { POST } from "@/app/api/v1/jobs/run-workflow/route";
-import { INVALID_RECIPIENT_ERROR_PREFIX, isTerminalRunError } from "@/lib/workflows/run-failure";
+import {
+  EMAIL_IDEMPOTENCY_CONFLICT_ERROR,
+  INVALID_RECIPIENT_ERROR_PREFIX,
+  isTerminalRunError,
+} from "@/lib/workflows/run-failure";
 import { emailKey } from "@/server/security/rate-limit";
 import { normalizeWorkflowRecipient } from "@/server/services/workflow-email-limits";
 
@@ -610,6 +614,74 @@ describe("email.send retries", () => {
 
     expect(sendEmail).toHaveBeenCalledTimes(1);
     expect(limiter.spent("workflowEmailOrgHour", ORG)).toBe(1);
+  });
+});
+
+/**
+ * The shape sendEmail throws for a provider refusal (EmailSendError in
+ * src/server/integrations/resend.ts, mocked out here): `code` is Resend's
+ * error name, and the message is the provider's text, which can quote the
+ * address.
+ */
+class ProviderRefusal extends Error {
+  constructor(readonly code: string) {
+    super("Resend error: request for lead@example.com does not match the original");
+    this.name = "EmailSendError";
+  }
+}
+
+describe("email.send provider idempotency refusals", () => {
+  it("a key reused with a different request ends the step for good", async () => {
+    sendEmail.mockRejectedValueOnce(new ProviderRefusal("invalid_idempotent_request"));
+
+    const res = await deliver("lead@example.com", "contact.created:1");
+
+    expect(res.status).toBe(200);
+    const run = runFor("contact.created:1");
+    expect(run.status).toBe("FAILED");
+    expect(run.error).toBe(EMAIL_IDEMPOTENCY_CONFLICT_ERROR);
+    expect(isTerminalRunError(run.error as string)).toBe(true);
+    expect(state.steps[0]!.status).toBe("FAILED");
+    expect(state.steps[0]!.error).toBe(EMAIL_IDEMPOTENCY_CONFLICT_ERROR);
+    const stored = JSON.stringify([run.error, run.stepResults, state.steps, state.notifications]);
+    expect(stored).not.toContain("lead@");
+    expect(stored).not.toContain("does not match");
+
+    // A redelivery of the same message sends nothing.
+    const again = await deliver("lead@example.com", "contact.created:1");
+    expect(await again.json()).toEqual({ skipped: "terminal_failure" });
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+  });
+
+  it("a concurrent request with the same key stays retryable and sends on retry", async () => {
+    sendEmail.mockRejectedValueOnce(new ProviderRefusal("concurrent_idempotent_requests"));
+
+    const first = await deliver("lead@example.com", "contact.created:1");
+
+    expect(first.status).toBe(500);
+    const run = runFor("contact.created:1");
+    expect(run.status).toBe("FAILED");
+    expect(run.error).toBe("step failed (EmailSendError)");
+    expect(state.steps[0]!.error).toBe("email.send failed (EmailSendError)");
+    expect(isTerminalRunError(run.error as string)).toBe(false);
+    expect(JSON.stringify([run.error, state.steps])).not.toContain("lead@");
+
+    const retry = await deliver("lead@example.com", "contact.created:1");
+    expect(retry.status).toBe(200);
+    expect(sendEmail).toHaveBeenCalledTimes(2);
+    expect(sendEmail.mock.calls[1]![0].idempotencyKey).toBe(
+      sendEmail.mock.calls[0]![0].idempotencyKey,
+    );
+    expect(runFor("contact.created:1").status).toBe("SUCCEEDED");
+  });
+
+  it("any other provider error stays retryable", async () => {
+    sendEmail.mockRejectedValueOnce(new ProviderRefusal("application_error"));
+
+    const res = await deliver("lead@example.com", "contact.created:1");
+
+    expect(res.status).toBe(500);
+    expect(isTerminalRunError(runFor("contact.created:1").error as string)).toBe(false);
   });
 });
 

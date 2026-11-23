@@ -30,6 +30,12 @@ export const INVALID_RECIPIENT_ERROR_PREFIX = "email.send: invalid recipient";
  * admitWorkflowEmail.
  */
 export const EMAIL_LIMIT_REACHED_ERROR_PREFIX = "email.send: limit reached";
+/**
+ * Resend refused the send's idempotency key because an earlier request with
+ * the same key differed (invalid_idempotent_request): the same key fails the
+ * same way on every attempt.
+ */
+export const EMAIL_IDEMPOTENCY_CONFLICT_ERROR = "email.send: provider refused a reused send key";
 
 /**
  * Run errors that end the job without a retry (the run-workflow job answers
@@ -44,6 +50,7 @@ export const TERMINAL_RUN_ERRORS = {
     CONTACT_MISSING_ERROR,
     CONTACT_NOT_FOUND_ERROR,
     "ai_quota_exceeded",
+    EMAIL_IDEMPOTENCY_CONFLICT_ERROR,
   ],
   prefixes: [INVALID_RECIPIENT_ERROR_PREFIX, EMAIL_LIMIT_REACHED_ERROR_PREFIX],
 } as const;
