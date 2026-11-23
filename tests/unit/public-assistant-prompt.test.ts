@@ -16,8 +16,19 @@ describe("buildPublicAssistantSystemPrompt", () => {
 
   it("does not present Creator Studio as generally available", () => {
     const prompt = buildPublicAssistantSystemPrompt("en");
-    expect(prompt).toMatch(/limited rollout/);
     expect(prompt).not.toMatch(/Creator Studio.*(available now|generally available)/i);
+  });
+
+  it("lists out-of-pilot features only as not available, never as current features", () => {
+    const prompt = buildPublicAssistantSystemPrompt("en");
+    const [current, notAvailable] = prompt.split("## Not available yet");
+    expect(notAvailable).toBeDefined();
+    // Pilot scope: docs/free-pilot-launch-runbook.md §10 and §15.
+    expect(current).not.toMatch(/voice|inbox|automation|workflow|creator studio/i);
+    for (const feature of [/voice/i, /automations/i, /inbox/i, /Creator Studio/, /paid plans/i]) {
+      expect(notAvailable).toMatch(feature);
+    }
+    expect(prompt).not.toMatch(/production use/i);
   });
 
   it("declares itself read-only with no tools, matching the route's actual tool-free call", () => {

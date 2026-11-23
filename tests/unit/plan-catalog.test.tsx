@@ -22,6 +22,7 @@ import {
   annualPriceEur,
   PLAN_LIMITS,
   PLAN_MONTHLY_PRICE_EUR,
+  PRICING_PAGE_PLANS,
   PUBLIC_PLANS,
   SELF_SERVE_PLANS,
 } from "@/lib/billing/plan-catalog";
@@ -51,34 +52,31 @@ describe("plan catalog", () => {
     expect(annualMonthlyEquivalentEur("PRO").toFixed(2)).toBe("65.83");
   });
 
-  it("prices every self-serve plan above zero and lists it publicly", () => {
+  it("prices every self-serve plan above zero and gives it a list price", () => {
     for (const plan of SELF_SERVE_PLANS) {
       expect(PUBLIC_PLANS).toContain(plan);
       expect(PLAN_MONTHLY_PRICE_EUR[plan]).toBeGreaterThan(0);
     }
   });
 
-  it("renders the public pricing page with the same numbers as before", async () => {
+  it("shows only the free plan on the public pricing page during the pilot", async () => {
+    expect(PRICING_PAGE_PLANS).toEqual(["FREE"]);
+
     const page = await PricingPage({ params: Promise.resolve({ locale: "en" }) });
     const { container } = render(page);
     const text = container.textContent ?? "";
 
+    // Free: 2 seats, 50 pooled AI messages, from the catalog.
     expect(screen.getByText("Free")).toBeTruthy();
-    expect(screen.getByText("Starter")).toBeTruthy();
-    expect(screen.getByText("Pro")).toBeTruthy();
     expect(text).toContain("€0");
-    expect(text).toContain("€29");
-    expect(text).toContain("€79");
-    // Free: 2 seats, 50 pooled AI messages, no voice. Every plan shows one pooled number.
     expect(text).toContain("planSeats(2)");
     expect(text).toContain("planAiMessages(50)");
-    expect(text).toContain("planVoiceNone");
-    // Starter and Pro: pooled AI messages and voice minutes.
-    expect(text).toContain("planSeats(10)");
-    expect(text).toContain("planAiMessages(1,000)");
-    expect(text).toContain("planVoiceMinutes(100)");
-    expect(text).toContain("planSeats(50)");
-    expect(text).toContain("planAiMessages(5,000)");
-    expect(text).toContain("planVoiceMinutes(500)");
+    // No paid plan, paid price or voice allowance may be promised
+    // (docs/free-pilot-launch-runbook.md §15).
+    expect(screen.queryByText("Starter")).toBeNull();
+    expect(screen.queryByText("Pro")).toBeNull();
+    expect(text).not.toContain("€29");
+    expect(text).not.toContain("€79");
+    expect(text).not.toMatch(/voice/i);
   });
 });
