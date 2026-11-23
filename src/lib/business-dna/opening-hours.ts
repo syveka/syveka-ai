@@ -32,6 +32,24 @@ export function normalizeOpeningHours(raw: unknown): WeekHours {
   return Object.fromEntries(DAY_KEYS.map((day) => [day, normalizeDay(source[day])])) as WeekHours;
 }
 
+/**
+ * The week the Business DNA form shows when nothing is saved: Mon-Fri
+ * 09:00-17:00 and a closed weekend, as the booking calendar's own default
+ * weekly schedule (DEFAULT_WEEKLY_RULES). Display only: the form sends opening
+ * hours only once the user changes a day, so this is never stored by itself.
+ * A saved week, even a partial or all-closed one, shows as normalizeOpeningHours
+ * reads it.
+ */
+export function openingHoursForForm(raw: unknown): WeekHours {
+  if (raw && typeof raw === "object") return normalizeOpeningHours(raw);
+  return Object.fromEntries(
+    DAY_KEYS.map((day) => [
+      day,
+      { ...DEFAULT_DAY_HOURS, closed: day === "saturday" || day === "sunday" },
+    ]),
+  ) as WeekHours;
+}
+
 function normalizeDay(value: unknown): DayHours {
   if (!value || typeof value !== "object") return { ...DEFAULT_DAY_HOURS };
   const v = value as Record<string, unknown>;
