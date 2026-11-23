@@ -499,6 +499,69 @@ describe("email.send retries", () => {
     expect(limiter.spent("workflowEmailOrgHour", ORG)).toBe(1);
   });
 
+  it("a retry whose recipient changed is checked against the new recipient's limits", async () => {
+    // Attempt 1 spends the limits for A, then the provider fails.
+    sendEmail.mockRejectedValueOnce(new Error("provider timeout"));
+    const first = await deliver("lead-a@example.com", "contact.created:1");
+    expect(first.status).toBe(500);
+
+    // The creator edits the step's `to` (same step id) before the retry, and
+    // B has already had its 10 for today from this organization.
+    const workflow = state.workflow as { steps: Array<Record<string, unknown>> };
+    workflow.steps[0]!.to = "lead-b@example.com";
+    limiter.hits.set(
+      `workflowEmailRecipientDay|${ORG}:${emailKey("lead-b@example.com")}`,
+      Array.from({ length: 10 }, () => Date.now()),
+    );
+
+    const retry = await deliver("lead-a@example.com", "contact.created:1");
+
+    expect(retry.status).toBe(200);
+    expect(sendEmail).toHaveBeenCalledTimes(1);
+    expect(sendEmail.mock.calls.some(([args]) => args.to === "lead-b@example.com")).toBe(false);
+    expect(runFor("contact.created:1").error).toBe(`${LIMIT_PREFIX} (recipient_day)`);
+  });
+
+  it("a retry whose recipient changed spends the new recipient's limits once", async () => {
+    sendEmail.mockRejectedValueOnce(new Error("provider timeout"));
+    await deliver("lead-a@example.com", "contact.created:1");
+    const workflow = state.workflow as { steps: Array<Record<string, unknown>> };
+    workflow.steps[0]!.to = "lead-b@example.com";
+
+    const retry = await deliver("lead-a@example.com", "contact.created:1");
+
+    expect(retry.status).toBe(200);
+    expect(sendEmail).toHaveBeenCalledTimes(2);
+    expect(sendEmail.mock.calls[1]![0].to).toBe("lead-b@example.com");
+    expect(
+      limiter.spent("workflowEmailRecipientDay", `${ORG}:${emailKey("lead-b@example.com")}`),
+    ).toBe(1);
+    // A's spend stays spent: an over-count, never an over-send.
+    expect(limiter.spent("workflowEmailOrgHour", ORG)).toBe(2);
+  });
+
+  it("a marker without a recipient fingerprint is not trusted", async () => {
+    sendEmail.mockRejectedValueOnce(new Error("provider timeout"));
+    await deliver("lead@example.com", "contact.created:1");
+    // A row written before markers carried a fingerprint.
+    state.steps[0]!.output = { emailLimitsSpent: true };
+
+    const retry = await deliver("lead@example.com", "contact.created:1");
+
+    expect(retry.status).toBe(200);
+    expect(limiter.spent("workflowEmailOrgHour", ORG)).toBe(2);
+  });
+
+  it("the marker holds the recipient's hash, never the address", async () => {
+    sendEmail.mockRejectedValueOnce(new Error("provider timeout"));
+    await deliver("lead@example.com", "contact.created:1");
+
+    const marker = JSON.stringify(state.steps[0]!.output);
+    expect(marker).toContain(emailKey("lead@example.com"));
+    expect(marker).not.toContain("@");
+    expect(marker).not.toContain("lead");
+  });
+
   it("a succeeded step is never sent or counted again", async () => {
     await deliver("lead@example.com", "contact.created:1");
     const run = runFor("contact.created:1");

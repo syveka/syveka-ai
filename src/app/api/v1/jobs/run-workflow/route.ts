@@ -99,7 +99,7 @@ function isRecordNotFound(err: unknown): boolean {
 
 type StepClaimResult =
   // `output` is what an earlier, failed attempt at this step left on its row
-  // (null for a new claim); see EMAIL_LIMITS_SPENT.
+  // (null for a new claim); see EmailLimitsSpent.
   | { claimed: true; stepExecutionId: string; startedAt: Date; output: unknown }
   | { claimed: false; reason: "succeeded"; output: unknown }
   | { claimed: false; reason: "in_progress" };
@@ -265,11 +265,15 @@ class WorkflowEmailLimiterUnavailableError extends Error {
 
 /**
  * Written to an email.send step's own row once its limits are spent, before
- * the send. A retry of the same run and step (a provider error, or a crash
- * before completeStep) reclaims that row, finds this and sends without
- * spending the limits again: claimStep's reclaim never clears `output`.
+ * the send, with the recipient's fingerprint (a hash, never the address). A
+ * retry of the same run and step (a provider error, or a crash before
+ * completeStep) reclaims that row: claimStep's reclaim never clears `output`.
+ * It sends without spending the limits again only if it resolves to the same
+ * recipient. The workflow is read live, so an edited `to` keeps the step id
+ * and reaches the same row; that recipient is admitted on its own, and an
+ * older marker without a fingerprint is not trusted.
  */
-const EMAIL_LIMITS_SPENT = { emailLimitsSpent: true } as const;
+type EmailLimitsSpent = { emailLimitsSpentFor: string };
 
 /** Step output recorded when a notification was skipped for a non-member. */
 const RECIPIENT_NOT_MEMBER = { skipped: "recipient_not_member" } as const;
@@ -327,7 +331,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     { WORKFLOW_DATA_SYSTEM_PROMPT, formatWorkflowDataValue, stripWorkflowDataMarkers },
     { isInternalOnlyWorkflowOrg },
     { internalScopeViolations },
-    { admitWorkflowEmail, normalizeWorkflowRecipient },
+    { admitWorkflowEmail, normalizeWorkflowRecipient, workflowRecipientFingerprint },
   ] = await Promise.all([
     import("@/server/jobs/verify"),
     import("@/server/db/tenant"),
@@ -740,8 +744,10 @@ export async function POST(request: Request): Promise<NextResponse> {
             // limiter key: it can be a contact's personal data.
             const to = normalizeWorkflowRecipient(interpolate(step.to, ctx));
             if (!to) throw new WorkflowStepError(INVALID_RECIPIENT_ERROR_PREFIX);
+            const fingerprint = workflowRecipientFingerprint(to);
             const limitsSpent =
-              (claim.output as { emailLimitsSpent?: unknown } | null)?.emailLimitsSpent === true;
+              (claim.output as Partial<EmailLimitsSpent> | null)?.emailLimitsSpentFor ===
+              fingerprint;
             if (!limitsSpent) {
               const admission = await admitWorkflowEmail(orgId, to);
               if (!admission.ok) {
@@ -755,10 +761,11 @@ export async function POST(request: Request): Promise<NextResponse> {
               // Fenced like completeStep: a superseded worker stops here,
               // before sending. If this write fails the limits stay spent
               // and the retry spends them again (over-counts, never sends
-              // past them).
+              // past them). Overwrites a marker for another recipient.
+              const spent: EmailLimitsSpent = { emailLimitsSpentFor: fingerprint };
               const marked = await unscopedPrisma.workflowStepExecution.updateMany({
                 where: { id: claim.stepExecutionId, startedAt: claim.startedAt },
-                data: { output: EMAIL_LIMITS_SPENT },
+                data: { output: spent },
               });
               if (marked.count === 0) throw new StepFencedError();
             }

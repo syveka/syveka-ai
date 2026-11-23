@@ -19,6 +19,15 @@ export function normalizeWorkflowRecipient(raw: string): string | null {
   return z.email().safeParse(address).success ? address : null;
 }
 
+/**
+ * The recipient a spent allowance belongs to, as the same hashed mailbox key
+ * the limiters use (emailKey), never the address. Stored on the step's row so
+ * a retry that resolves to another recipient is checked again.
+ */
+export function workflowRecipientFingerprint(recipient: string): string {
+  return emailKey(recipient);
+}
+
 export type WorkflowEmailLimitScope =
   "organization_hour" | "organization_day" | "recipient_day" | "recipient_all_organizations_day";
 
@@ -42,7 +51,7 @@ export async function admitWorkflowEmail(
   organizationId: string,
   recipient: string,
 ): Promise<WorkflowEmailAdmission> {
-  const mailbox = emailKey(recipient);
+  const mailbox = workflowRecipientFingerprint(recipient);
   const checks: Array<[keyof RateLimiters, string, WorkflowEmailLimitScope]> = [
     ["workflowEmailOrgHour", organizationId, "organization_hour"],
     ["workflowEmailOrgDay", organizationId, "organization_day"],
