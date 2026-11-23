@@ -5,7 +5,7 @@ import { requirePermission } from "@/server/auth/guard";
 import { can } from "@/server/auth/permissions";
 import { getBusinessDNA } from "@/server/services/business-dna";
 import { listBusinessDnaServices } from "@/server/services/business-dna-services";
-import { normalizeOpeningHours } from "@/lib/business-dna/opening-hours";
+import { openingHoursForForm } from "@/lib/business-dna/opening-hours";
 import { Link } from "@/i18n/routing";
 import { BusinessDnaForm } from "./business-dna-form";
 
@@ -48,7 +48,7 @@ export default async function BusinessDnaSettingsPage() {
           brandTone: record?.brandTone ?? "",
           communicationStyle: record?.communicationStyle ?? "",
           responseInstructions: record?.responseInstructions ?? "",
-          openingHours: normalizeOpeningHours(record?.openingHours ?? null),
+          openingHours: openingHoursForForm(record?.openingHours ?? null),
           cancellationPolicy: record?.cancellationPolicy ?? "",
           bookingPolicy: record?.bookingPolicy ?? "",
           refundPolicy: record?.refundPolicy ?? "",
