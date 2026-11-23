@@ -8,6 +8,9 @@ import {
   CONTACT_MISSING_ERROR,
   CONTACT_MISSING_TEST_RUN_ERROR,
   CONTACT_NOT_FOUND_ERROR,
+  EMAIL_IDEMPOTENCY_CONFLICT_ERROR,
+  EMAIL_LIMIT_REACHED_ERROR_PREFIX,
+  EMAIL_OUTCOME_UNKNOWN_ERROR,
   INVALID_RECIPIENT_ERROR_PREFIX,
   isTerminalRunError,
   TERMINAL_RUN_ERRORS,
@@ -97,7 +100,9 @@ function isRecordNotFound(err: unknown): boolean {
 }
 
 type StepClaimResult =
-  | { claimed: true; stepExecutionId: string; startedAt: Date }
+  // `output` is what an earlier, failed attempt at this step left on its row
+  // (null for a new claim); see EmailLimitsSpent.
+  | { claimed: true; stepExecutionId: string; startedAt: Date; output: unknown }
   | { claimed: false; reason: "succeeded"; output: unknown }
   | { claimed: false; reason: "in_progress" };
 
@@ -187,7 +192,12 @@ async function claimStep(
         status: "CLAIMED",
       },
     });
-    return { claimed: true, stepExecutionId: created.id, startedAt: created.startedAt };
+    return {
+      claimed: true,
+      stepExecutionId: created.id,
+      startedAt: created.startedAt,
+      output: null,
+    };
   } catch (err) {
     if (!isUniqueViolation(err)) throw err;
 
@@ -217,7 +227,12 @@ async function claimStep(
     if (reclaimed.count === 0) {
       return { claimed: false, reason: "in_progress" };
     }
-    return { claimed: true, stepExecutionId: existing.id, startedAt: reclaimedStartedAt };
+    return {
+      claimed: true,
+      stepExecutionId: existing.id,
+      startedAt: reclaimedStartedAt,
+      output: existing.output,
+    };
   }
 }
 
@@ -237,6 +252,76 @@ async function isCurrentMember(
     select: { id: true },
   });
   return member !== null;
+}
+
+/**
+ * Thrown when the workflow email limits can't be checked (Redis down or not
+ * configured). Nothing is sent; the job answers 500 so QStash retries it.
+ */
+class WorkflowEmailLimiterUnavailableError extends Error {
+  constructor() {
+    super("workflow email limiter unavailable");
+    this.name = "WorkflowEmailLimiterUnavailableError";
+  }
+}
+
+/**
+ * Written to an email.send step's own row once its limits are spent, before
+ * the send, with the recipient's fingerprint (a hash, never the address). A
+ * retry of the same run and step (a provider error, or a crash before
+ * completeStep) reclaims that row: claimStep's reclaim never clears `output`.
+ * It sends without spending the limits again only if it resolves to the same
+ * recipient. The workflow is read live, so an edited `to` keeps the step id
+ * and reaches the same row; that recipient is admitted on its own.
+ *
+ * `firstAttemptAt` (epoch ms) is when the allowance was spent, right before
+ * the first provider call for it. A marker means the provider may already
+ * have the send; see EMAIL_RESEND_SAFE_WINDOW_MS.
+ */
+type EmailLimitsSpent = { emailLimitsSpentFor: string; firstAttemptAt: number };
+
+/**
+ * How long after a step's first provider attempt a retry may still send.
+ * Resend documents its idempotency keys as kept for 24 hours; after that a
+ * resend of the same key is not deduplicated, so an attempt the provider
+ * accepted but this job never recorded would go out twice. 12 hours sits
+ * well inside that window, and the normal QStash retries of a job finish
+ * within minutes. Only a late replay (a dead-letter message replayed by
+ * hand, a redelivered source event) reaches past it.
+ */
+const EMAIL_RESEND_SAFE_WINDOW_MS = 12 * 60 * 60_000;
+
+/**
+ * The limits marker on an email.send step's row, or null if no attempt got
+ * as far as spending the limits (so none reached the provider). Any marker
+ * counts, including the earlier `{ emailLimitsSpent: true }` shape and one
+ * without a usable time.
+ */
+function emailLimitsMarker(output: unknown): Partial<EmailLimitsSpent> | null {
+  if (typeof output !== "object" || output === null) return null;
+  return "emailLimitsSpentFor" in output || "emailLimitsSpent" in output
+    ? (output as Partial<EmailLimitsSpent>)
+    : null;
+}
+
+/** Whether a marker's first attempt is recent enough for the provider to dedupe a resend. */
+function withinResendSafeWindow(marker: Partial<EmailLimitsSpent>, now: number): boolean {
+  const at = marker.firstAttemptAt;
+  return typeof at === "number" && Number.isFinite(at) && now - at <= EMAIL_RESEND_SAFE_WINDOW_MS;
+}
+
+/**
+ * Resend's invalid_idempotent_request, as sendEmail surfaces it: an
+ * EmailSendError whose `code` is Resend's error name. Matched by name and
+ * code, not instanceof: the route takes only sendEmail from the dynamically
+ * imported resend module.
+ */
+function isIdempotencyConflict(err: unknown): boolean {
+  return (
+    err instanceof Error &&
+    err.name === "EmailSendError" &&
+    (err as Error & { code?: unknown }).code === "invalid_idempotent_request"
+  );
 }
 
 /** Step output recorded when a notification was skipped for a non-member. */
@@ -295,6 +380,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     { WORKFLOW_DATA_SYSTEM_PROMPT, formatWorkflowDataValue, stripWorkflowDataMarkers },
     { isInternalOnlyWorkflowOrg },
     { internalScopeViolations },
+    { admitWorkflowEmail, normalizeWorkflowRecipient, workflowRecipientFingerprint },
   ] = await Promise.all([
     import("@/server/jobs/verify"),
     import("@/server/db/tenant"),
@@ -308,6 +394,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/ai/prompts/workflow-data"),
     import("@/server/services/workflows"),
     import("@/lib/workflows/internal-scope"),
+    import("@/server/services/workflow-email-limits"),
   ]);
 
   const rawBody = await verifyJobRequest(request);
@@ -702,9 +789,45 @@ export async function POST(request: Request): Promise<NextResponse> {
             );
           }
           try {
-            const to = interpolate(step.to, ctx);
-            if (!to.includes("@"))
-              throw new WorkflowStepError(`${INVALID_RECIPIENT_ERROR_PREFIX} "${to}"`);
+            // The address never goes into the step or run error, a log or a
+            // limiter key: it can be a contact's personal data.
+            const to = normalizeWorkflowRecipient(interpolate(step.to, ctx));
+            if (!to) throw new WorkflowStepError(INVALID_RECIPIENT_ERROR_PREFIX);
+            const fingerprint = workflowRecipientFingerprint(to);
+            // An earlier attempt spent the limits, so it may have reached the
+            // provider. Past the safe window (or with no usable time) the
+            // provider may no longer dedupe the key, and a resend could be a
+            // second email: refused for good, nothing sent or spent.
+            const marker = emailLimitsMarker(claim.output);
+            if (marker && !withinResendSafeWindow(marker, Date.now())) {
+              throw new WorkflowStepError(EMAIL_OUTCOME_UNKNOWN_ERROR);
+            }
+            const limitsSpent = marker?.emailLimitsSpentFor === fingerprint;
+            if (!limitsSpent) {
+              const admission = await admitWorkflowEmail(orgId, to);
+              if (!admission.ok) {
+                if (admission.reason === "unavailable") {
+                  throw new WorkflowEmailLimiterUnavailableError();
+                }
+                throw new WorkflowStepError(
+                  `${EMAIL_LIMIT_REACHED_ERROR_PREFIX} (${admission.scope})`,
+                );
+              }
+              // Fenced like completeStep: a superseded worker stops here,
+              // before sending. If this write fails the limits stay spent
+              // and the retry spends them again (over-counts, never sends
+              // past them). Overwrites a marker for another recipient, with
+              // this attempt's time.
+              const spent: EmailLimitsSpent = {
+                emailLimitsSpentFor: fingerprint,
+                firstAttemptAt: Date.now(),
+              };
+              const marked = await unscopedPrisma.workflowStepExecution.updateMany({
+                where: { id: claim.stepExecutionId, startedAt: claim.startedAt },
+                data: { output: spent },
+              });
+              if (marked.count === 0) throw new StepFencedError();
+            }
             const sent = await sendEmail({
               to,
               subject: interpolate(step.subject, ctx),
@@ -718,6 +841,17 @@ export async function POST(request: Request): Promise<NextResponse> {
               // persisting it) - see docs/DECISIONS.md for the provider
               // contract and its limits.
               idempotencyKey: claim.stepExecutionId,
+            }).catch((sendErr: unknown) => {
+              // Resend refuses a key it already saw with a different request
+              // (the recipient or text changed since an earlier attempt). That
+              // repeats on every retry of this key, so it ends the step with a
+              // fixed reason, never the provider's text. Every other provider
+              // error, including a concurrent request with the same key, is
+              // retried as before.
+              if (isIdempotencyConflict(sendErr)) {
+                throw new WorkflowStepError(EMAIL_IDEMPOTENCY_CONFLICT_ERROR);
+              }
+              throw sendErr;
             });
             try {
               await completeStep(unscopedPrisma, claim, undefined, sent.id);
@@ -953,6 +1087,14 @@ export async function POST(request: Request): Promise<NextResponse> {
     await recordUsage(orgId, "WORKFLOW_RUNS", 1, { workflowId });
     return NextResponse.json({ ok: true });
   } catch (err) {
+    if (err instanceof StepFencedError) {
+      // Another worker reclaimed this step (the email limits marker write
+      // matched no row) and now owns the run, or has already finished it.
+      // This attempt sent nothing, so it records, logs, notifies and
+      // retries nothing either: a write here would overwrite that worker's
+      // result.
+      return NextResponse.json({ skipped: "step_superseded" });
+    }
     const message = failureText(err, "step failed").slice(0, 500);
     results.push({ stepId: "error", status: "failed", output: message });
     await persist("FAILED", message);
