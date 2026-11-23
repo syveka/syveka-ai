@@ -45,6 +45,10 @@ export type RateLimiters = {
   publicBookingRecipient: Ratelimit;
   publicBookingRecipientDay: Ratelimit;
   publicBookingIpOrgDay: Ratelimit;
+  workflowEmailOrgHour: Ratelimit;
+  workflowEmailOrgDay: Ratelimit;
+  workflowEmailRecipientDay: Ratelimit;
+  workflowEmailRecipientAnyOrgDay: Ratelimit;
 };
 
 /**
@@ -84,6 +88,30 @@ export const PUBLIC_BOOKING_ATTEMPTS_PER_RECIPIENT_ANY_ORG_PER_DAY = 10;
  * bucket per organization.
  */
 export const PUBLIC_BOOKING_ATTEMPTS_PER_IP_PER_ORG_PER_DAY = 10;
+/**
+ * Emails one organization's workflows may send (email.send steps) from the
+ * platform domain to any address. Sized above calendar-event reminders
+ * (60/h, 200/d): a new-lead acknowledgement or a follow-up per contact is
+ * one send, and a busy small business takes tens of leads a day, not
+ * hundreds. A bulk import or a burst of CRM changes hits the hourly cap
+ * first, so one bad hour can't use the whole day.
+ */
+export const WORKFLOW_EMAILS_PER_ORG_PER_HOUR = 100;
+export const WORKFLOW_EMAILS_PER_ORG_PER_DAY = 300;
+/**
+ * Workflow emails one organization may send one recipient mailbox per day:
+ * above the few a contact gets from one business in a day (an acknowledgement
+ * and a stage change or two), far below a flood. Notifying the team belongs
+ * to notify.member, which sends no email.
+ */
+export const WORKFLOW_EMAILS_PER_RECIPIENT_PER_DAY = 10;
+/**
+ * Workflow emails one recipient mailbox may get per day across ALL
+ * organizations. Organization creation is open, so the per-organization cap
+ * alone would let one sender mail a stranger 10 times per paid organization
+ * they run. Three businesses at their full allowance reach it.
+ */
+export const WORKFLOW_EMAILS_PER_RECIPIENT_ANY_ORG_PER_DAY = 30;
 
 let rateLimitersClient: RateLimiters | null = null;
 
@@ -238,6 +266,30 @@ function getRateLimiters(): RateLimiters {
       limiter: Ratelimit.slidingWindow(PUBLIC_BOOKING_ATTEMPTS_PER_IP_PER_ORG_PER_DAY, "1 d"),
       prefix: "rl:public-booking:ip-org:day",
     }),
+    // Workflow email.send steps: per organization per hour and day, per
+    // organization and recipient mailbox per day, and per recipient mailbox
+    // per day across organizations (the address hashed). See
+    // admitWorkflowEmail in services/workflow-email-limits.ts.
+    workflowEmailOrgHour: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(WORKFLOW_EMAILS_PER_ORG_PER_HOUR, "1 h"),
+      prefix: "rl:workflow-email:org:hour",
+    }),
+    workflowEmailOrgDay: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(WORKFLOW_EMAILS_PER_ORG_PER_DAY, "1 d"),
+      prefix: "rl:workflow-email:org:day",
+    }),
+    workflowEmailRecipientDay: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(WORKFLOW_EMAILS_PER_RECIPIENT_PER_DAY, "1 d"),
+      prefix: "rl:workflow-email:recipient:day",
+    }),
+    workflowEmailRecipientAnyOrgDay: new Ratelimit({
+      redis: client,
+      limiter: Ratelimit.slidingWindow(WORKFLOW_EMAILS_PER_RECIPIENT_ANY_ORG_PER_DAY, "1 d"),
+      prefix: "rl:workflow-email:recipient:any-org:day",
+    }),
   };
   return rateLimitersClient;
 }
@@ -308,6 +360,18 @@ export const rateLimiters = {
   },
   get publicBookingIpOrgDay() {
     return getRateLimiters().publicBookingIpOrgDay;
+  },
+  get workflowEmailOrgHour() {
+    return getRateLimiters().workflowEmailOrgHour;
+  },
+  get workflowEmailOrgDay() {
+    return getRateLimiters().workflowEmailOrgDay;
+  },
+  get workflowEmailRecipientDay() {
+    return getRateLimiters().workflowEmailRecipientDay;
+  },
+  get workflowEmailRecipientAnyOrgDay() {
+    return getRateLimiters().workflowEmailRecipientAnyOrgDay;
   },
 } satisfies RateLimiters;
 

@@ -24,6 +24,12 @@ export const CONTACT_MISSING_TEST_RUN_ERROR =
 export const CONTACT_MISSING_ERROR = "crm.create_activity: no contact in the contact field";
 export const CONTACT_NOT_FOUND_ERROR = "crm.create_activity: contact not found";
 export const INVALID_RECIPIENT_ERROR_PREFIX = "email.send: invalid recipient";
+/**
+ * Followed by the limit's scope: "(organization_hour)", "(organization_day)",
+ * "(recipient_day)" or "(recipient_all_organizations_day)". See
+ * admitWorkflowEmail.
+ */
+export const EMAIL_LIMIT_REACHED_ERROR_PREFIX = "email.send: limit reached";
 
 /**
  * Run errors that end the job without a retry (the run-workflow job answers
@@ -39,7 +45,7 @@ export const TERMINAL_RUN_ERRORS = {
     CONTACT_NOT_FOUND_ERROR,
     "ai_quota_exceeded",
   ],
-  prefixes: [INVALID_RECIPIENT_ERROR_PREFIX],
+  prefixes: [INVALID_RECIPIENT_ERROR_PREFIX, EMAIL_LIMIT_REACHED_ERROR_PREFIX],
 } as const;
 
 export function isTerminalRunError(error: string | null): boolean {

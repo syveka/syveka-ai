@@ -106,6 +106,10 @@ vi.mock("@/server/integrations/anthropic", () => ({
 }));
 vi.mock("@/server/ai/router", () => ({ routeModel: () => ({ model: "m", maxTokens: 1 }) }));
 vi.mock("@/server/integrations/resend", () => ({ sendEmail: fx.sendEmail }));
+// Workflow email limits admit every send (covered by run-workflow-email-limits.test.ts).
+vi.mock("@/server/integrations/redis", () => ({
+  checkRateLimit: async () => ({ ok: true, limit: 1, remaining: 1, reset: 0 }),
+}));
 vi.mock("@/server/services/billing/entitlements", () => ({
   recordUsage: vi.fn(async () => undefined),
   getEntitlements: async () => ({ readOnly: false, activeWorkflows: 5 }),

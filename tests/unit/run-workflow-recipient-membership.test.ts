@@ -164,6 +164,10 @@ vi.mock("@/server/integrations/anthropic", () => ({
 }));
 vi.mock("@/server/ai/router", () => ({ routeModel: () => ({ model: "m", maxTokens: 1 }) }));
 vi.mock("@/server/integrations/resend", () => ({ sendEmail: vi.fn() }));
+// Workflow email limits admit every send (covered by run-workflow-email-limits.test.ts).
+vi.mock("@/server/integrations/redis", () => ({
+  checkRateLimit: async () => ({ ok: true, limit: 1, remaining: 1, reset: 0 }),
+}));
 // A plan that includes workflows, with AI quota left (plan and quota gating
 // are covered by run-workflow-ai-quota.test.ts).
 vi.mock("@/server/services/billing/entitlements", () => ({

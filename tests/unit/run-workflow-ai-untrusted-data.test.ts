@@ -136,7 +136,11 @@ vi.mock("@/server/integrations/anthropic", () => ({
 }));
 vi.mock("@/server/ai/router", () => ({ routeModel: () => ({ model: "m", maxTokens: 1 }) }));
 vi.mock("@/server/integrations/resend", () => ({ sendEmail: fx.sendEmail }));
-vi.mock("@/server/integrations/redis", () => ({ limitAiChat: vi.fn() }));
+// Workflow email limits admit every send (covered by run-workflow-email-limits.test.ts).
+vi.mock("@/server/integrations/redis", () => ({
+  limitAiChat: vi.fn(),
+  checkRateLimit: async () => ({ ok: true, limit: 1, remaining: 1, reset: 0 }),
+}));
 vi.mock("@/server/services/ai-spend", () => ({
   assertAiQuotaAvailable: vi.fn(async () => undefined),
   AiSpendError: class AiSpendError extends Error {},

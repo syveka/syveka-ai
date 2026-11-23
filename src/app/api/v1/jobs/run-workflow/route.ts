@@ -8,6 +8,7 @@ import {
   CONTACT_MISSING_ERROR,
   CONTACT_MISSING_TEST_RUN_ERROR,
   CONTACT_NOT_FOUND_ERROR,
+  EMAIL_LIMIT_REACHED_ERROR_PREFIX,
   INVALID_RECIPIENT_ERROR_PREFIX,
   isTerminalRunError,
   TERMINAL_RUN_ERRORS,
@@ -97,7 +98,9 @@ function isRecordNotFound(err: unknown): boolean {
 }
 
 type StepClaimResult =
-  | { claimed: true; stepExecutionId: string; startedAt: Date }
+  // `output` is what an earlier, failed attempt at this step left on its row
+  // (null for a new claim); see EMAIL_LIMITS_SPENT.
+  | { claimed: true; stepExecutionId: string; startedAt: Date; output: unknown }
   | { claimed: false; reason: "succeeded"; output: unknown }
   | { claimed: false; reason: "in_progress" };
 
@@ -187,7 +190,12 @@ async function claimStep(
         status: "CLAIMED",
       },
     });
-    return { claimed: true, stepExecutionId: created.id, startedAt: created.startedAt };
+    return {
+      claimed: true,
+      stepExecutionId: created.id,
+      startedAt: created.startedAt,
+      output: null,
+    };
   } catch (err) {
     if (!isUniqueViolation(err)) throw err;
 
@@ -217,7 +225,12 @@ async function claimStep(
     if (reclaimed.count === 0) {
       return { claimed: false, reason: "in_progress" };
     }
-    return { claimed: true, stepExecutionId: existing.id, startedAt: reclaimedStartedAt };
+    return {
+      claimed: true,
+      stepExecutionId: existing.id,
+      startedAt: reclaimedStartedAt,
+      output: existing.output,
+    };
   }
 }
 
@@ -238,6 +251,25 @@ async function isCurrentMember(
   });
   return member !== null;
 }
+
+/**
+ * Thrown when the workflow email limits can't be checked (Redis down or not
+ * configured). Nothing is sent; the job answers 500 so QStash retries it.
+ */
+class WorkflowEmailLimiterUnavailableError extends Error {
+  constructor() {
+    super("workflow email limiter unavailable");
+    this.name = "WorkflowEmailLimiterUnavailableError";
+  }
+}
+
+/**
+ * Written to an email.send step's own row once its limits are spent, before
+ * the send. A retry of the same run and step (a provider error, or a crash
+ * before completeStep) reclaims that row, finds this and sends without
+ * spending the limits again: claimStep's reclaim never clears `output`.
+ */
+const EMAIL_LIMITS_SPENT = { emailLimitsSpent: true } as const;
 
 /** Step output recorded when a notification was skipped for a non-member. */
 const RECIPIENT_NOT_MEMBER = { skipped: "recipient_not_member" } as const;
@@ -295,6 +327,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     { WORKFLOW_DATA_SYSTEM_PROMPT, formatWorkflowDataValue, stripWorkflowDataMarkers },
     { isInternalOnlyWorkflowOrg },
     { internalScopeViolations },
+    { admitWorkflowEmail, normalizeWorkflowRecipient },
   ] = await Promise.all([
     import("@/server/jobs/verify"),
     import("@/server/db/tenant"),
@@ -308,6 +341,7 @@ export async function POST(request: Request): Promise<NextResponse> {
     import("@/server/ai/prompts/workflow-data"),
     import("@/server/services/workflows"),
     import("@/lib/workflows/internal-scope"),
+    import("@/server/services/workflow-email-limits"),
   ]);
 
   const rawBody = await verifyJobRequest(request);
@@ -702,9 +736,32 @@ export async function POST(request: Request): Promise<NextResponse> {
             );
           }
           try {
-            const to = interpolate(step.to, ctx);
-            if (!to.includes("@"))
-              throw new WorkflowStepError(`${INVALID_RECIPIENT_ERROR_PREFIX} "${to}"`);
+            // The address never goes into the step or run error, a log or a
+            // limiter key: it can be a contact's personal data.
+            const to = normalizeWorkflowRecipient(interpolate(step.to, ctx));
+            if (!to) throw new WorkflowStepError(INVALID_RECIPIENT_ERROR_PREFIX);
+            const limitsSpent =
+              (claim.output as { emailLimitsSpent?: unknown } | null)?.emailLimitsSpent === true;
+            if (!limitsSpent) {
+              const admission = await admitWorkflowEmail(orgId, to);
+              if (!admission.ok) {
+                if (admission.reason === "unavailable") {
+                  throw new WorkflowEmailLimiterUnavailableError();
+                }
+                throw new WorkflowStepError(
+                  `${EMAIL_LIMIT_REACHED_ERROR_PREFIX} (${admission.scope})`,
+                );
+              }
+              // Fenced like completeStep: a superseded worker stops here,
+              // before sending. If this write fails the limits stay spent
+              // and the retry spends them again (over-counts, never sends
+              // past them).
+              const marked = await unscopedPrisma.workflowStepExecution.updateMany({
+                where: { id: claim.stepExecutionId, startedAt: claim.startedAt },
+                data: { output: EMAIL_LIMITS_SPENT },
+              });
+              if (marked.count === 0) throw new StepFencedError();
+            }
             const sent = await sendEmail({
               to,
               subject: interpolate(step.subject, ctx),

@@ -103,6 +103,10 @@ vi.mock("@/server/ai/router", () => ({
   routeModel: () => ({ model: "utility-model", maxTokens: 100 }),
 }));
 vi.mock("@/server/integrations/resend", () => ({ sendEmail: mocks.sendEmail }));
+// Workflow email limits admit every send (covered by run-workflow-email-limits.test.ts).
+vi.mock("@/server/integrations/redis", () => ({
+  checkRateLimit: async () => ({ ok: true, limit: 1, remaining: 1, reset: 0 }),
+}));
 // A plan that includes workflows, with AI quota left (plan and quota gating
 // are covered by run-workflow-ai-quota.test.ts).
 vi.mock("@/server/services/billing/entitlements", () => ({
@@ -119,6 +123,7 @@ import {
   CONTACT_MISSING_ERROR,
   CONTACT_MISSING_TEST_RUN_ERROR,
   CONTACT_NOT_FOUND_ERROR,
+  EMAIL_LIMIT_REACHED_ERROR_PREFIX,
   INVALID_RECIPIENT_ERROR_PREFIX,
 } from "@/lib/workflows/run-failure";
 
@@ -141,6 +146,7 @@ const RETRYABLE_FAILED_RUN = {
             },
           },
           { error: { startsWith: INVALID_RECIPIENT_ERROR_PREFIX } },
+          { error: { startsWith: EMAIL_LIMIT_REACHED_ERROR_PREFIX } },
         ],
       },
     },
