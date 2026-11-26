@@ -1,4 +1,37 @@
 {
+  "platformAdmin": {
+    "title": "Syveka Admin",
+    "exit": "Back to dashboard",
+    "overview": "Platform overview",
+    "organizations": "Organizations",
+    "manageOrganizations": "Manage organizations",
+    "activePaidPlans": "Active paid plans",
+    "monthlyMessages": "AI messages this month",
+    "monthlyVoice": "Voice minutes this month",
+    "messageHistory": "AI message history",
+    "messageHistoryPeriod": "Last six calendar months, including the current month",
+    "noMessageHistory": "No AI message usage recorded in this period.",
+    "planDistribution": "Subscription plans",
+    "activeSubscriptions": "Active subscriptions: {count, number}",
+    "searchOrganizations": "Search organizations",
+    "noOrganizations": "No organizations found.",
+    "noBusinessId": "No business ID",
+    "organizationCounts": "{members, number} members · {contacts, number} contacts · {calls, number} calls",
+    "plans": {
+      "FREE": "Free",
+      "STARTER": "Starter",
+      "PRO": "Pro",
+      "ENTERPRISE": "Enterprise"
+    },
+    "statuses": {
+      "ACTIVE": "Active",
+      "TRIALING": "Trial",
+      "PAST_DUE": "Past due",
+      "CANCELED": "Canceled",
+      "INCOMPLETE": "Incomplete",
+      "PAUSED": "Paused"
+    }
+  },
   "common": {
     "appName": "Syveka AI",
     "save": "Save",

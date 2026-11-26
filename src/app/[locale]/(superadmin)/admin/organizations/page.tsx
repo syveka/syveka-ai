@@ -1,97 +1,115 @@
 export const dynamic = "force-dynamic";
 
+import { Building2, ChevronRight, Search } from "lucide-react";
+import { getLocale, getTranslations } from "next-intl/server";
 import { requireSuperadmin } from "@/server/auth/superadmin";
 import { unscopedPrisma } from "@/server/db/tenant";
-import { Card, CardContent } from "@/components/ui/card";
-import { StatCard } from "@/components/analytics/charts";
 import { Link } from "@/i18n/routing";
 
 export default async function AdminOrganizationsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string }>;
+  searchParams: Promise<{ q?: string | string[] }>;
 }) {
   await requireSuperadmin();
-  const { q } = await searchParams;
 
-  const monthStart = new Date();
-  monthStart.setUTCDate(1);
-  monthStart.setUTCHours(0, 0, 0, 0);
-
-  const [orgs, totals, planCounts] = await Promise.all([
-    unscopedPrisma.organization.findMany({
-      where: {
-        deletedAt: null,
-        ...(q ? { name: { contains: q, mode: "insensitive" } } : {}),
-      },
-      orderBy: { createdAt: "desc" },
-      take: 50,
-      include: {
-        subscription: { select: { plan: true, status: true, seats: true } },
-        _count: { select: { members: true, contacts: true, voiceCalls: true } },
-      },
-    }),
-    unscopedPrisma.usageRecord.groupBy({
-      by: ["metric"],
-      where: { periodStart: { gte: monthStart } },
-      _sum: { quantity: true },
-    }),
-    unscopedPrisma.subscription.groupBy({ by: ["plan"], _count: true }),
+  const [{ q }, locale, t, common] = await Promise.all([
+    searchParams,
+    getLocale(),
+    getTranslations("platformAdmin"),
+    getTranslations("common"),
   ]);
-
-  const metric = (m: string) => totals.find((t) => t.metric === m)?._sum.quantity ?? 0;
+  const query = typeof q === "string" ? q.trim() : "";
+  const orgs = await unscopedPrisma.organization.findMany({
+    where: {
+      deletedAt: null,
+      ...(query ? { name: { contains: query, mode: "insensitive" } } : {}),
+    },
+    orderBy: { createdAt: "desc" },
+    take: 50,
+    include: {
+      subscription: { select: { plan: true, status: true } },
+      _count: { select: { members: true, contacts: true, voiceCalls: true } },
+    },
+  });
+  const date = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeZone: "UTC" });
 
   return (
     <div className="space-y-6">
-      <h1 className="text-2xl font-semibold">Organizations</h1>
+      <h1 className="text-3xl font-semibold tracking-tight sm:text-4xl">{t("organizations")}</h1>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <StatCard label="Organizations" value={orgs.length} />
-        <StatCard
-          label="Paying"
-          value={planCounts.filter((p) => p.plan !== "FREE").reduce((n, p) => n + p._count, 0)}
-        />
-        <StatCard label="AI messages (month)" value={metric("AI_MESSAGES").toLocaleString()} />
-        <StatCard label="Voice minutes (month)" value={metric("VOICE_MINUTES").toLocaleString()} />
-      </div>
-
-      <form method="get">
-        <input
-          name="q"
-          defaultValue={q}
-          placeholder="Search organizations…"
-          className="h-9 w-full max-w-xs rounded-md border border-input bg-transparent px-3 text-sm"
-        />
+      <form method="get" role="search" className="flex flex-wrap items-center gap-2">
+        <label className="relative min-w-0 flex-1 sm:max-w-sm">
+          <span className="sr-only">{t("searchOrganizations")}</span>
+          <Search
+            className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <input
+            type="search"
+            name="q"
+            defaultValue={query}
+            placeholder={t("searchOrganizations")}
+            className="h-11 w-full rounded-xl border bg-card pe-3 ps-9 text-sm"
+          />
+        </label>
+        <button
+          type="submit"
+          className="min-h-11 rounded-xl border bg-card px-4 text-sm font-medium hover:bg-accent"
+        >
+          {common("search")}
+        </button>
       </form>
 
-      <Card>
-        <CardContent className="divide-y p-0">
-          {orgs.map((org) => (
-            <div key={org.id} className="flex items-center gap-4 p-4 text-sm">
-              <div className="min-w-0 flex-1">
+      <div className="overflow-hidden rounded-2xl border bg-card shadow-sm">
+        {orgs.length === 0 ? (
+          <p className="p-5 text-sm text-muted-foreground">{t("noOrganizations")}</p>
+        ) : (
+          <ul className="divide-y">
+            {orgs.map((org) => (
+              <li key={org.id}>
                 <Link
                   href={`/admin/organizations/${org.id}`}
-                  className="font-medium hover:underline"
+                  className="flex items-center gap-3 px-4 py-4 hover:bg-accent/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring sm:gap-4 sm:px-5"
                 >
-                  {org.name}
+                  <span className="hidden size-10 shrink-0 place-items-center rounded-xl bg-teal-50 text-teal-800 dark:bg-teal-950 dark:text-teal-200 sm:grid">
+                    <Building2 className="size-4" aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <p className="break-words text-sm font-semibold">{org.name}</p>
+                    <p className="break-words text-xs text-muted-foreground">
+                      <bdi>{org.slug}</bdi> ·{" "}
+                      {org.businessId ? <bdi>{org.businessId}</bdi> : t("noBusinessId")} ·{" "}
+                      {date.format(org.createdAt)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {t("organizationCounts", {
+                        members: org._count.members,
+                        contacts: org._count.contacts,
+                        calls: org._count.voiceCalls,
+                      })}
+                    </p>
+                  </div>
+                  <div className="space-y-1 text-end">
+                    <span className="inline-block rounded-full bg-secondary px-2.5 py-1 text-xs font-medium">
+                      {t(`plans.${org.subscription?.plan ?? "FREE"}`)}
+                    </span>
+                    {org.subscription && org.subscription.status !== "ACTIVE" && (
+                      <p className="text-xs text-muted-foreground">
+                        {t(`statuses.${org.subscription.status}`)}
+                      </p>
+                    )}
+                  </div>
+                  <ChevronRight
+                    className="size-4 shrink-0 text-muted-foreground rtl:-scale-x-100"
+                    aria-hidden="true"
+                  />
                 </Link>
-                <p className="text-xs text-muted-foreground">
-                  {org.slug} · {org.businessId ?? "no Y-tunnus"} · created{" "}
-                  {org.createdAt.toISOString().slice(0, 10)}
-                </p>
-              </div>
-              <span className="text-xs text-muted-foreground">
-                {org._count.members} members · {org._count.contacts} contacts ·{" "}
-                {org._count.voiceCalls} calls
-              </span>
-              <span className="rounded-full bg-secondary px-2 py-0.5 text-xs">
-                {org.subscription?.plan ?? "FREE"}
-                {org.subscription?.status !== "ACTIVE" ? ` (${org.subscription?.status})` : ""}
-              </span>
-            </div>
-          ))}
-        </CardContent>
-      </Card>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
     </div>
   );
 }
