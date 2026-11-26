@@ -2,14 +2,14 @@ export const dynamic = "force-dynamic";
 
 import { Suspense } from "react";
 import { getLocale } from "next-intl/server";
-import { requirePermission } from "@/server/auth/guard";
+import { requirePagePermission } from "@/server/auth/page-guard";
 import { getCrmDashboard } from "@/server/services/dashboard";
 import { getViewerTimeZone } from "@/server/services/viewer-time-zone";
 import { CrmDashboardView, DashboardSkeleton } from "@/components/dashboard/crm-dashboard";
 import { OrgSetupReadiness } from "./org-setup-readiness";
 
 async function DashboardContent() {
-  const ctx = await requirePermission("crm:read");
+  const ctx = await requirePagePermission("crm:read");
   const [dashboard, locale, timeZone] = await Promise.all([
     getCrmDashboard(ctx),
     getLocale(),

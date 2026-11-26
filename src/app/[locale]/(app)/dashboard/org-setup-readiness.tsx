@@ -26,7 +26,7 @@ function actionHref(key: string, state: ReadinessState): string | undefined {
  * fabricated "Blocked" state nothing in this codebase can actually detect
  * yet. Takes the already-authorized dashboard `ctx` as a prop rather than
  * re-deriving it — the dashboard page has already called
- * `requirePermission("crm:read")`.
+ * `requirePagePermission("crm:read")`.
  */
 export async function OrgSetupReadiness({ ctx }: { ctx: TenantContext }) {
   if (!can(ctx.role, "org:update")) return null;
